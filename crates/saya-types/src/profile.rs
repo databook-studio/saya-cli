@@ -31,6 +31,8 @@ pub enum DatabaseProfile {
         port: Option<u16>,
         database: String,
         user: String,
+        #[serde(default, rename = "sslmode", alias = "ssl_mode")]
+        ssl_mode: Option<PostgresSslMode>,
         password: Option<SecretRef>,
     },
     #[serde(rename = "mysql")]
@@ -59,6 +61,22 @@ pub enum DatabaseProfile {
         schema: Option<String>,
         role: Option<String>,
     },
+}
+
+/// PostgreSQL TLS verification mode. `None` preserves PostgreSQL's `prefer`
+/// default for existing profiles that omit `sslmode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PostgresSslMode {
+    #[serde(rename = "disable")]
+    Disable,
+    #[serde(rename = "prefer")]
+    Prefer,
+    #[serde(rename = "require")]
+    Require,
+    #[serde(rename = "verify-ca", alias = "verify_ca")]
+    VerifyCa,
+    #[serde(rename = "verify-full", alias = "verify_full")]
+    VerifyFull,
 }
 
 impl DatabaseProfile {

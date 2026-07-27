@@ -23,9 +23,11 @@ Global flags include `--config`, `--connections`, `--env-file`, `--profile`,
 text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
 and `--verbose`.
 
-Automation never prompts. In this alpha, ask/query and live connection/schema
-commands return explicit not-implemented events and exit with `5`, `4`, and `3`
-respectively. JSON writes result envelopes to stdout and diagnostics to stderr;
-NDJSON uses one stable envelope per line. `/history` lists saved session IDs in
-recent-first order, while `/connect` and `/include` only accept configured
-profiles and report selection rather than claiming a live connection.
+Automation never prompts. PostgreSQL `connection test`, `connection schema`,
+and `query` are live; query execution allows one parsed read-only statement and
+returns code `4` for SQL safety/query failures. Connection and schema failures
+return code `3`. `ask` and non-PostgreSQL engines return explicit unavailable
+events with `5` and the relevant connection/query code. JSON writes result
+envelopes to stdout and diagnostics to stderr; NDJSON uses one stable envelope
+per line. `/history` lists saved session IDs in recent-first order, while
+`/connect` and `/include` only accept configured profiles and report selection.

@@ -24,8 +24,9 @@ saya --env-file .env.saya config show --resolved --redacted
 Profile selection is `--profile`, `SAYA_PROFILE`, `default_profile`, a sole
 profile, then an error when multiple profiles exist. Environment-only mode is
 supported by `SAYA_DB_TYPE`, `SAYA_DB_HOST`, `SAYA_DB_PORT`, `SAYA_DB_NAME`,
-`SAYA_DB_USER`, and `SAYA_DB_PASSWORD`; the password is retained only as an
-environment reference in the typed profile.
+`SAYA_DB_USER`, `SAYA_DB_PASSWORD`, and optional `SAYA_DB_SSLMODE`; the password
+is retained only as an environment reference in the typed profile. PostgreSQL
+SSL modes are `disable`, `prefer`, `require`, `verify-ca`, and `verify-full`.
 
 `config doctor` reports paths and selection. `config show --resolved
 --redacted` emits only display-safe references and settings. It never resolves
@@ -37,5 +38,7 @@ The REPL session directory uses `SAYA_SESSION_DIR` first, then
 `--approval-mode` resolves to `never` (schema-only); interactive mode defaults
 to `ask`.
 
-The current alpha reads and validates these settings but does not yet connect
-to a database or provider.
+The current alpha connects only to PostgreSQL. Environment and file secret
+references are resolved at runtime without serializing or logging their values;
+keyring references return an explicit unavailable error. Provider calls and
+non-PostgreSQL engines are not implemented yet.

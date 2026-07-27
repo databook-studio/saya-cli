@@ -6,7 +6,15 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+saya-config = { path = "../saya-config" }
 saya-types = { path = "../saya-types" }
+futures-util.workspace = true
+serde_json.workspace = true
+sqlparser.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+chrono.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

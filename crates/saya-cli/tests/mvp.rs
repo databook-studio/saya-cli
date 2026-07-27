@@ -201,13 +201,39 @@ fn non_interactive_mode_does_not_start_a_prompt() {
 
 #[test]
 fn automation_not_implemented_uses_stable_nonzero_exit_codes_and_envelopes() {
+    let root = std::env::temp_dir().join(format!("saya-cli-unavailable-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let connections = root.join("connections.toml");
+    std::fs::write(
+        &connections,
+        "[profiles.analytics]\ntype = 'postgresql'\nhost = 'db.test'\ndatabase = 'app'\nuser = 'reader'\n\n[profiles.local]\ntype = 'duckdb'\npath = 'data.duckdb'\n",
+    )
+    .unwrap();
     let cases = [
         (
-            &["connection", "test", "analytics"][..],
+            &[
+                "--connections",
+                connections.to_str().unwrap(),
+                "connection",
+                "test",
+                "local",
+            ][..],
             3,
-            "connection test",
+            "duckdb connector",
         ),
-        (&["query", "--sql", "select 1"][..], 4, "database query"),
+        (
+            &[
+                "--connections",
+                connections.to_str().unwrap(),
+                "--profile",
+                "local",
+                "query",
+                "--sql",
+                "select 1",
+            ][..],
+            4,
+            "duckdb connector",
+        ),
         (&["ask", "show revenue"][..], 5, "AI/database execution"),
     ];
     for (args, code, expected) in cases {
@@ -221,6 +247,29 @@ fn automation_not_implemented_uses_stable_nonzero_exit_codes_and_envelopes() {
         assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
         assert!(output.stderr.is_empty());
     }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn query_results_render_as_text_and_json_without_diagnostics() {
+    let result = saya_types::QueryResult {
+        columns: vec!["id".into()],
+        rows: vec![serde_json::json!([1])],
+        row_count: 1,
+        truncated: true,
+        executed_sql: "SELECT id".into(),
+    };
+    let text = render_event(
+        &TerminalEvent::QueryResult {
+            result: result.clone(),
+        },
+        RenderFormat::Text,
+    );
+    assert_eq!(text.stdout, "id\n1\n[truncated]\n");
+    assert!(text.stderr.is_empty());
+    let json = render_event(&TerminalEvent::QueryResult { result }, RenderFormat::Json);
+    assert!(json.stdout.contains("\"event\":\"query_result\""));
+    assert!(json.stderr.is_empty());
 }
 
 #[test]

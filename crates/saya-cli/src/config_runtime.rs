@@ -30,6 +30,7 @@ pub struct RuntimeConfig {
     pub connections: ConnectionsFile,
     pub config_path: Option<PathBuf>,
     pub connections_path: Option<PathBuf>,
+    secret_values: BTreeMap<String, String>,
 }
 
 pub fn load(options: &GlobalOptions, cwd: &Path) -> Result<RuntimeConfig, RuntimeError> {
@@ -74,6 +75,8 @@ pub fn load_with_sources(
         Some(path) => config_sources::read_env_file(path)?,
         None => BTreeMap::new(),
     };
+    let mut secret_values = env_file.clone();
+    secret_values.extend(process.clone());
     let input = ResolutionInput::new(connections.clone())
         .with_user(user.unwrap_or_default())
         .with_project(project.unwrap_or_default())
@@ -89,7 +92,20 @@ pub fn load_with_sources(
         connections,
         config_path: selected_config.cloned(),
         connections_path: selected_connections.cloned(),
+        secret_values,
     })
+}
+
+impl RuntimeConfig {
+    pub fn secret_resolver(&self) -> saya_config::MapSecretResolver {
+        saya_config::MapSecretResolver::new(self.secret_values.clone())
+    }
+
+    pub fn named_profile(&self, name: &str) -> Result<&saya_types::DatabaseProfile, RuntimeError> {
+        self.connections.profiles.get(name).ok_or_else(|| {
+            RuntimeError::Config(saya_config::ConfigError::UnknownProfile(name.into()))
+        })
+    }
 }
 
 pub fn approval_mode(options: &GlobalOptions) -> Result<saya_agent::ApprovalPolicy, RuntimeError> {

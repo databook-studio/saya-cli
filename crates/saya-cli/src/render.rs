@@ -1,4 +1,5 @@
 use saya_config::OutputFormat;
+use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,11 +28,13 @@ impl From<OutputFormat> for RenderFormat {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TerminalEvent {
     AssistantText { text: String },
     Result { message: String },
+    QueryResult { result: QueryResult },
+    Schema { schema: SchemaTree },
     NotImplemented { feature: String },
     Diagnostic { message: String },
     Error { message: String },
@@ -64,11 +67,65 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: format!("{message}\n"),
             stderr: String::new(),
         },
+        TerminalEvent::QueryResult { result } => Rendered {
+            stdout: query_text(result),
+            stderr: String::new(),
+        },
+        TerminalEvent::Schema { schema } => Rendered {
+            stdout: format!("{}\n", schema_text(schema)),
+            stderr: String::new(),
+        },
         TerminalEvent::NotImplemented { feature } => Rendered {
             stdout: format!("Not implemented: {feature}\n"),
             stderr: String::new(),
         },
     }
+}
+
+fn query_text(result: &QueryResult) -> String {
+    let mut output = result.columns.join("\t");
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    for row in &result.rows {
+        let value = match row {
+            serde_json::Value::Array(values) => values
+                .iter()
+                .map(display_value)
+                .collect::<Vec<_>>()
+                .join("\t"),
+            value => display_value(value),
+        };
+        output.push_str(&value);
+        output.push('\n');
+    }
+    if result.truncated {
+        output.push_str("[truncated]\n");
+    }
+    output
+}
+
+fn display_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(value) => value.clone(),
+        value => value.to_string(),
+    }
+}
+
+fn schema_text(schema: &SchemaTree) -> String {
+    schema
+        .databases
+        .iter()
+        .flat_map(|database| {
+            database.schemas.iter().flat_map(move |schema| {
+                schema
+                    .tables
+                    .iter()
+                    .map(move |table| format!("{}.{}.{}", database.name, schema.name, table.name))
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn json_event(event: &TerminalEvent) -> Rendered {

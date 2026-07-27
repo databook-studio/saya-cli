@@ -34,22 +34,30 @@ fn network_profile(
     profile: Option<DatabaseProfile>,
     postgres: bool,
 ) -> Result<DatabaseProfile, ConfigError> {
-    let (host, port, database, user, password) = match profile {
+    let (host, port, database, user, ssl_mode, password) = match profile {
         Some(DatabaseProfile::Postgres {
             host,
             port,
             database,
             user,
+            ssl_mode,
             password,
-        })
-        | Some(DatabaseProfile::Mysql {
+        }) => (
+            Some(host),
+            port,
+            Some(database),
+            Some(user),
+            ssl_mode,
+            password,
+        ),
+        Some(DatabaseProfile::Mysql {
             host,
             port,
             database,
             user,
             password,
-        }) => (Some(host), port, Some(database), Some(user), password),
-        _ => (None, None, None, None, None),
+        }) => (Some(host), port, Some(database), Some(user), None, password),
+        _ => (None, None, None, None, None, None),
     };
     let host = required(env, "SAYA_DB_HOST", host)?;
     let database = required(env, "SAYA_DB_NAME", database)?;
@@ -65,12 +73,18 @@ fn network_profile(
             env: "SAYA_DB_PASSWORD".into(),
         })
         .or(password);
+    let ssl_mode = env
+        .get("SAYA_DB_SSLMODE")
+        .map(|value| crate::postgres_env::parse_ssl_mode(value))
+        .transpose()?
+        .or(ssl_mode);
     if postgres {
         Ok(DatabaseProfile::Postgres {
             host,
             port,
             database,
             user,
+            ssl_mode,
             password,
         })
     } else {
