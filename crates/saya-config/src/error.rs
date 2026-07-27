@@ -10,6 +10,10 @@ pub enum ConfigError {
     MissingProfile,
     #[error("connection profile {0:?} was not found")]
     UnknownProfile(String),
+    #[error("database environment variable {name} is required")]
+    MissingDatabaseField { name: &'static str },
+    #[error("database type {0:?} is not supported in environment configuration")]
+    UnsupportedDatabaseType(String),
     #[error("secret reference {0} could not be resolved")]
     MissingSecret(String),
     #[error("keyring secret references are unavailable in this runtime")]

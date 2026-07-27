@@ -1,8 +1,10 @@
-use std::collections::BTreeMap;
-
 use saya_types::DatabaseProfile;
 
-use crate::{AiProvider, CliOverrides, ConfigError, ConfigFile, OutputFormat, ResolutionInput};
+use crate::{
+    AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput,
+    layers::{apply_cli, apply_env, merge},
+    profile_env::overlay_database_environment,
+};
 
 const DEFAULT_MODEL: &str = "qwen2.5-coder:14b";
 
@@ -13,13 +15,18 @@ pub struct ResolvedConfig {
     pub ai: ResolvedAi,
     pub max_rows: usize,
     pub read_only: bool,
+    pub max_iterations: usize,
+    pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
+    pub output_color: ColorChoice,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedAi {
     pub provider: AiProvider,
     pub model: String,
+    pub base_url: Option<String>,
+    pub api_key: Option<saya_types::SecretRef>,
     pub allow_data_sharing: bool,
 }
 
@@ -58,67 +65,22 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
                 .ok_or_else(|| ConfigError::UnknownProfile(name.clone()))
         })
         .transpose()?;
+    let profile = overlay_database_environment(profile, &input.env_file, &input.process_env)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
         ai: ResolvedAi {
             provider: file.ai.provider.unwrap_or(AiProvider::Ollama),
             model: file.ai.model.unwrap_or_else(|| DEFAULT_MODEL.into()),
+            base_url: file.ai.base_url,
+            api_key: file.ai.api_key,
             allow_data_sharing: file.ai.allow_data_sharing.unwrap_or(false),
         },
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
+        max_iterations: file.run.max_iterations.unwrap_or(12),
+        query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
+        output_color: file.output.color.unwrap_or(ColorChoice::Auto),
     })
-}
-
-fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
-    macro_rules! apply { ($($path:ident).+) => { if layer.$($path).+.is_some() { base.$($path).+ = layer.$($path).+.clone(); } }; }
-    apply!(default_profile);
-    apply!(ai.provider);
-    apply!(ai.model);
-    apply!(ai.base_url);
-    apply!(ai.allow_data_sharing);
-    apply!(ai.api_key);
-    apply!(run.read_only);
-    apply!(run.max_rows);
-    apply!(run.max_iterations);
-    apply!(run.query_timeout_seconds);
-    apply!(output.format);
-    apply!(output.color);
-}
-
-fn apply_env(file: &mut ConfigFile, env: &BTreeMap<String, String>) -> Result<(), ConfigError> {
-    if let Some(value) = env.get("SAYA_AI_MODEL") {
-        file.ai.model = Some(value.clone());
-    }
-    if let Some(value) = env.get("SAYA_MAX_ROWS") {
-        file.run.max_rows = Some(value.parse().map_err(|_| ConfigError::InvalidEnvironment {
-            name: "SAYA_MAX_ROWS".into(),
-            reason: "expected an unsigned integer".into(),
-        })?);
-    }
-    if let Some(value) = env.get("SAYA_ALLOW_DATA_SHARING") {
-        file.ai.allow_data_sharing =
-            Some(value.parse().map_err(|_| ConfigError::InvalidEnvironment {
-                name: "SAYA_ALLOW_DATA_SHARING".into(),
-                reason: "expected true or false".into(),
-            })?);
-    }
-    Ok(())
-}
-
-fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
-    if cli.provider.is_some() {
-        file.ai.provider = cli.provider;
-    }
-    if cli.model.is_some() {
-        file.ai.model = cli.model.clone();
-    }
-    if cli.allow_data_sharing.is_some() {
-        file.ai.allow_data_sharing = cli.allow_data_sharing;
-    }
-    if cli.max_rows.is_some() {
-        file.run.max_rows = cli.max_rows;
-    }
 }

@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use saya_types::{DatabaseProfile, SecretRef};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use crate::{ConfigError, RedactedDiagnostics};
+use crate::{AiProvider, ColorChoice, ConfigError, OutputFormat, RedactedDiagnostics};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ConfigFile {
@@ -59,42 +59,4 @@ pub struct RunFile {
 pub struct OutputFile {
     pub format: Option<OutputFormat>,
     pub color: Option<ColorChoice>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AiProvider {
-    Ollama,
-    OpenaiCompatible,
-    Openai,
-    Anthropic,
-    Gemini,
-}
-
-impl AiProvider {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ollama => "ollama",
-            Self::OpenaiCompatible => "openai_compatible",
-            Self::Openai => "openai",
-            Self::Anthropic => "anthropic",
-            Self::Gemini => "gemini",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputFormat {
-    Text,
-    Json,
-    Ndjson,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ColorChoice {
-    Auto,
-    Always,
-    Never,
 }
