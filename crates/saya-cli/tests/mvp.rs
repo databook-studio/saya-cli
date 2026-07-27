@@ -155,6 +155,83 @@ fn discovery_prefers_project_over_user_and_explicit_env_file_is_opt_in() {
 }
 
 #[test]
+fn runtime_debug_redacts_merged_environment_values_and_keys() {
+    let root = std::env::temp_dir().join(format!("saya-cli-debug-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let sentinel_key = "SAYA_TEST_SECRET_SENTINEL";
+    let sentinel_value = "never-print-this-secret";
+    let runtime = saya_cli::load_with_sources(
+        &saya_cli::GlobalOptions::default(),
+        &root,
+        &root,
+        std::collections::BTreeMap::from([(sentinel_key.into(), sentinel_value.into())]),
+    )
+    .unwrap();
+    let diagnostic = format!("{runtime:?}");
+    assert!(!diagnostic.contains(sentinel_key));
+    assert!(!diagnostic.contains(sentinel_value));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn environment_only_named_profiles_are_available_to_connection_commands() {
+    let root = std::env::temp_dir().join(format!("saya-cli-env-profile-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let options = saya_cli::GlobalOptions {
+        profile: Some("env-only".into()),
+        ..Default::default()
+    };
+    let runtime = saya_cli::load_with_sources(
+        &options,
+        &root,
+        &root,
+        std::collections::BTreeMap::from([
+            ("SAYA_DB_TYPE".into(), "postgresql".into()),
+            ("SAYA_DB_HOST".into(), "127.0.0.1".into()),
+            ("SAYA_DB_PORT".into(), "1".into()),
+            ("SAYA_DB_NAME".into(), "app".into()),
+            ("SAYA_DB_USER".into(), "reader".into()),
+        ]),
+    )
+    .unwrap();
+    assert!(runtime.connections.profiles.is_empty());
+    assert_eq!(runtime.resolved.profile_name.as_deref(), Some("env-only"));
+    assert!(runtime.named_profile("env-only").is_ok());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn connection_subcommands_accept_environment_only_named_profiles() {
+    let root = std::env::temp_dir().join(format!("saya-cli-env-command-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    for command in [
+        ["connection", "test", "env-only"],
+        ["connection", "schema", "env-only"],
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+            .args(["--non-interactive", "--format", "json"])
+            .args(command)
+            .env("SAYA_CONFIG_HOME", &root)
+            .env("SAYA_PROFILE", "env-only")
+            .env("SAYA_DB_TYPE", "postgresql")
+            .env("SAYA_DB_HOST", "127.0.0.1")
+            .env("SAYA_DB_PORT", "1")
+            .env("SAYA_DB_NAME", "app")
+            .env("SAYA_DB_USER", "reader")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("\"event\":\"error\""),
+            "command: {command:?}; stderr: {stderr}"
+        );
+        assert!(!stderr.contains("profile \"env-only\" was not found"));
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scripted_repl_persists_and_continues_a_redacted_session() {
     use std::io::Write;
     let root = std::env::temp_dir().join(format!("saya-cli-repl-{}", std::process::id()));
@@ -201,13 +278,39 @@ fn non_interactive_mode_does_not_start_a_prompt() {
 
 #[test]
 fn automation_not_implemented_uses_stable_nonzero_exit_codes_and_envelopes() {
+    let root = std::env::temp_dir().join(format!("saya-cli-unavailable-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let connections = root.join("connections.toml");
+    std::fs::write(
+        &connections,
+        "[profiles.analytics]\ntype = 'postgresql'\nhost = 'db.test'\ndatabase = 'app'\nuser = 'reader'\n\n[profiles.local]\ntype = 'duckdb'\npath = 'data.duckdb'\n",
+    )
+    .unwrap();
     let cases = [
         (
-            &["connection", "test", "analytics"][..],
+            &[
+                "--connections",
+                connections.to_str().unwrap(),
+                "connection",
+                "test",
+                "local",
+            ][..],
             3,
-            "connection test",
+            "duckdb connector",
         ),
-        (&["query", "--sql", "select 1"][..], 4, "database query"),
+        (
+            &[
+                "--connections",
+                connections.to_str().unwrap(),
+                "--profile",
+                "local",
+                "query",
+                "--sql",
+                "select 1",
+            ][..],
+            4,
+            "duckdb connector",
+        ),
         (&["ask", "show revenue"][..], 5, "AI/database execution"),
     ];
     for (args, code, expected) in cases {
@@ -221,6 +324,29 @@ fn automation_not_implemented_uses_stable_nonzero_exit_codes_and_envelopes() {
         assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
         assert!(output.stderr.is_empty());
     }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn query_results_render_as_text_and_json_without_diagnostics() {
+    let result = saya_types::QueryResult {
+        columns: vec!["id".into()],
+        rows: vec![serde_json::json!([1])],
+        row_count: 1,
+        truncated: true,
+        executed_sql: "SELECT id".into(),
+    };
+    let text = render_event(
+        &TerminalEvent::QueryResult {
+            result: result.clone(),
+        },
+        RenderFormat::Text,
+    );
+    assert_eq!(text.stdout, "id\n1\n[truncated]\n");
+    assert!(text.stderr.is_empty());
+    let json = render_event(&TerminalEvent::QueryResult { result }, RenderFormat::Json);
+    assert!(json.stdout.contains("\"event\":\"query_result\""));
+    assert!(json.stderr.is_empty());
 }
 
 #[test]

@@ -1,10 +1,10 @@
 # SAYA CLI
 
-SAYA CLI is an open-source, terminal-native shell for a future database-aware
-SAYA agent. It is currently **alpha**: the interactive shell, slash commands,
-configuration discovery, redacted sessions, and text/JSON/NDJSON event formats
-are implemented. AI provider calls and database connectors are not implemented
-in this slice and report honest structured `not_implemented` outcomes.
+SAYA CLI is an open-source, terminal-native shell for a database-aware SAYA
+agent. It is currently **alpha**: PostgreSQL connection tests, schema discovery,
+and bounded read-only queries are implemented alongside the interactive shell,
+configuration discovery, redacted sessions, and text/JSON/NDJSON output. AI
+provider calls and other database engines remain structured unavailable outcomes.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ printf '/help\n/exit\n' | cargo run -p saya-cli --
 
 Running `saya` starts a scrollback-preserving REPL. Use `/help` for commands.
 The automation surface is available as `saya ask`, `saya query`, `saya config`,
-and `saya connection`, but live execution is not yet available.
+and `saya connection`. PostgreSQL is the only live engine in this alpha.
 
 ## Configuration
 
@@ -43,23 +43,28 @@ API keys, in committed files. See [configuration](docs/configuration.md) and
 ```bash
 saya config doctor
 saya config show --resolved --redacted --format json
-saya connection list --connections examples/connections.toml
-saya --env-file .env.saya --profile analytics
+saya connection test analytics --connections examples/connections.toml
+saya connection schema analytics --connections examples/connections.toml
+saya query --profile analytics --sql "SELECT current_database()"
 ```
 
 ## Privacy and limitations
 
 The intended MVP policy is read-only, bounded queries with cloud row sharing
-disabled. This alpha does not execute queries or send prompts to providers yet.
+disabled. PostgreSQL rejects parse failures, writes, DDL, transaction/control
+statements, and multi-statements before execution. It observes one extra row to
+mark truncated results. This alpha does not send prompts to providers yet.
+The database role must itself be read-only: SQL AST checks cannot prove that a
+PostgreSQL function is free of side effects.
 Resolved config secrets, provider headers, and raw query rows are structurally
 excluded from session files. Known credential-shaped text is redacted, but
 redaction cannot identify every arbitrary secret—never paste credentials into
 prompts. See [SECURITY.md](SECURITY.md).
 
-Unavailable automation capabilities return stable nonzero codes: `3` for
-connection/schema, `4` for query, and `5` for AI ask. Non-interactive mode
-defaults to `never` approval (schema-only) unless `--approval-mode` is explicit;
-interactive sessions default to `ask`.
+Unavailable or failed connection/schema operations return `3`, while safety and
+query failures return `4`; AI ask remains unavailable with `5`. Non-interactive
+mode defaults to `never` approval (schema-only) unless `--approval-mode` is
+explicit; interactive sessions default to `ask`.
 
 ## Development
 

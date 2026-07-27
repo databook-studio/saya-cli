@@ -6,6 +6,7 @@ mod error;
 mod input;
 mod layers;
 mod model;
+mod postgres_env;
 mod profile_env;
 mod resolve;
 mod secret;

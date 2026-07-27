@@ -6,6 +6,7 @@ mod config_runtime;
 mod config_sources;
 mod interactive;
 mod render;
+mod runtime_profile;
 mod session_paths;
 mod slash;
 

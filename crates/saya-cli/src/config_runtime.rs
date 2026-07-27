@@ -24,12 +24,13 @@ pub enum RuntimeError {
     Approval(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RuntimeConfig {
     pub resolved: saya_config::ResolvedConfig,
     pub connections: ConnectionsFile,
     pub config_path: Option<PathBuf>,
     pub connections_path: Option<PathBuf>,
+    pub(crate) secret_values: BTreeMap<String, String>,
 }
 
 pub fn load(options: &GlobalOptions, cwd: &Path) -> Result<RuntimeConfig, RuntimeError> {
@@ -74,6 +75,8 @@ pub fn load_with_sources(
         Some(path) => config_sources::read_env_file(path)?,
         None => BTreeMap::new(),
     };
+    let mut secret_values = env_file.clone();
+    secret_values.extend(process.clone());
     let input = ResolutionInput::new(connections.clone())
         .with_user(user.unwrap_or_default())
         .with_project(project.unwrap_or_default())
@@ -89,7 +92,21 @@ pub fn load_with_sources(
         connections,
         config_path: selected_config.cloned(),
         connections_path: selected_connections.cloned(),
+        secret_values,
     })
+}
+
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuntimeConfig")
+            .field("resolved", &self.resolved)
+            .field("connections", &self.connections)
+            .field("config_path", &self.config_path)
+            .field("connections_path", &self.connections_path)
+            .field("secret_values", &"[redacted]")
+            .finish()
+    }
 }
 
 pub fn approval_mode(options: &GlobalOptions) -> Result<saya_agent::ApprovalPolicy, RuntimeError> {

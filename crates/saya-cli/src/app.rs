@@ -1,4 +1,7 @@
-use crate::{cli::Cli, commands, config_runtime, interactive};
+use crate::{
+    cli::{Cli, Command, ConnectionCommand},
+    commands, config_runtime, interactive,
+};
 use std::path::Path;
 
 pub fn run(cli: Cli) -> i32 {
@@ -18,8 +21,31 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         }
         return interactive::run(cli);
     };
-    let runtime = config_runtime::load(&cli.options, Path::new("."))?;
-    let _approval = config_runtime::approval_mode(&cli.options)?;
-    let format = config_runtime::format_name(&cli.options, &runtime.resolved);
-    commands::run(command, &runtime, format)
+    let options = command_options(&cli.options, &command);
+    let runtime = config_runtime::load(&options, Path::new("."))?;
+    let _approval = config_runtime::approval_mode(&options)?;
+    let format = config_runtime::format_name(&options, &runtime.resolved);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(commands::run(command, &runtime, format))
+}
+
+fn command_options(
+    options: &crate::cli::GlobalOptions,
+    command: &Command,
+) -> crate::cli::GlobalOptions {
+    let mut options = options.clone();
+    if options.profile.is_none() {
+        let profile = match command {
+            Command::Connection {
+                command:
+                    ConnectionCommand::Test { profile_name }
+                    | ConnectionCommand::Schema { profile_name, .. },
+            } => Some(profile_name.clone()),
+            _ => None,
+        };
+        options.profile = profile;
+    }
+    options
 }
