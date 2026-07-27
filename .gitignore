@@ -5,3 +5,4 @@
 *.key
 *.pem
 *.p8
+.saya/sessions/

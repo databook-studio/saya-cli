@@ -43,7 +43,7 @@ impl RedactedDiagnostics {
             default_profile: file.default_profile.clone(),
             provider: file.ai.provider.map(|value| value.as_str().into()),
             model: file.ai.model.clone(),
-            base_url: file.ai.base_url.clone(),
+            base_url: file.ai.base_url.as_deref().map(redact_endpoint),
             api_key_reference: file.ai.api_key.as_ref().map(|value| value.redacted_label()),
             allow_data_sharing: file.ai.allow_data_sharing,
             read_only: file.run.read_only,
@@ -66,7 +66,7 @@ impl ResolvedConfig {
                 .map(|value| value.dialect().as_str().into()),
             provider: self.ai.provider.as_str().into(),
             model: self.ai.model.clone(),
-            base_url: self.ai.base_url.clone(),
+            base_url: self.ai.base_url.as_deref().map(redact_endpoint),
             api_key_reference: self.ai.api_key.as_ref().map(|value| value.redacted_label()),
             allow_data_sharing: self.ai.allow_data_sharing,
             max_rows: self.max_rows,
@@ -77,4 +77,38 @@ impl ResolvedConfig {
             output_color: self.output_color,
         }
     }
+}
+
+fn redact_endpoint(value: &str) -> String {
+    let mut output = redact_userinfo(value);
+    if let Some(index) = output.find('?') {
+        output.truncate(index + 1);
+        output.push_str("[redacted]");
+    }
+    output
+}
+
+fn redact_userinfo(value: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while let Some(offset) = value[cursor..].find("://") {
+        let scheme = cursor + offset;
+        let auth_start = scheme + 3;
+        let rest = &value[auth_start..];
+        let Some(at_offset) = rest.find('@') else {
+            break;
+        };
+        let boundary = rest
+            .find(|character: char| "/?# \t\r\n".contains(character))
+            .unwrap_or(rest.len());
+        if at_offset >= boundary {
+            cursor = auth_start;
+            continue;
+        }
+        let at = auth_start + at_offset;
+        output.push_str(&value[cursor..auth_start]);
+        cursor = at + 1;
+    }
+    output.push_str(&value[cursor..]);
+    output
 }

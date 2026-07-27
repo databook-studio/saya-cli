@@ -63,3 +63,21 @@ fn resolved_diagnostics_redact_file_secret_paths() {
     assert!(!rendered.contains("/private/key"));
     assert!(rendered.contains("file:[redacted path]"));
 }
+
+#[test]
+fn resolved_diagnostics_masks_base_url_userinfo_and_query_string() {
+    let config = ConfigFile::from_toml(
+        "[ai]\nbase_url = 'https://user:password@example.test/v1?api_key=secret&mode=fast'\n",
+    )
+    .unwrap();
+    let rendered = serde_json::to_string(
+        &resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config))
+            .unwrap()
+            .redacted_diagnostics(),
+    )
+    .unwrap();
+    assert!(!rendered.contains("password"));
+    assert!(!rendered.contains("api_key=secret"));
+    assert!(rendered.contains("https://example.test/v1"));
+    assert!(rendered.contains("[redacted]"));
+}

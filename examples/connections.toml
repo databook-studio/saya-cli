@@ -1,0 +1,25 @@
+[profiles.analytics]
+type = "postgresql"
+host = "localhost"
+port = 5432
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_ANALYTICS_PASSWORD" }
+
+[profiles.local]
+type = "duckdb"
+path = "./data/warehouse.duckdb"
+read_only = true
+
+# Snowflake is a configuration shape only in this alpha.
+[profiles.snowflake_prod]
+type = "snowflake"
+account = "xy12345"
+user = "jane"
+auth_type = "keypair"
+private_key = { file = "~/.snowflake/rsa_key.p8" }
+passphrase = { env = "SAYA_SNOWFLAKE_PASSPHRASE" }
+warehouse = "ANALYTICS"
+database = "PROD"
+schema = "PUBLIC"
+role = "ANALYST"
