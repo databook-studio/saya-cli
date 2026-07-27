@@ -71,10 +71,18 @@ fn connection(
             );
             Ok(0)
         }
-        ConnectionCommand::Test { profile } => {
-            not_implemented(format, format!("connection test for profile '{profile}'"))
-        }
-        ConnectionCommand::Schema { profile, refresh } => not_implemented(
+        ConnectionCommand::Test {
+            profile_name: profile,
+        } => not_implemented(
+            3,
+            format,
+            format!("connection test for profile '{profile}'"),
+        ),
+        ConnectionCommand::Schema {
+            profile_name: profile,
+            refresh,
+        } => not_implemented(
+            3,
             format,
             format!(
                 "schema {} for profile '{profile}'",
@@ -94,6 +102,7 @@ fn ask(
         return Err("ask requires a prompt or --file".into());
     }
     not_implemented(
+        5,
         format,
         format!("AI/database execution for prompt '{prompt}'"),
     )
@@ -108,7 +117,7 @@ fn query(
     if sql.trim().is_empty() {
         return Err("query requires --sql or --file".into());
     }
-    not_implemented(format, "database query execution".into())
+    not_implemented(4, format, "database query execution".into())
 }
 
 fn read_prompt(
@@ -124,11 +133,12 @@ fn read_prompt(
 }
 
 fn not_implemented(
+    code: i32,
     format: RenderFormat,
     feature: String,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     emit(TerminalEvent::NotImplemented { feature }, format);
-    Ok(0)
+    Ok(code)
 }
 fn emit(event: TerminalEvent, format: RenderFormat) {
     let rendered = render_event(&event, format);

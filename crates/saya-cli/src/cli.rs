@@ -86,10 +86,12 @@ pub enum ConfigCommand {
 pub enum ConnectionCommand {
     List,
     Test {
-        profile: String,
+        #[arg(value_name = "PROFILE")]
+        profile_name: String,
     },
     Schema {
-        profile: String,
+        #[arg(value_name = "PROFILE")]
+        profile_name: String,
         #[arg(long)]
         refresh: bool,
     },

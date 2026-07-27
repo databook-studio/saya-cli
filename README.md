@@ -29,6 +29,10 @@ The canonical files are TOML:
 ~/.config/saya/connections.toml
 ```
 
+Session files default to the platform user-data directory: `SAYA_SESSION_DIR`
+if set, then `$XDG_DATA_HOME/saya/sessions`, `%APPDATA%/saya/sessions`, or
+`~/.local/share/saya/sessions`. The override is useful for tests and CI.
+
 Use `--config` and `--connections` for explicit paths. Use `--env-file` to opt
 into a dotenv-style file; `.env` is never loaded automatically. Process
 environment values override explicit env-file values. Store only secret
@@ -47,8 +51,15 @@ saya --env-file .env.saya --profile analytics
 
 The intended MVP policy is read-only, bounded queries with cloud row sharing
 disabled. This alpha does not execute queries or send prompts to providers yet.
-No plaintext secrets, provider headers, or raw query rows are persisted in
-session files. See [SECURITY.md](SECURITY.md).
+Resolved config secrets, provider headers, and raw query rows are structurally
+excluded from session files. Known credential-shaped text is redacted, but
+redaction cannot identify every arbitrary secret—never paste credentials into
+prompts. See [SECURITY.md](SECURITY.md).
+
+Unavailable automation capabilities return stable nonzero codes: `3` for
+connection/schema, `4` for query, and `5` for AI ask. Non-interactive mode
+defaults to `never` approval (schema-only) unless `--approval-mode` is explicit;
+interactive sessions default to `ask`.
 
 ## Development
 

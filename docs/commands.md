@@ -24,5 +24,8 @@ text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
 and `--verbose`.
 
 Automation never prompts. In this alpha, ask/query and live connection/schema
-commands return explicit not-implemented events. JSON writes result envelopes
-to stdout and diagnostics to stderr; NDJSON uses one stable envelope per line.
+commands return explicit not-implemented events and exit with `5`, `4`, and `3`
+respectively. JSON writes result envelopes to stdout and diagnostics to stderr;
+NDJSON uses one stable envelope per line. `/history` lists saved session IDs in
+recent-first order, while `/connect` and `/include` only accept configured
+profiles and report selection rather than claiming a live connection.

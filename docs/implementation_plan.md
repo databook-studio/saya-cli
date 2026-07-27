@@ -328,8 +328,10 @@ read-only    auto-approve bounded read-only queries
 never        do not allow live query execution; schema reasoning only
 ```
 
-Non-interactive runs never prompt. They must receive an explicit approval policy
-through configuration or flags; otherwise they use the safe schema-only mode.
+Non-interactive runs never prompt. An omitted approval policy resolves to the
+safe `never` schema-only mode; `--approval-mode` may explicitly select another
+policy for a future live connector implementation. Interactive runs default to
+`ask`.
 
 Common flags:
 

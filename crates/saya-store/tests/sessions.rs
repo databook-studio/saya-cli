@@ -61,6 +61,74 @@ fn most_recent_ignores_corrupt_sessions_and_rejects_path_traversal() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn repeated_saves_replace_the_same_session_on_all_platforms() {
+    let root = temp_root("repeat");
+    let store = FsSessionStore::new(&root);
+    block_on(store.save(RedactedSession {
+        id: "same".into(),
+        profile_names: vec![],
+        messages: vec![RedactedMessage {
+            role: "user".into(),
+            content: "first".into(),
+        }],
+    }))
+    .unwrap();
+    block_on(store.save(RedactedSession {
+        id: "same".into(),
+        profile_names: vec![],
+        messages: vec![RedactedMessage {
+            role: "user".into(),
+            content: "second".into(),
+        }],
+    }))
+    .unwrap();
+    let loaded = block_on(store.load("same")).unwrap().unwrap();
+    assert_eq!(loaded.messages[0].content, "second");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn redaction_handles_multiple_known_markers_and_urls() {
+    let root = temp_root("redaction");
+    let store = FsSessionStore::new(&root);
+    block_on(store.save(RedactedSession { id: "redact".into(), profile_names: vec![], messages: vec![RedactedMessage { role: "user".into(), content: "password=one password=two api_key=aaa api_key=bbb postgres://u:p@one.test postgres://x:y@two.test".into() }] })).unwrap();
+    let saved = std::fs::read_to_string(root.join("redact.json")).unwrap();
+    for secret in [
+        "password=one",
+        "password=two",
+        "api_key=aaa",
+        "api_key=bbb",
+        "u:p@",
+        "x:y@",
+    ] {
+        assert!(!saved.contains(secret), "leaked {secret}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn history_lists_valid_sessions_in_recent_first_order() {
+    let root = temp_root("history");
+    let store = FsSessionStore::new(&root);
+    block_on(store.save(RedactedSession {
+        id: "older".into(),
+        profile_names: vec![],
+        messages: vec![],
+    }))
+    .unwrap();
+    block_on(store.save(RedactedSession {
+        id: "newer".into(),
+        profile_names: vec![],
+        messages: vec![],
+    }))
+    .unwrap();
+    let history = block_on(store.history()).unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].id, "newer");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::runtime::Builder::new_current_thread()
         .build()

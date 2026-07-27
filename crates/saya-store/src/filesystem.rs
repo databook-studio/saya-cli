@@ -1,4 +1,5 @@
-use crate::{RedactedSession, SessionStore, StoreError};
+use crate::redaction::redact;
+use crate::{RedactedSession, SessionStore, SessionSummary, StoreError};
 use async_trait::async_trait;
 use std::{
     fs,
@@ -73,7 +74,7 @@ impl SessionStore for FsSessionStore {
         {
             set_mode(&temp, 0o600)?;
         }
-        fs::rename(temp, path).map_err(io_error)
+        replace_file(&temp, &path)
     }
 
     async fn load(&self, id: &str) -> Result<Option<RedactedSession>, StoreError> {
@@ -98,34 +99,22 @@ impl SessionStore for FsSessionStore {
         }
         Ok(None)
     }
+
+    async fn history(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        crate::history::list(&self.root)
+    }
 }
 
-fn redact(value: &str) -> String {
-    let mut output = value.to_string();
-    for key in ["password=", "api_key=", "token=", "secret="] {
-        output = redact_after(&output, key);
+fn replace_file(temp: &Path, target: &Path) -> Result<(), StoreError> {
+    #[cfg(windows)]
+    {
+        fs::copy(temp, target).map_err(io_error)?;
+        fs::remove_file(temp).map_err(io_error)
     }
-    if let Some(start) = output.find("://") {
-        if let Some(at) = output[start + 3..].find('@') {
-            output.replace_range(start + 3..start + 3 + at, "[redacted]");
-        }
+    #[cfg(not(windows))]
+    {
+        fs::rename(temp, target).map_err(io_error)
     }
-    output
-}
-
-fn redact_after(value: &str, marker: &str) -> String {
-    let Some(start) = value.to_ascii_lowercase().find(marker) else {
-        return value.into();
-    };
-    let end = value[start + marker.len()..]
-        .find(char::is_whitespace)
-        .map(|index| start + marker.len() + index)
-        .unwrap_or(value.len());
-    format!(
-        "{}[redacted]{}",
-        &value[..start + marker.len()],
-        &value[end..]
-    )
 }
 
 fn stamp() -> u128 {

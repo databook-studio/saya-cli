@@ -93,10 +93,12 @@ pub fn load_with_sources(
 }
 
 pub fn approval_mode(options: &GlobalOptions) -> Result<saya_agent::ApprovalPolicy, RuntimeError> {
-    options
-        .approval_mode
-        .as_deref()
-        .unwrap_or("ask")
+    let value = match options.approval_mode.as_deref() {
+        Some(value) => value,
+        None if options.non_interactive => "never",
+        None => "ask",
+    };
+    value
         .parse()
         .map_err(|error: saya_agent::ApprovalPolicyParseError| {
             RuntimeError::Approval(error.to_string())

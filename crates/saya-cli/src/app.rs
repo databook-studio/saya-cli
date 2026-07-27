@@ -19,6 +19,7 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         return interactive::run(cli);
     };
     let runtime = config_runtime::load(&cli.options, Path::new("."))?;
+    let _approval = config_runtime::approval_mode(&cli.options)?;
     let format = config_runtime::format_name(&cli.options, &runtime.resolved);
     commands::run(command, &runtime, format)
 }

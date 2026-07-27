@@ -31,5 +31,11 @@ environment reference in the typed profile.
 --redacted` emits only display-safe references and settings. It never resolves
 or prints secret values.
 
+The REPL session directory uses `SAYA_SESSION_DIR` first, then
+`$XDG_DATA_HOME/saya/sessions`, `%APPDATA%/saya/sessions`, or
+`~/.local/share/saya/sessions`. In non-interactive mode, an omitted
+`--approval-mode` resolves to `never` (schema-only); interactive mode defaults
+to `ask`.
+
 The current alpha reads and validates these settings but does not yet connect
 to a database or provider.

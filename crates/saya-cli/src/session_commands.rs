@@ -6,6 +6,8 @@ use saya_agent::ApprovalPolicy;
 pub enum SessionAction {
     Message(String),
     NotImplemented(String),
+    Error(String),
+    History,
     Exit,
 }
 
@@ -13,8 +15,11 @@ impl SessionState {
     pub fn apply(&mut self, command: SlashCommand, available: &[String]) -> SessionAction {
         match command {
             SlashCommand::Connect(name) => {
+                if !available.iter().any(|profile| profile == &name) {
+                    return SessionAction::Error(format!("Unknown configured profile: {name}"));
+                }
                 self.profile = Some(name.clone());
-                SessionAction::Message(format!("Connected profile: {name}"))
+                SessionAction::Message(format!("Selected profile: {name}"))
             }
             SlashCommand::Connections => SessionAction::Message(if available.is_empty() {
                 "No configured connection profiles.".into()
@@ -22,6 +27,9 @@ impl SessionState {
                 format!("Profiles: {}", available.join(", "))
             }),
             SlashCommand::Include(name) => {
+                if !available.iter().any(|profile| profile == &name) {
+                    return SessionAction::Error(format!("Unknown configured profile: {name}"));
+                }
                 if !self.included_profiles.contains(&name) {
                     self.included_profiles.push(name.clone());
                 }
@@ -74,9 +82,7 @@ impl SessionState {
                 self.messages.clear();
                 SessionAction::Message("Conversation context cleared.".into())
             }
-            SlashCommand::History => SessionAction::NotImplemented(
-                "session history is provided by the store, not the shell state".into(),
-            ),
+            SlashCommand::History => SessionAction::History,
             SlashCommand::Help => SessionAction::Message(help_text().into()),
             SlashCommand::Exit => SessionAction::Exit,
         }

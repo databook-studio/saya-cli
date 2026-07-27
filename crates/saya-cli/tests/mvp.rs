@@ -1,7 +1,7 @@
 use clap::{CommandFactory, Parser};
 use saya_cli::{
     Cli, Command, FormatArg, RenderFormat, SessionAction, SessionState, SlashCommand,
-    TerminalEvent, parse_slash_command, render_event,
+    TerminalEvent, approval_name, parse_slash_command, render_event, resolve_session_dir,
 };
 
 #[test]
@@ -46,14 +46,31 @@ fn slash_commands_parse_and_state_transitions_are_deterministic() {
         parse_slash_command("/connect analytics").unwrap(),
         Some(SlashCommand::Connect("analytics".into()))
     );
+    let selected = state.apply(
+        SlashCommand::Connect("analytics".into()),
+        &["analytics".into()],
+    );
+    assert!(
+        matches!(selected, SessionAction::Message(ref message) if message == "Selected profile: analytics")
+    );
     assert!(matches!(
         state.apply(
-            SlashCommand::Connect("analytics".into()),
+            SlashCommand::Connect("unknown".into()),
             &["analytics".into()]
         ),
-        SessionAction::Message(_)
+        SessionAction::Error(_)
     ));
-    state.apply(SlashCommand::Include("staging".into()), &[]);
+    assert!(matches!(
+        state.apply(
+            SlashCommand::Include("unknown".into()),
+            &["analytics".into()]
+        ),
+        SessionAction::Error(_)
+    ));
+    state.apply(
+        SlashCommand::Include("staging".into()),
+        &["analytics".into(), "staging".into()],
+    );
     state.apply(SlashCommand::Privacy(Some(true)), &[]);
     state.apply(
         parse_slash_command("/approvals never").unwrap().unwrap(),
@@ -63,6 +80,10 @@ fn slash_commands_parse_and_state_transitions_are_deterministic() {
     assert_eq!(state.included_profiles, vec!["staging"]);
     assert!(state.allow_data_sharing);
     assert_eq!(state.approval_mode, "never");
+    assert!(matches!(
+        state.apply(SlashCommand::History, &[]),
+        SessionAction::History
+    ));
     assert!(matches!(
         state.apply(SlashCommand::Schema(false), &[]),
         SessionAction::NotImplemented(_)
@@ -176,4 +197,70 @@ fn non_interactive_mode_does_not_start_a_prompt() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires a subcommand"));
+}
+
+#[test]
+fn automation_not_implemented_uses_stable_nonzero_exit_codes_and_envelopes() {
+    let cases = [
+        (
+            &["connection", "test", "analytics"][..],
+            3,
+            "connection test",
+        ),
+        (&["query", "--sql", "select 1"][..], 4, "database query"),
+        (&["ask", "show revenue"][..], 5, "AI/database execution"),
+    ];
+    for (args, code, expected) in cases {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+            .args(["--non-interactive", "--format", "json"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(code), "args: {args:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("\"event\":\"not_implemented\""));
+        assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn non_interactive_defaults_to_never_approval_but_interactive_defaults_to_ask() {
+    let interactive = saya_cli::GlobalOptions::default();
+    let non_interactive = saya_cli::GlobalOptions {
+        non_interactive: true,
+        ..Default::default()
+    };
+    assert_eq!(approval_name(&interactive).unwrap(), "ask");
+    assert_eq!(approval_name(&non_interactive).unwrap(), "never");
+    let explicit = saya_cli::GlobalOptions {
+        non_interactive: true,
+        approval_mode: Some("read-only".into()),
+        ..Default::default()
+    };
+    assert_eq!(approval_name(&explicit).unwrap(), "read-only");
+}
+
+#[test]
+fn session_path_resolution_is_platform_aware_and_injectable() {
+    assert_eq!(
+        resolve_session_dir(
+            Some("/override"),
+            Some("/xdg"),
+            Some("/appdata"),
+            Some("/home")
+        ),
+        std::path::PathBuf::from("/override")
+    );
+    assert_eq!(
+        resolve_session_dir(None, Some("/xdg"), Some("/appdata"), Some("/home")),
+        std::path::PathBuf::from("/xdg/saya/sessions")
+    );
+    assert_eq!(
+        resolve_session_dir(None, None, Some("/appdata"), Some("/home")),
+        std::path::PathBuf::from("/appdata/saya/sessions")
+    );
+    assert_eq!(
+        resolve_session_dir(None, None, None, Some("/home")),
+        std::path::PathBuf::from("/home/.local/share/saya/sessions")
+    );
 }
