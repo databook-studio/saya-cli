@@ -4,6 +4,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod filesystem;
+
+pub use filesystem::FsSessionStore;
+
 /// Persistable session data. Callers must provide content after secret redaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedactedSession {

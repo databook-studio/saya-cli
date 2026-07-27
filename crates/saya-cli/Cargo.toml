@@ -12,3 +12,8 @@ path = "src/main.rs"
 clap.workspace = true
 saya-agent = { path = "../saya-agent" }
 saya-config = { path = "../saya-config" }
+saya-store = { path = "../saya-store" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
