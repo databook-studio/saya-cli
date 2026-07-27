@@ -34,4 +34,6 @@ Use `saya connection test analytics` to validate PostgreSQL credentials and
 `saya query --profile analytics --sql "SELECT ..."` permits one parsed
 read-only statement only, caps returned rows, and reports truncation. Never put
 a raw password, private key, API key, or connection URL with embedded
-credentials in a committed file.
+credentials in a committed file. Grant SAYA a database role that is itself
+read-only: AST validation cannot establish whether an arbitrary PostgreSQL
+function has side effects.

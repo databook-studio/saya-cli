@@ -54,6 +54,8 @@ The intended MVP policy is read-only, bounded queries with cloud row sharing
 disabled. PostgreSQL rejects parse failures, writes, DDL, transaction/control
 statements, and multi-statements before execution. It observes one extra row to
 mark truncated results. This alpha does not send prompts to providers yet.
+The database role must itself be read-only: SQL AST checks cannot prove that a
+PostgreSQL function is free of side effects.
 Resolved config secrets, provider headers, and raw query rows are structurally
 excluded from session files. Known credential-shaped text is redacted, but
 redaction cannot identify every arbitrary secret—never paste credentials into

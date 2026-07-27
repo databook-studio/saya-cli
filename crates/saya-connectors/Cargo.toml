@@ -15,6 +15,7 @@ sqlx.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 chrono.workspace = true
 uuid.workspace = true
+bigdecimal.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

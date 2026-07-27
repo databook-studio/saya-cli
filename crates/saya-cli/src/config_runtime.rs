@@ -24,13 +24,13 @@ pub enum RuntimeError {
     Approval(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RuntimeConfig {
     pub resolved: saya_config::ResolvedConfig,
     pub connections: ConnectionsFile,
     pub config_path: Option<PathBuf>,
     pub connections_path: Option<PathBuf>,
-    secret_values: BTreeMap<String, String>,
+    pub(crate) secret_values: BTreeMap<String, String>,
 }
 
 pub fn load(options: &GlobalOptions, cwd: &Path) -> Result<RuntimeConfig, RuntimeError> {
@@ -96,15 +96,16 @@ pub fn load_with_sources(
     })
 }
 
-impl RuntimeConfig {
-    pub fn secret_resolver(&self) -> saya_config::MapSecretResolver {
-        saya_config::MapSecretResolver::new(self.secret_values.clone())
-    }
-
-    pub fn named_profile(&self, name: &str) -> Result<&saya_types::DatabaseProfile, RuntimeError> {
-        self.connections.profiles.get(name).ok_or_else(|| {
-            RuntimeError::Config(saya_config::ConfigError::UnknownProfile(name.into()))
-        })
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuntimeConfig")
+            .field("resolved", &self.resolved)
+            .field("connections", &self.connections)
+            .field("config_path", &self.config_path)
+            .field("connections_path", &self.connections_path)
+            .field("secret_values", &"[redacted]")
+            .finish()
     }
 }
 

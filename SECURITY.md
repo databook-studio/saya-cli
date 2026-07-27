@@ -26,5 +26,8 @@ maintainers listed by the `databook-studio` organization with reproduction
 steps, affected version, and impact. Do not include live credentials or raw
 customer data.
 
-The current alpha has no live database or AI execution path. That limitation
-is intentional and should not be bypassed by adding secrets to examples.
+PostgreSQL is the current alpha's only live database path; provider execution is
+not implemented. The SQL policy is deliberately fail-closed, but it cannot
+prove arbitrary PostgreSQL functions are side-effect free. Use a database role
+that is itself read-only, and do not bypass that boundary by adding write
+credentials to examples.

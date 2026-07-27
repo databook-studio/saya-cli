@@ -17,13 +17,28 @@ pub fn prepare_postgres_sql(sql: &str, max_rows: usize) -> Result<String, Connec
         return Err(rejected());
     }
     if let Statement::Query(query) = &mut statements[0] {
-        let observed = max_rows.saturating_add(1);
-        query.limit = Some(sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(
-            observed.to_string(),
-            false,
-        )));
+        cap_limit(query, max_rows);
     }
     Ok(statements.remove(0).to_string())
+}
+
+fn cap_limit(query: &mut Query, max_rows: usize) {
+    if literal_limit(query.limit.as_ref()).is_some_and(|limit| limit <= max_rows) {
+        return;
+    }
+    query.limit = Some(sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(
+        max_rows.saturating_add(1).to_string(),
+        false,
+    )));
+}
+
+fn literal_limit(limit: Option<&sqlparser::ast::Expr>) -> Option<usize> {
+    match limit {
+        Some(sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(value, _))) => {
+            value.parse().ok()
+        }
+        _ => None,
+    }
 }
 
 fn allowed(statement: &Statement) -> bool {
@@ -74,14 +89,29 @@ mod tests {
     use super::prepare_postgres_sql;
 
     #[test]
-    fn bounds_and_observes_one_extra_row() {
+    fn preserves_small_literal_limits_and_caps_other_selects() {
+        assert!(
+            prepare_postgres_sql("select * from events limit 2", 5)
+                .unwrap()
+                .contains("LIMIT 2")
+        );
+        assert!(
+            prepare_postgres_sql("select * from events limit 5", 5)
+                .unwrap()
+                .contains("LIMIT 5")
+        );
         assert!(
             prepare_postgres_sql("select * from events", 5)
                 .unwrap()
                 .contains("LIMIT 6")
         );
         assert!(
-            prepare_postgres_sql("select 1 limit 2", 5)
+            prepare_postgres_sql("select 1 limit 20", 5)
+                .unwrap()
+                .contains("LIMIT 6")
+        );
+        assert!(
+            prepare_postgres_sql("select 1 limit $1", 5)
                 .unwrap()
                 .contains("LIMIT 6")
         );

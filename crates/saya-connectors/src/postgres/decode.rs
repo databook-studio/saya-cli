@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, TypeInfo, ValueRef, postgres::PgRow};
@@ -15,11 +16,17 @@ pub(crate) fn json_value(row: &PgRow, index: usize) -> Result<Value, sqlx::Error
         "INT4" => row
             .try_get::<i32, _>(index)
             .map(|v| Value::from(i64::from(v))),
-        "INT8" | "OID" => row.try_get::<i64, _>(index).map(Value::from),
+        "INT8" => row.try_get::<i64, _>(index).map(Value::from),
+        "OID" => row
+            .try_get::<i32, _>(index)
+            .map(|value| Value::from(value as u32)),
         "FLOAT4" => row
             .try_get::<f32, _>(index)
             .map(|v| Value::from(f64::from(v))),
         "FLOAT8" => row.try_get::<f64, _>(index).map(Value::from),
+        "NUMERIC" => row
+            .try_get::<BigDecimal, _>(index)
+            .map(|value| Value::String(value.to_string())),
         "JSON" | "JSONB" => row.try_get(index),
         "DATE" => row
             .try_get::<NaiveDate, _>(index)
