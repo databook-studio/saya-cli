@@ -24,6 +24,26 @@ fn builds_a_postgres_profile_from_environment_without_retaining_the_password() {
 }
 
 #[test]
+fn named_environment_profile_succeeds_without_a_connections_file_entry() {
+    let resolved = resolve(
+        ResolutionInput::new(ConnectionsFile::default()).with_process_env([
+            ("SAYA_PROFILE", "analytics"),
+            ("SAYA_DB_TYPE", "postgresql"),
+            ("SAYA_DB_HOST", "db.internal"),
+            ("SAYA_DB_NAME", "warehouse"),
+            ("SAYA_DB_USER", "readonly"),
+        ]),
+    )
+    .unwrap();
+
+    assert_eq!(resolved.profile_name.as_deref(), Some("analytics"));
+    assert!(matches!(
+        resolved.profile,
+        Some(DatabaseProfile::Postgres { .. })
+    ));
+}
+
+#[test]
 fn environment_database_fields_overlay_env_file_then_named_profile() {
     let profiles = ConnectionsFile::from_toml(
         "[profiles.analytics]\ntype = 'postgresql'\nhost = 'profile-host'\n\
@@ -89,5 +109,23 @@ fn environment_only_profiles_support_mysql_and_duckdb() {
     assert!(matches!(
         duckdb.profile,
         Some(DatabaseProfile::DuckDb { .. })
+    ));
+}
+
+#[test]
+fn duckdb_path_environment_overlay_preserves_profile_read_only_setting() {
+    let profiles = ConnectionsFile::from_toml(
+        "[profiles.local]\ntype = 'duckdb'\npath = 'base.duckdb'\nread_only = true\n",
+    )
+    .unwrap();
+    let resolved = resolve(ResolutionInput::new(profiles).with_process_env([
+        ("SAYA_PROFILE", "local"),
+        ("SAYA_DB_PATH", "override.duckdb"),
+    ]))
+    .unwrap();
+
+    assert!(matches!(
+        resolved.profile,
+        Some(DatabaseProfile::DuckDb { ref path, read_only: Some(true) }) if path == "override.duckdb"
     ));
 }

@@ -54,17 +54,17 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     if selected.is_none() && input.connections.profiles.len() > 1 {
         return Err(ConfigError::MissingProfile);
     }
+    let environment_profile = input.env_file.contains_key("SAYA_DB_TYPE")
+        || input.process_env.contains_key("SAYA_DB_TYPE");
     let profile = selected
         .as_ref()
-        .map(|name| {
-            input
-                .connections
-                .profiles
-                .get(name)
-                .cloned()
-                .ok_or_else(|| ConfigError::UnknownProfile(name.clone()))
+        .map(|name| match input.connections.profiles.get(name).cloned() {
+            Some(profile) => Ok(Some(profile)),
+            None if environment_profile => Ok(None),
+            None => Err(ConfigError::UnknownProfile(name.clone())),
         })
-        .transpose()?;
+        .transpose()?
+        .flatten();
     let profile = overlay_database_environment(profile, &input.env_file, &input.process_env)?;
     Ok(ResolvedConfig {
         profile_name: selected,

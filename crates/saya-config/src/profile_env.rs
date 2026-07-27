@@ -88,13 +88,13 @@ fn duckdb_profile(
     env: &BTreeMap<String, String>,
     profile: Option<DatabaseProfile>,
 ) -> Result<DatabaseProfile, ConfigError> {
-    let path = match profile {
-        Some(DatabaseProfile::DuckDb { path, .. }) => Some(path),
-        _ => None,
+    let (path, read_only) = match profile {
+        Some(DatabaseProfile::DuckDb { path, read_only }) => (Some(path), read_only),
+        _ => (None, None),
     };
     Ok(DatabaseProfile::DuckDb {
         path: required(env, "SAYA_DB_PATH", path)?,
-        read_only: None,
+        read_only,
     })
 }
 
