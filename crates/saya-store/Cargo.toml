@@ -1,0 +1,11 @@
+[package]
+name = "saya-store"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+saya-types = { path = "../saya-types" }
+thiserror.workspace = true
