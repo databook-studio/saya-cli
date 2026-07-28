@@ -17,6 +17,12 @@ chrono.workspace = true
 uuid.workspace = true
 bigdecimal.workspace = true
 duckdb.workspace = true
+reqwest.workspace = true
+base64.workspace = true
+rsa.workspace = true
+sha2.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+flate2 = "1"

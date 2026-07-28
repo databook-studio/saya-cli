@@ -8,12 +8,16 @@ mod factory;
 mod mysql;
 mod postgres;
 mod safety;
+mod snowflake;
 
 pub use duckdb::DuckDbConnector;
 pub use factory::{ConnectorOptions, build_connector};
 pub use mysql::MySqlConnector;
 pub use postgres::PostgresConnector;
-pub use safety::{prepare_duckdb_sql, prepare_mysql_sql, prepare_postgres_sql};
+pub use safety::{
+    prepare_duckdb_sql, prepare_mysql_sql, prepare_postgres_sql, prepare_snowflake_sql,
+};
+pub use snowflake::SnowflakeConnector;
 
 /// Engine-neutral contract implemented by every SAYA database driver.
 #[async_trait]

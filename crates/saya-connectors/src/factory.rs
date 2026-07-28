@@ -7,6 +7,8 @@ use sqlx::{
 
 use crate::{DatabaseConnector, DuckDbConnector, MySqlConnector, PostgresConnector};
 
+mod snowflake_factory;
+
 /// Runtime limits shared by connector instances created for one command.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectorOptions {
@@ -88,10 +90,7 @@ pub async fn build_connector(
                 .await
                 .map(|item| Box::new(item) as _)
         }
-        other => Err(ConnectionError::Unsupported(format!(
-            "{} connector is not implemented yet",
-            other.dialect().as_str()
-        ))),
+        DatabaseProfile::Snowflake { .. } => snowflake_factory::build(profile, resolver, settings),
     }
 }
 
