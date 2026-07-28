@@ -14,9 +14,8 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
-The private alpha supports `postgresql`, `mysql`, and `duckdb`. Snowflake
-configuration is accepted for forward compatibility but its connector remains
-unavailable. PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
+The private alpha supports `postgresql`, `mysql`, `duckdb`, and `snowflake`.
+PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-full`; MySQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-identity`.
 
@@ -51,6 +50,56 @@ path = "./warehouse.duckdb"
 read_only = true
 ```
 
+Snowflake profiles require `account`, `user`, and `auth_type`. Account values
+are identifiers such as `xy12345` or `org-account.us-east-1.aws`, not URLs.
+The auth-specific secret is required for `keypair` and `userpass`; browser SSO
+requires no secret:
+
+```toml
+[profiles.snowflake_keypair]
+type = "snowflake"
+account = "org-account.us-east-1.aws"
+user = "jane"
+auth_type = "keypair"
+private_key = { file = "/absolute/path/to/rsa_key.p8" }
+passphrase = { env = "SAYA_SNOWFLAKE_PASSPHRASE" }
+warehouse = "ANALYTICS"
+database = "PROD"
+schema = "PUBLIC"
+role = "ANALYST"
+
+[profiles.snowflake_userpass]
+type = "snowflake"
+account = "org-account.us-east-1.aws"
+user = "jane"
+auth_type = "userpass"
+password = { env = "SAYA_SNOWFLAKE_PASSWORD" }
+
+[profiles.snowflake_browser]
+type = "snowflake"
+account = "org-account.us-east-1.aws"
+user = "jane"
+auth_type = "externalbrowser"
+```
+
+Secret values must not be inline in TOML or committed. File SecretRef paths
+are literal; `~` and `$VARS` are not expanded. `env` and `file` references are
+supported. A `{ keyring = "..." }` reference is reserved but currently
+unavailable in this runtime. For explicit env files, set `SAYA_DB_TYPE`,
+`SAYA_DB_ACCOUNT`, `SAYA_DB_USER`, and `SAYA_DB_AUTH_TYPE`, plus
+`SAYA_DB_PRIVATE_KEY` for keypair or `SAYA_DB_PASSWORD` for userpass. These
+environment values become `SecretRef::Env` references and are not retained in
+the typed profile; process environment wins over `--env-file`.
+`SAYA_DB_PRIVATE_KEY` is raw PEM content; the line-oriented env-file parser does
+not turn literal `\n` into newlines. Prefer a connections.toml file SecretRef
+such as `{ file = "/absolute/path/to/rsa_key.p8" }`, or provide raw multiline
+PEM through a process environment that preserves newlines.
+
+`externalbrowser` starts a 127.0.0.1 ephemeral callback and exchanges the
+browser result for an in-memory legacy session token. It requires a real
+interactive TTY; `--non-interactive` and piped input fail before binding,
+network, or browser launch. The browser flow has a 120-second overall timeout.
+
 Use these commands to test, inspect, query, or ask against a selected profile:
 
 ```bash
@@ -60,7 +109,35 @@ saya query --profile analytics --sql "SELECT current_database()"
 saya --profile local --approval-mode read-only ask "summarize the local schema"
 ```
 
-All three live engines use the same command surface. `query` permits one parsed
+Snowflake entry paths are:
+
+```bash
+# Keypair from connections.toml (file SecretRef; safe for automation).
+saya --non-interactive connection test snowflake_keypair \
+  --connections ./connections.toml
+saya --non-interactive connection schema snowflake_keypair \
+  --connections ./connections.toml
+
+# User/password from an explicit env file (never commit this file).
+saya --non-interactive --env-file ./.env.snowflake \
+  --profile snowflake_userpass connection test snowflake_userpass
+
+# Browser SSO must run from an interactive TTY.
+saya --profile snowflake_browser connection test snowflake_browser
+saya --profile snowflake_browser connection schema snowflake_browser
+
+# Bounded SQL and an agent question use the same selected profile.
+saya --non-interactive --profile snowflake_keypair query \
+  --sql "SELECT CURRENT_DATABASE()"
+saya --profile snowflake_browser --approval-mode read-only ask \
+  "summarize the selected schema"
+```
+
+`--non-interactive` is valid for keypair and userpass profiles. It is not valid
+for `externalbrowser`; non-interactive or piped input fails before the browser,
+localhost callback, or Snowflake network request is started.
+
+All four live engines use the same command surface. `query` permits one parsed
 read-only statement, caps returned rows, and reports truncation.
 Never put
 a raw password, private key, API key, or connection URL with embedded

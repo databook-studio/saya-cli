@@ -3,7 +3,7 @@ use crate::{
     config_runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent},
 };
-use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector};
+use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
 use saya_types::DatabaseProfile;
 
 use super::output::{emit, failure, result};
@@ -12,12 +12,15 @@ pub(super) async fn run(
     command: ConnectionCommand,
     runtime: &RuntimeConfig,
     format: RenderFormat,
+    can_prompt: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match command {
         ConnectionCommand::List => list(runtime, format),
-        ConnectionCommand::Test { profile_name } => test(&profile_name, runtime, format).await,
+        ConnectionCommand::Test { profile_name } => {
+            test(&profile_name, runtime, format, can_prompt).await
+        }
         ConnectionCommand::Schema { profile_name, .. } => {
-            schema(&profile_name, runtime, format).await
+            schema(&profile_name, runtime, format, can_prompt).await
         }
     }
 }
@@ -43,6 +46,7 @@ async fn test(
     name: &str,
     runtime: &RuntimeConfig,
     format: RenderFormat,
+    can_prompt: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let profile = match runtime.named_profile(name) {
         Ok(profile) => profile,
@@ -54,7 +58,7 @@ async fn test(
             );
         }
     };
-    let Some(connector) = connector(profile, runtime, 3, format).await? else {
+    let Some(connector) = connector(profile, runtime, 3, format, can_prompt).await? else {
         return Ok(3);
     };
     match connector.connect().await {
@@ -67,6 +71,7 @@ async fn schema(
     name: &str,
     runtime: &RuntimeConfig,
     format: RenderFormat,
+    can_prompt: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let profile = match runtime.named_profile(name) {
         Ok(profile) => profile,
@@ -78,7 +83,7 @@ async fn schema(
             );
         }
     };
-    let Some(connector) = connector(profile, runtime, 3, format).await? else {
+    let Some(connector) = connector(profile, runtime, 3, format, can_prompt).await? else {
         return Ok(3);
     };
     match connector.schema().await {
@@ -95,13 +100,14 @@ pub(super) async fn connector(
     runtime: &RuntimeConfig,
     code: i32,
     format: RenderFormat,
+    can_prompt: bool,
 ) -> Result<Option<Box<dyn DatabaseConnector>>, Box<dyn std::error::Error>> {
     let resolver = runtime.secret_resolver();
     let settings = ConnectorOptions {
         query_timeout_seconds: runtime.resolved.query_timeout_seconds,
         ..Default::default()
     };
-    match build_connector(profile, &resolver, settings).await {
+    match build_connector_with_prompt(profile, &resolver, settings, can_prompt).await {
         Ok(connector) => Ok(Some(connector)),
         Err(error) => {
             failure(code, error, format)?;

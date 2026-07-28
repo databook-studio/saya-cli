@@ -1,13 +1,14 @@
 use saya_config::SecretResolver;
 use saya_types::{ConnectionError, DatabaseProfile, SecretRef, SnowflakeAuth};
 
-use crate::snowflake::{Auth, Context, Keypair, Userpass};
+use crate::snowflake::{Auth, Context, ExternalBrowser, Keypair, Userpass};
 use crate::{ConnectorOptions, DatabaseConnector, SnowflakeConnector};
 
 pub(super) fn build(
     profile: &DatabaseProfile,
     resolver: &dyn SecretResolver,
     settings: ConnectorOptions,
+    can_prompt: bool,
 ) -> Result<Box<dyn DatabaseConnector>, ConnectionError> {
     let DatabaseProfile::Snowflake {
         account,
@@ -33,7 +34,10 @@ pub(super) fn build(
             password: required(password.as_ref(), resolver)?,
             token: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         }),
-        SnowflakeAuth::Externalbrowser => Auth::ExternalBrowser { enabled: false },
+        SnowflakeAuth::Externalbrowser => Auth::ExternalBrowser(ExternalBrowser {
+            enabled: can_prompt,
+            token: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }),
     };
     let context = Context {
         warehouse: warehouse.clone(),

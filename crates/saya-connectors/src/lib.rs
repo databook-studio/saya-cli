@@ -11,7 +11,7 @@ mod safety;
 mod snowflake;
 
 pub use duckdb::DuckDbConnector;
-pub use factory::{ConnectorOptions, build_connector};
+pub use factory::{ConnectorOptions, build_connector, build_connector_with_prompt};
 pub use mysql::MySqlConnector;
 pub use postgres::PostgresConnector;
 pub use safety::{
