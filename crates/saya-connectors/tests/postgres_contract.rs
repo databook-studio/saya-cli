@@ -48,7 +48,7 @@ async fn factory_resolves_secret_references_without_exposing_values() {
 }
 
 #[tokio::test]
-async fn factory_redacts_missing_secret_and_rejects_unimplemented_engines() {
+async fn factory_redacts_missing_secret_and_builds_duckdb() {
     let resolver = MapSecretResolver::new([]);
     let error = match build_connector(
         &postgres(Some(SecretRef::Env {
@@ -65,18 +65,14 @@ async fn factory_redacts_missing_secret_and_rejects_unimplemented_engines() {
     assert!(matches!(error, ConnectionError::InvalidConfiguration(_)));
     assert!(!error.to_string().contains("hidden"));
 
-    let unavailable = match build_connector(
+    let duckdb = build_connector(
         &DatabaseProfile::DuckDb {
-            path: "data.duckdb".into(),
-            read_only: Some(true),
+            path: ":memory:".into(),
+            read_only: Some(false),
         },
         &resolver,
         ConnectorOptions::default(),
     )
-    .await
-    {
-        Err(error) => error,
-        Ok(_) => panic!("duckdb must be unavailable"),
-    };
-    assert!(matches!(unavailable, ConnectionError::Unsupported(_)));
+    .await;
+    assert!(duckdb.is_ok());
 }
