@@ -105,6 +105,11 @@ statements, and multi-statements before execution. It observes one extra row to
 mark truncated results. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly
 confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
+OpenAI and OpenAI-compatible providers are treated as cloud: when sharing is
+disabled, they receive schema metadata but not SQL tools or row data. Ollama is
+treated as local for this MVP. `/privacy`, `/model`, `/provider`, and `/connect`
+apply to the next interactive prompt; `/include` remains display-only and
+multi-profile execution is out of scope.
 The database role must itself be read-only: SQL AST checks cannot prove that a
 PostgreSQL function is free of side effects.
 Resolved config secrets, provider headers, and raw query rows are structurally

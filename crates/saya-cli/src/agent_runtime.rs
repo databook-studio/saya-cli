@@ -1,5 +1,8 @@
-use crate::{agent_provider, agent_tools, config_runtime::RuntimeConfig};
+use crate::{
+    agent_provider, agent_tools, config_runtime::RuntimeConfig, prompt_approval::TerminalApproval,
+};
 use saya_agent::{AgentError, AgentLimits, AgentOutput, AgentRequest, ApprovalPolicy, run_agent};
+use saya_config::{AiProvider, ResolvedAi};
 use saya_connectors::{ConnectorOptions, build_connector};
 use thiserror::Error;
 
@@ -11,6 +14,16 @@ pub(crate) enum AgentRuntimeError {
     Database(String),
     #[error("{0}")]
     Agent(String),
+    #[error("{0}")]
+    Configuration(String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct PromptOverrides {
+    pub(crate) provider: Option<AiProvider>,
+    pub(crate) model: Option<String>,
+    pub(crate) allow_data_sharing: Option<bool>,
+    pub(crate) profile: Option<String>,
 }
 
 pub(crate) async fn run_prompt(
@@ -18,10 +31,14 @@ pub(crate) async fn run_prompt(
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    overrides: PromptOverrides,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    let provider = agent_provider::build(&runtime.resolved.ai, &runtime.secret_resolver())
+    let ai = effective_ai(&runtime.resolved.ai, &overrides);
+    let provider = agent_provider::build(&ai, &runtime.secret_resolver())
         .map_err(|error| AgentRuntimeError::Provider(error.to_string()))?;
-    let connector = match runtime.resolved.profile.as_ref() {
+    let (profile_name, profile) = selected_profile(runtime, overrides.profile.as_ref())?;
+    let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
+    let connector = match profile.as_ref() {
         Some(profile) => Some(
             build_connector(
                 profile,
@@ -42,17 +59,18 @@ pub(crate) async fn run_prompt(
             .await
             .map_err(|error| AgentRuntimeError::Database(error.to_string()))?;
     }
-    let tools = agent_tools::DatabaseTools::new(connector, runtime.resolved.max_rows);
+    let tools =
+        agent_tools::DatabaseTools::new(connector, runtime.resolved.max_rows, allow_query_data);
     let request = AgentRequest {
         prompt: prompt.into(),
-        profile_names: runtime.resolved.profile_name.iter().cloned().collect(),
-        model: runtime.resolved.ai.model.clone(),
+        profile_names: profile_name.into_iter().collect(),
+        model: ai.model,
     };
     run_agent(
         &*provider,
         &tools,
         request,
-        agent_tools::DatabaseTools::definitions(),
+        agent_tools::DatabaseTools::definitions(allow_query_data),
         AgentLimits {
             max_turns: runtime.resolved.max_iterations,
             max_tool_calls: runtime.resolved.max_iterations.saturating_mul(2),
@@ -71,35 +89,40 @@ pub(crate) async fn run_prompt(
     })
 }
 
-struct TerminalApproval {
-    policy: ApprovalPolicy,
-    can_prompt: bool,
-}
-
-impl TerminalApproval {
-    fn new(policy: ApprovalPolicy, can_prompt: bool) -> Self {
-        Self { policy, can_prompt }
+pub(crate) fn query_data_allowed(provider: AiProvider, allow_data_sharing: bool) -> bool {
+    match provider {
+        AiProvider::Openai | AiProvider::OpenaiCompatible => allow_data_sharing,
+        AiProvider::Ollama => true,
+        _ => false,
     }
 }
 
-#[async_trait::async_trait]
-impl saya_agent::ApprovalDecider for TerminalApproval {
-    async fn approve(&self, _: &saya_agent::ToolDefinition) -> bool {
-        match self.policy {
-            ApprovalPolicy::ReadOnly => true,
-            ApprovalPolicy::Never => false,
-            ApprovalPolicy::Ask if !self.can_prompt => false,
-            ApprovalPolicy::Ask => {
-                use std::io::{self, IsTerminal, Write};
-                if !io::stdin().is_terminal() {
-                    return false;
-                }
-                eprint!("Allow bounded read-only SQL query? [y/N] ");
-                let _ = io::stderr().flush();
-                let mut answer = String::new();
-                io::stdin().read_line(&mut answer).is_ok()
-                    && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-            }
-        }
+fn effective_ai(base: &ResolvedAi, overrides: &PromptOverrides) -> ResolvedAi {
+    let mut ai = base.clone();
+    if let Some(provider) = overrides.provider {
+        ai.provider = provider;
+    }
+    if let Some(model) = overrides.model.as_ref() {
+        ai.model = model.clone();
+    }
+    if let Some(value) = overrides.allow_data_sharing {
+        ai.allow_data_sharing = value;
+    }
+    ai
+}
+
+fn selected_profile(
+    runtime: &RuntimeConfig,
+    override_name: Option<&String>,
+) -> Result<(Option<String>, Option<saya_types::DatabaseProfile>), AgentRuntimeError> {
+    match override_name {
+        Some(name) => runtime
+            .named_profile(name)
+            .map(|profile| (Some(name.clone()), Some(profile.clone())))
+            .map_err(|error| AgentRuntimeError::Configuration(error.to_string())),
+        None => Ok((
+            runtime.resolved.profile_name.clone(),
+            runtime.resolved.profile.clone(),
+        )),
     }
 }

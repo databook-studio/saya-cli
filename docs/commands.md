@@ -32,4 +32,7 @@ according to the approval policy. Connection and schema failures return code
 stdout and diagnostics to stderr; NDJSON uses one stable envelope per line.
 The agent does not yet stream model tokens. `/history` lists saved session IDs
 in recent-first order, while `/connect` and `/include` only accept configured
-profiles and report selection.
+profiles and report selection. `/connect`, `/privacy`, `/model`, and
+`/provider` are per-session overrides used by the next prompt; supported
+providers are `ollama`, `openai`, and `openai_compatible`. `/include` currently
+does not change the active execution profile or run multiple databases.

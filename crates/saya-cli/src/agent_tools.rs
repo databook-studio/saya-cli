@@ -6,26 +6,32 @@ use saya_types::QueryRequest;
 pub(crate) struct DatabaseTools {
     connector: Option<Box<dyn DatabaseConnector>>,
     max_rows: usize,
+    allow_query_data: bool,
 }
 
 impl DatabaseTools {
-    pub(crate) fn new(connector: Option<Box<dyn DatabaseConnector>>, max_rows: usize) -> Self {
+    pub(crate) fn new(
+        connector: Option<Box<dyn DatabaseConnector>>,
+        max_rows: usize,
+        allow_query_data: bool,
+    ) -> Self {
         Self {
             connector,
             max_rows,
+            allow_query_data,
         }
     }
 
-    pub(crate) fn definitions() -> Vec<ToolDefinition> {
-        vec![
-            ToolDefinition {
-                name: "schema_discovery".into(),
-                description: "Inspect the selected PostgreSQL schema without changing data.".into(),
-                read_only: true,
-                parameters: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
-                requires_approval: false,
-            },
-            ToolDefinition {
+    pub(crate) fn definitions(allow_query_data: bool) -> Vec<ToolDefinition> {
+        let mut tools = vec![ToolDefinition {
+            name: "schema_discovery".into(),
+            description: "Inspect the selected PostgreSQL schema without changing data.".into(),
+            read_only: true,
+            parameters: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+            requires_approval: false,
+        }];
+        if allow_query_data {
+            tools.push(ToolDefinition {
                 name: "bounded_sql_query".into(),
                 description:
                     "Run one bounded read-only SQL query against the selected PostgreSQL profile."
@@ -33,8 +39,9 @@ impl DatabaseTools {
                 read_only: true,
                 parameters: serde_json::json!({"type":"object","properties":{"sql":{"type":"string"}},"required":["sql"],"additionalProperties":false}),
                 requires_approval: true,
-            },
-        ]
+            });
+        }
+        tools
     }
 }
 
@@ -45,6 +52,9 @@ impl ToolExecutor for DatabaseTools {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        if name == "bounded_sql_query" && !self.allow_query_data {
+            return Err("data sharing is disabled for this cloud provider".into());
+        }
         let connector = self
             .connector
             .as_ref()

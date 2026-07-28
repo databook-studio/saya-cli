@@ -1,5 +1,5 @@
 use crate::{
-    agent_runtime,
+    agent_runtime::{self, PromptOverrides},
     config_runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent},
 };
@@ -24,7 +24,15 @@ pub(super) async fn ask(
     if prompt.trim().is_empty() {
         return Err("ask requires a prompt or --file".into());
     }
-    match agent_runtime::run_prompt(runtime, &prompt, approval, can_prompt).await {
+    match agent_runtime::run_prompt(
+        runtime,
+        &prompt,
+        approval,
+        can_prompt,
+        PromptOverrides::default(),
+    )
+    .await
+    {
         Ok(output) => {
             for event in output.events {
                 if let Some(event) = agent_event(event) {

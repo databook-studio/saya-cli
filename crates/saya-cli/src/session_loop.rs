@@ -54,7 +54,11 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                     .parse()
                     .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
                 match block_on(agent_runtime::run_prompt(
-                    &runtime, line, approval, terminal,
+                    &runtime,
+                    line,
+                    approval,
+                    terminal,
+                    state.prompt_overrides(),
                 )) {
                     Ok(output) => SessionAction::Agent(output),
                     Err(error) => SessionAction::Error(error.to_string()),
