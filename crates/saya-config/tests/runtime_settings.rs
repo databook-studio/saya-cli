@@ -52,6 +52,31 @@ fn process_environment_overrides_env_file_for_all_mapped_runtime_settings() {
 }
 
 #[test]
+fn provider_environment_names_resolve_to_runtime_secret_references() {
+    let resolved = resolve(
+        ResolutionInput::new(ConnectionsFile::default()).with_process_env([
+            ("SAYA_PROVIDER", "openai_compatible"),
+            ("SAYA_MODEL", "test-model"),
+            ("SAYA_PROVIDER_BASE_URL", "http://localhost:8080/v1"),
+            ("SAYA_API_KEY", "sentinel"),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(resolved.ai.provider, AiProvider::OpenaiCompatible);
+    assert_eq!(resolved.ai.model, "test-model");
+    assert_eq!(
+        resolved.ai.base_url.as_deref(),
+        Some("http://localhost:8080/v1")
+    );
+    assert_eq!(
+        resolved.ai.api_key,
+        Some(SecretRef::Env {
+            env: "SAYA_API_KEY".into()
+        })
+    );
+}
+
+#[test]
 fn resolved_diagnostics_redact_file_secret_paths() {
     let config = ConfigFile::from_toml("[ai]\napi_key = { file = '/private/key' }\n").unwrap();
     let rendered = serde_json::to_string(

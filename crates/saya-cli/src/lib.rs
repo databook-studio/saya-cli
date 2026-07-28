@@ -1,3 +1,6 @@
+mod agent_provider;
+mod agent_runtime;
+mod agent_tools;
 mod app;
 mod cli;
 mod commands;

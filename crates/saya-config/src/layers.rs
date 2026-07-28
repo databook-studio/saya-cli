@@ -24,10 +24,20 @@ pub(crate) fn apply_env(
 ) -> Result<(), ConfigError> {
     apply_string(&mut file.ai.model, env, "SAYA_AI_MODEL");
     apply_string(&mut file.ai.base_url, env, "SAYA_AI_BASE_URL");
+    apply_secret(&mut file.ai.api_key, env, "SAYA_AI_API_KEY");
     apply_parsed(
         &mut file.ai.provider,
         env,
         "SAYA_AI_PROVIDER",
+        AiProvider::parse,
+    )?;
+    apply_string(&mut file.ai.model, env, "SAYA_MODEL");
+    apply_string(&mut file.ai.base_url, env, "SAYA_PROVIDER_BASE_URL");
+    apply_secret(&mut file.ai.api_key, env, "SAYA_API_KEY");
+    apply_parsed(
+        &mut file.ai.provider,
+        env,
+        "SAYA_PROVIDER",
         AiProvider::parse,
     )?;
     apply_parsed(
@@ -77,6 +87,16 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
 fn apply_string(target: &mut Option<String>, env: &BTreeMap<String, String>, name: &str) {
     if let Some(value) = env.get(name) {
         *target = Some(value.clone());
+    }
+}
+
+fn apply_secret(
+    target: &mut Option<saya_types::SecretRef>,
+    env: &BTreeMap<String, String>,
+    name: &str,
+) {
+    if env.contains_key(name) {
+        *target = Some(saya_types::SecretRef::Env { env: name.into() });
     }
 }
 

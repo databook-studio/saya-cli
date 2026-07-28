@@ -1,10 +1,12 @@
 use super::session_state::SessionState;
 use crate::slash::{SlashCommand, help_text};
+use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionAction {
     Message(String),
+    Agent(AgentOutput),
     NotImplemented(String),
     Error(String),
     History,

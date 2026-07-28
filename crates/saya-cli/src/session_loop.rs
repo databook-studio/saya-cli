@@ -5,7 +5,7 @@ use super::{
 };
 use crate::session_paths::default_session_dir;
 use crate::{
-    Cli, config_runtime,
+    Cli, agent_runtime, config_runtime,
     render::{RenderFormat, TerminalEvent, render_event},
     slash::parse_slash_command,
 };
@@ -49,7 +49,16 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             ),
             None => {
                 state.record("user", line);
-                SessionAction::NotImplemented("interactive AI/database execution".into())
+                let approval = state
+                    .approval_mode
+                    .parse()
+                    .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
+                match block_on(agent_runtime::run_prompt(
+                    &runtime, line, approval, terminal,
+                )) {
+                    Ok(output) => SessionAction::Agent(output),
+                    Err(error) => SessionAction::Error(error.to_string()),
+                }
             }
         };
         if matches!(action, SessionAction::Exit) {
@@ -72,6 +81,17 @@ fn emit_action(
         SessionAction::Message(message) => {
             state.record("system", &message);
             emit(TerminalEvent::Result { message }, format);
+        }
+        SessionAction::Agent(output) => {
+            for event in output.events {
+                if let Some(event) = agent_event(event) {
+                    emit(event, format);
+                }
+            }
+            state.record(
+                "assistant",
+                "[response omitted from persisted session history]",
+            );
         }
         SessionAction::NotImplemented(feature) => {
             emit(TerminalEvent::NotImplemented { feature }, format)
@@ -99,6 +119,24 @@ fn emit_action(
         SessionAction::Exit => {}
     }
     Ok(())
+}
+
+fn agent_event(event: saya_agent::AgentEvent) -> Option<TerminalEvent> {
+    match event {
+        saya_agent::AgentEvent::AssistantText { text } => {
+            Some(TerminalEvent::AssistantText { text })
+        }
+        saya_agent::AgentEvent::ToolRequested { name } => {
+            Some(TerminalEvent::ToolRequested { name })
+        }
+        saya_agent::AgentEvent::ToolCompleted { name, summary } => {
+            Some(TerminalEvent::ToolCompleted { name, summary })
+        }
+        saya_agent::AgentEvent::ToolDenied { name, reason } => {
+            Some(TerminalEvent::ToolDenied { name, reason })
+        }
+        saya_agent::AgentEvent::Complete => None,
+    }
 }
 
 fn emit(event: TerminalEvent, format: RenderFormat) {

@@ -2,9 +2,9 @@
 
 SAYA CLI is an open-source, terminal-native shell for a database-aware SAYA
 agent. It is currently **alpha**: PostgreSQL connection tests, schema discovery,
-and bounded read-only queries are implemented alongside the interactive shell,
-configuration discovery, redacted sessions, and text/JSON/NDJSON output. AI
-provider calls and other database engines remain structured unavailable outcomes.
+bounded read-only queries, and configured Ollama/OpenAI-compatible provider calls
+are implemented alongside the interactive shell, redacted sessions, and
+text/JSON/NDJSON output. Other database engines remain unavailable.
 
 ## Quick start
 
@@ -40,6 +40,55 @@ references such as `{ env = "SAYA_ANALYTICS_PASSWORD" }`, never passwords or
 API keys, in committed files. See [configuration](docs/configuration.md) and
 [connections](docs/connections.md).
 
+For a local Ollama setup, use a config file plus an explicit env file:
+
+```toml
+# .saya/config.toml
+[ai]
+provider = "ollama"
+model = "qwen2.5-coder:14b"
+base_url = "http://localhost:11434"
+```
+
+```dotenv
+# .env.saya (do not commit)
+SAYA_PROVIDER=ollama
+SAYA_MODEL=qwen2.5-coder:14b
+SAYA_PROVIDER_BASE_URL=http://localhost:11434
+```
+
+For an OpenAI-compatible service, use a runtime-only API-key reference:
+
+```toml
+[ai]
+provider = "openai_compatible"
+model = "your-model"
+base_url = "https://api.example.test/v1"
+api_key = { env = "SAYA_API_KEY" }
+```
+
+```dotenv
+SAYA_API_KEY=replace-me
+```
+
+The connection file remains separate:
+
+```toml
+[profiles.analytics]
+type = "postgresql"
+host = "localhost"
+port = 5432
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_ANALYTICS_PASSWORD" }
+sslmode = "require"
+```
+
+Run `saya --env-file .env.saya --connections .saya/connections.toml
+--approval-mode read-only ask "show revenue"`. The newer provider env names
+(`SAYA_PROVIDER`, `SAYA_MODEL`, `SAYA_PROVIDER_BASE_URL`, `SAYA_API_KEY`) have
+the same precedence as the established `SAYA_AI_*` aliases.
+
 ```bash
 saya config doctor
 saya config show --resolved --redacted --format json
@@ -53,7 +102,9 @@ saya query --profile analytics --sql "SELECT current_database()"
 The intended MVP policy is read-only, bounded queries with cloud row sharing
 disabled. PostgreSQL rejects parse failures, writes, DDL, transaction/control
 statements, and multi-statements before execution. It observes one extra row to
-mark truncated results. This alpha does not send prompts to providers yet.
+mark truncated results. Schema discovery is auto-allowed; bounded SQL is
+auto-approved only with `read-only`, denied with `never`, and explicitly
+confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
 The database role must itself be read-only: SQL AST checks cannot prove that a
 PostgreSQL function is free of side effects.
 Resolved config secrets, provider headers, and raw query rows are structurally
@@ -62,9 +113,10 @@ redaction cannot identify every arbitrary secret—never paste credentials into
 prompts. See [SECURITY.md](SECURITY.md).
 
 Unavailable or failed connection/schema operations return `3`, while safety and
-query failures return `4`; AI ask remains unavailable with `5`. Non-interactive
+query failures return `4`; provider/agent failures return `5`. Non-interactive
 mode defaults to `never` approval (schema-only) unless `--approval-mode` is
-explicit; interactive sessions default to `ask`.
+explicit; interactive sessions default to `ask`. This MVP uses complete-chat
+HTTP requests and does not yet stream model tokens.
 
 ## Development
 

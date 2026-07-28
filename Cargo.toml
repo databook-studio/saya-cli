@@ -29,3 +29,4 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-r
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 uuid = { version = "1", features = ["serde"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

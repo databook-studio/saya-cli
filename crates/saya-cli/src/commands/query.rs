@@ -1,29 +1,52 @@
 use crate::{
+    agent_runtime,
     config_runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent},
 };
+use saya_agent::{AgentEvent, ApprovalPolicy};
 use saya_types::{ConnectionError, QueryRequest};
 use std::{fs, path::PathBuf};
 
 use super::{
     connection,
-    output::{emit, failure, unavailable},
+    output::{emit, failure, failure_message},
 };
 
-pub(super) fn ask(
+pub(super) async fn ask(
     prompt: Option<String>,
     file: Option<PathBuf>,
+    runtime: &RuntimeConfig,
     format: RenderFormat,
+    approval: ApprovalPolicy,
+    can_prompt: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let prompt = input(prompt, file)?;
     if prompt.trim().is_empty() {
         return Err("ask requires a prompt or --file".into());
     }
-    unavailable(
-        5,
-        format!("AI/database execution for prompt '{prompt}'"),
-        format,
-    )
+    match agent_runtime::run_prompt(runtime, &prompt, approval, can_prompt).await {
+        Ok(output) => {
+            for event in output.events {
+                if let Some(event) = agent_event(event) {
+                    emit(event, format);
+                }
+            }
+            Ok(0)
+        }
+        Err(error) => failure_message(5, error.to_string(), format),
+    }
+}
+
+fn agent_event(event: AgentEvent) -> Option<TerminalEvent> {
+    match event {
+        AgentEvent::AssistantText { text } => Some(TerminalEvent::AssistantText { text }),
+        AgentEvent::ToolRequested { name } => Some(TerminalEvent::ToolRequested { name }),
+        AgentEvent::ToolCompleted { name, summary } => {
+            Some(TerminalEvent::ToolCompleted { name, summary })
+        }
+        AgentEvent::ToolDenied { name, reason } => Some(TerminalEvent::ToolDenied { name, reason }),
+        AgentEvent::Complete => None,
+    }
 }
 
 pub(super) async fn run(

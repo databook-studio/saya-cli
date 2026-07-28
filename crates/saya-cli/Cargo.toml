@@ -9,6 +9,7 @@ name = "saya"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 clap.workspace = true
 saya-agent = { path = "../saya-agent" }
 saya-config = { path = "../saya-config" }

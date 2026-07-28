@@ -17,7 +17,7 @@ pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
 pub use input::{CliOverrides, ResolutionInput};
 pub use model::{ConfigFile, ConnectionsFile};
-pub use resolve::{ResolvedConfig, resolve};
+pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::SecretRef;
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};
 pub use values::{AiProvider, ColorChoice, OutputFormat};
