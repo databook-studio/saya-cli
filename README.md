@@ -108,7 +108,7 @@ confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
 OpenAI and OpenAI-compatible providers are treated as cloud: when sharing is
 disabled, they receive schema metadata but not SQL tools or row data. Ollama is
 treated as local for this MVP. `/privacy`, `/model`, `/provider`, and `/connect`
-apply to the next interactive prompt; `/include` remains display-only and
+apply to the next interactive prompt; `/include` is explicitly display-only and
 multi-profile execution is out of scope.
 The database role must itself be read-only: SQL AST checks cannot prove that a
 PostgreSQL function is free of side effects.
@@ -126,10 +126,14 @@ deltas as they arrive; JSON and NDJSON each write one stable JSON event envelope
 Requests retry retryable connection setup failures, HTTP 429, and 5xx responses only before the
 provider yields an event. A body transport failure is surfaced without retry because replaying a
 partially consumed response cannot be proved action-free. `Ctrl+C` cancels a one-shot request with
-exit code 130. Full multi-turn provider context and raw-mode interactive cancellation remain next-slice work.
-Interactive prompts do not yet send full multi-turn model context; resumed
-sessions contain redacted local history and do not reconstruct provider
-conversation context.
+exit code 130; during an interactive request it returns to the `saya>` prompt without persisting
+the incomplete turn. Interactive prompts and `--continue`/`--resume` use bounded, redacted
+user/assistant history, and `/clear` removes visible and provider context. Session files persist
+provider/model/profile/privacy/approval settings and safe tool name/status metadata. Database-derived
+assistant turns are persisted locally after redaction but omitted from cloud provider history when
+sharing is disabled; v1 files fall back to current runtime settings. Raw tool arguments, tool
+responses, credentials, headers, and raw tool-result rows are not persisted or reconstructed as
+provider history. A natural-language assistant answer may still contain database values.
 
 ## Development
 

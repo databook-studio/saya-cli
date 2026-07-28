@@ -36,6 +36,9 @@ in recent-first order, while `/connect` and `/include` only accept configured
 profiles and report selection. `/connect`, `/privacy`, `/model`, and
 `/provider` are per-session overrides used by the next prompt; supported
 providers are `ollama`, `openai`, and `openai_compatible`. `/include` currently
-does not change the active execution profile or run multiple databases.
-Interactive prompts do not yet carry full multi-turn model context; resumed
-sessions use redacted local history and do not reconstruct provider context.
+is explicitly display-only: it does not change the active execution profile or
+run multiple databases. Interactive prompts carry bounded prior user/assistant
+turns, and `--continue`/`--resume` reconstruct redacted history with saved
+provider settings. `/clear` removes the canonical turns as well as visible
+context. Tool arguments, responses, credentials, headers, and rows are never
+restored into provider history.

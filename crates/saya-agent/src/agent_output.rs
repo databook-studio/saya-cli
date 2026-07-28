@@ -1,4 +1,4 @@
-use crate::{AgentEvent, ProviderError};
+use crate::{AgentEvent, ProviderError, ToolMetadata};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -18,6 +18,8 @@ impl Default for AgentLimits {
 pub struct AgentOutput {
     pub answer: String,
     pub events: Vec<AgentEvent>,
+    pub used_bounded_sql_query: bool,
+    pub tool_metadata: Vec<ToolMetadata>,
 }
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -27,6 +29,10 @@ pub enum AgentError {
     Limit(&'static str),
     #[error("provider returned an unsupported tool call")]
     InvalidToolCall,
+    #[error("conversation history is invalid")]
+    InvalidHistory,
+    #[error("conversation context exceeds the safe limit")]
+    ContextLimit,
     #[error("request cancelled")]
     Cancelled,
 }

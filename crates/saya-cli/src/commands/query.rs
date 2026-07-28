@@ -33,6 +33,7 @@ pub(super) async fn ask(
         approval,
         can_prompt,
         PromptOverrides::default(),
+        Vec::new(),
         &sink,
         cancellation.clone(),
     );

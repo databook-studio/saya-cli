@@ -29,6 +29,27 @@ struct MockTools {
     calls: Arc<Mutex<Vec<String>>>,
 }
 
+struct HistoryProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for HistoryProvider {
+    fn name(&self) -> &str {
+        "history-mock"
+    }
+
+    async fn complete(
+        &self,
+        request: ChatRequest,
+    ) -> Result<ChatResponse, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(ChatResponse {
+            message: ChatMessage::text("assistant", "second answer"),
+        })
+    }
+}
+
 struct DenyApproval;
 
 #[async_trait]
@@ -61,7 +82,37 @@ fn request() -> AgentRequest {
         prompt: "show data".into(),
         profile_names: vec!["analytics".into()],
         model: "mock-model".into(),
+        history: Vec::new(),
     }
+}
+
+#[tokio::test]
+async fn prior_user_and_assistant_turn_reaches_provider_in_order() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = HistoryProvider {
+        requests: requests.clone(),
+    };
+    let mut request = request();
+    request.history = vec![
+        ChatMessage::text("user", "first prompt"),
+        ChatMessage::text("assistant", "first answer"),
+    ];
+    run_agent(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request,
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap();
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured[0].messages[1].content, "first prompt");
+    assert_eq!(captured[0].messages[2].content, "first answer");
+    assert_eq!(captured[0].messages[3].content, "show data");
 }
 
 #[tokio::test]
@@ -100,6 +151,9 @@ async fn tool_call_round_trip_is_deterministic_and_emits_safe_events() {
     .unwrap();
     assert_eq!(output.answer, "There is one result.");
     assert_eq!(&*calls.lock().unwrap(), &["bounded_sql_query"]);
+    assert!(output.used_bounded_sql_query);
+    assert_eq!(output.tool_metadata[0].name, "bounded_sql_query");
+    assert_eq!(output.tool_metadata[0].status, "completed");
     assert!(output.events.iter().any(|event| matches!(event, saya_agent::AgentEvent::ToolCompleted { summary, .. } if summary.contains("read-only"))));
 }
 
@@ -228,6 +282,7 @@ async fn injected_denial_does_not_execute_query_or_persist_rows() {
     .await
     .unwrap();
     assert!(calls.lock().unwrap().is_empty());
+    assert!(!output.used_bounded_sql_query);
     assert!(
         output
             .events

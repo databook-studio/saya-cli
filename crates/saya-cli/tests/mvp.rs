@@ -240,6 +240,7 @@ fn scripted_repl_persists_and_continues_a_redacted_session() {
     use std::io::Write;
     let root = std::env::temp_dir().join(format!("saya-cli-repl-{}", std::process::id()));
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args(["--format", "ndjson"])
         .env("SAYA_SESSION_DIR", &root)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -445,4 +446,203 @@ fn ask_calls_configured_openai_compatible_provider() {
     assert!(!String::from_utf8_lossy(&output.stdout).contains("mock-secret"));
     assert!(output.stderr.is_empty());
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn idle_eof_exits_the_interactive_process_cleanly() {
+    let root = std::env::temp_dir().join(format!("saya-cli-eof-{}", std::process::id()));
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env("SAYA_SESSION_DIR", &root)
+        .spawn()
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
+    use std::{
+        ffi::CStr,
+        fs::File,
+        io::{self, Read, Write},
+        net::TcpListener,
+        os::fd::{AsRawFd, FromRawFd},
+        os::unix::process::CommandExt,
+        process::{Child, Command, Stdio},
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    struct ChildGuard(Option<Child>);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.0.take() {
+                if child.try_wait().unwrap().is_none() {
+                    let _ = child.kill();
+                }
+                let _ = child.wait();
+            }
+        }
+    }
+
+    fn pty_pair() -> (File, File) {
+        let master_fd = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+        assert!(
+            master_fd >= 0,
+            "posix_openpt: {}",
+            io::Error::last_os_error()
+        );
+        assert_eq!(unsafe { libc::grantpt(master_fd) }, 0);
+        assert_eq!(unsafe { libc::unlockpt(master_fd) }, 0);
+        let slave_name = unsafe { CStr::from_ptr(libc::ptsname(master_fd)) };
+        let slave = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(slave_name.to_string_lossy().as_ref())
+            .unwrap();
+        let master = unsafe { File::from_raw_fd(master_fd) };
+        let flags = unsafe { libc::fcntl(master.as_raw_fd(), libc::F_GETFL) };
+        assert!(flags >= 0);
+        assert_eq!(
+            unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) },
+            0
+        );
+        (master, slave)
+    }
+
+    fn read_until(master: &mut File, needle: &[u8], timeout: Duration) -> Vec<u8> {
+        let deadline = Instant::now() + timeout;
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        while Instant::now() < deadline {
+            match master.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(size) => {
+                    output.extend_from_slice(&buffer[..size]);
+                    if output.windows(needle.len()).any(|window| window == needle) {
+                        return output;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                Err(error) => panic!("pty read failed: {error}"),
+            }
+        }
+        panic!(
+            "timed out waiting for {:?}; output was {:?}",
+            String::from_utf8_lossy(needle),
+            String::from_utf8_lossy(&output)
+        );
+    }
+
+    fn wait_with_deadline(child: &mut Child, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                return;
+            }
+            assert!(Instant::now() < deadline, "interactive child did not exit");
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(value) => break value,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return,
+            }
+        };
+        accepted_tx.send(()).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        let _ = stream.read_to_end(&mut request);
+    });
+    let config_root =
+        std::env::temp_dir().join(format!("saya-cli-cancel-config-{}", std::process::id()));
+    let session_root =
+        std::env::temp_dir().join(format!("saya-cli-cancel-session-{}", std::process::id()));
+    let (mut master, slave) = pty_pair();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
+    command
+        .stdin(Stdio::from(slave.try_clone().unwrap()))
+        .stdout(Stdio::from(slave.try_clone().unwrap()))
+        .stderr(Stdio::from(slave))
+        .env_clear()
+        .env("SAYA_CONFIG_HOME", &config_root)
+        .env("SAYA_SESSION_DIR", &session_root)
+        .env("SAYA_PROVIDER", "openai_compatible")
+        .env("SAYA_MODEL", "mock-model")
+        .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
+        .env("SAYA_API_KEY", "mock-secret");
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY.into(), 0) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut guard = ChildGuard(Some(command.spawn().unwrap()));
+    let child = guard.0.as_mut().unwrap();
+    let prompt = read_until(&mut master, b"saya> ", Duration::from_secs(3));
+    assert!(String::from_utf8_lossy(&prompt).contains("saya> "));
+    master.write_all(b"incomplete prompt\n").unwrap();
+    master.flush().unwrap();
+    accepted_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("provider request was not observed");
+    assert_eq!(
+        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) },
+        0
+    );
+    let cancelled = read_until(&mut master, b"saya> ", Duration::from_secs(3));
+    let cancelled_text = String::from_utf8_lossy(&cancelled);
+    assert!(
+        cancelled_text.contains("Request cancelled."),
+        "{cancelled_text}"
+    );
+    assert!(cancelled_text.contains("saya> "), "{cancelled_text}");
+    master.write_all(b"/exit\n").unwrap();
+    master.flush().unwrap();
+    drop(master);
+    wait_with_deadline(child, Duration::from_secs(3));
+    guard.0.take();
+    server.join().unwrap();
+    let saved = std::fs::read_dir(&session_root)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(value["turns"].as_array().unwrap().len(), 0);
+    assert!(!saved.contains("incomplete prompt"));
+    assert!(!saved.contains("mock-secret"));
+    let _ = std::fs::remove_dir_all(config_root);
+    std::fs::remove_dir_all(session_root).unwrap();
 }

@@ -8,6 +8,7 @@ use saya_agent::ApprovalPolicy;
 pub enum SessionAction {
     Message(String),
     Agent(AgentOutput),
+    Cancelled,
     NotImplemented(String),
     Error(String),
     History,
@@ -36,7 +37,7 @@ impl SessionState {
                 if !self.included_profiles.contains(&name) {
                     self.included_profiles.push(name.clone());
                 }
-                SessionAction::Message(format!("Included profile: {name}"))
+                SessionAction::Message(format!("Included profile (display-only): {name}"))
             }
             SlashCommand::Exclude(name) => {
                 self.included_profiles.retain(|item| item != &name);
@@ -93,6 +94,7 @@ impl SessionState {
             }),
             SlashCommand::Clear => {
                 self.messages.clear();
+                self.turns.clear();
                 SessionAction::Message("Conversation context cleared.".into())
             }
             SlashCommand::History => SessionAction::History,
