@@ -97,9 +97,12 @@ pub(crate) fn query_data_allowed(provider: AiProvider, allow_data_sharing: bool)
     }
 }
 
-fn effective_ai(base: &ResolvedAi, overrides: &PromptOverrides) -> ResolvedAi {
+pub(crate) fn effective_ai(base: &ResolvedAi, overrides: &PromptOverrides) -> ResolvedAi {
     let mut ai = base.clone();
     if let Some(provider) = overrides.provider {
+        if ai.provider != provider {
+            ai.base_url = None;
+        }
         ai.provider = provider;
     }
     if let Some(model) = overrides.model.as_ref() {

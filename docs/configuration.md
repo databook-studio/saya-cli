@@ -58,3 +58,6 @@ is hidden and dispatcher-blocked, so rows cannot reach those providers. Ollama
 is treated as local in this MVP. Interactive `/privacy`, `/model`, `/provider`,
 and `/connect` overrides apply to the next prompt; `/include` is not yet a
 multi-profile execution feature.
+Interactive prompts currently send only the new prompt to the model rather than
+full multi-turn context. Resumed sessions retain redacted local history but do
+not reconstruct provider conversation context.

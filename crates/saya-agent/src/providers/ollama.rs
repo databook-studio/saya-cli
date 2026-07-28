@@ -75,6 +75,9 @@ impl ChatProvider for OllamaProvider {
                 })
             })
             .collect::<Result<Vec<_>, ProviderError>>()?;
+        if payload.message.content.trim().is_empty() && calls.is_empty() {
+            return Err(ProviderError::InvalidResponse);
+        }
         Ok(ChatResponse {
             message: ChatMessage {
                 role: "assistant".into(),

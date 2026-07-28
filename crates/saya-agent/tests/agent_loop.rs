@@ -167,6 +167,31 @@ async fn malformed_or_unsupported_tool_calls_fail_closed() {
 }
 
 #[tokio::test]
+async fn empty_provider_response_is_invalid() {
+    let provider = MockProvider {
+        responses: Mutex::new(vec![ChatResponse {
+            message: ChatMessage::text("assistant", ""),
+        }]),
+    };
+    let error = run_agent(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        AgentError::Provider(saya_agent::ProviderError::InvalidResponse)
+    ));
+}
+
+#[tokio::test]
 async fn injected_denial_does_not_execute_query_or_persist_rows() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {

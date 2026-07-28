@@ -165,3 +165,26 @@ async fn provider_errors_do_not_include_authorization_material() {
     handle.join().unwrap();
     assert!(!error.to_string().contains("secret-sentinel"));
 }
+
+#[tokio::test]
+async fn openai_and_ollama_reject_empty_assistant_messages() {
+    let (base, _, openai_handle) = mock_server(r#"{"choices":[{"message":{"content":null}}]}"#);
+    let openai = OpenAiCompatibleProvider::new(
+        ProviderSettings::new("test-model", Some(format!("{base}/v1"))),
+        None,
+    )
+    .unwrap();
+    assert!(matches!(
+        openai.complete(request()).await,
+        Err(saya_agent::ProviderError::InvalidResponse)
+    ));
+    openai_handle.join().unwrap();
+
+    let (base, _, ollama_handle) = mock_server(r#"{"message":{"role":"assistant","content":""}}"#);
+    let ollama = OllamaProvider::new(ProviderSettings::new("test-model", Some(base))).unwrap();
+    assert!(matches!(
+        ollama.complete(request()).await,
+        Err(saya_agent::ProviderError::InvalidResponse)
+    ));
+    ollama_handle.join().unwrap();
+}

@@ -122,6 +122,9 @@ query failures return `4`; provider/agent failures return `5`. Non-interactive
 mode defaults to `never` approval (schema-only) unless `--approval-mode` is
 explicit; interactive sessions default to `ask`. This MVP uses complete-chat
 HTTP requests and does not yet stream model tokens.
+Interactive prompts do not yet send full multi-turn model context; resumed
+sessions contain redacted local history and do not reconstruct provider
+conversation context.
 
 ## Development
 

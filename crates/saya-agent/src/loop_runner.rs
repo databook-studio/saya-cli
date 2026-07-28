@@ -61,6 +61,9 @@ pub async fn run_agent(
             .await?;
         let assistant = response.message;
         messages.push(assistant.clone());
+        if assistant.content.trim().is_empty() && assistant.tool_calls.is_empty() {
+            return Err(AgentError::Provider(ProviderError::InvalidResponse));
+        }
         if assistant.tool_calls.is_empty() {
             events.push(AgentEvent::AssistantText {
                 text: assistant.content.clone(),

@@ -53,10 +53,14 @@ impl OpenAiResponse {
                 })
             })
             .collect::<Result<Vec<_>, ProviderError>>()?;
+        let content = message.content.unwrap_or_default();
+        if content.trim().is_empty() && tool_calls.is_empty() {
+            return Err(ProviderError::InvalidResponse);
+        }
         Ok(ChatResponse {
             message: ChatMessage {
                 role: "assistant".into(),
-                content: message.content.unwrap_or_default(),
+                content,
                 tool_calls,
                 tool_call_id: None,
             },

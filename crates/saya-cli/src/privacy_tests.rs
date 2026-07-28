@@ -154,3 +154,36 @@ fn session_slash_state_becomes_the_next_prompt_override() {
     assert_eq!(overrides.allow_data_sharing, Some(true));
     assert_eq!(overrides.profile.as_deref(), Some("analytics"));
 }
+
+#[test]
+fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() {
+    let ollama = saya_config::ResolvedAi {
+        provider: saya_config::AiProvider::Ollama,
+        model: "model".into(),
+        base_url: Some("http://ollama.invalid".into()),
+        api_key: None,
+        allow_data_sharing: false,
+    };
+    let to_openai = crate::agent_runtime::PromptOverrides {
+        provider: Some(saya_config::AiProvider::OpenaiCompatible),
+        ..Default::default()
+    };
+    assert_eq!(
+        crate::agent_runtime::effective_ai(&ollama, &to_openai).base_url,
+        None
+    );
+
+    let openai = saya_config::ResolvedAi {
+        provider: saya_config::AiProvider::OpenaiCompatible,
+        base_url: Some("https://cloud.invalid/v1".into()),
+        ..ollama
+    };
+    let to_ollama = crate::agent_runtime::PromptOverrides {
+        provider: Some(saya_config::AiProvider::Ollama),
+        ..Default::default()
+    };
+    assert_eq!(
+        crate::agent_runtime::effective_ai(&openai, &to_ollama).base_url,
+        None
+    );
+}
