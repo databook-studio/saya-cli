@@ -2,6 +2,9 @@ use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
 
+#[path = "render_json.rs"]
+mod render_json;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,
@@ -32,6 +35,9 @@ impl From<OutputFormat> for RenderFormat {
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TerminalEvent {
     AssistantText { text: String },
+    ToolRequested { name: String },
+    ToolCompleted { name: String, summary: String },
+    ToolDenied { name: String, reason: String },
     Result { message: String },
     QueryResult { result: QueryResult },
     Schema { schema: SchemaTree },
@@ -49,7 +55,7 @@ pub struct Rendered {
 pub fn render_event(event: &TerminalEvent, format: RenderFormat) -> Rendered {
     match format {
         RenderFormat::Text => text_event(event),
-        RenderFormat::Json | RenderFormat::Ndjson => json_event(event),
+        RenderFormat::Json | RenderFormat::Ndjson => render_json::render(event),
     }
 }
 
@@ -61,6 +67,18 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::AssistantText { text } => Rendered {
             stdout: format!("{text}\n"),
+            stderr: String::new(),
+        },
+        TerminalEvent::ToolRequested { name } => Rendered {
+            stdout: format!("Using read-only tool: {name}\n"),
+            stderr: String::new(),
+        },
+        TerminalEvent::ToolCompleted { name, summary } => Rendered {
+            stdout: format!("{name}: {summary}\n"),
+            stderr: String::new(),
+        },
+        TerminalEvent::ToolDenied { name, reason } => Rendered {
+            stdout: format!("Approval denied for {name}: {reason}\n"),
             stderr: String::new(),
         },
         TerminalEvent::Result { message } => Rendered {
@@ -126,18 +144,4 @@ fn schema_text(schema: &SchemaTree) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn json_event(event: &TerminalEvent) -> Rendered {
-    let line = serde_json::to_string(event).expect("terminal event is serializable") + "\n";
-    match event {
-        TerminalEvent::Diagnostic { .. } | TerminalEvent::Error { .. } => Rendered {
-            stdout: String::new(),
-            stderr: line,
-        },
-        _ => Rendered {
-            stdout: line,
-            stderr: String::new(),
-        },
-    }
 }

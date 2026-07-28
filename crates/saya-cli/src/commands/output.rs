@@ -37,3 +37,12 @@ pub(super) fn failure(
     );
     Ok(code)
 }
+
+pub(super) fn failure_message(
+    code: i32,
+    message: String,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    emit(TerminalEvent::Error { message }, format);
+    Ok(code)
+}

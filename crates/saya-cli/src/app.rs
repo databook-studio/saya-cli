@@ -2,7 +2,7 @@ use crate::{
     cli::{Cli, Command, ConnectionCommand},
     commands, config_runtime, interactive,
 };
-use std::path::Path;
+use std::{io::IsTerminal, path::Path};
 
 pub fn run(cli: Cli) -> i32 {
     match dispatch(cli) {
@@ -23,12 +23,15 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     };
     let options = command_options(&cli.options, &command);
     let runtime = config_runtime::load(&options, Path::new("."))?;
-    let _approval = config_runtime::approval_mode(&options)?;
+    let approval = config_runtime::approval_mode(&options)?;
     let format = config_runtime::format_name(&options, &runtime.resolved);
+    let can_prompt = !options.non_interactive && std::io::stdin().is_terminal();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(commands::run(command, &runtime, format))
+        .block_on(commands::run(
+            command, &runtime, format, approval, can_prompt,
+        ))
 }
 
 fn command_options(

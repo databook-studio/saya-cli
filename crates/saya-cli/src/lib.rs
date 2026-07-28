@@ -1,3 +1,6 @@
+mod agent_provider;
+mod agent_runtime;
+pub(crate) mod agent_tools;
 mod app;
 mod cli;
 mod commands;
@@ -9,6 +12,10 @@ mod render;
 mod runtime_profile;
 mod session_paths;
 mod slash;
+
+#[cfg(test)]
+mod privacy_tests;
+mod prompt_approval;
 
 use clap::Parser;
 

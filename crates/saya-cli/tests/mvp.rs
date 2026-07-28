@@ -218,6 +218,7 @@ fn connection_subcommands_accept_environment_only_named_profiles() {
             .env("SAYA_DB_PORT", "1")
             .env("SAYA_DB_NAME", "app")
             .env("SAYA_DB_USER", "reader")
+            .env("SAYA_QUERY_TIMEOUT_SECONDS", "1")
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(3));
@@ -314,15 +315,26 @@ fn automation_not_implemented_uses_stable_nonzero_exit_codes_and_envelopes() {
         (&["ask", "show revenue"][..], 5, "AI/database execution"),
     ];
     for (args, code, expected) in cases {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_saya"));
+        if expected == "AI/database execution" {
+            command.env("SAYA_PROVIDER_BASE_URL", "http://127.0.0.1:1");
+        }
+        let output = command
             .args(["--non-interactive", "--format", "json"])
             .args(args)
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(code), "args: {args:?}");
-        assert!(String::from_utf8_lossy(&output.stdout).contains("\"event\":\"not_implemented\""));
-        assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
-        assert!(output.stderr.is_empty());
+        if expected == "AI/database execution" {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("\"event\":\"error\""));
+            assert!(output.stdout.is_empty());
+        } else {
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("\"event\":\"not_implemented\"")
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
+            assert!(output.stderr.is_empty());
+        }
     }
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -389,4 +401,45 @@ fn session_path_resolution_is_platform_aware_and_injectable() {
         resolve_session_dir(None, None, None, Some("/home")),
         std::path::PathBuf::from("/home/.local/share/saya/sessions")
     );
+}
+
+#[test]
+fn ask_calls_configured_openai_compatible_provider() {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 8192];
+        let _ = stream.read(&mut request);
+        let body = r#"{"choices":[{"message":{"content":"answer from mock"}}]}"#;
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+    });
+    let root = std::env::temp_dir().join(format!("saya-cli-ask-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args([
+            "--non-interactive",
+            "--format",
+            "json",
+            "ask",
+            "show revenue",
+        ])
+        .env("SAYA_CONFIG_HOME", &root)
+        .env("SAYA_PROVIDER", "openai_compatible")
+        .env("SAYA_MODEL", "mock-model")
+        .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
+        .env("SAYA_API_KEY", "mock-secret")
+        .output()
+        .unwrap();
+    handle.join().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("answer from mock"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("mock-secret"));
+    assert!(output.stderr.is_empty());
+    std::fs::remove_dir_all(root).unwrap();
 }

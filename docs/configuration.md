@@ -40,5 +40,24 @@ to `ask`.
 
 The current alpha connects only to PostgreSQL. Environment and file secret
 references are resolved at runtime without serializing or logging their values;
-keyring references return an explicit unavailable error. Provider calls and
+keyring references return an explicit unavailable error. Provider settings may
+use either the established `SAYA_AI_PROVIDER`, `SAYA_AI_MODEL`, and
+`SAYA_AI_BASE_URL` names or the shorter `SAYA_PROVIDER`, `SAYA_MODEL`, and
+`SAYA_PROVIDER_BASE_URL` names. `SAYA_API_KEY` becomes a runtime
+`{ env = "SAYA_API_KEY" }` reference and is never serialized. Ollama and
+OpenAI-compatible chat-completions are supported; other providers and
 non-PostgreSQL engines are not implemented yet.
+
+Schema discovery is automatically allowed. A bounded SQL tool call is allowed
+under `read-only`, denied under `never`, and asks for explicit `y/yes` on a TTY
+under `ask`; it is denied when a TTY is unavailable. Model responses are not
+token-streamed in this MVP. Session files omit tool payloads and assistant
+database output by default. OpenAI and OpenAI-compatible providers are treated
+as cloud: with sharing disabled, schema metadata may be sent but the SQL tool
+is hidden and dispatcher-blocked, so rows cannot reach those providers. Ollama
+is treated as local in this MVP. Interactive `/privacy`, `/model`, `/provider`,
+and `/connect` overrides apply to the next prompt; `/include` is not yet a
+multi-profile execution feature.
+Interactive prompts currently send only the new prompt to the model rather than
+full multi-turn context. Resumed sessions retain redacted local history but do
+not reconstruct provider conversation context.

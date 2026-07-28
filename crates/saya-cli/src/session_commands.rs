@@ -1,10 +1,13 @@
 use super::session_state::SessionState;
+use crate::agent_runtime::PromptOverrides;
 use crate::slash::{SlashCommand, help_text};
+use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionAction {
     Message(String),
+    Agent(AgentOutput),
     NotImplemented(String),
     Error(String),
     History,
@@ -41,12 +44,22 @@ impl SessionState {
             }
             SlashCommand::Provider(value) => {
                 if let Some(value) = value {
+                    let supported = matches!(
+                        saya_config::AiProvider::parse(&value),
+                        Some(
+                            saya_config::AiProvider::Ollama
+                                | saya_config::AiProvider::Openai
+                                | saya_config::AiProvider::OpenaiCompatible
+                        )
+                    );
+                    if !supported {
+                        return SessionAction::Error(format!(
+                            "Unsupported provider: {value}. Use ollama, openai, or openai_compatible."
+                        ));
+                    }
                     self.provider = value;
                 }
-                SessionAction::NotImplemented(format!(
-                    "provider '{}' is configured, but provider execution is not implemented",
-                    self.provider
-                ))
+                SessionAction::Message(format!("Provider: {}", self.provider))
             }
             SlashCommand::Model(value) => {
                 if let Some(value) = value {
@@ -85,6 +98,15 @@ impl SessionState {
             SlashCommand::History => SessionAction::History,
             SlashCommand::Help => SessionAction::Message(help_text().into()),
             SlashCommand::Exit => SessionAction::Exit,
+        }
+    }
+
+    pub(crate) fn prompt_overrides(&self) -> PromptOverrides {
+        PromptOverrides {
+            provider: saya_config::AiProvider::parse(&self.provider),
+            model: Some(self.model.clone()),
+            allow_data_sharing: Some(self.allow_data_sharing),
+            profile: self.profile.clone(),
         }
     }
 }
