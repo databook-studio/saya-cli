@@ -1,8 +1,11 @@
 use saya_config::{ConfigError, SecretResolver};
-use saya_types::{ConnectionError, DatabaseProfile, PostgresSslMode};
-use sqlx::postgres::{PgConnectOptions, PgSslMode};
+use saya_types::{ConnectionError, DatabaseProfile, MySqlSslMode, PostgresSslMode};
+use sqlx::{
+    mysql::{MySqlConnectOptions, MySqlSslMode as DriverMySqlSslMode},
+    postgres::{PgConnectOptions, PgSslMode},
+};
 
-use crate::{DatabaseConnector, PostgresConnector};
+use crate::{DatabaseConnector, DuckDbConnector, MySqlConnector, PostgresConnector};
 
 /// Runtime limits shared by connector instances created for one command.
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +37,7 @@ pub async fn build_connector(
             user,
             ssl_mode,
             password,
+            ..
         } => {
             let mut options = PgConnectOptions::new()
                 .host(host)
@@ -47,10 +51,57 @@ pub async fn build_connector(
             }
             Ok(Box::new(PostgresConnector::from_options(options, settings)))
         }
+        DatabaseProfile::Mysql {
+            host,
+            port,
+            database,
+            user,
+            ssl_mode,
+            ssl_ca,
+            password,
+        } => {
+            let mut options = MySqlConnectOptions::new()
+                .host(host)
+                .port(port.unwrap_or(3306))
+                .database(database)
+                .username(user)
+                .ssl_mode(mysql_ssl(ssl_mode.unwrap_or(MySqlSslMode::VerifyIdentity)));
+            if let Some(reference) = password {
+                let secret = resolver.resolve(reference).map_err(config_error)?;
+                options = options.password(secret.expose());
+            }
+            if let Some(reference) = ssl_ca {
+                let secret = resolver.resolve(reference).map_err(config_error)?;
+                options = options.ssl_ca_from_pem(secret.expose().as_bytes().to_vec());
+            }
+            Ok(Box::new(MySqlConnector::from_options(
+                options, database, settings,
+            )))
+        }
+        DatabaseProfile::DuckDb { path, read_only } => {
+            if path != ":memory:" && read_only.is_none() {
+                return Err(ConnectionError::InvalidConfiguration(
+                    "DuckDB file profiles must set read_only explicitly".into(),
+                ));
+            }
+            DuckDbConnector::open(path, read_only.unwrap_or(false), settings)
+                .await
+                .map(|item| Box::new(item) as _)
+        }
         other => Err(ConnectionError::Unsupported(format!(
             "{} connector is not implemented yet",
             other.dialect().as_str()
         ))),
+    }
+}
+
+fn mysql_ssl(mode: MySqlSslMode) -> DriverMySqlSslMode {
+    match mode {
+        MySqlSslMode::Disable => DriverMySqlSslMode::Disabled,
+        MySqlSslMode::Prefer => DriverMySqlSslMode::Preferred,
+        MySqlSslMode::Require => DriverMySqlSslMode::Required,
+        MySqlSslMode::VerifyCa => DriverMySqlSslMode::VerifyCa,
+        MySqlSslMode::VerifyIdentity => DriverMySqlSslMode::VerifyIdentity,
     }
 }
 

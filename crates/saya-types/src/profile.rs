@@ -41,6 +41,10 @@ pub enum DatabaseProfile {
         port: Option<u16>,
         database: String,
         user: String,
+        #[serde(default, rename = "sslmode", alias = "ssl_mode")]
+        ssl_mode: Option<MySqlSslMode>,
+        #[serde(default, alias = "ssl_ca")]
+        ssl_ca: Option<SecretRef>,
         password: Option<SecretRef>,
     },
     #[serde(rename = "duckdb")]
@@ -77,6 +81,22 @@ pub enum PostgresSslMode {
     VerifyCa,
     #[serde(rename = "verify-full", alias = "verify_full")]
     VerifyFull,
+}
+
+/// MySQL TLS policy. Omitted legacy profiles are upgraded by the connector to
+/// `VerifyIdentity`; this type deliberately has no downgrade-capable default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MySqlSslMode {
+    #[serde(rename = "disable")]
+    Disable,
+    #[serde(rename = "prefer", alias = "preferred")]
+    Prefer,
+    #[serde(rename = "require")]
+    Require,
+    #[serde(rename = "verify-ca", alias = "verify_ca")]
+    VerifyCa,
+    #[serde(rename = "verify-identity", alias = "verify_identity")]
+    VerifyIdentity,
 }
 
 impl DatabaseProfile {
