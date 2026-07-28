@@ -7,17 +7,20 @@ use tokio::sync::Mutex;
 
 use crate::{ConnectorOptions, DatabaseConnector};
 
-use super::{auth::Auth, cancellation, errors, legacy, metadata, protocol_v2};
+use super::{auth::Auth, browser, cancellation, errors, legacy, metadata, protocol_v2, sso};
 
 pub struct SnowflakeConnector {
     pub(crate) client: reqwest::Client,
     pub(crate) origin: String,
     pub(crate) account: String,
+    pub(crate) account_identifier: String,
     pub(crate) user: String,
     pub(crate) auth: Auth,
     pub(crate) context: Context,
     pub(crate) timeout: Duration,
     pub(crate) active: Arc<Mutex<Option<String>>>,
+    pub(crate) browser_opener: fn(&str) -> Result<(), ()>,
+    pub(crate) sso_timeout: Duration,
 }
 
 #[derive(Clone)]
@@ -56,11 +59,14 @@ impl SnowflakeConnector {
             client,
             origin: format!("https://{host_account}.snowflakecomputing.com"),
             account: host_account.split('.').next().unwrap_or_default().into(),
+            account_identifier: host_account,
             user,
             auth,
             context,
             timeout,
             active: Arc::new(Mutex::new(None)),
+            browser_opener: browser::open,
+            sso_timeout: sso::auth_timeout(),
         })
     }
 }
@@ -86,11 +92,11 @@ impl DatabaseConnector for SnowflakeConnector {
     }
     async fn connect(&self) -> Result<(), ConnectionError> {
         match &self.auth {
-            Auth::ExternalBrowser { enabled: false } => Err(ConnectionError::Unsupported(
-                "Snowflake external-browser authentication requires interactive mode".into(),
-            )),
-            Auth::ExternalBrowser { enabled: true } => Err(ConnectionError::Unsupported("Snowflake external-browser session exchange is deferred until CLI interactive wiring".into())),
-            Auth::Keypair(_) => self.execute(QueryRequest::new("SELECT 1", 1)).await.map(|_| ()),
+            Auth::ExternalBrowser(_) => legacy::login(self).await.map(|_| ()),
+            Auth::Keypair(_) => self
+                .execute(QueryRequest::new("SELECT 1", 1))
+                .await
+                .map(|_| ()),
             Auth::Userpass(_) => legacy::login(self).await.map(|_| ()),
         }
     }
@@ -101,9 +107,7 @@ impl DatabaseConnector for SnowflakeConnector {
         match &self.auth {
             Auth::Keypair(_) => protocol_v2::execute(self, request).await,
             Auth::Userpass(_) => legacy::execute(self, request).await,
-            Auth::ExternalBrowser { .. } => Err(ConnectionError::Unsupported(
-                "Snowflake external-browser authentication requires interactive mode".into(),
-            )),
+            Auth::ExternalBrowser(_) => legacy::execute(self, request).await,
         }
     }
     async fn cancel(&self) -> Result<(), ConnectionError> {

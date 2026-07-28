@@ -31,6 +31,16 @@ pub async fn build_connector(
     resolver: &dyn SecretResolver,
     settings: ConnectorOptions,
 ) -> Result<Box<dyn DatabaseConnector>, ConnectionError> {
+    build_connector_with_prompt(profile, resolver, settings, false).await
+}
+
+/// Creates a connector with explicit permission for interactive authentication.
+pub async fn build_connector_with_prompt(
+    profile: &DatabaseProfile,
+    resolver: &dyn SecretResolver,
+    settings: ConnectorOptions,
+    can_prompt: bool,
+) -> Result<Box<dyn DatabaseConnector>, ConnectionError> {
     match profile {
         DatabaseProfile::Postgres {
             host,
@@ -90,7 +100,9 @@ pub async fn build_connector(
                 .await
                 .map(|item| Box::new(item) as _)
         }
-        DatabaseProfile::Snowflake { .. } => snowflake_factory::build(profile, resolver, settings),
+        DatabaseProfile::Snowflake { .. } => {
+            snowflake_factory::build(profile, resolver, settings, can_prompt)
+        }
     }
 }
 

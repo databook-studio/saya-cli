@@ -15,3 +15,9 @@ pub(crate) fn query() -> ConnectionError {
 pub(crate) fn schema() -> ConnectionError {
     ConnectionError::SchemaFailed("Snowflake schema discovery failed".into())
 }
+
+pub(crate) fn interactive() -> ConnectionError {
+    ConnectionError::Unsupported(
+        "Snowflake external-browser authentication requires interactive mode".into(),
+    )
+}

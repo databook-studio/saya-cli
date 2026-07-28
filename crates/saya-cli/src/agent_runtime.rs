@@ -6,7 +6,7 @@ use saya_agent::{
     CancellationToken, ChatMessage, run_agent_with_sink,
 };
 use saya_config::{AiProvider, ResolvedAi};
-use saya_connectors::{ConnectorOptions, build_connector};
+use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -47,13 +47,14 @@ pub(crate) async fn run_prompt_with_sink(
     let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
     let connector = match profile.as_ref() {
         Some(profile) => Some(
-            build_connector(
+            build_connector_with_prompt(
                 profile,
                 &runtime.secret_resolver(),
                 ConnectorOptions {
                     query_timeout_seconds: runtime.resolved.query_timeout_seconds,
                     ..Default::default()
                 },
+                can_prompt,
             )
             .await
             .map_err(|error| AgentRuntimeError::Database(error.to_string()))?,

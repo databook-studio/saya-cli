@@ -21,15 +21,27 @@ password = { env = "SAYA_MYSQL_PASSWORD" }
 sslmode = "verify-identity"
 # ssl_ca = { file = "/etc/ssl/certs/mysql-ca.pem" }
 
-# Snowflake is a configuration shape only in this alpha.
 [profiles.snowflake_prod]
 type = "snowflake"
 account = "xy12345"
 user = "jane"
 auth_type = "keypair"
-private_key = { file = "~/.snowflake/rsa_key.p8" }
+private_key = { file = "/absolute/path/to/rsa_key.p8" }
 passphrase = { env = "SAYA_SNOWFLAKE_PASSPHRASE" }
 warehouse = "ANALYTICS"
 database = "PROD"
 schema = "PUBLIC"
 role = "ANALYST"
+
+[profiles.snowflake_userpass]
+type = "snowflake"
+account = "xy12345"
+user = "jane"
+auth_type = "userpass"
+password = { env = "SAYA_SNOWFLAKE_PASSWORD" }
+
+[profiles.snowflake_browser]
+type = "snowflake"
+account = "xy12345"
+user = "jane"
+auth_type = "externalbrowser"

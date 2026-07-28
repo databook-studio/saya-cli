@@ -6,7 +6,13 @@ pub(crate) use keypair::jwt;
 pub(crate) enum Auth {
     Keypair(Keypair),
     Userpass(Userpass),
-    ExternalBrowser { enabled: bool },
+    ExternalBrowser(ExternalBrowser),
+}
+
+#[derive(Clone)]
+pub(crate) struct ExternalBrowser {
+    pub(crate) enabled: bool,
+    pub(crate) token: std::sync::Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 #[derive(Clone)]

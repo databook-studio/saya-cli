@@ -31,6 +31,17 @@ default is `verify-identity`. Password and CA values are retained only as
 environment references in the typed profile. Use `disable` only for a local
 TLS-disabled development server.
 
+Environment-only Snowflake uses `SAYA_DB_TYPE=snowflake`,
+`SAYA_DB_ACCOUNT`, `SAYA_DB_USER`, and `SAYA_DB_AUTH_TYPE=keypair|userpass|externalbrowser`.
+Keypair additionally requires `SAYA_DB_PRIVATE_KEY`; userpass requires
+`SAYA_DB_PASSWORD`; externalbrowser needs no secret. Optional context fields
+are `SAYA_DB_WAREHOUSE`, `SAYA_DB_NAME`, `SAYA_DB_SCHEMA`, and `SAYA_DB_ROLE`.
+Secret environment values become `SecretRef::Env` references and are never
+placed in the resolved typed profile. Use an explicit `--env-file` or process
+environment; process environment has precedence. File SecretRef paths are
+literal and do not expand `~` or `$VARS`. `env` and `file` are supported;
+keyring references are reserved and currently unavailable.
+
 Environment-only DuckDB uses `SAYA_DB_TYPE=duckdb` and `SAYA_DB_PATH`. A
 file-backed path must also set `SAYA_DB_READ_ONLY=true` or `false`; `:memory:`
 may omit it. `SAYA_DB_READ_ONLY` controls DuckDB file access mode and is
@@ -47,8 +58,7 @@ The REPL session directory uses `SAYA_SESSION_DIR` first, then
 `--approval-mode` resolves to `never` (schema-only); interactive mode defaults
 to `ask`.
 
-The private alpha connects to PostgreSQL, MySQL, and DuckDB. Snowflake remains
-unavailable. Environment and file secret
+The private alpha connects to PostgreSQL, MySQL, DuckDB, and Snowflake. Environment and file secret
 references are resolved at runtime without serializing or logging their values;
 keyring references return an explicit unavailable error. Provider settings may
 use either the established `SAYA_AI_PROVIDER`, `SAYA_AI_MODEL`, and

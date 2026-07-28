@@ -1,10 +1,10 @@
 # SAYA CLI
 
 SAYA CLI is an open-source, terminal-native shell for a database-aware SAYA
-agent. It is currently **private alpha**: PostgreSQL, MySQL, and DuckDB connection
+agent. It is currently **private alpha**: PostgreSQL, MySQL, DuckDB, and Snowflake connection
 tests, schema discovery, bounded read-only queries, and streaming configured
 Ollama/OpenAI-compatible provider calls are implemented alongside the interactive
-shell, redacted sessions, and text/JSON/NDJSON output. Snowflake remains unavailable.
+shell, redacted sessions, and text/JSON/NDJSON output.
 
 ## Quick start
 
@@ -16,7 +16,8 @@ printf '/help\n/exit\n' | cargo run -p saya-cli --
 
 Running `saya` starts a scrollback-preserving REPL. Use `/help` for commands.
 The automation surface is available as `saya ask`, `saya query`, `saya config`,
-and `saya connection`. PostgreSQL, MySQL, and DuckDB are live engines in this alpha.
+and `saya connection`. PostgreSQL, MySQL, DuckDB, and Snowflake are live engines
+in this alpha.
 
 ## Configuration
 
@@ -101,6 +102,52 @@ sslmode = "verify-identity"
 # ssl_ca = { file = "/etc/ssl/certs/mysql-ca.pem" }
 ```
 
+Snowflake accounts use an account identifier such as `xy12345` or
+`org-account.us-east-1.aws`, not a URL. Key-pair, password, and interactive
+browser authentication are supported:
+
+```toml
+[profiles.snowflake_keypair]
+type = "snowflake"
+account = "org-account.us-east-1.aws"
+user = "jane"
+auth_type = "keypair"
+private_key = { file = "/absolute/path/to/rsa_key.p8" }
+passphrase = { env = "SAYA_SNOWFLAKE_PASSPHRASE" }
+warehouse = "ANALYTICS"
+database = "PROD"
+schema = "PUBLIC"
+role = "ANALYST"
+
+[profiles.snowflake_userpass]
+type = "snowflake"
+account = "org-account.us-east-1.aws"
+user = "jane"
+auth_type = "userpass"
+password = { env = "SAYA_SNOWFLAKE_PASSWORD" }
+
+[profiles.snowflake_browser]
+type = "snowflake"
+account = "org-account.us-east-1.aws"
+user = "jane"
+auth_type = "externalbrowser"
+```
+
+File SecretRef paths are literal strings: `~` and environment variables are
+not expanded. The current runtime supports `env` and `file` SecretRefs;
+`{ keyring = "..." }` is a reserved shape and currently reports unavailable.
+For an environment-only profile, use an explicit env file or process
+environment with `SAYA_DB_TYPE`, `SAYA_DB_ACCOUNT`, `SAYA_DB_USER`, and
+`SAYA_DB_AUTH_TYPE`, plus `SAYA_DB_PRIVATE_KEY` for keypair or
+`SAYA_DB_PASSWORD` for userpass. Process environment overrides `--env-file`.
+`SAYA_DB_PRIVATE_KEY` is raw PEM content. Because env files are line-oriented
+and literal `\n` is not converted to a newline, put keypair PEM in a
+connections.toml file SecretRef such as `{ file = "/absolute/path/to/rsa_key.p8" }`,
+or provide raw multiline PEM through a process environment that preserves it.
+Browser authentication requires an interactive TTY and opens a system browser;
+it fails before binding, network, or browser launch with `--non-interactive` or
+piped input, and the localhost callback expires after 120 seconds.
+
 For a file-backed DuckDB profile, set `read_only` explicitly. `:memory:` may
 omit it. DuckDB external access, extension autoloading, community extensions,
 and persistent secrets are locked off by the CLI:
@@ -122,16 +169,30 @@ saya config doctor
 saya config show --resolved --redacted --format json
 saya connection test analytics --connections examples/connections.toml
 saya connection schema analytics --connections examples/connections.toml
+saya --non-interactive connection test snowflake_keypair \
+  --connections examples/connections.toml
+saya --non-interactive connection schema snowflake_keypair \
+  --connections examples/connections.toml
+saya --non-interactive --env-file .env.snowflake \
+  --profile snowflake_userpass connection test snowflake_userpass
+saya --profile snowflake_browser connection test snowflake_browser
 saya query --profile analytics --sql "SELECT current_database()"
+saya --non-interactive --profile snowflake_keypair query \
+  --sql "SELECT CURRENT_DATABASE()"
+saya --profile snowflake_browser --approval-mode read-only ask \
+  "summarize the selected schema"
 saya connection test local --connections examples/connections.toml
 saya query --profile local --connections examples/connections.toml --sql "SELECT 1"
 saya --profile local --approval-mode read-only ask "summarize the local schema"
 ```
 
+`--non-interactive` is valid for Snowflake keypair and userpass profiles, but
+not for `externalbrowser`, which requires an interactive TTY.
+
 ## Privacy and limitations
 
 The intended MVP policy is read-only, bounded queries with cloud row sharing
-disabled. PostgreSQL, MySQL, and DuckDB reject parse failures, writes, DDL, transaction/control
+disabled. PostgreSQL, MySQL, DuckDB, and Snowflake reject parse failures, writes, DDL, transaction/control
 statements, and multi-statements before execution. It observes one extra row to
 mark truncated results. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly

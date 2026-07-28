@@ -3,9 +3,10 @@
 > Goal: create `databook-studio/saya-cli`, a standalone open-source Rust CLI
 > that brings SAYA's database-aware agent loop to terminals, scripts, and CI.
 >
-> Planning status: interactive terminal mode is approved for MVP; the remaining
-> decisions at the end of this document still require confirmation. No GitHub
-> repository or implementation code has been created.
+> Planning status: private alpha implementation is active. PostgreSQL, MySQL,
+> DuckDB, and Snowflake connectors, typed profiles, interactive terminal mode,
+> and hermetic JSON/NDJSON command paths are implemented. The repository remains
+> private while the MVP is hardened before open-source publication.
 
 ## 1. Product Definition
 
@@ -24,7 +25,8 @@ React, Tauri commands, desktop IPC, DataBook licensing, or private app storage.
 - PostgreSQL, MySQL, DuckDB, and Snowflake profiles.
 - Ollama, OpenAI-compatible, OpenAI, Anthropic, and Gemini providers.
 - Config through TOML, process environment, and an explicit `.env` file.
-- Secret references through environment variables, files, and optional keyring.
+- Secret references through environment variables and files; keyring is a
+  reserved shape and currently unavailable in this runtime.
 - Schema discovery, read-only SQL execution, row limits, and query cancellation.
 - Single- and multi-database SAYA questions.
 - A Claude/Codex-style interactive terminal session launched with `saya`.
@@ -121,7 +123,7 @@ Core test seams:
 - `EventSink`
 - `TerminalRenderer`
 
-All production source files target 150 lines or fewer. The hard ceiling is 250
+All production source files target 150 lines or fewer. The hard ceiling is 300
 lines for this repository; split modules before reaching it.
 
 ## 4. Configuration Contract
@@ -216,7 +218,7 @@ path = "./data/warehouse.duckdb"
 read_only = true
 ```
 
-Snowflake example:
+Snowflake example (file paths are literal; `~` and `$VARS` are not expanded):
 
 ```toml
 [profiles.snowflake_prod]
@@ -224,8 +226,8 @@ type = "snowflake"
 account = "xy12345"
 user = "jane"
 auth_type = "keypair"
-private_key = { file = "~/.snowflake/rsa_key.p8" }
-passphrase = { keyring = "saya-cli/snowflake_prod/passphrase" }
+private_key = { file = "/absolute/path/to/rsa_key.p8" }
+passphrase = { env = "SAYA_SNOWFLAKE_PASSPHRASE" }
 warehouse = "ANALYTICS"
 database = "PROD"
 schema = "PUBLIC"
@@ -234,13 +236,14 @@ role = "ANALYST"
 
 ### Secret policy
 
-- Supported references: `env`, `file`, and `keyring`.
+- Supported references: `env` and `file`. `keyring` is reserved but currently
+  unavailable and returns a typed configuration error.
 - Never serialize resolved secrets.
 - Reject inline database passwords, private keys, and AI API keys by default.
 - Redact connection URLs and provider headers in logs and errors.
 - Warn when a referenced secret file has unsafe permissions where supported.
-- Keyring is optional at runtime so headless Linux and CI can use env/file
-  references without a desktop secret service.
+- A keyring shape is retained for forward compatibility, but this runtime
+  returns `KeyringUnavailable`; env/file references work in headless Linux and CI.
 
 Environment-only operation is supported:
 
@@ -330,7 +333,7 @@ never        do not allow live query execution; schema reasoning only
 
 Non-interactive runs never prompt. An omitted approval policy resolves to the
 safe `never` schema-only mode; `--approval-mode` may explicitly select another
-policy for a future live connector implementation. Interactive runs default to
+policy when the selected connector is available. Interactive runs default to
 `ask`.
 
 Common flags:
@@ -465,17 +468,17 @@ action, cancel safely, close the terminal, and resume the redacted session.
 - Add dialect-specific SQL policy tests.
 - Use Docker for MySQL and temporary files for DuckDB.
 
-Exit: the three connectors behave consistently through `ask`, `query`, and
+Exit: the four connectors behave consistently through `ask`, `query`, and
 schema commands.
 
 ### Phase 6 — Snowflake
 
-- Port auth and execution behavior behind Snowflake-specific modules.
-- Use HTTP fixtures for password/key-pair auth, polling, errors, gzip chunks,
-  raw unbracketed row parsing, and SSE-C headers.
-- Make browser SSO interactive-only and fail clearly under
-  `--non-interactive`.
-- Keep live Snowflake tests opt-in and secret-backed.
+- Typed TOML/env profiles support keypair, userpass, and externalbrowser auth.
+- HTTP fixtures cover auth, polling, errors, gzip chunks, raw unbracketed row
+  parsing, SSE-C headers, and redacted browser callback failures.
+- Browser SSO is interactive-only, bounded to 120 seconds, and fails clearly
+  under `--non-interactive` or piped input.
+- Live Snowflake tests remain opt-in and secret-backed; CI stays hermetic.
 
 Exit: fixture suite passes everywhere and opt-in live validation passes before
 removing the beta label.
@@ -557,7 +560,7 @@ Recommended defaults are shown in parentheses:
 3. Canonical config format (`TOML`).
 4. MVP databases (PostgreSQL, MySQL, DuckDB, Snowflake).
 5. Secret policy (references only; no inline secrets by default).
-6. Keyring support (optional in MVP, env/file always available).
+6. Keyring support (deferred; env/file references are the supported MVP shapes).
 7. Privacy (read-only; cloud row sharing disabled by default).
 8. Snowflake browser SSO (supported only in interactive terminals).
 9. Skills and Goal mode (post-MVP).

@@ -52,6 +52,7 @@ pub(super) async fn run(
     file: Option<PathBuf>,
     runtime: &RuntimeConfig,
     format: RenderFormat,
+    can_prompt: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let sql = input(sql, file)?;
     if sql.trim().is_empty() {
@@ -64,7 +65,8 @@ pub(super) async fn run(
             format,
         );
     };
-    let Some(connector) = connection::connector(profile, runtime, 4, format).await? else {
+    let Some(connector) = connection::connector(profile, runtime, 4, format, can_prompt).await?
+    else {
         return Ok(4);
     };
     match connector.connect().await {

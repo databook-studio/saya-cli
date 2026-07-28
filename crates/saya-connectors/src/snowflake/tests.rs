@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use flate2::{Compression, write::GzEncoder};
 use rsa::{
@@ -8,12 +11,12 @@ use rsa::{
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::Mutex,
     time::sleep,
 };
 
-use super::{Auth, Context, Keypair, SnowflakeConnector, Userpass};
+use super::{Auth, Context, ExternalBrowser, Keypair, SnowflakeConnector, Userpass};
 use crate::{ConnectorOptions, DatabaseConnector};
 
 #[derive(Clone)]
@@ -154,6 +157,87 @@ fn userpass() -> Auth {
         password: "password-sentinel".into(),
         token: Arc::new(Mutex::new(None)),
     })
+}
+
+#[tokio::test]
+async fn callback_accepts_empty_preconnect_and_fragmented_form_post() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let sender = tokio::spawn(async move {
+        let _ = TcpStream::connect(address).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        stream
+            .write_all(b"POST /callback HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 21\r\n\r\ntoken=")
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(10)).await;
+        stream.write_all(b"a%2Bb%26c%3D%3F").await.unwrap();
+    });
+    let token = super::sso_callback::capture_token(&listener, Duration::from_secs(1))
+        .await
+        .unwrap();
+    sender.await.unwrap();
+    assert_eq!(token, "a+b&c=?");
+}
+
+#[tokio::test]
+async fn callback_rejects_wrong_method_content_type_and_malformed_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let sender = tokio::spawn(async move {
+        for request in [
+            "PUT /callback HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            "POST /callback HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ntoken=no",
+            "BROKEN\r\n\r\n",
+            "GET /callback?token=final%2Btoken HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ] {
+            let mut stream = TcpStream::connect(address).await.unwrap();
+            stream.write_all(request.as_bytes()).await.unwrap();
+            sleep(Duration::from_millis(5)).await;
+        }
+    });
+    let token = super::sso_callback::capture_token(&listener, Duration::from_secs(1))
+        .await
+        .unwrap();
+    sender.await.unwrap();
+    assert_eq!(token, "final+token");
+}
+
+#[tokio::test]
+async fn callback_rejects_duplicate_fields_oversized_input_and_times_out() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let sender = tokio::spawn(async move {
+        for request in [
+            "POST /callback HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 8\r\nContent-Length: 8\r\n\r\ntoken=no",
+            "POST /callback HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 8\r\n\r\ntoken=no",
+            "GET /callback?token=one&token=two HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            "POST /callback HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 5\r\n\r\ntoken=extra",
+            &format!(
+                "GET /callback?token=large HTTP/1.1\r\nX-Large: {}\r\n\r\n",
+                "x".repeat(17 * 1024)
+            ),
+            "POST /callback HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 9000\r\n\r\n",
+            "GET /callback?token=final HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        ] {
+            let mut stream = TcpStream::connect(address).await.unwrap();
+            stream.write_all(request.as_bytes()).await.unwrap();
+            sleep(Duration::from_millis(5)).await;
+        }
+    });
+    let token = super::sso_callback::capture_token(&listener, Duration::from_secs(1))
+        .await
+        .unwrap();
+    sender.await.unwrap();
+    assert_eq!(token, "final");
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    assert!(
+        super::sso_callback::capture_token(&listener, Duration::from_millis(20))
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -350,6 +434,12 @@ async fn legacy_relogs_once_decodes_gzip_chunks_and_forwards_only_ssec_headers()
     let (origin, seen) = server(vec![login(), expired, login(), query]).await;
     let mut item = connector(userpass());
     item.origin = origin;
+    item.context = Context {
+        warehouse: Some("WH".into()),
+        database: Some("DB".into()),
+        schema: Some("SCH".into()),
+        role: Some("ROLE".into()),
+    };
     let output = item
         .execute(saya_types::QueryRequest::new("SELECT 1", 3))
         .await
@@ -375,6 +465,14 @@ async fn legacy_relogs_once_decodes_gzip_chunks_and_forwards_only_ssec_headers()
     assert!(first.contains("x-amz-server-side-encryption-customer-key-md5: md5"));
     assert!(!first.contains("x-not-forwarded"));
     assert_eq!(two_seen.lock().await.len(), 1);
+    let login = &requests[0];
+    let login_json: Value = serde_json::from_str(request_body(login)).unwrap();
+    assert_eq!(login_json["data"]["WAREHOUSE_NAME"], "WH");
+    assert!(login_json["data"].get("WAREHOUSE").is_none());
+    assert!(login.contains("warehouse=WH"));
+    assert!(login.contains("databaseName=DB"));
+    assert!(login.contains("schemaName=SCH"));
+    assert!(login.contains("roleName=ROLE"));
 }
 
 #[tokio::test]
@@ -511,7 +609,10 @@ async fn keypair_connect_performs_a_real_statement_request() {
 
 #[tokio::test]
 async fn external_browser_is_disabled_by_default() {
-    let item = connector(Auth::ExternalBrowser { enabled: false });
+    let item = connector(Auth::ExternalBrowser(ExternalBrowser {
+        enabled: false,
+        token: Arc::new(Mutex::new(None)),
+    }));
     assert!(
         item.connect()
             .await
@@ -519,6 +620,243 @@ async fn external_browser_is_disabled_by_default() {
             .to_string()
             .contains("interactive mode")
     );
+}
+
+fn test_browser_opener(_: &str) -> Result<(), ()> {
+    Ok(())
+}
+
+static OPENED_URL: OnceLock<std::sync::Mutex<Option<String>>> = OnceLock::new();
+
+fn record_browser_opener(url: &str) -> Result<(), ()> {
+    *OPENED_URL
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap() = Some(url.into());
+    Ok(())
+}
+
+fn failing_browser_opener(_: &str) -> Result<(), ()> {
+    Err(())
+}
+
+fn external_connector() -> SnowflakeConnector {
+    connector(Auth::ExternalBrowser(ExternalBrowser {
+        enabled: true,
+        token: Arc::new(Mutex::new(None)),
+    }))
+}
+
+fn auth_response(url: &str) -> Reply {
+    Reply::json(json!({"success":true,"data":{"ssoUrl":url,"proofKey":"proof-marker"}}))
+}
+
+#[tokio::test]
+async fn external_browser_rejects_bad_urls_provider_failures_and_opener_failures() {
+    for url in [
+        "http://idp.example.test/login",
+        "https://user:pass@idp.example.test/login",
+        "not-a-url",
+    ] {
+        let (origin, _) = server(vec![auth_response(url)]).await;
+        let mut item = external_connector();
+        item.origin = origin;
+        item.browser_opener = record_browser_opener;
+        let error = item.connect().await.unwrap_err().to_string();
+        assert!(!error.contains("idp.example"));
+        assert!(!error.contains("proof-marker"));
+    }
+    let marker = "provider-body-marker";
+    for response in [
+        Reply::status("500 Internal Server Error", json!({"message":marker})),
+        Reply {
+            status: "200 OK",
+            body: marker.as_bytes().to_vec(),
+            headers: vec![],
+            delay: Duration::ZERO,
+        },
+        Reply::json(json!({"success":false,"message":marker})),
+    ] {
+        let (origin, _) = server(vec![response]).await;
+        let mut item = external_connector();
+        item.origin = origin;
+        let error = item.connect().await.unwrap_err().to_string();
+        assert!(!error.contains(marker));
+    }
+    let (origin, _) = server(vec![auth_response(
+        "https://idp.example.test/login?state=secret",
+    )])
+    .await;
+    let mut item = external_connector();
+    item.origin = origin;
+    item.browser_opener = failing_browser_opener;
+    let error = item.connect().await.unwrap_err().to_string();
+    assert!(!error.to_string().contains("state=secret"));
+}
+
+#[tokio::test]
+async fn external_browser_timeout_is_bounded_and_secret_free() {
+    let marker = "callback-secret-marker";
+    let (origin, _) = server(vec![auth_response(
+        "https://idp.example.test/login?state=secret",
+    )])
+    .await;
+    let mut item = external_connector();
+    item.origin = origin;
+    item.browser_opener = record_browser_opener;
+    item.sso_timeout = Duration::from_millis(30);
+    let error = item.connect().await.unwrap_err().to_string();
+    assert!(!error.contains(marker));
+    assert!(!error.contains("state=secret"));
+}
+
+async fn sso_fixture_server() -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let capture = seen.clone();
+    tokio::spawn(async move {
+        let mut auth_count = 0;
+        let mut query_count = 0;
+        for _ in 0..7 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut socket).await;
+            capture.lock().await.push(request.clone());
+            let response = if request.starts_with("POST /session/authenticator-request") {
+                auth_count += 1;
+                let body: Value = serde_json::from_str(request_body(&request)).unwrap();
+                let port = body["data"]["BROWSER_MODE_REDIRECT_PORT"].as_u64().unwrap() as u16;
+                let token = format!("callback-{auth_count}%2Breserved%26value");
+                tokio::spawn(async move {
+                    sleep(Duration::from_millis(5)).await;
+                    let mut callback = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+                    let body = format!("token={token}");
+                    let header = format!(
+                        "POST /callback HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n",
+                        body.len()
+                    );
+                    callback.write_all(header.as_bytes()).await.unwrap();
+                    sleep(Duration::from_millis(5)).await;
+                    callback.write_all(body.as_bytes()).await.unwrap();
+                });
+                json!({"success":true,"data":{"ssoUrl":"https://idp.example.test/login?state=redacted","proofKey":"proof-key"}})
+            } else if request.starts_with("POST /session/v1/login-request") {
+                json!({"success":true,"data":{"token":format!("session-{auth_count}")}})
+            } else {
+                query_count += 1;
+                if query_count == 1 {
+                    json!({"success":false,"data":{"code":"390104"}})
+                } else {
+                    json!({"success":true,"data":{"rowtype":[{"name":"N"}],"rowset":[[7]]}})
+                }
+            };
+            let body = response.to_string();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(headers.as_bytes()).await.unwrap();
+            socket.write_all(body.as_bytes()).await.unwrap();
+        }
+    });
+    (format!("http://{address}"), seen)
+}
+
+async fn sso_exchange_failure_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut socket).await;
+        let body: Value = serde_json::from_str(request_body(&request)).unwrap();
+        let port = body["data"]["BROWSER_MODE_REDIRECT_PORT"].as_u64().unwrap() as u16;
+        let response = auth_response("https://idp.example.test/login?state=exchange-secret");
+        let body = String::from_utf8(response.body).unwrap();
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        let mut callback = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let callback_body = "token=callback-secret";
+        callback.write_all(format!("POST /callback HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{callback_body}", callback_body.len()).as_bytes()).await.unwrap();
+        let (mut exchange, _) = listener.accept().await.unwrap();
+        let _ = read_request(&mut exchange).await;
+        let body = "{\"message\":\"session-secret\"}";
+        exchange.write_all(format!("HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    });
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn external_browser_exchanges_fragmented_callback_caches_and_reauthenticates() {
+    let (origin, seen) = sso_fixture_server().await;
+    let mut item = connector(Auth::ExternalBrowser(ExternalBrowser {
+        enabled: true,
+        token: Arc::new(Mutex::new(None)),
+    }));
+    item.origin = origin;
+    item.browser_opener = record_browser_opener;
+    item.sso_timeout = Duration::from_secs(2);
+    item.context = Context {
+        warehouse: Some("WH".into()),
+        database: Some("DB".into()),
+        schema: Some("SCH".into()),
+        role: Some("ROLE".into()),
+    };
+    let first = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap();
+    let second = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap();
+    assert_eq!(first.rows, rows(&[7]));
+    assert_eq!(second.rows, rows(&[7]));
+    let requests = seen.lock().await;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|item| item.starts_with("POST /session/authenticator-request"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|item| item.starts_with("POST /session/v1/login-request"))
+            .count(),
+        2
+    );
+    let exchange: Value = serde_json::from_str(request_body(&requests[1])).unwrap();
+    assert_eq!(exchange["data"]["ACCOUNT_NAME"], "acct");
+    assert_eq!(exchange["data"]["LOGIN_NAME"], "user");
+    assert_eq!(exchange["data"]["TOKEN"], "callback-1+reserved&value");
+    assert_eq!(exchange["data"]["PROOF_KEY"], "proof-key");
+    assert_eq!(exchange["data"]["WAREHOUSE_NAME"], "WH");
+    assert!(requests[1].contains("warehouse=WH"));
+    assert!(requests[1].contains("databaseName=DB"));
+    assert!(requests[1].contains("schemaName=SCH"));
+    assert!(requests[1].contains("roleName=ROLE"));
+    assert!(requests[2].contains("Snowflake Token=\"session-1\""));
+    assert!(requests[5].contains("Snowflake Token=\"session-2\""));
+    let opened = OPENED_URL.get().unwrap().lock().unwrap().clone().unwrap();
+    assert_eq!(opened, "https://idp.example.test/login?state=redacted");
+}
+
+#[tokio::test]
+async fn external_browser_login_exchange_failure_is_generic_and_redacted() {
+    let origin = sso_exchange_failure_server().await;
+    let mut item = external_connector();
+    item.origin = origin;
+    item.browser_opener = test_browser_opener;
+    item.sso_timeout = Duration::from_secs(1);
+    let error = item.connect().await.unwrap_err().to_string();
+    for marker in [
+        "exchange-secret",
+        "callback-secret",
+        "session-secret",
+        "proof-marker",
+    ] {
+        assert!(!error.contains(marker));
+    }
 }
 
 #[test]
