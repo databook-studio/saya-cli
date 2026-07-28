@@ -34,7 +34,7 @@ pub(crate) fn request(request: ChatRequest) -> OllamaRequest {
         model: request.model,
         messages: messages(request.messages),
         tools: tools(request.tools),
-        stream: false,
+        stream: true,
     }
 }
 

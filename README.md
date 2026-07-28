@@ -2,7 +2,7 @@
 
 SAYA CLI is an open-source, terminal-native shell for a database-aware SAYA
 agent. It is currently **alpha**: PostgreSQL connection tests, schema discovery,
-bounded read-only queries, and configured Ollama/OpenAI-compatible provider calls
+bounded read-only queries, and streaming configured Ollama/OpenAI-compatible provider calls
 are implemented alongside the interactive shell, redacted sessions, and
 text/JSON/NDJSON output. Other database engines remain unavailable.
 
@@ -121,7 +121,12 @@ Unavailable or failed connection/schema operations return `3`, while safety and
 query failures return `4`; provider/agent failures return `5`. Non-interactive
 mode defaults to `never` approval (schema-only) unless `--approval-mode` is
 explicit; interactive sessions default to `ask`. This MVP uses complete-chat
-HTTP requests and does not yet stream model tokens.
+HTTP streams token deltas from Ollama and OpenAI-compatible chat-completions. Text output writes
+deltas as they arrive; JSON and NDJSON each write one stable JSON event envelope per delta.
+Requests retry retryable connection setup failures, HTTP 429, and 5xx responses only before the
+provider yields an event. A body transport failure is surfaced without retry because replaying a
+partially consumed response cannot be proved action-free. `Ctrl+C` cancels a one-shot request with
+exit code 130. Full multi-turn provider context and raw-mode interactive cancellation remain next-slice work.
 Interactive prompts do not yet send full multi-turn model context; resumed
 sessions contain redacted local history and do not reconstruct provider
 conversation context.

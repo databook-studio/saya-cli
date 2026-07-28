@@ -1,17 +1,16 @@
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
-
+#[path = "render_delta.rs"]
+mod render_delta;
 #[path = "render_json.rs"]
 mod render_json;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,
     Json,
     Ndjson,
 }
-
 impl From<crate::cli::FormatArg> for RenderFormat {
     fn from(value: crate::cli::FormatArg) -> Self {
         match value {
@@ -30,7 +29,6 @@ impl From<OutputFormat> for RenderFormat {
         }
     }
 }
-
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TerminalEvent {
@@ -38,6 +36,7 @@ pub enum TerminalEvent {
     ToolRequested { name: String },
     ToolCompleted { name: String, summary: String },
     ToolDenied { name: String, reason: String },
+    Complete,
     Result { message: String },
     QueryResult { result: QueryResult },
     Schema { schema: SchemaTree },
@@ -45,7 +44,6 @@ pub enum TerminalEvent {
     Diagnostic { message: String },
     Error { message: String },
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
     pub stdout: String,
@@ -65,10 +63,7 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: String::new(),
             stderr: format!("{message}\n"),
         },
-        TerminalEvent::AssistantText { text } => Rendered {
-            stdout: format!("{text}\n"),
-            stderr: String::new(),
-        },
+        TerminalEvent::AssistantText { text } => render_delta::text(text),
         TerminalEvent::ToolRequested { name } => Rendered {
             stdout: format!("Using read-only tool: {name}\n"),
             stderr: String::new(),
@@ -79,6 +74,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::ToolDenied { name, reason } => Rendered {
             stdout: format!("Approval denied for {name}: {reason}\n"),
+            stderr: String::new(),
+        },
+        TerminalEvent::Complete => Rendered {
+            stdout: "\n".into(),
             stderr: String::new(),
         },
         TerminalEvent::Result { message } => Rendered {

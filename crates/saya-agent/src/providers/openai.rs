@@ -1,9 +1,12 @@
-use super::openai_response::OpenAiResponse;
 use super::{
+    http::send_stream,
+    openai_stream,
     settings::{ProviderSettings, endpoint},
     wire::{messages, tools},
 };
-use crate::{ChatProvider, ChatRequest, ChatResponse, ProviderError};
+use crate::{
+    CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderStream,
+};
 use async_trait::async_trait;
 use serde::Serialize;
 
@@ -32,33 +35,36 @@ impl ChatProvider for OpenAiCompatibleProvider {
     fn name(&self) -> &str {
         "openai-compatible"
     }
-
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        self.collect(request).await
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ProviderStream, ProviderError> {
         let body = OpenAiRequest::from_request(request);
         let url = endpoint(
             self.settings.base_url.as_deref(),
             "https://api.openai.com/v1",
             "chat/completions",
         );
-        let mut request = self.client.post(url).json(&body);
-        if let Some(key) = self.api_key.as_deref() {
-            request = request.bearer_auth(key);
-        }
-        let response = request
-            .send()
-            .await
-            .map_err(|_| ProviderError::Request("network request failed".into()))?;
-        if !response.status().is_success() {
-            return Err(ProviderError::Request(format!(
-                "HTTP {}",
-                response.status().as_u16()
-            )));
-        }
-        let payload = response
-            .json::<OpenAiResponse>()
-            .await
-            .map_err(|_| ProviderError::InvalidResponse)?;
-        payload.into_chat_response()
+        let client = &self.client;
+        let key = self.api_key.as_deref();
+        let response = send_stream(
+            || {
+                let request = client.post(&url).json(&body);
+                if let Some(value) = key {
+                    request.bearer_auth(value)
+                } else {
+                    request
+                }
+            },
+            &self.settings.retry_delays,
+            &cancellation,
+        )
+        .await?;
+        Ok(openai_stream::parse(response, cancellation))
     }
 }
 
@@ -67,14 +73,15 @@ struct OpenAiRequest {
     model: String,
     messages: Vec<super::wire::WireMessage>,
     tools: Vec<super::wire::WireTool>,
+    stream: bool,
 }
-
 impl OpenAiRequest {
     fn from_request(request: ChatRequest) -> Self {
         Self {
             model: request.model,
             messages: messages(request.messages),
             tools: tools(request.tools),
+            stream: true,
         }
     }
 }

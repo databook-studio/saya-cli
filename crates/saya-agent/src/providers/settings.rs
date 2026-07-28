@@ -5,6 +5,7 @@ pub struct ProviderSettings {
     pub model: String,
     pub base_url: Option<String>,
     pub timeout: Duration,
+    pub retry_delays: Vec<Duration>,
 }
 
 impl ProviderSettings {
@@ -13,7 +14,13 @@ impl ProviderSettings {
             model: model.into(),
             base_url,
             timeout: Duration::from_secs(60),
+            retry_delays: vec![Duration::from_millis(10), Duration::from_millis(20)],
         }
+    }
+
+    pub fn with_retry_delays(mut self, retry_delays: Vec<Duration>) -> Self {
+        self.retry_delays = retry_delays;
+        self
     }
 }
 

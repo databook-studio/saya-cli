@@ -2,8 +2,9 @@ use crate::{
     agent_runtime::{self, PromptOverrides},
     config_runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent},
+    stream_render::TerminalSink,
 };
-use saya_agent::{AgentEvent, ApprovalPolicy};
+use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_types::{ConnectionError, QueryRequest};
 use std::{fs, path::PathBuf};
 
@@ -24,36 +25,24 @@ pub(super) async fn ask(
     if prompt.trim().is_empty() {
         return Err("ask requires a prompt or --file".into());
     }
-    match agent_runtime::run_prompt(
+    let cancellation = CancellationToken::new();
+    let sink = TerminalSink::new(format);
+    let work = agent_runtime::run_prompt_with_sink(
         runtime,
         &prompt,
         approval,
         can_prompt,
         PromptOverrides::default(),
-    )
-    .await
-    {
-        Ok(output) => {
-            for event in output.events {
-                if let Some(event) = agent_event(event) {
-                    emit(event, format);
-                }
-            }
-            Ok(0)
-        }
+        &sink,
+        cancellation.clone(),
+    );
+    tokio::pin!(work);
+    match tokio::select! {
+        result = &mut work => result,
+        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); return Ok(130); }
+    } {
+        Ok(_) => Ok(0),
         Err(error) => failure_message(5, error.to_string(), format),
-    }
-}
-
-fn agent_event(event: AgentEvent) -> Option<TerminalEvent> {
-    match event {
-        AgentEvent::AssistantText { text } => Some(TerminalEvent::AssistantText { text }),
-        AgentEvent::ToolRequested { name } => Some(TerminalEvent::ToolRequested { name }),
-        AgentEvent::ToolCompleted { name, summary } => {
-            Some(TerminalEvent::ToolCompleted { name, summary })
-        }
-        AgentEvent::ToolDenied { name, reason } => Some(TerminalEvent::ToolDenied { name, reason }),
-        AgentEvent::Complete => None,
     }
 }
 
