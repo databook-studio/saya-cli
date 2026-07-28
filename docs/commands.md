@@ -30,7 +30,8 @@ OpenAI-compatible chat endpoint, can inspect schema, and can run bounded SQL
 according to the approval policy. Connection and schema failures return code
 `3`; provider/agent failures return `5`. JSON writes result envelopes to
 stdout and diagnostics to stderr; NDJSON uses one stable envelope per line.
-The agent does not yet stream model tokens. `/history` lists saved session IDs
+`ask` streams provider text deltas. Text output writes deltas immediately, while JSON and NDJSON
+write one valid stable JSON event envelope per delta. `/history` lists saved session IDs
 in recent-first order, while `/connect` and `/include` only accept configured
 profiles and report selection. `/connect`, `/privacy`, `/model`, and
 `/provider` are per-session overrides used by the next prompt; supported

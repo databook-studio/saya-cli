@@ -1,45 +1,69 @@
+use futures_util::StreamExt;
 use saya_agent::{
-    ChatMessage, ChatProvider, ChatRequest, OllamaProvider, OpenAiCompatibleProvider,
-    ProviderSettings, ToolDefinition,
+    CancellationToken, ChatMessage, ChatProvider, ChatRequest, OllamaProvider,
+    OpenAiCompatibleProvider, ProviderError, ProviderSettings, ToolDefinition,
 };
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
     thread,
+    time::Duration,
 };
 
-fn mock_server(response: &'static str) -> (String, Arc<Mutex<String>>, thread::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = format!("http://{}", listener.local_addr().unwrap());
-    let request = Arc::new(Mutex::new(String::new()));
-    let captured = request.clone();
-    let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let body = read_request(&mut stream);
-        *captured.lock().unwrap() = body;
-        let bytes = response.as_bytes();
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}", bytes.len(), response).unwrap();
-    });
-    (address, request, handle)
+struct Reply {
+    status: u16,
+    chunks: Vec<&'static str>,
 }
 
-fn mock_sequence(
-    responses: Vec<&'static str>,
-) -> (String, Arc<Mutex<Vec<String>>>, thread::JoinHandle<()>) {
+fn server(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String>>>, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = format!("http://{}", listener.local_addr().unwrap());
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let captured = requests.clone();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let copy = captured.clone();
     let handle = thread::spawn(move || {
-        for response in responses {
+        for reply in replies {
             let (mut stream, _) = listener.accept().unwrap();
-            captured.lock().unwrap().push(read_request(&mut stream));
-            let bytes = response.as_bytes();
-            write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}", bytes.len(), response).unwrap();
+            copy.lock().unwrap().push(read_request(&mut stream));
+            let body = reply.chunks.concat();
+            write!(stream, "HTTP/1.1 {} OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n", reply.status, body.len()).unwrap();
+            for chunk in reply.chunks {
+                stream.write_all(chunk.as_bytes()).unwrap();
+                stream.flush().unwrap();
+                thread::sleep(Duration::from_millis(2));
+            }
         }
     });
-    (address, requests, handle)
+    (base, captured, handle)
+}
+
+fn byte_server(chunks: Vec<Vec<u8>>) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = read_request(&mut stream);
+        let length: usize = chunks.iter().map(Vec::len).sum();
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").unwrap();
+        for chunk in chunks {
+            stream.write_all(&chunk).unwrap();
+            stream.flush().unwrap();
+        }
+    });
+    (base, handle)
+}
+
+fn keep_open_server(body: &'static str) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = read_request(&mut stream);
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\n{}", body.len() + 1, body).unwrap();
+        stream.flush().unwrap();
+        thread::sleep(Duration::from_millis(200));
+    });
+    (base, handle)
 }
 
 fn read_request(stream: &mut TcpStream) -> String {
@@ -49,7 +73,7 @@ fn read_request(stream: &mut TcpStream) -> String {
     loop {
         let count = stream.read(&mut buffer).unwrap();
         bytes.extend_from_slice(&buffer[..count]);
-        if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+        if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
             header_end = end + 4;
             break;
         }
@@ -80,111 +104,215 @@ fn request() -> ChatRequest {
         }],
     }
 }
-
-#[tokio::test]
-async fn openai_compatible_provider_posts_tools_and_parses_tool_calls() {
-    let response = r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call-7","type":"function","function":{"name":"schema_discovery","arguments":"{}"}}]}}]}"#;
-    let (base, captured, handle) = mock_server(response);
-    let provider = OpenAiCompatibleProvider::new(
-        ProviderSettings::new("test-model", Some(format!("{base}/v1"))),
+fn openai(base: String) -> OpenAiCompatibleProvider {
+    OpenAiCompatibleProvider::new(
+        ProviderSettings::new("test-model", Some(format!("{base}/v1")))
+            .with_retry_delays(vec![Duration::ZERO]),
         Some("secret-sentinel"),
     )
-    .unwrap();
-    let result = provider.complete(request()).await.unwrap();
-    handle.join().unwrap();
-    assert_eq!(result.message.tool_calls[0].name, "schema_discovery");
-    let sent = captured.lock().unwrap();
-    assert!(sent.starts_with("POST /v1/chat/completions"));
-    assert!(sent.contains("Bearer secret-sentinel"));
-    assert!(sent.contains("schema_discovery"));
+    .unwrap()
 }
 
 #[tokio::test]
-async fn ollama_provider_posts_non_streaming_chat_and_parses_text() {
-    let response = r#"{"message":{"role":"assistant","content":"ready"}}"#;
-    let (base, captured, handle) = mock_server(response);
-    let provider = OllamaProvider::new(ProviderSettings::new("test-model", Some(base))).unwrap();
-    let result = provider.complete(request()).await.unwrap();
-    handle.join().unwrap();
-    assert_eq!(result.message.content, "ready");
-    let sent = captured.lock().unwrap();
-    assert!(sent.starts_with("POST /api/chat"));
-    assert!(sent.contains("\"stream\":false"));
-}
-
-#[tokio::test]
-async fn ollama_tool_follow_up_uses_native_arguments_objects() {
-    let first = r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"schema_discovery","arguments":{}}}]}}"#;
-    let second = r#"{"message":{"role":"assistant","content":"schema ready"}}"#;
-    let (base, requests, handle) = mock_sequence(vec![first, second]);
-    let provider = OllamaProvider::new(ProviderSettings::new("test-model", Some(base))).unwrap();
-    let first_result = provider.complete(request()).await.unwrap();
-    let follow_up = ChatRequest {
-        model: "test-model".into(),
-        messages: vec![
-            ChatMessage {
-                role: "assistant".into(),
-                content: String::new(),
-                tool_calls: first_result.message.tool_calls,
-                tool_call_id: None,
-            },
-            ChatMessage {
-                role: "tool".into(),
-                content: "{\"schema\":{}}".into(),
-                tool_calls: Vec::new(),
-                tool_call_id: Some("call-0".into()),
-            },
+async fn openai_sse_handles_fragmented_text_and_done() {
+    let (base, requests, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel",
+            "lo\"}}]}\n\n: harmless\n\ndata: [DONE]\n\n",
         ],
-        tools: request().tools,
-    };
-    assert_eq!(
-        provider.complete(follow_up).await.unwrap().message.content,
-        "schema ready"
-    );
+    }]);
+    let response = openai(base).complete(request()).await.unwrap();
     handle.join().unwrap();
-    let captured = requests.lock().unwrap();
-    assert_eq!(captured.len(), 2);
-    assert!(
-        captured[1].contains("\"arguments\":{}"),
-        "unexpected native payload: {}",
-        captured[1]
-    );
-    assert!(!captured[1].contains("\\\"arguments\\\":"));
-    assert!(!captured[1].contains("\"tool_calls\":[{\"id\""));
+    assert_eq!(response.message.content, "Hello");
+    let sent = &requests.lock().unwrap()[0];
+    assert!(sent.contains("\"stream\":true"));
+    assert!(sent.contains("Bearer secret-sentinel"));
 }
 
 #[tokio::test]
-async fn provider_errors_do_not_include_authorization_material() {
-    let (base, _, handle) = mock_server(r#"{"error":"secret-sentinel"}"#);
-    let provider = OpenAiCompatibleProvider::new(
-        ProviderSettings::new("test-model", Some(base)),
-        Some("secret-sentinel"),
-    )
-    .unwrap();
-    let error = provider.complete(request()).await.unwrap_err();
+async fn openai_sse_preserves_utf8_and_queued_delta_before_done() {
+    let body = b"data: {\"choices\":[{\"delta\":{\"content\":\"planet \xf0\x9f\x8c\x8d\"}}]}\n\ndata: [DONE]\n\n";
+    let split = body.iter().position(|byte| *byte == 0xf0).unwrap() + 2;
+    let (base, handle) = byte_server(vec![body[..split].to_vec(), body[split..].to_vec()]);
+    assert_eq!(
+        openai(base)
+            .complete(request())
+            .await
+            .unwrap()
+            .message
+            .content,
+        "planet 🌍"
+    );
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn terminal_sentinels_allow_only_trailing_ascii_whitespace() {
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n \r\n\t",
+        ],
+    }]);
+    assert_eq!(
+        openai(base)
+            .complete(request())
+            .await
+            .unwrap()
+            .message
+            .content,
+        "ok"
+    );
+    handle.join().unwrap();
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\nnot-whitespace",
+        ],
+    }]);
+    assert!(matches!(
+        openai(base).complete(request()).await,
+        Err(ProviderError::InvalidResponse)
+    ));
+    handle.join().unwrap();
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec!["{\"message\":{\"content\":\"ok\"},\"done\":true}\n \r\n\t"],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    assert_eq!(
+        provider.complete(request()).await.unwrap().message.content,
+        "ok"
+    );
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn terminal_markers_finish_without_waiting_for_socket_close() {
+    let (base, handle) = keep_open_server(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+    );
+    let response =
+        tokio::time::timeout(Duration::from_millis(100), openai(base).complete(request()))
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(response.message.content, "ok");
+    handle.join().unwrap();
+    let (base, handle) = keep_open_server("{\"message\":{\"content\":\"ok\"},\"done\":true}\n");
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let response = tokio::time::timeout(Duration::from_millis(100), provider.complete(request()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.message.content, "ok");
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn openai_sse_assembles_fragmented_tool_calls() {
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-7\",\"function\":{\"name\":\"schema_",
+            "discovery\",\"arguments\":\"{\\\"schema\\\":\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"public\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ],
+    }]);
+    let response = openai(base).complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.tool_calls[0].name, "schema_discovery");
+    assert_eq!(response.message.tool_calls[0].arguments["schema"], "public");
+}
+
+#[tokio::test]
+async fn ollama_ndjson_handles_fragmentation_and_requires_done() {
+    let (base, requests, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"content\":\"re",
+            "ady\"},\"done\":false}\n{\"done\":true}\n",
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let response = provider.complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ready");
+    assert!(requests.lock().unwrap()[0].contains("\"stream\":true"));
+}
+
+#[tokio::test]
+async fn ollama_accepts_terminal_record_without_trailing_newline() {
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec!["{\"message\":{\"content\":\"ready\"},\"done\":true}"],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    assert_eq!(
+        provider.complete(request()).await.unwrap().message.content,
+        "ready"
+    );
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn retries_before_first_event_but_not_after_partial_stream() {
+    let (base, requests, handle) = server(vec![
+        Reply {
+            status: 429,
+            chunks: vec![],
+        },
+        Reply {
+            status: 200,
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+            ],
+        },
+    ]);
+    assert_eq!(
+        openai(base)
+            .complete(request())
+            .await
+            .unwrap()
+            .message
+            .content,
+        "ok"
+    );
+    handle.join().unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    let (base, requests, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec!["data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"],
+    }]);
+    assert!(matches!(
+        openai(base).complete(request()).await,
+        Err(ProviderError::InvalidResponse)
+    ));
+    handle.join().unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn cancellation_and_errors_are_sanitized() {
+    let (base, _, handle) = server(vec![Reply {
+        status: 500,
+        chunks: vec!["secret-sentinel"],
+    }]);
+    let error = openai(base).complete(request()).await.unwrap_err();
     handle.join().unwrap();
     assert!(!error.to_string().contains("secret-sentinel"));
-}
-
-#[tokio::test]
-async fn openai_and_ollama_reject_empty_assistant_messages() {
-    let (base, _, openai_handle) = mock_server(r#"{"choices":[{"message":{"content":null}}]}"#);
-    let openai = OpenAiCompatibleProvider::new(
-        ProviderSettings::new("test-model", Some(format!("{base}/v1"))),
-        None,
-    )
-    .unwrap();
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec!["data: {\"choices\":[{\"delta\":{\"content\":\"slow\"}}]}\n\n"],
+    }]);
+    let provider = openai(base);
+    let token = CancellationToken::new();
+    let mut stream = provider.stream(request(), token.clone()).await.unwrap();
+    token.cancel();
     assert!(matches!(
-        openai.complete(request()).await,
-        Err(saya_agent::ProviderError::InvalidResponse)
+        stream.next().await.unwrap(),
+        Err(ProviderError::Cancelled)
     ));
-    openai_handle.join().unwrap();
-
-    let (base, _, ollama_handle) = mock_server(r#"{"message":{"role":"assistant","content":""}}"#);
-    let ollama = OllamaProvider::new(ProviderSettings::new("test-model", Some(base))).unwrap();
-    assert!(matches!(
-        ollama.complete(request()).await,
-        Err(saya_agent::ProviderError::InvalidResponse)
-    ));
-    ollama_handle.join().unwrap();
+    handle.join().unwrap();
 }

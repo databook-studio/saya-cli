@@ -1,7 +1,10 @@
 use crate::{
     agent_provider, agent_tools, config_runtime::RuntimeConfig, prompt_approval::TerminalApproval,
 };
-use saya_agent::{AgentError, AgentLimits, AgentOutput, AgentRequest, ApprovalPolicy, run_agent};
+use saya_agent::{
+    AgentError, AgentEventSink, AgentLimits, AgentOutput, AgentRequest, ApprovalPolicy,
+    CancellationToken, run_agent_with_sink,
+};
 use saya_config::{AiProvider, ResolvedAi};
 use saya_connectors::{ConnectorOptions, build_connector};
 use thiserror::Error;
@@ -26,12 +29,14 @@ pub(crate) struct PromptOverrides {
     pub(crate) profile: Option<String>,
 }
 
-pub(crate) async fn run_prompt(
+pub(crate) async fn run_prompt_with_sink(
     runtime: &RuntimeConfig,
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
     overrides: PromptOverrides,
+    sink: &dyn AgentEventSink,
+    cancellation: CancellationToken,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = effective_ai(&runtime.resolved.ai, &overrides);
     let provider = agent_provider::build(&ai, &runtime.secret_resolver())
@@ -66,7 +71,7 @@ pub(crate) async fn run_prompt(
         profile_names: profile_name.into_iter().collect(),
         model: ai.model,
     };
-    run_agent(
+    run_agent_with_sink(
         &*provider,
         &tools,
         request,
@@ -76,6 +81,8 @@ pub(crate) async fn run_prompt(
             max_tool_calls: runtime.resolved.max_iterations.saturating_mul(2),
         },
         &TerminalApproval::new(approval, can_prompt),
+        sink,
+        cancellation,
     )
     .await
     .map_err(|error| match error {
@@ -86,6 +93,7 @@ pub(crate) async fn run_prompt(
         AgentError::InvalidToolCall => {
             AgentRuntimeError::Agent("provider returned an unsupported tool call".into())
         }
+        AgentError::Cancelled => AgentRuntimeError::Agent("request cancelled".into()),
     })
 }
 

@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use saya_agent::{
-    AgentError, AgentLimits, AgentRequest, AllowReadOnlyApproval, ApprovalDecider, ChatMessage,
-    ChatProvider, ChatRequest, ChatResponse, ToolCall, ToolDefinition, ToolExecutor, run_agent,
+    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
+    ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
+    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolExecutor, run_agent,
+    run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
@@ -241,3 +243,73 @@ trait Pipe: Sized {
     }
 }
 impl<T> Pipe for T {}
+
+struct StreamingToolProvider;
+#[async_trait]
+impl ChatProvider for StreamingToolProvider {
+    fn name(&self) -> &str {
+        "streaming-mock"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!()
+    }
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        let call = ToolCall {
+            id: "call-1".into(),
+            name: "bounded_sql_query".into(),
+            arguments: serde_json::json!({"sql":"select 1"}),
+        };
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            Ok(ProviderEvent::ToolCalls(vec![call])),
+            Ok(ProviderEvent::Done),
+        ])))
+    }
+}
+
+struct CancellingSink {
+    token: CancellationToken,
+    events: Arc<Mutex<Vec<AgentEvent>>>,
+}
+#[async_trait]
+impl AgentEventSink for CancellingSink {
+    async fn emit(&self, event: AgentEvent) {
+        self.events.lock().unwrap().push(event.clone());
+        if matches!(event, AgentEvent::ToolRequested { .. }) {
+            self.token.cancel();
+        }
+    }
+}
+
+#[tokio::test]
+async fn cancellation_blocks_tool_execution_and_terminal_events() {
+    let token = CancellationToken::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let error = run_agent_with_sink(
+        &StreamingToolProvider,
+        &MockTools {
+            calls: calls.clone(),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &CancellingSink {
+            token: token.clone(),
+            events: events.clone(),
+        },
+        token,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, AgentError::Cancelled));
+    assert!(calls.lock().unwrap().is_empty());
+    assert!(!events.lock().unwrap().iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCompleted { .. } | AgentEvent::Complete
+    )));
+}

@@ -51,7 +51,7 @@ non-PostgreSQL engines are not implemented yet.
 Schema discovery is automatically allowed. A bounded SQL tool call is allowed
 under `read-only`, denied under `never`, and asks for explicit `y/yes` on a TTY
 under `ask`; it is denied when a TTY is unavailable. Model responses are not
-token-streamed in this MVP. Session files omit tool payloads and assistant
+streamed for Ollama and OpenAI-compatible providers. Session files omit tool payloads and assistant
 database output by default. OpenAI and OpenAI-compatible providers are treated
 as cloud: with sharing disabled, schema metadata may be sent but the SQL tool
 is hidden and dispatcher-blocked, so rows cannot reach those providers. Ollama

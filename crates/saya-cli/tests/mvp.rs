@@ -112,6 +112,9 @@ fn renderer_separates_diagnostics_and_emits_stable_envelopes() {
         diagnostic.stderr,
         "{\"event\":\"diagnostic\",\"message\":\"safe\"}\n"
     );
+    let complete = render_event(&TerminalEvent::Complete, RenderFormat::Ndjson);
+    assert_eq!(complete.stdout, "{\"event\":\"complete\"}\n");
+    assert_eq!(complete.stderr, "");
 }
 
 #[test]
@@ -416,8 +419,8 @@ fn ask_calls_configured_openai_compatible_provider() {
         let (mut stream, _) = listener.accept().unwrap();
         let mut request = [0_u8; 8192];
         let _ = stream.read(&mut request);
-        let body = r#"{"choices":[{"message":{"content":"answer from mock"}}]}"#;
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"answer from mock\"}}]}\n\ndata: [DONE]\n\n";
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
     });
     let root = std::env::temp_dir().join(format!("saya-cli-ask-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();

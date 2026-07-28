@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 saya-types = { path = "../saya-types" }

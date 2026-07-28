@@ -59,12 +59,6 @@ pub enum AgentEvent {
 }
 
 #[async_trait]
-pub trait ChatProvider: Send + Sync {
-    fn name(&self) -> &str;
-    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError>;
-}
-
-#[async_trait]
 pub trait ApprovalDecider: Send + Sync {
     async fn approve(&self, tool: &ToolDefinition) -> bool;
 }
@@ -86,6 +80,8 @@ pub enum ProviderError {
     InvalidResponse,
     #[error("provider is not configured: {0}")]
     Configuration(String),
+    #[error("provider stream was cancelled")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,10 +1,13 @@
 use super::{
+    http::send_stream,
+    ollama_stream,
     ollama_wire::{OllamaRequest, request as ollama_request},
     settings::{ProviderSettings, endpoint},
 };
-use crate::{ChatMessage, ChatProvider, ChatRequest, ChatResponse, ProviderError, ToolCall};
+use crate::{
+    CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderStream,
+};
 use async_trait::async_trait;
-use serde::Deserialize;
 
 pub struct OllamaProvider {
     client: reqwest::Client,
@@ -26,8 +29,14 @@ impl ChatProvider for OllamaProvider {
     fn name(&self) -> &str {
         "ollama"
     }
-
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        self.collect(request).await
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ProviderStream, ProviderError> {
         let body: OllamaRequest = ollama_request(request);
         let base = self
             .settings
@@ -39,76 +48,14 @@ impl ChatProvider for OllamaProvider {
         } else {
             "api/chat"
         };
-        let response = self
-            .client
-            .post(endpoint(Some(base), "", suffix))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| ProviderError::Request("network request failed".into()))?;
-        if !response.status().is_success() {
-            return Err(ProviderError::Request(format!(
-                "HTTP {}",
-                response.status().as_u16()
-            )));
-        }
-        let payload = response
-            .json::<OllamaResponse>()
-            .await
-            .map_err(|_| ProviderError::InvalidResponse)?;
-        let calls = payload
-            .message
-            .tool_calls
-            .into_iter()
-            .enumerate()
-            .map(|(index, call)| {
-                let arguments = match call.function.arguments {
-                    serde_json::Value::String(value) => {
-                        serde_json::from_str(&value).map_err(|_| ProviderError::InvalidResponse)?
-                    }
-                    value => value,
-                };
-                Ok(ToolCall {
-                    id: format!("call-{index}"),
-                    name: call.function.name,
-                    arguments,
-                })
-            })
-            .collect::<Result<Vec<_>, ProviderError>>()?;
-        if payload.message.content.trim().is_empty() && calls.is_empty() {
-            return Err(ProviderError::InvalidResponse);
-        }
-        Ok(ChatResponse {
-            message: ChatMessage {
-                role: "assistant".into(),
-                content: payload.message.content,
-                tool_calls: calls,
-                tool_call_id: None,
-            },
-        })
+        let url = endpoint(Some(base), "", suffix);
+        let client = &self.client;
+        let response = send_stream(
+            || client.post(&url).json(&body),
+            &self.settings.retry_delays,
+            &cancellation,
+        )
+        .await?;
+        Ok(ollama_stream::parse(response, cancellation))
     }
-}
-
-#[derive(Deserialize)]
-struct OllamaResponse {
-    message: OllamaMessage,
-}
-
-#[derive(Deserialize)]
-struct OllamaMessage {
-    #[serde(default)]
-    content: String,
-    #[serde(default)]
-    tool_calls: Vec<OllamaToolCall>,
-}
-
-#[derive(Deserialize)]
-struct OllamaToolCall {
-    function: OllamaFunction,
-}
-
-#[derive(Deserialize)]
-struct OllamaFunction {
-    name: String,
-    arguments: serde_json::Value,
 }

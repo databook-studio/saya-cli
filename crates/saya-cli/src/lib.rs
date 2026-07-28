@@ -12,6 +12,7 @@ mod render;
 mod runtime_profile;
 mod session_paths;
 mod slash;
+mod stream_render;
 
 #[cfg(test)]
 mod privacy_tests;
