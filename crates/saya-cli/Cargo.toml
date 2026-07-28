@@ -22,4 +22,5 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+duckdb.workspace = true
 libc = "0.2"

@@ -26,8 +26,10 @@ maintainers listed by the `databook-studio` organization with reproduction
 steps, affected version, and impact. Do not include live credentials or raw
 customer data.
 
-PostgreSQL is the current alpha's only live database path; provider execution is
-not implemented. The SQL policy is deliberately fail-closed, but it cannot
-prove arbitrary PostgreSQL functions are side-effect free. Use a database role
-that is itself read-only, and do not bypass that boundary by adding write
-credentials to examples.
+PostgreSQL, MySQL, and DuckDB are live database paths in the private alpha, and
+provider execution exists through the supported Ollama/OpenAI-compatible
+interfaces. Snowflake remains unavailable. The SQL policy is deliberately
+fail-closed, but it cannot prove arbitrary database functions are side-effect
+free. Use least-privilege, read-only database credentials and restrictive
+filesystem permissions for DuckDB paths; do not bypass those boundaries by
+adding write credentials to examples.

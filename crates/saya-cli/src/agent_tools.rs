@@ -25,7 +25,7 @@ impl DatabaseTools {
     pub(crate) fn definitions(allow_query_data: bool) -> Vec<ToolDefinition> {
         let mut tools = vec![ToolDefinition {
             name: "schema_discovery".into(),
-            description: "Inspect the selected PostgreSQL schema without changing data.".into(),
+            description: "Inspect the selected database schema without changing data.".into(),
             read_only: true,
             parameters: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
             requires_approval: false,
@@ -33,9 +33,8 @@ impl DatabaseTools {
         if allow_query_data {
             tools.push(ToolDefinition {
                 name: "bounded_sql_query".into(),
-                description:
-                    "Run one bounded read-only SQL query against the selected PostgreSQL profile."
-                        .into(),
+                description: "Run one bounded read-only SQL query against the selected database."
+                    .into(),
                 read_only: true,
                 parameters: serde_json::json!({"type":"object","properties":{"sql":{"type":"string"}},"required":["sql"],"additionalProperties":false}),
                 requires_approval: true,
