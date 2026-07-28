@@ -4,9 +4,9 @@ use crate::{
     render::{RenderFormat, TerminalEvent},
 };
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector};
-use saya_types::{DatabaseProfile, SqlDialect};
+use saya_types::DatabaseProfile;
 
-use super::output::{emit, failure, result, unavailable};
+use super::output::{emit, failure, result};
 
 pub(super) async fn run(
     command: ConnectionCommand,
@@ -96,14 +96,6 @@ pub(super) async fn connector(
     code: i32,
     format: RenderFormat,
 ) -> Result<Option<Box<dyn DatabaseConnector>>, Box<dyn std::error::Error>> {
-    if profile.dialect() != SqlDialect::Postgres {
-        unavailable(
-            code,
-            format!("{} connector", profile.dialect().as_str()),
-            format,
-        )?;
-        return Ok(None);
-    }
     let resolver = runtime.secret_resolver();
     let settings = ConnectorOptions {
         query_timeout_seconds: runtime.resolved.query_timeout_seconds,

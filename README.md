@@ -1,10 +1,10 @@
 # SAYA CLI
 
 SAYA CLI is an open-source, terminal-native shell for a database-aware SAYA
-agent. It is currently **alpha**: PostgreSQL connection tests, schema discovery,
-bounded read-only queries, and streaming configured Ollama/OpenAI-compatible provider calls
-are implemented alongside the interactive shell, redacted sessions, and
-text/JSON/NDJSON output. Other database engines remain unavailable.
+agent. It is currently **private alpha**: PostgreSQL, MySQL, and DuckDB connection
+tests, schema discovery, bounded read-only queries, and streaming configured
+Ollama/OpenAI-compatible provider calls are implemented alongside the interactive
+shell, redacted sessions, and text/JSON/NDJSON output. Snowflake remains unavailable.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ printf '/help\n/exit\n' | cargo run -p saya-cli --
 
 Running `saya` starts a scrollback-preserving REPL. Use `/help` for commands.
 The automation surface is available as `saya ask`, `saya query`, `saya config`,
-and `saya connection`. PostgreSQL is the only live engine in this alpha.
+and `saya connection`. PostgreSQL, MySQL, and DuckDB are live engines in this alpha.
 
 ## Configuration
 
@@ -84,6 +84,34 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
+MySQL uses the same SecretRef password pattern. Its safe default is
+`verify-identity`; use `disable` only for an explicitly local development
+server. Supported modes are `disable`, `prefer`, `require`, `verify-ca`, and
+`verify-identity`:
+
+```toml
+[profiles.mysql]
+type = "mysql"
+host = "localhost"
+port = 3306
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_MYSQL_PASSWORD" }
+sslmode = "verify-identity"
+# ssl_ca = { file = "/etc/ssl/certs/mysql-ca.pem" }
+```
+
+For a file-backed DuckDB profile, set `read_only` explicitly. `:memory:` may
+omit it. DuckDB external access, extension autoloading, community extensions,
+and persistent secrets are locked off by the CLI:
+
+```toml
+[profiles.local]
+type = "duckdb"
+path = "./data/warehouse.duckdb"
+read_only = true
+```
+
 Run `saya --env-file .env.saya --connections .saya/connections.toml
 --approval-mode read-only ask "show revenue"`. The newer provider env names
 (`SAYA_PROVIDER`, `SAYA_MODEL`, `SAYA_PROVIDER_BASE_URL`, `SAYA_API_KEY`) have
@@ -95,12 +123,15 @@ saya config show --resolved --redacted --format json
 saya connection test analytics --connections examples/connections.toml
 saya connection schema analytics --connections examples/connections.toml
 saya query --profile analytics --sql "SELECT current_database()"
+saya connection test local --connections examples/connections.toml
+saya query --profile local --connections examples/connections.toml --sql "SELECT 1"
+saya --profile local --approval-mode read-only ask "summarize the local schema"
 ```
 
 ## Privacy and limitations
 
 The intended MVP policy is read-only, bounded queries with cloud row sharing
-disabled. PostgreSQL rejects parse failures, writes, DDL, transaction/control
+disabled. PostgreSQL, MySQL, and DuckDB reject parse failures, writes, DDL, transaction/control
 statements, and multi-statements before execution. It observes one extra row to
 mark truncated results. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly
@@ -110,8 +141,9 @@ disabled, they receive schema metadata but not SQL tools or row data. Ollama is
 treated as local for this MVP. `/privacy`, `/model`, `/provider`, and `/connect`
 apply to the next interactive prompt; `/include` is explicitly display-only and
 multi-profile execution is out of scope.
-The database role must itself be read-only: SQL AST checks cannot prove that a
-PostgreSQL function is free of side effects.
+The database role must itself be read-only, and DuckDB file paths must have
+least-privilege filesystem permissions: SQL AST checks cannot prove that an
+arbitrary database function is free of side effects.
 Resolved config secrets, provider headers, and raw query rows are structurally
 excluded from session files. Known credential-shaped text is redacted, but
 redaction cannot identify every arbitrary secret—never paste credentials into

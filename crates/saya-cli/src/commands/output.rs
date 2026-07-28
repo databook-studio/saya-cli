@@ -15,15 +15,6 @@ pub(super) fn result(
     Ok(0)
 }
 
-pub(super) fn unavailable(
-    code: i32,
-    feature: String,
-    format: RenderFormat,
-) -> Result<i32, Box<dyn std::error::Error>> {
-    emit(TerminalEvent::NotImplemented { feature }, format);
-    Ok(code)
-}
-
 pub(super) fn failure(
     code: i32,
     error: ConnectionError,

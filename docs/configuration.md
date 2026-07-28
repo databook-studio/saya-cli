@@ -24,9 +24,18 @@ saya --env-file .env.saya config show --resolved --redacted
 Profile selection is `--profile`, `SAYA_PROFILE`, `default_profile`, a sole
 profile, then an error when multiple profiles exist. Environment-only mode is
 supported by `SAYA_DB_TYPE`, `SAYA_DB_HOST`, `SAYA_DB_PORT`, `SAYA_DB_NAME`,
-`SAYA_DB_USER`, `SAYA_DB_PASSWORD`, and optional `SAYA_DB_SSLMODE`; the password
-is retained only as an environment reference in the typed profile. PostgreSQL
-SSL modes are `disable`, `prefer`, `require`, `verify-ca`, and `verify-full`.
+`SAYA_DB_USER`, `SAYA_DB_PASSWORD`, and optional `SAYA_DB_SSLMODE`. For MySQL,
+`SAYA_DB_SSL_CA` is a SecretRef to PEM content and `SAYA_DB_SSLMODE` accepts
+`disable`, `prefer`, `require`, `verify-ca`, or `verify-identity`; the safe
+default is `verify-identity`. Password and CA values are retained only as
+environment references in the typed profile. Use `disable` only for a local
+TLS-disabled development server.
+
+Environment-only DuckDB uses `SAYA_DB_TYPE=duckdb` and `SAYA_DB_PATH`. A
+file-backed path must also set `SAYA_DB_READ_ONLY=true` or `false`; `:memory:`
+may omit it. `SAYA_DB_READ_ONLY` controls DuckDB file access mode and is
+distinct from global `SAYA_READ_ONLY`, which controls the SQL/query policy.
+Only the exact strings `true` and `false` are accepted for this setting.
 
 `config doctor` reports paths and selection. `config show --resolved
 --redacted` emits only display-safe references and settings. It never resolves
@@ -38,15 +47,16 @@ The REPL session directory uses `SAYA_SESSION_DIR` first, then
 `--approval-mode` resolves to `never` (schema-only); interactive mode defaults
 to `ask`.
 
-The current alpha connects only to PostgreSQL. Environment and file secret
+The private alpha connects to PostgreSQL, MySQL, and DuckDB. Snowflake remains
+unavailable. Environment and file secret
 references are resolved at runtime without serializing or logging their values;
 keyring references return an explicit unavailable error. Provider settings may
 use either the established `SAYA_AI_PROVIDER`, `SAYA_AI_MODEL`, and
 `SAYA_AI_BASE_URL` names or the shorter `SAYA_PROVIDER`, `SAYA_MODEL`, and
 `SAYA_PROVIDER_BASE_URL` names. `SAYA_API_KEY` becomes a runtime
 `{ env = "SAYA_API_KEY" }` reference and is never serialized. Ollama and
-OpenAI-compatible chat-completions are supported; other providers and
-non-PostgreSQL engines are not implemented yet.
+OpenAI-compatible chat-completions are supported; other providers are not
+implemented yet.
 
 Schema discovery is automatically allowed. A bounded SQL tool call is allowed
 under `read-only`, denied under `never`, and asks for explicit `y/yes` on a TTY

@@ -11,6 +11,16 @@ type = "duckdb"
 path = "./data/warehouse.duckdb"
 read_only = true
 
+[profiles.mysql]
+type = "mysql"
+host = "localhost"
+port = 3306
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_MYSQL_PASSWORD" }
+sslmode = "verify-identity"
+# ssl_ca = { file = "/etc/ssl/certs/mysql-ca.pem" }
+
 # Snowflake is a configuration shape only in this alpha.
 [profiles.snowflake_prod]
 type = "snowflake"
