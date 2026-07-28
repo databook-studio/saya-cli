@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 
 use sqlparser::{
     ast::{Expr, ObjectName, Query, SetExpr, Statement, Visit, Visitor},
-    dialect::{Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect},
+    dialect::{Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SnowflakeDialect},
     parser::Parser,
 };
 
@@ -17,6 +17,10 @@ pub fn prepare_mysql_sql(sql: &str, max_rows: usize) -> Result<String, Connectio
 
 pub fn prepare_duckdb_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
     prepare(sql, max_rows, &DuckDbDialect {})
+}
+
+pub fn prepare_snowflake_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
+    prepare(sql, max_rows, &SnowflakeDialect {})
 }
 
 fn prepare(sql: &str, max_rows: usize, dialect: &dyn Dialect) -> Result<String, ConnectionError> {
@@ -128,6 +132,12 @@ fn denied(name: &ObjectName) -> bool {
         "read_text",
         "sqlite_scan",
         "glob",
+        "get_presigned_url",
+        "build_scoped_file_url",
+        "directory",
+        "metadata",
     ]
     .contains(&name.as_str())
+        || name.starts_with('@')
+        || name.starts_with("system$")
 }
