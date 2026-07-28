@@ -40,7 +40,7 @@ fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -
         && *text_open
         && !matches!(event, TerminalEvent::AssistantText { .. });
     let mut rendered = render_event(&event, format);
-    if close {
+    if close && !matches!(event, TerminalEvent::Complete) {
         rendered.stdout.insert(0, '\n');
         *text_open = false;
     }
@@ -48,8 +48,11 @@ fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -
         TerminalEvent::AssistantText { ref text } if matches!(format, RenderFormat::Text) => {
             *text_open = !text.is_empty()
         }
-        TerminalEvent::Complete if matches!(format, RenderFormat::Text) && !close => {
-            rendered.stdout.clear()
+        TerminalEvent::Complete if matches!(format, RenderFormat::Text) => {
+            *text_open = false;
+            if !close {
+                rendered.stdout.clear();
+            }
         }
         _ => {}
     }
@@ -116,6 +119,21 @@ mod tests {
         assert_eq!(
             render_agent(AgentEvent::Complete, RenderFormat::Ndjson, &mut open).stdout,
             "{\"event\":\"complete\"}\n"
+        );
+    }
+    #[test]
+    fn text_complete_closes_an_open_delta_line_once() {
+        let mut open = false;
+        let _ = render_agent(
+            AgentEvent::AssistantText {
+                text: "done".into(),
+            },
+            RenderFormat::Text,
+            &mut open,
+        );
+        assert_eq!(
+            render_agent(AgentEvent::Complete, RenderFormat::Text, &mut open).stdout,
+            "\n"
         );
     }
 }

@@ -53,6 +53,19 @@ fn byte_server(chunks: Vec<Vec<u8>>) -> (String, thread::JoinHandle<()>) {
     (base, handle)
 }
 
+fn keep_open_server(body: &'static str) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = read_request(&mut stream);
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\n{}", body.len() + 1, body).unwrap();
+        stream.flush().unwrap();
+        thread::sleep(Duration::from_millis(200));
+    });
+    (base, handle)
+}
+
 fn read_request(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 4096];
@@ -172,6 +185,28 @@ async fn terminal_sentinels_allow_only_trailing_ascii_whitespace() {
         provider.complete(request()).await.unwrap().message.content,
         "ok"
     );
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn terminal_markers_finish_without_waiting_for_socket_close() {
+    let (base, handle) = keep_open_server(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+    );
+    let response =
+        tokio::time::timeout(Duration::from_millis(100), openai(base).complete(request()))
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(response.message.content, "ok");
+    handle.join().unwrap();
+    let (base, handle) = keep_open_server("{\"message\":{\"content\":\"ok\"},\"done\":true}\n");
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let response = tokio::time::timeout(Duration::from_millis(100), provider.complete(request()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.message.content, "ok");
     handle.join().unwrap();
 }
 
