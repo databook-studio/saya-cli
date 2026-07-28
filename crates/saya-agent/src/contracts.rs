@@ -6,6 +6,8 @@ pub struct AgentRequest {
     pub prompt: String,
     pub profile_names: Vec<String>,
     pub model: String,
+    #[serde(default)]
+    pub history: Vec<ChatMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +36,12 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolMetadata {
+    pub name: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

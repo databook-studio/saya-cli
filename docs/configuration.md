@@ -50,14 +50,21 @@ non-PostgreSQL engines are not implemented yet.
 
 Schema discovery is automatically allowed. A bounded SQL tool call is allowed
 under `read-only`, denied under `never`, and asks for explicit `y/yes` on a TTY
-under `ask`; it is denied when a TTY is unavailable. Model responses are not
-streamed for Ollama and OpenAI-compatible providers. Session files omit tool payloads and assistant
-database output by default. OpenAI and OpenAI-compatible providers are treated
+under `ask`; it is denied when a TTY is unavailable. Model responses are streamed
+for Ollama and OpenAI-compatible providers. Session files persist redacted
+user/assistant turn text and safe tool name/status metadata, but omit tool
+payloads, credentials, headers, and raw tool-result rows. A database-derived
+assistant turn may still contain values in its natural-language answer and is
+persisted locally after redaction; it is omitted from cloud provider history
+when sharing is disabled. OpenAI and OpenAI-compatible providers are treated
 as cloud: with sharing disabled, schema metadata may be sent but the SQL tool
 is hidden and dispatcher-blocked, so rows cannot reach those providers. Ollama
 is treated as local in this MVP. Interactive `/privacy`, `/model`, `/provider`,
 and `/connect` overrides apply to the next prompt; `/include` is not yet a
 multi-profile execution feature.
-Interactive prompts currently send only the new prompt to the model rather than
-full multi-turn context. Resumed sessions retain redacted local history but do
-not reconstruct provider conversation context.
+Interactive prompts and resumed sessions reconstruct only bounded, redacted
+user/assistant provider history. `/clear` clears visible, persisted, and
+provider context. Raw tool arguments, tool responses, and raw tool-result rows
+are never restored into provider history. Local Ollama history may include
+database-derived turns; v1 sessions without settings use the current runtime
+defaults.

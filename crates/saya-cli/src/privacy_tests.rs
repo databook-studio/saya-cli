@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use saya_agent::{
     AgentLimits, AgentRequest, AllowReadOnlyApproval, ChatMessage, ChatProvider, ChatRequest,
-    ChatResponse, ToolCall, ToolExecutor, run_agent,
+    ChatResponse, ToolCall, ToolExecutor, ToolMetadata, run_agent,
 };
 use std::sync::{Arc, Mutex};
 
@@ -41,6 +41,7 @@ fn request() -> AgentRequest {
         prompt: "show data".into(),
         profile_names: vec!["analytics".into()],
         model: "model".into(),
+        history: Vec::new(),
     }
 }
 
@@ -185,5 +186,68 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
     assert_eq!(
         crate::agent_runtime::effective_ai(&openai, &to_ollama).base_url,
         None
+    );
+}
+
+#[test]
+fn clear_removes_canonical_turns_and_visible_messages() {
+    let mut state = crate::SessionState::new("session", None, "model");
+    state.record_turn(
+        "first prompt",
+        "first answer",
+        true,
+        vec![ToolMetadata {
+            name: "bounded_sql_query".into(),
+            status: "completed".into(),
+        }],
+    );
+    assert!(state.provider_history().len() == 2);
+    state.apply(crate::SlashCommand::Clear, &[]);
+    assert!(state.messages.is_empty());
+    assert!(state.turns.is_empty());
+    assert!(state.provider_history().is_empty());
+}
+
+#[test]
+fn canonical_redacted_turns_do_not_duplicate_legacy_messages_or_tool_payloads() {
+    let mut state = crate::SessionState::new("session", None, "model");
+    state.record_turn(
+        "prompt ROW_SENTINEL",
+        "answer ROW_SENTINEL",
+        true,
+        vec![ToolMetadata {
+            name: "bounded_sql_query".into(),
+            status: "completed".into(),
+        }],
+    );
+    let saved = state.redacted();
+    assert!(saved.messages.is_empty());
+    assert_eq!(saved.turns.len(), 1);
+    assert!(
+        !serde_json::to_string(&saved)
+            .unwrap()
+            .contains("raw tool arguments")
+    );
+}
+
+#[test]
+fn cloud_privacy_omits_only_database_derived_turns() {
+    let mut state = crate::SessionState::new("session", None, "model");
+    state.provider = "openai".into();
+    state.record_turn("safe prompt", "safe answer", false, Vec::new());
+    state.record_turn("row prompt", "CLOUD_ROW_SENTINEL", true, Vec::new());
+    let history = state.provider_history();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].content, "safe prompt");
+    assert!(
+        !serde_json::to_string(&history)
+            .unwrap()
+            .contains("CLOUD_ROW_SENTINEL")
+    );
+    state.allow_data_sharing = true;
+    assert!(
+        serde_json::to_string(&state.provider_history())
+            .unwrap()
+            .contains("CLOUD_ROW_SENTINEL")
     );
 }

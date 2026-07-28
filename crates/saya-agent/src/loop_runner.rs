@@ -6,34 +6,11 @@ mod receive;
 mod tools;
 
 use crate::{
-    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatMessage,
-    ChatProvider, NoopEventSink, ToolDefinition, ToolExecutor,
+    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
+    ToolDefinition, ToolExecutor,
 };
 
-const SYSTEM_PROMPT: &str = "You are SAYA, a database assistant. Use only the supplied read-only tools. Never claim to have written data or used unsupported tools.";
-
 pub use output::{AgentError, AgentLimits, AgentOutput};
-
-pub async fn run_agent(
-    provider: &dyn ChatProvider,
-    tools: &dyn ToolExecutor,
-    request: AgentRequest,
-    definitions: Vec<ToolDefinition>,
-    limits: AgentLimits,
-    approval: &dyn ApprovalDecider,
-) -> Result<AgentOutput, AgentError> {
-    run_agent_with_sink(
-        provider,
-        tools,
-        request,
-        definitions,
-        limits,
-        approval,
-        &NoopEventSink,
-        CancellationToken::new(),
-    )
-    .await
-}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_agent_with_sink(
@@ -46,12 +23,11 @@ pub async fn run_agent_with_sink(
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
 ) -> Result<AgentOutput, AgentError> {
-    let mut messages = vec![
-        ChatMessage::text("system", SYSTEM_PROMPT),
-        ChatMessage::text("user", request.prompt),
-    ];
+    let mut messages = crate::history::build_messages(&request.prompt, &request.history)?;
     let mut events = Vec::new();
     let mut tool_count = 0;
+    let mut used_bounded_sql_query = false;
+    let mut tool_metadata = Vec::new();
     for _ in 0..limits.max_turns {
         check_cancelled(&cancellation)?;
         let assistant = receive::receive(
@@ -71,6 +47,8 @@ pub async fn run_agent_with_sink(
             return Ok(AgentOutput {
                 answer: assistant.content,
                 events,
+                used_bounded_sql_query,
+                tool_metadata,
             });
         }
         for call in assistant.tool_calls {
@@ -95,6 +73,9 @@ pub async fn run_agent_with_sink(
             let approved = !definition.requires_approval || approval.approve(definition).await;
             let (result, summary) = if approved {
                 check_cancelled(&cancellation)?;
+                if call.name == "bounded_sql_query" {
+                    used_bounded_sql_query = true;
+                }
                 tools::execute(tools, &call.name, call.arguments).await
             } else {
                 emit(
@@ -111,6 +92,19 @@ pub async fn run_agent_with_sink(
                     "read-only database tool denied",
                 )
             };
+            tool_metadata.push(crate::ToolMetadata {
+                name: call.name.clone(),
+                status: if approved {
+                    if summary.contains("failed") {
+                        "failed"
+                    } else {
+                        "completed"
+                    }
+                } else {
+                    "denied"
+                }
+                .into(),
+            });
             messages.push(tools::tool_message(call.id, result));
             if approved {
                 check_cancelled(&cancellation)?;

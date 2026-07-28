@@ -11,11 +11,69 @@ mod redaction;
 pub use filesystem::FsSessionStore;
 
 /// Persistable session data. Callers must provide content after secret redaction.
+pub const SESSION_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedactedSession {
+    #[serde(default = "legacy_session_version")]
+    pub version: u32,
     pub id: String,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub included_profiles: Vec<String>,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub allow_data_sharing: bool,
+    #[serde(default)]
+    pub approval_mode: String,
+    #[serde(default)]
+    pub turns: Vec<RedactedTurn>,
+    #[serde(default)]
     pub profile_names: Vec<String>,
+    #[serde(default)]
     pub messages: Vec<RedactedMessage>,
+}
+
+impl Default for RedactedSession {
+    fn default() -> Self {
+        Self {
+            version: SESSION_VERSION,
+            id: String::new(),
+            profile: None,
+            included_profiles: Vec::new(),
+            provider: String::new(),
+            model: String::new(),
+            allow_data_sharing: false,
+            approval_mode: String::new(),
+            turns: Vec::new(),
+            profile_names: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+}
+
+fn legacy_session_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RedactedTurn {
+    pub user: String,
+    pub assistant: String,
+    #[serde(default)]
+    pub database_derived: bool,
+    #[serde(default)]
+    pub tools: Vec<RedactedToolMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RedactedToolMetadata {
+    pub name: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

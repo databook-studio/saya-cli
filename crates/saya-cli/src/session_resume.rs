@@ -3,9 +3,21 @@ use crate::Cli;
 use saya_store::{FsSessionStore, SessionStore};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
+#[path = "session_resume_tests.rs"]
+mod tests;
+
+pub(crate) struct SessionDefaults {
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) allow_data_sharing: bool,
+    pub(crate) approval_mode: String,
+}
+
 pub(crate) fn load_session(
     store: &FsSessionStore,
     cli: &Cli,
+    defaults: &SessionDefaults,
 ) -> Result<SessionState, Box<dyn std::error::Error>> {
     let loaded = if let Some(id) = cli.options.resume.as_deref() {
         block_on(store.load(id))?
@@ -16,12 +28,38 @@ pub(crate) fn load_session(
     };
     match loaded {
         Some(value) => {
-            let mut state = SessionState::new(
-                value.id,
-                value.profile_names.first().cloned(),
-                "qwen2.5-coder:14b",
-            );
-            state.included_profiles = value.profile_names.into_iter().skip(1).collect();
+            let profile = value
+                .profile
+                .clone()
+                .or_else(|| value.profile_names.first().cloned());
+            let mut state = SessionState::new(value.id, profile, defaults.model.clone());
+            state.provider =
+                if value.version < saya_store::SESSION_VERSION || value.provider.is_empty() {
+                    defaults.provider.clone()
+                } else {
+                    value.provider
+                };
+            state.allow_data_sharing = if value.version < saya_store::SESSION_VERSION {
+                defaults.allow_data_sharing
+            } else {
+                value.allow_data_sharing
+            };
+            state.model = if value.version < saya_store::SESSION_VERSION || value.model.is_empty() {
+                defaults.model.clone()
+            } else {
+                value.model
+            };
+            state.approval_mode =
+                if value.version < saya_store::SESSION_VERSION || value.approval_mode.is_empty() {
+                    defaults.approval_mode.clone()
+                } else {
+                    value.approval_mode
+                };
+            state.included_profiles = if value.included_profiles.is_empty() {
+                value.profile_names.into_iter().skip(1).collect()
+            } else {
+                value.included_profiles
+            };
             state.messages = value
                 .messages
                 .into_iter()
@@ -30,6 +68,11 @@ pub(crate) fn load_session(
                     content: line.content,
                 })
                 .collect();
+            state.turns = if value.turns.is_empty() {
+                legacy_turns(&state.messages)
+            } else {
+                value.turns
+            };
             Ok(state)
         }
         None if cli.options.resume.is_some() || cli.options.continue_session => {
@@ -38,13 +81,34 @@ pub(crate) fn load_session(
         None => Ok(SessionState::new(
             new_id(),
             cli.options.profile.clone(),
-            "qwen2.5-coder:14b",
+            defaults.model.clone(),
         )),
     }
 }
 
+fn legacy_turns(messages: &[SessionLine]) -> Vec<saya_store::RedactedTurn> {
+    let safe = messages
+        .iter()
+        .filter(|message| message.role == "user" || message.role == "assistant")
+        .collect::<Vec<_>>();
+    safe.chunks_exact(2)
+        .filter(|pair| {
+            pair[0].role == "user"
+                && pair[1].role == "assistant"
+                && !pair[1].content.contains("response omitted")
+        })
+        .map(|pair| saya_store::RedactedTurn {
+            user: pair[0].content.clone(),
+            assistant: pair[1].content.clone(),
+            database_derived: false,
+            tools: Vec::new(),
+        })
+        .collect()
+}
+
 pub(crate) fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::runtime::Builder::new_current_thread()
+        .enable_all()
         .build()
         .expect("runtime")
         .block_on(future)

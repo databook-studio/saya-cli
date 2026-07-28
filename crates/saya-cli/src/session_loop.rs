@@ -1,14 +1,14 @@
 use super::{
     session_commands::SessionAction,
-    session_resume::{block_on, load_session},
+    session_request::PromptResult,
+    session_resume::{SessionDefaults, block_on, load_session},
     session_state::SessionState,
 };
 use crate::session_paths::default_session_dir;
 use crate::{
-    Cli, agent_runtime, config_runtime,
+    Cli, config_runtime,
     render::{RenderFormat, TerminalEvent, render_event},
     slash::parse_slash_command,
-    stream_render::TerminalSink,
 };
 use saya_store::{FsSessionStore, SessionStore};
 use std::io::{self, IsTerminal, Write};
@@ -17,12 +17,20 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let runtime = config_runtime::load(&cli.options, std::path::Path::new("."))?;
     let format = config_runtime::format_name(&cli.options, &runtime.resolved);
     let store = FsSessionStore::new(default_session_dir());
-    let mut state = load_session(&store, &cli)?;
-    state.provider = runtime.resolved.ai.provider.as_str().into();
-    state.model = runtime.resolved.ai.model.clone();
-    state.allow_data_sharing = runtime.resolved.ai.allow_data_sharing;
-    state.approval_mode = config_runtime::approval_name(&cli.options)?;
-    state.included_profiles = cli.options.include_profiles.clone();
+    let defaults = SessionDefaults {
+        provider: runtime.resolved.ai.provider.as_str().into(),
+        model: runtime.resolved.ai.model.clone(),
+        allow_data_sharing: runtime.resolved.ai.allow_data_sharing,
+        approval_mode: config_runtime::approval_name(&cli.options)?,
+    };
+    let mut state = load_session(&store, &cli, &defaults)?;
+    if !cli.options.continue_session && cli.options.resume.is_none() {
+        state.provider = runtime.resolved.ai.provider.as_str().into();
+        state.model = runtime.resolved.ai.model.clone();
+        state.allow_data_sharing = runtime.resolved.ai.allow_data_sharing;
+        state.approval_mode = config_runtime::approval_name(&cli.options)?;
+        state.included_profiles = cli.options.include_profiles.clone();
+    }
     let terminal = io::stdin().is_terminal();
     let mut input = String::new();
     loop {
@@ -49,22 +57,30 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                     .collect::<Vec<_>>(),
             ),
             None => {
-                state.record("user", line);
+                let history = state.provider_history();
                 let approval = state
                     .approval_mode
                     .parse()
                     .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
-                let sink = TerminalSink::new(format);
-                match block_on(agent_runtime::run_prompt_with_sink(
+                match block_on(super::session_request::run(
                     &runtime,
                     line,
                     approval,
                     terminal,
                     state.prompt_overrides(),
-                    &sink,
-                    saya_agent::CancellationToken::new(),
+                    history,
+                    format,
                 )) {
-                    Ok(output) => SessionAction::Agent(output),
+                    Ok(PromptResult::Completed(output)) => {
+                        state.record_turn(
+                            line,
+                            output.answer.clone(),
+                            output.used_bounded_sql_query,
+                            output.tool_metadata.clone(),
+                        );
+                        SessionAction::Agent(output)
+                    }
+                    Ok(PromptResult::Cancelled) => SessionAction::Cancelled,
                     Err(error) => SessionAction::Error(error.to_string()),
                 }
             }
@@ -78,7 +94,6 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     block_on(store.save(state.redacted()))?;
     Ok(0)
 }
-
 fn emit_action(
     action: SessionAction,
     format: RenderFormat,
@@ -87,15 +102,18 @@ fn emit_action(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         SessionAction::Message(message) => {
-            state.record("system", &message);
+            if message != "Conversation context cleared." {
+                state.record("system", &message);
+            }
             emit(TerminalEvent::Result { message }, format);
         }
-        SessionAction::Agent(_) => {
-            state.record(
-                "assistant",
-                "[response omitted from persisted session history]",
-            );
-        }
+        SessionAction::Agent(_) => {}
+        SessionAction::Cancelled => emit(
+            TerminalEvent::Diagnostic {
+                message: "Request cancelled.".into(),
+            },
+            format,
+        ),
         SessionAction::NotImplemented(feature) => {
             emit(TerminalEvent::NotImplemented { feature }, format)
         }

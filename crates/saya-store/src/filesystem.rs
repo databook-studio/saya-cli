@@ -58,6 +58,10 @@ impl SessionStore for FsSessionStore {
         for message in &mut session.messages {
             message.content = redact(&message.content);
         }
+        for turn in &mut session.turns {
+            turn.user = redact(&turn.user);
+            turn.assistant = redact(&turn.assistant);
+        }
         let path = self.path(&session.id)?;
         let temp = path.with_extension("json.tmp");
         let data = serde_json::to_vec_pretty(&session)

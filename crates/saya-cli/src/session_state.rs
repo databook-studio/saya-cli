@@ -1,4 +1,5 @@
-use saya_store::{RedactedMessage, RedactedSession};
+use saya_agent::{ChatMessage, ToolMetadata};
+use saya_store::{RedactedSession, RedactedToolMetadata, RedactedTurn, SESSION_VERSION};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -11,6 +12,7 @@ pub struct SessionState {
     pub allow_data_sharing: bool,
     pub approval_mode: String,
     pub messages: Vec<SessionLine>,
+    pub turns: Vec<RedactedTurn>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,6 +33,7 @@ impl SessionState {
             allow_data_sharing: false,
             approval_mode: "ask".into(),
             messages: Vec::new(),
+            turns: Vec::new(),
         }
     }
 
@@ -41,18 +44,65 @@ impl SessionState {
         });
     }
 
-    pub fn redacted(&self) -> RedactedSession {
-        RedactedSession {
-            id: self.id.clone(),
-            profile_names: self.profile_names(),
-            messages: self
-                .messages
-                .iter()
-                .map(|line| RedactedMessage {
-                    role: line.role.clone(),
-                    content: line.content.clone(),
+    pub fn record_turn(
+        &mut self,
+        user: impl Into<String>,
+        assistant: impl Into<String>,
+        database_derived: bool,
+        tools: Vec<ToolMetadata>,
+    ) {
+        let user = user.into();
+        let assistant = assistant.into();
+        self.messages.push(SessionLine {
+            role: "user".into(),
+            content: user.clone(),
+        });
+        self.messages.push(SessionLine {
+            role: "assistant".into(),
+            content: assistant.clone(),
+        });
+        self.turns.push(RedactedTurn {
+            user,
+            assistant,
+            database_derived,
+            tools: tools
+                .into_iter()
+                .map(|tool| RedactedToolMetadata {
+                    name: tool.name,
+                    status: tool.status,
                 })
                 .collect(),
+        });
+    }
+
+    pub fn provider_history(&self) -> Vec<ChatMessage> {
+        let include_sensitive =
+            self.provider.eq_ignore_ascii_case("ollama") || self.allow_data_sharing;
+        self.turns
+            .iter()
+            .filter(|turn| include_sensitive || !turn.database_derived)
+            .flat_map(|turn| {
+                [
+                    ChatMessage::text("user", turn.user.clone()),
+                    ChatMessage::text("assistant", turn.assistant.clone()),
+                ]
+            })
+            .collect()
+    }
+
+    pub fn redacted(&self) -> RedactedSession {
+        RedactedSession {
+            version: SESSION_VERSION,
+            id: self.id.clone(),
+            profile: self.profile.clone(),
+            included_profiles: self.included_profiles.clone(),
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            allow_data_sharing: self.allow_data_sharing,
+            approval_mode: self.approval_mode.clone(),
+            turns: self.turns.clone(),
+            profile_names: self.profile_names(),
+            messages: Vec::new(),
         }
     }
 

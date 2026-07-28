@@ -3,7 +3,7 @@ use crate::{
 };
 use saya_agent::{
     AgentError, AgentEventSink, AgentLimits, AgentOutput, AgentRequest, ApprovalPolicy,
-    CancellationToken, run_agent_with_sink,
+    CancellationToken, ChatMessage, run_agent_with_sink,
 };
 use saya_config::{AiProvider, ResolvedAi};
 use saya_connectors::{ConnectorOptions, build_connector};
@@ -29,12 +29,14 @@ pub(crate) struct PromptOverrides {
     pub(crate) profile: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_prompt_with_sink(
     runtime: &RuntimeConfig,
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
     overrides: PromptOverrides,
+    history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
 ) -> Result<AgentOutput, AgentRuntimeError> {
@@ -70,6 +72,7 @@ pub(crate) async fn run_prompt_with_sink(
         prompt: prompt.into(),
         profile_names: profile_name.into_iter().collect(),
         model: ai.model,
+        history,
     };
     run_agent_with_sink(
         &*provider,
@@ -92,6 +95,12 @@ pub(crate) async fn run_prompt_with_sink(
         }
         AgentError::InvalidToolCall => {
             AgentRuntimeError::Agent("provider returned an unsupported tool call".into())
+        }
+        AgentError::InvalidHistory => {
+            AgentRuntimeError::Agent("conversation history is invalid".into())
+        }
+        AgentError::ContextLimit => {
+            AgentRuntimeError::Agent("conversation context exceeds the safe limit".into())
         }
         AgentError::Cancelled => AgentRuntimeError::Agent("request cancelled".into()),
     })
