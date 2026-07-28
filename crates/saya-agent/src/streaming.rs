@@ -37,8 +37,11 @@ impl CancellationToken {
         self.0.cancelled.load(Ordering::Acquire)
     }
     pub async fn cancelled(&self) {
+        let notified = self.0.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if !self.is_cancelled() {
-            self.0.notify.notified().await;
+            notified.await;
         }
     }
 }
@@ -92,5 +95,26 @@ pub trait ChatProvider: Send + Sync {
                 tool_call_id: None,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CancellationToken;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn cancellation_waiter_does_not_miss_a_notification() {
+        for _ in 0..64 {
+            let token = CancellationToken::new();
+            let waiter = token.clone();
+            let task = tokio::spawn(async move { waiter.cancelled().await });
+            tokio::task::yield_now().await;
+            token.cancel();
+            tokio::time::timeout(Duration::from_millis(100), task)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 }

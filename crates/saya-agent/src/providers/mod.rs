@@ -1,3 +1,4 @@
+mod framing;
 mod http;
 mod ollama;
 mod ollama_chunks;

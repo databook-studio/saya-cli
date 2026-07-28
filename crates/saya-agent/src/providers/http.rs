@@ -15,7 +15,7 @@ pub(super) async fn send_stream(
         match response {
             Ok(response) if response.status().is_success() => return Ok(response),
             Ok(response) if retryable(response.status()) && attempt < delays.len() => {
-                tokio::time::sleep(delays[attempt]).await;
+                wait(delays[attempt], cancellation).await?;
             }
             Ok(response) => {
                 return Err(ProviderError::Request(format!(
@@ -23,11 +23,18 @@ pub(super) async fn send_stream(
                     response.status().as_u16()
                 )));
             }
-            Err(_) if attempt < delays.len() => tokio::time::sleep(delays[attempt]).await,
+            Err(_) if attempt < delays.len() => wait(delays[attempt], cancellation).await?,
             Err(_) => return Err(ProviderError::Request("network request failed".into())),
         }
     }
     Err(ProviderError::Request("network request failed".into()))
+}
+
+async fn wait(delay: Duration, cancellation: &CancellationToken) -> Result<(), ProviderError> {
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(ProviderError::Cancelled),
+        _ = tokio::time::sleep(delay) => Ok(()),
+    }
 }
 
 fn retryable(status: StatusCode) -> bool {

@@ -1,4 +1,4 @@
-use super::{openai_chunks::Chunk, tool_assembly::ToolAssembly};
+use super::{framing::whitespace, openai_chunks::Chunk, tool_assembly::ToolAssembly};
 use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
@@ -28,18 +28,30 @@ where
         if let Some(event) = value.1.pending.pop_front() {
             return Some((Ok(event), value));
         }
-        if value.1.done {
+        if value.1.eof {
             return None;
         }
         let item = tokio::select! { _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)), item = value.0.next() => item };
         let Some(chunk) = item else {
-            value.1.done = true;
-            return Some((Err(ProviderError::InvalidResponse), value));
+            if !value.1.done {
+                value.1.eof = true;
+                return Some((Err(ProviderError::InvalidResponse), value));
+            }
+            value.1.pending.push_back(ProviderEvent::Done);
+            value.1.eof = true;
+            continue;
         };
+        if value.1.done {
+            if chunk.as_ref().is_ok_and(|chunk| whitespace(chunk)) {
+                continue;
+            }
+            value.1.eof = true;
+            return Some((Err(ProviderError::InvalidResponse), value));
+        }
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(_) => {
-                value.1.done = true;
+                value.1.eof = true;
                 return Some((
                     Err(ProviderError::Request("network request failed".into())),
                     value,
@@ -47,7 +59,7 @@ where
             }
         };
         if let Err(error) = value.1.push(&chunk) {
-            value.1.done = true;
+            value.1.eof = true;
             return Some((Err(error), value));
         }
     }
@@ -60,6 +72,7 @@ struct State {
     tools: ToolAssembly,
     content: bool,
     done: bool,
+    eof: bool,
 }
 impl State {
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
@@ -108,14 +121,14 @@ impl State {
             }
         }
         if self.done {
-            if !self.bytes.is_empty() || (!self.content && self.tools.is_empty()) {
+            if !whitespace(&self.bytes) || (!self.content && self.tools.is_empty()) {
                 return Err(ProviderError::InvalidResponse);
             }
             let calls = std::mem::take(&mut self.tools).finish()?;
             if !calls.is_empty() {
                 self.pending.push_back(ProviderEvent::ToolCalls(calls));
             }
-            self.pending.push_back(ProviderEvent::Done);
+            self.bytes.clear();
         }
         Ok(())
     }
