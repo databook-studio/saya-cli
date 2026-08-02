@@ -5,12 +5,14 @@ use crate::{
     stream_render::TerminalSink,
 };
 use saya_agent::{ApprovalPolicy, CancellationToken};
+use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::{ConnectionError, QueryRequest};
-use std::{fs, path::PathBuf};
+use std::{path::PathBuf, time::Instant};
 
 use super::{
     connection,
     output::{emit, failure, failure_message},
+    state,
 };
 
 pub(super) async fn ask(
@@ -20,8 +22,9 @@ pub(super) async fn ask(
     format: RenderFormat,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    let prompt = input(prompt, file)?;
+    let prompt = super::query_input::input(prompt, file)?;
     if prompt.trim().is_empty() {
         return Err("ask requires a prompt or --file".into());
     }
@@ -36,6 +39,7 @@ pub(super) async fn ask(
         Vec::new(),
         &sink,
         cancellation.clone(),
+        Some(state_db.clone()),
     );
     tokio::pin!(work);
     match tokio::select! {
@@ -53,8 +57,9 @@ pub(super) async fn run(
     runtime: &RuntimeConfig,
     format: RenderFormat,
     can_prompt: bool,
+    state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    let sql = input(sql, file)?;
+    let sql = super::query_input::input(sql, file)?;
     if sql.trim().is_empty() {
         return Err("query requires --sql or --file".into());
     }
@@ -65,33 +70,71 @@ pub(super) async fn run(
             format,
         );
     };
+    let started = Instant::now();
+    let profile_name = runtime.resolved.profile_name.as_deref().unwrap_or("none");
     let Some(connector) = connection::connector(profile, runtime, 4, format, can_prompt).await?
     else {
+        state::audit(
+            state_db,
+            profile_name,
+            AuditOperation::Query,
+            AuditStatus::Failure,
+            started.elapsed(),
+            None,
+            None,
+            format,
+        )
+        .await;
         return Ok(4);
     };
     match connector.connect().await {
-        Err(error) => failure(3, error, format),
+        Err(error) => {
+            state::audit(
+                state_db,
+                profile_name,
+                AuditOperation::Query,
+                AuditStatus::Failure,
+                started.elapsed(),
+                None,
+                None,
+                format,
+            )
+            .await;
+            failure(3, error, format)
+        }
         Ok(()) => match connector
             .execute(QueryRequest::new(sql, runtime.resolved.max_rows))
             .await
         {
             Ok(result) => {
+                state::audit(
+                    state_db,
+                    profile_name,
+                    AuditOperation::Query,
+                    AuditStatus::Success,
+                    started.elapsed(),
+                    Some(result.rows.len()),
+                    Some(result.truncated),
+                    format,
+                )
+                .await;
                 emit(TerminalEvent::QueryResult { result }, format);
                 Ok(0)
             }
-            Err(error) => failure(4, error, format),
+            Err(error) => {
+                state::audit(
+                    state_db,
+                    profile_name,
+                    AuditOperation::Query,
+                    AuditStatus::Failure,
+                    started.elapsed(),
+                    None,
+                    None,
+                    format,
+                )
+                .await;
+                failure(4, error, format)
+            }
         },
-    }
-}
-
-fn input(
-    value: Option<String>,
-    file: Option<PathBuf>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    match (value, file) {
-        (Some(value), None) => Ok(value),
-        (None, Some(path)) => Ok(fs::read_to_string(path)?),
-        (Some(_), Some(_)) => Err("provide a prompt or --file, not both".into()),
-        (None, None) => Err("a prompt or --file is required".into()),
     }
 }

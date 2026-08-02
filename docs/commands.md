@@ -44,3 +44,10 @@ turns, and `--continue`/`--resume` reconstruct redacted history with saved
 provider settings. `/clear` removes the canonical turns as well as visible
 context. Tool arguments, responses, credentials, headers, and rows are never
 restored into provider history.
+
+`connection schema PROFILE` and interactive `/schema` authenticate and fetch
+live metadata before updating the local schema cache. If a later live attempt
+fails, the command may return cached metadata only with an explicit stale
+diagnostic. `--refresh` and `/schema refresh` invalidate first and therefore
+never fall back. Agent schema tools use the same post-live-connection fallback;
+cached metadata never enables query execution without a live connector.

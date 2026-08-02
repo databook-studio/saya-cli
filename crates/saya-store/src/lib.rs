@@ -4,11 +4,22 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod audit_store;
 mod filesystem;
 mod history;
 mod redaction;
+mod schema_store;
+mod sqlite;
+mod sqlite_support;
+mod state_contracts;
 
 pub use filesystem::FsSessionStore;
+pub use sqlite::SqliteStateStore;
+pub use sqlite_support::state_sidecar_path;
+pub use state_contracts::{
+    AuditEntry, AuditOperation, AuditRecord, AuditStatus, AuditStore, CachedSchema, SCHEMA_VERSION,
+    SchemaCacheEntry, SchemaStore,
+};
 
 /// Persistable session data. Callers must provide content after secret redaction.
 pub const SESSION_VERSION: u32 = 2;
@@ -90,8 +101,14 @@ pub struct SessionSummary {
 
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("session store failed: {0}")]
-    Failure(String),
+    #[error("local state store is unavailable")]
+    Unavailable,
+}
+
+impl StoreError {
+    pub fn unavailable() -> Self {
+        Self::Unavailable
+    }
 }
 
 #[async_trait]

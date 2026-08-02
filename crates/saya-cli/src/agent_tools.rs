@@ -1,15 +1,18 @@
 use async_trait::async_trait;
 use saya_agent::{ToolDefinition, ToolExecutor};
 use saya_connectors::DatabaseConnector;
-use saya_types::QueryRequest;
+use saya_store::SqliteStateStore;
 
 pub(crate) struct DatabaseTools {
     connector: Option<Box<dyn DatabaseConnector>>,
     max_rows: usize,
     allow_query_data: bool,
+    state_db: Option<SqliteStateStore>,
+    profile_name: Option<String>,
 }
 
 impl DatabaseTools {
+    #[cfg(test)]
     pub(crate) fn new(
         connector: Option<Box<dyn DatabaseConnector>>,
         max_rows: usize,
@@ -19,6 +22,24 @@ impl DatabaseTools {
             connector,
             max_rows,
             allow_query_data,
+            state_db: None,
+            profile_name: None,
+        }
+    }
+
+    pub(crate) fn with_state(
+        connector: Option<Box<dyn DatabaseConnector>>,
+        max_rows: usize,
+        allow_query_data: bool,
+        state_db: Option<SqliteStateStore>,
+        profile_name: Option<String>,
+    ) -> Self {
+        Self {
+            connector,
+            max_rows,
+            allow_query_data,
+            state_db,
+            profile_name,
         }
     }
 
@@ -59,23 +80,27 @@ impl ToolExecutor for DatabaseTools {
             .as_ref()
             .ok_or("no database profile is selected")?;
         match name {
-            "schema_discovery" => serde_json::to_value(
-                connector
-                    .schema()
-                    .await
-                    .map_err(|_| "schema discovery failed")?,
-            )
-            .map_err(|_| "schema result unavailable".into()),
+            "schema_discovery" => {
+                crate::agent_state_tools::schema(
+                    &**connector,
+                    self.state_db.as_ref(),
+                    self.profile_name.as_deref(),
+                )
+                .await
+            }
             "bounded_sql_query" => {
                 let sql = arguments
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
                     .ok_or("invalid query arguments")?;
-                let result = connector
-                    .execute(QueryRequest::new(sql, self.max_rows))
-                    .await
-                    .map_err(|_| "read-only query failed")?;
-                serde_json::to_value(result).map_err(|_| "query result unavailable".into())
+                crate::agent_state_tools::query(
+                    &**connector,
+                    sql,
+                    self.max_rows,
+                    self.state_db.as_ref(),
+                    self.profile_name.as_deref(),
+                )
+                .await
             }
             _ => Err("unsupported read-only tool".into()),
         }

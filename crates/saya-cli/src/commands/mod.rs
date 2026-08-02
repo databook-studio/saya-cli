@@ -1,10 +1,15 @@
 mod config;
 pub(crate) mod connection;
+pub(crate) mod connection_schema;
+mod connection_schema_cache;
 mod output;
 mod query;
+mod query_input;
+mod state;
 
 use crate::{cli::Command, config_runtime::RuntimeConfig, render::RenderFormat};
 use saya_agent::ApprovalPolicy;
+use saya_store::SqliteStateStore;
 
 pub async fn run(
     command: Command,
@@ -13,14 +18,17 @@ pub async fn run(
     approval: ApprovalPolicy,
     can_prompt: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    let state = SqliteStateStore::new(crate::state_path::state_db_path());
     match command {
         Command::Config { command } => config::run(command, runtime, format),
         Command::Connection { command } => {
-            connection::run(command, runtime, format, can_prompt).await
+            connection::run(command, runtime, format, can_prompt, &state).await
         }
         Command::Ask { prompt, file } => {
-            query::ask(prompt, file, runtime, format, approval, can_prompt).await
+            query::ask(prompt, file, runtime, format, approval, can_prompt, &state).await
         }
-        Command::Query { sql, file } => query::run(sql, file, runtime, format, can_prompt).await,
+        Command::Query { sql, file } => {
+            query::run(sql, file, runtime, format, can_prompt, &state).await
+        }
     }
 }
