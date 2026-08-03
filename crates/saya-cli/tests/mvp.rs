@@ -734,7 +734,7 @@ fn state_path_precedence_is_platform_aware_and_injectable() {
 
 #[test]
 fn duckdb_schema_cache_fallback_refresh_and_interactive_schema_are_stable() {
-    use saya_store::{AuditOperation, AuditStore};
+    use saya_store::{AuditOperation, AuditStore, SqliteStateStore};
     use std::io::Write;
     let root = std::env::temp_dir().join(format!("saya-cli-state-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -863,9 +863,11 @@ fn duckdb_schema_cache_fallback_refresh_and_interactive_schema_are_stable() {
         .enable_all()
         .build()
         .unwrap();
-    let audits = runtime
-        .block_on(saya_store::SqliteStateStore::new(&state).recent_audit(100))
-        .unwrap();
+    let store = SqliteStateStore::new(&state);
+    let audits = runtime.block_on(store.recent_audit(100)).unwrap();
+    runtime.block_on(store.close());
+    drop(store);
+    drop(runtime);
     assert!(
         audits
             .iter()
@@ -1226,7 +1228,11 @@ fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
             if libc::setsid() == -1 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY.into(), 0) == -1 {
+            #[cfg(target_vendor = "apple")]
+            let controlling_terminal = libc::TIOCSCTTY as libc::c_ulong;
+            #[cfg(not(target_vendor = "apple"))]
+            let controlling_terminal = libc::TIOCSCTTY;
+            if libc::ioctl(libc::STDIN_FILENO, controlling_terminal, 0) == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
