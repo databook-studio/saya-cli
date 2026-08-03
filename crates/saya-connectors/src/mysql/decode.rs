@@ -1,5 +1,5 @@
 use bigdecimal::BigDecimal;
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, TypeInfo, ValueRef, mysql::MySqlRow};
 
@@ -26,9 +26,12 @@ pub(crate) fn json_value(row: &MySqlRow, index: usize) -> Result<Value, sqlx::Er
         "TIME" => row
             .try_get::<NaiveTime, _>(index)
             .map(|value| Value::String(value.to_string())),
-        "DATETIME" | "TIMESTAMP" => row
+        "DATETIME" => row
             .try_get::<NaiveDateTime, _>(index)
             .map(|value| Value::String(value.to_string())),
+        "TIMESTAMP" => row
+            .try_get::<DateTime<Utc>, _>(index)
+            .map(|value| Value::String(value.naive_utc().to_string())),
         "YEAR" | "BIT" => row.try_get::<u64, _>(index).map(Value::from),
         "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => row
             .try_get::<Vec<u8>, _>(index)
