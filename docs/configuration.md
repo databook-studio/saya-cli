@@ -5,6 +5,12 @@ looks for project files in `.saya/` and user files in the platform config
 directory (`$XDG_CONFIG_HOME/saya`, `$APPDATA/saya`, or `~/.config/saya`).
 Explicit `--config` and `--connections` paths override discovered files.
 
+Run `saya config init` in a project to create a safe starting pair:
+`.saya/config.toml` and `.saya/connections.toml`. The command never overwrites
+existing files, writes `0600` files in a newly created Unix `0700` directory,
+and removes the first file if the second cannot be created. Text, JSON, and
+NDJSON success output is stable; diagnostics stay on stderr.
+
 Value precedence, highest first:
 
 1. CLI flags
@@ -72,8 +78,9 @@ use either the established `SAYA_AI_PROVIDER`, `SAYA_AI_MODEL`, and
 `SAYA_AI_BASE_URL` names or the shorter `SAYA_PROVIDER`, `SAYA_MODEL`, and
 `SAYA_PROVIDER_BASE_URL` names. `SAYA_API_KEY` becomes a runtime
 `{ env = "SAYA_API_KEY" }` reference and is never serialized. Ollama and
-OpenAI-compatible chat-completions are supported; other providers are not
-implemented yet.
+OpenAI-compatible chat-completions are supported; Anthropic and Gemini are not
+implemented. Fully offline agent use is also unavailable: the agent still
+needs a configured provider endpoint.
 
 Schema discovery is automatically allowed. A bounded SQL tool call is allowed
 under `read-only`, denied under `never`, and asks for explicit `y/yes` on a TTY

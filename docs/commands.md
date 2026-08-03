@@ -8,6 +8,7 @@ session. It accepts `/help`, `/connect`, `/connections`, `/include`,
 Examples:
 
 ```bash
+saya config init
 saya --profile analytics
 saya --continue
 saya --resume 1720000000000
@@ -51,3 +52,8 @@ fails, the command may return cached metadata only with an explicit stale
 diagnostic. `--refresh` and `/schema refresh` invalidate first and therefore
 never fall back. Agent schema tools use the same post-live-connection fallback;
 cached metadata never enables query execution without a live connector.
+
+`config init` creates `.saya/config.toml` and `.saya/connections.toml` in the
+current directory. It is credential-free, refuses to overwrite either file,
+and rolls back a partially created pair. Use `--format text|json|ndjson` for a
+stable result envelope; errors and diagnostics remain on stderr.

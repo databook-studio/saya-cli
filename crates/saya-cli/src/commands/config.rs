@@ -1,8 +1,9 @@
 use crate::{
-    cli::ConfigCommand, config_doctor, config_runtime::RuntimeConfig, render::RenderFormat,
+    cli::ConfigCommand, config_doctor, config_init, config_runtime::RuntimeConfig,
+    render::RenderFormat,
 };
 
-use super::output::result;
+use super::output::{failure_message, result};
 
 pub(super) fn run(
     command: ConfigCommand,
@@ -10,10 +11,7 @@ pub(super) fn run(
     format: RenderFormat,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match command {
-        ConfigCommand::Init => {
-            print!("{CONFIG_TEMPLATE}");
-            Ok(0)
-        }
+        ConfigCommand::Init => run_init(format),
         ConfigCommand::Doctor => result(config_doctor::summary(runtime), format),
         ConfigCommand::Show { .. } => {
             let value = runtime.resolved.redacted_diagnostics();
@@ -27,4 +25,9 @@ pub(super) fn run(
     }
 }
 
-const CONFIG_TEMPLATE: &str = "default_profile = \"analytics\"\n\n[ai]\nprovider = \"ollama\"\nmodel = \"qwen2.5-coder:14b\"\nallow_data_sharing = false\n\n[run]\nread_only = true\nmax_rows = 1000\n";
+pub(super) fn run_init(format: RenderFormat) -> Result<i32, Box<dyn std::error::Error>> {
+    match std::env::current_dir().and_then(|cwd| config_init::create_project_files(&cwd)) {
+        Ok(message) => result(message, format),
+        Err(error) => failure_message(2, config_init::error_message(&error), format),
+    }
+}

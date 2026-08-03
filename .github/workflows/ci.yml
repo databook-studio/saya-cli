@@ -18,8 +18,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   postgres-live:
     name: PostgreSQL live contract
@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p saya-connectors --test postgres_live
+      - run: cargo test --locked -p saya-connectors --test postgres_live
 
   mysql-live:
     name: MySQL live contract
@@ -66,4 +66,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p saya-connectors --test mysql_live
+      - run: cargo test --locked -p saya-connectors --test mysql_live

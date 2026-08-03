@@ -3,6 +3,16 @@
 Put profiles in `connections.toml` under `[profiles.<name>]`. Values that are
 credentials must be references:
 
+```bash
+saya config init
+```
+
+This creates `.saya/config.toml` and `.saya/connections.toml` only when neither
+exists. It is safe to rerun after editing because it refuses to overwrite, and
+it rolls back the first file if the second cannot be created. The generated
+analytics profile is a PostgreSQL SecretRef template; set its referenced
+environment variable before connecting.
+
 ```toml
 [profiles.analytics]
 type = "postgresql"
@@ -136,6 +146,11 @@ saya --profile snowflake_browser --approval-mode read-only ask \
 `--non-interactive` is valid for keypair and userpass profiles. It is not valid
 for `externalbrowser`; non-interactive or piped input fails before the browser,
 localhost callback, or Snowflake network request is started.
+
+Only one execution profile is selected for a command. `--include-profile` is a
+display/session inclusion feature in this alpha, not multi-profile execution.
+Anthropic and Gemini are provider-level unavailable features, and fully offline
+agent use is unavailable even when the database connector is local.
 
 All four live engines use the same command surface. `query` permits one parsed
 read-only statement, caps returned rows, and reports truncation.
