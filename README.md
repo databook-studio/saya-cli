@@ -25,6 +25,9 @@ available as `saya ask`, `saya query`, `saya config`, and `saya connection`.
 See [installation](docs/installation.md) for source install details and the
 current crates.io/Homebrew boundary.
 
+For complete connection-profile, dotenv, query, and cross-database examples,
+see the [database query guide](docs/querying-databases.md).
+
 ## Configuration
 
 The canonical files are TOML:
