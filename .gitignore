@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+!examples/.env.*.example
 *.key
 *.pem
 *.p8

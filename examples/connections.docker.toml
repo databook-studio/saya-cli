@@ -1,0 +1,20 @@
+# Local DataBook Docker services from DataTalkie/docker/docker-compose.yml.
+# These profiles are intentionally TLS-disabled for localhost development only.
+
+[profiles.databook_postgres]
+type = "postgresql"
+host = "127.0.0.1"
+port = 5434
+database = "pagila"
+user = "databook"
+password = { env = "SAYA_DOCKER_POSTGRES_PASSWORD" }
+sslmode = "disable"
+
+[profiles.databook_mysql]
+type = "mysql"
+host = "127.0.0.1"
+port = 3306
+database = "databook"
+user = "databook"
+password = { env = "SAYA_DOCKER_MYSQL_PASSWORD" }
+sslmode = "disable"
