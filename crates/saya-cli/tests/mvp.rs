@@ -770,6 +770,104 @@ fn duckdb_schema_cache_fallback_refresh_and_interactive_schema_are_stable() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn relative_and_existing_parent_state_paths_do_not_change_parent_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("saya-cli-relative-state-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let database = root.join("data.duckdb");
+    duckdb::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE TABLE events (id INTEGER);")
+        .unwrap();
+    let connections = root.join("connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.analytics]\ntype = 'duckdb'\npath = '{}'\nread_only = true\n",
+            database.display()
+        ),
+    )
+    .unwrap();
+    let state_paths = [
+        std::ffi::OsString::from("relative-state.sqlite3"),
+        root.join("shared-state.sqlite3").into_os_string(),
+    ];
+    for state_path in state_paths {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+            .current_dir(&root)
+            .args([
+                "--non-interactive",
+                "--connections",
+                connections.to_str().unwrap(),
+                "connection",
+                "schema",
+                "analytics",
+            ])
+            .env("SAYA_STATE_DB", state_path)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+    }
+    assert_eq!(
+        std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    assert!(root.join("relative-state.sqlite3").exists());
+    assert!(root.join("shared-state.sqlite3").exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn schema_command_emits_one_persistence_warning_when_all_state_steps_fail() {
+    let root = std::env::temp_dir().join(format!("saya-cli-state-warning-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let database = root.join("data.duckdb");
+    duckdb::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE TABLE events (id INTEGER);")
+        .unwrap();
+    let connections = root.join("connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.analytics]\ntype = 'duckdb'\npath = '{}'\nread_only = true\n",
+            database.display()
+        ),
+    )
+    .unwrap();
+    let bad_state = root.join("not-a-database");
+    std::fs::create_dir(&bad_state).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args([
+            "--non-interactive",
+            "--format",
+            "json",
+            "--connections",
+            connections.to_str().unwrap(),
+            "connection",
+            "schema",
+            "analytics",
+            "--refresh",
+        ])
+        .env("SAYA_STATE_DB", &bad_state)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("\"event\":\"schema\""));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("Local state store unavailable").count(),
+        1,
+        "{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn ask_calls_configured_openai_compatible_provider() {
     use std::{
@@ -996,7 +1094,8 @@ fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
     }
     let mut guard = ChildGuard(Some(command.spawn().unwrap()));
     let child = guard.0.as_mut().unwrap();
-    let prompt = read_until(&mut master, b"saya> ", Duration::from_secs(3));
+    // Cold debug builds can be slow while workspace tests contend for CPU.
+    let prompt = read_until(&mut master, b"saya> ", Duration::from_secs(10));
     assert!(String::from_utf8_lossy(&prompt).contains("saya> "));
     master.write_all(b"incomplete prompt\n").unwrap();
     master.flush().unwrap();

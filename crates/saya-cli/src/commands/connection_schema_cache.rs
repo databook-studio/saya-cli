@@ -8,25 +8,26 @@ use std::time::Instant;
 
 pub(super) async fn fallback(
     store: &SqliteStateStore,
-    name: &str,
     identity: &str,
     started: Instant,
     error: saya_types::ConnectionError,
     format: RenderFormat,
+    persistence_failed: &mut bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match store.get_schema(identity).await {
         Ok(Some(cached)) => {
-            state::audit(
+            *persistence_failed |= state::audit_silent(
                 store,
-                name,
+                identity,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Cached,
                 started.elapsed(),
                 None,
                 None,
-                format,
             )
-            .await;
+            .await
+            .is_err();
+            warn(*persistence_failed, format);
             emit(
                 TerminalEvent::Diagnostic {
                     message: "Using cached schema metadata; it may be stale.".into(),
@@ -42,29 +43,38 @@ pub(super) async fn fallback(
             Ok(0)
         }
         Err(_) => {
-            state::diagnostic(format);
-            fail(store, name, started, error, format).await
+            *persistence_failed = true;
+            fail(store, identity, started, error, format, persistence_failed).await
         }
-        Ok(None) => fail(store, name, started, error, format).await,
+        Ok(None) => fail(store, identity, started, error, format, persistence_failed).await,
     }
 }
+
 async fn fail(
     store: &SqliteStateStore,
-    name: &str,
+    identity: &str,
     started: Instant,
     error: saya_types::ConnectionError,
     format: RenderFormat,
+    persistence_failed: &mut bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    state::audit(
+    *persistence_failed |= state::audit_silent(
         store,
-        name,
+        identity,
         AuditOperation::SchemaRefresh,
         AuditStatus::Failure,
         started.elapsed(),
         None,
         None,
-        format,
     )
-    .await;
+    .await
+    .is_err();
+    warn(*persistence_failed, format);
     failure(3, error, format)
+}
+
+fn warn(persistence_failed: bool, format: RenderFormat) {
+    if persistence_failed {
+        state::diagnostic(format);
+    }
 }

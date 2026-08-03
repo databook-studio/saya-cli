@@ -35,12 +35,19 @@ async fn cached_schema_is_explicit_and_agent_query_audit_omits_sql() {
     let path = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&path);
     let profile = "quoted profile";
-    let key = crate::profile_identity::profile_identity(profile);
+    let key = crate::profile_identity::profile_identity(
+        profile,
+        &saya_types::DatabaseProfile::DuckDb {
+            path: "agent-state.duckdb".into(),
+            read_only: Some(true),
+        },
+        std::path::Path::new("/agent-test/connections.toml"),
+    );
     store
         .upsert_schema(&key, &SchemaTree::default())
         .await
         .unwrap();
-    let cached = schema(&Failing, Some(&store), Some(profile)).await.unwrap();
+    let cached = schema(&Failing, Some(&store), Some(&key)).await.unwrap();
     assert_eq!(cached["diagnostic"], "cached schema may be stale");
     assert!(
         query(
@@ -48,7 +55,7 @@ async fn cached_schema_is_explicit_and_agent_query_audit_omits_sql() {
             "SELECT 'raw SQL sentinel'",
             1,
             Some(&store),
-            Some(profile)
+            Some(&key)
         )
         .await
         .is_err()

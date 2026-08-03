@@ -8,18 +8,16 @@ use std::time::Instant;
 pub(crate) async fn schema(
     connector: &dyn DatabaseConnector,
     store: Option<&SqliteStateStore>,
-    profile: Option<&str>,
+    profile_id: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let started = Instant::now();
     match connector.schema().await {
         Ok(schema) => {
-            if let (Some(store), Some(profile)) = (store, profile) {
-                let _ = store
-                    .upsert_schema(&crate::profile_identity::profile_identity(profile), &schema)
-                    .await;
+            if let (Some(store), Some(profile_id)) = (store, profile_id) {
+                let _ = store.upsert_schema(profile_id, &schema).await;
                 audit(
                     store,
-                    profile,
+                    profile_id,
                     AuditOperation::SchemaRefresh,
                     AuditStatus::Success,
                     started,
@@ -30,26 +28,23 @@ pub(crate) async fn schema(
             }
             serde_json::to_value(schema).map_err(|_| "schema result unavailable".into())
         }
-        Err(_) => cached(store, profile, started).await,
+        Err(_) => cached(store, profile_id, started).await,
     }
 }
 
 async fn cached(
     store: Option<&SqliteStateStore>,
-    profile: Option<&str>,
+    profile_id: Option<&str>,
     started: Instant,
 ) -> Result<serde_json::Value, String> {
-    let (Some(store), Some(profile)) = (store, profile) else {
+    let (Some(store), Some(profile_id)) = (store, profile_id) else {
         return Err("schema discovery failed".into());
     };
-    match store
-        .get_schema(&crate::profile_identity::profile_identity(profile))
-        .await
-    {
+    match store.get_schema(profile_id).await {
         Ok(Some(cached)) => {
             audit(
                 store,
-                profile,
+                profile_id,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Cached,
                 started,
@@ -64,7 +59,7 @@ async fn cached(
         _ => {
             audit(
                 store,
-                profile,
+                profile_id,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Failure,
                 started,
@@ -82,15 +77,15 @@ pub(crate) async fn query(
     sql: &str,
     max_rows: usize,
     store: Option<&SqliteStateStore>,
-    profile: Option<&str>,
+    profile_id: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let started = Instant::now();
     match connector.execute(QueryRequest::new(sql, max_rows)).await {
         Ok(result) => {
-            if let (Some(store), Some(profile)) = (store, profile) {
+            if let (Some(store), Some(profile_id)) = (store, profile_id) {
                 audit(
                     store,
-                    profile,
+                    profile_id,
                     AuditOperation::AgentQuery,
                     AuditStatus::Success,
                     started,
@@ -102,10 +97,10 @@ pub(crate) async fn query(
             serde_json::to_value(result).map_err(|_| "query result unavailable".into())
         }
         Err(_) => {
-            if let (Some(store), Some(profile)) = (store, profile) {
+            if let (Some(store), Some(profile_id)) = (store, profile_id) {
                 audit(
                     store,
-                    profile,
+                    profile_id,
                     AuditOperation::AgentQuery,
                     AuditStatus::Failure,
                     started,
@@ -121,7 +116,7 @@ pub(crate) async fn query(
 
 async fn audit(
     store: &SqliteStateStore,
-    profile: &str,
+    profile_id: &str,
     operation: AuditOperation,
     status: AuditStatus,
     started: Instant,
@@ -129,7 +124,7 @@ async fn audit(
     truncated: Option<bool>,
 ) {
     let mut event = AuditEntry::new(
-        crate::profile_identity::profile_identity(profile),
+        profile_id,
         operation,
         status,
         started.elapsed().as_millis() as u64,

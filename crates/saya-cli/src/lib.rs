@@ -8,6 +8,7 @@ mod cli;
 mod commands;
 mod config_doctor;
 mod config_runtime;
+mod config_scope;
 mod config_sources;
 mod interactive;
 mod render;

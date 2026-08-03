@@ -1,14 +1,13 @@
-use crate::{cli::ConnectionCommand, config_runtime::RuntimeConfig, render::RenderFormat};
-use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
-use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
-use saya_types::DatabaseProfile;
-use std::time::Instant;
-
 use super::{
     connection_schema,
     output::{failure, result},
     state,
 };
+use crate::{cli::ConnectionCommand, config_runtime::RuntimeConfig, render::RenderFormat};
+use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
+use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
+use saya_types::DatabaseProfile;
+use std::time::Instant;
 
 pub(super) async fn run(
     command: ConnectionCommand,
@@ -74,10 +73,11 @@ async fn test(
         }
     };
     let started = Instant::now();
+    let identity = state::identity(name, profile, &runtime.cache_scope);
     let Some(connector) = connector(profile, runtime, 3, format, can_prompt).await? else {
         state::audit(
             state_db,
-            name,
+            &identity,
             AuditOperation::ConnectionTest,
             AuditStatus::Failure,
             started.elapsed(),
@@ -92,7 +92,7 @@ async fn test(
         Ok(()) => {
             state::audit(
                 state_db,
-                name,
+                &identity,
                 AuditOperation::ConnectionTest,
                 AuditStatus::Success,
                 started.elapsed(),
@@ -106,7 +106,7 @@ async fn test(
         Err(error) => {
             state::audit(
                 state_db,
-                name,
+                &identity,
                 AuditOperation::ConnectionTest,
                 AuditStatus::Failure,
                 started.elapsed(),

@@ -8,7 +8,7 @@ pub(crate) struct DatabaseTools {
     max_rows: usize,
     allow_query_data: bool,
     state_db: Option<SqliteStateStore>,
-    profile_name: Option<String>,
+    profile_id: Option<String>,
 }
 
 impl DatabaseTools {
@@ -23,7 +23,7 @@ impl DatabaseTools {
             max_rows,
             allow_query_data,
             state_db: None,
-            profile_name: None,
+            profile_id: None,
         }
     }
 
@@ -32,14 +32,14 @@ impl DatabaseTools {
         max_rows: usize,
         allow_query_data: bool,
         state_db: Option<SqliteStateStore>,
-        profile_name: Option<String>,
+        profile_id: Option<String>,
     ) -> Self {
         Self {
             connector,
             max_rows,
             allow_query_data,
             state_db,
-            profile_name,
+            profile_id,
         }
     }
 
@@ -84,7 +84,7 @@ impl ToolExecutor for DatabaseTools {
                 crate::agent_state_tools::schema(
                     &**connector,
                     self.state_db.as_ref(),
-                    self.profile_name.as_deref(),
+                    self.profile_id.as_deref(),
                 )
                 .await
             }
@@ -98,7 +98,7 @@ impl ToolExecutor for DatabaseTools {
                     sql,
                     self.max_rows,
                     self.state_db.as_ref(),
-                    self.profile_name.as_deref(),
+                    self.profile_id.as_deref(),
                 )
                 .await
             }

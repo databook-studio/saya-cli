@@ -29,73 +29,94 @@ pub(crate) async fn run(
             );
         }
     };
-    let identity = state::identity(name);
-    if refresh {
-        state::ignore(store.invalidate_schema(&identity).await, format).await;
-    }
+    let identity = state::identity(name, profile, &runtime.cache_scope);
+    let mut persistence_failed = refresh && store.invalidate_schema(&identity).await.is_err();
     let started = Instant::now();
     let connector = match connection::build(profile, runtime, can_prompt).await {
         Ok(connector) => connector,
         Err(error) if !refresh => {
             return connection_schema_cache::fallback(
-                store, name, &identity, started, error, format,
+                store,
+                &identity,
+                started,
+                error,
+                format,
+                &mut persistence_failed,
             )
             .await;
         }
         Err(error) => {
-            state::audit(
+            persistence_failed |= state::audit_silent(
                 store,
-                name,
+                &identity,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Failure,
                 started.elapsed(),
                 None,
                 None,
-                format,
             )
-            .await;
+            .await
+            .is_err();
+            warn(persistence_failed, format);
             return failure(3, error, format);
         }
     };
     match live_schema(&*connector).await {
         Ok(schema) => {
-            state::ignore(store.upsert_schema(&identity, &schema).await, format).await;
-            state::audit(
+            persistence_failed |= store.upsert_schema(&identity, &schema).await.is_err();
+            persistence_failed |= state::audit_silent(
                 store,
-                name,
+                &identity,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Success,
                 started.elapsed(),
                 None,
                 None,
-                format,
             )
-            .await;
+            .await
+            .is_err();
+            warn(persistence_failed, format);
             emit(TerminalEvent::Schema { schema }, format);
             Ok(0)
         }
         Err(error) if !refresh => {
-            connection_schema_cache::fallback(store, name, &identity, started, error, format).await
+            connection_schema_cache::fallback(
+                store,
+                &identity,
+                started,
+                error,
+                format,
+                &mut persistence_failed,
+            )
+            .await
         }
         Err(error) => {
-            state::audit(
+            persistence_failed |= state::audit_silent(
                 store,
-                name,
+                &identity,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Failure,
                 started.elapsed(),
                 None,
                 None,
-                format,
             )
-            .await;
+            .await
+            .is_err();
+            warn(persistence_failed, format);
             failure(3, error, format)
         }
     }
 }
+
 async fn live_schema(
     connector: &dyn DatabaseConnector,
 ) -> Result<saya_types::SchemaTree, saya_types::ConnectionError> {
     connector.connect().await?;
     connector.schema().await
+}
+
+fn warn(persistence_failed: bool, format: RenderFormat) {
+    if persistence_failed {
+        state::diagnostic(format);
+    }
 }

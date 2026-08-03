@@ -72,11 +72,12 @@ pub(super) async fn run(
     };
     let started = Instant::now();
     let profile_name = runtime.resolved.profile_name.as_deref().unwrap_or("none");
+    let identity = state::identity(profile_name, profile, &runtime.cache_scope);
     let Some(connector) = connection::connector(profile, runtime, 4, format, can_prompt).await?
     else {
         state::audit(
             state_db,
-            profile_name,
+            &identity,
             AuditOperation::Query,
             AuditStatus::Failure,
             started.elapsed(),
@@ -91,7 +92,7 @@ pub(super) async fn run(
         Err(error) => {
             state::audit(
                 state_db,
-                profile_name,
+                &identity,
                 AuditOperation::Query,
                 AuditStatus::Failure,
                 started.elapsed(),
@@ -109,7 +110,7 @@ pub(super) async fn run(
             Ok(result) => {
                 state::audit(
                     state_db,
-                    profile_name,
+                    &identity,
                     AuditOperation::Query,
                     AuditStatus::Success,
                     started.elapsed(),
@@ -124,7 +125,7 @@ pub(super) async fn run(
             Err(error) => {
                 state::audit(
                     state_db,
-                    profile_name,
+                    &identity,
                     AuditOperation::Query,
                     AuditStatus::Failure,
                     started.elapsed(),

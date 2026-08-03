@@ -6,13 +6,16 @@ use std::{
 };
 
 pub(crate) fn prepare_path(path: &Path) -> Result<(), StoreError> {
-    let parent = path.parent().ok_or(StoreError::Unavailable)?;
-    if parent.parent().is_none() || parent == std::env::temp_dir() {
-        return Err(StoreError::Unavailable);
-    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let existed = parent.exists();
     fs::create_dir_all(parent).map_err(|_| StoreError::Unavailable)?;
     #[cfg(unix)]
-    set_mode(parent, 0o700)?;
+    if !existed {
+        set_mode(parent, 0o700)?;
+    }
     Ok(())
 }
 

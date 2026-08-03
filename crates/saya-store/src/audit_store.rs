@@ -28,8 +28,11 @@ impl AuditStore for SqliteStateStore {
         self.secure_files()
     }
     async fn recent_audit(&self, limit: usize) -> Result<Vec<AuditRecord>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let rows = sqlx::query_as::<_, (i64, Option<String>, String, String, String, i64, Option<i64>, Option<i64>)>("SELECT created_unix_ms, session_id, profile_id, operation, status, duration_ms, row_count, truncated FROM audit_log ORDER BY id DESC LIMIT ?")
-            .bind(limit.clamp(1, MAX_AUDIT_READ) as i64).fetch_all(self.pool().await?).await.map_err(|_| StoreError::Unavailable)?;
+            .bind(limit.min(MAX_AUDIT_READ) as i64).fetch_all(self.pool().await?).await.map_err(|_| StoreError::Unavailable)?;
         rows.into_iter().map(decode).collect()
     }
 }

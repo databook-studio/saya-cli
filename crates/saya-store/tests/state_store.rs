@@ -61,18 +61,18 @@ async fn audit_is_typed_bounded_retained_and_decoded_without_payload_fields() {
                 && row.event.profile_id == PROFILE)
     );
     assert!(store.recent_audit(20_000).await.unwrap().len() <= 1_000);
+    assert!(store.recent_audit(0).await.unwrap().is_empty());
     let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
-async fn concurrent_access_empty_and_corrupt_files_fail_safely() {
+async fn independent_stores_serialize_first_initialization_and_corrupt_files_fail_safely() {
     let root = temp_root("concurrent");
     let db = root.join("state.sqlite3");
     fs::write(&db, []).unwrap();
-    let store = SqliteStateStore::new(&db);
     let mut tasks = Vec::new();
     for _ in 0..12 {
-        let store = store.clone();
+        let store = SqliteStateStore::new(&db);
         tasks.push(tokio::spawn(async move {
             store
                 .upsert_schema(PROFILE, &schema("events"))
@@ -92,7 +92,14 @@ async fn concurrent_access_empty_and_corrupt_files_fail_safely() {
     for task in tasks {
         task.await.unwrap();
     }
-    assert_eq!(store.recent_audit(100).await.unwrap().len(), 12);
+    assert_eq!(
+        SqliteStateStore::new(&db)
+            .recent_audit(100)
+            .await
+            .unwrap()
+            .len(),
+        12
+    );
     let corrupt_root = temp_root("corrupt");
     let corrupt = corrupt_root.join("state.sqlite3");
     fs::write(&corrupt, b"server error /private/tmp password").unwrap();
@@ -148,22 +155,44 @@ async fn adversarial_labels_are_rejected_and_never_written() {
 async fn unix_parent_database_and_sidecars_are_private() {
     use std::os::unix::fs::PermissionsExt;
     let root = temp_root("permissions");
-    let db = root.join("state.sqlite3");
+    let db = root.join("created").join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     store
         .upsert_schema(PROFILE, &schema("events"))
         .await
         .unwrap();
     assert_eq!(
-        fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+        fs::metadata(root.join("created"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
         0o700
     );
-    for entry in fs::read_dir(&root).unwrap().flatten() {
+    for entry in fs::read_dir(root.join("created")).unwrap().flatten() {
         assert_eq!(
             entry.metadata().unwrap().permissions().mode() & 0o777,
             0o600
         );
     }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_existing_state_parent_preserves_its_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = temp_root("shared-parent");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    store
+        .upsert_schema(PROFILE, &schema("events"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
     let _ = fs::remove_dir_all(root);
 }
 

@@ -47,6 +47,12 @@ pub(crate) async fn run_prompt_with_sink(
         .map_err(|error| AgentRuntimeError::Provider(error.to_string()))?;
     let (profile_name, profile) =
         crate::agent_profile::selected(runtime, overrides.profile.as_ref())?;
+    let profile_id = profile_name
+        .as_ref()
+        .zip(profile.as_ref())
+        .map(|(name, profile)| {
+            crate::profile_identity::profile_identity(name, profile, &runtime.cache_scope)
+        });
     let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
     let connector = match profile.as_ref() {
         Some(profile) => Some(
@@ -75,7 +81,7 @@ pub(crate) async fn run_prompt_with_sink(
         runtime.resolved.max_rows,
         allow_query_data,
         state_db,
-        profile_name.clone(),
+        profile_id,
     );
     let request = AgentRequest {
         prompt: prompt.into(),
