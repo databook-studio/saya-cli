@@ -7,11 +7,11 @@ members = [
   "crates/saya-store",
   "crates/saya-cli",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/databook-studio/saya-cli"
 
@@ -31,7 +31,7 @@ uuid = { version = "1", features = ["serde"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
 bytes = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
-duckdb = { version = "=1.4.4", features = ["bundled", "chrono", "serde_json", "uuid"] }
+duckdb = { version = "=1.10504.0", features = ["bundled", "chrono", "serde_json", "uuid"] }
 base64 = "0.22"
 rsa = { version = "0.9", features = ["pem", "pkcs5"] }
 sha2 = { version = "0.10", features = ["oid"] }

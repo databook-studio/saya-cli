@@ -1,5 +1,0 @@
-[env]
-# libduckdb-sys compiles bundled C++ through cc-rs. Newer MSVC defaults no
-# longer enable the C++17 constructs used by DuckDB; target-qualified flags
-# keep this requirement isolated to native Windows builds.
-CXXFLAGS_x86_64_pc_windows_msvc = { value = "/std:c++17", force = true }

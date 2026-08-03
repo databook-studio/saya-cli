@@ -6,10 +6,10 @@ impl RuntimeConfig {
     }
 
     pub fn named_profile(&self, name: &str) -> Result<&saya_types::DatabaseProfile, RuntimeError> {
-        if self.resolved.profile_name.as_deref() == Some(name) {
-            if let Some(profile) = self.resolved.profile.as_ref() {
-                return Ok(profile);
-            }
+        if self.resolved.profile_name.as_deref() == Some(name)
+            && let Some(profile) = self.resolved.profile.as_ref()
+        {
+            return Ok(profile);
         }
         self.connections.profiles.get(name).ok_or_else(|| {
             RuntimeError::Config(saya_config::ConfigError::UnknownProfile(name.into()))

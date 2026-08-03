@@ -1,6 +1,6 @@
 # Installation
 
-SAYA CLI is currently a private-alpha source release. Rust 1.85 or newer is
+SAYA CLI is currently a private-alpha source release. Rust 1.88.0 or newer is
 required.
 
 ## Build from a checkout
