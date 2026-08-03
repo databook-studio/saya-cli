@@ -5,12 +5,14 @@ use crate::{
     stream_render::TerminalSink,
 };
 use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
+use saya_store::SqliteStateStore;
 
 pub(crate) enum PromptResult {
     Completed(AgentOutput),
     Cancelled,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     runtime: &RuntimeConfig,
     prompt: &str,
@@ -19,6 +21,7 @@ pub(crate) async fn run(
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     format: RenderFormat,
+    state_db: &SqliteStateStore,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
@@ -31,6 +34,7 @@ pub(crate) async fn run(
         history,
         &sink,
         cancellation.clone(),
+        Some(state_db.clone()),
     );
     tokio::pin!(work);
     tokio::select! {

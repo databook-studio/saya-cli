@@ -5,7 +5,7 @@ pub(crate) fn list(root: &Path) -> Result<Vec<SessionSummary>, StoreError> {
     let entries = match fs::read_dir(root) {
         Ok(value) => value,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(StoreError::Failure(error.to_string())),
+        Err(_) => return Err(StoreError::unavailable()),
     };
     let mut history = Vec::new();
     for entry in entries

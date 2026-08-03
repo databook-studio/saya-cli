@@ -12,6 +12,7 @@ pub enum SessionAction {
     NotImplemented(String),
     Error(String),
     History,
+    Schema(bool),
     Exit,
 }
 
@@ -87,11 +88,7 @@ impl SessionState {
                 }
                 SessionAction::Message(format!("Approval mode: {}", self.approval_mode))
             }
-            SlashCommand::Schema(refresh) => SessionAction::NotImplemented(if refresh {
-                "schema refresh is not implemented".into()
-            } else {
-                "schema inspection is not implemented".into()
-            }),
+            SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();

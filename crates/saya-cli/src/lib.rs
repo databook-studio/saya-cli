@@ -1,11 +1,14 @@
+mod agent_profile;
 mod agent_provider;
 mod agent_runtime;
+mod agent_state_tools;
 pub(crate) mod agent_tools;
 mod app;
 mod cli;
 mod commands;
 mod config_doctor;
 mod config_runtime;
+mod config_scope;
 mod config_sources;
 mod interactive;
 mod render;
@@ -16,7 +19,9 @@ mod stream_render;
 
 #[cfg(test)]
 mod privacy_tests;
+mod profile_identity;
 mod prompt_approval;
+mod state_path;
 
 use clap::Parser;
 
@@ -27,6 +32,7 @@ pub use interactive::{Session, SessionAction, SessionState};
 pub use render::{RenderFormat, TerminalEvent, render_event};
 pub use session_paths::{default_session_dir, resolve_session_dir};
 pub use slash::{SlashCommand, parse_slash_command};
+pub use state_path::resolve_state_db_path;
 
 pub fn run_from_env() -> i32 {
     run(Cli::parse_from(std::env::args_os()))

@@ -2,14 +2,9 @@ use super::{
     session_commands::SessionAction,
     session_request::PromptResult,
     session_resume::{SessionDefaults, block_on, load_session},
-    session_state::SessionState,
 };
 use crate::session_paths::default_session_dir;
-use crate::{
-    Cli, config_runtime,
-    render::{RenderFormat, TerminalEvent, render_event},
-    slash::parse_slash_command,
-};
+use crate::{Cli, config_runtime, slash::parse_slash_command};
 use saya_store::{FsSessionStore, SessionStore};
 use std::io::{self, IsTerminal, Write};
 
@@ -17,6 +12,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let runtime = config_runtime::load(&cli.options, std::path::Path::new("."))?;
     let format = config_runtime::format_name(&cli.options, &runtime.resolved);
     let store = FsSessionStore::new(default_session_dir());
+    let state_db = saya_store::SqliteStateStore::new(crate::state_path::state_db_path());
     let defaults = SessionDefaults {
         provider: runtime.resolved.ai.provider.as_str().into(),
         model: runtime.resolved.ai.model.clone(),
@@ -70,6 +66,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                     state.prompt_overrides(),
                     history,
                     format,
+                    &state_db,
                 )) {
                     Ok(PromptResult::Completed(output)) => {
                         state.record_turn(
@@ -88,62 +85,21 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         if matches!(action, SessionAction::Exit) {
             break;
         }
-        emit_action(action, format, &mut state, &store)?;
+        if let SessionAction::Schema(refresh) = &action {
+            block_on(super::session_schema::run(
+                &runtime,
+                state.profile.as_deref(),
+                *refresh,
+                terminal,
+                format,
+                &state_db,
+            ))?;
+            block_on(store.save(state.redacted()))?;
+            continue;
+        }
+        super::session_emit::emit_action(action, format, &mut state, &store)?;
         block_on(store.save(state.redacted()))?;
     }
     block_on(store.save(state.redacted()))?;
     Ok(0)
-}
-fn emit_action(
-    action: SessionAction,
-    format: RenderFormat,
-    state: &mut SessionState,
-    store: &FsSessionStore,
-) -> Result<(), Box<dyn std::error::Error>> {
-    match action {
-        SessionAction::Message(message) => {
-            if message != "Conversation context cleared." {
-                state.record("system", &message);
-            }
-            emit(TerminalEvent::Result { message }, format);
-        }
-        SessionAction::Agent(_) => {}
-        SessionAction::Cancelled => emit(
-            TerminalEvent::Diagnostic {
-                message: "Request cancelled.".into(),
-            },
-            format,
-        ),
-        SessionAction::NotImplemented(feature) => {
-            emit(TerminalEvent::NotImplemented { feature }, format)
-        }
-        SessionAction::Error(message) => emit(TerminalEvent::Error { message }, format),
-        SessionAction::History => {
-            let entries = block_on(store.history())?;
-            let message = if entries.is_empty() {
-                "No saved sessions.".into()
-            } else {
-                entries
-                    .into_iter()
-                    .map(|entry| format!("{}\t{}", entry.id, entry.modified_unix_ms))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            };
-            emit(
-                TerminalEvent::Result {
-                    message: message.clone(),
-                },
-                format,
-            );
-            state.record("system", message);
-        }
-        SessionAction::Exit => {}
-    }
-    Ok(())
-}
-
-fn emit(event: TerminalEvent, format: RenderFormat) {
-    let rendered = render_event(&event, format);
-    print!("{}", rendered.stdout);
-    eprint!("{}", rendered.stderr);
 }

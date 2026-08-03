@@ -30,6 +30,7 @@ pub struct RuntimeConfig {
     pub connections: ConnectionsFile,
     pub config_path: Option<PathBuf>,
     pub connections_path: Option<PathBuf>,
+    pub cache_scope: PathBuf,
     pub(crate) secret_values: BTreeMap<String, String>,
 }
 
@@ -87,11 +88,13 @@ pub fn load_with_sources(
             allow_data_sharing: options.allow_data_sharing.then_some(true),
             ..Default::default()
         });
+    let cache_scope = crate::config_scope::resolve(selected_connections, cwd);
     Ok(RuntimeConfig {
         resolved: resolve(input)?,
         connections,
         config_path: selected_config.cloned(),
         connections_path: selected_connections.cloned(),
+        cache_scope,
         secret_values,
     })
 }
@@ -104,6 +107,7 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("connections", &self.connections)
             .field("config_path", &self.config_path)
             .field("connections_path", &self.connections_path)
+            .field("cache_scope", &"[redacted]")
             .field("secret_values", &"[redacted]")
             .finish()
     }

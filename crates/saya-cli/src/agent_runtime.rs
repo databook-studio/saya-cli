@@ -7,6 +7,7 @@ use saya_agent::{
 };
 use saya_config::{AiProvider, ResolvedAi};
 use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
+use saya_store::SqliteStateStore;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -39,11 +40,19 @@ pub(crate) async fn run_prompt_with_sink(
     history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
+    state_db: Option<SqliteStateStore>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = effective_ai(&runtime.resolved.ai, &overrides);
     let provider = agent_provider::build(&ai, &runtime.secret_resolver())
         .map_err(|error| AgentRuntimeError::Provider(error.to_string()))?;
-    let (profile_name, profile) = selected_profile(runtime, overrides.profile.as_ref())?;
+    let (profile_name, profile) =
+        crate::agent_profile::selected(runtime, overrides.profile.as_ref())?;
+    let profile_id = profile_name
+        .as_ref()
+        .zip(profile.as_ref())
+        .map(|(name, profile)| {
+            crate::profile_identity::profile_identity(name, profile, &runtime.cache_scope)
+        });
     let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
     let connector = match profile.as_ref() {
         Some(profile) => Some(
@@ -67,8 +76,13 @@ pub(crate) async fn run_prompt_with_sink(
             .await
             .map_err(|error| AgentRuntimeError::Database(error.to_string()))?;
     }
-    let tools =
-        agent_tools::DatabaseTools::new(connector, runtime.resolved.max_rows, allow_query_data);
+    let tools = agent_tools::DatabaseTools::with_state(
+        connector,
+        runtime.resolved.max_rows,
+        allow_query_data,
+        state_db,
+        profile_id,
+    );
     let request = AgentRequest {
         prompt: prompt.into(),
         profile_names: profile_name.into_iter().collect(),
@@ -130,20 +144,4 @@ pub(crate) fn effective_ai(base: &ResolvedAi, overrides: &PromptOverrides) -> Re
         ai.allow_data_sharing = value;
     }
     ai
-}
-
-fn selected_profile(
-    runtime: &RuntimeConfig,
-    override_name: Option<&String>,
-) -> Result<(Option<String>, Option<saya_types::DatabaseProfile>), AgentRuntimeError> {
-    match override_name {
-        Some(name) => runtime
-            .named_profile(name)
-            .map(|profile| (Some(name.clone()), Some(profile.clone())))
-            .map_err(|error| AgentRuntimeError::Configuration(error.to_string())),
-        None => Ok((
-            runtime.resolved.profile_name.clone(),
-            runtime.resolved.profile.clone(),
-        )),
-    }
 }

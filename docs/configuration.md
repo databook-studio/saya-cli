@@ -58,6 +58,13 @@ The REPL session directory uses `SAYA_SESSION_DIR` first, then
 `--approval-mode` resolves to `never` (schema-only); interactive mode defaults
 to `ask`.
 
+Local state uses `SAYA_STATE_DB` when set; otherwise it is stored at
+`saya/state.sqlite3` beneath the platform data directory. The SQLite database
+contains complete schema snapshots under opaque profile IDs and a bounded,
+typed audit log. It never stores credentials, secret references, connection
+URLs, SQL, prompts, result rows, provider payloads, headers, driver errors, or
+source file paths. Session JSON behavior and `SAYA_SESSION_DIR` are unchanged.
+
 The private alpha connects to PostgreSQL, MySQL, DuckDB, and Snowflake. Environment and file secret
 references are resolved at runtime without serializing or logging their values;
 keyring references return an explicit unavailable error. Provider settings may

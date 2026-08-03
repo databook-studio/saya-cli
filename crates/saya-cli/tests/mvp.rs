@@ -2,6 +2,7 @@ use clap::{CommandFactory, Parser};
 use saya_cli::{
     Cli, Command, FormatArg, RenderFormat, SessionAction, SessionState, SlashCommand,
     TerminalEvent, approval_name, parse_slash_command, render_event, resolve_session_dir,
+    resolve_state_db_path,
 };
 
 #[test]
@@ -86,7 +87,7 @@ fn slash_commands_parse_and_state_transitions_are_deterministic() {
     ));
     assert!(matches!(
         state.apply(SlashCommand::Schema(false), &[]),
-        SessionAction::NotImplemented(_)
+        SessionAction::Schema(false)
     ));
     assert_eq!(state.apply(SlashCommand::Exit, &[]), SessionAction::Exit);
 }
@@ -416,6 +417,7 @@ fn duckdb_commands_have_stable_process_envelopes_and_safety() {
     )
     .unwrap();
     let config = root.join("config.toml");
+    let state = root.join("state.sqlite3");
     std::fs::write(&config, "[run]\nmax_rows = 1\n").unwrap();
     let base = [
         "--non-interactive",
@@ -426,10 +428,10 @@ fn duckdb_commands_have_stable_process_envelopes_and_safety() {
         "--connections",
         connections.to_str().unwrap(),
     ];
-    let test = run_cli(&base, &["connection", "test", "local"]);
+    let test = run_cli(&base, &["connection", "test", "local"], &state);
     assert_eq!(test.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&test.stdout).contains("\"event\":\"result\""));
-    let schema = run_cli(&base, &["connection", "schema", "local"]);
+    let schema = run_cli(&base, &["connection", "schema", "local"], &state);
     assert_eq!(schema.status.code(), Some(0));
     let schema_output = String::from_utf8_lossy(&schema.stdout);
     assert!(schema_output.contains("\"event\":\"schema\""));
@@ -447,6 +449,7 @@ fn duckdb_commands_have_stable_process_envelopes_and_safety() {
             "local",
         ],
         &["query", "--sql", "SELECT id, label FROM events ORDER BY id"],
+        &state,
     );
     assert_eq!(query.status.code(), Some(0));
     let query_output = String::from_utf8_lossy(&query.stdout);
@@ -466,6 +469,7 @@ fn duckdb_commands_have_stable_process_envelopes_and_safety() {
             "local",
         ],
         &["query", "--sql", "DROP TABLE events"],
+        &state,
     );
     assert_eq!(denied.status.code(), Some(4));
     assert!(String::from_utf8_lossy(&denied.stderr).contains("\"event\":\"error\""));
@@ -487,16 +491,18 @@ fn duckdb_commands_have_stable_process_envelopes_and_safety() {
             missing_read_only.to_str().unwrap(),
         ],
         &["connection", "test", "local"],
+        &state,
     );
     assert_eq!(missing.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&missing.stderr).contains("read_only explicitly"));
     std::fs::remove_dir_all(root).unwrap();
 }
 
-fn run_cli(global: &[&str], command: &[&str]) -> std::process::Output {
+fn run_cli(global: &[&str], command: &[&str], state: &std::path::Path) -> std::process::Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
         .args(global)
         .args(command)
+        .env("SAYA_STATE_DB", state)
         .output()
         .unwrap()
 }
@@ -566,6 +572,303 @@ fn session_path_resolution_is_platform_aware_and_injectable() {
 }
 
 #[test]
+fn state_path_precedence_is_platform_aware_and_injectable() {
+    assert_eq!(
+        resolve_state_db_path(
+            Some("/override.sqlite3"),
+            Some("/xdg"),
+            Some("/appdata"),
+            Some("/home")
+        ),
+        std::path::PathBuf::from("/override.sqlite3")
+    );
+    assert_eq!(
+        resolve_state_db_path(None, Some("/xdg"), Some("/appdata"), Some("/home")),
+        std::path::PathBuf::from("/xdg/saya/state.sqlite3")
+    );
+    assert_eq!(
+        resolve_state_db_path(None, None, Some("/appdata"), Some("/home")),
+        std::path::PathBuf::from("/appdata/saya/state.sqlite3")
+    );
+}
+
+#[test]
+fn duckdb_schema_cache_fallback_refresh_and_interactive_schema_are_stable() {
+    use saya_store::{AuditOperation, AuditStore};
+    use std::io::Write;
+    let root = std::env::temp_dir().join(format!("saya-cli-state-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let database = root.join("state.duckdb");
+    duckdb::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE TABLE cache_events (id INTEGER);")
+        .unwrap();
+    let connections = root.join("connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.analytics]\ntype = 'duckdb'\npath = '{}'\nread_only = true\n",
+            database.display()
+        ),
+    )
+    .unwrap();
+    let state = root.join("private-state.sqlite3");
+    let globals = [
+        "--non-interactive",
+        "--format",
+        "json",
+        "--connections",
+        connections.to_str().unwrap(),
+    ];
+    let first = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args(globals)
+        .args(["connection", "schema", "analytics"])
+        .env("SAYA_STATE_DB", &state)
+        .output()
+        .unwrap();
+    assert_eq!(first.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&first.stdout).contains("cache_events"));
+    let query = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args(globals)
+        .args([
+            "query",
+            "--profile",
+            "analytics",
+            "--sql",
+            "SELECT 'row-secret' AS raw_sql_secret",
+        ])
+        .env("SAYA_STATE_DB", &state)
+        .output()
+        .unwrap();
+    assert_eq!(query.status.code(), Some(0));
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args([
+            "--format",
+            "ndjson",
+            "--connections",
+            connections.to_str().unwrap(),
+            "--profile",
+            "analytics",
+        ])
+        .env("SAYA_STATE_DB", &state)
+        .env("SAYA_SESSION_DIR", root.join("sessions"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"/schema\n/schema refresh\n/exit\n")
+        .unwrap();
+    let interactive = child.wait_with_output().unwrap();
+    assert_eq!(interactive.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&interactive.stdout)
+            .matches("\"event\":\"schema\"")
+            .count(),
+        2
+    );
+    assert!(interactive.stderr.is_empty());
+    std::fs::remove_file(&database).unwrap();
+    let cached = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args(globals)
+        .args(["connection", "schema", "analytics"])
+        .env("SAYA_STATE_DB", &state)
+        .output()
+        .unwrap();
+    assert_eq!(cached.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&cached.stdout).contains("\"event\":\"schema\""));
+    assert_eq!(
+        String::from_utf8_lossy(&cached.stderr),
+        "{\"event\":\"diagnostic\",\"message\":\"Using cached schema metadata; it may be stale.\"}\n"
+    );
+    let refresh = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args(globals)
+        .args(["connection", "schema", "analytics", "--refresh"])
+        .env("SAYA_STATE_DB", &state)
+        .output()
+        .unwrap();
+    assert_eq!(refresh.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&refresh.stderr).contains("\"event\":\"error\""));
+    let mut failed_repl = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args([
+            "--format",
+            "ndjson",
+            "--connections",
+            connections.to_str().unwrap(),
+            "--profile",
+            "analytics",
+        ])
+        .env("SAYA_STATE_DB", &state)
+        .env("SAYA_SESSION_DIR", root.join("failed-sessions"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    failed_repl
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"/schema refresh\n/exit\n")
+        .unwrap();
+    let failed_repl = failed_repl.wait_with_output().unwrap();
+    assert_eq!(failed_repl.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&failed_repl.stderr).contains("\"event\":\"error\""));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let audits = runtime
+        .block_on(saya_store::SqliteStateStore::new(&state).recent_audit(100))
+        .unwrap();
+    assert!(
+        audits
+            .iter()
+            .all(|row| row.event.profile_id.starts_with("p-") && row.event.profile_id.len() == 66)
+    );
+    assert!(
+        audits
+            .iter()
+            .any(|row| row.event.operation == AuditOperation::Query)
+    );
+    assert!(
+        audits
+            .iter()
+            .filter(|row| row.event.operation == AuditOperation::SchemaRefresh)
+            .count()
+            >= 4
+    );
+    let decoded_audit = format!("{audits:?}");
+    for sentinel in ["analytics", "state.duckdb", "raw_sql_secret", "row-secret"] {
+        assert!(!decoded_audit.contains(sentinel), "audit leaked {sentinel}");
+    }
+    let mut state_bytes = Vec::new();
+    for entry in std::fs::read_dir(&root).unwrap().flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("private-state.sqlite3")
+        {
+            state_bytes.extend(std::fs::read(entry.path()).unwrap());
+        }
+    }
+    let disk = String::from_utf8_lossy(&state_bytes);
+    for sentinel in [
+        "analytics",
+        "state.duckdb",
+        "SELECT 'row-secret'",
+        "raw_sql_secret",
+        "row-secret",
+    ] {
+        assert!(!disk.contains(sentinel), "state leaked {sentinel}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn relative_and_existing_parent_state_paths_do_not_change_parent_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("saya-cli-relative-state-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let database = root.join("data.duckdb");
+    duckdb::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE TABLE events (id INTEGER);")
+        .unwrap();
+    let connections = root.join("connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.analytics]\ntype = 'duckdb'\npath = '{}'\nread_only = true\n",
+            database.display()
+        ),
+    )
+    .unwrap();
+    let state_paths = [
+        std::ffi::OsString::from("relative-state.sqlite3"),
+        root.join("shared-state.sqlite3").into_os_string(),
+    ];
+    for state_path in state_paths {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+            .current_dir(&root)
+            .args([
+                "--non-interactive",
+                "--connections",
+                connections.to_str().unwrap(),
+                "connection",
+                "schema",
+                "analytics",
+            ])
+            .env("SAYA_STATE_DB", state_path)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+    }
+    assert_eq!(
+        std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    assert!(root.join("relative-state.sqlite3").exists());
+    assert!(root.join("shared-state.sqlite3").exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn schema_command_emits_one_persistence_warning_when_all_state_steps_fail() {
+    let root = std::env::temp_dir().join(format!("saya-cli-state-warning-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let database = root.join("data.duckdb");
+    duckdb::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE TABLE events (id INTEGER);")
+        .unwrap();
+    let connections = root.join("connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.analytics]\ntype = 'duckdb'\npath = '{}'\nread_only = true\n",
+            database.display()
+        ),
+    )
+    .unwrap();
+    let bad_state = root.join("not-a-database");
+    std::fs::create_dir(&bad_state).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        .args([
+            "--non-interactive",
+            "--format",
+            "json",
+            "--connections",
+            connections.to_str().unwrap(),
+            "connection",
+            "schema",
+            "analytics",
+            "--refresh",
+        ])
+        .env("SAYA_STATE_DB", &bad_state)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("\"event\":\"schema\""));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("Local state store unavailable").count(),
+        1,
+        "{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn ask_calls_configured_openai_compatible_provider() {
     use std::{
         io::{Read, Write},
@@ -583,6 +886,7 @@ fn ask_calls_configured_openai_compatible_provider() {
     });
     let root = std::env::temp_dir().join(format!("saya-cli-ask-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
+    let provider_state = root.join("provider-only-state.sqlite3");
     let database = root.join("ask.duckdb");
     duckdb::Connection::open(&database)
         .unwrap()
@@ -614,6 +918,7 @@ fn ask_calls_configured_openai_compatible_provider() {
         .env("SAYA_MODEL", "mock-model")
         .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
         .env("SAYA_API_KEY", "mock-secret")
+        .env("SAYA_STATE_DB", &provider_state)
         .output()
         .unwrap();
     handle.join().unwrap();
@@ -621,6 +926,10 @@ fn ask_calls_configured_openai_compatible_provider() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("answer from mock"));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("mock-secret"));
     assert!(output.stderr.is_empty());
+    assert!(
+        !provider_state.exists(),
+        "provider-only ask must not create an agent-query audit"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -785,7 +1094,8 @@ fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
     }
     let mut guard = ChildGuard(Some(command.spawn().unwrap()));
     let child = guard.0.as_mut().unwrap();
-    let prompt = read_until(&mut master, b"saya> ", Duration::from_secs(3));
+    // Cold debug builds can be slow while workspace tests contend for CPU.
+    let prompt = read_until(&mut master, b"saya> ", Duration::from_secs(10));
     assert!(String::from_utf8_lossy(&prompt).contains("saya> "));
     master.write_all(b"incomplete prompt\n").unwrap();
     master.flush().unwrap();

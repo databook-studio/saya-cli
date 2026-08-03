@@ -25,7 +25,7 @@ tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "sig
 toml = "0.8"
 futures-util = "0.3"
 sqlparser = { version = "0.53", features = ["visitor"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "mysql", "json", "chrono", "uuid", "bigdecimal"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "json", "chrono", "uuid", "bigdecimal"] }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 uuid = { version = "1", features = ["serde"] }
 bigdecimal = { version = "0.4", features = ["serde"] }

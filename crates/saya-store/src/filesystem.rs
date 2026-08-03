@@ -20,7 +20,7 @@ impl FsSessionStore {
 
     fn path(&self, id: &str) -> Result<PathBuf, StoreError> {
         if id.is_empty() || id.contains('/') || id.contains('\\') || id == "." || id == ".." {
-            return Err(StoreError::Failure("invalid session id".into()));
+            return Err(StoreError::unavailable());
         }
         Ok(self.root.join(format!("{id}.json")))
     }
@@ -64,8 +64,7 @@ impl SessionStore for FsSessionStore {
         }
         let path = self.path(&session.id)?;
         let temp = path.with_extension("json.tmp");
-        let data = serde_json::to_vec_pretty(&session)
-            .map_err(|error| StoreError::Failure(error.to_string()))?;
+        let data = serde_json::to_vec_pretty(&session).map_err(|_| StoreError::unavailable())?;
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -127,8 +126,8 @@ fn stamp() -> u128 {
         .map(|value| value.as_millis())
         .unwrap_or_default()
 }
-fn io_error(error: std::io::Error) -> StoreError {
-    StoreError::Failure(error.to_string())
+fn io_error(_: std::io::Error) -> StoreError {
+    StoreError::unavailable()
 }
 
 #[cfg(unix)]

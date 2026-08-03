@@ -186,6 +186,11 @@ saya query --profile local --connections examples/connections.toml --sql "SELECT
 saya --profile local --approval-mode read-only ask "summarize the local schema"
 ```
 
+Schema discovery is cached in a private local SQLite state database. Live
+authentication is always attempted first; stale fallback is explicitly marked,
+and `connection schema --refresh` or interactive `/schema refresh` invalidates
+before discovery. Set `SAYA_STATE_DB` to override the platform data path.
+
 `--non-interactive` is valid for Snowflake keypair and userpass profiles, but
 not for `externalbrowser`, which requires an interactive TTY.
 
