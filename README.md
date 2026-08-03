@@ -91,9 +91,10 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
-`saya config init` refuses to overwrite either project file, rolls back partial
-creation, and emits one stable result event in text, JSON, or NDJSON. The
-generated templates contain SecretRefs only; they never contain credentials.
+`saya config init` refuses to overwrite either project file and makes a
+best-effort rollback after an ordinary creation error; it is not crash-atomic.
+It emits one stable result event in text, JSON, or NDJSON. The generated
+templates contain SecretRefs only; they never contain credentials.
 
 MySQL uses the same SecretRef password pattern. Its safe default is
 `verify-identity`; use `disable` only for an explicitly local development

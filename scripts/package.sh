@@ -23,6 +23,12 @@ else
     (cd "$OUTPUT_DIR" && sha256sum "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256")
 fi
 
+if command -v shasum >/dev/null 2>&1; then
+    (cd "$OUTPUT_DIR" && shasum -a 256 -c "$(basename "$ARCHIVE").sha256")
+else
+    (cd "$OUTPUT_DIR" && sha256sum -c "$(basename "$ARCHIVE").sha256")
+fi
+
 SMOKE_DIR="$WORK_DIR/smoke"
 mkdir "$SMOKE_DIR"
 tar -xzf "$ARCHIVE" -C "$SMOKE_DIR"

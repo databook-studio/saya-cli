@@ -55,5 +55,6 @@ cached metadata never enables query execution without a live connector.
 
 `config init` creates `.saya/config.toml` and `.saya/connections.toml` in the
 current directory. It is credential-free, refuses to overwrite either file,
-and rolls back a partially created pair. Use `--format text|json|ndjson` for a
-stable result envelope; errors and diagnostics remain on stderr.
+and makes a best-effort rollback after an ordinary creation error; it is not
+crash-atomic. Use `--format text|json|ndjson` for a stable result envelope;
+errors and diagnostics remain on stderr.

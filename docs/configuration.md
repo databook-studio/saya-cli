@@ -8,7 +8,8 @@ Explicit `--config` and `--connections` paths override discovered files.
 Run `saya config init` in a project to create a safe starting pair:
 `.saya/config.toml` and `.saya/connections.toml`. The command never overwrites
 existing files, writes `0600` files in a newly created Unix `0700` directory,
-and removes the first file if the second cannot be created. Text, JSON, and
+and makes a best-effort rollback if ordinary creation of the second file fails;
+it is not crash-atomic. Text, JSON, and
 NDJSON success output is stable; diagnostics stay on stderr.
 
 Value precedence, highest first:

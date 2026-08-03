@@ -28,6 +28,13 @@ sslmode = "require"
 "#;
 
 pub(crate) fn create_project_files(cwd: &Path) -> io::Result<String> {
+    create_project_files_with(cwd, create_private_file)
+}
+
+fn create_project_files_with(
+    cwd: &Path,
+    mut write_file: impl FnMut(&Path, &str) -> io::Result<()>,
+) -> io::Result<String> {
     let directory = cwd.join(".saya");
     let config = directory.join("config.toml");
     let connections = directory.join("connections.toml");
@@ -50,9 +57,9 @@ pub(crate) fn create_project_files(cwd: &Path) -> io::Result<String> {
     }
     let mut created = Vec::new();
     let result = (|| {
-        create_private_file(&config, CONFIG_TEMPLATE)?;
+        write_file(&config, CONFIG_TEMPLATE)?;
         created.push(config.clone());
-        create_private_file(&connections, CONNECTIONS_TEMPLATE)?;
+        write_file(&connections, CONNECTIONS_TEMPLATE)?;
         created.push(connections.clone());
         Ok::<(), io::Error>(())
     })();
@@ -115,3 +122,7 @@ fn set_private_directory(path: &Path) -> io::Result<()> {
 fn set_private_directory(_path: &Path) -> io::Result<()> {
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "config_init_tests.rs"]
+mod tests;

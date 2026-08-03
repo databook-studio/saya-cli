@@ -9,7 +9,8 @@ saya config init
 
 This creates `.saya/config.toml` and `.saya/connections.toml` only when neither
 exists. It is safe to rerun after editing because it refuses to overwrite, and
-it rolls back the first file if the second cannot be created. The generated
+it makes a best-effort rollback of the first file after an ordinary second-file
+creation error; it is not crash-atomic. The generated
 analytics profile is a PostgreSQL SecretRef template; set its referenced
 environment variable before connecting.
 

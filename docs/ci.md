@@ -2,8 +2,9 @@
 
 Pull requests and pushes run `.github/workflows/ci.yml` across Linux, macOS,
 and Windows. The verification job runs formatting, the workspace test suite,
-and strict Clippy. Live PostgreSQL/MySQL contracts are separate opt-in service
-jobs.
+and strict Clippy. Live PostgreSQL/MySQL contract jobs run on every push and
+pull request with ephemeral services; live Snowflake validation remains opt-in
+and outside CI.
 
 Release candidates use `.github/workflows/release-candidate.yml`. Start it
 manually from Actions. Each native runner:

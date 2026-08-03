@@ -7,3 +7,5 @@
 *.pem
 *.p8
 .saya/sessions/
+.saya/config.toml
+.saya/connections.toml

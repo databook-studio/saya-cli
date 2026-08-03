@@ -43,8 +43,9 @@ saya --profile analytics --approval-mode read-only query --sql 'SELECT 1'
 ```
 
 `config init` refuses to overwrite either file, uses restrictive Unix modes,
-and leaves no partial files when the second creation fails. The generated
-connection contains an environment SecretRef, not a credential.
+and makes a best-effort rollback after an ordinary second-file creation error;
+it is not crash-atomic. The generated connection contains an environment
+SecretRef, not a credential.
 
 ## Release packaging
 
