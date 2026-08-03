@@ -6,6 +6,10 @@ and strict Clippy. Live PostgreSQL/MySQL contract jobs run on every push and
 pull request with ephemeral services; live Snowflake validation remains opt-in
 and outside CI.
 
+The repository Cargo configuration forces `/std:c++17` only for the
+`x86_64-pc-windows-msvc` C++ toolchain. This is required for the bundled
+DuckDB dependency on current MSVC and does not alter Unix compiler flags.
+
 Release candidates use `.github/workflows/release-candidate.yml`. Start it
 manually from Actions. Each native runner:
 
@@ -29,5 +33,6 @@ The workflow does not make crates.io or Homebrew releases.
 
 Local parity is available with `scripts/package.sh`, which writes the archive
 and `.sha256` file under `dist/` unless `SAYA_PACKAGE_DIR` is set.
-Run `scripts/check-release-workflow.sh` to validate the workflow YAML, publish
-permissions/gate, and Windows UTF-8/LF checksum sidecar contract.
+Run `scripts/check-release-workflow.sh` to validate release and CI action
+pins, the MSVC C++17 contract, workflow YAML, publish permissions/gate, and
+the Windows UTF-8/LF checksum sidecar contract.

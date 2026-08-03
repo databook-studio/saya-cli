@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/release-candidate.yml"
+CI_WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
 
 ruby -ryaml - "$WORKFLOW" <<'RUBY'
 path = ARGV.fetch(0)
@@ -27,7 +28,7 @@ raise "missing UTF-8 without BOM" unless text.include?("UTF8Encoding]::new($fals
 raise "missing LF sidecar newline" unless text.include?("$stage.zip`n")
 raise "offline release command" if text.include?("--offline")
 {
-  "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" => "v4",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" => "v7",
   "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" => "v4",
   "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" => "v4",
   "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" => "stable",
@@ -35,4 +36,19 @@ raise "offline release command" if text.include?("--offline")
   raise "missing pinned #{action}" unless text.include?("#{action} # #{version}")
 end
 puts "release workflow structure and Windows sidecar contract valid"
+RUBY
+
+ruby -ryaml - "$CI_WORKFLOW" "$ROOT_DIR/.cargo/config.toml" <<'RUBY'
+workflow_path, cargo_config_path = ARGV
+workflow = YAML.load_file(workflow_path)
+text = File.read(workflow_path)
+checkout = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7"
+toolchain = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable"
+raise "CI does not pin checkout v7" unless text.scan(checkout).length == 3
+raise "CI does not pin rust-toolchain" unless text.scan(toolchain).length == 3
+raise "CI matrix does not include Windows" unless workflow.dig("jobs", "verify", "strategy", "matrix", "os").include?("windows-latest")
+config = File.read(cargo_config_path)
+flag = 'CXXFLAGS_x86_64_pc_windows_msvc = { value = "/std:c++17", force = true }'
+raise "MSVC C++17 flag missing or not forced" unless config.include?(flag)
+puts "CI action pins and MSVC DuckDB C++17 contract valid"
 RUBY
