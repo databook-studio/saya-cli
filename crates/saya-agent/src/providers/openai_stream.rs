@@ -87,16 +87,16 @@ impl State {
                 .into_iter()
                 .next()
                 .ok_or(ProviderError::InvalidResponse)?;
-            if let Some(reason) = choice.finish_reason.as_deref() {
-                if !matches!(reason, "stop" | "tool_calls") {
-                    return Err(ProviderError::InvalidResponse);
-                }
+            if let Some(reason) = choice.finish_reason.as_deref()
+                && !matches!(reason, "stop" | "tool_calls")
+            {
+                return Err(ProviderError::InvalidResponse);
             }
-            if let Some(text) = choice.delta.content {
-                if !text.is_empty() {
-                    self.content = true;
-                    self.pending.push_back(ProviderEvent::TextDelta(text));
-                }
+            if let Some(text) = choice.delta.content
+                && !text.is_empty()
+            {
+                self.content = true;
+                self.pending.push_back(ProviderEvent::TextDelta(text));
             }
             for call in choice.delta.tool_calls {
                 self.tools.push(

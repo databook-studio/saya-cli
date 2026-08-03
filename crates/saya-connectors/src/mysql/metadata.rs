@@ -6,7 +6,7 @@ use tokio::time::timeout;
 
 use super::{MySqlConnector, errors};
 
-const SCHEMA_SQL: &str = "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position";
+const SCHEMA_SQL: &str = "SELECT CAST(TABLE_NAME AS CHAR) AS table_name, CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(DATA_TYPE AS CHAR) AS data_type, CAST(IS_NULLABLE AS CHAR) AS is_nullable FROM information_schema.columns WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION";
 
 pub(crate) async fn schema(connector: &MySqlConnector) -> Result<SchemaTree, ConnectionError> {
     let rows = timeout(

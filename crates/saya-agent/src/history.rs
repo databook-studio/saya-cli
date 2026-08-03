@@ -40,7 +40,7 @@ pub fn build_messages(
 }
 
 fn validate(history: &[ChatMessage]) -> Result<(), AgentError> {
-    if history.len() % 2 != 0 {
+    if !history.len().is_multiple_of(2) {
         return Err(AgentError::InvalidHistory);
     }
     for (index, message) in history.iter().enumerate() {

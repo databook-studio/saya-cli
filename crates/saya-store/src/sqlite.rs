@@ -44,6 +44,11 @@ impl SqliteStateStore {
             })
             .await
     }
+    pub async fn close(&self) {
+        if let Some(pool) = self.pool.get() {
+            pool.close().await;
+        }
+    }
     pub(crate) fn secure_files(&self) -> Result<(), StoreError> {
         sqlite_support::secure_files(&self.path)
     }
