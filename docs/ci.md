@@ -28,3 +28,5 @@ The workflow does not make crates.io or Homebrew releases.
 
 Local parity is available with `scripts/package.sh`, which writes the archive
 and `.sha256` file under `dist/` unless `SAYA_PACKAGE_DIR` is set.
+Run `scripts/check-release-workflow.sh` to validate the workflow YAML, publish
+permissions/gate, and Windows UTF-8/LF checksum sidecar contract.

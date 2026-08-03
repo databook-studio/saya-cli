@@ -76,13 +76,14 @@ jobs:
         shell: pwsh
         run: |
           $version = (Select-String -Path crates/saya-cli/Cargo.toml -Pattern '^version = "(.*)"').Matches.Groups[1].Value
-          $host = (rustc -vV | Select-String '^host: ').ToString().Split(':')[1].Trim()
-          $stage = "saya-$version-$host"
+          $targetTriple = (rustc -vV | Select-String '^host: ').ToString().Split(':')[1].Trim()
+          $stage = "saya-$version-$targetTriple"
           New-Item -ItemType Directory -Path $stage | Out-Null
           Copy-Item target/release/saya.exe,README.md,LICENSE,SECURITY.md $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
           $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $stage.zip" | Set-Content "$stage.zip.sha256"
+          $sidecar = "$hash  $stage.zip`n"
+          [System.IO.File]::WriteAllText("$stage.zip.sha256", $sidecar, [System.Text.UTF8Encoding]::new($false))
       - uses: actions/upload-artifact@v4
         with:
           name: saya-${{ matrix.platform }}
