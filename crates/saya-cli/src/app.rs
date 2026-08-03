@@ -1,5 +1,5 @@
 use crate::{
-    cli::{Cli, Command, ConnectionCommand},
+    cli::{Cli, Command, ConfigCommand, ConnectionCommand},
     commands, config_runtime, interactive,
 };
 use std::{io::IsTerminal, path::Path};
@@ -21,6 +21,14 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         }
         return interactive::run(cli);
     };
+    if matches!(
+        &command,
+        Command::Config {
+            command: ConfigCommand::Init
+        }
+    ) {
+        return commands::run_config_init(cli.options.format.into());
+    }
     let options = command_options(&cli.options, &command);
     let runtime = config_runtime::load(&options, Path::new("."))?;
     let approval = config_runtime::approval_mode(&options)?;

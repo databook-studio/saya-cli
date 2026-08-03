@@ -9,15 +9,21 @@ shell, redacted sessions, and text/JSON/NDJSON output.
 ## Quick start
 
 ```bash
-cargo run -p saya-cli -- --help
-cargo run -p saya-cli -- config doctor
-printf '/help\n/exit\n' | cargo run -p saya-cli --
+cargo build --release --locked -p saya-cli
+./target/release/saya config init
+export SAYA_ANALYTICS_PASSWORD='use-a-read-only-password'
+./target/release/saya config doctor
+./target/release/saya connection test analytics
+./target/release/saya --profile analytics --approval-mode read-only query --sql 'SELECT 1'
 ```
 
-Running `saya` starts a scrollback-preserving REPL. Use `/help` for commands.
-The automation surface is available as `saya ask`, `saya query`, `saya config`,
-and `saya connection`. PostgreSQL, MySQL, DuckDB, and Snowflake are live engines
-in this alpha.
+The five-minute path is: build from source, initialize the credential-free
+`.saya/` templates, set the environment SecretRef used by the example profile,
+then test a bounded read-only query. Running `saya` without a subcommand starts
+the REPL; use `/help` for interactive commands. The automation surface is
+available as `saya ask`, `saya query`, `saya config`, and `saya connection`.
+See [installation](docs/installation.md) for source install details and the
+current crates.io/Homebrew boundary.
 
 ## Configuration
 
@@ -84,6 +90,11 @@ user = "saya_readonly"
 password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
+
+`saya config init` refuses to overwrite either project file and makes a
+best-effort rollback after an ordinary creation error; it is not crash-atomic.
+It emits one stable result event in text, JSON, or NDJSON. The generated
+templates contain SecretRefs only; they never contain credentials.
 
 MySQL uses the same SecretRef password pattern. Its safe default is
 `verify-identity`; use `disable` only for an explicitly local development
@@ -202,11 +213,13 @@ statements, and multi-statements before execution. It observes one extra row to
 mark truncated results. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly
 confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
-OpenAI and OpenAI-compatible providers are treated as cloud: when sharing is
+OpenAI-compatible providers are treated as cloud: when sharing is
 disabled, they receive schema metadata but not SQL tools or row data. Ollama is
 treated as local for this MVP. `/privacy`, `/model`, `/provider`, and `/connect`
 apply to the next interactive prompt; `/include` is explicitly display-only and
 multi-profile execution is out of scope.
+Anthropic and Gemini providers, fully offline agent use, signing, crates.io,
+and Homebrew distribution are explicitly unavailable in this private alpha.
 The database role must itself be read-only, and DuckDB file paths must have
 least-privilege filesystem permissions: SQL AST checks cannot prove that an
 arbitrary database function is free of side effects.
@@ -237,8 +250,8 @@ provider history. A natural-language assistant answer may still contain database
 
 ```bash
 cargo fmt --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The project is Apache-2.0 licensed.

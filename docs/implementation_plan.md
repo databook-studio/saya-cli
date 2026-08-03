@@ -490,8 +490,10 @@ removing the beta label.
 - Write the five-minute README and complete configuration, connections,
   providers, security, CI, and command documentation.
 - Add examples with no real credentials.
-- Produce signed/checksummed artifacts for macOS, Linux, and Windows.
-- Add Homebrew and `cargo install` paths after release smoke tests.
+- Produce checksummed artifacts for macOS, Linux, and Windows; signing remains
+  an external credential and release-plan gate.
+- Keep crates.io and Homebrew as future channels; document source
+  `cargo install --locked --path` for the current release candidate.
 
 Exit: a new user can install, configure, test a connection, and run `saya ask`
 from documentation alone.

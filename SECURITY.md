@@ -29,7 +29,10 @@ customer data.
 
 PostgreSQL, MySQL, DuckDB, and Snowflake are supported database paths in the
 private alpha; Snowflake live validation remains opt-in. Provider execution
-exists through the supported Ollama/OpenAI-compatible interfaces. The SQL
+exists through the supported Ollama/OpenAI-compatible interfaces only;
+Anthropic, Gemini, and fully offline agent use are unavailable. Release
+archives are checksummed, but signing is an external credential and release
+plan gate and is not fabricated by CI or local packaging. The SQL
 policy is deliberately fail-closed, but it cannot prove arbitrary database
 functions are side-effect free. Use least-privilege, read-only database
 credentials and restrictive filesystem permissions for DuckDB paths; do not

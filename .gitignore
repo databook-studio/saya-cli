@@ -1,4 +1,5 @@
 /target/
+/dist/
 .env
 .env.*
 !.env.example
@@ -6,3 +7,5 @@
 *.pem
 *.p8
 .saya/sessions/
+.saya/config.toml
+.saya/connections.toml

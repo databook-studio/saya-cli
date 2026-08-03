@@ -32,3 +32,7 @@ pub async fn run(
         }
     }
 }
+
+pub(crate) fn run_config_init(format: RenderFormat) -> Result<i32, Box<dyn std::error::Error>> {
+    config::run_init(format)
+}
