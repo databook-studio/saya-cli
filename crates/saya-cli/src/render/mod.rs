@@ -1,9 +1,7 @@
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
-#[path = "render_delta.rs"]
 mod render_delta;
-#[path = "render_json.rs"]
 mod render_json;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {

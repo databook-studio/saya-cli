@@ -1,6 +1,6 @@
 use crate::{
     cli::{Cli, Command, ConfigCommand, ConnectionCommand},
-    commands, config_runtime, interactive,
+    commands, config, interactive,
 };
 use std::{io::IsTerminal, path::Path};
 
@@ -30,9 +30,9 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         return commands::run_config_init(cli.options.format.into());
     }
     let options = command_options(&cli.options, &command);
-    let runtime = config_runtime::load(&options, Path::new("."))?;
-    let approval = config_runtime::approval_mode(&options)?;
-    let format = config_runtime::format_name(&options, &runtime.resolved);
+    let runtime = config::runtime::load(&options, Path::new("."))?;
+    let approval = config::runtime::approval_mode(&options)?;
+    let format = config::runtime::format_name(&options, &runtime.resolved);
     let can_prompt = !options.non_interactive && std::io::stdin().is_terminal();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

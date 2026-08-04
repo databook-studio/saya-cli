@@ -1,4 +1,5 @@
-use crate::{agent_runtime::AgentRuntimeError, config_runtime::RuntimeConfig};
+use super::runtime::AgentRuntimeError;
+use crate::config::runtime::RuntimeConfig;
 
 pub(crate) fn selected(
     runtime: &RuntimeConfig,

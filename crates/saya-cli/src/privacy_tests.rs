@@ -59,12 +59,12 @@ async fn cloud_without_sharing_hides_sql_and_never_sends_rows() {
         responses: Mutex::new(vec![text_response("schema only")]),
         requests: requests.clone(),
     };
-    assert!(!crate::agent_runtime::query_data_allowed(
+    assert!(!crate::agent::runtime::query_data_allowed(
         saya_config::AiProvider::OpenaiCompatible,
         false
     ));
-    let tools = crate::agent_tools::DatabaseTools::definitions(
-        crate::agent_runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, false),
+    let tools = crate::agent::tools::DatabaseTools::definitions(
+        crate::agent::runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, false),
     );
     run_agent(
         &provider,
@@ -102,12 +102,12 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
         ]),
         requests: requests.clone(),
     };
-    assert!(crate::agent_runtime::query_data_allowed(
+    assert!(crate::agent::runtime::query_data_allowed(
         saya_config::AiProvider::OpenaiCompatible,
         true
     ));
-    let tools = crate::agent_tools::DatabaseTools::definitions(
-        crate::agent_runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, true),
+    let tools = crate::agent::tools::DatabaseTools::definitions(
+        crate::agent::runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, true),
     );
     run_agent(
         &provider,
@@ -126,7 +126,7 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
 
 #[tokio::test]
 async fn cloud_without_sharing_blocks_dispatch_even_for_direct_malicious_call() {
-    let tools = crate::agent_tools::DatabaseTools::new(None, 10, false);
+    let tools = crate::agent::tools::DatabaseTools::new(None, 10, false);
     let error = tools
         .execute("bounded_sql_query", serde_json::json!({"sql":"select 1"}))
         .await
@@ -166,12 +166,12 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         api_key: None,
         allow_data_sharing: false,
     };
-    let to_openai = crate::agent_runtime::PromptOverrides {
+    let to_openai = crate::agent::runtime::PromptOverrides {
         provider: Some(saya_config::AiProvider::OpenaiCompatible),
         ..Default::default()
     };
     assert_eq!(
-        crate::agent_runtime::effective_ai(&ollama, &to_openai).base_url,
+        crate::agent::runtime::effective_ai(&ollama, &to_openai).base_url,
         None
     );
 
@@ -180,12 +180,12 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         base_url: Some("https://cloud.invalid/v1".into()),
         ..ollama
     };
-    let to_ollama = crate::agent_runtime::PromptOverrides {
+    let to_ollama = crate::agent::runtime::PromptOverrides {
         provider: Some(saya_config::AiProvider::Ollama),
         ..Default::default()
     };
     assert_eq!(
-        crate::agent_runtime::effective_ai(&openai, &to_ollama).base_url,
+        crate::agent::runtime::effective_ai(&openai, &to_ollama).base_url,
         None
     );
 }
@@ -255,11 +255,11 @@ fn cloud_privacy_omits_only_database_derived_turns() {
 
 #[test]
 fn anthropic_is_cloud_gated_on_data_sharing() {
-    assert!(!crate::agent_runtime::query_data_allowed(
+    assert!(!crate::agent::runtime::query_data_allowed(
         saya_config::AiProvider::Anthropic,
         false
     ));
-    assert!(crate::agent_runtime::query_data_allowed(
+    assert!(crate::agent::runtime::query_data_allowed(
         saya_config::AiProvider::Anthropic,
         true
     ));
@@ -267,11 +267,11 @@ fn anthropic_is_cloud_gated_on_data_sharing() {
 
 #[test]
 fn gemini_is_cloud_gated_on_data_sharing() {
-    assert!(!crate::agent_runtime::query_data_allowed(
+    assert!(!crate::agent::runtime::query_data_allowed(
         saya_config::AiProvider::Gemini,
         false
     ));
-    assert!(crate::agent_runtime::query_data_allowed(
+    assert!(crate::agent::runtime::query_data_allowed(
         saya_config::AiProvider::Gemini,
         true
     ));

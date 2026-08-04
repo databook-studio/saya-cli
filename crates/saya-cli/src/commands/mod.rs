@@ -7,7 +7,7 @@ mod query;
 mod query_input;
 mod state;
 
-use crate::{cli::Command, config_runtime::RuntimeConfig, render::RenderFormat};
+use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
 use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 

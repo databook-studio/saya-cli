@@ -1,5 +1,5 @@
 use crate::{
-    config_runtime::RuntimeConfig,
+    config::runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent, render_event},
 };
 use saya_store::SqliteStateStore;

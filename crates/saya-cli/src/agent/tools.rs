@@ -3,8 +3,8 @@ use saya_agent::{ToolDefinition, ToolExecutor};
 use saya_store::SqliteStateStore;
 
 #[cfg(test)]
-use crate::connection_registry::ConnectionEntry;
-use crate::connection_registry::ConnectionRegistry;
+use crate::connection::ConnectionEntry;
+use crate::connection::ConnectionRegistry;
 #[cfg(test)]
 use saya_connectors::DatabaseConnector;
 
@@ -117,7 +117,7 @@ impl ToolExecutor for DatabaseTools {
         let entry = self.registry.resolve(connection)?;
         match name {
             "schema_discovery" => {
-                crate::agent_state_tools::schema(
+                super::state_tools::schema(
                     entry.connector.as_ref(),
                     self.state_db.as_ref(),
                     entry.profile_id.as_deref(),
@@ -129,7 +129,7 @@ impl ToolExecutor for DatabaseTools {
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
                     .ok_or("invalid query arguments")?;
-                crate::agent_state_tools::query(
+                super::state_tools::query(
                     entry.connector.as_ref(),
                     sql,
                     self.max_rows,
@@ -144,5 +144,5 @@ impl ToolExecutor for DatabaseTools {
 }
 
 #[cfg(test)]
-#[path = "agent_tools_tests.rs"]
+#[path = "tools_tests.rs"]
 mod tests;

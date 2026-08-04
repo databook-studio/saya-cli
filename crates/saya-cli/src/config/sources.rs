@@ -1,4 +1,4 @@
-use crate::config_runtime::RuntimeError;
+use super::runtime::RuntimeError;
 use saya_config::{ConfigFile, ConnectionsFile, parse_explicit_env_file};
 use std::{
     collections::BTreeMap,

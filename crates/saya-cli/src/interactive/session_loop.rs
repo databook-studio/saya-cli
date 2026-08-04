@@ -1,12 +1,10 @@
+use super::session_paths::default_session_dir;
 use super::{
     session_commands::SessionAction,
     session_request::PromptResult,
     session_resume::{SessionDefaults, block_on, load_session},
 };
-use crate::session_paths::default_session_dir;
-use crate::{
-    Cli, RenderFormat, RuntimeConfig, SessionState, config_runtime, slash::parse_slash_command,
-};
+use crate::{Cli, RenderFormat, RuntimeConfig, SessionState, config, slash::parse_slash_command};
 use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
 use std::io::{self, IsTerminal, Write};
 
@@ -18,29 +16,29 @@ use std::io::{self, IsTerminal, Write};
 /// is preserved. Piped input reads lines without the status header, so scripts
 /// and CI behave predictably.
 pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
-    let runtime = config_runtime::load(&cli.options, std::path::Path::new("."))?;
-    let format = config_runtime::format_name(&cli.options, &runtime.resolved);
+    let runtime = config::runtime::load(&cli.options, std::path::Path::new("."))?;
+    let format = config::runtime::format_name(&cli.options, &runtime.resolved);
     let store = FsSessionStore::new(default_session_dir());
     let state_db = SqliteStateStore::new(crate::state_path::state_db_path());
     let defaults = SessionDefaults {
         provider: runtime.resolved.ai.provider.as_str().into(),
         model: runtime.resolved.ai.model.clone(),
         allow_data_sharing: runtime.resolved.ai.allow_data_sharing,
-        approval_mode: config_runtime::approval_name(&cli.options)?,
+        approval_mode: config::runtime::approval_name(&cli.options)?,
     };
     let mut state = load_session(&store, &cli, &defaults)?;
     if !cli.options.continue_session && cli.options.resume.is_none() {
         state.provider = runtime.resolved.ai.provider.as_str().into();
         state.model = runtime.resolved.ai.model.clone();
         state.allow_data_sharing = runtime.resolved.ai.allow_data_sharing;
-        state.approval_mode = config_runtime::approval_name(&cli.options)?;
+        state.approval_mode = config::runtime::approval_name(&cli.options)?;
         state.included_profiles = cli.options.include_profiles.clone();
     }
     let terminal = io::stdin().is_terminal();
     if terminal {
         let mut line_editor = reedline::Reedline::create();
         loop {
-            let prompt = crate::session_prompt::SayaPrompt::new(&state);
+            let prompt = super::session_prompt::SayaPrompt::new(&state);
             match line_editor.read_line(&prompt) {
                 Ok(reedline::Signal::Success(buffer)) => {
                     if handle_line(
@@ -81,7 +79,7 @@ fn run_plain_loop(
     let mut input = String::new();
     loop {
         if terminal {
-            println!("{}", crate::session_prompt::status_line(state));
+            println!("{}", super::session_prompt::status_line(state));
             print!("saya> ");
             io::stdout().flush()?;
         }
