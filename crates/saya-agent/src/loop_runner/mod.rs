@@ -1,8 +1,5 @@
-#[path = "agent_output.rs"]
 mod output;
-#[path = "loop_receive.rs"]
 mod receive;
-#[path = "loop_tools.rs"]
 mod tools;
 
 use crate::{
