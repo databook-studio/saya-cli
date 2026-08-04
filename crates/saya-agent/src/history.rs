@@ -4,12 +4,19 @@ pub const MAX_HISTORY_MESSAGES: usize = 20;
 pub const MAX_HISTORY_BYTES: usize = 32 * 1024;
 const SYSTEM_PROMPT: &str = "You are SAYA, a database assistant. Use only the supplied read-only tools. Never claim to have written data or used unsupported tools.";
 
+/// Builds the message list for the agent from optional extra system prompt context,
+/// the user prompt, and conversation history.
 pub fn build_messages(
+    system_extra: Option<&str>,
     prompt: &str,
     history: &[ChatMessage],
 ) -> Result<Vec<ChatMessage>, AgentError> {
+    let system_content = match system_extra {
+        Some(s) if !s.trim().is_empty() => format!("{SYSTEM_PROMPT}\n\n{s}"),
+        _ => SYSTEM_PROMPT.to_string(),
+    };
     let current = [
-        ChatMessage::text("system", SYSTEM_PROMPT),
+        ChatMessage::text("system", system_content),
         ChatMessage::text("user", prompt),
     ];
     let current_bytes = current.iter().map(message_bytes).sum::<usize>();
@@ -73,7 +80,7 @@ mod tests {
                 ]
             })
             .collect::<Vec<_>>();
-        let messages = build_messages("current", &history).unwrap();
+        let messages = build_messages(None, "current", &history).unwrap();
         assert_eq!(messages.len(), 22);
         assert_eq!(messages[1].content, "u14");
         assert_eq!(messages[20].content, "a23");
@@ -92,11 +99,11 @@ mod tests {
             tool_call_id: Some("call".into()),
         }];
         assert!(matches!(
-            build_messages("ok", &history),
+            build_messages(None, "ok", &history),
             Err(AgentError::InvalidHistory)
         ));
         assert!(matches!(
-            build_messages(&"x".repeat(MAX_HISTORY_BYTES), &[]),
+            build_messages(None, &"x".repeat(MAX_HISTORY_BYTES), &[]),
             Err(AgentError::ContextLimit)
         ));
     }
@@ -110,8 +117,18 @@ mod tests {
             ChatMessage::text("user", large.clone()),
             ChatMessage::text("assistant", large),
         ];
-        let messages = build_messages("current", &history).unwrap();
+        let messages = build_messages(None, "current", &history).unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].content, "current");
+    }
+
+    #[test]
+    fn appends_extra_system_context_when_provided() {
+        let extra = "Available database connections:\n- a (postgresql)";
+        let messages = build_messages(Some(extra), "prompt", &[]).unwrap();
+        assert_eq!(messages[0].role, "system");
+        assert!(messages[0].content.contains(SYSTEM_PROMPT));
+        assert!(messages[0].content.contains(extra));
+        assert_eq!(messages[0].content, format!("{SYSTEM_PROMPT}\n\n{extra}"));
     }
 }

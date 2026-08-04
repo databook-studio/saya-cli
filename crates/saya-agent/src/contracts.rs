@@ -6,6 +6,9 @@ pub struct AgentRequest {
     pub prompt: String,
     pub profile_names: Vec<String>,
     pub model: String,
+    /// Optional extra system context appended to the base SAYA system prompt (e.g. available database connections).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
     #[serde(default)]
     pub history: Vec<ChatMessage>,
 }

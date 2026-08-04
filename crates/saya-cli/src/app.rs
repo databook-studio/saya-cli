@@ -38,7 +38,12 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         .enable_all()
         .build()?
         .block_on(commands::run(
-            command, &runtime, format, approval, can_prompt,
+            command,
+            &runtime,
+            format,
+            approval,
+            can_prompt,
+            options.include_profiles.clone(),
         ))
 }
 

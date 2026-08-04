@@ -23,7 +23,11 @@ pub async fn run_agent_with_sink(
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
 ) -> Result<AgentOutput, AgentError> {
-    let mut messages = crate::history::build_messages(&request.prompt, &request.history)?;
+    let mut messages = crate::history::build_messages(
+        request.system_prompt.as_deref(),
+        &request.prompt,
+        &request.history,
+    )?;
     let mut events = Vec::new();
     let mut tool_count = 0;
     let mut used_bounded_sql_query = false;

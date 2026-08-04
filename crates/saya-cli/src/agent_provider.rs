@@ -1,5 +1,6 @@
 use saya_agent::{
-    ChatProvider, OllamaProvider, OpenAiCompatibleProvider, ProviderError, ProviderSettings,
+    AnthropicProvider, ChatProvider, GeminiProvider, OllamaProvider, OpenAiCompatibleProvider,
+    ProviderError, ProviderSettings,
 };
 use saya_config::{AiProvider, ResolvedAi, SecretResolver};
 
@@ -22,9 +23,29 @@ pub(crate) fn build(
                 key.as_ref().map(|value| value.expose()),
             )?))
         }
-        other => Err(ProviderError::Configuration(format!(
-            "provider '{}' is not implemented",
-            other.as_str()
-        ))),
+        AiProvider::Anthropic => {
+            let key = config
+                .api_key
+                .as_ref()
+                .map(|reference| resolver.resolve(reference))
+                .transpose()
+                .map_err(|_| ProviderError::Configuration("API key unavailable".into()))?;
+            Ok(Box::new(AnthropicProvider::new(
+                settings,
+                key.as_ref().map(|value| value.expose()),
+            )?))
+        }
+        AiProvider::Gemini => {
+            let key = config
+                .api_key
+                .as_ref()
+                .map(|reference| resolver.resolve(reference))
+                .transpose()
+                .map_err(|_| ProviderError::Configuration("API key unavailable".into()))?;
+            Ok(Box::new(GeminiProvider::new(
+                settings,
+                key.as_ref().map(|value| value.expose()),
+            )?))
+        }
     }
 }

@@ -17,5 +17,7 @@ pub use contracts::{
 };
 pub use event_sink::{AgentEventSink, NoopEventSink};
 pub use loop_runner::{AgentError, AgentLimits, AgentOutput, run_agent_with_sink};
-pub use providers::{OllamaProvider, OpenAiCompatibleProvider, ProviderSettings};
+pub use providers::{
+    AnthropicProvider, GeminiProvider, OllamaProvider, OpenAiCompatibleProvider, ProviderSettings,
+};
 pub use streaming::{CancellationToken, ChatProvider, ProviderEvent, ProviderStream};

@@ -15,6 +15,7 @@ use super::{
     state,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn ask(
     prompt: Option<String>,
     file: Option<PathBuf>,
@@ -22,6 +23,7 @@ pub(super) async fn ask(
     format: RenderFormat,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    included_profiles: Vec<String>,
     state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let prompt = super::query_input::input(prompt, file)?;
@@ -35,7 +37,10 @@ pub(super) async fn ask(
         &prompt,
         approval,
         can_prompt,
-        PromptOverrides::default(),
+        PromptOverrides {
+            included_profiles,
+            ..Default::default()
+        },
         Vec::new(),
         &sink,
         cancellation.clone(),
