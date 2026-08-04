@@ -38,7 +38,7 @@ impl SessionState {
                 if !self.included_profiles.contains(&name) {
                     self.included_profiles.push(name.clone());
                 }
-                SessionAction::Message(format!("Included profile (display-only): {name}"))
+                SessionAction::Message(format!("Included profile: {name}"))
             }
             SlashCommand::Exclude(name) => {
                 self.included_profiles.retain(|item| item != &name);
@@ -46,17 +46,9 @@ impl SessionState {
             }
             SlashCommand::Provider(value) => {
                 if let Some(value) = value {
-                    let supported = matches!(
-                        saya_config::AiProvider::parse(&value),
-                        Some(
-                            saya_config::AiProvider::Ollama
-                                | saya_config::AiProvider::Openai
-                                | saya_config::AiProvider::OpenaiCompatible
-                        )
-                    );
-                    if !supported {
+                    if saya_config::AiProvider::parse(&value).is_none() {
                         return SessionAction::Error(format!(
-                            "Unsupported provider: {value}. Use ollama, openai, or openai_compatible."
+                            "Unsupported provider: {value}. Use ollama, openai, openai_compatible, anthropic, or gemini."
                         ));
                     }
                     self.provider = value;
