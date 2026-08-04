@@ -3,7 +3,7 @@ use super::{
     output::{failure, result},
     state,
 };
-use crate::{cli::ConnectionCommand, config_runtime::RuntimeConfig, render::RenderFormat};
+use crate::{cli::ConnectionCommand, config::runtime::RuntimeConfig, render::RenderFormat};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::DatabaseProfile;

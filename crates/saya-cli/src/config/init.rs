@@ -124,5 +124,5 @@ fn set_private_directory(_path: &Path) -> io::Result<()> {
 }
 
 #[cfg(test)]
-#[path = "config_init_tests.rs"]
+#[path = "init_tests.rs"]
 mod tests;

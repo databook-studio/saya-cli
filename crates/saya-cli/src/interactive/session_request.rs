@@ -1,6 +1,9 @@
 use crate::{
-    agent_runtime::{self, AgentRuntimeError, PromptOverrides},
-    config_runtime::RuntimeConfig,
+    agent::{
+        self,
+        runtime::{AgentRuntimeError, PromptOverrides},
+    },
+    config::runtime::RuntimeConfig,
     render::RenderFormat,
     stream_render::TerminalSink,
 };
@@ -25,7 +28,7 @@ pub(crate) async fn run(
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
-    let work = agent_runtime::run_prompt_with_sink(
+    let work = agent::runtime::run_prompt_with_sink(
         runtime,
         prompt,
         approval,

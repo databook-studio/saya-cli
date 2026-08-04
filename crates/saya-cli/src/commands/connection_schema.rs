@@ -4,7 +4,7 @@ use super::{
     state,
 };
 use crate::{
-    config_runtime::RuntimeConfig,
+    config::runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent},
 };
 use saya_connectors::DatabaseConnector;

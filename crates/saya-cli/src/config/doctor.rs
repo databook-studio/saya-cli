@@ -1,4 +1,4 @@
-use crate::config_runtime::RuntimeConfig;
+use super::runtime::RuntimeConfig;
 
 pub(crate) fn summary(runtime: &RuntimeConfig) -> String {
     format!(

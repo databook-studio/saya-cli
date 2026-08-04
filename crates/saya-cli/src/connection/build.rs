@@ -1,5 +1,5 @@
-use crate::agent_runtime::AgentRuntimeError;
-use crate::connection_registry::{ConnectionEntry, ConnectionRegistry};
+use super::registry::{ConnectionEntry, ConnectionRegistry};
+use crate::agent::runtime::AgentRuntimeError;
 use saya_config::SecretResolver;
 use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
 use saya_types::DatabaseProfile;
@@ -87,5 +87,5 @@ pub(crate) async fn build_registry(
 }
 
 #[cfg(test)]
-#[path = "connection_build_tests.rs"]
+#[path = "build_tests.rs"]
 mod tests;

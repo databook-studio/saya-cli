@@ -1,6 +1,6 @@
 use crate::{
-    agent_runtime::{self, PromptOverrides},
-    config_runtime::RuntimeConfig,
+    agent::runtime::{self, PromptOverrides},
+    config::runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
@@ -32,7 +32,7 @@ pub(super) async fn ask(
     }
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
-    let work = agent_runtime::run_prompt_with_sink(
+    let work = runtime::run_prompt_with_sink(
         runtime,
         &prompt,
         approval,

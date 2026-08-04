@@ -1,5 +1,5 @@
 use super::session_state::SessionState;
-use crate::agent_runtime::PromptOverrides;
+use crate::agent::runtime::PromptOverrides;
 use crate::slash::{SlashCommand, help_text};
 use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;

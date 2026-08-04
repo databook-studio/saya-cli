@@ -1,6 +1,5 @@
-use crate::{
-    agent_provider, agent_tools, config_runtime::RuntimeConfig, prompt_approval::TerminalApproval,
-};
+use super::{provider, tools};
+use crate::{config::runtime::RuntimeConfig, prompt_approval::TerminalApproval};
 use saya_agent::{
     AgentError, AgentEventSink, AgentLimits, AgentOutput, AgentRequest, ApprovalPolicy,
     CancellationToken, ChatMessage, run_agent_with_sink,
@@ -43,10 +42,9 @@ pub(crate) async fn run_prompt_with_sink(
     state_db: Option<SqliteStateStore>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = effective_ai(&runtime.resolved.ai, &overrides);
-    let provider = agent_provider::build(&ai, &runtime.secret_resolver())
+    let provider = provider::build(&ai, &runtime.secret_resolver())
         .map_err(|error| AgentRuntimeError::Provider(error.to_string()))?;
-    let (profile_name, profile) =
-        crate::agent_profile::selected(runtime, overrides.profile.as_ref())?;
+    let (profile_name, profile) = super::profile::selected(runtime, overrides.profile.as_ref())?;
     let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
 
     let mut secondaries = Vec::new();
@@ -69,7 +67,7 @@ pub(crate) async fn run_prompt_with_sink(
     let registry = match profile.as_ref() {
         Some(primary_profile) => {
             let primary_name = profile_name.as_deref().unwrap_or("");
-            crate::connection_build::build_registry(
+            crate::connection::build_registry(
                 &runtime.secret_resolver(),
                 &runtime.cache_scope,
                 runtime.resolved.query_timeout_seconds,
@@ -80,12 +78,12 @@ pub(crate) async fn run_prompt_with_sink(
             )
             .await?
         }
-        None => crate::connection_registry::ConnectionRegistry::new(""),
+        None => crate::connection::ConnectionRegistry::new(""),
     };
 
     let system_prompt = registry.describe_context();
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
-    let tools = agent_tools::DatabaseTools::with_registry(
+    let tools = tools::DatabaseTools::with_registry(
         registry,
         runtime.resolved.max_rows,
         allow_query_data,
@@ -102,7 +100,7 @@ pub(crate) async fn run_prompt_with_sink(
         &*provider,
         &tools,
         request,
-        agent_tools::DatabaseTools::definitions(allow_query_data),
+        tools::DatabaseTools::definitions(allow_query_data),
         AgentLimits {
             max_turns: runtime.resolved.max_iterations,
             max_tool_calls: runtime.resolved.max_iterations.saturating_mul(2),

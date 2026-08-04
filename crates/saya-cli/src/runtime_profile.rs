@@ -1,4 +1,4 @@
-use crate::config_runtime::{RuntimeConfig, RuntimeError};
+use crate::config::runtime::{RuntimeConfig, RuntimeError};
 
 impl RuntimeConfig {
     pub fn secret_resolver(&self) -> saya_config::MapSecretResolver {

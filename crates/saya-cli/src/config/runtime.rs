@@ -1,7 +1,5 @@
-use crate::{
-    cli::GlobalOptions,
-    config_sources::{self, Paths},
-};
+use super::sources::Paths;
+use crate::cli::GlobalOptions;
 use saya_config::{CliOverrides, ConnectionsFile, ResolutionInput, resolve};
 use std::{
     collections::BTreeMap,
@@ -38,8 +36,8 @@ pub fn load(options: &GlobalOptions, cwd: &Path) -> Result<RuntimeConfig, Runtim
     load_with_sources(
         options,
         cwd,
-        &config_sources::user_config_dir(),
-        config_sources::process_env(),
+        &super::sources::user_config_dir(),
+        super::sources::process_env(),
     )
 }
 
@@ -50,15 +48,15 @@ pub fn load_with_sources(
     process: BTreeMap<String, String>,
 ) -> Result<RuntimeConfig, RuntimeError> {
     let paths = Paths::discover(cwd, user_dir);
-    let user = config_sources::read_config(&paths.user_config)?;
+    let user = super::sources::read_config(&paths.user_config)?;
     let selected_config = options
         .config
         .as_ref()
         .or_else(|| paths.project_config.as_ref().filter(|path| path.exists()))
         .or_else(|| paths.user_config.as_ref().filter(|path| path.exists()));
     let project = match options.config.as_ref() {
-        Some(path) => Some(config_sources::read_required_config(path)?),
-        None => config_sources::read_config(&paths.project_config)?,
+        Some(path) => Some(super::sources::read_required_config(path)?),
+        None => super::sources::read_config(&paths.project_config)?,
     };
     let selected_connections = options
         .connections
@@ -71,9 +69,9 @@ pub fn load_with_sources(
         })
         .or_else(|| paths.user_connections.as_ref().filter(|path| path.exists()));
     let connections =
-        config_sources::read_connections(selected_connections, options.connections.is_some())?;
+        super::sources::read_connections(selected_connections, options.connections.is_some())?;
     let env_file = match options.env_file.as_ref() {
-        Some(path) => config_sources::read_env_file(path)?,
+        Some(path) => super::sources::read_env_file(path)?,
         None => BTreeMap::new(),
     };
     let mut secret_values = env_file.clone();
@@ -88,7 +86,7 @@ pub fn load_with_sources(
             allow_data_sharing: options.allow_data_sharing.then_some(true),
             ..Default::default()
         });
-    let cache_scope = crate::config_scope::resolve(selected_connections, cwd);
+    let cache_scope = super::scope::resolve(selected_connections, cwd);
     Ok(RuntimeConfig {
         resolved: resolve(input)?,
         connections,
