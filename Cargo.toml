@@ -30,6 +30,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde"] }
 uuid = { version = "1", features = ["serde"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
 bytes = "1"
+reedline = "0.38"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
 duckdb = { version = "=1.10504.0", features = ["bundled", "chrono", "serde_json", "uuid"] }
 base64 = "0.22"

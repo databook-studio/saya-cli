@@ -106,6 +106,7 @@ impl SessionState {
             model: Some(self.model.clone()),
             allow_data_sharing: Some(self.allow_data_sharing),
             profile: self.profile.clone(),
+            included_profiles: self.included_profiles.clone(),
         }
     }
 }

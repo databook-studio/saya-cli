@@ -6,7 +6,6 @@ use saya_agent::{
     CancellationToken, ChatMessage, run_agent_with_sink,
 };
 use saya_config::{AiProvider, ResolvedAi};
-use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
 use saya_store::SqliteStateStore;
 use thiserror::Error;
 
@@ -28,6 +27,7 @@ pub(crate) struct PromptOverrides {
     pub(crate) model: Option<String>,
     pub(crate) allow_data_sharing: Option<bool>,
     pub(crate) profile: Option<String>,
+    pub(crate) included_profiles: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -47,46 +47,55 @@ pub(crate) async fn run_prompt_with_sink(
         .map_err(|error| AgentRuntimeError::Provider(error.to_string()))?;
     let (profile_name, profile) =
         crate::agent_profile::selected(runtime, overrides.profile.as_ref())?;
-    let profile_id = profile_name
-        .as_ref()
-        .zip(profile.as_ref())
-        .map(|(name, profile)| {
-            crate::profile_identity::profile_identity(name, profile, &runtime.cache_scope)
-        });
     let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
-    let connector = match profile.as_ref() {
-        Some(profile) => Some(
-            build_connector_with_prompt(
-                profile,
-                &runtime.secret_resolver(),
-                ConnectorOptions {
-                    query_timeout_seconds: runtime.resolved.query_timeout_seconds,
-                    ..Default::default()
-                },
-                can_prompt,
-            )
-            .await
-            .map_err(|error| AgentRuntimeError::Database(error.to_string()))?,
-        ),
-        None => None,
-    };
-    if let Some(connector) = connector.as_ref() {
-        connector
-            .connect()
-            .await
-            .map_err(|error| AgentRuntimeError::Database(error.to_string()))?;
+
+    let mut secondaries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for name in &overrides.included_profiles {
+        if name.is_empty() {
+            continue;
+        }
+        if profile_name.as_deref() == Some(name.as_str()) {
+            continue;
+        }
+        if !seen.insert(name) {
+            continue;
+        }
+        if let Ok(sec_profile) = runtime.named_profile(name) {
+            secondaries.push((name.clone(), sec_profile.clone()));
+        }
     }
-    let tools = agent_tools::DatabaseTools::with_state(
-        connector,
+
+    let registry = match profile.as_ref() {
+        Some(primary_profile) => {
+            let primary_name = profile_name.as_deref().unwrap_or("");
+            crate::connection_build::build_registry(
+                &runtime.secret_resolver(),
+                &runtime.cache_scope,
+                runtime.resolved.query_timeout_seconds,
+                can_prompt,
+                primary_name,
+                primary_profile,
+                &secondaries,
+            )
+            .await?
+        }
+        None => crate::connection_registry::ConnectionRegistry::new(""),
+    };
+
+    let system_prompt = registry.describe_context();
+    let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
+    let tools = agent_tools::DatabaseTools::with_registry(
+        registry,
         runtime.resolved.max_rows,
         allow_query_data,
         state_db,
-        profile_id,
     );
     let request = AgentRequest {
         prompt: prompt.into(),
-        profile_names: profile_name.into_iter().collect(),
+        profile_names,
         model: ai.model,
+        system_prompt,
         history,
     };
     run_agent_with_sink(
@@ -123,9 +132,11 @@ pub(crate) async fn run_prompt_with_sink(
 
 pub(crate) fn query_data_allowed(provider: AiProvider, allow_data_sharing: bool) -> bool {
     match provider {
-        AiProvider::Openai | AiProvider::OpenaiCompatible => allow_data_sharing,
+        AiProvider::Openai
+        | AiProvider::OpenaiCompatible
+        | AiProvider::Anthropic
+        | AiProvider::Gemini => allow_data_sharing,
         AiProvider::Ollama => true,
-        _ => false,
     }
 }
 

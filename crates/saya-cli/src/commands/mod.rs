@@ -17,6 +17,7 @@ pub async fn run(
     format: RenderFormat,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    included_profiles: Vec<String>,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let state = SqliteStateStore::new(crate::state_path::state_db_path());
     match command {
@@ -25,7 +26,17 @@ pub async fn run(
             connection::run(command, runtime, format, can_prompt, &state).await
         }
         Command::Ask { prompt, file } => {
-            query::ask(prompt, file, runtime, format, approval, can_prompt, &state).await
+            query::ask(
+                prompt,
+                file,
+                runtime,
+                format,
+                approval,
+                can_prompt,
+                included_profiles,
+                &state,
+            )
+            .await
         }
         Command::Query { sql, file } => {
             query::run(sql, file, runtime, format, can_prompt, &state).await

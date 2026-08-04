@@ -11,10 +11,13 @@ mod config_init;
 mod config_runtime;
 mod config_scope;
 mod config_sources;
+mod connection_build;
+mod connection_registry;
 mod interactive;
 mod render;
 mod runtime_profile;
 mod session_paths;
+mod session_prompt;
 mod slash;
 mod stream_render;
 

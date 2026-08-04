@@ -41,6 +41,7 @@ fn request() -> AgentRequest {
         prompt: "show data".into(),
         profile_names: vec!["analytics".into()],
         model: "model".into(),
+        system_prompt: None,
         history: Vec::new(),
     }
 }
@@ -250,4 +251,28 @@ fn cloud_privacy_omits_only_database_derived_turns() {
             .unwrap()
             .contains("CLOUD_ROW_SENTINEL")
     );
+}
+
+#[test]
+fn anthropic_is_cloud_gated_on_data_sharing() {
+    assert!(!crate::agent_runtime::query_data_allowed(
+        saya_config::AiProvider::Anthropic,
+        false
+    ));
+    assert!(crate::agent_runtime::query_data_allowed(
+        saya_config::AiProvider::Anthropic,
+        true
+    ));
+}
+
+#[test]
+fn gemini_is_cloud_gated_on_data_sharing() {
+    assert!(!crate::agent_runtime::query_data_allowed(
+        saya_config::AiProvider::Gemini,
+        false
+    ));
+    assert!(crate::agent_runtime::query_data_allowed(
+        saya_config::AiProvider::Gemini,
+        true
+    ));
 }
