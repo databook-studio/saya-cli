@@ -18,9 +18,10 @@ All notable changes to SAYA CLI are recorded here.
   `x-goog-api-key` header. All five documented providers (Ollama,
   OpenAI-compatible, OpenAI, Anthropic, Gemini) are now implemented, so
   configuration and runtime agree.
-- Added an interactive status header above the `saya> ` prompt showing the
-  active profile, included databases, provider/model, approval mode, and privacy
-  state.
+- Added a rich interactive line editor (reedline) with in-session command
+  history recall and line editing, plus a status header (active profile,
+  included databases, provider/model, approval mode, and privacy state). Piped
+  input keeps the plain line reader for predictable scripting/CI.
 - Cloud row-data sharing for Anthropic and Gemini is gated on
   `--allow-data-sharing`, consistent with the other cloud providers.
 - Added `saya config init` for credential-free project templates.

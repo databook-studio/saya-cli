@@ -49,7 +49,10 @@
 - [~] **D2** `DEFERRED` — reedline-based history/multi-line editing + slash completion. Deferred with D1's reedline revert (see above); needs a DSR-answering terminal / PTY-test strategy. The status line (D1) shipped.
 - [x] **D3** `DONE` — docs/commands.md: interactive status header documented; provider list corrected to all five (ollama/openai/openai_compatible/anthropic/gemini).
 
-### ✅ PHASE D COMPLETE (scoped) — interactive status prompt shipped; rich editor deferred with rationale.
+### ✅ PHASE D COMPLETE — status prompt + reedline rich editor (history + line editing) shipped.
+
+- **D2 follow-up `DONE`** — reedline re-introduced and made testable. Root cause of the earlier hangs: my DSR responder only answered `ESC[6n` inside the wait helper, so once the first prompt appeared, later cursor queries went unanswered and reedline blocked; the prompt also used a `\n` in the indicator (broke single-line layout) and the test sent `\n` (not `\r`) for Enter.
+  - Fix: a proper PTY harness — a **background pump** continuously drains the master, answers **every** `ESC[6n` with `ESC[1;1R`, and accumulates output; `TERM=xterm-256color` + window size set; Enter sent as `\r`; single-line prompt (`[status] saya> `). reedline falls back to the plain reader if a terminal can't initialize it. `active_sigint` and the full suite pass on the reedline path (172 tests).
 
 ## Phase E — Cleanup
 - [x] **E1** `DONE` — `.DS_Store` added to `.gitignore`; CHANGELOG.md updated (multi-DB navigation, Anthropic, Gemini, status prompt, privacy gating). Final verification: fmt clean, clippy `--all-targets -D warnings` clean, **172 tests passed / 0 failed**.
