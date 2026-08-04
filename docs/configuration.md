@@ -78,25 +78,27 @@ keyring references return an explicit unavailable error. Provider settings may
 use either the established `SAYA_AI_PROVIDER`, `SAYA_AI_MODEL`, and
 `SAYA_AI_BASE_URL` names or the shorter `SAYA_PROVIDER`, `SAYA_MODEL`, and
 `SAYA_PROVIDER_BASE_URL` names. `SAYA_API_KEY` becomes a runtime
-`{ env = "SAYA_API_KEY" }` reference and is never serialized. Ollama and
-OpenAI-compatible chat-completions are supported; Anthropic and Gemini are not
-implemented. Fully offline agent use is also unavailable: the agent still
-needs a configured provider endpoint.
+`{ env = "SAYA_API_KEY" }` reference and is never serialized. Ollama, OpenAI,
+OpenAI-compatible, Anthropic, and Gemini providers are supported. Fully offline
+agent use is unavailable: the agent still needs a configured provider endpoint.
 
 Schema discovery is automatically allowed. A bounded SQL tool call is allowed
 under `read-only`, denied under `never`, and asks for explicit `y/yes` on a TTY
 under `ask`; it is denied when a TTY is unavailable. Model responses are streamed
-for Ollama and OpenAI-compatible providers. Session files persist redacted
+for Ollama, OpenAI, OpenAI-compatible, and Anthropic providers, while Gemini
+replies are returned buffered. Session files persist redacted
 user/assistant turn text and safe tool name/status metadata, but omit tool
 payloads, credentials, headers, and raw tool-result rows. A database-derived
 assistant turn may still contain values in its natural-language answer and is
 persisted locally after redaction; it is omitted from cloud provider history
-when sharing is disabled. OpenAI and OpenAI-compatible providers are treated
+when sharing is disabled. OpenAI, OpenAI-compatible, Anthropic, and Gemini
+providers are treated
 as cloud: with sharing disabled, schema metadata may be sent but the SQL tool
 is hidden and dispatcher-blocked, so rows cannot reach those providers. Ollama
 is treated as local in this MVP. Interactive `/privacy`, `/model`, `/provider`,
-and `/connect` overrides apply to the next prompt; `/include` is not yet a
-multi-profile execution feature.
+and `/connect` overrides apply to the next prompt; `/include` (and
+`--include-profile`) connect additional read-only databases for multi-database
+agent navigation.
 Interactive prompts and resumed sessions reconstruct only bounded, redacted
 user/assistant provider history. `/clear` clears visible, persisted, and
 provider context. Raw tool arguments, tool responses, and raw tool-result rows

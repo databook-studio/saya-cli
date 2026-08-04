@@ -50,3 +50,15 @@ Run `scripts/check-release-workflow.sh` to validate release and CI action
 pins, MSRV inheritance and its exact CI gate, resource limits, the matched
 bundled DuckDB pin, workflow YAML, publish permissions/gate, and the Windows
 UTF-8/LF checksum sidecar contract.
+
+## Troubleshooting: every job fails at "Set up job"
+
+If all CI jobs fail within a few seconds with no steps executed, the cause is
+GitHub Actions billing, not the code or workflow. A failed payment or an
+exhausted Actions spending limit blocks the runners before any step runs; the
+check annotation reads: "The job was not started because recent account
+payments have failed or your spending limit needs to be increased." Resolve it
+in the organization's **Settings → Billing and plans** (fix the payment method
+or raise the Actions spending limit) and confirm **Settings → Actions** is
+enabled. No workflow change is required; re-run the jobs once billing is
+restored.

@@ -148,10 +148,12 @@ saya --profile snowflake_browser --approval-mode read-only ask \
 for `externalbrowser`; non-interactive or piped input fails before the browser,
 localhost callback, or Snowflake network request is started.
 
-Only one execution profile is selected for a command. `--include-profile` is a
-display/session inclusion feature in this alpha, not multi-profile execution.
-Anthropic and Gemini are provider-level unavailable features, and fully offline
-agent use is unavailable even when the database connector is local.
+A primary execution profile is selected for a command with `--profile`.
+`--include-profile` (and interactive `/include`) connect additional read-only
+databases, and the agent navigates between all connected databases by passing an
+optional `connection` argument to its schema and query tools; the primary is the
+default. Fully offline agent use is unavailable even when the database connector
+is local.
 
 All four live engines use the same command surface. `query` permits one parsed
 read-only statement, caps returned rows, and reports truncation.

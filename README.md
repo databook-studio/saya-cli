@@ -2,9 +2,10 @@
 
 SAYA CLI is an open-source, terminal-native shell for a database-aware SAYA
 agent. It is currently **private alpha**: PostgreSQL, MySQL, DuckDB, and Snowflake connection
-tests, schema discovery, bounded read-only queries, and streaming configured
-Ollama/OpenAI-compatible provider calls are implemented alongside the interactive
-shell, redacted sessions, and text/JSON/NDJSON output.
+tests, schema discovery, bounded read-only queries, and configured Ollama,
+OpenAI, OpenAI-compatible, Anthropic, and Gemini provider calls are implemented
+alongside the interactive shell (with command history and line editing),
+multi-database agent navigation, redacted sessions, and text/JSON/NDJSON output.
 
 ## Quick start
 
@@ -216,13 +217,15 @@ statements, and multi-statements before execution. It observes one extra row to
 mark truncated results. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly
 confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
-OpenAI-compatible providers are treated as cloud: when sharing is
-disabled, they receive schema metadata but not SQL tools or row data. Ollama is
-treated as local for this MVP. `/privacy`, `/model`, `/provider`, and `/connect`
-apply to the next interactive prompt; `/include` is explicitly display-only and
-multi-profile execution is out of scope.
-Anthropic and Gemini providers, fully offline agent use, signing, crates.io,
-and Homebrew distribution are explicitly unavailable in this private alpha.
+OpenAI, OpenAI-compatible, Anthropic, and Gemini providers are treated as
+cloud: when sharing is disabled, they receive schema metadata but not SQL tools
+or row data. Ollama is treated as local for this MVP. `/privacy`, `/model`,
+`/provider`, and `/connect` apply to the next interactive prompt. `/include`
+(and `--include-profile`) connect additional read-only databases, and the agent
+navigates between all connected databases by passing an optional `connection`
+argument to its schema and query tools; the primary database is the default.
+Fully offline agent use, signing, crates.io, and Homebrew distribution are
+explicitly unavailable in this private alpha.
 The database role must itself be read-only, and DuckDB file paths must have
 least-privilege filesystem permissions: SQL AST checks cannot prove that an
 arbitrary database function is free of side effects.
@@ -234,8 +237,9 @@ prompts. See [SECURITY.md](SECURITY.md).
 Unavailable or failed connection/schema operations return `3`, while safety and
 query failures return `4`; provider/agent failures return `5`. Non-interactive
 mode defaults to `never` approval (schema-only) unless `--approval-mode` is
-explicit; interactive sessions default to `ask`. This MVP uses complete-chat
-HTTP streams token deltas from Ollama and OpenAI-compatible chat-completions. Text output writes
+explicit; interactive sessions default to `ask`. This MVP streams token
+deltas from Ollama, OpenAI, OpenAI-compatible, and Anthropic chat providers, and returns Gemini
+responses as a single buffered reply. Text output writes
 deltas as they arrive; JSON and NDJSON each write one stable JSON event envelope per delta.
 Requests retry retryable connection setup failures, HTTP 429, and 5xx responses only before the
 provider yields an event. A body transport failure is surfaced without retry because replaying a
