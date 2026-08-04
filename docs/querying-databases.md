@@ -1,9 +1,9 @@
 # Querying databases with SAYA CLI
 
 SAYA CLI connects to PostgreSQL, MySQL, DuckDB, and Snowflake and runs bounded,
-read-only queries. Each command has one active execution profile. In this alpha,
-`--include-profile` and `/include` only record/display extra context; they do
-**not** execute federated queries.
+read-only queries. Each command has one primary execution profile, with support
+for connecting additional read-only databases using `--include-profile` or
+interactive slash commands.
 ## 1. Initialise a project
 
 ```bash
@@ -122,17 +122,50 @@ row-bounded and marked when truncated. Running `saya` without a subcommand
 starts the REPL; use `/connect analytics`, `/schema`, then ask with an
 explicit approval mode.
 
-## 5. Cross-database work
+## 5. Querying multiple databases
+
+SAYA supports multi-database navigation by connecting additional read-only databases alongside the primary profile:
+
+- **Global flag**: The `--include-profile <name>` global flag (repeatable) connects additional read-only databases alongside the primary `--profile`. It works with both `saya ask` commands and interactive sessions.
+- **Interactive slash commands**: In an interactive session, `/include <profile>` and `/exclude <profile>` add and remove secondary live database connections for subsequent turns.
+- **Agent navigation across connections**: When more than one database is connected, the AI agent is informed in its system context of the name and SQL dialect of every connected database. The agent navigates between them by passing an optional `connection` argument to its schema-inspection and query tools. It inspects each database separately and combines the findings in its answer.
+- **Default connection**: The primary database is the default target when no `connection` argument is specified.
+- **Connection failure handling**: If a secondary database fails to connect, it is skipped while the primary run continues. The primary database connection must succeed or the entire run fails.
+- **Not single-query SQL federation**: Multi-database support enables AI agent navigation across distinct live connections. It does **not** execute a single federated SQL query that JOINs across engines in a single statement.
+
+### Examples
+
+**Command-line `ask` with included profiles:**
+```bash
+saya --profile prod --include-profile staging ask "compare row counts"
+```
+
+**Interactive session with `/include` and `/exclude`:**
+```bash
+saya --profile prod
+```
+```text
+> /include staging
+Included secondary database 'staging'.
+
+> Compare row counts between prod and staging tables
+
+> /exclude staging
+Removed secondary database 'staging'.
+```
+
+### Engine-level cross-database joins
+
+For single-statement SQL joins, same-server or same-account databases can perform joins within a single connection if supported by the engine:
 
 | Situation | Supported approach |
 | --- | --- |
 | Two schemas in one PostgreSQL database | Query qualified names such as `sales.orders` and `support.tickets`. |
 | Two MySQL databases on one server | Use `database.table` when the selected read-only user has access to both. |
 | Two Snowflake databases in one account | Use `DATABASE.SCHEMA.TABLE` when the selected role has grants on both. |
-| Separate PostgreSQL databases or servers | Query profiles separately, then join in an approved warehouse or deliberately staged local dataset. PostgreSQL has no native cross-database join. |
-| Separate engines/profiles | SAYA cannot federate them. Export only approved, non-sensitive aggregates to an approved staging system, then query that system through one profile. |
-Same-server MySQL and same-account Snowflake can perform the join inside the
-selected connection:
+| Separate engines or standalone databases | Connect multiple profiles with `--include-profile` or `/include` so the AI agent can inspect and query each database independently, combining the results. |
+
+Same-server MySQL and same-account Snowflake can perform single-statement joins inside the selected connection:
 ```bash
 saya --approval-mode read-only --profile mysql query --sql \
   'SELECT o.customer_id, c.segment FROM orders.orders o JOIN crm.customers c USING (customer_id) LIMIT 100'
@@ -140,8 +173,6 @@ saya --approval-mode read-only --profile mysql query --sql \
 saya --approval-mode read-only --profile snowflake_prod query --sql \
   'SELECT * FROM PROD.PUBLIC.ORDERS o JOIN CRM.PUBLIC.CUSTOMERS c USING (CUSTOMER_ID) LIMIT 100'
 ```
-Do not treat `--include-profile analytics --include-profile mysql` as
-federation: it does not open or query both connections.
 
 ## Safety and troubleshooting
 
