@@ -42,10 +42,11 @@ write one valid stable JSON event envelope per delta. `/history` lists saved ses
 in recent-first order. The slash commands `/connect <profile>`, `/include <profile>`, and `/exclude <profile>` manage live database connections in interactive sessions: `/connect` sets the primary profile, `/include` adds secondary live read-only database connections (skipped if connection fails), and `/exclude` removes them. `/connect`, `/privacy`, `/model`, and
 `/provider` are per-session overrides used by the next prompt; supported
 providers are `ollama`, `openai`, `openai_compatible`, `anthropic`, and `gemini`.
-When attached to a terminal, each interactive prompt is preceded by a one-line
-status header showing the active profile, any included databases, the
-provider/model, the approval mode, and the privacy (cloud data-sharing) state,
-followed by the `saya> ` input marker. Interactive prompts carry bounded prior user/assistant
+When attached to a terminal, each interactive prompt shows a one-line status
+header (active profile, any included databases, provider/model, approval mode,
+and privacy/cloud data-sharing state) followed by the `saya> ` input marker,
+with command history recall (Up/Down) and standard line editing. Piped input
+uses a plain line reader so scripts and CI behave predictably. Interactive prompts carry bounded prior user/assistant
 turns, and `--continue`/`--resume` reconstruct redacted history with saved
 provider settings. `/clear` removes the canonical turns as well as visible
 context. Tool arguments, responses, credentials, headers, and rows are never

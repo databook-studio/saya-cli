@@ -37,10 +37,51 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         state.included_profiles = cli.options.include_profiles.clone();
     }
     let terminal = io::stdin().is_terminal();
+    if terminal {
+        let mut line_editor = reedline::Reedline::create();
+        loop {
+            let prompt = crate::session_prompt::SayaPrompt::new(&state);
+            match line_editor.read_line(&prompt) {
+                Ok(reedline::Signal::Success(buffer)) => {
+                    if handle_line(
+                        &buffer, &mut state, &runtime, &store, &state_db, format, terminal,
+                    )? {
+                        break;
+                    }
+                }
+                Ok(reedline::Signal::CtrlC) => continue,
+                Ok(reedline::Signal::CtrlD) => break,
+                Err(_) => {
+                    // The terminal lacks a capability the rich editor needs (for example
+                    // cursor-position reporting). Fall back to a plain line reader for the
+                    // remainder of the session so the CLI still works.
+                    run_plain_loop(terminal, &mut state, &runtime, &store, &state_db, format)?;
+                    break;
+                }
+            }
+        }
+    } else {
+        run_plain_loop(terminal, &mut state, &runtime, &store, &state_db, format)?;
+    }
+    block_on(store.save(state.redacted()))?;
+    Ok(0)
+}
+
+/// Reads lines from stdin without the rich editor, printing the status header
+/// and `saya> ` marker when attached to a terminal. Used for piped input and as
+/// a graceful fallback when the rich editor cannot initialize.
+fn run_plain_loop(
+    terminal: bool,
+    state: &mut SessionState,
+    runtime: &RuntimeConfig,
+    store: &FsSessionStore,
+    state_db: &SqliteStateStore,
+    format: RenderFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
     loop {
         if terminal {
-            println!("{}", crate::session_prompt::status_line(&state));
+            println!("{}", crate::session_prompt::status_line(state));
             print!("saya> ");
             io::stdout().flush()?;
         }
@@ -48,14 +89,11 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         if io::stdin().read_line(&mut input)? == 0 {
             break;
         }
-        if handle_line(
-            &input, &mut state, &runtime, &store, &state_db, format, terminal,
-        )? {
+        if handle_line(&input, state, runtime, store, state_db, format, terminal)? {
             break;
         }
     }
-    block_on(store.save(state.redacted()))?;
-    Ok(0)
+    Ok(())
 }
 
 /// Processes one input line: dispatches a slash command or an agent prompt,

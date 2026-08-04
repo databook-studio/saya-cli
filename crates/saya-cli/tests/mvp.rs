@@ -1131,6 +1131,16 @@ fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
         );
         assert_eq!(unsafe { libc::grantpt(master_fd) }, 0);
         assert_eq!(unsafe { libc::unlockpt(master_fd) }, 0);
+        // Give the PTY a realistic size so the rich line editor can lay out its prompt.
+        let winsize = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        unsafe {
+            libc::ioctl(master_fd, libc::TIOCSWINSZ, &winsize);
+        }
         let slave_name = unsafe { CStr::from_ptr(libc::ptsname(master_fd)) };
         let slave = std::fs::OpenOptions::new()
             .read(true)
@@ -1145,33 +1155,6 @@ fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
             0
         );
         (master, slave)
-    }
-
-    fn read_until(master: &mut File, needle: &[u8], timeout: Duration) -> Vec<u8> {
-        let deadline = Instant::now() + timeout;
-        let mut output = Vec::new();
-        let mut buffer = [0_u8; 4096];
-        while Instant::now() < deadline {
-            match master.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(size) => {
-                    output.extend_from_slice(&buffer[..size]);
-                    if output.windows(needle.len()).any(|window| window == needle) {
-                        return output;
-                    }
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
-                Err(error) => panic!("pty read failed: {error}"),
-            }
-        }
-        panic!(
-            "timed out waiting for {:?}; output was {:?}",
-            String::from_utf8_lossy(needle),
-            String::from_utf8_lossy(&output)
-        );
     }
 
     fn wait_with_deadline(child: &mut Child, timeout: Duration) {
@@ -1221,6 +1204,7 @@ fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
         .stdout(Stdio::from(slave.try_clone().unwrap()))
         .stderr(Stdio::from(slave))
         .env_clear()
+        .env("TERM", "xterm-256color")
         .env("SAYA_CONFIG_HOME", &config_root)
         .env("SAYA_SESSION_DIR", &session_root)
         .env("SAYA_PROVIDER", "openai_compatible")
@@ -1244,30 +1228,83 @@ fn active_sigint_returns_to_repl_without_persisting_incomplete_turn() {
     }
     let mut guard = ChildGuard(Some(command.spawn().unwrap()));
     let child = guard.0.as_mut().unwrap();
-    // Cold debug builds can be slow while workspace tests contend for CPU.
-    let prompt = read_until(&mut master, b"saya> ", Duration::from_secs(10));
-    assert!(String::from_utf8_lossy(&prompt).contains("saya> "));
-    master.write_all(b"incomplete prompt\n").unwrap();
+
+    // Drive the pseudo-terminal like a real terminal emulator: a background pump
+    // drains all output, answers the rich editor's cursor-position queries (ESC[6n)
+    // so it can initialize, and accumulates bytes so the test can wait for markers.
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let pump_output = output.clone();
+    let mut pump_master = master.try_clone().unwrap();
+    let pump = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut buffer = [0_u8; 4096];
+        while Instant::now() < deadline {
+            match pump_master.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(size) => {
+                    let chunk = &buffer[..size];
+                    pump_output.lock().unwrap().extend_from_slice(chunk);
+                    let queries = chunk
+                        .windows(4)
+                        .filter(|window| *window == b"\x1b[6n")
+                        .count();
+                    for _ in 0..queries {
+                        let _ = pump_master.write_all(b"\x1b[1;1R");
+                        let _ = pump_master.flush();
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                Err(_) => break,
+            }
+        }
+    });
+
+    let wait_for = |needle: &[u8], timeout: Duration| -> Vec<u8> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            {
+                let buffer = output.lock().unwrap();
+                if buffer.windows(needle.len()).any(|window| window == needle) {
+                    return buffer.clone();
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for {:?}; output was {:?}",
+                    String::from_utf8_lossy(needle),
+                    String::from_utf8_lossy(&buffer)
+                );
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+
+    // The rich editor renders its prompt (cold debug builds can be slow under load).
+    wait_for(b"saya> ", Duration::from_secs(15));
+    // Enter is a carriage return in a raw terminal.
+    master.write_all(b"incomplete prompt\r").unwrap();
     master.flush().unwrap();
     accepted_rx
-        .recv_timeout(Duration::from_secs(3))
+        .recv_timeout(Duration::from_secs(5))
         .expect("provider request was not observed");
     assert_eq!(
         unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) },
         0
     );
-    let cancelled = read_until(&mut master, b"saya> ", Duration::from_secs(3));
-    let cancelled_text = String::from_utf8_lossy(&cancelled);
+    let cancelled = wait_for(b"Request cancelled.", Duration::from_secs(5));
     assert!(
-        cancelled_text.contains("Request cancelled."),
-        "{cancelled_text}"
+        String::from_utf8_lossy(&cancelled).contains("saya> "),
+        "{}",
+        String::from_utf8_lossy(&cancelled)
     );
-    assert!(cancelled_text.contains("saya> "), "{cancelled_text}");
-    master.write_all(b"/exit\n").unwrap();
+    master.write_all(b"/exit\r").unwrap();
     master.flush().unwrap();
-    drop(master);
-    wait_with_deadline(child, Duration::from_secs(3));
+    wait_with_deadline(child, Duration::from_secs(5));
     guard.0.take();
+    drop(master);
+    let _ = pump.join();
     server.join().unwrap();
     let saved = std::fs::read_dir(&session_root)
         .unwrap()
