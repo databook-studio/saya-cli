@@ -1,0 +1,25 @@
+# cargo-audit advisory triage.
+#
+# `cargo audit` scans the entire Cargo.lock — including optional dependencies
+# that are never compiled into saya — so some advisories here are for code that
+# is not actually reachable. Each ignore below is justified and revisited when
+# an upstream fix lands. Review on every dependency bump.
+[advisories]
+ignore = [
+    # rsa 0.9.x — "Marvin Attack" RSA timing side-channel (RUSTSEC-2023-0071).
+    # No fixed release exists (open upstream since 2023-11). `rsa` is used for
+    # Snowflake key-pair JWT signing (performed locally with the user's own
+    # private key) and is pulled transitively by `sqlx-mysql` for MySQL auth.
+    # Neither path exposes a remote timing oracle over many operations against
+    # a secret, so practical exposure is low. Revisit when `rsa` ships a fix or
+    # when Snowflake signing is migrated to a constant-time backend.
+    "RUSTSEC-2023-0071",
+
+    # rkyv 0.7.x — out-of-bounds read in archive validation (RUSTSEC-2026-0235).
+    # Reachable ONLY through `rust_decimal`'s optional `rkyv` feature, which
+    # saya does not enable; `cargo tree -i rkyv` is empty, i.e. rkyv is not
+    # compiled into any saya target. It appears in Cargo.lock purely as an
+    # unused optional dependency. Revisit if we ever enable `rust_decimal/rkyv`
+    # (a fixed rkyv >= 0.8.17 would then be required).
+    "RUSTSEC-2026-0235",
+]
