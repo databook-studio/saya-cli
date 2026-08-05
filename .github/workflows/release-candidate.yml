@@ -22,7 +22,6 @@ jobs:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     env:
-      CARGO_BUILD_JOBS: "1"
       CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
       fail-fast: false
