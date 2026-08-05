@@ -1,13 +1,14 @@
 [package]
 name = "saya-config"
-publish = false        # internal library; not published to crates.io
-version = "0.1.0"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Configuration loading and resolution for SAYA CLI."
 
 [dependencies]
-saya-types = { path = "../saya-types" }
+saya-types = { path = "../saya-types", version = "0.1.2" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

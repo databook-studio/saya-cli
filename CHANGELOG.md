@@ -5,6 +5,19 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.1.2 — 2026-08-05
+
+### Distribution
+
+- Added an **Intel macOS** (`x86_64-apple-darwin`) build to the release matrix,
+  so releases now cover Linux x86_64, macOS arm64, macOS x86_64, and Windows
+  x86_64.
+- Prepared crates.io publishing: the workspace libraries are now publishable
+  (`saya-types`, `saya-config`, `saya-store`, `saya-agent`, `saya-connectors`),
+  enabling `cargo install saya-cli`.
+- Added `cargo-binstall` metadata so `cargo binstall saya-cli` downloads the
+  prebuilt binary instead of compiling.
+
 ## 0.1.1 — 2026-08-05
 
 First release published with prebuilt binaries (Linux, macOS, Windows) and

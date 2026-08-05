@@ -1,10 +1,11 @@
 [package]
 name = "saya-agent"
-publish = false        # internal library; not published to crates.io
-version = "0.1.0"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Agentic LLM loop and OpenAI-compatible provider clients for SAYA CLI."
 
 [dependencies]
 async-trait.workspace = true
@@ -12,7 +13,7 @@ bytes.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
-saya-types = { path = "../saya-types" }
+saya-types = { path = "../saya-types", version = "0.1.2" }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

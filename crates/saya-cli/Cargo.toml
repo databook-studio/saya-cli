@@ -1,6 +1,6 @@
 [package]
 name = "saya-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -15,14 +15,24 @@ categories = ["command-line-utilities", "database"]
 name = "saya"
 path = "src/main.rs"
 
+# cargo-binstall: download the prebuilt binary from GitHub Releases instead of
+# compiling. Archive layout: saya-<version>-<target>/{saya, README.md, ...}.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/saya-{ version }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+bin-dir = "saya-{ version }-{ target }/{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [dependencies]
 async-trait.workspace = true
 clap.workspace = true
-saya-agent = { path = "../saya-agent" }
-saya-config = { path = "../saya-config" }
-saya-connectors = { path = "../saya-connectors" }
-saya-store = { path = "../saya-store" }
-saya-types = { path = "../saya-types" }
+saya-agent = { path = "../saya-agent", version = "0.1.2" }
+saya-config = { path = "../saya-config", version = "0.1.2" }
+saya-connectors = { path = "../saya-connectors", version = "0.1.2" }
+saya-store = { path = "../saya-store", version = "0.1.2" }
+saya-types = { path = "../saya-types", version = "0.1.2" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

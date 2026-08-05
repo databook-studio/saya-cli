@@ -29,8 +29,10 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x86_64
-          - os: macos-latest
-            platform: macos-native
+          - os: macos-latest # Apple Silicon -> aarch64-apple-darwin
+            platform: macos-arm64
+          - os: macos-13 # Intel -> x86_64-apple-darwin
+            platform: macos-x86_64
           - os: windows-latest
             platform: windows-x86_64
     steps:
