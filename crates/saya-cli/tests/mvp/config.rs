@@ -63,7 +63,7 @@ fn config_init_creates_parseable_templates_with_stable_output() {
                 );
             }
         }
-        fs::remove_dir_all(root).unwrap();
+        let _ = fs::remove_dir_all(root);
     }
 }
 
@@ -80,7 +80,7 @@ fn config_init_refuses_overwrite_and_rolls_back_partial_creation() {
         fs::read_to_string(root.join(".saya/config.toml")).unwrap(),
         config_before
     );
-    fs::remove_dir_all(&root).unwrap();
+    let _ = fs::remove_dir_all(&root);
 
     let root = test_root("init-rollback");
     fs::create_dir_all(root.join(".saya")).unwrap();
@@ -89,7 +89,7 @@ fn config_init_refuses_overwrite_and_rolls_back_partial_creation() {
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("connections.toml"));
     assert!(!root.join(".saya/config.toml").exists());
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn config_init_failures_use_stable_error_envelopes_without_path_leaks() {
         assert_eq!(String::from_utf8_lossy(&output.stderr), expected);
         assert!(!stderr(&output).contains(&root.display().to_string()));
         assert!(!root.join(".saya/config.toml").exists());
-        fs::remove_dir_all(root).unwrap();
+        let _ = fs::remove_dir_all(root);
     }
 }
 
@@ -155,7 +155,7 @@ fn discovery_prefers_project_over_user_and_explicit_env_file_is_opt_in() {
     )
     .unwrap();
     assert_eq!(with_opt_in.resolved.ai.model, "explicit-env");
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -174,5 +174,5 @@ fn runtime_debug_redacts_merged_environment_values_and_keys() {
     let diagnostic = format!("{runtime:?}");
     assert!(!diagnostic.contains(sentinel_key));
     assert!(!diagnostic.contains(sentinel_value));
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }

@@ -2,27 +2,37 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# CI runners are ephemeral, so incremental compilation only adds overhead and
+# bloats the restored cache; disable it workspace-wide. Build parallelism is
+# left at the cargo default (all logical CPUs) instead of being throttled to a
+# single job, which serialized the ~1,800-file bundled DuckDB C++ compile.
+env:
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest
     env:
-      CARGO_BUILD_JOBS: "1"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.88.0
         with:
           toolchain: 1.88.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "msrv-1.88"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --locked
 
   verify:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     env:
-      CARGO_BUILD_JOBS: "1"
       CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
       fail-fast: false
@@ -33,6 +43,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "stable-${{ runner.os }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --check
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -57,6 +71,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "stable-${{ runner.os }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --locked -p saya-connectors --test postgres_live
 
   mysql-live:
@@ -82,4 +100,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "stable-${{ runner.os }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --locked -p saya-connectors --test mysql_live

@@ -62,7 +62,7 @@ fn ask_calls_configured_openai_compatible_provider() {
         !provider_state.exists(),
         "provider-only ask must not create an agent-query audit"
     );
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// Proves multi-database navigation: with `--profile primary --include-profile warehouse`

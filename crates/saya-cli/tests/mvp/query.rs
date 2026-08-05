@@ -99,7 +99,7 @@ fn duckdb_commands_have_stable_process_envelopes_and_safety() {
     );
     assert_eq!(missing.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&missing.stderr).contains("read_only explicitly"));
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn duckdb_schema_cache_fallback_refresh_and_interactive_schema_are_stable() {
     ] {
         assert!(!disk.contains(sentinel), "state leaked {sentinel}");
     }
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

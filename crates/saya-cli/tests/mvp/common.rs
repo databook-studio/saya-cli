@@ -8,7 +8,7 @@ use std::{
 pub(crate) fn test_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("saya-cli-{label}-{}", std::process::id()));
     if root.exists() {
-        fs::remove_dir_all(&root).unwrap();
+        let _ = fs::remove_dir_all(&root);
     }
     fs::create_dir_all(&root).unwrap();
     root

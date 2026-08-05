@@ -33,7 +33,7 @@ fn scripted_repl_persists_and_continues_a_redacted_session() {
         .output()
         .unwrap();
     assert!(resumed.status.success());
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn idle_eof_exits_the_interactive_process_cleanly() {
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[cfg(unix)]
@@ -240,5 +240,5 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
     assert!(!saved.contains("incomplete prompt"));
     assert!(!saved.contains("mock-secret"));
     let _ = std::fs::remove_dir_all(config_root);
-    std::fs::remove_dir_all(session_root).unwrap();
+    let _ = std::fs::remove_dir_all(session_root);
 }
