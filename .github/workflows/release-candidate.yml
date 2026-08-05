@@ -38,12 +38,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt, clippy
-      - name: Verify source
+      # fmt is a cheap, no-compile sanity check. Tests and clippy are NOT re-run
+      # here: releases are cut from `main`, which the branch ruleset already
+      # gates on the full test + clippy suite across all platforms. Re-running
+      # them made the release job compile the bundled DuckDB C++ three times
+      # (test + clippy + release) instead of once.
+      - name: Check formatting
         shell: bash
-        run: |
-          cargo fmt --check
-          cargo test --workspace --locked
-          cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo fmt --check
       - name: Build release binary
         shell: bash
         run: cargo build --release --locked -p saya-cli
