@@ -58,7 +58,7 @@ fn filesystem_store_round_trips_redacted_sessions_and_recovers_corruption() {
             .to_string_lossy()
             .contains("corrupt-"))
     );
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn most_recent_ignores_corrupt_sessions_and_rejects_path_traversal() {
     .unwrap();
     assert!(block_on(store.load("../good")).is_err());
     assert_eq!(block_on(store.most_recent()).unwrap().unwrap().id, "good");
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn repeated_saves_replace_the_same_session_on_all_platforms() {
     .unwrap();
     let loaded = block_on(store.load("same")).unwrap().unwrap();
     assert_eq!(loaded.messages[0].content, "second");
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn redaction_handles_multiple_known_markers_and_urls() {
     ] {
         assert!(!saved.contains(secret), "leaked {secret}");
     }
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn history_lists_valid_sessions_in_recent_first_order() {
     let history = block_on(store.history()).unwrap();
     assert_eq!(history.len(), 2);
     assert_eq!(history[0].id, "newer");
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
