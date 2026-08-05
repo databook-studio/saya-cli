@@ -92,7 +92,7 @@ jobs:
           $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           $sidecar = "$hash  $stage.zip`n"
           [System.IO.File]::WriteAllText("$stage.zip.sha256", $sidecar, [System.Text.UTF8Encoding]::new($false))
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: saya-${{ matrix.platform }}
           path: |
@@ -121,7 +121,7 @@ jobs:
           archives=$(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print | sed 's#^./##' | LC_ALL=C sort)
           test -n "$archives"
           while IFS= read -r archive; do sha256sum -- "$archive"; done <<< "$archives" > SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: saya-checksums
           path: artifacts/SHA256SUMS
