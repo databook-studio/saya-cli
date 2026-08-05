@@ -32,7 +32,7 @@ bigdecimal = { version = "0.4", features = ["serde"] }
 bytes = "1"
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
-duckdb = { version = "=1.10504.0", features = ["bundled", "chrono", "serde_json", "uuid"] }
+duckdb = { version = "=1.10505.0", features = ["bundled", "chrono", "serde_json", "uuid"] }
 base64 = "0.22"
 rsa = { version = "0.9", features = ["pem", "pkcs5"] }
 sha2 = { version = "0.10", features = ["oid"] }
