@@ -31,8 +31,9 @@ jobs:
             platform: linux-x86_64
           - os: macos-latest # Apple Silicon -> aarch64-apple-darwin
             platform: macos-arm64
-          - os: macos-13 # Intel -> x86_64-apple-darwin
+          - os: macos-latest # cross-compiled on Apple Silicon -> x86_64-apple-darwin
             platform: macos-x86_64
+            target: x86_64-apple-darwin
           - os: windows-latest
             platform: windows-x86_64
     steps:
@@ -50,9 +51,16 @@ jobs:
         run: cargo fmt --check
       - name: Build release binary
         shell: bash
-        run: cargo build --release --locked -p saya-cli
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            rustup target add "${{ matrix.target }}"
+            cargo build --release --locked -p saya-cli --target "${{ matrix.target }}"
+          else
+            cargo build --release --locked -p saya-cli
+          fi
       - name: Smoke test binary on Unix
-        if: matrix.os != 'windows-latest'
+        # Skip for cross-compiled targets — the binary's arch may differ from the runner's.
+        if: matrix.os != 'windows-latest' && matrix.target == ''
         shell: bash
         run: |
           BIN="target/release/saya"
@@ -71,10 +79,14 @@ jobs:
         shell: bash
         run: |
           VERSION=$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' crates/saya-cli/Cargo.toml | head -n 1)
-          HOST=$(rustc -vV | sed -n 's/^host: //p')
-          BIN="target/release/saya"
-          test -f "$BIN" || BIN="target/release/saya.exe"
-          STAGE="saya-${VERSION}-${HOST}"
+          if [ -n "${{ matrix.target }}" ]; then
+            TRIPLE="${{ matrix.target }}"
+            BIN="target/${{ matrix.target }}/release/saya"
+          else
+            TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
+            BIN="target/release/saya"
+          fi
+          STAGE="saya-${VERSION}-${TRIPLE}"
           mkdir "$STAGE"
           cp "$BIN" "$STAGE/"
           cp README.md LICENSE SECURITY.md "$STAGE/"
