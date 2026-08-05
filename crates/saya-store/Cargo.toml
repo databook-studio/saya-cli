@@ -1,16 +1,17 @@
 [package]
 name = "saya-store"
-publish = false        # internal library; not published to crates.io
-version = "0.1.0"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Local session and schema-cache storage for SAYA CLI."
 
 [dependencies]
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-saya-types = { path = "../saya-types" }
+saya-types = { path = "../saya-types", version = "0.1.2" }
 sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

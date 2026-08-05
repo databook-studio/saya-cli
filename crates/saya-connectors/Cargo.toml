@@ -1,15 +1,16 @@
 [package]
 name = "saya-connectors"
-publish = false        # internal library; not published to crates.io
-version = "0.1.0"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Database connectors and read-only SQL safety for SAYA CLI (PostgreSQL, MySQL, DuckDB, Snowflake)."
 
 [dependencies]
 async-trait.workspace = true
-saya-config = { path = "../saya-config" }
-saya-types = { path = "../saya-types" }
+saya-config = { path = "../saya-config", version = "0.1.2" }
+saya-types = { path = "../saya-types", version = "0.1.2" }
 futures-util.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true
