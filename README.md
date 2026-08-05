@@ -47,6 +47,28 @@ The GIFs are generated with [vhs](https://github.com/charmbracelet/vhs) from the
 `docs/*.tape` scripts (the live ones need `SAYA_API_KEY` and reachable databases
 in the environment).
 
+## Install
+
+Prebuilt binaries for macOS (Apple Silicon + Intel), Linux (x86_64), and Windows
+(x86_64) are attached to every
+[release](https://github.com/databook-studio/saya-cli/releases).
+
+```bash
+# Homebrew (macOS / Linux)
+brew install databook-studio/tap/saya
+
+# Cargo — prebuilt binary, no compile (cargo-bins.github.io/cargo-binstall)
+cargo binstall saya-cli
+
+# Cargo — from source (compiles the bundled DuckDB, so allow a few minutes)
+cargo install saya-cli
+```
+
+Or download the archive for your platform from the
+[releases page](https://github.com/databook-studio/saya-cli/releases), verify it
+against `SHA256SUMS`, and put the `saya` binary on your `PATH`. See
+[installation](docs/installation.md) for details.
+
 ## Quick start
 
 ```bash
