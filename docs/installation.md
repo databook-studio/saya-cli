@@ -1,7 +1,24 @@
 # Installation
 
-SAYA CLI is currently a private-alpha source release. Rust 1.88.0 or newer is
-required.
+SAYA CLI ships prebuilt binaries for macOS (Apple Silicon + Intel), Linux
+(x86_64), and Windows (x86_64) on every
+[release](https://github.com/databook-studio/saya-cli/releases), and is
+published on crates.io. Building from source requires Rust 1.88.0 or newer.
+
+## Install a release build
+
+```bash
+# Homebrew (macOS / Linux)
+brew install databook-studio/tap/saya
+
+# Cargo, prebuilt binary, no compile (https://github.com/cargo-bins/cargo-binstall)
+cargo binstall saya-cli
+
+# Cargo, from source (compiles the bundled DuckDB — allow a few minutes)
+cargo install saya-cli
+```
+
+All of these install a single `saya` binary onto your `PATH`.
 
 ## Build from a checkout
 
@@ -19,16 +36,14 @@ cargo install --locked --path crates/saya-cli
 saya --version
 ```
 
-The repository is not published on crates.io and there is no Homebrew formula.
-For a future public repository, the intended source install shape is:
+You can also install the latest source straight from git:
 
 ```bash
 cargo install --locked --git https://github.com/databook-studio/saya-cli.git saya-cli
 ```
 
-That command is future-facing documentation, not a currently supported release
-channel. Prebuilt archives are produced only by the release-candidate workflow
-after its checks pass.
+Prebuilt archives are produced by the release workflow on each version tag and
+attached to the GitHub release alongside a `SHA256SUMS` manifest.
 
 ## First five minutes
 
