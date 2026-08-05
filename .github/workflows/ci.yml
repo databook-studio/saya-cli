@@ -5,12 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+# CI runners are ephemeral, so incremental compilation only adds overhead and
+# bloats the restored cache; disable it workspace-wide. Build parallelism is
+# left at the cargo default (all logical CPUs) instead of being throttled to a
+# single job, which serialized the ~1,800-file bundled DuckDB C++ compile.
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest
     env:
-      CARGO_BUILD_JOBS: "1"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -27,7 +33,6 @@ jobs:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     env:
-      CARGO_BUILD_JOBS: "1"
       CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
       fail-fast: false
