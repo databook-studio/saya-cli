@@ -1,0 +1,47 @@
+[profiles.analytics]
+type = "postgresql"
+host = "localhost"
+port = 5432
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_ANALYTICS_PASSWORD" }
+
+[profiles.local]
+type = "duckdb"
+path = "./data/warehouse.duckdb"
+read_only = true
+
+[profiles.mysql]
+type = "mysql"
+host = "localhost"
+port = 3306
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_MYSQL_PASSWORD" }
+sslmode = "verify-identity"
+# ssl_ca = { file = "/etc/ssl/certs/mysql-ca.pem" }
+
+[profiles.snowflake_prod]
+type = "snowflake"
+account = "xy12345"
+user = "jane"
+auth_type = "keypair"
+private_key = { file = "/absolute/path/to/rsa_key.p8" }
+passphrase = { env = "SAYA_SNOWFLAKE_PASSPHRASE" }
+warehouse = "ANALYTICS"
+database = "PROD"
+schema = "PUBLIC"
+role = "ANALYST"
+
+[profiles.snowflake_userpass]
+type = "snowflake"
+account = "xy12345"
+user = "jane"
+auth_type = "userpass"
+password = { env = "SAYA_SNOWFLAKE_PASSWORD" }
+
+[profiles.snowflake_browser]
+type = "snowflake"
+account = "xy12345"
+user = "jane"
+auth_type = "externalbrowser"

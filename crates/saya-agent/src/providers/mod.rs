@@ -1,0 +1,24 @@
+mod anthropic;
+mod anthropic_request;
+mod anthropic_stream;
+mod framing;
+mod gemini;
+mod gemini_request;
+mod gemini_response;
+mod http;
+mod ollama;
+mod ollama_chunks;
+mod ollama_stream;
+mod ollama_wire;
+mod openai;
+mod openai_chunks;
+mod openai_stream;
+mod settings;
+mod tool_assembly;
+mod wire;
+
+pub use anthropic::AnthropicProvider;
+pub use gemini::GeminiProvider;
+pub use ollama::OllamaProvider;
+pub use openai::OpenAiCompatibleProvider;
+pub use settings::ProviderSettings;
