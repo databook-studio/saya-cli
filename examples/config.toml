@@ -1,0 +1,18 @@
+default_profile = "analytics"
+
+[ai]
+provider = "ollama"
+model = "qwen2.5-coder:14b"
+base_url = "http://localhost:11434"
+allow_data_sharing = false
+api_key = { env = "SAYA_API_KEY" }
+
+[run]
+read_only = true
+max_rows = 1000
+max_iterations = 12
+query_timeout_seconds = 60
+
+[output]
+format = "text"
+color = "auto"

@@ -1,0 +1,14 @@
+/target/
+/dist/
+.DS_Store
+**/.DS_Store
+.env
+.env.*
+!.env.example
+!examples/.env.*.example
+*.key
+*.pem
+*.p8
+.saya/sessions/
+.saya/config.toml
+.saya/connections.toml

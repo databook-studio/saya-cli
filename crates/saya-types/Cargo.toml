@@ -1,0 +1,12 @@
+[package]
+name = "saya-types"
+publish = false        # internal library; not published to crates.io
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
