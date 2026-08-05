@@ -10,6 +10,7 @@ pub(crate) fn prepare_path(path: &Path) -> Result<(), StoreError> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
+    #[cfg(unix)]
     let existed = parent.exists();
     fs::create_dir_all(parent).map_err(|_| StoreError::Unavailable)?;
     #[cfg(unix)]
@@ -27,6 +28,8 @@ pub(crate) fn secure_files(path: &Path) -> Result<(), StoreError> {
             set_mode(&sidecar, 0o600)?;
         }
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
