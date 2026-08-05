@@ -5,6 +5,30 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.1.1 — 2026-08-05
+
+First release published with prebuilt binaries (Linux, macOS, Windows) and
+SHA-256 checksums. No user-facing behavior changes versus 0.1.0.
+
+### Dependencies
+
+- Updated `ratatui` 0.29 → 0.30, `toml` 0.8 → 1.1, and `base64` 0.22 → 0.23.
+
+### Build & CI
+
+- Parallelized compilation (removed a one-job throttle) — roughly halved CI and
+  release build times for the bundled DuckDB C++ compile.
+- Added dependency/build caching (`rust-cache`) and de-duplicated CI runs.
+- Release job now builds only (tests and clippy already run on `main`),
+  compiling DuckDB once instead of three times.
+- Bumped `actions/upload-artifact` and `actions/download-artifact` to current
+  major versions.
+
+### Security
+
+- Documented triage of two unfixable/unreachable advisories (`rsa`
+  RUSTSEC-2023-0071, `rkyv` RUSTSEC-2026-0235) in `.cargo/audit.toml`.
+
 ## 0.1.0 — 2026-08-05
 
 ### Interactive full-screen TUI
