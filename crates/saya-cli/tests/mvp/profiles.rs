@@ -22,7 +22,7 @@ fn environment_only_named_profiles_are_available_to_connection_commands() {
     assert!(runtime.connections.profiles.is_empty());
     assert_eq!(runtime.resolved.profile_name.as_deref(), Some("env-only"));
     assert!(runtime.named_profile("env-only").is_ok());
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn connection_subcommands_accept_environment_only_named_profiles() {
         );
         assert!(!stderr.contains("profile \"env-only\" was not found"));
     }
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn mysql_environment_profile_reaches_generic_connector_path() {
     assert!(!stderr.contains("not_implemented"));
     assert!(!stderr.contains("connector is not implemented"));
     assert!(output.stdout.is_empty());
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -169,5 +169,5 @@ fn snowflake_environment_profiles_reach_connector_and_externalbrowser_fails_befo
     assert!(piped_text.contains("\"event\":\"error\""), "{piped_text}");
     assert!(piped_text.contains("interactive mode"), "{piped_text}");
     assert!(piped_output.stdout.is_empty(), "{piped_text}");
-    std::fs::remove_dir_all(root).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
