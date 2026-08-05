@@ -9,8 +9,13 @@ on:
 # bloats the restored cache; disable it workspace-wide. Build parallelism is
 # left at the cargo default (all logical CPUs) instead of being throttled to a
 # single job, which serialized the ~1,800-file bundled DuckDB C++ compile.
+# Route Rust and DuckDB C/C++ compiles through sccache.
 env:
   CARGO_INCREMENTAL: "0"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  CC: "sccache cc"
+  CXX: "sccache c++"
 
 jobs:
   msrv:
@@ -27,6 +32,7 @@ jobs:
         with:
           shared-key: "msrv-1.88"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - run: cargo check --workspace --locked
 
   verify:
@@ -47,6 +53,7 @@ jobs:
         with:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - run: cargo fmt --check
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -75,6 +82,7 @@ jobs:
         with:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - run: cargo test --locked -p saya-connectors --test postgres_live
 
   mysql-live:
@@ -104,4 +112,5 @@ jobs:
         with:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - run: cargo test --locked -p saya-connectors --test mysql_live
