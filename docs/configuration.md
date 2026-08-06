@@ -72,7 +72,7 @@ typed audit log. It never stores credentials, secret references, connection
 URLs, SQL, prompts, result rows, provider payloads, headers, driver errors, or
 source file paths. Session JSON behavior and `SAYA_SESSION_DIR` are unchanged.
 
-The private alpha connects to PostgreSQL, MySQL, DuckDB, and Snowflake. Environment and file secret
+SAYA connects to PostgreSQL, MySQL, DuckDB, and Snowflake. Environment and file secret
 references are resolved at runtime without serializing or logging their values;
 keyring references return an explicit unavailable error. Provider settings may
 use either the established `SAYA_AI_PROVIDER`, `SAYA_AI_MODEL`, and

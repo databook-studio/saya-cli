@@ -286,8 +286,8 @@ or row data. Ollama is treated as local for this MVP. `/privacy`, `/model`,
 (and `--include-profile`) connect additional read-only databases, and the agent
 navigates between all connected databases by passing an optional `connection`
 argument to its schema and query tools; the primary database is the default.
-Fully offline agent use, signing, crates.io, and Homebrew distribution are
-explicitly unavailable in this private alpha.
+Fully offline agent use and release signing are not implemented; provider
+execution is Ollama / OpenAI-compatible only.
 The database role must itself be read-only, and DuckDB file paths must have
 least-privilege filesystem permissions: SQL AST checks cannot prove that an
 arbitrary database function is free of side effects.
