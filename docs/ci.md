@@ -18,31 +18,32 @@ The workspace pins `duckdb` and its bundled `libduckdb-sys` implementation to
 enables `/EHsc` behind an MSVC target gate, so CI does not override dependency
 C++ flags.
 
-Full-matrix and release-candidate builds set `CARGO_BUILD_JOBS=1` and disable
-test-profile debug information. This serializes the largest native links and
-keeps test binaries small enough for hosted runners while still compiling and
-running the complete test suite.
+Builds compile in parallel. The earlier `CARGO_BUILD_JOBS=1` throttle was
+removed — it serialized the ~1,800-file bundled DuckDB C++ compile and was the
+dominant cost. Incremental compilation and test-profile debug info are disabled
+to keep the cached `target/` small, and `Swatinem/rust-cache` caches the cargo
+registry and `target/` (including the compiled DuckDB objects) between runs. The
+cache is written only from `main`, so pull requests restore it without evicting
+it. `ci.yml` runs on pull requests and pushes to `main`.
 
-Release candidates use `.github/workflows/release-candidate.yml`. Start it
-manually from Actions. Each native runner:
+Releases use `.github/workflows/release-candidate.yml`, triggered by pushing a
+`vX.Y.Z` tag (or manually with `publish: false` to validate without releasing).
+Its build matrix covers Linux x86_64, macOS arm64, macOS x86_64 (cross-compiled
+on the Apple Silicon runner, since GitHub's Intel runners are scarce), and
+Windows x86_64. Each build compiles `saya` in release mode, smoke-tests
+`saya --version` and `--non-interactive config doctor` on native targets, and
+uploads a tar (Unix) or zip (Windows) archive with a SHA-256 sidecar. Tests and
+Clippy are not re-run there — the branch ruleset gates `main` on them before a
+tag is cut.
 
-1. runs `cargo fmt --check`, locked workspace tests, and strict locked Clippy;
-2. builds `saya-cli` in release mode;
-3. smoke-tests `saya --version` and `--non-interactive config doctor`;
-4. uploads a native tar archive on Unix or zip archive on Windows plus a
-   SHA-256 sidecar.
-
-The local verification checklist additionally runs the workspace tests and
-Clippy with `--offline` when the dependency cache is present.
-
-The checksum job downloads every build artifact, verifies each sidecar, and
-uploads one `SHA256SUMS` manifest. The `publish` input defaults to `false`.
-Only an explicit `publish: true` dispatch can run the `gh release create` job,
-which depends on both build completion and checksum verification.
+On a real tag, later jobs verify and aggregate `SHA256SUMS`, create the GitHub
+Release, publish the workspace to crates.io, and bump the Homebrew tap formula.
+See [`RELEASING.md`](../RELEASING.md) for the full sequence and the
+`CARGO_REGISTRY_TOKEN` / `HOMEBREW_TAP_TOKEN` secrets those jobs use; each no-ops
+when its secret is unset.
 
 Do not treat a green build as a signed release. Signing requires external
 credentials and a release plan; no signing step or fake signature is included.
-The workflow does not make crates.io or Homebrew releases.
 
 Local parity is available with `scripts/package.sh`, which writes the archive
 and `.sha256` file under `dist/` unless `SAYA_PACKAGE_DIR` is set.

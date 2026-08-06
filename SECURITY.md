@@ -27,8 +27,8 @@ maintainers listed by the `databook-studio` organization with reproduction
 steps, affected version, and impact. Do not include live credentials or raw
 customer data.
 
-PostgreSQL, MySQL, DuckDB, and Snowflake are supported database paths in the
-private alpha; Snowflake live validation remains opt-in. Provider execution
+PostgreSQL, MySQL, DuckDB, and Snowflake are supported database paths;
+Snowflake live validation remains opt-in. Provider execution
 exists through the supported Ollama/OpenAI-compatible interfaces only;
 Anthropic, Gemini, and fully offline agent use are unavailable. Release
 archives are checksummed, but signing is an external credential and release
