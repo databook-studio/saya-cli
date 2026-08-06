@@ -30,17 +30,41 @@ impl From<OutputFormat> for RenderFormat {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TerminalEvent {
-    AssistantText { text: String },
-    ToolRequested { name: String },
-    ToolCompleted { name: String, summary: String },
-    ToolDenied { name: String, reason: String },
+    AssistantText {
+        text: String,
+    },
+    ToolRequested {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    ToolCompleted {
+        name: String,
+        summary: String,
+    },
+    ToolDenied {
+        name: String,
+        reason: String,
+    },
     Complete,
-    Result { message: String },
-    QueryResult { result: QueryResult },
-    Schema { schema: SchemaTree },
-    NotImplemented { feature: String },
-    Diagnostic { message: String },
-    Error { message: String },
+    Result {
+        message: String,
+    },
+    QueryResult {
+        result: QueryResult,
+    },
+    Schema {
+        schema: SchemaTree,
+    },
+    NotImplemented {
+        feature: String,
+    },
+    Diagnostic {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
@@ -62,8 +86,11 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stderr: format!("{message}\n"),
         },
         TerminalEvent::AssistantText { text } => render_delta::text(text),
-        TerminalEvent::ToolRequested { name } => Rendered {
-            stdout: format!("Using read-only tool: {name}\n"),
+        TerminalEvent::ToolRequested { name, detail } => Rendered {
+            stdout: match detail {
+                Some(detail) => format!("Using read-only tool: {name}\n  {detail}\n"),
+                None => format!("Using read-only tool: {name}\n"),
+            },
             stderr: String::new(),
         },
         TerminalEvent::ToolCompleted { name, summary } => Rendered {

@@ -71,6 +71,16 @@ impl ConnectionRegistry {
         self.names.iter().map(String::as_str).collect()
     }
 
+    /// Every connection with its name, in insertion order. This is the
+    /// currently included/connected set that multi-database fan-out runs
+    /// against (primary plus each secondary that connected).
+    pub(crate) fn entries(&self) -> Vec<(&str, &ConnectionEntry)> {
+        self.names
+            .iter()
+            .filter_map(|name| self.map.get(name).map(|entry| (name.as_str(), entry)))
+            .collect()
+    }
+
     /// Resolves an optional connection name to an entry. `None` or empty -> primary.
     /// Unknown name -> Err with a message listing the available names.
     /// Empty registry -> Err("no database profile is selected").
@@ -107,7 +117,7 @@ impl ConnectionRegistry {
             }
         }
         lines.push(
-            "To inspect a database, pass its `connection` argument to schema and query tools. Inspect each database separately and combine your findings."
+            "To inspect a database, pass its `connection` argument to schema and query tools. Inspect each database separately and combine your findings. When the same query should run against every connected database, call `bounded_sql_query_all` once instead of repeating `bounded_sql_query` per connection."
                 .to_string(),
         );
         Some(lines.join("\n"))

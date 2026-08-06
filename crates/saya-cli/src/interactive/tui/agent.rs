@@ -20,6 +20,8 @@ pub(crate) enum StreamMsg {
     /// The agent is asking the user to approve a tool; the UI replies via `respond`.
     ApprovalRequest {
         tool: String,
+        /// Human-readable detail (e.g. the SQL) shown so the user sees what they approve.
+        detail: Option<String>,
         respond: oneshot::Sender<bool>,
     },
     Done(Result<AgentOutput, String>),
@@ -54,7 +56,7 @@ struct ChannelApproval {
 
 #[async_trait]
 impl ApprovalDecider for ChannelApproval {
-    async fn approve(&self, tool: &ToolDefinition) -> bool {
+    async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
         match self.policy {
             ApprovalPolicy::ReadOnly => return true,
             ApprovalPolicy::Never => return false,
@@ -65,6 +67,12 @@ impl ApprovalDecider for ChannelApproval {
             .tx
             .send(StreamMsg::ApprovalRequest {
                 tool: tool.name.clone(),
+                detail: crate::agent::tools::sql_tool_call(&tool.name, arguments).map(|call| {
+                    match call.target {
+                        Some(target) => format!("-- on {target}\n{}", call.sql),
+                        None => call.sql,
+                    }
+                }),
                 respond,
             })
             .is_err()
