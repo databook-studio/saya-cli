@@ -183,3 +183,18 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: bash scripts/publish-crates.sh
+
+  bump-homebrew:
+    name: Bump Homebrew formula
+    # Runs on a version tag, after the GitHub Release (and its SHA256SUMS) exists.
+    # The script regenerates the tap formula from the published checksums and
+    # no-ops if HOMEBREW_TAP_TOKEN is unset, so it never blocks a release.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Update tap formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: bash scripts/update-homebrew-formula.sh "${GITHUB_REF_NAME#v}"
