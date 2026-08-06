@@ -1,6 +1,6 @@
 # ADR 0001: Release architecture and trust boundaries
 
-- Status: accepted
+- Status: accepted (amended 2026-08-06 — see Amendment)
 - Date: 2026-08-03
 
 ## Decision
@@ -30,3 +30,25 @@ release channels yet.
 Providers remain an explicit product boundary: Ollama and OpenAI-compatible
 chat-completions are implemented; Anthropic, Gemini, and fully offline agent
 operation are not.
+
+## Amendment (2026-08-06)
+
+The release is now **tag-triggered and multi-channel**, superseding the parts of
+the decision above that describe a manual-dispatch, GitHub-Releases-only,
+source-install architecture. The trust boundaries — verified builds, checksummed
+archives, and no fabricated signatures — are unchanged.
+
+- Pushing a `vX.Y.Z` tag runs the full pipeline: build → checksums → GitHub
+  Release → crates.io publish → Homebrew tap bump. A `workflow_dispatch` with
+  `publish: false` remains available for validation-only builds.
+- The build matrix adds macOS x86_64, cross-compiled on the Apple Silicon runner
+  (GitHub's Intel runners are scarce), alongside Linux x86_64, macOS arm64, and
+  Windows x86_64.
+- The workspace crates are published to crates.io (`cargo install saya-cli` /
+  `cargo binstall saya-cli`), and a Homebrew tap
+  ([databook-studio/homebrew-tap](https://github.com/databook-studio/homebrew-tap))
+  provides `brew install databook-studio/tap/saya`. The crates.io and Homebrew
+  jobs no-op unless their secrets (`CARGO_REGISTRY_TOKEN`, `HOMEBREW_TAP_TOKEN`)
+  are configured.
+- Signing remains deliberately out of scope. See [`RELEASING.md`](../RELEASING.md)
+  for the current end-to-end process.

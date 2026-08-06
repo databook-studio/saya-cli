@@ -25,7 +25,7 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
-The private alpha supports `postgresql`, `mysql`, `duckdb`, and `snowflake`.
+SAYA supports `postgresql`, `mysql`, `duckdb`, and `snowflake`.
 PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-full`; MySQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-identity`.
