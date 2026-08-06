@@ -5,10 +5,10 @@ use crate::connection::ConnectionRegistry;
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
-    pub(super) registry: ConnectionRegistry,
-    pub(super) max_rows: usize,
-    pub(super) allow_query_data: bool,
-    pub(super) state_db: Option<SqliteStateStore>,
+    registry: ConnectionRegistry,
+    max_rows: usize,
+    allow_query_data: bool,
+    state_db: Option<SqliteStateStore>,
 }
 
 impl DatabaseTools {
@@ -59,7 +59,7 @@ impl DatabaseTools {
     /// Runs `sql` against every connected database independently, collecting a
     /// per-database `result` or `error` so a dialect mismatch on one database
     /// never sinks the rest. A single approval covers the whole fan-out.
-    pub(super) async fn query_all(&self, sql: &str) -> Result<serde_json::Value, String> {
+    async fn query_all(&self, sql: &str) -> Result<serde_json::Value, String> {
         let entries = self.registry.entries();
         if entries.is_empty() {
             return Err("no database profile is selected".into());
@@ -94,6 +94,53 @@ impl DatabaseTools {
             databases.push(serde_json::Value::Object(record));
         }
         Ok(serde_json::json!({ "databases": databases }))
+    }
+
+    /// Dispatches a read-only agent tool call to its selected connection.
+    pub(super) async fn execute_read_only(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        if matches!(name, "bounded_sql_query" | "bounded_sql_query_all") && !self.allow_query_data {
+            return Err("data sharing is disabled for this cloud provider".into());
+        }
+        if name == "bounded_sql_query_all" {
+            let sql = arguments
+                .get("sql")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("invalid query arguments")?;
+            return self.query_all(sql).await;
+        }
+        let connection = arguments
+            .get("connection")
+            .and_then(serde_json::Value::as_str);
+        let entry = self.registry.resolve(connection)?;
+        match name {
+            "schema_discovery" => {
+                super::super::state_tools::schema(
+                    entry.connector.as_ref(),
+                    self.state_db.as_ref(),
+                    entry.profile_id.as_deref(),
+                )
+                .await
+            }
+            "bounded_sql_query" => {
+                let sql = arguments
+                    .get("sql")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("invalid query arguments")?;
+                super::super::state_tools::query(
+                    entry.connector.as_ref(),
+                    sql,
+                    self.max_rows,
+                    self.state_db.as_ref(),
+                    entry.profile_id.as_deref(),
+                )
+                .await
+            }
+            _ => Err("unsupported read-only tool".into()),
+        }
     }
 
     /// Returns available database tool definitions.

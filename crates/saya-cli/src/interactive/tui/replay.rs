@@ -57,9 +57,9 @@ pub(crate) fn relative_time(delta_ms: u128) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::interactive::session_state::SessionState;
     use super::super::transcript::BlockKind;
     use super::history_blocks;
+    use crate::interactive::session_state::SessionState;
     use saya_agent::ToolMetadata;
 
     #[test]

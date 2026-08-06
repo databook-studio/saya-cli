@@ -68,7 +68,8 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         if let Some(stream) = &app.stream {
             stream.cancel.cancel();
         }
-        app.transcript.push(super::transcript::BlockKind::System, "Cancelling…");
+        app.transcript
+            .push(super::transcript::BlockKind::System, "Cancelling…");
         return;
     }
     let ctrl = mods.contains(KeyModifiers::CONTROL);
@@ -92,8 +93,10 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 app.should_quit = true;
             } else {
                 app.ctrl_c_armed = true;
-                app.transcript
-                    .push(super::transcript::BlockKind::System, "Press Ctrl+C again to exit.");
+                app.transcript.push(
+                    super::transcript::BlockKind::System,
+                    "Press Ctrl+C again to exit.",
+                );
             }
             return;
         }
