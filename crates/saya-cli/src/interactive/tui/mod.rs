@@ -30,21 +30,28 @@ use super::session_resume::block_on;
 use super::session_state::SessionState;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
-use types::App;
 use clipboard::{copy_to_native_clipboard, osc52_copy};
 use dispatch::Dispatch;
 use keys::handle_key;
 use ratatui::crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind},
     execute,
 };
 use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
 use std::sync::Arc;
 use std::time::Duration;
 use terminal::TerminalGuard;
-use transcript::BlockKind;
+use transcript::{BlockKind, Transcript};
+use types::App;
+
+fn save_session(store: &FsSessionStore, state: &SessionState, transcript: &mut Transcript) {
+    if let Err(error) = block_on(store.save(state.redacted())) {
+        transcript.push(
+            BlockKind::Error,
+            format!("Could not save this session; your latest changes may be lost: {error}"),
+        );
+    }
+}
 
 /// Runs the full-screen TUI session. Returns the process exit code.
 pub(crate) fn run(
@@ -69,6 +76,7 @@ pub(crate) fn run(
 
     // Tracks the terminal's actual mouse-capture state; TerminalGuard enables it.
     let mut mouse_captured = true;
+    let mut mouse_capture_error_reported = false;
 
     while !app.should_quit {
         let status = super::session_prompt::status_segments(state);
@@ -99,36 +107,56 @@ pub(crate) fn run(
         let want_capture = !app.selection_mode;
         if want_capture != mouse_captured {
             let backend = guard.terminal.backend_mut();
-            let _ = if want_capture {
+            let result = if want_capture {
                 execute!(backend, EnableMouseCapture)
             } else {
                 execute!(backend, DisableMouseCapture)
             };
-            mouse_captured = want_capture;
+            match result {
+                Ok(()) => {
+                    mouse_captured = want_capture;
+                    mouse_capture_error_reported = false;
+                }
+                Err(error) if !mouse_capture_error_reported => {
+                    app.transcript.push(
+                        BlockKind::Error,
+                        format!("Could not update mouse capture: {error}"),
+                    );
+                    mouse_capture_error_reported = true;
+                }
+                Err(_) => {}
+            }
         }
 
         // Fulfil a queued clipboard copy. Try the OS clipboard tool first (pbcopy
         // / wl-copy / xclip / clip) since that's what actually works locally —
         // notably in macOS Terminal.app, which ignores OSC 52. Always also emit
-        // OSC 52 so copies still reach the *local* clipboard over SSH. Warn only
-        // when the native tool is missing, so the optimistic "Copied…" line isn't
-        // silently wrong.
+        // OSC 52 so copies can still reach the *local* clipboard over SSH. Report
+        // the outcome only after attempting both mechanisms.
         if let Some(text) = app.pending_clipboard.take() {
             let native_ok = copy_to_native_clipboard(&text);
-            let _ = osc52_copy(guard.terminal.backend_mut(), &text);
-            if !native_ok {
-                app.transcript.push(
+            let osc_result = osc52_copy(guard.terminal.backend_mut(), &text);
+            match (native_ok, osc_result) {
+                (true, _) => app
+                    .transcript
+                    .push(BlockKind::System, "Copied to the system clipboard."),
+                (false, Ok(())) => app.transcript.push(
                     BlockKind::System,
-                    "No system clipboard tool found; sent OSC 52 instead \
-                     (works only if your terminal supports it).",
-                );
+                    "Sent OSC 52 clipboard data; it will copy if your terminal supports it.",
+                ),
+                (false, Err(error)) => app.transcript.push(
+                    BlockKind::Error,
+                    format!(
+                        "Could not copy to the system clipboard, and sending OSC 52 failed: {error}"
+                    ),
+                ),
             }
         }
 
         if app.is_busy() {
             app.spinner = app.spinner.wrapping_add(1);
             if app.drain_stream(state) {
-                let _ = block_on(store.save(state.redacted()));
+                save_session(store, state, &mut app.transcript);
             }
         }
 
@@ -177,7 +205,7 @@ pub(crate) fn run(
                     .push(BlockKind::Error, format!("Session not found: {id}")),
                 Err(error) => app.transcript.push(BlockKind::Error, error.to_string()),
             }
-            let _ = block_on(store.save(state.redacted()));
+            save_session(store, state, &mut app.transcript);
         }
     }
 

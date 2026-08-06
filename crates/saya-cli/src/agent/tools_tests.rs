@@ -206,6 +206,32 @@ fn definitions_include_fan_out_only_when_query_data_allowed() {
 }
 
 #[test]
+fn definitions_preserve_the_read_only_and_approval_contract() {
+    let tools = DatabaseTools::definitions(true);
+    let tool = |name: &str| tools.iter().find(|tool| tool.name == name).unwrap();
+
+    let schema = tool("schema_discovery");
+    assert!(schema.read_only);
+    assert!(!schema.requires_approval);
+    assert!(schema.parameters["properties"]["connection"].is_object());
+    assert!(schema.parameters.get("required").is_none());
+
+    let single = tool("bounded_sql_query");
+    assert!(single.read_only);
+    assert!(single.requires_approval);
+    assert_eq!(single.parameters["required"], serde_json::json!(["sql"]));
+    assert!(single.parameters["properties"]["connection"].is_object());
+    assert!(single.parameters["properties"]["sql"].is_object());
+
+    let all = tool("bounded_sql_query_all");
+    assert!(all.read_only);
+    assert!(all.requires_approval);
+    assert_eq!(all.parameters["required"], serde_json::json!(["sql"]));
+    assert!(all.parameters["properties"]["sql"].is_object());
+    assert!(all.parameters["properties"].get("connection").is_none());
+}
+
+#[test]
 fn tool_call_detail_surfaces_the_sql() {
     // Single-connection query: the SQL, whitespace collapsed to one line.
     let detail = tool_call_detail(

@@ -31,9 +31,7 @@ impl App {
                             _ => ("(no profile)".into(), "?".into(), 0),
                         };
                     PickerEntry {
-                        label: format!(
-                            "{when:<10}  {profile:<16}  {model:<24}  {turns} turn(s)"
-                        ),
+                        label: format!("{when:<10}  {profile:<16}  {model:<24}  {turns} turn(s)"),
                         id: entry.id,
                     }
                 })
@@ -98,9 +96,9 @@ impl App {
                     profile,
                     &self.runtime.cache_scope,
                 );
-                if let Ok(Some(cached)) =
-                    crate::interactive::session_resume::block_on(self.state_db.get_schema(&identity))
-                {
+                if let Ok(Some(cached)) = crate::interactive::session_resume::block_on(
+                    self.state_db.get_schema(&identity),
+                ) {
                     refs.extend(atref::schema_refs(&cached.schema));
                 }
             }

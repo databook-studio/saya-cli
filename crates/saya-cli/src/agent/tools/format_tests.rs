@@ -22,6 +22,23 @@ fn format_sql_handles_multibyte_utf8() {
 }
 
 #[test]
+fn format_sql_preserves_quoted_keywords_and_whitespace() {
+    let raw = "SELECT 'a   from b', \"order by\" FROM t";
+    let formatted = format_sql(raw);
+    assert_eq!(formatted, "SELECT 'a   from b', \"order by\"\nFROM t");
+}
+
+#[test]
+fn format_sql_preserves_keywords_inside_comments() {
+    let raw = "SELECT 1 -- from the cache\nFROM t /* where ignored */ WHERE id = 1";
+    let formatted = format_sql(raw);
+    assert_eq!(
+        formatted,
+        "SELECT 1 -- from the cache\nFROM t /* where ignored */\nWHERE id = 1"
+    );
+}
+
+#[test]
 fn sql_tool_call_bounded_sql_query_default() {
     let args = serde_json::json!({ "sql": "select 1" });
     let call = sql_tool_call("bounded_sql_query", &args).expect("should return SqlCall");

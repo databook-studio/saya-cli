@@ -30,10 +30,6 @@ impl App {
         {
             Some(block) => {
                 self.pending_clipboard = Some(block.text.clone());
-                self.transcript.push(
-                    BlockKind::System,
-                    "Copied the last answer to the clipboard.",
-                );
             }
             None => self
                 .transcript
@@ -56,8 +52,6 @@ impl App {
             return;
         }
         self.pending_clipboard = Some(text);
-        self.transcript
-            .push(BlockKind::System, "Copied the transcript to the clipboard.");
     }
 
     /// Recalls the previous history entry into the input (Up).
