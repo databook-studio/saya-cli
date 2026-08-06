@@ -13,3 +13,4 @@
 .saya/config.toml
 .saya/connections.toml
 .env.saya
+/.claude/skills/saya-live-test
