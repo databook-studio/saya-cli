@@ -5,7 +5,10 @@ use saya_types::QueryResult;
 fn test_format_table_basic_alignment() {
     let result = QueryResult {
         columns: vec!["id".into(), "name".into()],
-        rows: vec![serde_json::json!([1, "alice"]), serde_json::json!([2, "bob"])],
+        rows: vec![
+            serde_json::json!([1, "alice"]),
+            serde_json::json!([2, "bob"]),
+        ],
         row_count: 2,
         truncated: false,
         executed_sql: "SELECT * FROM users".into(),
@@ -33,7 +36,10 @@ fn test_format_table_basic_alignment() {
 fn test_format_table_right_aligns_numeric_columns() {
     let result = QueryResult {
         columns: vec!["id".into(), "name".into()],
-        rows: vec![serde_json::json!([1, "alice"]), serde_json::json!([100, "bob"])],
+        rows: vec![
+            serde_json::json!([1, "alice"]),
+            serde_json::json!([100, "bob"]),
+        ],
         row_count: 2,
         truncated: false,
         executed_sql: "".into(),
@@ -147,8 +153,7 @@ fn test_format_markdown_tables_basic() {
 
 #[test]
 fn test_format_markdown_tables_numeric_alignment() {
-    let input =
-        "| Rank | Title | Count |\n|------|-------|-------|\n| 1 | BUCKET | 34 |\n| 2 | ROCKETEER | 33 |";
+    let input = "| Rank | Title | Count |\n|------|-------|-------|\n| 1 | BUCKET | 34 |\n| 2 | ROCKETEER | 33 |";
     let output = format_markdown_tables(input);
     let lines: Vec<&str> = output.lines().collect();
 
