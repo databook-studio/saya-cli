@@ -34,10 +34,10 @@ brand-guidelines (`github.com/anthropics/skills`).
   gray so the answer is what stands out.
 - **Status is coded by meaning, not decoration.** Green = safe/success, amber = needs
   attention, red = error. Approval mode follows this: read-only green, ask amber, never red.
-- **Re-tintable.** Everything keys off a small set of named constants at the top of
-  `ui.rs`; changing saya's signature is a one-line edit to the `ACCENT` constant.
+- **Re-tintable.** Everything keys off a small set of named constants in
+  `ui/theme.rs`; changing saya's signature is a one-line edit to the `ACCENT` constant.
 
-## Mapping to the code (`crates/saya-cli/src/interactive/tui/ui.rs`)
+## Mapping to the code (`crates/saya-cli/src/interactive/tui/ui/theme.rs`)
 
 | Element | Colour |
 | --- | --- |
