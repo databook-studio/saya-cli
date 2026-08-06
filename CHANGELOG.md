@@ -5,6 +5,8 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.1.3 — 2026-08-06
+
 ### Added
 
 - **SQL visibility** — the exact SQL a tool is about to run is now shown in the

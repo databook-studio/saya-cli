@@ -1,6 +1,6 @@
 [package]
 name = "saya-cli"
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -28,11 +28,11 @@ pkg-fmt = "zip"
 [dependencies]
 async-trait.workspace = true
 clap.workspace = true
-saya-agent = { path = "../saya-agent", version = "0.1.2" }
-saya-config = { path = "../saya-config", version = "0.1.2" }
-saya-connectors = { path = "../saya-connectors", version = "0.1.2" }
-saya-store = { path = "../saya-store", version = "0.1.2" }
-saya-types = { path = "../saya-types", version = "0.1.2" }
+saya-agent = { path = "../saya-agent", version = "0.1.3" }
+saya-config = { path = "../saya-config", version = "0.1.3" }
+saya-connectors = { path = "../saya-connectors", version = "0.1.3" }
+saya-store = { path = "../saya-store", version = "0.1.3" }
+saya-types = { path = "../saya-types", version = "0.1.3" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
