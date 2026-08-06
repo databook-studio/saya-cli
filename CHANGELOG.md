@@ -5,6 +5,47 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Added
+
+- **SQL visibility** — the exact SQL a tool is about to run is now shown in the
+  approval prompt (both the TUI dialog and the headless `[y/N]` prompt) and
+  echoed into the transcript / headless output, so you approve and audit the
+  real query text rather than a generic "read-only SQL query" label. In the TUI
+  the executed SQL renders as a labelled, multi-line block (broken before each
+  major clause) instead of a collapsed one-liner, and the approval panel now
+  sits directly above the input box — with the formatted SQL inside it — rather
+  than floating in the middle of the screen.
+- **Cross-database queries** — a new `bounded_sql_query_all` agent tool runs one
+  bounded, read-only query against every connected database in a single
+  approval and returns per-database results. Each database runs independently,
+  so a dialect mismatch on one is reported alongside the others' successes
+  instead of aborting the whole call.
+- **Copy & paste from the TUI** — `Ctrl+O` toggles selection mode (releases the
+  mouse so your terminal's own drag-select and copy work, with a `SELECT`
+  indicator in the status bar); `Ctrl+Y` copies the last answer and `Ctrl+B`
+  copies the whole transcript. Copies go to the OS clipboard via the platform
+  tool (`pbcopy` / `wl-copy` / `xclip` / `clip`) and also emit OSC 52 so copies
+  reach the local clipboard over SSH. (`F2`/`F3`/`F4` still work as aliases on
+  terminals that deliver them, but macOS reserves those as media keys.)
+- **Resumed sessions show their history** — resuming a session (via the
+  `/sessions` picker or `--resume` / `--continue`) now replays the prior turns
+  into the transcript — each question, the tools it ran, and the answer — so the
+  panel opens on the earlier conversation instead of an empty screen.
+- **Launch splash** — before the first question the TUI now shows a centered
+  splash (name, tagline, your configured databases, example prompts, and key
+  hints) instead of an empty panel; it disappears the moment you ask something.
+- **Role rail in the transcript** — every transcript line now carries a
+  colour-coded left rail (cyan for you, periwinkle for saya, dimmed for tool and
+  system lines, red for errors), so turns and tool steps read as distinct
+  groups instead of a flat stream.
+- **Colour-coded status bar** — the status strip is now segmented: the profile
+  in the accent colour, provider/model dimmed, the approval mode coloured by
+  risk (green read-only, yellow ask, red never), and privacy coloured.
+- **Markdown in answers** — assistant answers now render `**bold**`, inline
+  `` `code` ``, `#` headings, and `-`/`*` bullets instead of raw text.
+- **Numeric columns align right** — query-result tables right-align numeric
+  columns so figures line up on their digits, while text stays left-aligned.
+
 ## 0.1.2 — 2026-08-05
 
 ### Distribution

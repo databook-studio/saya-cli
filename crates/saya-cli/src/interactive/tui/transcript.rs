@@ -50,9 +50,25 @@ impl Transcript {
         self.push(kind, delta);
     }
 
+    /// Rewrites the text of the most recent block of `kind` via `f`. Used to reflow a
+    /// finished assistant answer — e.g. turning Markdown pipe tables into box tables —
+    /// once streaming is complete, so wrapping and scroll math see the final text.
+    pub(crate) fn reformat_last(&mut self, kind: BlockKind, f: impl FnOnce(&str) -> String) {
+        if let Some(block) = self.blocks.iter_mut().rev().find(|b| b.kind == kind) {
+            block.text = f(&block.text);
+        }
+    }
+
     /// Returns `true` if the transcript contains no blocks.
     pub(crate) fn is_empty(&self) -> bool {
         self.blocks.is_empty()
+    }
+
+    /// Removes every block and returns the view to the tail. Used when a
+    /// resumed session replaces the current transcript with its history.
+    pub(crate) fn clear(&mut self) {
+        self.blocks.clear();
+        self.scroll_up = 0;
     }
 
     /// Returns a slice of all blocks in the transcript.
@@ -213,5 +229,19 @@ mod tests {
         let mut t = Transcript::new();
         t.push(BlockKind::User, "hello");
         assert!(t.view(10, 0).is_empty());
+    }
+
+    #[test]
+    fn test_reformat_last() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::Assistant, "first answer");
+        t.push(BlockKind::User, "user query");
+        t.push(BlockKind::Assistant, "raw streaming answer");
+
+        t.reformat_last(BlockKind::Assistant, |s| format!("[formatted: {s}]"));
+
+        assert_eq!(t.blocks()[0].text, "first answer");
+        assert_eq!(t.blocks()[1].text, "user query");
+        assert_eq!(t.blocks()[2].text, "[formatted: raw streaming answer]");
     }
 }

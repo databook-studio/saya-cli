@@ -59,26 +59,44 @@ pub struct ChatResponse {
     pub message: ChatMessage,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
+// `PartialEq` only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
-    AssistantText { text: String },
-    ToolRequested { name: String },
-    ToolCompleted { name: String, summary: String },
-    ToolDenied { name: String, reason: String },
+    AssistantText {
+        text: String,
+    },
+    /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
+    /// surfaced so the user can see exactly what will run before approving it.
+    ToolRequested {
+        name: String,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        arguments: serde_json::Value,
+    },
+    ToolCompleted {
+        name: String,
+        summary: String,
+    },
+    ToolDenied {
+        name: String,
+        reason: String,
+    },
     Complete,
 }
 
 #[async_trait]
 pub trait ApprovalDecider: Send + Sync {
-    async fn approve(&self, tool: &ToolDefinition) -> bool;
+    /// Decides whether a tool call may run. `arguments` is the raw call payload
+    /// so implementations can show the user what they are approving.
+    async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool;
 }
 
 pub struct AllowReadOnlyApproval;
 
 #[async_trait]
 impl ApprovalDecider for AllowReadOnlyApproval {
-    async fn approve(&self, _: &ToolDefinition) -> bool {
+    async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
         true
     }
 }

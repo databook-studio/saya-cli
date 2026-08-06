@@ -14,7 +14,9 @@ impl Default for AgentLimits {
         }
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `events` holds `AgentEvent`, which carries a `serde_json::Value` and is
+// therefore `PartialEq` but not `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct AgentOutput {
     pub answer: String,
     pub events: Vec<AgentEvent>,
