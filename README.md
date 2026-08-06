@@ -17,11 +17,14 @@ connected databases at once.
 
 - 🖥️ **Full-screen TUI** — bottom-pinned input, scrolling transcript, live
   streaming answers, `/` command popup with fuzzy matching, and `@table` schema
-  autocomplete.
-- 🛡️ **Safe by default** — every query is bounded and read-only, with an
-  approval prompt before it runs; sessions are redacted before being persisted.
+  autocomplete. Copy out with `Ctrl+O` (selection mode), `Ctrl+Y` (last
+  answer), or `Ctrl+B` (whole transcript).
+- 🛡️ **Safe by default** — every query is bounded and read-only, and the
+  **exact SQL is shown** in the approval prompt (and echoed to the transcript)
+  before it runs; sessions are redacted before being persisted.
 - 🔌 **Databases** — PostgreSQL, MySQL, DuckDB, Snowflake; query several
-  connected databases at once.
+  connected databases at once, or run **one query across every connected
+  database** and get per-database results side by side.
 - 🤖 **Providers** — Ollama, OpenAI, OpenAI-compatible gateways, Anthropic,
   Gemini; configurable model and temperature.
 - ⚙️ **Scriptable** — piped/non-TTY input runs headless with text/JSON/NDJSON

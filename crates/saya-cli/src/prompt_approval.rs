@@ -13,7 +13,11 @@ impl TerminalApproval {
 
 #[async_trait::async_trait]
 impl saya_agent::ApprovalDecider for TerminalApproval {
-    async fn approve(&self, _: &saya_agent::ToolDefinition) -> bool {
+    async fn approve(
+        &self,
+        tool: &saya_agent::ToolDefinition,
+        arguments: &serde_json::Value,
+    ) -> bool {
         match self.policy {
             ApprovalPolicy::ReadOnly => true,
             ApprovalPolicy::Never => false,
@@ -22,6 +26,10 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                 use std::io::{self, IsTerminal, Write};
                 if !io::stdin().is_terminal() {
                     return false;
+                }
+                // Show the exact SQL being approved when we can extract it.
+                if let Some(detail) = crate::agent::tools::tool_call_detail(&tool.name, arguments) {
+                    eprintln!("  {detail}");
                 }
                 eprint!("Allow bounded read-only SQL query? [y/N] ");
                 let _ = io::stderr().flush();

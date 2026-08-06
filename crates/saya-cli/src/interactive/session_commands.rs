@@ -4,7 +4,9 @@ use crate::slash::SlashCommand;
 use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Agent(AgentOutput)` carries agent events backed by `serde_json::Value`, so
+// this enum is `PartialEq` but not `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum SessionAction {
     Message(String),
     Agent(AgentOutput),

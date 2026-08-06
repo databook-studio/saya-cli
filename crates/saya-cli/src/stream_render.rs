@@ -62,7 +62,10 @@ fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -
 pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
     match event {
         AgentEvent::AssistantText { text } => TerminalEvent::AssistantText { text },
-        AgentEvent::ToolRequested { name } => TerminalEvent::ToolRequested { name },
+        AgentEvent::ToolRequested { name, arguments } => {
+            let detail = crate::agent::tools::tool_call_detail(&name, &arguments);
+            TerminalEvent::ToolRequested { name, detail }
+        }
         AgentEvent::ToolCompleted { name, summary } => {
             TerminalEvent::ToolCompleted { name, summary }
         }
@@ -91,7 +94,8 @@ mod tests {
         assert_eq!(
             render_agent(
                 AgentEvent::ToolRequested {
-                    name: "schema".into()
+                    name: "schema".into(),
+                    arguments: serde_json::Value::Null,
                 },
                 RenderFormat::Text,
                 &mut open

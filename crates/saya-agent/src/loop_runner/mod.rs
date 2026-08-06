@@ -64,6 +64,7 @@ pub async fn run_agent_with_sink(
                 sink,
                 AgentEvent::ToolRequested {
                     name: call.name.clone(),
+                    arguments: call.arguments.clone(),
                 },
             )
             .await;
@@ -71,7 +72,8 @@ pub async fn run_agent_with_sink(
                 .iter()
                 .find(|tool| tool.name == call.name)
                 .expect("validated");
-            let approved = !definition.requires_approval || approval.approve(definition).await;
+            let approved = !definition.requires_approval
+                || approval.approve(definition, &call.arguments).await;
             let (result, summary) = if approved {
                 check_cancelled(&cancellation)?;
                 if call.name == "bounded_sql_query" {

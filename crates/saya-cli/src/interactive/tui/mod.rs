@@ -41,7 +41,7 @@ use ratatui::crossterm::{
 use saya_agent::AgentEvent;
 use saya_store::{FsSessionStore, SchemaStore, SessionStore, SqliteStateStore};
 use std::cell::Cell;
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -95,6 +95,8 @@ struct Menu {
 /// A pending tool-approval request awaiting the user's y/n answer.
 struct PendingApproval {
     tool: String,
+    /// Human-readable detail (e.g. the SQL) shown in the approval dialog.
+    detail: Option<String>,
     respond: oneshot::Sender<bool>,
 }
 
@@ -139,6 +141,12 @@ struct App {
     pending_resume: Option<String>,
     /// Whether the help overlay is shown.
     show_help: bool,
+    /// Selection mode: when on, mouse capture is released so the terminal's own
+    /// drag-select + copy works (at the cost of wheel scrolling). Toggled with Ctrl+O.
+    selection_mode: bool,
+    /// Text queued for the system clipboard, fulfilled by the run loop via the OS
+    /// clipboard tool (pbcopy/wl-copy/xclip/clip) plus an OSC 52 escape for SSH.
+    pending_clipboard: Option<String>,
     runtime: Arc<RuntimeConfig>,
     state_db: SqliteStateStore,
     should_quit: bool,
@@ -170,6 +178,8 @@ impl App {
             picker: None,
             pending_resume: None,
             show_help: false,
+            selection_mode: false,
+            pending_clipboard: None,
             runtime,
             state_db,
             should_quit: false,
@@ -273,6 +283,20 @@ impl App {
         self.at_refs = refs;
     }
 
+    /// Replays a resumed session's saved turns into the transcript so the user
+    /// sees the prior conversation instead of an empty panel. Does nothing for a
+    /// session with no completed turns, leaving the welcome message in place.
+    fn show_history(&mut self, state: &SessionState) {
+        if state.turns.is_empty() {
+            return;
+        }
+        self.transcript.clear();
+        for (kind, text) in history_blocks(state) {
+            self.transcript.push(kind, text);
+        }
+        self.transcript.scroll_to_bottom();
+    }
+
     /// Scrolls the transcript by `delta` pages (negative = up), using the last
     /// rendered viewport height.
     fn scroll_pages(&mut self, up: bool) {
@@ -289,6 +313,60 @@ impl App {
         } else {
             self.transcript.scroll_down(n);
         }
+    }
+
+    /// Toggles selection mode. In selection mode the app releases the mouse so
+    /// the terminal can drag-select and copy; the run loop reconciles the actual
+    /// capture state. Wheel scrolling is unavailable while selecting.
+    fn toggle_selection_mode(&mut self) {
+        self.selection_mode = !self.selection_mode;
+        let message = if self.selection_mode {
+            "Selection mode on — drag to select and copy with your terminal. Ctrl+O to resume scrolling."
+        } else {
+            "Selection mode off — mouse wheel scrolls again."
+        };
+        self.transcript.push(BlockKind::System, message);
+    }
+
+    /// Queues the most recent assistant answer for the clipboard (F3).
+    fn copy_last_answer(&mut self) {
+        match self
+            .transcript
+            .blocks()
+            .iter()
+            .rev()
+            .find(|block| block.kind == BlockKind::Assistant)
+        {
+            Some(block) => {
+                self.pending_clipboard = Some(block.text.clone());
+                self.transcript.push(
+                    BlockKind::System,
+                    "Copied the last answer to the clipboard.",
+                );
+            }
+            None => self
+                .transcript
+                .push(BlockKind::System, "No answer to copy yet."),
+        }
+    }
+
+    /// Queues the whole transcript for the clipboard (F4).
+    fn copy_transcript(&mut self) {
+        let text = self
+            .transcript
+            .blocks()
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if text.is_empty() {
+            self.transcript
+                .push(BlockKind::System, "Nothing to copy yet.");
+            return;
+        }
+        self.pending_clipboard = Some(text);
+        self.transcript
+            .push(BlockKind::System, "Copied the transcript to the clipboard.");
     }
 
     /// Recalls the previous history entry into the input (Up).
@@ -377,6 +455,15 @@ impl App {
         self.refresh_menu();
     }
 
+    /// Pushes a blank separator line, unless the transcript is empty or already ends in one.
+    fn push_spacer(&mut self) {
+        match self.transcript.blocks().last() {
+            None => {}
+            Some(last) if last.text.is_empty() => {}
+            Some(_) => self.transcript.push(BlockKind::System, String::new()),
+        }
+    }
+
     /// Captures the current line for dispatch and clears the input.
     fn submit(&mut self) {
         let line = self.input.text().trim_end().to_string();
@@ -392,6 +479,7 @@ impl App {
             self.transcript.scroll_to_bottom();
             return;
         }
+        self.push_spacer();
         self.transcript.push(BlockKind::User, line.clone());
         self.transcript.scroll_to_bottom();
         self.pending = Some(line);
@@ -433,7 +521,7 @@ impl App {
             match msg {
                 StreamMsg::Event(event) => {
                     match &event {
-                        AgentEvent::ToolRequested { name } => {
+                        AgentEvent::ToolRequested { name, .. } => {
                             self.activity = Some(name.clone());
                         }
                         AgentEvent::AssistantText { .. } | AgentEvent::ToolCompleted { .. } => {
@@ -443,8 +531,16 @@ impl App {
                     }
                     apply_event(&mut self.transcript, event);
                 }
-                StreamMsg::ApprovalRequest { tool, respond } => {
-                    self.pending_approval = Some(PendingApproval { tool, respond });
+                StreamMsg::ApprovalRequest {
+                    tool,
+                    detail,
+                    respond,
+                } => {
+                    self.pending_approval = Some(PendingApproval {
+                        tool,
+                        detail,
+                        respond,
+                    });
                 }
                 StreamMsg::Done(result) => {
                     match result {
@@ -493,9 +589,15 @@ pub(crate) fn run(
         .collect::<Vec<String>>();
     let mut app = App::new(profiles, Arc::new(runtime.clone()), state_db.clone());
     app.reload_at_refs(state);
+    // A session resumed via --resume/--continue arrives with its turns already
+    // loaded; replay them so the panel opens on the prior conversation.
+    app.show_history(state);
+
+    // Tracks the terminal's actual mouse-capture state; TerminalGuard enables it.
+    let mut mouse_captured = true;
 
     while !app.should_quit {
-        let status = super::session_prompt::status_line(state);
+        let status = super::session_prompt::status_segments(state);
         guard
             .terminal
             .draw(|frame| ui::draw(frame, &app, &status))?;
@@ -514,6 +616,38 @@ pub(crate) fn run(
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+
+        // Reconcile the terminal's mouse capture with selection mode: releasing
+        // capture lets the terminal drag-select and copy; re-grabbing it restores
+        // wheel scrolling.
+        let want_capture = !app.selection_mode;
+        if want_capture != mouse_captured {
+            let backend = guard.terminal.backend_mut();
+            let _ = if want_capture {
+                execute!(backend, EnableMouseCapture)
+            } else {
+                execute!(backend, DisableMouseCapture)
+            };
+            mouse_captured = want_capture;
+        }
+
+        // Fulfil a queued clipboard copy. Try the OS clipboard tool first (pbcopy
+        // / wl-copy / xclip / clip) since that's what actually works locally —
+        // notably in macOS Terminal.app, which ignores OSC 52. Always also emit
+        // OSC 52 so copies still reach the *local* clipboard over SSH. Warn only
+        // when the native tool is missing, so the optimistic "Copied…" line isn't
+        // silently wrong.
+        if let Some(text) = app.pending_clipboard.take() {
+            let native_ok = copy_to_native_clipboard(&text);
+            let _ = osc52_copy(guard.terminal.backend_mut(), &text);
+            if !native_ok {
+                app.transcript.push(
+                    BlockKind::System,
+                    "No system clipboard tool found; sent OSC 52 instead \
+                     (works only if your terminal supports it).",
+                );
             }
         }
 
@@ -553,8 +687,16 @@ pub(crate) fn run(
                 Ok(Some(loaded)) => {
                     *state = loaded;
                     app.reload_at_refs(state);
-                    app.transcript
-                        .push(BlockKind::System, format!("Resumed session {id}"));
+                    if state.turns.is_empty() {
+                        app.transcript.clear();
+                        app.transcript.push(
+                            BlockKind::System,
+                            format!("Resumed session {id} (no earlier turns)."),
+                        );
+                    } else {
+                        // Replace the panel with the resumed session's conversation.
+                        app.show_history(state);
+                    }
                 }
                 Ok(None) => app
                     .transcript
@@ -566,6 +708,106 @@ pub(crate) fn run(
     }
 
     Ok(0)
+}
+
+/// Builds the transcript blocks that represent a resumed session's turns: each
+/// turn becomes a user block, a compact line per tool it ran, then the assistant
+/// block, ending with a divider noting how much history was replayed.
+fn history_blocks(state: &SessionState) -> Vec<(BlockKind, String)> {
+    let mut blocks = Vec::new();
+    for (i, turn) in state.turns.iter().enumerate() {
+        if i > 0 {
+            blocks.push((BlockKind::System, String::new()));
+        }
+        blocks.push((BlockKind::User, turn.user.clone()));
+        for tool in &turn.tools {
+            let glyph = if tool.status == "completed" {
+                "✓"
+            } else {
+                "✗"
+            };
+            blocks.push((
+                BlockKind::Tool,
+                format!("{glyph} {} ({})", tool.name, tool.status),
+            ));
+        }
+        blocks.push((
+            BlockKind::Assistant,
+            table::format_markdown_tables(&turn.assistant),
+        ));
+    }
+    blocks.push((
+        BlockKind::System,
+        format!(
+            "— resumed session {} · {} earlier turn(s) —",
+            state.id,
+            state.turns.len()
+        ),
+    ));
+    blocks
+}
+
+/// The OS clipboard command(s) to try, best candidate first. Each entry is an
+/// argv whose program reads the clipboard payload from stdin.
+fn clipboard_commands() -> &'static [&'static [&'static str]] {
+    #[cfg(target_os = "macos")]
+    {
+        &[&["pbcopy"]]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        &[&["clip"]]
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Wayland first, then the two common X11 tools.
+        &[
+            &["wl-copy"],
+            &["xclip", "-selection", "clipboard"],
+            &["xsel", "--clipboard", "--input"],
+        ]
+    }
+}
+
+/// Copies `text` to the OS clipboard by piping it to the first available
+/// platform clipboard tool. Returns `true` on success. This is what makes copy
+/// work in terminals that ignore OSC 52 (e.g. macOS Terminal.app).
+fn copy_to_native_clipboard(text: &str) -> bool {
+    use std::process::{Command, Stdio};
+    for argv in clipboard_commands() {
+        let Some((program, args)) = argv.split_first() else {
+            continue;
+        };
+        let child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        let Ok(mut child) = child else { continue };
+        // Write the payload, then drop stdin to signal EOF before waiting.
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if let Ok(status) = child.wait()
+            && status.success()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Copies `text` to the terminal's clipboard using the OSC 52 escape sequence.
+/// This delegates to the terminal emulator, so it needs no native clipboard
+/// library and works across an SSH session. Terminals that don't support OSC 52
+/// simply ignore it.
+fn osc52_copy<W: Write>(writer: &mut W, text: &str) -> io::Result<()> {
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    // OSC 52 form: ESC ] 52 ; c ; <base64> BEL — `c` targets the clipboard.
+    write!(writer, "\x1b]52;c;{encoded}\x07")?;
+    writer.flush()
 }
 
 /// Formats a millisecond age as a compact relative time (e.g. "3h ago").
@@ -585,15 +827,53 @@ fn relative_time(delta_ms: u128) -> String {
 /// Applies one streamed agent event to the transcript.
 fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
     match event {
-        AgentEvent::AssistantText { text } => transcript.append_delta(BlockKind::Assistant, &text),
-        AgentEvent::ToolRequested { name } => transcript.push(BlockKind::Tool, format!("→ {name}")),
+        AgentEvent::AssistantText { text } => {
+            if !matches!(
+                transcript.blocks().last().map(|b| b.kind),
+                Some(BlockKind::Assistant)
+            ) {
+                // first chunk of the answer: separate it from the tool/SQL lines above
+                if transcript
+                    .blocks()
+                    .last()
+                    .is_some_and(|b| !b.text.is_empty())
+                {
+                    transcript.push(BlockKind::System, String::new());
+                }
+            }
+            transcript.append_delta(BlockKind::Assistant, &text);
+        }
+        AgentEvent::ToolRequested { name, arguments } => {
+            if let Some(call) = crate::agent::tools::sql_tool_call(&name, &arguments) {
+                let header = match &call.target {
+                    Some(t) => format!("SQL · {t}"),
+                    None => "SQL".to_string(),
+                };
+                let body = call
+                    .sql
+                    .lines()
+                    .map(|l| format!("  {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let text = format!("{header}\n{body}");
+                transcript.push(BlockKind::Tool, text);
+            } else {
+                let line = match crate::agent::tools::tool_call_detail(&name, &arguments) {
+                    Some(detail) => format!("→ {name}: {detail}"),
+                    None => format!("→ {name}"),
+                };
+                transcript.push(BlockKind::Tool, line);
+            }
+        }
         AgentEvent::ToolCompleted { name, summary } => {
             transcript.push(BlockKind::Tool, format!("✓ {name}: {summary}"))
         }
         AgentEvent::ToolDenied { name, reason } => {
             transcript.push(BlockKind::System, format!("✗ {name} denied: {reason}"))
         }
-        AgentEvent::Complete => {}
+        AgentEvent::Complete => {
+            transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
+        }
     }
 }
 
@@ -608,6 +888,20 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     if code == KeyCode::F(1) || (code == KeyCode::Char('?') && app.input.is_empty()) {
         app.show_help = true;
         return;
+    }
+    // Copy / selection keys work globally, independent of any open modal. Ctrl
+    // chords are the primary bindings because macOS reserves the bare function
+    // keys as media keys, so F2–F4 never reach the app there; they stay as
+    // aliases for terminals that do deliver them.
+    let ctrl_mod = mods.contains(KeyModifiers::CONTROL);
+    match code {
+        KeyCode::Char('o') if ctrl_mod => return app.toggle_selection_mode(),
+        KeyCode::Char('y') if ctrl_mod => return app.copy_last_answer(),
+        KeyCode::Char('b') if ctrl_mod => return app.copy_transcript(),
+        KeyCode::F(2) => return app.toggle_selection_mode(),
+        KeyCode::F(3) => return app.copy_last_answer(),
+        KeyCode::F(4) => return app.copy_transcript(),
+        _ => {}
     }
     // The session picker captures navigation until confirmed or cancelled.
     if app.picker.is_some() {
@@ -702,4 +996,89 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     // A real edit or cursor move ends history navigation, so the next Up starts fresh.
     app.history.reset();
     app.refresh_menu();
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::{clipboard_commands, osc52_copy};
+
+    #[test]
+    fn clipboard_commands_are_non_empty_argvs() {
+        let commands = clipboard_commands();
+        assert!(
+            !commands.is_empty(),
+            "every platform needs a clipboard tool"
+        );
+        assert!(
+            commands.iter().all(|argv| !argv.is_empty()),
+            "each argv must at least name a program"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_prefers_pbcopy() {
+        assert_eq!(clipboard_commands()[0][0], "pbcopy");
+    }
+
+    #[test]
+    fn osc52_wraps_base64_in_the_clipboard_escape() {
+        let mut out = Vec::new();
+        osc52_copy(&mut out, "SELECT 1").expect("write to a Vec never fails");
+        // "SELECT 1" base64-encodes to "U0VMRUNUIDE=".
+        assert_eq!(out, b"\x1b]52;c;U0VMRUNUIDE=\x07");
+    }
+
+    #[test]
+    fn osc52_encodes_multibyte_and_newlines() {
+        let mut out = Vec::new();
+        osc52_copy(&mut out, "café\n").expect("write to a Vec never fails");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.starts_with("\x1b]52;c;") && text.ends_with('\x07'));
+        // The payload is base64 (no raw newline leaks into the escape).
+        assert!(!text.contains('\n'));
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::super::session_state::SessionState;
+    use super::{BlockKind, history_blocks};
+    use saya_agent::ToolMetadata;
+
+    #[test]
+    fn history_blocks_replays_turns_in_order_with_a_divider() {
+        let mut state = SessionState::new("sess-1", None, "m");
+        state.record_turn("hello", "hi there", false, vec![]);
+        state.record_turn(
+            "count users",
+            "42 users",
+            true,
+            vec![ToolMetadata {
+                name: "bounded_sql_query".into(),
+                status: "completed".into(),
+            }],
+        );
+
+        let blocks = history_blocks(&state);
+        // 2 turns → (user, assistant) + spacer + (user, tool, assistant) + a trailing divider.
+        assert_eq!(blocks.len(), 7);
+        assert_eq!(blocks[0], (BlockKind::User, "hello".to_string()));
+        assert_eq!(blocks[1], (BlockKind::Assistant, "hi there".to_string()));
+        assert_eq!(blocks[2], (BlockKind::System, String::new()));
+        assert_eq!(blocks[3], (BlockKind::User, "count users".to_string()));
+        assert_eq!(blocks[4].0, BlockKind::Tool);
+        assert!(
+            blocks[4].1.contains("bounded_sql_query") && blocks[4].1.contains("completed"),
+            "tool line should name the tool and its status: {}",
+            blocks[4].1
+        );
+        assert_eq!(blocks[5], (BlockKind::Assistant, "42 users".to_string()));
+        assert_eq!(blocks[6].0, BlockKind::System);
+        assert!(
+            blocks[6].1.contains("sess-1") && blocks[6].1.contains("2 earlier turn"),
+            "divider should name the session and turn count: {}",
+            blocks[6].1
+        );
+    }
 }

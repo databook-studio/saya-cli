@@ -28,3 +28,29 @@ pub(crate) fn status_line(state: &SessionState) -> String {
         state.provider, state.model, state.approval_mode
     )
 }
+
+/// Structured status for the TUI status bar, so each segment can be coloured.
+pub(crate) struct StatusView {
+    pub(crate) profile: String,
+    pub(crate) included: Vec<String>,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) approval_mode: String,
+    /// Mirrors `status_line`'s mapping: `allow_data_sharing` => "privacy:on".
+    pub(crate) privacy_on: bool,
+}
+
+/// Returns structured status bar segments for the active session state.
+pub(crate) fn status_segments(state: &SessionState) -> StatusView {
+    StatusView {
+        profile: state
+            .profile
+            .clone()
+            .unwrap_or_else(|| "(no profile)".to_string()),
+        included: state.included_profiles.clone(),
+        provider: state.provider.clone(),
+        model: state.model.clone(),
+        approval_mode: state.approval_mode.clone(),
+        privacy_on: state.allow_data_sharing,
+    }
+}
