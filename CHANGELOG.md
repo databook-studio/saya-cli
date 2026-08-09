@@ -13,8 +13,11 @@ All notable changes to SAYA CLI are recorded here. This project follows
 - **Follow-up refinement** — the agent now receives the SQL it most recently ran,
   so a terse follow-up ("now show the lowest instead", "filter to 2023") adapts
   the previous query instead of rediscovering the schema.
-- **`/chart`** — render the last query's result as a text bar chart (label column
-  vs first numeric column) directly in the transcript.
+- **Charts to interactive files** — `/chart [type]` and the natural-language path now
+  render the query result as a self-contained, interactive **Chart.js** HTML file
+  (bar/line/area/pie/doughnut/scatter) and open it in the browser, replacing the old
+  in-terminal ASCII chart. A new `render_chart` agent tool lets the AI choose the
+  chart type and produce the file when you ask it to visualize data.
 - **`/explain [sql]`** — show the `EXPLAIN` query plan for the given SQL, or the
   last query if omitted. Read-only; works across PostgreSQL, MySQL, DuckDB, and
   Snowflake.
