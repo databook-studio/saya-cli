@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod chart;
 mod cli;
 mod commands;
 mod config;

@@ -197,7 +197,7 @@ fn run_chart(
     // token (if any) is the output path.
     let mut tokens = args.split_whitespace();
     let (kind, path_arg) = match tokens.next() {
-        Some(tok) => match super::chart::ChartKind::parse(tok) {
+        Some(tok) => match crate::chart::ChartKind::parse(tok) {
             Some(k) => (Some(k), tokens.next()),
             None => (None, Some(tok)),
         },
@@ -212,11 +212,11 @@ fn run_chart(
         }
         _ => return,
     };
-    let mut spec = super::chart::suggest_spec(&result);
+    let mut spec = crate::chart::suggest_spec(&result);
     if let Some(k) = kind {
         spec.kind = k;
     }
-    let html = match super::chart::render_html(&result, &spec) {
+    let html = match crate::chart::render_html(&result, &spec) {
         Ok(html) => html,
         Err(msg) => {
             transcript.push(BlockKind::System, msg);
@@ -227,12 +227,12 @@ fn run_chart(
         Some(p) => std::path::PathBuf::from(p),
         None => std::env::temp_dir().join("saya-chart.html"),
     };
-    if let Err(msg) = super::chart::write_html(&html, &path) {
+    if let Err(msg) = crate::chart::write_html(&html, &path) {
         transcript.push(BlockKind::Error, msg);
         return;
     }
     let mut note = format!("Chart written to {}", path.display());
-    match super::chart::open_file(&path) {
+    match crate::chart::open_file(&path) {
         Ok(()) => note.push_str(" (opening in your browser)"),
         Err(e) => note.push_str(&format!(" — open it manually ({e})")),
     }
