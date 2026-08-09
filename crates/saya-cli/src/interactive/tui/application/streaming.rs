@@ -21,6 +21,7 @@ impl App {
             state.prompt_overrides(),
             state.provider_history(),
             self.state_db.clone(),
+            self.last_query.as_ref().map(|lq| lq.sql.clone()),
         ));
         self.request.started = Some(std::time::Instant::now());
     }
