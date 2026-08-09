@@ -31,6 +31,24 @@ pub(crate) fn emit_action(
         SessionAction::NotImplemented(feature) => {
             emit(TerminalEvent::NotImplemented { feature }, format)
         }
+        SessionAction::Export(_) => emit(
+            TerminalEvent::Error {
+                message: "export is only available in the interactive TUI".into(),
+            },
+            format,
+        ),
+        SessionAction::Chart(_) => emit(
+            TerminalEvent::Error {
+                message: "chart is only available in the interactive TUI".into(),
+            },
+            format,
+        ),
+        SessionAction::Explain(_) => emit(
+            TerminalEvent::Error {
+                message: "explain is only available in the interactive TUI".into(),
+            },
+            format,
+        ),
         SessionAction::Error(message) => emit(TerminalEvent::Error { message }, format),
         SessionAction::History => history(format, state, store)?,
     }

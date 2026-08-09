@@ -5,6 +5,7 @@
 
 use super::exec;
 use super::transcript::{BlockKind, Transcript};
+use super::types::LastQuery;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_resume::{SessionDefaults, block_on, resume_session};
@@ -12,6 +13,7 @@ use crate::interactive::session_state::SessionState;
 use crate::render::{RenderFormat, TerminalEvent, render_event};
 use crate::slash::parse_slash_command;
 use saya_store::{FsSessionStore, SessionStore};
+use std::path::Path;
 
 /// Outcome of dispatching one line.
 pub(crate) enum Dispatch {
@@ -27,6 +29,7 @@ pub(crate) enum Dispatch {
 
 /// Dispatches one submitted line, mutating `state` and appending to `transcript`.
 /// A non-command line returns `Dispatch::Agent` for the caller to stream.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch(
     line: &str,
     transcript: &mut Transcript,
@@ -35,6 +38,7 @@ pub(crate) fn dispatch(
     runtime: &RuntimeConfig,
     store: &FsSessionStore,
     format: RenderFormat,
+    last_query: &mut Option<LastQuery>,
 ) -> Dispatch {
     // In the TUI, /sessions opens an interactive picker rather than a text list.
     if line.trim() == "/sessions" {
@@ -48,7 +52,16 @@ pub(crate) fn dispatch(
             SessionAction::Error(message) => transcript.push(BlockKind::Error, message),
             SessionAction::History => list_sessions(transcript, store),
             SessionAction::Resume(id) => resume(transcript, state, store, &id),
-            SessionAction::Sql(sql) => run_sql(transcript, state, runtime, format, &sql),
+            SessionAction::Sql(sql) => {
+                run_sql(transcript, state, runtime, format, &sql, last_query)
+            }
+            SessionAction::Export(path) => {
+                run_export(transcript, runtime, state, last_query, &path)
+            }
+            SessionAction::Chart(args) => run_chart(transcript, runtime, state, last_query, &args),
+            SessionAction::Explain(arg) => {
+                run_explain(transcript, runtime, state, last_query, &arg)
+            }
             SessionAction::Schema(_) => transcript.push(
                 BlockKind::System,
                 "Schema view is available in headless mode; TUI rendering is coming next.",
@@ -61,7 +74,6 @@ pub(crate) fn dispatch(
         },
         Ok(None) => result = Dispatch::Agent(line.to_string()),
     }
-    let _ = block_on(store.save(state.redacted()));
     transcript.scroll_to_bottom();
     result
 }
@@ -110,10 +122,15 @@ fn run_sql(
     runtime: &RuntimeConfig,
     format: RenderFormat,
     sql: &str,
+    last_query: &mut Option<LastQuery>,
 ) {
     let event = block_on(exec::run_sql(runtime, state.profile.as_deref(), sql));
     match event {
         TerminalEvent::QueryResult { result } => {
+            *last_query = Some(LastQuery {
+                sql: sql.to_string(),
+                connection: state.profile.clone(),
+            });
             transcript.push(BlockKind::Tool, super::table::format_table(&result));
         }
         TerminalEvent::Error { message } => {
@@ -123,5 +140,134 @@ fn run_sql(
             let rendered = render_event(&other, format);
             transcript.push(BlockKind::System, rendered.stdout.trim_end().to_string());
         }
+    }
+}
+
+fn run_export(
+    transcript: &mut Transcript,
+    runtime: &RuntimeConfig,
+    state: &SessionState,
+    last_query: &Option<LastQuery>,
+    path: &str,
+) {
+    let Some(lq) = last_query.as_ref() else {
+        transcript.push(
+            BlockKind::System,
+            "Nothing to export yet — run a query first.",
+        );
+        return;
+    };
+    let target = lq.connection.as_deref().or(state.profile.as_deref());
+    let event = block_on(exec::run_sql(runtime, target, &lq.sql));
+    match event {
+        TerminalEvent::QueryResult { result } => {
+            match super::export::write_result(&result, Path::new(path)) {
+                Ok(n) => {
+                    let mut msg = format!("Exported {n} row(s) to {path}");
+                    if result.truncated {
+                        msg.push_str(" (result was truncated)");
+                    }
+                    transcript.push(BlockKind::System, msg);
+                }
+                Err(msg) => transcript.push(BlockKind::Error, msg),
+            }
+        }
+        TerminalEvent::Error { message } => {
+            transcript.push(BlockKind::Error, message);
+        }
+        _ => {}
+    }
+}
+
+fn run_chart(
+    transcript: &mut Transcript,
+    runtime: &RuntimeConfig,
+    state: &SessionState,
+    last_query: &Option<LastQuery>,
+    args: &str,
+) {
+    let Some(lq) = last_query.as_ref() else {
+        transcript.push(
+            BlockKind::System,
+            "Nothing to chart yet — run a query first.",
+        );
+        return;
+    };
+    // Parse "[type] [path]": if the first token is a known chart kind, use it; the remaining
+    // token (if any) is the output path.
+    let mut tokens = args.split_whitespace();
+    let (kind, path_arg) = match tokens.next() {
+        Some(tok) => match crate::chart::ChartKind::parse(tok) {
+            Some(k) => (Some(k), tokens.next()),
+            None => (None, Some(tok)),
+        },
+        None => (None, None),
+    };
+    let target = lq.connection.as_deref().or(state.profile.as_deref());
+    let result = match block_on(exec::run_sql(runtime, target, &lq.sql)) {
+        TerminalEvent::QueryResult { result } => result,
+        TerminalEvent::Error { message } => {
+            transcript.push(BlockKind::Error, message);
+            return;
+        }
+        _ => return,
+    };
+    let mut spec = crate::chart::suggest_spec(&result);
+    if let Some(k) = kind {
+        spec.kind = k;
+    }
+    let html = match crate::chart::render_html(&result, &spec) {
+        Ok(html) => html,
+        Err(msg) => {
+            transcript.push(BlockKind::System, msg);
+            return;
+        }
+    };
+    let path = match path_arg {
+        Some(p) => std::path::PathBuf::from(p),
+        None => std::env::temp_dir().join("saya-chart.html"),
+    };
+    if let Err(msg) = crate::chart::write_html(&html, &path) {
+        transcript.push(BlockKind::Error, msg);
+        return;
+    }
+    let mut note = format!("Chart written to {}", path.display());
+    match crate::chart::open_file(&path) {
+        Ok(()) => note.push_str(" (opening in your browser)"),
+        Err(e) => note.push_str(&format!(" — open it manually ({e})")),
+    }
+    transcript.push(BlockKind::System, note);
+}
+
+/// Runs EXPLAIN for the provided SQL query or the last executed query.
+fn run_explain(
+    transcript: &mut Transcript,
+    runtime: &RuntimeConfig,
+    state: &SessionState,
+    last_query: &Option<LastQuery>,
+    arg: &str,
+) {
+    // Choose SQL + connection: explicit arg uses the active profile; empty arg
+    // reuses the last query and its connection.
+    let (sql, connection) = if !arg.trim().is_empty() {
+        (arg.trim().to_string(), None)
+    } else if let Some(lq) = last_query.as_ref() {
+        (lq.sql.clone(), lq.connection.clone())
+    } else {
+        transcript.push(
+            BlockKind::System,
+            "Nothing to explain — run a query first, or pass SQL: /explain SELECT ...",
+        );
+        return;
+    };
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    let explain_sql = format!("EXPLAIN {trimmed}");
+    let target = connection.as_deref().or(state.profile.as_deref());
+    match block_on(exec::run_sql(runtime, target, &explain_sql)) {
+        TerminalEvent::QueryResult { result } => {
+            transcript.push(BlockKind::Tool, super::table::format_plan(&result));
+        }
+        TerminalEvent::Error { message } => transcript.push(BlockKind::Error, message),
+        _ => {}
     }
 }

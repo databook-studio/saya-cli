@@ -4,7 +4,9 @@ use crate::slash::SlashCommand;
 use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Agent(AgentOutput)` carries agent events backed by `serde_json::Value`, so
+// this enum is `PartialEq` but not `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum SessionAction {
     Message(String),
     Agent(AgentOutput),
@@ -15,6 +17,9 @@ pub enum SessionAction {
     Resume(String),
     Schema(bool),
     Sql(String),
+    Export(String),
+    Chart(String),
+    Explain(String),
     Exit,
 }
 
@@ -105,6 +110,9 @@ impl SessionState {
             }
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
+            SlashCommand::Export(path) => SessionAction::Export(path),
+            SlashCommand::Chart(args) => SessionAction::Chart(args),
+            SlashCommand::Explain(sql) => SessionAction::Explain(sql),
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();

@@ -11,7 +11,9 @@ pub(crate) fn json_value(row: &PgRow, index: usize) -> Result<Value, sqlx::Error
     if raw.is_null() {
         return Ok(Value::Null);
     }
-    match raw.type_info().name() {
+    // Own the type name so `raw` is free to re-borrow in the fallback arm.
+    let type_name = raw.type_info().name().to_owned();
+    match type_name.as_str() {
         "BOOL" => row.try_get::<bool, _>(index).map(Value::Bool),
         "INT2" => row
             .try_get::<i16, _>(index)
@@ -49,7 +51,15 @@ pub(crate) fn json_value(row: &PgRow, index: usize) -> Result<Value, sqlx::Error
         "BYTEA" => row
             .try_get::<Vec<u8>, _>(index)
             .map(|v| Value::String(hex(&v))),
-        _ => row.try_get::<String, _>(index).map(Value::String),
+        // Unknown/user-defined types (e.g. enums like `mpaa_rating`) can't be
+        // decoded through sqlx's type-checked `String` path — that errors the
+        // whole row. Read the raw wire bytes as UTF-8 instead: Postgres sends
+        // enum labels (and most textual types) as their text, so this yields the
+        // right value and, at worst, a lossy string rather than a failed query.
+        _ => Ok(raw
+            .as_bytes()
+            .map(|bytes| Value::String(String::from_utf8_lossy(bytes).into_owned()))
+            .unwrap_or(Value::Null)),
     }
 }
 

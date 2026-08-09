@@ -5,6 +5,9 @@ use saya_connectors::DatabaseConnector;
 use saya_types::{
     ConnectionError, Database, QueryRequest, QueryResult, Schema, SchemaTree, SqlDialect, Table,
 };
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Barrier;
 
 struct FakeConnector {
     table_name: String,
@@ -38,6 +41,400 @@ impl DatabaseConnector for FakeConnector {
     async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
         Ok(QueryResult::empty(req.sql))
     }
+}
+
+/// A connector whose queries always fail, used to exercise the fan-out
+/// per-database error path (e.g. a dialect mismatch on one database).
+struct FailingConnector {
+    dialect: SqlDialect,
+}
+
+struct BarrierConnector {
+    barrier: Arc<Barrier>,
+}
+
+struct SlowConnector;
+
+#[async_trait]
+impl DatabaseConnector for SlowConnector {
+    fn dialect(&self) -> SqlDialect {
+        SqlDialect::DuckDb
+    }
+
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Ok(SchemaTree::default())
+    }
+
+    async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        Ok(QueryResult::empty("SELECT 1"))
+    }
+}
+
+#[async_trait]
+impl DatabaseConnector for BarrierConnector {
+    fn dialect(&self) -> SqlDialect {
+        SqlDialect::DuckDb
+    }
+
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Ok(SchemaTree::default())
+    }
+
+    async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        self.barrier.wait().await;
+        Ok(QueryResult::empty(req.sql))
+    }
+}
+
+#[async_trait]
+impl DatabaseConnector for FailingConnector {
+    fn dialect(&self) -> SqlDialect {
+        self.dialect
+    }
+
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Err(ConnectionError::SchemaFailed("nope".into()))
+    }
+
+    async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        Err(ConnectionError::QueryFailed(
+            "syntax error near FROM".into(),
+        ))
+    }
+}
+
+fn two_connection_registry() -> ConnectionRegistry {
+    let mut registry = ConnectionRegistry::new("primary");
+    registry.insert(
+        "primary",
+        ConnectionEntry {
+            connector: Box::new(FakeConnector {
+                table_name: "from_primary".into(),
+            }),
+            dialect: SqlDialect::DuckDb,
+            profile_id: None,
+        },
+    );
+    registry.insert(
+        "warehouse",
+        ConnectionEntry {
+            connector: Box::new(FakeConnector {
+                table_name: "from_secondary".into(),
+            }),
+            dialect: SqlDialect::Postgres,
+            profile_id: None,
+        },
+    );
+    registry
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_fans_out_over_every_connection() {
+    let tools = DatabaseTools::with_registry(two_connection_registry(), 100, true, None);
+
+    let res = tools
+        .execute(
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1"}),
+        )
+        .await
+        .expect("fan-out query should succeed");
+
+    let databases = res
+        .get("databases")
+        .and_then(|value| value.as_array())
+        .expect("result should carry a `databases` array");
+    assert_eq!(databases.len(), 2, "one entry per connected database");
+
+    let names: Vec<&str> = databases
+        .iter()
+        .filter_map(|db| db.get("connection").and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        vec!["primary", "warehouse"],
+        "insertion order preserved"
+    );
+    // Every database reports its dialect and a successful result, not an error.
+    for db in databases {
+        assert!(db.get("dialect").is_some(), "each entry names its dialect");
+        assert!(db.get("result").is_some(), "each entry carries a result");
+        assert!(db.get("error").is_none(), "no errors expected here");
+    }
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_reports_per_database_errors_without_aborting() {
+    let mut registry = ConnectionRegistry::new("primary");
+    registry.insert(
+        "primary",
+        ConnectionEntry {
+            connector: Box::new(FakeConnector {
+                table_name: "ok".into(),
+            }),
+            dialect: SqlDialect::DuckDb,
+            profile_id: None,
+        },
+    );
+    registry.insert(
+        "snowflake",
+        ConnectionEntry {
+            connector: Box::new(FailingConnector {
+                dialect: SqlDialect::Snowflake,
+            }),
+            dialect: SqlDialect::Snowflake,
+            profile_id: None,
+        },
+    );
+    let tools = DatabaseTools::with_registry(registry, 100, true, None);
+
+    let res = tools
+        .execute(
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1"}),
+        )
+        .await
+        .expect("fan-out should succeed even when one database fails");
+
+    let databases = res["databases"].as_array().expect("databases array");
+    assert_eq!(databases.len(), 2);
+    assert!(
+        databases[0].get("result").is_some(),
+        "the healthy database still returns a result"
+    );
+    assert!(
+        databases[1].get("error").is_some(),
+        "the failing database reports an error instead of sinking the run"
+    );
+    assert!(
+        databases[1]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("syntax error near FROM")),
+        "safe connector detail should identify the dialect mismatch"
+    );
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_runs_connections_concurrently() {
+    let barrier = Arc::new(Barrier::new(2));
+    let mut registry = ConnectionRegistry::new("primary");
+    for name in ["primary", "warehouse"] {
+        registry.insert(
+            name,
+            ConnectionEntry {
+                connector: Box::new(BarrierConnector {
+                    barrier: barrier.clone(),
+                }),
+                dialect: SqlDialect::DuckDb,
+                profile_id: None,
+            },
+        );
+    }
+    let tools = DatabaseTools::with_registry(registry, 100, true, None);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        tools.execute(
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1"}),
+        ),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "both queries must start before either can finish"
+    );
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_respects_its_concurrency_cap() {
+    let barrier = Arc::new(Barrier::new(2));
+    let mut registry = ConnectionRegistry::new("primary");
+    for name in ["primary", "warehouse"] {
+        registry.insert(
+            name,
+            ConnectionEntry {
+                connector: Box::new(BarrierConnector {
+                    barrier: barrier.clone(),
+                }),
+                dialect: SqlDialect::DuckDb,
+                profile_id: None,
+            },
+        );
+    }
+    let tools = DatabaseTools::with_registry_and_fan_out_limits(
+        registry,
+        100,
+        true,
+        1,
+        Duration::from_secs(1),
+    );
+
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            tools.execute(
+                "bounded_sql_query_all",
+                serde_json::json!({"sql": "SELECT 1"}),
+            ),
+        )
+        .await
+        .is_err(),
+        "a cap of one must not start the second barrier participant"
+    );
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_reports_per_database_timeouts() {
+    let mut registry = ConnectionRegistry::new("primary");
+    registry.insert(
+        "primary",
+        ConnectionEntry {
+            connector: Box::new(SlowConnector),
+            dialect: SqlDialect::DuckDb,
+            profile_id: None,
+        },
+    );
+    let tools = DatabaseTools::with_registry_and_fan_out_limits(
+        registry,
+        100,
+        true,
+        1,
+        Duration::from_millis(10),
+    );
+
+    let result = tools
+        .execute(
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1"}),
+        )
+        .await
+        .expect("fan-out timeout is reported per database");
+    assert_eq!(result["databases"][0]["error"], "read-only query timed out");
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_is_blocked_when_data_sharing_is_disabled() {
+    let tools = DatabaseTools::with_registry(two_connection_registry(), 100, false, None);
+    let err = tools
+        .execute(
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1"}),
+        )
+        .await
+        .expect_err("fan-out must respect the data-sharing guard");
+    assert!(err.contains("data sharing is disabled"), "got: {err}");
+}
+
+#[tokio::test]
+async fn tool_execution_rejects_arguments_outside_its_schema() {
+    let tools = DatabaseTools::new(None, 100, true);
+    for (name, arguments) in [
+        ("schema_discovery", serde_json::json!({"sql": "SELECT 1"})),
+        ("bounded_sql_query", serde_json::json!({"sql": 1})),
+        (
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1", "connection": "primary"}),
+        ),
+    ] {
+        let error = tools
+            .execute(name, arguments)
+            .await
+            .expect_err("invalid tool arguments must not reach a connector");
+        assert!(error.contains("invalid tool arguments"), "got: {error}");
+    }
+}
+
+#[test]
+fn definitions_include_fan_out_only_when_query_data_allowed() {
+    let with_data: Vec<String> = DatabaseTools::definitions(true)
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect();
+    assert!(with_data.iter().any(|name| name == "bounded_sql_query_all"));
+
+    let without_data: Vec<String> = DatabaseTools::definitions(false)
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect();
+    assert!(
+        !without_data
+            .iter()
+            .any(|name| name == "bounded_sql_query_all")
+    );
+    assert!(!without_data.iter().any(|name| name == "bounded_sql_query"));
+}
+
+#[test]
+fn definitions_preserve_the_read_only_and_approval_contract() {
+    let tools = DatabaseTools::definitions(true);
+    let tool = |name: &str| tools.iter().find(|tool| tool.name == name).unwrap();
+
+    let schema = tool("schema_discovery");
+    assert!(schema.read_only);
+    assert!(!schema.requires_approval);
+    assert!(schema.parameters["properties"]["connection"].is_object());
+    assert!(schema.parameters.get("required").is_none());
+
+    let single = tool("bounded_sql_query");
+    assert!(single.read_only);
+    assert!(single.requires_approval);
+    assert_eq!(single.parameters["required"], serde_json::json!(["sql"]));
+    assert!(single.parameters["properties"]["connection"].is_object());
+    assert!(single.parameters["properties"]["sql"].is_object());
+
+    let all = tool("bounded_sql_query_all");
+    assert!(all.read_only);
+    assert!(all.requires_approval);
+    assert_eq!(all.parameters["required"], serde_json::json!(["sql"]));
+    assert!(all.parameters["properties"]["sql"].is_object());
+    assert!(all.parameters["properties"].get("connection").is_none());
+}
+
+#[test]
+fn tool_call_detail_surfaces_the_sql() {
+    // Single-connection query: the SQL, whitespace collapsed to one line.
+    let detail = tool_call_detail(
+        "bounded_sql_query",
+        &serde_json::json!({"sql": "SELECT *\n  FROM   users"}),
+    )
+    .expect("query tools expose their SQL");
+    assert_eq!(detail, "SELECT * FROM users");
+
+    // A named connection is annotated.
+    let detail = tool_call_detail(
+        "bounded_sql_query",
+        &serde_json::json!({"sql": "SELECT 1", "connection": "warehouse"}),
+    )
+    .unwrap();
+    assert!(
+        detail.contains("SELECT 1") && detail.contains("@warehouse"),
+        "got: {detail}"
+    );
+
+    // The fan-out tool labels itself as running everywhere.
+    let detail = tool_call_detail(
+        "bounded_sql_query_all",
+        &serde_json::json!({"sql": "SELECT 1"}),
+    )
+    .unwrap();
+    assert!(detail.contains("all connected databases"), "got: {detail}");
+
+    // Tools without a query expose no detail.
+    assert!(tool_call_detail("schema_discovery", &serde_json::json!({})).is_none());
 }
 
 #[tokio::test]
