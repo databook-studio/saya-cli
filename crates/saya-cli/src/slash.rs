@@ -15,6 +15,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "sql",
     "export",
     "chart",
+    "explain",
     "clear",
     "history",
     "sessions",
@@ -38,6 +39,7 @@ pub enum SlashCommand {
     Sql(String),
     Export(String),
     Chart(String),
+    Explain(String),
     Clear,
     History,
     Sessions,
@@ -96,6 +98,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             SlashCommand::Export(path.to_string())
         }
         "chart" => SlashCommand::Chart(arg.trim().to_string()),
+        "explain" => SlashCommand::Explain(arg.trim().to_string()),
         "clear" => SlashCommand::Clear,
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
@@ -170,7 +173,7 @@ fn parse_approval(value: &str) -> Result<Option<ApprovalPolicy>, SlashParseError
 }
 
 pub fn help_text() -> &'static str {
-    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/clear  /history  /sessions  /resume <id>  /help  /exit"
+    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit"
 }
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
@@ -210,6 +213,9 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         ),
         "chart" => Some(
             "chart — draw the last query's result as a bar chart (first text column vs first numeric column)",
+        ),
+        "explain" => Some(
+            "explain [sql] — show the query plan (EXPLAIN) for the given SQL, or the last query if omitted",
         ),
         "clear" => Some("clear — clear conversation history and context. Example: /clear"),
         "history" => Some("history — display session history. Example: /history"),
@@ -321,6 +327,18 @@ mod tests {
         assert_eq!(
             parse_slash_command("/chart foo"),
             Ok(Some(SlashCommand::Chart("foo".into())))
+        );
+    }
+
+    #[test]
+    fn test_parse_explain_command() {
+        assert_eq!(
+            parse_slash_command("/explain"),
+            Ok(Some(SlashCommand::Explain("".into())))
+        );
+        assert_eq!(
+            parse_slash_command("/explain SELECT 1"),
+            Ok(Some(SlashCommand::Explain("SELECT 1".into())))
         );
     }
 
