@@ -1,0 +1,23 @@
+---
+description: saya engineering standards — read before writing code
+alwaysApply: true
+---
+
+# saya standards
+
+Before editing this Rust workspace, read [`AGENTS.md`](../../AGENTS.md) and load the
+relevant module in [`docs/standards/`](../../docs/standards/README.md).
+
+Non-negotiables:
+
+- **Read-only by default** — all SQL routes through `saya-connectors/src/safety/`.
+  Never add a bypass.
+- **No secrets in the tree** — no `.env`, keys, session dirs, or raw DB results in
+  commits, fixtures, or snapshots. Use secret references + redacted fixtures.
+- **Behavior changes start with a failing test** (`cargo nextest run --workspace`).
+- **New production `.rs` files ≤ 150 lines (soft), 250 hard cap.**
+- **Contracts live in their crate; all presentation lives in `saya-cli`.**
+- **Conventional commits**, no `Co-Authored-By` trailer.
+
+Follow the golden path: plan first → test-drive (red/green/refactor) → review the diff
+against the standards.
