@@ -5,30 +5,7 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
-### Added
-
-- **`/export <path>`** — write the last query's results (from `/sql` or an agent
-  tool) to a `.csv` or `.json` file. CSV uses RFC-4180 escaping; JSON is an array
-  of column-keyed objects.
-- **Follow-up refinement** — the agent now receives the SQL it most recently ran,
-  so a terse follow-up ("now show the lowest instead", "filter to 2023") adapts
-  the previous query instead of rediscovering the schema.
-- **Charts to interactive files** — `/chart [type]` and the natural-language path now
-  render the query result as a self-contained, interactive **Chart.js** HTML file
-  (bar/line/area/pie/doughnut/scatter) and open it in the browser, replacing the old
-  in-terminal ASCII chart. A new `render_chart` agent tool lets the AI choose the
-  chart type and produce the file when you ask it to visualize data.
-- **`/explain [sql]`** — show the `EXPLAIN` query plan for the given SQL, or the
-  last query if omitted. Read-only; works across PostgreSQL, MySQL, DuckDB, and
-  Snowflake.
-
-### Fixed
-
-- **Postgres enum / unknown-type columns** no longer fail a query with an opaque
-  "PostgreSQL query failed". User-defined types (e.g. `mpaa_rating`) are decoded
-  from their raw text instead of erroring the whole result.
-
-## 0.1.3 — 2026-08-06
+## 0.2.0 — 2026-08-09
 
 ### Added
 
@@ -50,26 +27,45 @@ All notable changes to SAYA CLI are recorded here. This project follows
   indicator in the status bar); `Ctrl+Y` copies the last answer and `Ctrl+B`
   copies the whole transcript. Copies go to the OS clipboard via the platform
   tool (`pbcopy` / `wl-copy` / `xclip` / `clip`) and also emit OSC 52 so copies
-  reach the local clipboard over SSH. (`F2`/`F3`/`F4` still work as aliases on
-  terminals that deliver them, but macOS reserves those as media keys.)
+  reach the local clipboard over SSH.
 - **Resumed sessions show their history** — resuming a session (via the
   `/sessions` picker or `--resume` / `--continue`) now replays the prior turns
-  into the transcript — each question, the tools it ran, and the answer — so the
-  panel opens on the earlier conversation instead of an empty screen.
-- **Launch splash** — before the first question the TUI now shows a centered
-  splash (name, tagline, your configured databases, example prompts, and key
-  hints) instead of an empty panel; it disappears the moment you ask something.
-- **Role rail in the transcript** — every transcript line now carries a
-  colour-coded left rail (cyan for you, periwinkle for saya, dimmed for tool and
-  system lines, red for errors), so turns and tool steps read as distinct
-  groups instead of a flat stream.
-- **Colour-coded status bar** — the status strip is now segmented: the profile
-  in the accent colour, provider/model dimmed, the approval mode coloured by
-  risk (green read-only, yellow ask, red never), and privacy coloured.
-- **Markdown in answers** — assistant answers now render `**bold**`, inline
-  `` `code` ``, `#` headings, and `-`/`*` bullets instead of raw text.
-- **Numeric columns align right** — query-result tables right-align numeric
-  columns so figures line up on their digits, while text stays left-aligned.
+  into the transcript — each question, the tools it ran, and the answer.
+- **Launch splash** — before the first question the TUI shows a centered splash
+  (name, tagline, your configured databases, example prompts, and key hints)
+  instead of an empty panel; it disappears the moment you ask something.
+- **Role rail in the transcript** — every transcript line carries a colour-coded
+  left rail (you / saya / tool / system / error) so turns read as distinct groups.
+- **Colour-coded status bar** — profile in the accent colour, provider/model
+  dimmed, approval mode coloured by risk (green read-only, amber ask, red never),
+  and privacy coloured.
+- **Markdown in answers** — assistant answers render `**bold**`, inline
+  `` `code` ``, `#` headings, `-`/`*` bullets, and GitHub-style tables (drawn as
+  box tables) instead of raw text.
+- **`/export <path>`** — write the last query's results (from `/sql` or an agent
+  tool) to a `.csv` or `.json` file. CSV uses RFC-4180 escaping; JSON is an array
+  of column-keyed objects.
+- **Follow-up refinement** — the agent receives the SQL it most recently ran, so
+  a terse follow-up ("now show the lowest instead", "filter to 2023") adapts the
+  previous query instead of rediscovering the schema.
+- **Charts to interactive files** — `/chart [type]` and a new `render_chart`
+  agent tool render the query result as a self-contained, interactive **Chart.js**
+  HTML file (bar/line/area/pie/doughnut/scatter) and open it in the browser; the
+  AI chooses the chart type when you ask it to visualize data.
+- **`/explain [sql]`** — show the `EXPLAIN` query plan for the given SQL, or the
+  last query if omitted (full, un-truncated plan text). Read-only; works across
+  PostgreSQL, MySQL, DuckDB, and Snowflake.
+
+### Changed
+
+- Numeric columns in result tables are right-aligned so figures line up on their
+  digits, while text stays left-aligned.
+
+### Fixed
+
+- **Postgres enum / unknown-type columns** no longer fail a query with an opaque
+  "PostgreSQL query failed". User-defined types (e.g. `mpaa_rating`) are decoded
+  from their raw text instead of erroring the whole result.
 
 ## 0.1.2 — 2026-08-05
 
