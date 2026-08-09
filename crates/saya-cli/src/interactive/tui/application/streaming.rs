@@ -3,7 +3,7 @@
 use super::super::agent::{self, StreamMsg};
 use super::super::stream_events::apply_event;
 use super::super::transcript::BlockKind;
-use super::super::types::{App, PendingApproval};
+use super::super::types::{App, LastQuery, PendingApproval};
 use crate::interactive::session_state::SessionState;
 use saya_agent::AgentEvent;
 
@@ -45,8 +45,23 @@ impl App {
             match msg {
                 StreamMsg::Event(event) => {
                     match &event {
-                        AgentEvent::ToolRequested { name, .. } => {
+                        AgentEvent::ToolRequested { name, arguments } => {
                             self.request.activity = Some(name.clone());
+                            if matches!(
+                                name.as_str(),
+                                "bounded_sql_query" | "bounded_sql_query_all"
+                            ) && let Some(sql) = arguments.get("sql").and_then(|v| v.as_str())
+                            {
+                                let connection = arguments
+                                    .get("connection")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string);
+                                self.last_query = Some(LastQuery {
+                                    sql: sql.to_string(),
+                                    connection,
+                                });
+                            }
                         }
                         AgentEvent::AssistantText { .. } | AgentEvent::ToolCompleted { .. } => {
                             self.request.activity = None;

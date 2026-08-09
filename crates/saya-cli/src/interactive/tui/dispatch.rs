@@ -5,6 +5,7 @@
 
 use super::exec;
 use super::transcript::{BlockKind, Transcript};
+use super::types::LastQuery;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_resume::{SessionDefaults, block_on, resume_session};
@@ -12,6 +13,7 @@ use crate::interactive::session_state::SessionState;
 use crate::render::{RenderFormat, TerminalEvent, render_event};
 use crate::slash::parse_slash_command;
 use saya_store::{FsSessionStore, SessionStore};
+use std::path::Path;
 
 /// Outcome of dispatching one line.
 pub(crate) enum Dispatch {
@@ -27,6 +29,7 @@ pub(crate) enum Dispatch {
 
 /// Dispatches one submitted line, mutating `state` and appending to `transcript`.
 /// A non-command line returns `Dispatch::Agent` for the caller to stream.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch(
     line: &str,
     transcript: &mut Transcript,
@@ -35,6 +38,7 @@ pub(crate) fn dispatch(
     runtime: &RuntimeConfig,
     store: &FsSessionStore,
     format: RenderFormat,
+    last_query: &mut Option<LastQuery>,
 ) -> Dispatch {
     // In the TUI, /sessions opens an interactive picker rather than a text list.
     if line.trim() == "/sessions" {
@@ -48,7 +52,12 @@ pub(crate) fn dispatch(
             SessionAction::Error(message) => transcript.push(BlockKind::Error, message),
             SessionAction::History => list_sessions(transcript, store),
             SessionAction::Resume(id) => resume(transcript, state, store, &id),
-            SessionAction::Sql(sql) => run_sql(transcript, state, runtime, format, &sql),
+            SessionAction::Sql(sql) => {
+                run_sql(transcript, state, runtime, format, &sql, last_query)
+            }
+            SessionAction::Export(path) => {
+                run_export(transcript, runtime, state, last_query, &path)
+            }
             SessionAction::Schema(_) => transcript.push(
                 BlockKind::System,
                 "Schema view is available in headless mode; TUI rendering is coming next.",
@@ -109,10 +118,15 @@ fn run_sql(
     runtime: &RuntimeConfig,
     format: RenderFormat,
     sql: &str,
+    last_query: &mut Option<LastQuery>,
 ) {
     let event = block_on(exec::run_sql(runtime, state.profile.as_deref(), sql));
     match event {
         TerminalEvent::QueryResult { result } => {
+            *last_query = Some(LastQuery {
+                sql: sql.to_string(),
+                connection: state.profile.clone(),
+            });
             transcript.push(BlockKind::Tool, super::table::format_table(&result));
         }
         TerminalEvent::Error { message } => {
@@ -122,5 +136,41 @@ fn run_sql(
             let rendered = render_event(&other, format);
             transcript.push(BlockKind::System, rendered.stdout.trim_end().to_string());
         }
+    }
+}
+
+fn run_export(
+    transcript: &mut Transcript,
+    runtime: &RuntimeConfig,
+    state: &SessionState,
+    last_query: &Option<LastQuery>,
+    path: &str,
+) {
+    let Some(lq) = last_query.as_ref() else {
+        transcript.push(
+            BlockKind::System,
+            "Nothing to export yet — run a query first.",
+        );
+        return;
+    };
+    let target = lq.connection.as_deref().or(state.profile.as_deref());
+    let event = block_on(exec::run_sql(runtime, target, &lq.sql));
+    match event {
+        TerminalEvent::QueryResult { result } => {
+            match super::export::write_result(&result, Path::new(path)) {
+                Ok(n) => {
+                    let mut msg = format!("Exported {n} row(s) to {path}");
+                    if result.truncated {
+                        msg.push_str(" (result was truncated)");
+                    }
+                    transcript.push(BlockKind::System, msg);
+                }
+                Err(msg) => transcript.push(BlockKind::Error, msg),
+            }
+        }
+        TerminalEvent::Error { message } => {
+            transcript.push(BlockKind::Error, message);
+        }
+        _ => {}
     }
 }

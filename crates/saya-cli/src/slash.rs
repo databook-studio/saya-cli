@@ -13,6 +13,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "approvals",
     "schema",
     "sql",
+    "export",
     "clear",
     "history",
     "sessions",
@@ -34,6 +35,7 @@ pub enum SlashCommand {
     Approvals(Option<ApprovalPolicy>),
     Schema(bool),
     Sql(String),
+    Export(String),
     Clear,
     History,
     Sessions,
@@ -81,6 +83,15 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
                 return Err(SlashParseError("sql requires a query".into()));
             }
             SlashCommand::Sql(query.to_string())
+        }
+        "export" => {
+            let path = trimmed.strip_prefix("/export").unwrap_or("").trim();
+            if path.is_empty() {
+                return Err(SlashParseError(
+                    "export requires a file path, e.g. /export out.csv".into(),
+                ));
+            }
+            SlashCommand::Export(path.to_string())
         }
         "clear" => SlashCommand::Clear,
         "history" => SlashCommand::History,
@@ -156,7 +167,7 @@ fn parse_approval(value: &str) -> Result<Option<ApprovalPolicy>, SlashParseError
 }
 
 pub fn help_text() -> &'static str {
-    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /clear\n/history  /sessions  /resume <id>  /help  /exit"
+    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/clear  /history  /sessions  /resume <id>  /help  /exit"
 }
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
@@ -190,6 +201,9 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         ),
         "sql" => Some(
             "sql <query> — execute a raw SQL query directly. Example: /sql SELECT * FROM users LIMIT 10;",
+        ),
+        "export" => Some(
+            "export <path> — write the last query's rows to a .csv or .json file. Example: /export results.csv",
         ),
         "clear" => Some("clear — clear conversation history and context. Example: /clear"),
         "history" => Some("history — display session history. Example: /history"),
@@ -275,6 +289,20 @@ mod tests {
         assert_eq!(
             parse_slash_command("/sql   "),
             Err(SlashParseError("sql requires a query".into()))
+        );
+    }
+
+    #[test]
+    fn test_parse_export_command() {
+        assert_eq!(
+            parse_slash_command("/export out.csv"),
+            Ok(Some(SlashCommand::Export("out.csv".into())))
+        );
+        assert_eq!(
+            parse_slash_command("/export"),
+            Err(SlashParseError(
+                "export requires a file path, e.g. /export out.csv".into()
+            ))
         );
     }
 
