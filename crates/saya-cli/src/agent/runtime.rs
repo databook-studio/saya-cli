@@ -42,6 +42,7 @@ pub(crate) async fn run_prompt_with_sink(
     cancellation: CancellationToken,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
+    last_sql: Option<String>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = effective_ai(&runtime.resolved.ai, &overrides);
     let provider = provider::build(&ai, &runtime.secret_resolver())
@@ -83,7 +84,23 @@ pub(crate) async fn run_prompt_with_sink(
         None => crate::connection::ConnectionRegistry::new(""),
     };
 
-    let system_prompt = registry.describe_context();
+    let system_prompt = {
+        let base = registry.describe_context();
+        match last_sql {
+            Some(sql) if !sql.trim().is_empty() => {
+                let hint = format!(
+                    "For context, the most recent SQL you ran was:\n{sql}\n\nIf the user's request \
+                     refines, filters, sorts, or drills into that previous result, adapt this query \
+                     instead of rediscovering the schema from scratch."
+                );
+                Some(match base {
+                    Some(b) => format!("{b}\n\n{hint}"),
+                    None => hint,
+                })
+            }
+            _ => base,
+        }
+    };
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let tools = tools::DatabaseTools::with_registry(
         registry,

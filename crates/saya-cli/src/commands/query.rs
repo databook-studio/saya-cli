@@ -46,6 +46,7 @@ pub(super) async fn ask(
         cancellation.clone(),
         Some(state_db.clone()),
         None,
+        None,
     );
     tokio::pin!(work);
     match tokio::select! {
