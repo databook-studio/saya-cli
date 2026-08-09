@@ -5,6 +5,20 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Added
+
+- **`/export <path>`** — write the last query's results (from `/sql` or an agent
+  tool) to a `.csv` or `.json` file. CSV uses RFC-4180 escaping; JSON is an array
+  of column-keyed objects.
+- **Follow-up refinement** — the agent now receives the SQL it most recently ran,
+  so a terse follow-up ("now show the lowest instead", "filter to 2023") adapts
+  the previous query instead of rediscovering the schema.
+- **`/chart`** — render the last query's result as a text bar chart (label column
+  vs first numeric column) directly in the transcript.
+- **`/explain [sql]`** — show the `EXPLAIN` query plan for the given SQL, or the
+  last query if omitted. Read-only; works across PostgreSQL, MySQL, DuckDB, and
+  Snowflake.
+
 ## 0.1.3 — 2026-08-06
 
 ### Added
