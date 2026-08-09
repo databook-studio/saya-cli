@@ -11,47 +11,82 @@ impl App {
     /// Opens the session picker with the most recent saved sessions, enriched
     /// with each session's profile, model, turn count, and relative age.
     pub(crate) fn open_session_picker(&mut self, store: &FsSessionStore) {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let entries = match crate::interactive::session_resume::block_on(store.history()) {
-            Ok(list) => list
-                .into_iter()
-                .take(20)
-                .map(|entry| {
-                    let when = relative_time(now_ms.saturating_sub(entry.modified_unix_ms));
-                    let (profile, model, turns) =
-                        match crate::interactive::session_resume::block_on(store.load(&entry.id)) {
-                            Ok(Some(session)) => (
-                                session.profile.unwrap_or_else(|| "(no profile)".into()),
-                                format!("{}/{}", session.provider, session.model),
-                                session.turns.len(),
-                            ),
-                            _ => ("(no profile)".into(), "?".into(), 0),
-                        };
-                    PickerEntry {
-                        label: format!("{when:<10}  {profile:<16}  {model:<24}  {turns} turn(s)"),
-                        id: entry.id,
-                    }
-                })
-                .collect::<Vec<_>>(),
-            Err(_) => Vec::new(),
-        };
-        if entries.is_empty() {
-            self.transcript
-                .push(BlockKind::System, "No saved sessions to resume.");
+        if self.overlays.picker.is_some() || self.overlays.picker_loading.is_some() {
             return;
         }
-        self.picker = Some(Picker {
-            entries,
-            selected: 0,
+        let store = store.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(load_picker_entries(&store));
         });
+        self.overlays.picker_loading = Some(receiver);
+        self.transcript
+            .push(BlockKind::System, "Loading saved sessions…");
     }
 
+    /// Applies a background session-picker load once it completes.
+    pub(crate) fn poll_session_picker(&mut self) {
+        let result =
+            self.overlays
+                .picker_loading
+                .as_ref()
+                .and_then(|receiver| match receiver.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        Some(Err("session picker worker stopped unexpectedly".into()))
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                });
+        let Some(result) = result else { return };
+        self.overlays.picker_loading = None;
+        match result {
+            Ok(entries) if entries.is_empty() => self
+                .transcript
+                .push(BlockKind::System, "No saved sessions to resume."),
+            Ok(entries) => {
+                self.overlays.picker = Some(Picker {
+                    entries,
+                    selected: 0,
+                });
+            }
+            Err(error) => self.transcript.push(BlockKind::Error, error),
+        }
+    }
+}
+
+fn load_picker_entries(store: &FsSessionStore) -> Result<Vec<PickerEntry>, String> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let entries = crate::interactive::session_resume::block_on(store.history())
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .take(20)
+        .map(|entry| {
+            let when = relative_time(now_ms.saturating_sub(entry.modified_unix_ms));
+            let (profile, model, turns) =
+                match crate::interactive::session_resume::block_on(store.load(&entry.id)) {
+                    Ok(Some(session)) => (
+                        session.profile.unwrap_or_else(|| "(no profile)".into()),
+                        format!("{}/{}", session.provider, session.model),
+                        session.turns.len(),
+                    ),
+                    _ => ("(no profile)".into(), "?".into(), 0),
+                };
+            PickerEntry {
+                label: format!("{when:<10}  {profile:<16}  {model:<24}  {turns} turn(s)"),
+                id: entry.id,
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(entries)
+}
+
+impl App {
     /// Moves the picker selection by `delta`, clamped.
     pub(crate) fn picker_move(&mut self, delta: isize) {
-        if let Some(picker) = &mut self.picker {
+        if let Some(picker) = &mut self.overlays.picker {
             let len = picker.entries.len();
             if len == 0 {
                 return;
@@ -63,16 +98,16 @@ impl App {
 
     /// Confirms the picker selection, requesting a resume in the run loop.
     pub(crate) fn picker_confirm(&mut self) {
-        if let Some(picker) = self.picker.take()
+        if let Some(picker) = self.overlays.picker.take()
             && let Some(entry) = picker.entries.into_iter().nth(picker.selected)
         {
-            self.pending_resume = Some(entry.id);
+            self.overlays.pending_resume = Some(entry.id);
         }
     }
 
     /// Answers the pending tool-approval request and records the decision.
     pub(crate) fn answer_approval(&mut self, allow: bool) {
-        if let Some(pending) = self.pending_approval.take() {
+        if let Some(pending) = self.request.pending_approval.take() {
             let _ = pending.respond.send(allow);
             let verb = if allow { "Approved" } else { "Denied" };
             self.transcript

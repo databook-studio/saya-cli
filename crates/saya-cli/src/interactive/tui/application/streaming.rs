@@ -14,7 +14,7 @@ impl App {
             .approval_mode
             .parse()
             .unwrap_or(saya_agent::ApprovalPolicy::Ask);
-        self.stream = Some(agent::start(
+        self.request.stream = Some(agent::start(
             self.runtime.clone(),
             prompt,
             approval,
@@ -22,19 +22,20 @@ impl App {
             state.provider_history(),
             self.state_db.clone(),
         ));
-        self.stream_started = Some(std::time::Instant::now());
+        self.request.started = Some(std::time::Instant::now());
     }
 
     /// Drains any queued agent-stream messages into the transcript. Returns true
     /// when the request just finished (so the caller can persist the session).
     pub(crate) fn drain_stream(&mut self, state: &mut SessionState) -> bool {
         let mut messages = Vec::new();
-        if let Some(stream) = self.stream.as_mut() {
+        if let Some(stream) = self.request.stream.as_mut() {
             while let Ok(msg) = stream.rx.try_recv() {
                 messages.push(msg);
             }
         }
         let prompt = self
+            .request
             .stream
             .as_ref()
             .map(|s| s.prompt.clone())
@@ -45,10 +46,10 @@ impl App {
                 StreamMsg::Event(event) => {
                     match &event {
                         AgentEvent::ToolRequested { name, .. } => {
-                            self.activity = Some(name.clone());
+                            self.request.activity = Some(name.clone());
                         }
                         AgentEvent::AssistantText { .. } | AgentEvent::ToolCompleted { .. } => {
-                            self.activity = None;
+                            self.request.activity = None;
                         }
                         _ => {}
                     }
@@ -59,7 +60,7 @@ impl App {
                     detail,
                     respond,
                 } => {
-                    self.pending_approval = Some(PendingApproval {
+                    self.request.pending_approval = Some(PendingApproval {
                         tool,
                         detail,
                         respond,
@@ -80,9 +81,9 @@ impl App {
             }
         }
         if finished {
-            self.stream = None;
-            self.stream_started = None;
-            self.activity = None;
+            self.request.stream = None;
+            self.request.started = None;
+            self.request.activity = None;
         }
         // No forced scroll: when the user is at the bottom the newest lines show
         // automatically; when they've scrolled up to read, streaming leaves them.

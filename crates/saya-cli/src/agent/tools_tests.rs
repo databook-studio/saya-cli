@@ -5,6 +5,9 @@ use saya_connectors::DatabaseConnector;
 use saya_types::{
     ConnectionError, Database, QueryRequest, QueryResult, Schema, SchemaTree, SqlDialect, Table,
 };
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Barrier;
 
 struct FakeConnector {
     table_name: String,
@@ -44,6 +47,52 @@ impl DatabaseConnector for FakeConnector {
 /// per-database error path (e.g. a dialect mismatch on one database).
 struct FailingConnector {
     dialect: SqlDialect,
+}
+
+struct BarrierConnector {
+    barrier: Arc<Barrier>,
+}
+
+struct SlowConnector;
+
+#[async_trait]
+impl DatabaseConnector for SlowConnector {
+    fn dialect(&self) -> SqlDialect {
+        SqlDialect::DuckDb
+    }
+
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Ok(SchemaTree::default())
+    }
+
+    async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        Ok(QueryResult::empty("SELECT 1"))
+    }
+}
+
+#[async_trait]
+impl DatabaseConnector for BarrierConnector {
+    fn dialect(&self) -> SqlDialect {
+        SqlDialect::DuckDb
+    }
+
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Ok(SchemaTree::default())
+    }
+
+    async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        self.barrier.wait().await;
+        Ok(QueryResult::empty(req.sql))
+    }
 }
 
 #[async_trait]
@@ -170,6 +219,111 @@ async fn bounded_sql_query_all_reports_per_database_errors_without_aborting() {
         databases[1].get("error").is_some(),
         "the failing database reports an error instead of sinking the run"
     );
+    assert!(
+        databases[1]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("syntax error near FROM")),
+        "safe connector detail should identify the dialect mismatch"
+    );
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_runs_connections_concurrently() {
+    let barrier = Arc::new(Barrier::new(2));
+    let mut registry = ConnectionRegistry::new("primary");
+    for name in ["primary", "warehouse"] {
+        registry.insert(
+            name,
+            ConnectionEntry {
+                connector: Box::new(BarrierConnector {
+                    barrier: barrier.clone(),
+                }),
+                dialect: SqlDialect::DuckDb,
+                profile_id: None,
+            },
+        );
+    }
+    let tools = DatabaseTools::with_registry(registry, 100, true, None);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        tools.execute(
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1"}),
+        ),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "both queries must start before either can finish"
+    );
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_respects_its_concurrency_cap() {
+    let barrier = Arc::new(Barrier::new(2));
+    let mut registry = ConnectionRegistry::new("primary");
+    for name in ["primary", "warehouse"] {
+        registry.insert(
+            name,
+            ConnectionEntry {
+                connector: Box::new(BarrierConnector {
+                    barrier: barrier.clone(),
+                }),
+                dialect: SqlDialect::DuckDb,
+                profile_id: None,
+            },
+        );
+    }
+    let tools = DatabaseTools::with_registry_and_fan_out_limits(
+        registry,
+        100,
+        true,
+        1,
+        Duration::from_secs(1),
+    );
+
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            tools.execute(
+                "bounded_sql_query_all",
+                serde_json::json!({"sql": "SELECT 1"}),
+            ),
+        )
+        .await
+        .is_err(),
+        "a cap of one must not start the second barrier participant"
+    );
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_reports_per_database_timeouts() {
+    let mut registry = ConnectionRegistry::new("primary");
+    registry.insert(
+        "primary",
+        ConnectionEntry {
+            connector: Box::new(SlowConnector),
+            dialect: SqlDialect::DuckDb,
+            profile_id: None,
+        },
+    );
+    let tools = DatabaseTools::with_registry_and_fan_out_limits(
+        registry,
+        100,
+        true,
+        1,
+        Duration::from_millis(10),
+    );
+
+    let result = tools
+        .execute(
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1"}),
+        )
+        .await
+        .expect("fan-out timeout is reported per database");
+    assert_eq!(result["databases"][0]["error"], "read-only query timed out");
 }
 
 #[tokio::test]
@@ -183,6 +337,25 @@ async fn bounded_sql_query_all_is_blocked_when_data_sharing_is_disabled() {
         .await
         .expect_err("fan-out must respect the data-sharing guard");
     assert!(err.contains("data sharing is disabled"), "got: {err}");
+}
+
+#[tokio::test]
+async fn tool_execution_rejects_arguments_outside_its_schema() {
+    let tools = DatabaseTools::new(None, 100, true);
+    for (name, arguments) in [
+        ("schema_discovery", serde_json::json!({"sql": "SELECT 1"})),
+        ("bounded_sql_query", serde_json::json!({"sql": 1})),
+        (
+            "bounded_sql_query_all",
+            serde_json::json!({"sql": "SELECT 1", "connection": "primary"}),
+        ),
+    ] {
+        let error = tools
+            .execute(name, arguments)
+            .await
+            .expect_err("invalid tool arguments must not reach a connector");
+        assert!(error.contains("invalid tool arguments"), "got: {error}");
+    }
 }
 
 #[test]
