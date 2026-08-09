@@ -212,7 +212,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
             "export <path> — write the last query's rows to a .csv or .json file. Example: /export results.csv",
         ),
         "chart" => Some(
-            "chart — draw the last query's result as a bar chart (first text column vs first numeric column)",
+            "chart [type] [path] — render the last query as an interactive HTML chart and open it. type: bar|line|area|pie|doughnut|scatter (default auto)",
         ),
         "explain" => Some(
             "explain [sql] — show the query plan (EXPLAIN) for the given SQL, or the last query if omitted",
