@@ -232,7 +232,7 @@ fn run_explain(
     let target = connection.as_deref().or(state.profile.as_deref());
     match block_on(exec::run_sql(runtime, target, &explain_sql)) {
         TerminalEvent::QueryResult { result } => {
-            transcript.push(BlockKind::Tool, super::table::format_table(&result));
+            transcript.push(BlockKind::Tool, super::table::format_plan(&result));
         }
         TerminalEvent::Error { message } => transcript.push(BlockKind::Error, message),
         _ => {}
