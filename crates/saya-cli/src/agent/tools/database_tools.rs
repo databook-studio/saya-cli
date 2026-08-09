@@ -157,6 +157,62 @@ impl DatabaseTools {
         )
     }
 
+    /// Runs `sql` read-only at the full row cap, renders an interactive chart file with the
+    /// requested type, opens it, and returns the file path (never the rows).
+    async fn render_chart(
+        &self,
+        arguments: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let sql = arguments
+            .get("sql")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("invalid query arguments")?;
+        let connection = arguments.get("connection").and_then(|v| v.as_str());
+        let entry = self.registry.resolve(connection)?;
+        let result = entry
+            .connector
+            .execute(saya_types::QueryRequest::new(sql, self.max_rows))
+            .await
+            .map_err(|_| "read-only query failed".to_string())?;
+
+        let mut spec = crate::chart::suggest_spec(&result);
+        if let Some(kind) = arguments
+            .get("chart_type")
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::chart::ChartKind::parse)
+        {
+            spec.kind = kind;
+        }
+        if let Some(x) = arguments.get("x").and_then(serde_json::Value::as_str) {
+            spec.x = Some(x.to_string());
+        }
+        if let Some(y) = arguments.get("y").and_then(|v| v.as_array()) {
+            let cols: Vec<String> = y
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            if !cols.is_empty() {
+                spec.y = cols;
+            }
+        }
+        if let Some(title) = arguments.get("title").and_then(serde_json::Value::as_str) {
+            spec.title = Some(title.to_string());
+        }
+
+        let html = crate::chart::render_html(&result, &spec)?;
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("saya-chart-{unique}.html"));
+        crate::chart::write_html(&html, &path)?;
+        let _ = crate::chart::open_file(&path);
+        Ok(serde_json::json!({
+            "path": path.display().to_string(),
+            "note": "Interactive chart written and opened in the browser."
+        }))
+    }
+
     /// Dispatches a read-only agent tool call to its selected connection.
     pub(super) async fn execute_read_only(
         &self,
@@ -164,7 +220,11 @@ impl DatabaseTools {
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         validate_arguments(name, &arguments)?;
-        if matches!(name, "bounded_sql_query" | "bounded_sql_query_all") && !self.allow_query_data {
+        if matches!(
+            name,
+            "bounded_sql_query" | "bounded_sql_query_all" | "render_chart"
+        ) && !self.allow_query_data
+        {
             return Err("data sharing is disabled for this cloud provider".into());
         }
         if name == "bounded_sql_query_all" {
@@ -201,6 +261,7 @@ impl DatabaseTools {
                 )
                 .await
             }
+            "render_chart" => self.render_chart(&arguments).await,
             _ => Err("unsupported read-only tool".into()),
         }
     }
@@ -234,7 +295,7 @@ impl DatabaseTools {
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "connection": connection_prop,
+                        "connection": connection_prop.clone(),
                         "sql": {
                             "type": "string"
                         }
@@ -266,6 +327,32 @@ impl DatabaseTools {
                 }),
                 requires_approval: true,
             });
+            tools.push(ToolDefinition {
+                name: "render_chart".into(),
+                description: "Visualize the results of a SQL query as an interactive chart the user can open \
+                    in their browser. Call this whenever the user asks to chart, plot, graph, or visualize \
+                    data. Provide the SQL to run and choose the chart_type that best fits the data: `bar` for \
+                    comparing categories, `line` or `area` for trends over an ordered/time axis, `pie` or \
+                    `doughnut` for a category's share of a total, `scatter` for the relationship between two \
+                    numeric columns. Optionally name the x (label) column, the y (value) column(s), and a \
+                    title. The chart is written to a file and opened; only the file path is returned."
+                    .into(),
+                read_only: true,
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "connection": connection_prop.clone(),
+                        "sql": { "type": "string" },
+                        "chart_type": { "type": "string", "enum": ["bar","line","area","pie","doughnut","scatter"] },
+                        "x": { "type": "string" },
+                        "y": { "type": "array", "items": { "type": "string" } },
+                        "title": { "type": "string" }
+                    },
+                    "required": ["sql", "chart_type"],
+                    "additionalProperties": false
+                }),
+                requires_approval: false,
+            });
         }
         tools
     }
@@ -279,6 +366,10 @@ fn validate_arguments(name: &str, arguments: &serde_json::Value) -> Result<(), S
         "schema_discovery" => (&["connection"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
         "bounded_sql_query_all" => (&["sql"][..], true),
+        "render_chart" => (
+            &["connection", "sql", "chart_type", "x", "y", "title"][..],
+            true,
+        ),
         _ => return Err("unsupported read-only tool".into()),
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
