@@ -38,6 +38,12 @@ rsa = { version = "0.9", features = ["pem", "pkcs5"] }
 sha2 = { version = "0.10", features = ["oid"] }
 url = "2"
 
+# Dev-only. Snapshot testing (insta) and property testing (proptest) — see
+# docs/standards/testing.md. Declared workspace-wide; wired as dev-dependencies in
+# the crates that use them.
+insta = { version = "1.43", features = ["yaml"] }
+proptest = "1"
+
 [profile.release]
 strip = "symbols"
 lto = "thin"

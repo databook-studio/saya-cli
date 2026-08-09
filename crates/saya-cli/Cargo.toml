@@ -45,3 +45,4 @@ base64.workspace = true
 [dev-dependencies]
 duckdb.workspace = true
 libc = "0.2"
+insta.workspace = true

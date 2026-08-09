@@ -1,0 +1,21 @@
+# cargo-nextest configuration. See https://nexte.st/docs/configuration/
+#
+# nextest is the standard runner (see docs/standards/testing.md). `cargo test` still
+# works for anyone without nextest installed; doctests always run via `cargo test`.
+
+[profile.default]
+# Fail fast locally so the red test is the first thing you see.
+fail-fast = true
+# Surface slow tests without failing on them — live/DB tests are legitimately slow.
+slow-timeout = { period = "60s", terminal-after = 3 }
+
+[profile.ci]
+# In CI we want the full failure picture in one run, not the first failure.
+fail-fast = false
+# Retry to absorb genuinely flaky live/network tests; a test that only passes on
+# retry is a bug to fix, not a state to accept.
+retries = 2
+failure-output = "immediate-final"
+# Machine-readable results for the CI UI.
+[profile.ci.junit]
+path = "junit.xml"
