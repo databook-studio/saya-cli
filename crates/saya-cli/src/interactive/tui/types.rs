@@ -74,6 +74,14 @@ pub(crate) struct SessionSave {
     pub(crate) result: Receiver<Result<(), String>>,
 }
 
+/// The most recent query the app ran (via /sql or an agent tool), so /export
+/// (and later /chart) can re-run it. Re-running a SELECT stays read-only.
+#[derive(Clone)]
+pub(crate) struct LastQuery {
+    pub(crate) sql: String,
+    pub(crate) connection: Option<String>,
+}
+
 /// Interactive application state.
 pub(crate) struct App {
     pub(crate) input: InputBuffer,
@@ -97,6 +105,7 @@ pub(crate) struct App {
     pub(crate) clipboard_copy: Option<ClipboardCopy>,
     pub(crate) session_save: Option<SessionSave>,
     pub(crate) pending_session_save: Option<RedactedSession>,
+    pub(crate) last_query: Option<LastQuery>,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) state_db: SqliteStateStore,
     pub(crate) should_quit: bool,
