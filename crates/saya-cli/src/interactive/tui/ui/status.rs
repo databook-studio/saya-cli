@@ -54,10 +54,11 @@ pub(super) fn draw_status(frame: &mut Frame<'_>, app: &App, status: &StatusView,
     let line = if app.is_busy() {
         let frame_char = SPINNER[app.spinner % SPINNER.len()];
         let elapsed = app
-            .stream_started
+            .request
+            .started
             .map(|start| start.elapsed().as_secs())
             .unwrap_or(0);
-        let doing = match &app.activity {
+        let doing = match &app.request.activity {
             Some(tool) => format!("running {tool} "),
             None => "thinking ".to_string(),
         };
@@ -71,7 +72,7 @@ pub(super) fn draw_status(frame: &mut Frame<'_>, app: &App, status: &StatusView,
         spans.extend(status_spans(status, bg));
         spans.push(Span::styled("  (Esc to cancel) ", bar));
         Line::from(spans)
-    } else if app.selection_mode {
+    } else if app.overlays.selection_mode {
         let mut spans = vec![Span::styled(
             " SELECT ",
             Style::default()

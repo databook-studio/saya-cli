@@ -29,6 +29,16 @@ fn format_sql_preserves_quoted_keywords_and_whitespace() {
 }
 
 #[test]
+fn format_sql_preserves_mysql_and_postgres_quoted_forms() {
+    let raw = "SELECT `from  table`, $tag$where from body$tag$ FROM t";
+    let formatted = format_sql(raw);
+    assert_eq!(
+        formatted,
+        "SELECT `from  table`, $tag$where from body$tag$\nFROM t"
+    );
+}
+
+#[test]
 fn format_sql_preserves_keywords_inside_comments() {
     let raw = "SELECT 1 -- from the cache\nFROM t /* where ignored */ WHERE id = 1";
     let formatted = format_sql(raw);

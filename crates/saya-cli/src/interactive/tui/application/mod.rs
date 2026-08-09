@@ -7,7 +7,7 @@ mod streaming;
 use super::history::History;
 use super::input::InputBuffer;
 use super::transcript::{BlockKind, Transcript};
-use super::types::{App, MAX_INPUT_ROWS};
+use super::types::{App, MAX_INPUT_ROWS, OverlayState, RequestState};
 use crate::config::runtime::RuntimeConfig;
 use saya_store::SqliteStateStore;
 use std::cell::Cell;
@@ -29,22 +29,18 @@ impl App {
             input: InputBuffer::new(),
             transcript,
             profiles,
-            menu: None,
             pending: None,
-            stream: None,
-            stream_started: None,
-            activity: None,
+            request: RequestState::default(),
+            overlays: OverlayState::default(),
             spinner: 0,
             history: History::load(),
             viewport: Cell::new((0, 0)),
             ctrl_c_armed: false,
             at_refs: Vec::new(),
-            pending_approval: None,
-            picker: None,
-            pending_resume: None,
-            show_help: false,
-            selection_mode: false,
             pending_clipboard: None,
+            clipboard_copy: None,
+            session_save: None,
+            pending_session_save: None,
             runtime,
             state_db,
             should_quit: false,
@@ -53,7 +49,7 @@ impl App {
 
     /// Whether an agent request is currently streaming.
     pub(crate) fn is_busy(&self) -> bool {
-        self.stream.is_some()
+        self.request.stream.is_some()
     }
 
     /// Number of visible text rows the input box should show (clamped).

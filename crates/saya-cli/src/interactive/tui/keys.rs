@@ -6,13 +6,13 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 /// Applies one key press to the application state.
 pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     // The help overlay is dismissed by any key.
-    if app.show_help {
-        app.show_help = false;
+    if app.overlays.show_help {
+        app.overlays.show_help = false;
         return;
     }
     // F1 (or `?` on an empty line) opens the help overlay.
     if code == KeyCode::F(1) || (code == KeyCode::Char('?') && app.input.is_empty()) {
-        app.show_help = true;
+        app.overlays.show_help = true;
         return;
     }
     // Copy / selection keys work globally, independent of any open modal. Ctrl
@@ -30,18 +30,18 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         _ => {}
     }
     // The session picker captures navigation until confirmed or cancelled.
-    if app.picker.is_some() {
+    if app.overlays.picker.is_some() {
         match code {
             KeyCode::Up => app.picker_move(-1),
             KeyCode::Down => app.picker_move(1),
             KeyCode::Enter => app.picker_confirm(),
-            KeyCode::Esc => app.picker = None,
+            KeyCode::Esc => app.overlays.picker = None,
             _ => {}
         }
         return;
     }
     // A tool-approval modal captures input until answered.
-    if app.pending_approval.is_some() {
+    if app.request.pending_approval.is_some() {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => app.answer_approval(true),
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => app.answer_approval(false),
@@ -50,14 +50,14 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         return;
     }
     // When the popup is open these keys drive it.
-    if app.menu.is_some() {
+    if app.overlays.menu.is_some() {
         match code {
             KeyCode::Up => return app.menu_move(-1),
             KeyCode::Down => return app.menu_move(1),
             // Both Enter and Tab accept the highlighted suggestion.
             KeyCode::Tab | KeyCode::Enter => return app.accept_selected(),
             KeyCode::Esc => {
-                app.menu = None;
+                app.overlays.menu = None;
                 return;
             }
             _ => {}
@@ -65,7 +65,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     }
     // Esc cancels an in-flight agent request.
     if code == KeyCode::Esc && app.is_busy() {
-        if let Some(stream) = &app.stream {
+        if let Some(stream) = &app.request.stream {
             stream.cancel.cancel();
         }
         app.transcript
@@ -81,14 +81,14 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     match code {
         KeyCode::Char('c') if ctrl => {
             if app.is_busy() {
-                if let Some(stream) = &app.stream {
+                if let Some(stream) = &app.request.stream {
                     stream.cancel.cancel();
                 }
                 app.transcript
                     .push(super::transcript::BlockKind::System, "Cancelling…");
             } else if !app.input.is_empty() {
                 app.input.clear();
-                app.menu = None;
+                app.overlays.menu = None;
             } else if was_armed {
                 app.should_quit = true;
             } else {

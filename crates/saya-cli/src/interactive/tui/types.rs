@@ -6,9 +6,10 @@ use super::history::History;
 use super::input::InputBuffer;
 use super::transcript::Transcript;
 use crate::config::runtime::RuntimeConfig;
-use saya_store::SqliteStateStore;
+use saya_store::{RedactedSession, SqliteStateStore};
 use std::cell::Cell;
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
 
 /// Largest number of text rows the input box grows to before it stops expanding.
@@ -42,18 +43,45 @@ pub(crate) struct PickerEntry {
     pub(crate) label: String,
 }
 
+/// State tied to an active agent request.
+#[derive(Default)]
+pub(crate) struct RequestState {
+    pub(crate) stream: Option<Stream>,
+    pub(crate) started: Option<std::time::Instant>,
+    pub(crate) activity: Option<String>,
+    pub(crate) pending_approval: Option<PendingApproval>,
+}
+
+/// UI overlays and modal interaction state.
+#[derive(Default)]
+pub(crate) struct OverlayState {
+    pub(crate) menu: Option<Menu>,
+    pub(crate) picker_loading: Option<Receiver<Result<Vec<PickerEntry>, String>>>,
+    pub(crate) picker: Option<Picker>,
+    pub(crate) pending_resume: Option<String>,
+    pub(crate) show_help: bool,
+    pub(crate) selection_mode: bool,
+}
+
+/// A native clipboard helper running in the background alongside an OSC 52 write.
+pub(crate) struct ClipboardCopy {
+    pub(crate) native_result: Receiver<bool>,
+    pub(crate) osc_error: Option<String>,
+}
+
+/// A redacted session save running outside the UI event loop.
+pub(crate) struct SessionSave {
+    pub(crate) result: Receiver<Result<(), String>>,
+}
+
 /// Interactive application state.
 pub(crate) struct App {
     pub(crate) input: InputBuffer,
     pub(crate) transcript: Transcript,
     pub(crate) profiles: Vec<String>,
-    pub(crate) menu: Option<Menu>,
     pub(crate) pending: Option<String>,
-    pub(crate) stream: Option<Stream>,
-    /// When the active request started streaming, for the elapsed timer.
-    pub(crate) stream_started: Option<std::time::Instant>,
-    /// The tool the agent is currently running, shown in the status bar.
-    pub(crate) activity: Option<String>,
+    pub(crate) request: RequestState,
+    pub(crate) overlays: OverlayState,
     pub(crate) spinner: usize,
     pub(crate) history: History,
     /// Transcript viewport (width, height) captured during the last render,
@@ -63,20 +91,12 @@ pub(crate) struct App {
     pub(crate) ctrl_c_armed: bool,
     /// `@table` / `@table.column` references from the active profiles' cached schema.
     pub(crate) at_refs: Vec<String>,
-    /// A tool-approval request from the agent awaiting the user's answer.
-    pub(crate) pending_approval: Option<PendingApproval>,
-    /// Open session picker, if any.
-    pub(crate) picker: Option<Picker>,
-    /// A session id the user chose to resume, handled by the run loop.
-    pub(crate) pending_resume: Option<String>,
-    /// Whether the help overlay is shown.
-    pub(crate) show_help: bool,
-    /// Selection mode: when on, mouse capture is released so the terminal's own
-    /// drag-select + copy works (at the cost of wheel scrolling). Toggled with Ctrl+O.
-    pub(crate) selection_mode: bool,
     /// Text queued for the system clipboard, fulfilled by the run loop via the OS
     /// clipboard tool (pbcopy/wl-copy/xclip/clip) plus an OSC 52 escape for SSH.
     pub(crate) pending_clipboard: Option<String>,
+    pub(crate) clipboard_copy: Option<ClipboardCopy>,
+    pub(crate) session_save: Option<SessionSave>,
+    pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) state_db: SqliteStateStore,
     pub(crate) should_quit: bool,
