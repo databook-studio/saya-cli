@@ -19,6 +19,12 @@ All notable changes to SAYA CLI are recorded here. This project follows
   last query if omitted. Read-only; works across PostgreSQL, MySQL, DuckDB, and
   Snowflake.
 
+### Fixed
+
+- **Postgres enum / unknown-type columns** no longer fail a query with an opaque
+  "PostgreSQL query failed". User-defined types (e.g. `mpaa_rating`) are decoded
+  from their raw text instead of erroring the whole result.
+
 ## 0.1.3 — 2026-08-06
 
 ### Added
