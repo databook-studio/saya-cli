@@ -14,6 +14,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "schema",
     "sql",
     "export",
+    "chart",
     "clear",
     "history",
     "sessions",
@@ -36,6 +37,7 @@ pub enum SlashCommand {
     Schema(bool),
     Sql(String),
     Export(String),
+    Chart(String),
     Clear,
     History,
     Sessions,
@@ -93,6 +95,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             }
             SlashCommand::Export(path.to_string())
         }
+        "chart" => SlashCommand::Chart(arg.trim().to_string()),
         "clear" => SlashCommand::Clear,
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
@@ -205,6 +208,9 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "export" => Some(
             "export <path> — write the last query's rows to a .csv or .json file. Example: /export results.csv",
         ),
+        "chart" => Some(
+            "chart — draw the last query's result as a bar chart (first text column vs first numeric column)",
+        ),
         "clear" => Some("clear — clear conversation history and context. Example: /clear"),
         "history" => Some("history — display session history. Example: /history"),
         "sessions" => Some("sessions — list available interactive sessions. Example: /sessions"),
@@ -303,6 +309,18 @@ mod tests {
             Err(SlashParseError(
                 "export requires a file path, e.g. /export out.csv".into()
             ))
+        );
+    }
+
+    #[test]
+    fn test_parse_chart_command() {
+        assert_eq!(
+            parse_slash_command("/chart"),
+            Ok(Some(SlashCommand::Chart("".into())))
+        );
+        assert_eq!(
+            parse_slash_command("/chart foo"),
+            Ok(Some(SlashCommand::Chart("foo".into())))
         );
     }
 

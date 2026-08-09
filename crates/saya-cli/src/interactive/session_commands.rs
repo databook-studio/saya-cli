@@ -18,6 +18,7 @@ pub enum SessionAction {
     Schema(bool),
     Sql(String),
     Export(String),
+    Chart(String),
     Exit,
 }
 
@@ -109,6 +110,7 @@ impl SessionState {
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
             SlashCommand::Export(path) => SessionAction::Export(path),
+            SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
