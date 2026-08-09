@@ -59,6 +59,9 @@ pub(crate) fn dispatch(
                 run_export(transcript, runtime, state, last_query, &path)
             }
             SessionAction::Chart(_args) => run_chart(transcript, runtime, state, last_query),
+            SessionAction::Explain(arg) => {
+                run_explain(transcript, runtime, state, last_query, &arg)
+            }
             SessionAction::Schema(_) => transcript.push(
                 BlockKind::System,
                 "Schema view is available in headless mode; TUI rendering is coming next.",
@@ -199,6 +202,39 @@ fn run_chart(
         TerminalEvent::Error { message } => {
             transcript.push(BlockKind::Error, message);
         }
+        _ => {}
+    }
+}
+
+/// Runs EXPLAIN for the provided SQL query or the last executed query.
+fn run_explain(
+    transcript: &mut Transcript,
+    runtime: &RuntimeConfig,
+    state: &SessionState,
+    last_query: &Option<LastQuery>,
+    arg: &str,
+) {
+    // Choose SQL + connection: explicit arg uses the active profile; empty arg
+    // reuses the last query and its connection.
+    let (sql, connection) = if !arg.trim().is_empty() {
+        (arg.trim().to_string(), None)
+    } else if let Some(lq) = last_query.as_ref() {
+        (lq.sql.clone(), lq.connection.clone())
+    } else {
+        transcript.push(
+            BlockKind::System,
+            "Nothing to explain — run a query first, or pass SQL: /explain SELECT ...",
+        );
+        return;
+    };
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    let explain_sql = format!("EXPLAIN {trimmed}");
+    let target = connection.as_deref().or(state.profile.as_deref());
+    match block_on(exec::run_sql(runtime, target, &explain_sql)) {
+        TerminalEvent::QueryResult { result } => {
+            transcript.push(BlockKind::Tool, super::table::format_table(&result));
+        }
+        TerminalEvent::Error { message } => transcript.push(BlockKind::Error, message),
         _ => {}
     }
 }

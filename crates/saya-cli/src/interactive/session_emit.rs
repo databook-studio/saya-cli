@@ -43,6 +43,12 @@ pub(crate) fn emit_action(
             },
             format,
         ),
+        SessionAction::Explain(_) => emit(
+            TerminalEvent::Error {
+                message: "explain is only available in the interactive TUI".into(),
+            },
+            format,
+        ),
         SessionAction::Error(message) => emit(TerminalEvent::Error { message }, format),
         SessionAction::History => history(format, state, store)?,
     }
