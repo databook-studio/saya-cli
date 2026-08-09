@@ -41,6 +41,7 @@ impl App {
             clipboard_copy: None,
             session_save: None,
             pending_session_save: None,
+            last_query: None,
             runtime,
             state_db,
             should_quit: false,

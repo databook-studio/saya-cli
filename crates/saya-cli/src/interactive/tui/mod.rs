@@ -14,6 +14,7 @@ mod clipboard;
 mod complete;
 mod dispatch;
 mod exec;
+mod export;
 mod fuzzy;
 mod history;
 mod input;
@@ -230,6 +231,7 @@ pub(crate) fn run(
                 runtime,
                 store,
                 format,
+                &mut app.last_query,
             ) {
                 Dispatch::Quit => app.should_quit = true,
                 // A command may have switched profiles; refresh @-references.

@@ -17,6 +17,7 @@ pub enum SessionAction {
     Resume(String),
     Schema(bool),
     Sql(String),
+    Export(String),
     Exit,
 }
 
@@ -107,6 +108,7 @@ impl SessionState {
             }
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
+            SlashCommand::Export(path) => SessionAction::Export(path),
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
