@@ -54,7 +54,7 @@ pub(crate) async fn schema(
             }
             Ok(compact_schema(&schema))
         }
-        Err(_) => cached(store, profile_id, started).await,
+        Err(error) => cached(store, profile_id, started, &error).await,
     }
 }
 
@@ -62,9 +62,10 @@ async fn cached(
     store: Option<&SqliteStateStore>,
     profile_id: Option<&str>,
     started: Instant,
+    live_error: &saya_types::ConnectionError,
 ) -> Result<serde_json::Value, String> {
     let (Some(store), Some(profile_id)) = (store, profile_id) else {
-        return Err("schema discovery failed".into());
+        return Err(format!("schema discovery failed: {live_error}"));
     };
     match store.get_schema(profile_id).await {
         Ok(Some(cached)) => {
@@ -82,7 +83,9 @@ async fn cached(
             if let Some(object) = value.as_object_mut() {
                 object.insert(
                     "diagnostic".into(),
-                    serde_json::Value::String("cached schema may be stale".into()),
+                    serde_json::Value::String(format!(
+                        "using cached schema because live refresh failed: {live_error}"
+                    )),
                 );
             }
             Ok(value)
@@ -98,7 +101,7 @@ async fn cached(
                 None,
             )
             .await;
-            Err("schema discovery failed".into())
+            Err(format!("schema discovery failed: {live_error}"))
         }
     }
 }
@@ -129,7 +132,7 @@ pub(crate) async fn query(
             }
             serde_json::to_value(result).map_err(|_| "query result unavailable".into())
         }
-        Err(_) => {
+        Err(error) => {
             if let (Some(store), Some(profile_id)) = (store, profile_id) {
                 audit(
                     store,
@@ -142,7 +145,10 @@ pub(crate) async fn query(
                 )
                 .await;
             }
-            Err("read-only query failed".into())
+            // Connector errors are intentionally sanitized at their boundary, so
+            // their safe detail helps the agent distinguish dialect and syntax
+            // mismatches without exposing driver internals or credentials.
+            Err(format!("read-only query failed: {error}"))
         }
     }
 }
