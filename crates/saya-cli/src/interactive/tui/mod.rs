@@ -10,6 +10,7 @@
 mod agent;
 mod application;
 mod atref;
+mod chart;
 mod clipboard;
 mod complete;
 mod dispatch;

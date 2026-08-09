@@ -58,6 +58,7 @@ pub(crate) fn dispatch(
             SessionAction::Export(path) => {
                 run_export(transcript, runtime, state, last_query, &path)
             }
+            SessionAction::Chart(_args) => run_chart(transcript, runtime, state, last_query),
             SessionAction::Schema(_) => transcript.push(
                 BlockKind::System,
                 "Schema view is available in headless mode; TUI rendering is coming next.",
@@ -168,6 +169,33 @@ fn run_export(
                 Err(msg) => transcript.push(BlockKind::Error, msg),
             }
         }
+        TerminalEvent::Error { message } => {
+            transcript.push(BlockKind::Error, message);
+        }
+        _ => {}
+    }
+}
+
+fn run_chart(
+    transcript: &mut Transcript,
+    runtime: &RuntimeConfig,
+    state: &SessionState,
+    last_query: &Option<LastQuery>,
+) {
+    let Some(lq) = last_query.as_ref() else {
+        transcript.push(
+            BlockKind::System,
+            "Nothing to chart yet — run a query first.",
+        );
+        return;
+    };
+    let target = lq.connection.as_deref().or(state.profile.as_deref());
+    let event = block_on(exec::run_sql(runtime, target, &lq.sql));
+    match event {
+        TerminalEvent::QueryResult { result } => match super::chart::format_bar_chart(&result) {
+            Ok(text) => transcript.push(BlockKind::Tool, text),
+            Err(msg) => transcript.push(BlockKind::System, msg),
+        },
         TerminalEvent::Error { message } => {
             transcript.push(BlockKind::Error, message);
         }
