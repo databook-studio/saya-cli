@@ -58,7 +58,7 @@ pub(crate) fn dispatch(
             SessionAction::Export(path) => {
                 run_export(transcript, runtime, state, last_query, &path)
             }
-            SessionAction::Chart(_args) => run_chart(transcript, runtime, state, last_query),
+            SessionAction::Chart(args) => run_chart(transcript, runtime, state, last_query, &args),
             SessionAction::Explain(arg) => {
                 run_explain(transcript, runtime, state, last_query, &arg)
             }
@@ -184,6 +184,7 @@ fn run_chart(
     runtime: &RuntimeConfig,
     state: &SessionState,
     last_query: &Option<LastQuery>,
+    args: &str,
 ) {
     let Some(lq) = last_query.as_ref() else {
         transcript.push(
@@ -192,18 +193,50 @@ fn run_chart(
         );
         return;
     };
-    let target = lq.connection.as_deref().or(state.profile.as_deref());
-    let event = block_on(exec::run_sql(runtime, target, &lq.sql));
-    match event {
-        TerminalEvent::QueryResult { result } => match super::chart::format_bar_chart(&result) {
-            Ok(text) => transcript.push(BlockKind::Tool, text),
-            Err(msg) => transcript.push(BlockKind::System, msg),
+    // Parse "[type] [path]": if the first token is a known chart kind, use it; the remaining
+    // token (if any) is the output path.
+    let mut tokens = args.split_whitespace();
+    let (kind, path_arg) = match tokens.next() {
+        Some(tok) => match super::chart::ChartKind::parse(tok) {
+            Some(k) => (Some(k), tokens.next()),
+            None => (None, Some(tok)),
         },
+        None => (None, None),
+    };
+    let target = lq.connection.as_deref().or(state.profile.as_deref());
+    let result = match block_on(exec::run_sql(runtime, target, &lq.sql)) {
+        TerminalEvent::QueryResult { result } => result,
         TerminalEvent::Error { message } => {
             transcript.push(BlockKind::Error, message);
+            return;
         }
-        _ => {}
+        _ => return,
+    };
+    let mut spec = super::chart::suggest_spec(&result);
+    if let Some(k) = kind {
+        spec.kind = k;
     }
+    let html = match super::chart::render_html(&result, &spec) {
+        Ok(html) => html,
+        Err(msg) => {
+            transcript.push(BlockKind::System, msg);
+            return;
+        }
+    };
+    let path = match path_arg {
+        Some(p) => std::path::PathBuf::from(p),
+        None => std::env::temp_dir().join("saya-chart.html"),
+    };
+    if let Err(msg) = super::chart::write_html(&html, &path) {
+        transcript.push(BlockKind::Error, msg);
+        return;
+    }
+    let mut note = format!("Chart written to {}", path.display());
+    match super::chart::open_file(&path) {
+        Ok(()) => note.push_str(" (opening in your browser)"),
+        Err(e) => note.push_str(&format!(" — open it manually ({e})")),
+    }
+    transcript.push(BlockKind::System, note);
 }
 
 /// Runs EXPLAIN for the provided SQL query or the last executed query.
