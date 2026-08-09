@@ -91,6 +91,7 @@ pub(crate) fn start(
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     state_db: SqliteStateStore,
+    last_sql: Option<String>,
 ) -> Stream {
     let (tx, rx) = unbounded_channel();
     let cancel = CancellationToken::new();
@@ -124,6 +125,7 @@ pub(crate) fn start(
             cancel_worker,
             Some(state_db),
             Some(decider),
+            last_sql,
         ));
         let _ = tx.send(StreamMsg::Done(result.map_err(|error| error.to_string())));
     });

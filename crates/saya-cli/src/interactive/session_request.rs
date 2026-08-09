@@ -39,6 +39,7 @@ pub(crate) async fn run(
         cancellation.clone(),
         Some(state_db.clone()),
         None,
+        None,
     );
     tokio::pin!(work);
     tokio::select! {
