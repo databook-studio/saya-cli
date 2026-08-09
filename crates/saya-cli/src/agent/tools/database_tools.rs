@@ -1,5 +1,7 @@
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use saya_agent::ToolDefinition;
 use saya_store::SqliteStateStore;
+use std::time::Duration;
 
 use crate::connection::ConnectionRegistry;
 
@@ -9,9 +11,14 @@ pub(crate) struct DatabaseTools {
     max_rows: usize,
     allow_query_data: bool,
     state_db: Option<SqliteStateStore>,
+    max_concurrent_fan_out_queries: usize,
+    fan_out_query_timeout: Duration,
 }
 
 impl DatabaseTools {
+    const MAX_CONCURRENT_FAN_OUT_QUERIES: usize = 4;
+    const FAN_OUT_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+
     /// Creates database tools with a single optional primary connection for testing.
     #[cfg(test)]
     pub(crate) fn new(
@@ -38,6 +45,8 @@ impl DatabaseTools {
             max_rows,
             allow_query_data,
             state_db: None,
+            max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
+            fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
         }
     }
 
@@ -53,6 +62,26 @@ impl DatabaseTools {
             max_rows,
             allow_query_data,
             state_db,
+            max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
+            fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_registry_and_fan_out_limits(
+        registry: ConnectionRegistry,
+        max_rows: usize,
+        allow_query_data: bool,
+        max_concurrent_fan_out_queries: usize,
+        fan_out_query_timeout: Duration,
+    ) -> Self {
+        Self {
+            registry,
+            max_rows,
+            allow_query_data,
+            state_db: None,
+            max_concurrent_fan_out_queries: max_concurrent_fan_out_queries.max(1),
+            fan_out_query_timeout,
         }
     }
 
@@ -64,36 +93,68 @@ impl DatabaseTools {
         if entries.is_empty() {
             return Err("no database profile is selected".into());
         }
-        let mut databases = Vec::with_capacity(entries.len());
-        for (name, entry) in entries {
-            let outcome = super::super::state_tools::query(
+        let mut entries = entries.into_iter().enumerate();
+        let mut pending = FuturesUnordered::new();
+        for _ in 0..self.max_concurrent_fan_out_queries {
+            if let Some((index, (name, entry))) = entries.next() {
+                pending.push(self.query_one(index, name, entry, sql));
+            }
+        }
+
+        let mut databases = Vec::new();
+        while let Some(database) = pending.next().await {
+            databases.push(database);
+            if let Some((index, (name, entry))) = entries.next() {
+                pending.push(self.query_one(index, name, entry, sql));
+            }
+        }
+        databases.sort_by_key(|(index, _, _, _)| *index);
+
+        let databases = databases
+            .into_iter()
+            .map(|(_, name, dialect, outcome)| {
+                let mut record = serde_json::Map::new();
+                record.insert("connection".into(), serde_json::Value::String(name));
+                record.insert("dialect".into(), serde_json::Value::String(dialect));
+                match outcome {
+                    Ok(result) => {
+                        record.insert("result".into(), result);
+                    }
+                    Err(error) => {
+                        record.insert("error".into(), serde_json::Value::String(error));
+                    }
+                }
+                serde_json::Value::Object(record)
+            })
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({ "databases": databases }))
+    }
+
+    async fn query_one(
+        &self,
+        index: usize,
+        name: &str,
+        entry: &crate::connection::ConnectionEntry,
+        sql: &str,
+    ) -> (usize, String, String, Result<serde_json::Value, String>) {
+        let outcome = tokio::time::timeout(
+            self.fan_out_query_timeout,
+            super::super::state_tools::query(
                 entry.connector.as_ref(),
                 sql,
                 self.max_rows,
                 self.state_db.as_ref(),
                 entry.profile_id.as_deref(),
-            )
-            .await;
-            let mut record = serde_json::Map::new();
-            record.insert(
-                "connection".into(),
-                serde_json::Value::String(name.to_string()),
-            );
-            record.insert(
-                "dialect".into(),
-                serde_json::Value::String(entry.dialect.as_str().to_string()),
-            );
-            match outcome {
-                Ok(result) => {
-                    record.insert("result".into(), result);
-                }
-                Err(error) => {
-                    record.insert("error".into(), serde_json::Value::String(error));
-                }
-            }
-            databases.push(serde_json::Value::Object(record));
-        }
-        Ok(serde_json::json!({ "databases": databases }))
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| Err("read-only query timed out".into()));
+        (
+            index,
+            name.to_string(),
+            entry.dialect.as_str().to_string(),
+            outcome,
+        )
     }
 
     /// Dispatches a read-only agent tool call to its selected connection.
@@ -102,6 +163,7 @@ impl DatabaseTools {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        validate_arguments(name, &arguments)?;
         if matches!(name, "bounded_sql_query" | "bounded_sql_query_all") && !self.allow_query_data {
             return Err("data sharing is disabled for this cloud provider".into());
         }
@@ -207,4 +269,29 @@ impl DatabaseTools {
         }
         tools
     }
+}
+
+fn validate_arguments(name: &str, arguments: &serde_json::Value) -> Result<(), String> {
+    let object = arguments
+        .as_object()
+        .ok_or("invalid tool arguments: expected an object")?;
+    let (allowed, requires_sql) = match name {
+        "schema_discovery" => (&["connection"][..], false),
+        "bounded_sql_query" => (&["connection", "sql"][..], true),
+        "bounded_sql_query_all" => (&["sql"][..], true),
+        _ => return Err("unsupported read-only tool".into()),
+    };
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err("invalid tool arguments: unsupported property".into());
+    }
+    if object
+        .get("connection")
+        .is_some_and(|connection| !connection.is_string())
+    {
+        return Err("invalid tool arguments: connection must be a string".into());
+    }
+    if requires_sql && !object.get("sql").is_some_and(serde_json::Value::is_string) {
+        return Err("invalid tool arguments: sql must be a string".into());
+    }
+    Ok(())
 }

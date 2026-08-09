@@ -10,8 +10,8 @@ impl App {
     /// the terminal can drag-select and copy; the run loop reconciles the actual
     /// capture state. Wheel scrolling is unavailable while selecting.
     pub(crate) fn toggle_selection_mode(&mut self) {
-        self.selection_mode = !self.selection_mode;
-        let message = if self.selection_mode {
+        self.overlays.selection_mode = !self.overlays.selection_mode;
+        let message = if self.overlays.selection_mode {
             "Selection mode on — drag to select and copy with your terminal. Ctrl+O to resume scrolling."
         } else {
             "Selection mode off — mouse wheel scrolls again."
@@ -21,6 +21,11 @@ impl App {
 
     /// Queues the most recent assistant answer for the clipboard (F3).
     pub(crate) fn copy_last_answer(&mut self) {
+        if self.clipboard_copy.is_some() || self.pending_clipboard.is_some() {
+            self.transcript
+                .push(BlockKind::System, "Clipboard copy already in progress.");
+            return;
+        }
         match self
             .transcript
             .blocks()
@@ -39,6 +44,11 @@ impl App {
 
     /// Queues the whole transcript for the clipboard (F4).
     pub(crate) fn copy_transcript(&mut self) {
+        if self.clipboard_copy.is_some() || self.pending_clipboard.is_some() {
+            self.transcript
+                .push(BlockKind::System, "Clipboard copy already in progress.");
+            return;
+        }
         let text = self
             .transcript
             .blocks()
@@ -78,7 +88,7 @@ impl App {
         let cursor = self.input.cursor();
         let found = complete::slash_candidates(self.input.text(), &self.profiles)
             .or_else(|| atref::at_candidates(self.input.text(), cursor, &self.at_refs));
-        self.menu = found.map(|(start, end, candidates)| Menu {
+        self.overlays.menu = found.map(|(start, end, candidates)| Menu {
             start,
             end,
             candidates,
@@ -88,7 +98,7 @@ impl App {
 
     /// Moves the popup selection by `delta`, clamped.
     pub(crate) fn menu_move(&mut self, delta: isize) {
-        if let Some(menu) = &mut self.menu {
+        if let Some(menu) = &mut self.overlays.menu {
             let len = menu.candidates.len();
             if len == 0 {
                 return;
@@ -103,7 +113,7 @@ impl App {
     /// value closes the popup so the next Enter submits.
     pub(crate) fn accept_selected(&mut self) {
         let mut completed_command = false;
-        if let Some(menu) = &self.menu
+        if let Some(menu) = &self.overlays.menu
             && let Some(candidate) = menu.candidates.get(menu.selected)
         {
             let chars: Vec<char> = self.input.text().chars().collect();
@@ -123,7 +133,7 @@ impl App {
         if completed_command {
             self.refresh_menu();
         } else {
-            self.menu = None;
+            self.overlays.menu = None;
         }
     }
 
@@ -148,7 +158,7 @@ impl App {
     pub(crate) fn submit(&mut self) {
         let line = self.input.text().trim_end().to_string();
         self.input.clear();
-        self.menu = None;
+        self.overlays.menu = None;
         if line.is_empty() {
             return;
         }

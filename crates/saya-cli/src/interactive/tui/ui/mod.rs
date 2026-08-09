@@ -24,6 +24,7 @@ use status::draw_status;
 pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     let input_height = (app.input_rows() as u16) + 2;
     let approval_h = app
+        .request
         .pending_approval
         .as_ref()
         .map(|p| approval_height(p.detail.as_deref(), frame.area().width))
@@ -49,17 +50,17 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
         draw_empty_state(frame, app, chunks[0]);
     }
     draw_status(frame, app, status, chunks[1]);
-    if let Some(pending) = &app.pending_approval {
+    if let Some(pending) = &app.request.pending_approval {
         draw_approval(frame, &pending.tool, pending.detail.as_deref(), chunks[2]);
     }
     draw_input(frame, app, chunks[3]);
-    if let Some(menu) = &app.menu {
+    if let Some(menu) = &app.overlays.menu {
         draw_menu(frame, menu, chunks[3]);
     }
-    if let Some(picker) = &app.picker {
+    if let Some(picker) = &app.overlays.picker {
         draw_picker(frame, picker, frame.area());
     }
-    if app.show_help {
+    if app.overlays.show_help {
         draw_help(frame, frame.area());
     }
 }

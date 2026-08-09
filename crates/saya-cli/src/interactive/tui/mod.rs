@@ -30,7 +30,7 @@ use super::session_resume::block_on;
 use super::session_state::SessionState;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
-use clipboard::{copy_to_native_clipboard, osc52_copy};
+use clipboard::{ClipboardOutcome, clipboard_outcome, copy_to_native_clipboard, osc52_copy};
 use dispatch::Dispatch;
 use keys::handle_key;
 use ratatui::crossterm::{
@@ -41,15 +41,49 @@ use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
 use std::sync::Arc;
 use std::time::Duration;
 use terminal::TerminalGuard;
-use transcript::{BlockKind, Transcript};
-use types::App;
+use transcript::BlockKind;
+use types::{App, ClipboardCopy, SessionSave};
 
-fn save_session(store: &FsSessionStore, state: &SessionState, transcript: &mut Transcript) {
-    if let Err(error) = block_on(store.save(state.redacted())) {
-        transcript.push(
+fn start_session_save(app: &mut App, store: &FsSessionStore, session: saya_store::RedactedSession) {
+    let store = store.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = block_on(store.save(session)).map_err(|error| error.to_string());
+        let _ = sender.send(result);
+    });
+    app.session_save = Some(SessionSave { result: receiver });
+}
+
+fn queue_session_save(app: &mut App, store: &FsSessionStore, state: &SessionState) {
+    let session = state.redacted();
+    if app.session_save.is_some() {
+        app.pending_session_save = Some(session);
+    } else {
+        start_session_save(app, store, session);
+    }
+}
+
+fn poll_session_save(app: &mut App, store: &FsSessionStore) {
+    let result = app
+        .session_save
+        .as_ref()
+        .and_then(|save| match save.result.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("session save worker stopped unexpectedly".into()))
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        });
+    let Some(result) = result else { return };
+    app.session_save = None;
+    if let Err(error) = result {
+        app.transcript.push(
             BlockKind::Error,
             format!("Could not save this session; your latest changes may be lost: {error}"),
         );
+    }
+    if let Some(session) = app.pending_session_save.take() {
+        start_session_save(app, store, session);
     }
 }
 
@@ -79,6 +113,8 @@ pub(crate) fn run(
     let mut mouse_capture_error_reported = false;
 
     while !app.should_quit {
+        app.poll_session_picker();
+        poll_session_save(&mut app, store);
         let status = super::session_prompt::status_segments(state);
         guard
             .terminal
@@ -104,7 +140,7 @@ pub(crate) fn run(
         // Reconcile the terminal's mouse capture with selection mode: releasing
         // capture lets the terminal drag-select and copy; re-grabbing it restores
         // wheel scrolling.
-        let want_capture = !app.selection_mode;
+        let want_capture = !app.overlays.selection_mode;
         if want_capture != mouse_captured {
             let backend = guard.terminal.backend_mut();
             let result = if want_capture {
@@ -128,26 +164,51 @@ pub(crate) fn run(
             }
         }
 
-        // Fulfil a queued clipboard copy. Try the OS clipboard tool first (pbcopy
+        // Fulfil queued clipboard copies without blocking the event loop. Try the OS clipboard tool first (pbcopy
         // / wl-copy / xclip / clip) since that's what actually works locally —
         // notably in macOS Terminal.app, which ignores OSC 52. Always also emit
         // OSC 52 so copies can still reach the *local* clipboard over SSH. Report
         // the outcome only after attempting both mechanisms.
-        if let Some(text) = app.pending_clipboard.take() {
-            let native_ok = copy_to_native_clipboard(&text);
-            let osc_result = osc52_copy(guard.terminal.backend_mut(), &text);
-            match (native_ok, osc_result) {
-                (true, _) => app
+        if app.clipboard_copy.is_none()
+            && let Some(text) = app.pending_clipboard.take()
+        {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let native_text = text.clone();
+            std::thread::spawn(move || {
+                let _ = sender.send(copy_to_native_clipboard(&native_text));
+            });
+            app.clipboard_copy = Some(ClipboardCopy {
+                native_result: receiver,
+                osc_error: osc52_copy(guard.terminal.backend_mut(), &text)
+                    .err()
+                    .map(|error| error.to_string()),
+            });
+        }
+        let native_result =
+            app.clipboard_copy
+                .as_ref()
+                .and_then(|copy| match copy.native_result.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(false),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                });
+        if let Some(native_ok) = native_result
+            && let Some(copy) = app.clipboard_copy.take()
+        {
+            match clipboard_outcome(native_ok, copy.osc_error.as_deref()) {
+                ClipboardOutcome::Native => app
                     .transcript
                     .push(BlockKind::System, "Copied to the system clipboard."),
-                (false, Ok(())) => app.transcript.push(
+                ClipboardOutcome::Osc52 => app.transcript.push(
                     BlockKind::System,
                     "Sent OSC 52 clipboard data; it will copy if your terminal supports it.",
                 ),
-                (false, Err(error)) => app.transcript.push(
+                ClipboardOutcome::Failed => app.transcript.push(
                     BlockKind::Error,
                     format!(
-                        "Could not copy to the system clipboard, and sending OSC 52 failed: {error}"
+                        "Could not copy to the system clipboard, and sending OSC 52 failed: {}",
+                        copy.osc_error
+                            .unwrap_or_else(|| "unknown terminal output error".into())
                     ),
                 ),
             }
@@ -156,7 +217,7 @@ pub(crate) fn run(
         if app.is_busy() {
             app.spinner = app.spinner.wrapping_add(1);
             if app.drain_stream(state) {
-                save_session(store, state, &mut app.transcript);
+                queue_session_save(&mut app, store, state);
             }
         }
 
@@ -176,9 +237,10 @@ pub(crate) fn run(
                 Dispatch::Agent(prompt) => app.start_agent(prompt, state),
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
             }
+            queue_session_save(&mut app, store, state);
         }
 
-        if let Some(id) = app.pending_resume.take() {
+        if let Some(id) = app.overlays.pending_resume.take() {
             let defaults = super::session_resume::SessionDefaults {
                 provider: state.provider.clone(),
                 model: state.model.clone(),
@@ -205,7 +267,7 @@ pub(crate) fn run(
                     .push(BlockKind::Error, format!("Session not found: {id}")),
                 Err(error) => app.transcript.push(BlockKind::Error, error.to_string()),
             }
-            save_session(store, state, &mut app.transcript);
+            queue_session_save(&mut app, store, state);
         }
     }
 

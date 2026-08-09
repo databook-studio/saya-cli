@@ -48,7 +48,10 @@ async fn cached_schema_is_explicit_and_agent_query_audit_omits_sql() {
         .await
         .unwrap();
     let cached = schema(&Failing, Some(&store), Some(&key)).await.unwrap();
-    assert_eq!(cached["diagnostic"], "cached schema may be stale");
+    assert_eq!(
+        cached["diagnostic"],
+        "using cached schema because live refresh failed: schema discovery failed: server sentinel"
+    );
     assert!(
         query(
             &Failing,

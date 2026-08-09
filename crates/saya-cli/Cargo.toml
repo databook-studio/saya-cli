@@ -28,6 +28,7 @@ pkg-fmt = "zip"
 [dependencies]
 async-trait.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 saya-agent = { path = "../saya-agent", version = "0.1.3" }
 saya-config = { path = "../saya-config", version = "0.1.3" }
 saya-connectors = { path = "../saya-connectors", version = "0.1.3" }

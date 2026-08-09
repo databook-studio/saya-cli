@@ -61,7 +61,6 @@ pub(crate) fn dispatch(
         },
         Ok(None) => result = Dispatch::Agent(line.to_string()),
     }
-    let _ = block_on(store.save(state.redacted()));
     transcript.scroll_to_bottom();
     result
 }
