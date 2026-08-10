@@ -48,6 +48,9 @@ pub(crate) fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Pa
         DatabaseProfile::DuckDb { path, read_only } => {
             fields(&mut hash, ["duckdb", path, &format!("{read_only:?}")]);
         }
+        DatabaseProfile::Sqlite { path, read_only } => {
+            fields(&mut hash, ["sqlite", path, &format!("{read_only:?}")]);
+        }
         DatabaseProfile::Snowflake {
             account,
             user,

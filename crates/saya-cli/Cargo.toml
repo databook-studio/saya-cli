@@ -46,3 +46,4 @@ base64.workspace = true
 duckdb.workspace = true
 libc = "0.2"
 insta.workspace = true
+sqlx.workspace = true
