@@ -25,7 +25,7 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
-SAYA supports `postgresql`, `mysql`, `duckdb`, and `snowflake`.
+SAYA supports `postgresql`, `mysql`, `sqlite`, `duckdb`, and `snowflake`.
 PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-full`; MySQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-identity`.
@@ -58,6 +58,20 @@ grant SAYA access only to the intended file and its parent directory.
 [profiles.local]
 type = "duckdb"
 path = "./warehouse.duckdb"
+read_only = true
+```
+
+SQLite needs no network credential. Connect to SQLite database files using
+`type = "sqlite"` with `path` and optional `read_only` (which defaults to `true`,
+unlike DuckDB which requires it explicitly). `:memory:` is unsupported; use a
+file path. SAYA enforces read-only SQL regardless of the flag. For
+environment-only configurations, set `SAYA_DB_TYPE=sqlite` and `SAYA_DB_PATH=...`,
+with optional `SAYA_DB_READ_ONLY`.
+
+```toml
+[profiles.local_sqlite]
+type = "sqlite"
+path = "./data/warehouse.sqlite3"
 read_only = true
 ```
 
@@ -155,7 +169,7 @@ optional `connection` argument to its schema and query tools; the primary is the
 default. Fully offline agent use is unavailable even when the database connector
 is local.
 
-All four live engines use the same command surface. `query` permits one parsed
+All five live engines use the same command surface. `query` permits one parsed
 read-only statement, caps returned rows, and reports truncation.
 Never put
 a raw password, private key, API key, or connection URL with embedded

@@ -1,6 +1,6 @@
 # Querying databases with SAYA CLI
 
-SAYA CLI connects to PostgreSQL, MySQL, DuckDB, and Snowflake and runs bounded,
+SAYA CLI connects to PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake and runs bounded,
 read-only queries. Each command has one primary execution profile, with support
 for connecting additional read-only databases using `--include-profile` or
 interactive slash commands.

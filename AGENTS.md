@@ -10,7 +10,7 @@ then load only the standards module the task touches. Full detail lives in
 ## What saya is
 
 A database-aware AI agent for the terminal: a full-screen TUI over PostgreSQL, MySQL,
-DuckDB, and Snowflake, with schema discovery and **bounded, read-only** SQL. A small
+SQLite, DuckDB, and Snowflake, with schema discovery and **bounded, read-only** SQL. A small
 Rust workspace — **edition 2024, MSRV 1.88**.
 
 ```

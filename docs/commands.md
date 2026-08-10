@@ -25,7 +25,7 @@ Global flags include `--config`, `--connections`, `--env-file`, `--profile`,
 text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
 and `--verbose`.
 
-Automation never prompts. PostgreSQL, MySQL, DuckDB, and Snowflake `connection
+Automation never prompts. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake `connection
 test`, `connection schema`, and `query` commands are live; Snowflake
 `externalbrowser` is rejected in automation because it requires an interactive
 TTY. Query execution allows one parsed read-only statement and

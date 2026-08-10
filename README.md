@@ -2,7 +2,7 @@
 
 SAYA CLI is an open-source, terminal-native shell for a database-aware AI agent.
 Ask questions about your data in plain language and it discovers schema and runs
-**bounded, read-only** SQL against PostgreSQL, MySQL, DuckDB, or Snowflake.
+**bounded, read-only** SQL against PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
 
 An interactive terminal (TTY) launches a **full-screen TUI** — a scrolling
 transcript, a bottom-pinned input box, a slash-command popup that opens on `/`,
@@ -22,7 +22,7 @@ connected databases at once.
 - 🛡️ **Safe by default** — every query is bounded and read-only, and the
   **exact SQL is shown** in the approval prompt (and echoed to the transcript)
   before it runs; sessions are redacted before being persisted.
-- 🔌 **Databases** — PostgreSQL, MySQL, DuckDB, Snowflake; query several
+- 🔌 **Databases** — PostgreSQL, MySQL, SQLite, DuckDB, Snowflake; query several
   connected databases at once, or run **one query across every connected
   database** and get per-database results side by side.
 - 🤖 **Providers** — Ollama, OpenAI, OpenAI-compatible gateways, Anthropic,
@@ -277,7 +277,7 @@ not for `externalbrowser`, which requires an interactive TTY.
 ## Privacy and limitations
 
 The intended MVP policy is read-only, bounded queries with cloud row sharing
-disabled. PostgreSQL, MySQL, DuckDB, and Snowflake reject parse failures, writes, DDL, transaction/control
+disabled. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake reject parse failures, writes, DDL, transaction/control
 statements, and multi-statements before execution. It observes one extra row to
 mark truncated results. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly

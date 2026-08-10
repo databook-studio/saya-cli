@@ -5,6 +5,12 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.3.0 — 2026-08-10
+
+### Added
+
+- **SQLite** — connect to SQLite database files with `type = "sqlite"` (`path`, optional `read_only` defaulting to true). Read-only by default and through the bounded SQL safety layer; `:memory:` is not supported.
+
 ### Fixed
 
 - **Charts now plot decimal columns.** `NUMERIC`/`DECIMAL` values (e.g. `SUM`/`AVG`
