@@ -30,3 +30,4 @@ url.workspace = true
 tokio.workspace = true
 flate2 = "1"
 proptest.workspace = true
+tempfile = "3"

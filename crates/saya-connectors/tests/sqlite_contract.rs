@@ -2,16 +2,9 @@ use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector};
 use saya_types::{ConnectionError, QueryRequest};
 use serde_json::Value;
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
-use std::{fs, path::PathBuf};
+use std::path::Path;
 
-fn test_db_path(name: &str) -> PathBuf {
-    let mut path = std::env::temp_dir();
-    path.push(format!("saya_sqlite_contract_test_{name}.db"));
-    let _ = fs::remove_file(&path);
-    path
-}
-
-async fn create_test_fixture(path: &PathBuf) {
+async fn create_test_fixture(path: &Path) {
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true);
@@ -63,8 +56,8 @@ async fn create_test_fixture(path: &PathBuf) {
 
 #[tokio::test]
 async fn test_sqlite_missing_path_fails_eagerly_and_does_not_create_file() {
-    let path = std::env::temp_dir().join("saya_sqlite_nonexistent_12345.db");
-    let _ = fs::remove_file(&path);
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("saya_sqlite_nonexistent_12345.db");
 
     let opts = ConnectorOptions::default();
     let res = SqliteConnector::open(&path, true, opts).await;
@@ -89,7 +82,8 @@ async fn test_sqlite_in_memory_rejected() {
 
 #[tokio::test]
 async fn test_sqlite_contract_full() {
-    let path = test_db_path("full");
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("full.db");
     create_test_fixture(&path).await;
 
     let opts = ConnectorOptions::default();
@@ -104,7 +98,7 @@ async fn test_sqlite_contract_full() {
     let schema_tree = connector.schema().await.expect("schema() should succeed");
     assert_eq!(schema_tree.databases.len(), 1);
     let db = &schema_tree.databases[0];
-    assert_eq!(db.name, "saya_sqlite_contract_test_full");
+    assert_eq!(db.name, "full");
     assert_eq!(db.schemas.len(), 1);
     let main_schema = &db.schemas[0];
     assert_eq!(main_schema.name, "main");
@@ -186,12 +180,14 @@ async fn test_sqlite_contract_full() {
         Err(ConnectionError::Unsupported(_))
     ));
 
-    let _ = fs::remove_file(&path);
+    drop(connector);
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_sqlite_driver_read_only_pragma() {
-    let path = test_db_path("pragma_read_only");
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("pragma_read_only.db");
     create_test_fixture(&path).await;
 
     let options = SqliteConnectOptions::new()
@@ -209,5 +205,64 @@ async fn test_sqlite_driver_read_only_pragma() {
     );
 
     pool.close().await;
-    let _ = fs::remove_file(&path);
+    drop(temp_dir);
+}
+
+#[tokio::test]
+async fn test_sqlite_query_timeout_interrupts_and_cleans_up_connection() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("timeout_test.db");
+    create_test_fixture(&path).await;
+
+    let opts = ConnectorOptions {
+        query_timeout_seconds: 1,
+        max_connections: 1,
+    };
+    let connector = SqliteConnector::open(&path, true, opts)
+        .await
+        .expect("Opening fixture db should succeed");
+
+    let start = std::time::Instant::now();
+    let infinite_req = QueryRequest {
+        sql: "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt) SELECT count(*) FROM cnt;".to_string(),
+        max_rows: 10,
+    };
+
+    let res = connector.execute(infinite_req).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        res.is_err(),
+        "Long-running query must be interrupted and return Err"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "Query timeout must trigger within a few seconds, took {:?}",
+        elapsed
+    );
+
+    if let Err(err) = res {
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("timed out") || err_msg.contains("Query failed"),
+            "Error message should indicate timeout/failure: {err_msg}"
+        );
+        assert!(
+            !err_msg.contains(path.to_str().unwrap_or("")),
+            "Error message must not leak file path: {err_msg}"
+        );
+    }
+
+    let reuse_req = QueryRequest {
+        sql: "SELECT 1".to_string(),
+        max_rows: 10,
+    };
+    let reuse_res = connector.execute(reuse_req).await;
+    assert!(
+        reuse_res.is_ok(),
+        "Reusing connection after timeout must succeed (no pool poisoning)"
+    );
+
+    drop(connector);
+    drop(temp_dir);
 }

@@ -3177,6 +3177,7 @@ dependencies = [
  "sha2",
  "sqlparser",
  "sqlx",
+ "tempfile",
  "tokio",
  "url",
  "uuid",

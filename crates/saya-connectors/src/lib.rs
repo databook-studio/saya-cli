@@ -3,7 +3,6 @@
 use async_trait::async_trait;
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 
-mod common;
 mod duckdb;
 mod factory;
 mod mysql;

@@ -79,3 +79,46 @@ impl DatabaseConnector for SqliteConnector {
         super::execute::query(self, request).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqliteConnectOptions;
+
+    #[tokio::test]
+    async fn test_production_pool_query_only_and_trusted_schema() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("prod_pool_test.db");
+
+        let fixture_options = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let fixture_pool = SqlitePool::connect_with(fixture_options).await.unwrap();
+        sqlx::query("CREATE TABLE t (id INT);")
+            .execute(&fixture_pool)
+            .await
+            .unwrap();
+        fixture_pool.close().await;
+
+        let opts = ConnectorOptions::default();
+        let connector = SqliteConnector::open(&db_path, false, opts).await.unwrap();
+
+        let insert_res = sqlx::query("INSERT INTO t VALUES (1)")
+            .execute(&connector.pool)
+            .await;
+        assert!(
+            insert_res.is_err(),
+            "query_only=ON pragma must block writes even when file opened with read_only=false"
+        );
+
+        let row: (i64,) = sqlx::query_as("PRAGMA trusted_schema")
+            .fetch_one(&connector.pool)
+            .await
+            .unwrap();
+        assert_eq!(row.0, 0, "PRAGMA trusted_schema must be 0");
+
+        connector.pool.close().await;
+        drop(connector);
+        drop(temp_dir);
+    }
+}
