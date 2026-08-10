@@ -22,7 +22,7 @@ fn snowflake_policy_denies_writes_stages_and_system_functions() {
         "DELETE FROM events",
         "SELECT * FROM @stage/file",
         "SELECT SYSTEM$ABORT_SESSION()",
-        "SELECT read_csv('x')",
+        "SELECT nextval('id_seq')",
         "SELECT 1; SELECT 2",
     ] {
         assert!(prepare_snowflake_sql(sql, 3).is_err(), "{sql}");
