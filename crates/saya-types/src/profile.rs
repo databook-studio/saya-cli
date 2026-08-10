@@ -56,7 +56,8 @@ pub enum DatabaseProfile {
     #[serde(rename = "sqlite")]
     Sqlite {
         path: String,
-        read_only: Option<bool>,
+        #[serde(default = "default_true")]
+        read_only: bool,
     },
     #[serde(rename = "snowflake")]
     Snowflake {
@@ -71,6 +72,10 @@ pub enum DatabaseProfile {
         schema: Option<String>,
         role: Option<String>,
     },
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 /// PostgreSQL TLS verification mode. `None` preserves PostgreSQL's `prefer`

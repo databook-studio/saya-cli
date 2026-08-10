@@ -392,7 +392,7 @@ fn environment_only_profiles_support_sqlite() {
         resolved.profile,
         Some(DatabaseProfile::Sqlite {
             ref path,
-            read_only: None,
+            read_only: true,
         }) if path == "data.db"
     ));
 }
@@ -410,7 +410,7 @@ fn sqlite_read_only_environment_override_is_typed() {
     assert!(matches!(
         resolved.profile,
         Some(DatabaseProfile::Sqlite {
-            read_only: Some(true),
+            read_only: true,
             ..
         })
     ));
@@ -445,6 +445,6 @@ fn sqlite_path_environment_overlay_preserves_profile_read_only_setting() {
 
     assert!(matches!(
         resolved.profile,
-        Some(DatabaseProfile::Sqlite { ref path, read_only: Some(true) }) if path == "override.db"
+        Some(DatabaseProfile::Sqlite { ref path, read_only: true }) if path == "override.db"
     ));
 }

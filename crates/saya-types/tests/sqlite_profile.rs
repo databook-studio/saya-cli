@@ -8,7 +8,7 @@ fn sqlite_profile_deserializes_with_read_only() {
         profile,
         DatabaseProfile::Sqlite {
             path: "/tmp/app.db".into(),
-            read_only: Some(true),
+            read_only: true,
         }
     );
 }
@@ -21,7 +21,21 @@ fn sqlite_profile_deserializes_omitting_read_only() {
         profile,
         DatabaseProfile::Sqlite {
             path: "/tmp/app.db".into(),
-            read_only: None,
+            read_only: true,
+        }
+    );
+}
+
+#[test]
+fn sqlite_profile_deserializes_read_only_false() {
+    let profile: DatabaseProfile =
+        serde_json::from_str(r#"{"type":"sqlite","path":"/tmp/app.db","read_only":false}"#)
+            .unwrap();
+    assert_eq!(
+        profile,
+        DatabaseProfile::Sqlite {
+            path: "/tmp/app.db".into(),
+            read_only: false,
         }
     );
 }
@@ -30,7 +44,7 @@ fn sqlite_profile_deserializes_omitting_read_only() {
 fn sqlite_profile_dialect_and_as_str() {
     let profile = DatabaseProfile::Sqlite {
         path: "/tmp/app.db".into(),
-        read_only: Some(false),
+        read_only: false,
     };
     assert_eq!(profile.dialect(), SqlDialect::Sqlite);
     assert_eq!(SqlDialect::Sqlite.as_str(), "sqlite");
@@ -40,7 +54,7 @@ fn sqlite_profile_dialect_and_as_str() {
 fn sqlite_profile_serde_round_trip() {
     let original = DatabaseProfile::Sqlite {
         path: "/tmp/app.db".into(),
-        read_only: Some(true),
+        read_only: true,
     };
     let serialized = serde_json::to_string(&original).unwrap();
     let deserialized: DatabaseProfile = serde_json::from_str(&serialized).unwrap();
