@@ -22,6 +22,7 @@ impl SecretRef {
 }
 
 /// Typed database connection profile loaded from `connections.toml`.
+/// Exhaustive matching is intentional so the compiler forces every backend to handle every profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum DatabaseProfile {
@@ -49,6 +50,11 @@ pub enum DatabaseProfile {
     },
     #[serde(rename = "duckdb")]
     DuckDb {
+        path: String,
+        read_only: Option<bool>,
+    },
+    #[serde(rename = "sqlite")]
+    Sqlite {
         path: String,
         read_only: Option<bool>,
     },
@@ -105,6 +111,7 @@ impl DatabaseProfile {
             Self::Postgres { .. } => SqlDialect::Postgres,
             Self::Mysql { .. } => SqlDialect::Mysql,
             Self::DuckDb { .. } => SqlDialect::DuckDb,
+            Self::Sqlite { .. } => SqlDialect::Sqlite,
             Self::Snowflake { .. } => SqlDialect::Snowflake,
         }
     }
