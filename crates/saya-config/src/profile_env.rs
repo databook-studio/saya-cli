@@ -7,6 +7,7 @@ use crate::ConfigError;
 mod duckdb;
 mod mysql;
 mod snowflake;
+mod sqlite;
 mod values;
 
 pub(crate) fn overlay_database_environment(
@@ -30,6 +31,7 @@ pub(crate) fn overlay_database_environment(
         "postgresql" | "postgres" => network_profile(&env, profile, true).map(Some),
         "mysql" => network_profile(&env, profile, false).map(Some),
         "duckdb" => duckdb::profile(&env, profile).map(Some),
+        "sqlite" => sqlite::profile(&env, profile).map(Some),
         "snowflake" => snowflake::profile(&env, profile).map(Some),
         other => Err(ConfigError::UnsupportedDatabaseType(other.into())),
     }
@@ -134,6 +136,7 @@ fn profile_type(profile: &DatabaseProfile) -> &'static str {
         DatabaseProfile::Postgres { .. } => "postgresql",
         DatabaseProfile::Mysql { .. } => "mysql",
         DatabaseProfile::DuckDb { .. } => "duckdb",
+        DatabaseProfile::Sqlite { .. } => "sqlite",
         DatabaseProfile::Snowflake { .. } => "snowflake",
     }
 }
