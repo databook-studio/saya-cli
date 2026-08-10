@@ -5,7 +5,9 @@ use sqlx::{
     postgres::{PgConnectOptions, PgSslMode},
 };
 
-use crate::{DatabaseConnector, DuckDbConnector, MySqlConnector, PostgresConnector};
+use crate::{
+    DatabaseConnector, DuckDbConnector, MySqlConnector, PostgresConnector, SqliteConnector,
+};
 
 mod snowflake_factory;
 
@@ -100,6 +102,13 @@ pub async fn build_connector_with_prompt(
                 .await
                 .map(|item| Box::new(item) as _)
         }
+        DatabaseProfile::Sqlite { path, read_only } => SqliteConnector::open(
+            std::path::Path::new(path),
+            read_only.unwrap_or(true),
+            settings,
+        )
+        .await
+        .map(|c| Box::new(c) as _),
         DatabaseProfile::Snowflake { .. } => {
             snowflake_factory::build(profile, resolver, settings, can_prompt)
         }

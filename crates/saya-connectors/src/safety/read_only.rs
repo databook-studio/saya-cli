@@ -3,7 +3,9 @@ use std::ops::ControlFlow;
 
 use sqlparser::{
     ast::{Expr, ObjectName, Query, SetExpr, Statement, Visit, Visitor},
-    dialect::{Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SnowflakeDialect},
+    dialect::{
+        Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
+    },
     parser::Parser,
 };
 
@@ -21,6 +23,10 @@ pub fn prepare_duckdb_sql(sql: &str, max_rows: usize) -> Result<String, Connecti
 
 pub fn prepare_snowflake_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
     prepare(sql, max_rows, &SnowflakeDialect {})
+}
+
+pub fn prepare_sqlite_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
+    prepare(sql, max_rows, &SQLiteDialect {})
 }
 
 fn prepare(sql: &str, max_rows: usize, dialect: &dyn Dialect) -> Result<String, ConnectionError> {
@@ -136,8 +142,29 @@ fn denied(name: &ObjectName) -> bool {
         "build_scoped_file_url",
         "directory",
         "metadata",
+        "load_extension",
+        "readfile",
+        "writefile",
     ]
     .contains(&name.as_str())
         || name.starts_with('@')
         || name.starts_with("system$")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_denied_functions() {
+        assert!(prepare_sqlite_sql("SELECT load_extension('x')", 10).is_err());
+        assert!(prepare_sqlite_sql("SELECT readfile('x')", 10).is_err());
+        assert!(prepare_sqlite_sql("SELECT writefile('a', 'b')", 10).is_err());
+    }
+
+    #[test]
+    fn test_sqlite_prepare() {
+        let sql = prepare_sqlite_sql("SELECT 1 FROM t", 10).unwrap();
+        assert!(sql.to_uppercase().contains("LIMIT 11"));
+    }
 }
