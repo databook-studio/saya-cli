@@ -5,6 +5,13 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Fixed
+
+- **Charts now plot decimal columns.** `NUMERIC`/`DECIMAL` values (e.g. `SUM`/`AVG`
+  and money columns) decode to JSON strings; `/chart` and `render_chart` treated
+  them as non-numeric and silently dropped them, producing empty bar/line/area/
+  scatter charts. Numeric strings are now recognized and plotted.
+
 ## 0.2.0 — 2026-08-09
 
 ### Added

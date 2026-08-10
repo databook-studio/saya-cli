@@ -61,7 +61,7 @@ fn is_numeric_column(rows: &[Vec<serde_json::Value>], col_idx: usize) -> bool {
     for row in rows {
         if let Some(cell) = row.get(col_idx).filter(|c| !c.is_null()) {
             non_null_count += 1;
-            if !cell.is_number() {
+            if cell_to_f64(cell).is_none() {
                 return false;
             }
         }
@@ -69,8 +69,16 @@ fn is_numeric_column(rows: &[Vec<serde_json::Value>], col_idx: usize) -> bool {
     non_null_count >= 1
 }
 
+/// Interprets a cell as an `f64`, accepting both JSON numbers and numeric
+/// *strings*. Postgres `NUMERIC`/`DECIMAL` and MySQL `DECIMAL` (e.g. `SUM`/`AVG`,
+/// money columns) decode to JSON strings, so a number-only check would silently
+/// drop them from charts.
 fn cell_to_f64(value: &serde_json::Value) -> Option<f64> {
-    value.as_f64()
+    match value {
+        serde_json::Value::Number(_) => value.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
 }
 
 fn html_escape(s: &str) -> String {
@@ -452,5 +460,44 @@ mod chart_gen_tests {
             title: None,
         };
         assert!(render_html(&no_num_result, &err_spec).is_err());
+    }
+
+    // Postgres NUMERIC/DECIMAL and MySQL DECIMAL decode to JSON *strings*, not
+    // numbers (e.g. SUM(amount) -> "3094.78"). They must still chart.
+    #[test]
+    fn numeric_string_values_are_plotted() {
+        let result = QueryResult {
+            columns: vec!["month".to_string(), "revenue".to_string()],
+            rows: vec![
+                json!(["2022-01", "3094.78"]),
+                json!(["2022-02", "10164.97"]),
+            ],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT month, SUM(amount) AS revenue FROM payment GROUP BY 1"
+                .to_string(),
+        };
+        let spec = suggest_spec(&result);
+        assert_eq!(spec.y, vec!["revenue".to_string()]);
+        let html = render_html(&result, &spec).unwrap();
+        assert!(html.contains("3094.78"), "numeric-string value was dropped");
+        assert!(
+            html.contains("10164.97"),
+            "numeric-string value was dropped"
+        );
+    }
+
+    #[test]
+    fn suggest_spec_detects_numeric_string_columns() {
+        // Two numeric columns encoded as strings should be recognized as numeric
+        // (and so picked as a scatter), not treated as categorical text.
+        let result = QueryResult {
+            columns: vec!["length".to_string(), "avg_rate".to_string()],
+            rows: vec![json!(["46", "2.59"]), json!(["47", "2.70"])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT length, AVG(rate) FROM film GROUP BY 1".to_string(),
+        };
+        assert_eq!(suggest_spec(&result).kind, ChartKind::Scatter);
     }
 }
