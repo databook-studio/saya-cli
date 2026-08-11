@@ -1,8 +1,8 @@
 use super::{provider, tools};
 use crate::{config::runtime::RuntimeConfig, prompt_approval::TerminalApproval};
 use saya_agent::{
-    AgentError, AgentEventSink, AgentLimits, AgentOutput, AgentRequest, ApprovalDecider,
-    ApprovalPolicy, CancellationToken, ChatMessage, run_agent_with_sink,
+    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, AgentRequest,
+    ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, run_agent_with_sink,
 };
 use saya_config::{AiProvider, ResolvedAi};
 use saya_store::SqliteStateStore;
@@ -67,7 +67,7 @@ pub(crate) async fn run_prompt_with_sink(
         }
     }
 
-    let registry = match profile.as_ref() {
+    let (registry, failures) = match profile.as_ref() {
         Some(primary_profile) => {
             let primary_name = profile_name.as_deref().unwrap_or("");
             crate::connection::build_registry(
@@ -81,8 +81,15 @@ pub(crate) async fn run_prompt_with_sink(
             )
             .await?
         }
-        None => crate::connection::ConnectionRegistry::new(""),
+        None => (crate::connection::ConnectionRegistry::new(""), Vec::new()),
     };
+
+    for (name, reason) in failures {
+        sink.emit(AgentEvent::AssistantText {
+            text: format!("skipped database '{name}': {reason}\n"),
+        })
+        .await;
+    }
 
     let system_prompt = {
         let base = registry.describe_context();
