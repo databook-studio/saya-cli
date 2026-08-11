@@ -206,6 +206,11 @@ impl DatabaseTools {
             .unwrap_or(0);
         let path = std::env::temp_dir().join(format!("saya-chart-{unique}.html"));
         crate::chart::write_html(&html, &path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
         let _ = crate::chart::open_file(&path);
         Ok(serde_json::json!({
             "path": path.display().to_string(),
@@ -351,7 +356,7 @@ impl DatabaseTools {
                     "required": ["sql", "chart_type"],
                     "additionalProperties": false
                 }),
-                requires_approval: false,
+                requires_approval: true,
             });
         }
         tools
@@ -385,4 +390,72 @@ fn validate_arguments(name: &str, arguments: &serde_json::Value) -> Result<(), S
         return Err("invalid tool arguments: sql must be a string".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use saya_agent::ToolExecutor;
+
+    #[test]
+    fn render_chart_requires_approval() {
+        let tools = DatabaseTools::definitions(true);
+        let chart_tool = tools
+            .iter()
+            .find(|tool| tool.name == "render_chart")
+            .expect("render_chart definition exists");
+        assert!(chart_tool.requires_approval);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn render_chart_creates_0600_permissions_file() {
+        use async_trait::async_trait;
+        use saya_connectors::DatabaseConnector;
+        use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
+
+        struct NonEmptyConnector;
+
+        #[async_trait]
+        impl DatabaseConnector for NonEmptyConnector {
+            fn dialect(&self) -> SqlDialect {
+                SqlDialect::DuckDb
+            }
+
+            async fn connect(&self) -> Result<(), ConnectionError> {
+                Ok(())
+            }
+
+            async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+                Ok(SchemaTree::default())
+            }
+
+            async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
+                Ok(QueryResult {
+                    columns: vec!["cat".into(), "val".into()],
+                    rows: vec![serde_json::json!(["A", 10])],
+                    row_count: 1,
+                    truncated: false,
+                    executed_sql: req.sql,
+                })
+            }
+        }
+
+        let tools = DatabaseTools::new(Some(Box::new(NonEmptyConnector)), 100, true);
+        let res = tools
+            .execute(
+                "render_chart",
+                serde_json::json!({"sql": "SELECT 1", "chart_type": "bar"}),
+            )
+            .await
+            .expect("render_chart should succeed");
+
+        let path_str = res["path"].as_str().expect("path in response");
+        let path = std::path::Path::new(path_str);
+        let meta = std::fs::metadata(path).expect("file should exist");
+
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_file(path);
+    }
 }
