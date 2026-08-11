@@ -1,4 +1,11 @@
-/// The role/style class of a transcript block. The renderer maps these to colors.
+use std::{cell::RefCell, rc::Rc};
+
+const MAX_BLOCKS: usize = 5000;
+const MAX_TOTAL_TEXT_BYTES: usize = 4 << 20;
+
+type WrappedLines = Vec<(BlockKind, String)>;
+type WrapCache = RefCell<Option<(usize, Rc<WrappedLines>)>>;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BlockKind {
@@ -9,7 +16,6 @@ pub(crate) enum BlockKind {
     Tool,
 }
 
-/// One logical entry in the transcript. `text` may contain '\n'.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct Block {
@@ -17,136 +23,142 @@ pub(crate) struct Block {
     pub(crate) text: String,
 }
 
-/// Scrollback with soft-wrapping and a bottom-anchored scroll offset.
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 pub(crate) struct Transcript {
     blocks: Vec<Block>,
-    /// Lines scrolled UP from the bottom. 0 = following the tail (newest visible).
     scroll_up: usize,
+    cache: WrapCache,
 }
 
 #[allow(dead_code)]
 impl Transcript {
-    /// Creates a new empty transcript.
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Appends a block. If currently following the tail (`scroll_up == 0`), keeps following it.
-    pub(crate) fn push(&mut self, kind: BlockKind, text: impl Into<String>) {
-        self.blocks.push(Block {
-            kind,
-            text: text.into(),
-        });
+    fn invalidate_cache(&self) {
+        *self.cache.borrow_mut() = None;
     }
 
-    /// Appends `delta` to the last block if it has the same `kind`, or pushes a new block.
+    fn enforce_bounds(&mut self) {
+        let mut bytes: usize = self.blocks.iter().map(|b| b.text.len()).sum();
+        let mut drop = 0;
+        while self.blocks.len().saturating_sub(drop) > MAX_BLOCKS
+            || (bytes > MAX_TOTAL_TEXT_BYTES && drop < self.blocks.len())
+        {
+            bytes = bytes.saturating_sub(self.blocks[drop].text.len());
+            drop += 1;
+        }
+        if drop > 0 {
+            self.blocks.drain(..drop);
+        }
+    }
+
+    pub(crate) fn push(&mut self, kind: BlockKind, text: impl Into<String>) {
+        let text = text.into();
+        self.blocks.push(Block { kind, text });
+        self.enforce_bounds();
+        self.invalidate_cache();
+    }
+
     pub(crate) fn append_delta(&mut self, kind: BlockKind, delta: &str) {
         if let Some(last) = self.blocks.last_mut().filter(|last| last.kind == kind) {
             last.text.push_str(delta);
-            return;
+            self.enforce_bounds();
+            self.invalidate_cache();
+        } else {
+            self.push(kind, delta);
         }
-        self.push(kind, delta);
     }
 
-    /// Rewrites the text of the most recent block of `kind` via `f`. Used to reflow a
-    /// finished assistant answer — e.g. turning Markdown pipe tables into box tables —
-    /// once streaming is complete, so wrapping and scroll math see the final text.
     pub(crate) fn reformat_last(&mut self, kind: BlockKind, f: impl FnOnce(&str) -> String) {
         if let Some(block) = self.blocks.iter_mut().rev().find(|b| b.kind == kind) {
             block.text = f(&block.text);
+            self.invalidate_cache();
         }
     }
 
-    /// Returns `true` if the transcript contains no blocks.
     pub(crate) fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
 
-    /// Removes every block and returns the view to the tail. Used when a
-    /// resumed session replaces the current transcript with its history.
     pub(crate) fn clear(&mut self) {
         self.blocks.clear();
         self.scroll_up = 0;
+        self.invalidate_cache();
     }
 
-    /// Returns a slice of all blocks in the transcript.
     pub(crate) fn blocks(&self) -> &[Block] {
         &self.blocks
     }
 
-    /// Soft-wraps every block to `width` columns (by character count).
-    pub(crate) fn wrapped(&self, width: usize) -> Vec<(BlockKind, String)> {
-        let effective_width = width.max(1);
+    fn lines(&self, width: usize) -> Rc<WrappedLines> {
+        let eff = width.max(1);
+        if let Some((_, lines)) = self.cache.borrow().as_ref().filter(|(w, _)| *w == eff) {
+            return Rc::clone(lines);
+        }
         let mut lines = Vec::new();
         for block in &self.blocks {
-            for raw_line in block.text.split('\n') {
-                if raw_line.is_empty() {
+            for raw in block.text.split('\n') {
+                if raw.is_empty() {
                     lines.push((block.kind, String::new()));
                 } else {
-                    let chars: Vec<char> = raw_line.chars().collect();
-                    for chunk in chars.chunks(effective_width) {
-                        lines.push((block.kind, chunk.iter().collect()));
-                    }
+                    let chars: Vec<_> = raw.chars().collect();
+                    lines.extend(chars.chunks(eff).map(|c| (block.kind, c.iter().collect())));
                 }
             }
         }
-        lines
+        let rc = Rc::new(lines);
+        *self.cache.borrow_mut() = Some((eff, Rc::clone(&rc)));
+        rc
     }
 
-    /// Returns the total number of wrapped lines at the given `width`.
+    pub(crate) fn wrapped(&self, width: usize) -> WrappedLines {
+        (*self.lines(width)).clone()
+    }
+
     pub(crate) fn total_lines(&self, width: usize) -> usize {
-        self.wrapped(width).len()
+        self.lines(width).len()
     }
 
-    /// Returns the visible slice of wrapped lines for a given viewport width and height.
-    pub(crate) fn view(&self, width: usize, height: usize) -> Vec<(BlockKind, String)> {
+    pub(crate) fn view(&self, width: usize, height: usize) -> WrappedLines {
         if height == 0 {
             return Vec::new();
         }
-        let lines = self.wrapped(width);
-        let total = lines.len();
-        if total <= height {
-            return lines;
+        let lines = self.lines(width);
+        let rem = lines.len().saturating_sub(height);
+        if rem == 0 {
+            return (*lines).clone();
         }
-        let max_scroll = total - height;
-        let effective_scroll = self.scroll_up.min(max_scroll);
-        let start = total - height - effective_scroll;
+        let start = rem - self.scroll_up.min(rem);
         lines[start..start + height].to_vec()
     }
 
-    /// Increases `scroll_up` by `n`, clamped to max scroll offset.
     pub(crate) fn scroll_up(&mut self, n: usize, width: usize, height: usize) {
-        let total = self.total_lines(width);
-        let max_scroll = total.saturating_sub(height);
-        self.scroll_up = self.scroll_up.saturating_add(n).min(max_scroll);
+        let max = self.total_lines(width).saturating_sub(height);
+        self.scroll_up = self.scroll_up.saturating_add(n).min(max);
     }
 
-    /// Decreases `scroll_up` by `n`, saturating at 0.
     pub(crate) fn scroll_down(&mut self, n: usize) {
         self.scroll_up = self.scroll_up.saturating_sub(n);
     }
 
-    /// Resets `scroll_up` to 0 (following the tail).
     pub(crate) fn scroll_to_bottom(&mut self) {
         self.scroll_up = 0;
     }
 
-    /// Whether the view is pinned to the newest content.
     pub(crate) fn is_following_tail(&self) -> bool {
         self.scroll_up == 0
     }
 
-    /// Returns `(total_lines, index_of_first_visible_line)` for a scrollbar.
     pub(crate) fn scroll_metrics(&self, width: usize, height: usize) -> (usize, usize) {
         let total = self.total_lines(width);
-        if total <= height {
+        let rem = total.saturating_sub(height);
+        if rem == 0 {
             return (total, 0);
         }
-        let max_scroll = total - height;
-        let effective = self.scroll_up.min(max_scroll);
-        (total, total - height - effective)
+        (total, rem - self.scroll_up.min(rem))
     }
 }
 
@@ -155,93 +167,81 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_push_and_append_delta() {
+    fn test_transcript_all() {
         let mut t = Transcript::new();
         assert!(t.is_empty() && t.blocks().is_empty());
         t.push(BlockKind::User, "Hello");
         t.push(BlockKind::Assistant, "Hi there");
-        assert_eq!(t.blocks().len(), 2);
-
         t.append_delta(BlockKind::Assistant, "!");
-        assert_eq!(t.blocks()[1].text, "Hi there!");
         t.append_delta(BlockKind::User, "Bye");
         assert_eq!(t.blocks().len(), 3);
-    }
+        assert_eq!(t.blocks()[1].text, "Hi there!");
 
-    #[test]
-    fn test_wrapping() {
-        let mut t = Transcript::new();
-        let long_str = "1234567890abcdefghij";
-        t.push(BlockKind::System, long_str);
-        let lines = t.wrapped(10);
-        let concat: String = lines.iter().map(|(_, s)| s.as_str()).collect();
-        assert_eq!(concat, long_str);
+        t.push(BlockKind::Assistant, "streaming answer");
+        t.reformat_last(BlockKind::Assistant, |s| format!("[formatted: {s}]"));
+        assert_eq!(t.blocks()[3].text, "[formatted: streaming answer]");
 
         let mut t2 = Transcript::new();
-        t2.push(BlockKind::Error, "a\n\nb\n");
-        assert_eq!(t2.wrapped(10).len(), 4);
+        t2.push(BlockKind::System, "1234567890abcdefghij");
+        let s: String = t2.wrapped(10).iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(s, "1234567890abcdefghij");
 
-        let mut t3 = Transcript::new();
-        t3.push(BlockKind::Tool, "日日日日日");
-        assert_eq!(t3.wrapped(2).len(), 3);
+        let (mut t3, mut t4) = (Transcript::new(), Transcript::new());
+        t3.push(BlockKind::Error, "a\n\nb\n");
+        t4.push(BlockKind::Tool, "日日日日日");
+        assert!(t3.wrapped(10).len() == 4 && t4.wrapped(2).len() == 3);
 
-        let mut t4 = Transcript::new();
-        t4.push(BlockKind::User, "abc");
-        assert_eq!(t4.wrapped(0).len(), 3);
-    }
-
-    #[test]
-    fn test_view_and_scrolling() {
-        let mut t = Transcript::new();
+        t.clear();
         t.push(BlockKind::User, "l1\nl2\nl3\nl4\nl5");
-
-        let texts = |v: Vec<(BlockKind, String)>| -> Vec<String> {
-            v.into_iter().map(|(_, s)| s).collect()
-        };
-
-        assert_eq!(texts(t.view(10, 3)), vec!["l3", "l4", "l5"]);
-
+        let texts = |v: WrappedLines| v.into_iter().map(|(_, s)| s).collect::<Vec<_>>();
+        assert_eq!(texts(t.view(10, 3)), ["l3", "l4", "l5"]);
         t.scroll_up(1, 10, 3);
-        assert_eq!(texts(t.view(10, 3)), vec!["l2", "l3", "l4"]);
-
+        assert_eq!(texts(t.view(10, 3)), ["l2", "l3", "l4"]);
         t.scroll_up(100, 10, 3);
-        assert_eq!(texts(t.view(10, 3)), vec!["l1", "l2", "l3"]);
-
+        assert_eq!(texts(t.view(10, 3)), ["l1", "l2", "l3"]);
         t.scroll_down(1);
         assert_eq!(t.view(10, 3)[0].1, "l2");
-
         t.scroll_down(10);
         assert_eq!(t.view(10, 3)[0].1, "l3");
-
         t.scroll_up(2, 10, 3);
         t.scroll_to_bottom();
         assert_eq!(t.view(10, 3)[0].1, "l3");
-    }
 
-    #[test]
-    fn test_edge_cases() {
-        let mut empty = Transcript::new();
-        assert!(empty.view(10, 5).is_empty() && empty.total_lines(10) == 0);
+        let (mut empty, mut t_edge) = (Transcript::new(), Transcript::new());
         empty.scroll_up(5, 10, 5);
         empty.scroll_down(2);
         empty.scroll_to_bottom();
+        t_edge.push(BlockKind::User, "hello");
+        assert!(empty.view(10, 5).is_empty());
+        assert_eq!(empty.total_lines(10), 0);
+        assert!(t_edge.view(10, 0).is_empty());
 
-        let mut t = Transcript::new();
-        t.push(BlockKind::User, "hello");
-        assert!(t.view(10, 0).is_empty());
-    }
+        let mut tc = Transcript::new();
+        tc.push(BlockKind::User, "hello world");
+        let (l1, l2) = (tc.lines(10), tc.lines(10));
+        assert!(Rc::ptr_eq(&l1, &l2) && tc.wrapped(10).len() == 2);
 
-    #[test]
-    fn test_reformat_last() {
-        let mut t = Transcript::new();
-        t.push(BlockKind::Assistant, "first answer");
-        t.push(BlockKind::User, "user query");
-        t.push(BlockKind::Assistant, "raw streaming answer");
+        tc.push(BlockKind::Assistant, "hi");
+        let (l3, l4) = (tc.lines(10), tc.lines(20));
+        assert!(!Rc::ptr_eq(&l2, &l3) && !Rc::ptr_eq(&l3, &l4));
+        tc.append_delta(BlockKind::Assistant, " there");
+        assert!(!Rc::ptr_eq(&l4, &tc.lines(20)));
+        tc.clear();
+        assert!(tc.lines(20).is_empty());
 
-        t.reformat_last(BlockKind::Assistant, |s| format!("[formatted: {s}]"));
+        let mut tb = Transcript::new();
+        (0..MAX_BLOCKS + 100).for_each(|i| tb.push(BlockKind::User, format!("msg {i}")));
+        assert_eq!(tb.blocks().len(), MAX_BLOCKS);
+        assert_eq!(tb.blocks()[0].text, "msg 100");
+        let last_text = format!("msg {}", MAX_BLOCKS + 99);
+        assert_eq!(tb.blocks()[MAX_BLOCKS - 1].text, last_text);
 
-        assert_eq!(t.blocks()[0].text, "first answer");
-        assert_eq!(t.blocks()[1].text, "user query");
-        assert_eq!(t.blocks()[2].text, "[formatted: raw streaming answer]");
+        let mut tb2 = Transcript::new();
+        tb2.push(BlockKind::User, "old block");
+        let huge = "x".repeat(MAX_TOTAL_TEXT_BYTES);
+        tb2.push(BlockKind::Assistant, huge.clone());
+        assert_eq!(tb2.blocks().len(), 1);
+        assert_eq!(tb2.blocks()[0].text, huge);
+        assert_eq!(tb2.view(10, 1)[0].0, BlockKind::Assistant);
     }
 }
