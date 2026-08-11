@@ -268,6 +268,39 @@ async fn test_sqlite_query_timeout_interrupts_and_cleans_up_connection() {
 }
 
 #[tokio::test]
+async fn test_sqlite_finite_query_succeeds_under_normal_timeout() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("finite_timeout_test.db");
+    create_test_fixture(&path).await;
+
+    let opts = ConnectorOptions::default();
+    let connector = SqliteConnector::open(&path, true, opts)
+        .await
+        .expect("Opening fixture db should succeed");
+
+    let req = QueryRequest {
+        sql: "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 5000) SELECT count(*) AS n FROM c".to_string(),
+        max_rows: 10,
+    };
+
+    let res = connector
+        .execute(req)
+        .await
+        .expect("Finite query exceeding 1000 VM instructions must succeed under normal timeout");
+
+    assert_eq!(res.row_count, 1);
+    assert!(!res.truncated);
+    let row = match &res.rows[0] {
+        Value::Array(arr) => arr,
+        other => panic!("Row is not JSON Array: {other:?}"),
+    };
+    assert_eq!(row[0], Value::from(5000));
+
+    drop(connector);
+    drop(temp_dir);
+}
+
+#[tokio::test]
 async fn test_sqlite_schema_nullability_primary_keys() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let path = temp_dir.path().join("pk_nullability.db");

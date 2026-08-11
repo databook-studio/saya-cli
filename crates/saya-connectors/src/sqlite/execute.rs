@@ -23,7 +23,7 @@ pub(crate) async fn query(
 
     {
         let mut handle = conn.lock_handle().await.map_err(errors::query)?;
-        handle.set_progress_handler(1000, move || Instant::now() >= deadline);
+        handle.set_progress_handler(1000, move || Instant::now() < deadline);
     }
 
     let stream_res = fetch_rows(&mut conn, &sql, request.max_rows).await;
