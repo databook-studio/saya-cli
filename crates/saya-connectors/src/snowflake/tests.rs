@@ -135,6 +135,7 @@ fn connector(auth: Auth) -> SnowflakeConnector {
         ConnectorOptions {
             query_timeout_seconds: 2,
             max_connections: 1,
+            ..Default::default()
         },
     )
     .unwrap()

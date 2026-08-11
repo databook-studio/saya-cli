@@ -217,6 +217,7 @@ async fn test_sqlite_query_timeout_interrupts_and_cleans_up_connection() {
     let opts = ConnectorOptions {
         query_timeout_seconds: 1,
         max_connections: 1,
+        ..Default::default()
     };
     let connector = SqliteConnector::open(&path, true, opts)
         .await

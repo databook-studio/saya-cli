@@ -144,6 +144,7 @@ pub(super) async fn build(
     let resolver = runtime.secret_resolver();
     let settings = ConnectorOptions {
         query_timeout_seconds: runtime.resolved.query_timeout_seconds,
+        read_only: runtime.resolved.read_only,
         ..Default::default()
     };
     build_connector_with_prompt(profile, &resolver, settings, can_prompt).await

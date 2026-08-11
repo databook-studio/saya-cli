@@ -16,6 +16,7 @@ mod snowflake_factory;
 pub struct ConnectorOptions {
     pub query_timeout_seconds: u64,
     pub max_connections: u32,
+    pub read_only: bool,
 }
 
 impl Default for ConnectorOptions {
@@ -23,6 +24,7 @@ impl Default for ConnectorOptions {
         Self {
             query_timeout_seconds: 60,
             max_connections: 4,
+            read_only: true,
         }
     }
 }
@@ -59,6 +61,7 @@ pub async fn build_connector_with_prompt(
                 .database(database)
                 .username(user)
                 .ssl_mode(ssl_mode.map(ssl).unwrap_or(PgSslMode::Prefer));
+            // Session read-only is applied once in PostgresConnector::from_options.
             if let Some(reference) = password {
                 let secret = resolver.resolve(reference).map_err(config_error)?;
                 options = options.password(secret.expose());
@@ -135,4 +138,15 @@ fn ssl(mode: PostgresSslMode) -> PgSslMode {
 
 fn config_error(error: ConfigError) -> ConnectionError {
     ConnectionError::InvalidConfiguration(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connector_options_default_is_read_only() {
+        let opts = ConnectorOptions::default();
+        assert!(opts.read_only);
+    }
 }

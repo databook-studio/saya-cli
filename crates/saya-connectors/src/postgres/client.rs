@@ -17,7 +17,10 @@ pub struct PostgresConnector {
 }
 
 impl PostgresConnector {
-    pub fn from_options(options: PgConnectOptions, settings: ConnectorOptions) -> Self {
+    pub fn from_options(mut options: PgConnectOptions, settings: ConnectorOptions) -> Self {
+        if settings.read_only {
+            options = options.options([("default_transaction_read_only", "on")]);
+        }
         let query_timeout = Duration::from_secs(settings.query_timeout_seconds.max(1));
         let pool = PgPoolOptions::new()
             .max_connections(settings.max_connections.max(1))
