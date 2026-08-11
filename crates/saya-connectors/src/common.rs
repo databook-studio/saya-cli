@@ -88,4 +88,80 @@ mod tests {
         let obj = Value::Object(map);
         assert_eq!(value_bytes(&obj), 3 + 3);
     }
+
+    #[test]
+    fn test_cap_cell_boundary_exact_and_multibyte() {
+        // String at EXACTLY MAX_CELL_BYTES (1 MiB) must remain unchanged
+        let exact_ascii = "x".repeat(MAX_CELL_BYTES);
+        let res_exact = cap_cell(Value::String(exact_ascii.clone()));
+        if let Value::String(s) = res_exact {
+            assert_eq!(s.len(), MAX_CELL_BYTES);
+            assert_eq!(s, exact_ascii);
+            assert!(!s.contains("…[truncated"));
+        } else {
+            panic!("Expected Value::String");
+        }
+
+        // String just over MAX_CELL_BYTES by 1 byte must be truncated
+        let over_ascii = "x".repeat(MAX_CELL_BYTES + 1);
+        let res_over = cap_cell(Value::String(over_ascii));
+        if let Value::String(s) = res_over {
+            assert!(s.starts_with(&"x".repeat(MAX_CELL_BYTES)));
+            assert!(s.contains("…[truncated 1 bytes]"));
+        } else {
+            panic!("Expected Value::String");
+        }
+
+        // Multi-byte char crossing MAX_CELL_BYTES boundary:
+        // (MAX_CELL_BYTES - 1) ASCII bytes + 4-byte '🦀' (MAX_CELL_BYTES + 3 total)
+        let mut mb_str = "a".repeat(MAX_CELL_BYTES - 1);
+        mb_str.push('🦀');
+        let res_mb = cap_cell(Value::String(mb_str));
+        if let Value::String(s) = res_mb {
+            assert!(s.starts_with(&"a".repeat(MAX_CELL_BYTES - 1)));
+            assert!(
+                !s.contains('🦀'),
+                "Multi-byte char straddling boundary must be safely truncated"
+            );
+            assert!(s.contains("…[truncated 4 bytes]"));
+        } else {
+            panic!("Expected Value::String");
+        }
+    }
+
+    #[test]
+    fn test_result_budget_helper_truncation() {
+        let mut result_bytes = 0;
+        let mut truncated = false;
+        let mut row_count = 0;
+
+        let cell_str = "r".repeat(500_000);
+        let cell_val = Value::String(cell_str);
+
+        while !truncated {
+            let row = Value::Array(vec![cell_val.clone(), Value::from(row_count)]);
+            let row_bytes = value_bytes(&row);
+            result_bytes += row_bytes;
+            row_count += 1;
+
+            if result_bytes > MAX_RESULT_BYTES {
+                truncated = true;
+            }
+        }
+
+        assert!(
+            truncated,
+            "Bounded accumulation must report truncated once MAX_RESULT_BYTES is crossed"
+        );
+        assert!(
+            result_bytes > MAX_RESULT_BYTES,
+            "Total bytes ({result_bytes}) must exceed MAX_RESULT_BYTES ({MAX_RESULT_BYTES})"
+        );
+
+        let max_allowed = MAX_RESULT_BYTES + 500_000 + 8;
+        assert!(
+            result_bytes <= max_allowed,
+            "Accumulation must stop immediately after crossing budget, got {result_bytes} vs max allowed {max_allowed}"
+        );
+    }
 }

@@ -244,4 +244,72 @@ mod tests {
         assert_eq!(tb2.blocks()[0].text, huge);
         assert_eq!(tb2.view(10, 1)[0].0, BlockKind::Assistant);
     }
+
+    #[test]
+    fn test_transcript_max_blocks_large_input_bound() {
+        let mut t = Transcript::new();
+        let total_pushed = MAX_BLOCKS + 5000;
+        for i in 0..total_pushed {
+            t.push(BlockKind::User, format!("block {i}"));
+        }
+
+        assert!(
+            t.blocks().len() <= MAX_BLOCKS,
+            "blocks length must be clamped to <= MAX_BLOCKS"
+        );
+        assert_eq!(t.blocks().len(), MAX_BLOCKS);
+
+        let expected_first = format!("block {}", total_pushed - MAX_BLOCKS);
+        let expected_last = format!("block {}", total_pushed - 1);
+
+        assert_eq!(t.blocks().first().unwrap().text, expected_first);
+        assert_eq!(t.blocks().last().unwrap().text, expected_last);
+
+        let view_lines = t.view(80, 20);
+        assert_eq!(
+            view_lines.len(),
+            20,
+            "view(width, height) must return exactly height lines after stress"
+        );
+
+        let wrapped = t.wrapped(80);
+        assert_eq!(
+            wrapped.len(),
+            t.total_lines(80),
+            "wrapped length must match total_lines length"
+        );
+        assert_eq!(wrapped.len(), MAX_BLOCKS);
+    }
+
+    #[test]
+    fn test_transcript_total_bytes_eviction() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::User, "initial early message");
+
+        let chunk_size = 1_500_000;
+        let large_1 = "a".repeat(chunk_size);
+        let large_2 = "b".repeat(chunk_size);
+        let large_3 = "c".repeat(chunk_size);
+
+        t.push(BlockKind::Assistant, large_1);
+        t.push(BlockKind::Assistant, large_2);
+        t.push(BlockKind::Assistant, large_3.clone());
+
+        let total_bytes: usize = t.blocks().iter().map(|b| b.text.len()).sum();
+        assert!(
+            total_bytes <= MAX_TOTAL_TEXT_BYTES,
+            "Total text bytes ({total_bytes}) must be <= MAX_TOTAL_TEXT_BYTES ({MAX_TOTAL_TEXT_BYTES})"
+        );
+
+        assert_ne!(
+            t.blocks().first().unwrap().text,
+            "initial early message",
+            "Initial early message must be evicted"
+        );
+        assert_eq!(
+            t.blocks().last().unwrap().text,
+            large_3,
+            "Newest pushed block must be retained"
+        );
+    }
 }
