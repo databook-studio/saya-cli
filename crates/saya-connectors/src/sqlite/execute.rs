@@ -61,6 +61,8 @@ async fn fetch_rows(
     let mut stream = sqlx::query(sql).fetch(&mut **conn);
     let mut columns = Vec::new();
     let mut rows = Vec::new();
+    let mut result_bytes = 0;
+    let mut truncated_by_bytes = false;
 
     while let Some(row) = stream.try_next().await? {
         if columns.is_empty() {
@@ -70,19 +72,26 @@ async fn fetch_rows(
                 .map(|column| column.name().to_string())
                 .collect();
         }
-        let row_values = (0..row.len())
-            .map(|index| decode::json_value(&row, index))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut row_values = Vec::with_capacity(row.len());
+        for index in 0..row.len() {
+            let cell = decode::json_value(&row, index)?;
+            let cell = crate::common::cap_cell(cell);
+            result_bytes += crate::common::value_bytes(&cell);
+            row_values.push(cell);
+        }
         rows.push(Value::Array(row_values));
 
         if rows.len() > max_rows {
             break;
         }
+        if result_bytes > crate::common::MAX_RESULT_BYTES {
+            truncated_by_bytes = true;
+            break;
+        }
     }
 
-    let collected = rows.len();
-    let truncated = collected > max_rows;
-    if truncated {
+    let truncated = rows.len() > max_rows || truncated_by_bytes;
+    if rows.len() > max_rows {
         rows.pop();
     }
 

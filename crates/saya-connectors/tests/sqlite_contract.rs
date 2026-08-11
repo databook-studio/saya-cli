@@ -512,3 +512,75 @@ async fn test_sqlite_schema_nullability_ddl_false_positive() {
     drop(connector);
     drop(temp_dir);
 }
+
+#[tokio::test]
+async fn test_sqlite_byte_budget_truncates_large_cell() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("large_cell.db");
+
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let pool = SqlitePool::connect_with(options).await.unwrap();
+
+    sqlx::query("CREATE TABLE big_data (id INTEGER PRIMARY KEY, content TEXT);")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let large_string = "a".repeat(1_500_000);
+    sqlx::query("INSERT INTO big_data (id, content) VALUES (1, ?);")
+        .bind(&large_string)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    pool.close().await;
+
+    let opts = ConnectorOptions::default();
+    let connector = SqliteConnector::open(&path, true, opts)
+        .await
+        .expect("Opening fixture db should succeed");
+
+    let req = QueryRequest {
+        sql: "SELECT id, content FROM big_data".to_string(),
+        max_rows: 10,
+    };
+    let res = connector
+        .execute(req)
+        .await
+        .expect("execute() should succeed");
+
+    assert_eq!(res.row_count, 1);
+    assert!(
+        !res.truncated,
+        "Single row under MAX_RESULT_BYTES should not truncate query"
+    );
+
+    let row = match &res.rows[0] {
+        Value::Array(arr) => arr,
+        other => panic!("Row is not JSON Array: {other:?}"),
+    };
+
+    let content_val = match &row[1] {
+        Value::String(s) => s,
+        other => panic!("Content is not JSON String: {other:?}"),
+    };
+
+    assert!(
+        content_val.len() < large_string.len(),
+        "Cell string should be truncated"
+    );
+    assert!(
+        content_val.contains("…[truncated "),
+        "Truncated cell must contain truncation marker"
+    );
+    assert!(
+        content_val.len() <= 1_048_576 + 50,
+        "Cell size must be capped near MAX_CELL_BYTES + marker length, got {}",
+        content_val.len()
+    );
+
+    drop(connector);
+    drop(temp_dir);
+}
