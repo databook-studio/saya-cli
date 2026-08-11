@@ -385,20 +385,20 @@ fn definitions_preserve_the_read_only_and_approval_contract() {
 
     let schema = tool("schema_discovery");
     assert!(schema.read_only);
-    assert!(!schema.requires_approval);
+    assert!(!schema.effect.requires_approval);
     assert!(schema.parameters["properties"]["connection"].is_object());
     assert!(schema.parameters.get("required").is_none());
 
     let single = tool("bounded_sql_query");
     assert!(single.read_only);
-    assert!(single.requires_approval);
+    assert!(single.effect.requires_approval);
     assert_eq!(single.parameters["required"], serde_json::json!(["sql"]));
     assert!(single.parameters["properties"]["connection"].is_object());
     assert!(single.parameters["properties"]["sql"].is_object());
 
     let all = tool("bounded_sql_query_all");
     assert!(all.read_only);
-    assert!(all.requires_approval);
+    assert!(all.effect.requires_approval);
     assert_eq!(all.parameters["required"], serde_json::json!(["sql"]));
     assert!(all.parameters["properties"]["sql"].is_object());
     assert!(all.parameters["properties"].get("connection").is_none());

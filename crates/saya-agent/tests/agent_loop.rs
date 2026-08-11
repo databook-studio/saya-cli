@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
     ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolExecutor, run_agent,
+    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolEffect, ToolExecutor, run_agent,
     run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
@@ -74,21 +74,33 @@ fn definitions() -> Vec<ToolDefinition> {
             description: "read-only query".into(),
             read_only: true,
             parameters: serde_json::json!({"type":"object"}),
-            requires_approval: true,
+            effect: ToolEffect {
+                database_data: true,
+                external_side_effect: false,
+                requires_approval: true,
+            },
         },
         ToolDefinition {
             name: "bounded_sql_query_all".into(),
             description: "fan-out read-only query".into(),
             read_only: true,
             parameters: serde_json::json!({"type":"object"}),
-            requires_approval: true,
+            effect: ToolEffect {
+                database_data: true,
+                external_side_effect: false,
+                requires_approval: true,
+            },
         },
         ToolDefinition {
             name: "schema_discovery".into(),
             description: "schema discovery".into(),
             read_only: true,
             parameters: serde_json::json!({"type":"object"}),
-            requires_approval: false,
+            effect: ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+            },
         },
     ]
 }

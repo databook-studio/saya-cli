@@ -72,16 +72,12 @@ pub async fn run_agent_with_sink(
                 .iter()
                 .find(|tool| tool.name == call.name)
                 .expect("validated");
-            let approved = !definition.requires_approval
+            let approved = !definition.effect.requires_approval
                 || approval.approve(definition, &call.arguments).await;
             let (result, summary) = if approved {
                 check_cancelled(&cancellation)?;
                 // Indicates a database-row-producing query tool ran.
-                // A typed tool-effect model (planned) will supersede this string match.
-                if matches!(
-                    call.name.as_str(),
-                    "bounded_sql_query" | "bounded_sql_query_all"
-                ) {
+                if definition.effect.database_data {
                     used_bounded_sql_query = true;
                 }
                 tools::execute(tools, &call.name, call.arguments).await

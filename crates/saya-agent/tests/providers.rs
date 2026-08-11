@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use saya_agent::{
     CancellationToken, ChatMessage, ChatProvider, ChatRequest, OllamaProvider,
-    OpenAiCompatibleProvider, ProviderError, ProviderSettings, ToolDefinition,
+    OpenAiCompatibleProvider, ProviderError, ProviderSettings, ToolDefinition, ToolEffect,
 };
 use std::{
     io::{Read, Write},
@@ -100,7 +100,11 @@ fn request() -> ChatRequest {
             description: "schema".into(),
             read_only: true,
             parameters: serde_json::json!({"type":"object"}),
-            requires_approval: false,
+            effect: ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+            },
         }],
     }
 }

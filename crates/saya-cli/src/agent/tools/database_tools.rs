@@ -1,5 +1,5 @@
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use saya_agent::ToolDefinition;
+use saya_agent::{ToolDefinition, ToolEffect};
 use saya_store::SqliteStateStore;
 use std::time::Duration;
 
@@ -289,7 +289,11 @@ impl DatabaseTools {
                 },
                 "additionalProperties": false
             }),
-            requires_approval: false,
+            effect: ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+            },
         }];
         if allow_query_data {
             tools.push(ToolDefinition {
@@ -308,7 +312,11 @@ impl DatabaseTools {
                     "required": ["sql"],
                     "additionalProperties": false
                 }),
-                requires_approval: true,
+                effect: ToolEffect {
+                    database_data: true,
+                    external_side_effect: false,
+                    requires_approval: true,
+                },
             });
             tools.push(ToolDefinition {
                 name: "bounded_sql_query_all".into(),
@@ -330,7 +338,11 @@ impl DatabaseTools {
                     "required": ["sql"],
                     "additionalProperties": false
                 }),
-                requires_approval: true,
+                effect: ToolEffect {
+                    database_data: true,
+                    external_side_effect: false,
+                    requires_approval: true,
+                },
             });
             tools.push(ToolDefinition {
                 name: "render_chart".into(),
@@ -356,7 +368,11 @@ impl DatabaseTools {
                     "required": ["sql", "chart_type"],
                     "additionalProperties": false
                 }),
-                requires_approval: true,
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: true,
+                    requires_approval: true,
+                },
             });
         }
         tools
@@ -404,7 +420,9 @@ mod tests {
             .iter()
             .find(|tool| tool.name == "render_chart")
             .expect("render_chart definition exists");
-        assert!(chart_tool.requires_approval);
+        assert!(chart_tool.effect.requires_approval);
+        assert!(chart_tool.effect.external_side_effect);
+        assert!(!chart_tool.effect.database_data);
     }
 
     #[cfg(unix)]

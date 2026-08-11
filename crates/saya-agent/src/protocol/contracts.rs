@@ -113,13 +113,20 @@ pub enum ProviderError {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolEffect {
+    pub database_data: bool,
+    pub external_side_effect: bool,
+    pub requires_approval: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub read_only: bool,
     pub parameters: serde_json::Value,
-    pub requires_approval: bool,
+    pub effect: ToolEffect,
 }
 
 #[async_trait]
