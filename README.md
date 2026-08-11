@@ -291,9 +291,13 @@ navigates between all connected databases by passing an optional `connection`
 argument to its schema and query tools; the primary database is the default.
 Fully offline agent use and release signing are not implemented; provider
 execution is Ollama / OpenAI-compatible only.
-The database role must itself be read-only, and DuckDB file paths must have
-least-privilege filesystem permissions: SQL AST checks cannot prove that an
-arbitrary database function is free of side effects.
+saya also enforces read-only at the **database session level** (PostgreSQL
+`default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
+`query_only`, and a read-only DuckDB open) on top of the AST checks. Because AST
+checks cannot prove that an arbitrary database function is side-effect free — and
+Snowflake has no equivalent session switch — connect with a least-privilege,
+read-only database role and give DuckDB/SQLite file paths least-privilege
+filesystem permissions.
 Resolved config secrets, provider headers, and raw query rows are structurally
 excluded from session files. Known credential-shaped text is redacted, but
 redaction cannot identify every arbitrary secret—never paste credentials into
