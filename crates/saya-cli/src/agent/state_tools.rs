@@ -24,7 +24,8 @@ fn compact_schema(schema: &SchemaTree) -> serde_json::Value {
                     .map(|column| format!("{}:{}", column.name, column.data_type))
                     .collect::<Vec<_>>()
                     .join(", ");
-                tables.insert(table.name.clone(), serde_json::Value::String(columns));
+                let key = format!("{}.{}.{}", database.name, schema_ns.name, table.name);
+                tables.insert(key, serde_json::Value::String(columns));
             }
         }
     }
