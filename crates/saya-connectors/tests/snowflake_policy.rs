@@ -28,3 +28,14 @@ fn snowflake_policy_denies_writes_stages_and_system_functions() {
         assert!(prepare_snowflake_sql(sql, 3).is_err(), "{sql}");
     }
 }
+
+#[test]
+fn snowflake_policy_denies_staged_file_functions() {
+    for sql in [
+        "SELECT GET_PRESIGNED_URL(@stage, 'secret.csv')",
+        "SELECT BUILD_SCOPED_FILE_URL(@stage, 'secret.csv')",
+        "SELECT * FROM DIRECTORY(@stage)",
+    ] {
+        assert!(prepare_snowflake_sql(sql, 10).is_err(), "must reject {sql}");
+    }
+}

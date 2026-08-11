@@ -25,13 +25,13 @@ const DUCKDB_DENIED_FUNCTIONS: &[&str] = &[
     "read_text",
     "sqlite_scan",
     "glob",
-    "get_presigned_url",
-    "build_scoped_file_url",
-    "directory",
     "metadata",
 ];
 
 const SQLITE_DENIED_FUNCTIONS: &[&str] = &["load_extension", "readfile", "writefile"];
+
+const SNOWFLAKE_DENIED_FUNCTIONS: &[&str] =
+    &["get_presigned_url", "build_scoped_file_url", "directory"];
 
 const SNOWFLAKE_DENIED_PREFIXES: &[&str] = &["@", "system$"];
 
@@ -56,7 +56,7 @@ const SQLITE_POLICY: BackendPolicy = BackendPolicy {
 };
 
 const SNOWFLAKE_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: &[],
+    denied_functions: SNOWFLAKE_DENIED_FUNCTIONS,
     denied_prefixes: SNOWFLAKE_DENIED_PREFIXES,
 };
 
@@ -220,6 +220,23 @@ mod tests {
         assert!(prepare_snowflake_sql("SELECT * FROM @stage", 10).is_err());
 
         assert!(prepare_postgres_sql("SELECT system$type('x')", 10).is_ok());
+    }
+
+    #[test]
+    fn test_snowflake_denied_functions() {
+        assert!(
+            prepare_snowflake_sql("SELECT GET_PRESIGNED_URL(@stage, 'secret.csv')", 10).is_err()
+        );
+        assert!(
+            prepare_snowflake_sql("SELECT BUILD_SCOPED_FILE_URL(@stage, 'secret.csv')", 10)
+                .is_err()
+        );
+        assert!(prepare_snowflake_sql("SELECT * FROM DIRECTORY(@stage)", 10).is_err());
+
+        assert!(prepare_duckdb_sql("SELECT * FROM read_csv('x')", 10).is_err());
+        assert!(
+            prepare_postgres_sql("SELECT GET_PRESIGNED_URL('stage', 'secret.csv')", 10).is_ok()
+        );
     }
 
     #[test]
