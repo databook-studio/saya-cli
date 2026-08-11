@@ -87,6 +87,21 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+fn escape_json_for_script(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            '&' => out.push_str("\\u0026"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Heuristic default when the caller doesn't specify how to chart `result`.
 #[allow(dead_code)]
 pub(crate) fn suggest_spec(result: &QueryResult) -> ChartSpec {
@@ -307,6 +322,7 @@ pub(crate) fn render_html(result: &QueryResult, spec: &ChartSpec) -> Result<Stri
 
     let config_json = serde_json::to_string(&config)
         .map_err(|e| format!("failed to serialize chart config: {e}"))?;
+    let escaped_config_json = escape_json_for_script(&config_json);
 
     let inlined_chartjs = include_str!("assets/chart.umd.min.js");
     let doc_title = spec.title.as_deref().unwrap_or("saya chart");
@@ -319,7 +335,8 @@ pub(crate) fn render_html(result: &QueryResult, spec: &ChartSpec) -> Result<Stri
         #wrap{{box-sizing:border-box;height:100%;padding:24px}}</style>\n\
         <script>{inlined_chartjs}</script></head>\n\
         <body><div id=\"wrap\"><canvas id=\"c\"></canvas></div>\n\
-        <script>const CONFIG={config_json};new Chart(document.getElementById('c').getContext('2d'),CONFIG);</script>\n\
+        <script id=\"saya-chart-config\" type=\"application/json\">{escaped_config_json}</script>\n\
+        <script>const CONFIG=JSON.parse(document.getElementById('saya-chart-config').textContent);new Chart(document.getElementById('c').getContext('2d'),CONFIG);</script>\n\
         </body></html>"
     );
 
@@ -499,5 +516,36 @@ mod chart_gen_tests {
             executed_sql: "SELECT length, AVG(rate) FROM film GROUP BY 1".to_string(),
         };
         assert_eq!(suggest_spec(&result).kind, ChartKind::Scatter);
+    }
+
+    #[test]
+    fn test_render_html_script_injection_prevention() {
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "val".to_string()],
+            rows: vec![
+                json!(["</script><img src=x onerror=alert(1)>", 10]),
+                json!(["</SCRIPT>", 20]),
+            ],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, val FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["val".to_string()],
+            title: None,
+        };
+        let html = render_html(&result, &spec).unwrap();
+
+        assert!(html.contains("id=\"saya-chart-config\""));
+        assert!(html.contains("type=\"application/json\""));
+        assert!(html.contains("JSON.parse"));
+
+        assert!(!html.contains("</script><img"));
+        assert!(!html.contains("</SCRIPT>"));
+
+        assert!(html.contains("\\u003c/script"));
+        assert!(html.contains("\\u003c/SCRIPT"));
     }
 }
