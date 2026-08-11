@@ -14,6 +14,7 @@ mod sqlite_support;
 mod state_contracts;
 
 pub use filesystem::FsSessionStore;
+pub use redaction::redact;
 pub use sqlite::SqliteStateStore;
 pub use sqlite_support::state_sidecar_path;
 pub use state_contracts::{
