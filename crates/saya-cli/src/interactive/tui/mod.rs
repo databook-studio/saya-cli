@@ -13,6 +13,7 @@ mod atref;
 mod clipboard;
 mod complete;
 mod dispatch;
+mod dispatch_actions;
 mod exec;
 mod export;
 mod fuzzy;
@@ -20,6 +21,7 @@ mod history;
 mod input;
 mod keys;
 mod replay;
+mod session_save;
 mod stream_events;
 mod table;
 mod terminal;
@@ -27,7 +29,6 @@ mod transcript;
 mod types;
 mod ui;
 
-use super::session_resume::block_on;
 use super::session_state::SessionState;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
@@ -38,55 +39,13 @@ use ratatui::crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind},
     execute,
 };
-use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
+use saya_store::{FsSessionStore, SqliteStateStore};
+use session_save::{poll_session_save, queue_session_save};
 use std::sync::Arc;
 use std::time::Duration;
 use terminal::TerminalGuard;
 use transcript::BlockKind;
-use types::{App, ClipboardCopy, SessionSave};
-
-fn start_session_save(app: &mut App, store: &FsSessionStore, session: saya_store::RedactedSession) {
-    let store = store.clone();
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = block_on(store.save(session)).map_err(|error| error.to_string());
-        let _ = sender.send(result);
-    });
-    app.session_save = Some(SessionSave { result: receiver });
-}
-
-fn queue_session_save(app: &mut App, store: &FsSessionStore, state: &SessionState) {
-    let session = state.redacted();
-    if app.session_save.is_some() {
-        app.pending_session_save = Some(session);
-    } else {
-        start_session_save(app, store, session);
-    }
-}
-
-fn poll_session_save(app: &mut App, store: &FsSessionStore) {
-    let result = app
-        .session_save
-        .as_ref()
-        .and_then(|save| match save.result.try_recv() {
-            Ok(result) => Some(result),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Some(Err("session save worker stopped unexpectedly".into()))
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-        });
-    let Some(result) = result else { return };
-    app.session_save = None;
-    if let Err(error) = result {
-        app.transcript.push(
-            BlockKind::Error,
-            format!("Could not save this session; your latest changes may be lost: {error}"),
-        );
-    }
-    if let Some(session) = app.pending_session_save.take() {
-        start_session_save(app, store, session);
-    }
-}
+use types::{App, ClipboardCopy};
 
 /// Runs the full-screen TUI session. Returns the process exit code.
 pub(crate) fn run(
