@@ -10,6 +10,7 @@ pub(crate) async fn query(
     connector: &PostgresConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
+    let _in_flight = connector.in_flight.lock().await;
     let sql = crate::prepare_postgres_sql(&request.sql, request.max_rows)?;
     let mut connection = timeout(connector.query_timeout, connector.pool.acquire())
         .await
