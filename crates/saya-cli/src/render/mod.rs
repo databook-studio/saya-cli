@@ -79,8 +79,20 @@ pub fn render_event(event: &TerminalEvent, format: RenderFormat) -> Rendered {
     }
 }
 
+pub(super) fn sanitize_terminal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\n' | '\t' => out.push(c),
+            '\x00'..='\x1F' | '\x7F' | '\u{0080}'..='\u{009F}' => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn text_event(event: &TerminalEvent) -> Rendered {
-    match event {
+    let rendered = match event {
         TerminalEvent::Diagnostic { message } | TerminalEvent::Error { message } => Rendered {
             stdout: String::new(),
             stderr: format!("{message}\n"),
@@ -121,6 +133,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: format!("Not implemented: {feature}\n"),
             stderr: String::new(),
         },
+    };
+    Rendered {
+        stdout: sanitize_terminal(&rendered.stdout),
+        stderr: sanitize_terminal(&rendered.stderr),
     }
 }
 
@@ -168,4 +184,67 @@ fn schema_text(schema: &SchemaTree) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_terminal_strips_control_bytes_and_preserves_tabs_and_newlines() {
+        let input = "hello\x1b[31mRED\x1b[0m\tworld\n\x1b]0;pwned\x07\r\x7f\u{0080}\u{009f}";
+        let sanitized = sanitize_terminal(input);
+        assert_eq!(sanitized, "hello[31mRED[0m\tworld\n]0;pwned");
+        assert!(!sanitized.contains('\x1b'));
+        assert!(!sanitized.contains('\x07'));
+        assert!(!sanitized.contains('\r'));
+        assert!(!sanitized.contains('\x7f'));
+        assert!(!sanitized.contains('\u{0080}'));
+        assert!(!sanitized.contains('\u{009f}'));
+    }
+
+    #[test]
+    fn test_text_render_sanitizes_terminal_control_sequences() {
+        let raw_text = "col1\x1b[31mRED\x1b[0m\tcol2\x1b]0;pwned\x07";
+        let event = TerminalEvent::QueryResult {
+            result: QueryResult {
+                columns: vec!["col1".into(), "col2".into()],
+                rows: vec![serde_json::json!([raw_text, "ok"])],
+                row_count: 1,
+                truncated: false,
+                executed_sql: "SELECT 1".into(),
+            },
+        };
+
+        let rendered_text = render_event(&event, RenderFormat::Text);
+        assert!(!rendered_text.stdout.contains('\x1b'));
+        assert!(!rendered_text.stdout.contains('\x07'));
+        assert!(rendered_text.stdout.contains("col1[31mRED[0m"));
+        assert!(rendered_text.stdout.contains("pwned"));
+        assert!(rendered_text.stdout.contains('\t'));
+        assert!(rendered_text.stdout.contains('\n'));
+
+        let rendered_json = render_event(&event, RenderFormat::Json);
+        assert!(rendered_json.stdout.contains("\\u001b[31mRED\\u001b[0m"));
+        assert!(rendered_json.stdout.contains("\\u001b]0;pwned\\u0007"));
+    }
+
+    #[test]
+    fn test_assistant_text_and_delta_sanitizes_control_sequences() {
+        let raw = "\x1b[31mRED\x1b[0m\x1b]0;pwned\x07";
+        let delta_rendered = render_delta::text(raw);
+        assert!(!delta_rendered.stdout.contains('\x1b'));
+        assert!(!delta_rendered.stdout.contains('\x07'));
+        assert_eq!(delta_rendered.stdout, "[31mRED[0m]0;pwned");
+
+        let event = TerminalEvent::AssistantText {
+            text: raw.to_string(),
+        };
+        let text_rendered = render_event(&event, RenderFormat::Text);
+        assert!(!text_rendered.stdout.contains('\x1b'));
+        assert!(!text_rendered.stdout.contains('\x07'));
+
+        let json_rendered = render_event(&event, RenderFormat::Json);
+        assert!(json_rendered.stdout.contains("\\u001b"));
+    }
 }
