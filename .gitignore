@@ -13,4 +13,11 @@
 .saya/config.toml
 .saya/connections.toml
 .env.saya
-/.claude/skills/saya-live-test
+
+# Internal AI-agent development methodology and standards — kept local, not part
+# of the open-source distribution.
+/AGENTS.md
+/CLAUDE.md
+/.cursor/
+/.claude/
+/docs/standards/

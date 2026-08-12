@@ -1,4 +1,4 @@
-//! Exemplar snapshot test (see docs/standards/testing.md).
+//! Exemplar snapshot test.
 //!
 //! `render_event` turns a `TerminalEvent` into terminal / JSON output. The exact
 //! shape of that output is tedious to assert by hand and easy to regress, so we pin

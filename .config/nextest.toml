@@ -1,6 +1,6 @@
 # cargo-nextest configuration. See https://nexte.st/docs/configuration/
 #
-# nextest is the standard runner (see docs/standards/testing.md). `cargo test` still
+# nextest is the standard runner. `cargo test` still
 # works for anyone without nextest installed; doctests always run via `cargo test`.
 
 [profile.default]

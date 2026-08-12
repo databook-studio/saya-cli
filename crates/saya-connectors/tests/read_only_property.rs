@@ -1,4 +1,4 @@
-//! Exemplar property test for the read-only safety layer (see docs/standards/{testing,security}.md).
+//! Exemplar property test for the read-only safety layer.
 //!
 //! Independent oracle statement-class verification:
 //! This test suite proves that any SQL statement accepted by `prepare_postgres_sql` or
