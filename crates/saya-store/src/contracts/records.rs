@@ -1,0 +1,149 @@
+use crate::StoreError;
+use async_trait::async_trait;
+use saya_types::{
+    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectRef, ProfileIdentity,
+    SchemaFingerprint,
+};
+
+pub const MAX_CLAIM_PAYLOAD_BYTES: usize = 4096;
+pub const MAX_CLAIMS_PER_OBJECT: usize = 128;
+pub const MAX_EVIDENCE_PER_CLAIM: usize = 32;
+pub const MAX_LISTED_OBJECTS: usize = 1000;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ContractObjectId(String);
+
+impl ContractObjectId {
+    pub(crate) fn from_inner(value: String) -> Self {
+        Self(value)
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ContractObjectId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DeduplicationKey(String);
+
+impl DeduplicationKey {
+    pub(crate) fn from_inner(value: String) -> Self {
+        Self(value)
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for DeduplicationKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredObject {
+    pub id: ContractObjectId,
+    pub object: DatabaseObjectRef,
+    pub fingerprint: SchemaFingerprint,
+    pub fingerprint_version: u32,
+    pub first_seen_unix_ms: i64,
+    pub last_seen_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredClaim {
+    pub id: ClaimId,
+    pub object: DatabaseObjectRef,
+    pub payload: Option<ClaimPayload>,
+    pub origin: ClaimOrigin,
+    pub status: ClaimStatus,
+    pub schema_fingerprint: SchemaFingerprint,
+    pub referenced_columns: Vec<String>,
+    pub created_unix_ms: i64,
+    pub updated_unix_ms: i64,
+    pub last_verified_unix_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EvidenceKind {
+    ExplicitUserStatement,
+    SuccessfulReadQuery,
+    RepeatedObservation,
+    ReviewedImport,
+    ManualConfirmation,
+}
+
+impl EvidenceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExplicitUserStatement => "explicit_user_statement",
+            Self::SuccessfulReadQuery => "successful_read_query",
+            Self::RepeatedObservation => "repeated_observation",
+            Self::ReviewedImport => "reviewed_import",
+            Self::ManualConfirmation => "manual_confirmation",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "explicit_user_statement" => Some(Self::ExplicitUserStatement),
+            "successful_read_query" => Some(Self::SuccessfulReadQuery),
+            "repeated_observation" => Some(Self::RepeatedObservation),
+            "reviewed_import" => Some(Self::ReviewedImport),
+            "manual_confirmation" => Some(Self::ManualConfirmation),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEvidence {
+    pub kind: EvidenceKind,
+    pub session_id: Option<String>,
+    pub turn_ordinal: Option<u32>,
+    pub observed_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposeClaim {
+    pub object: DatabaseObjectRef,
+    pub fingerprint: SchemaFingerprint,
+    pub payload: ClaimPayload,
+    pub origin: ClaimOrigin,
+    pub initial_status: ClaimStatus,
+    pub evidence: Option<ClaimEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposeOutcome {
+    Stored(ClaimId),
+    Duplicate { id: ClaimId, status: ClaimStatus },
+}
+
+#[async_trait]
+pub trait ContractStore: Send + Sync {
+    async fn upsert_object(
+        &self,
+        object: &DatabaseObjectRef,
+        fingerprint: &SchemaFingerprint,
+    ) -> Result<ContractObjectId, StoreError>;
+    async fn propose_claim(&self, request: ProposeClaim) -> Result<ProposeOutcome, StoreError>;
+    async fn get_claim(&self, id: &ClaimId) -> Result<Option<StoredClaim>, StoreError>;
+    /// If `statuses` is empty, claims of every status are returned; otherwise only
+    /// claims whose status appears in the slice.
+    async fn list_claims(
+        &self,
+        object: &DatabaseObjectRef,
+        statuses: &[ClaimStatus],
+    ) -> Result<Vec<StoredClaim>, StoreError>;
+    async fn list_objects(
+        &self,
+        profile: &ProfileIdentity,
+    ) -> Result<Vec<StoredObject>, StoreError>;
+}
