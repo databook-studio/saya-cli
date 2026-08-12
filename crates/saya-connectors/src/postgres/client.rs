@@ -49,7 +49,7 @@ impl DatabaseConnector for PostgresConnector {
             sqlx::query("SELECT 1").execute(&self.pool),
         )
         .await
-        .map_err(|_| ConnectionError::ConnectionFailed("PostgreSQL connection timed out".into()))?
+        .map_err(|_| ConnectionError::connection_failed("PostgreSQL connection timed out"))?
         .map_err(super::errors::connection)?;
         Ok(())
     }

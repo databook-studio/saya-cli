@@ -21,10 +21,10 @@ impl DatabaseConnector for Failing {
         Ok(())
     }
     async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
-        Err(ConnectionError::SchemaFailed("server sentinel".into()))
+        Err(ConnectionError::schema_failed("server sentinel"))
     }
     async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
-        Err(ConnectionError::QueryFailed("row sentinel".into()))
+        Err(ConnectionError::query_failed("row sentinel"))
     }
 }
 

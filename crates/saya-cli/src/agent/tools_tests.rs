@@ -106,13 +106,11 @@ impl DatabaseConnector for FailingConnector {
     }
 
     async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
-        Err(ConnectionError::SchemaFailed("nope".into()))
+        Err(ConnectionError::schema_failed("nope"))
     }
 
     async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
-        Err(ConnectionError::QueryFailed(
-            "syntax error near FROM".into(),
-        ))
+        Err(ConnectionError::query_failed("syntax error near FROM"))
     }
 }
 

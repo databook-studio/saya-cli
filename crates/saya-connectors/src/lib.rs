@@ -31,6 +31,6 @@ pub trait DatabaseConnector: Send + Sync {
     async fn schema(&self) -> Result<SchemaTree, ConnectionError>;
     async fn execute(&self, request: QueryRequest) -> Result<QueryResult, ConnectionError>;
     async fn cancel(&self) -> Result<(), ConnectionError> {
-        Err(ConnectionError::Unsupported("query cancellation".into()))
+        Err(ConnectionError::unsupported("query cancellation"))
     }
 }

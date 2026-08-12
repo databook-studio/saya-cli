@@ -160,7 +160,7 @@ fn set_allowed(set: &SetExpr) -> bool {
 }
 
 fn rejected() -> ConnectionError {
-    ConnectionError::QueryFailed("query rejected by read-only safety policy".into())
+    ConnectionError::query_failed("query rejected by read-only safety policy")
 }
 
 struct Guard<'a> {

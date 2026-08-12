@@ -37,7 +37,7 @@ pub(crate) async fn schema(c: &SqliteConnector) -> Result<SchemaTree, Connection
         sqlx::query(TABLE_LIST_SQL).fetch_all(&c.pool),
     )
     .await
-    .map_err(|_| ConnectionError::SchemaFailed("SQLite schema discovery timed out".into()))?
+    .map_err(|_| ConnectionError::schema_failed("SQLite schema discovery timed out"))?
     .map_err(errors::schema)?;
 
     let mut wr_map: HashMap<String, bool> = HashMap::new();
@@ -52,7 +52,7 @@ pub(crate) async fn schema(c: &SqliteConnector) -> Result<SchemaTree, Connection
         sqlx::query(PK_INDEX_SQL).fetch_all(&c.pool),
     )
     .await
-    .map_err(|_| ConnectionError::SchemaFailed("SQLite schema discovery timed out".into()))?
+    .map_err(|_| ConnectionError::schema_failed("SQLite schema discovery timed out"))?
     .map_err(errors::schema)?;
 
     let mut pk_index_set: HashSet<String> = HashSet::new();
@@ -63,7 +63,7 @@ pub(crate) async fn schema(c: &SqliteConnector) -> Result<SchemaTree, Connection
 
     let rows = timeout(c.query_timeout, sqlx::query(SCHEMA_SQL).fetch_all(&c.pool))
         .await
-        .map_err(|_| ConnectionError::SchemaFailed("SQLite schema discovery timed out".into()))?
+        .map_err(|_| ConnectionError::schema_failed("SQLite schema discovery timed out"))?
         .map_err(errors::schema)?;
 
     let mut tables: Vec<Table> = Vec::new();

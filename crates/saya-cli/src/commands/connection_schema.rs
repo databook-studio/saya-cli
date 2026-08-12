@@ -24,7 +24,7 @@ pub(crate) async fn run(
         Err(error) => {
             return failure(
                 3,
-                saya_types::ConnectionError::InvalidConfiguration(error.to_string()),
+                saya_types::ConnectionError::invalid_configuration(error.to_string()),
                 format,
             );
         }

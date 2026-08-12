@@ -20,8 +20,8 @@ impl SqliteConnector {
         settings: ConnectorOptions,
     ) -> Result<Self, ConnectionError> {
         if path.to_str() == Some(":memory:") {
-            return Err(ConnectionError::InvalidConfiguration(
-                "SQLite :memory: is not supported; use a file path".into(),
+            return Err(ConnectionError::invalid_configuration(
+                "SQLite :memory: is not supported; use a file path",
             ));
         }
 
@@ -66,7 +66,7 @@ impl DatabaseConnector for SqliteConnector {
             sqlx::query("SELECT 1").execute(&self.pool),
         )
         .await
-        .map_err(|_| ConnectionError::ConnectionFailed("SQLite connection timed out".into()))?
+        .map_err(|_| ConnectionError::connection_failed("SQLite connection timed out"))?
         .map_err(super::errors::connection)?;
         Ok(())
     }

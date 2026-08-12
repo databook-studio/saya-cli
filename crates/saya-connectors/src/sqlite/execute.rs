@@ -16,7 +16,7 @@ pub(crate) async fn query(
 
     let mut conn = timeout(c.query_timeout, c.pool.acquire())
         .await
-        .map_err(|_| ConnectionError::QueryFailed("SQLite query timed out".into()))?
+        .map_err(|_| ConnectionError::query_failed("SQLite query timed out"))?
         .map_err(errors::query)?;
 
     let deadline = Instant::now() + c.query_timeout;
@@ -36,9 +36,7 @@ pub(crate) async fn query(
         Ok(res) => res,
         Err(err) => {
             if Instant::now() >= deadline || is_interrupt_error(&err) {
-                return Err(ConnectionError::QueryFailed(
-                    "SQLite query timed out".into(),
-                ));
+                return Err(ConnectionError::query_failed("SQLite query timed out"));
             }
             return Err(errors::query(err));
         }

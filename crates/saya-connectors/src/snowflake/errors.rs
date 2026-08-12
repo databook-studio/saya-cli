@@ -1,23 +1,23 @@
 use saya_types::ConnectionError;
 
 pub(crate) fn auth() -> ConnectionError {
-    ConnectionError::AuthenticationFailed("Snowflake authentication failed".into())
+    ConnectionError::authentication_failed("Snowflake authentication failed")
 }
 
 pub(crate) fn connect() -> ConnectionError {
-    ConnectionError::ConnectionFailed("Snowflake connection failed".into())
+    ConnectionError::connection_failed("Snowflake connection failed")
 }
 
 pub(crate) fn query() -> ConnectionError {
-    ConnectionError::QueryFailed("Snowflake query failed".into())
+    ConnectionError::query_failed("Snowflake query failed")
 }
 
 pub(crate) fn schema() -> ConnectionError {
-    ConnectionError::SchemaFailed("Snowflake schema discovery failed".into())
+    ConnectionError::schema_failed("Snowflake schema discovery failed")
 }
 
 pub(crate) fn interactive() -> ConnectionError {
-    ConnectionError::Unsupported(
-        "Snowflake external-browser authentication requires interactive mode".into(),
+    ConnectionError::unsupported(
+        "Snowflake external-browser authentication requires interactive mode",
     )
 }

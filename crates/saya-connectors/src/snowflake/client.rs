@@ -43,8 +43,8 @@ impl SnowflakeConnector {
     ) -> Result<Self, ConnectionError> {
         let host_account = account.trim().to_ascii_lowercase();
         if !valid_account(&host_account) {
-            return Err(ConnectionError::InvalidConfiguration(
-                "invalid Snowflake account identifier".into(),
+            return Err(ConnectionError::invalid_configuration(
+                "invalid Snowflake account identifier",
             ));
         }
         let timeout = Duration::from_secs(options.query_timeout_seconds.max(1));

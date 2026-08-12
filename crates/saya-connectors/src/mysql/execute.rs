@@ -53,6 +53,6 @@ pub(crate) async fn query(
     };
     timeout(connector.query_timeout, work)
         .await
-        .map_err(|_| ConnectionError::QueryFailed("MySQL query timed out".into()))?
+        .map_err(|_| ConnectionError::query_failed("MySQL query timed out"))?
         .map_err(errors::query)
 }

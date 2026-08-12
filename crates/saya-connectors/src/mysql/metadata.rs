@@ -31,7 +31,7 @@ pub(crate) async fn schema(connector: &MySqlConnector) -> Result<SchemaTree, Con
     };
     let tables = timeout(connector.query_timeout, work)
         .await
-        .map_err(|_| ConnectionError::SchemaFailed("MySQL schema discovery timed out".into()))??;
+        .map_err(|_| ConnectionError::schema_failed("MySQL schema discovery timed out"))??;
     let tables = tables
         .into_iter()
         .map(|(name, columns)| Table { name, columns })

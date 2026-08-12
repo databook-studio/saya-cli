@@ -97,8 +97,8 @@ pub async fn build_connector_with_prompt(
         }
         DatabaseProfile::DuckDb { path, read_only } => {
             if path != ":memory:" && read_only.is_none() {
-                return Err(ConnectionError::InvalidConfiguration(
-                    "DuckDB file profiles must set read_only explicitly".into(),
+                return Err(ConnectionError::invalid_configuration(
+                    "DuckDB file profiles must set read_only explicitly",
                 ));
             }
             DuckDbConnector::open(path, read_only.unwrap_or(false), settings)
@@ -137,7 +137,7 @@ fn ssl(mode: PostgresSslMode) -> PgSslMode {
 }
 
 fn config_error(error: ConfigError) -> ConnectionError {
-    ConnectionError::InvalidConfiguration(error.to_string())
+    ConnectionError::invalid_configuration(error.to_string())
 }
 
 #[cfg(test)]

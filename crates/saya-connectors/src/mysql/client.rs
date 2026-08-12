@@ -57,7 +57,7 @@ impl DatabaseConnector for MySqlConnector {
             sqlx::query("SELECT 1").execute(&self.pool),
         )
         .await
-        .map_err(|_| ConnectionError::ConnectionFailed("MySQL connection timed out".into()))?
+        .map_err(|_| ConnectionError::connection_failed("MySQL connection timed out"))?
         .map_err(super::errors::connection)?;
         Ok(())
     }
@@ -71,8 +71,8 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     async fn cancel(&self) -> Result<(), ConnectionError> {
-        Err(ConnectionError::Unsupported(
-            "MySQL cancellation is not safely available".into(),
+        Err(ConnectionError::unsupported(
+            "MySQL cancellation is not safely available",
         ))
     }
 }

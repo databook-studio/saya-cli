@@ -81,9 +81,8 @@ fn process_rows(
     max_columns: usize,
 ) -> Result<(), ConnectionError> {
     if total_columns.saturating_add(rows.len()) > max_columns {
-        return Err(ConnectionError::SchemaFailed(
-            "Snowflake schema is too large to enumerate completely; narrow the database/schema"
-                .into(),
+        return Err(ConnectionError::schema_failed(
+            "Snowflake schema is too large to enumerate completely; narrow the database/schema",
         ));
     }
     for row in rows {

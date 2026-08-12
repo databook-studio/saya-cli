@@ -13,7 +13,7 @@ pub(crate) async fn schema(connector: &PostgresConnector) -> Result<SchemaTree, 
         sqlx::query_scalar::<_, String>("SELECT current_database()").fetch_one(&connector.pool),
     )
     .await
-    .map_err(|_| ConnectionError::SchemaFailed("PostgreSQL schema discovery timed out".into()))?
+    .map_err(|_| ConnectionError::schema_failed("PostgreSQL schema discovery timed out"))?
     .map_err(errors::schema)?;
     let work = async {
         let mut stream = sqlx::query(SCHEMA_SQL).fetch(&connector.pool);
@@ -38,9 +38,9 @@ pub(crate) async fn schema(connector: &PostgresConnector) -> Result<SchemaTree, 
         }
         Ok(schemas)
     };
-    let schemas = timeout(connector.query_timeout, work).await.map_err(|_| {
-        ConnectionError::SchemaFailed("PostgreSQL schema discovery timed out".into())
-    })??;
+    let schemas = timeout(connector.query_timeout, work)
+        .await
+        .map_err(|_| ConnectionError::schema_failed("PostgreSQL schema discovery timed out"))??;
     let schemas = schemas
         .into_iter()
         .map(|(name, tables)| Schema {

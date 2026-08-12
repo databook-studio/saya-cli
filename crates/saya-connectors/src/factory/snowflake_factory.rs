@@ -55,17 +55,15 @@ fn required(
 ) -> Result<String, ConnectionError> {
     reference
         .ok_or_else(|| {
-            ConnectionError::InvalidConfiguration(
-                "Snowflake authentication secret is required".into(),
-            )
+            ConnectionError::invalid_configuration("Snowflake authentication secret is required")
         })
         .and_then(|item| {
             resolver
                 .resolve(item)
                 .map(|value| value.expose().to_owned())
                 .map_err(|_| {
-                    ConnectionError::InvalidConfiguration(
-                        "Snowflake authentication secret could not be resolved".into(),
+                    ConnectionError::invalid_configuration(
+                        "Snowflake authentication secret could not be resolved",
                     )
                 })
         })
@@ -80,8 +78,8 @@ fn optional(
                 .resolve(item)
                 .map(|value| value.expose().to_owned())
                 .map_err(|_| {
-                    ConnectionError::InvalidConfiguration(
-                        "Snowflake authentication secret could not be resolved".into(),
+                    ConnectionError::invalid_configuration(
+                        "Snowflake authentication secret could not be resolved",
                     )
                 })
         })

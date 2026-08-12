@@ -14,14 +14,14 @@ pub(crate) async fn query(
     let sql = crate::prepare_postgres_sql(&request.sql, request.max_rows)?;
     let mut connection = timeout(connector.query_timeout, connector.pool.acquire())
         .await
-        .map_err(|_| ConnectionError::ConnectionFailed("PostgreSQL connection timed out".into()))?
+        .map_err(|_| ConnectionError::connection_failed("PostgreSQL connection timed out"))?
         .map_err(errors::connection)?;
     let pid = timeout(
         connector.query_timeout,
         sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&mut *connection),
     )
     .await
-    .map_err(|_| ConnectionError::QueryFailed("PostgreSQL query timed out".into()))?
+    .map_err(|_| ConnectionError::query_failed("PostgreSQL query timed out"))?
     .map_err(errors::query)?;
     *connector.active_pid.lock().await = Some(pid);
     let result = collect(
@@ -85,6 +85,6 @@ async fn collect(
     };
     timeout(connector.query_timeout, work)
         .await
-        .map_err(|_| ConnectionError::QueryFailed("PostgreSQL query timed out".into()))?
+        .map_err(|_| ConnectionError::query_failed("PostgreSQL query timed out"))?
         .map_err(errors::query)
 }

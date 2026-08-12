@@ -18,11 +18,11 @@ impl DatabaseConnector for DummyConnector {
     }
 
     async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
-        Err(ConnectionError::SchemaFailed("dummy".into()))
+        Err(ConnectionError::schema_failed("dummy"))
     }
 
     async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
-        Err(ConnectionError::QueryFailed("dummy".into()))
+        Err(ConnectionError::query_failed("dummy"))
     }
 }
 
