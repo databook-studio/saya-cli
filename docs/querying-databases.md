@@ -61,7 +61,10 @@ schema = "PUBLIC"
 role = "SAYA_READONLY"
 ```
 Use a database role that is read-only. SAYA rejects writes, DDL, transactions,
-and multiple statements, but cannot prove every database function is harmless.
+and multiple statements at the AST layer, and also enforces read-only at the
+database session level (PostgreSQL `default_transaction_read_only`, MySQL
+`SESSION transaction_read_only`, SQLite `PRAGMA query_only`, DuckDB read-only
+open) — but cannot prove every database function is harmless.
 Prefer PostgreSQL `verify-full` and MySQL `verify-identity`; use `disable` only
 for a deliberately local development server.
 ## 3. Provide secrets explicitly
@@ -89,7 +92,8 @@ connection template. `externalbrowser` requires an interactive TTY, so it
 cannot run with `--non-interactive`.
 For a one-off or CI-only connection, omit `connections.toml` and set the
 `SAYA_DB_*` fields in [`examples/.env.example`](../examples/.env.example), or
-use [`examples/.env.duckdb.example`](../examples/.env.duckdb.example). Set
+use [`examples/.env.duckdb.example`](../examples/.env.duckdb.example) or
+[`examples/.env.sqlite.example`](../examples/.env.sqlite.example). Set
 `SAYA_PROFILE=env-only` so commands can name that environment-only profile.
 
 ## 4. Validate and query
@@ -118,7 +122,8 @@ saya --non-interactive --approval-mode read-only \
 ```
 `query` accepts one parsed read-only statement; `--file` avoids placing SQL in
 shell history. Use `--format json` or `--format ndjson` in scripts. Results are
-row-bounded and marked when truncated. Running `saya` without a subcommand
+bounded by both row caps and byte budgets (1 MiB per cell, 16 MiB per result)
+and marked `truncated` when either limit is reached. Running `saya` without a subcommand
 starts the REPL; use `/connect analytics`, `/schema`, then ask with an
 explicit approval mode.
 

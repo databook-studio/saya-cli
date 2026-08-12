@@ -31,7 +31,10 @@ test`, `connection schema`, and `query` commands are live; Snowflake
 TTY. Query execution allows one parsed read-only statement and
 returns code `4` for SQL safety/query failures. `ask` calls the configured chat
 provider (Ollama, OpenAI, an OpenAI-compatible endpoint, Anthropic, or Gemini),
-can inspect schema, and can run bounded SQL according to the approval policy. When additional databases are connected via
+can inspect schema, and can run bounded SQL according to the approval policy. It
+can also render an interactive Chart.js file from a query via the `render_chart`
+tool; because that writes a file and opens a browser (`external_side_effect`), it
+always requires approval. When additional databases are connected via
 `--include-profile` or interactive `/include`, the AI agent is informed of the name and SQL
 dialect of every connected database in its context and can navigate between them by passing an
 optional `connection` argument to its schema-inspection and query tools (with the primary database as default). If a secondary database fails to connect, it is skipped while the primary run continues. Connection and schema failures return code

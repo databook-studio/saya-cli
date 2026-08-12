@@ -59,6 +59,21 @@ Environment-only SQLite uses `SAYA_DB_TYPE=sqlite` and `SAYA_DB_PATH`, with opti
 `SAYA_DB_READ_ONLY` (defaults to `true`). `:memory:` is unsupported. SAYA
 enforces bounded read-only SQL regardless of the setting.
 
+The `[run]` table sets execution limits and the query policy:
+
+```toml
+[run]
+read_only = true            # SAYA_READ_ONLY overrides this
+max_rows = 1000
+max_iterations = 12
+query_timeout_seconds = 60
+```
+
+`read_only` (overridable by `SAYA_READ_ONLY`) is the global SQL/query policy and
+also drives session-level read-only on connectors that support it. This is
+distinct from a profile's own `SAYA_DB_READ_ONLY`, which sets a file engine's
+(DuckDB/SQLite) access mode.
+
 `config doctor` reports paths and selection. `config show --resolved
 --redacted` emits only display-safe references and settings. It never resolves
 or prints secret values.

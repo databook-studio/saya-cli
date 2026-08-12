@@ -162,6 +162,11 @@ saya --profile snowflake_browser --approval-mode read-only ask \
 for `externalbrowser`; non-interactive or piped input fails before the browser,
 localhost callback, or Snowflake network request is started.
 
+Snowflake schema discovery pages through `INFORMATION_SCHEMA` rather than
+truncating silently, and enforces a hard cap on total columns; a schema larger
+than the cap fails with an explicit "too large to enumerate" error asking you to
+narrow the database/schema, instead of returning a partial schema.
+
 A primary execution profile is selected for a command with `--profile`.
 `--include-profile` (and interactive `/include`) connect additional read-only
 databases, and the agent navigates between all connected databases by passing an
@@ -170,9 +175,14 @@ default. Fully offline agent use is unavailable even when the database connector
 is local.
 
 All five live engines use the same command surface. `query` permits one parsed
-read-only statement, caps returned rows, and reports truncation.
-Never put
+read-only statement, caps returned rows, and reports truncation. Read-only is
+enforced in two layers: the AST safety parser, and — governed by `[run].read_only`
+/ `SAYA_READ_ONLY` — the database session itself (PostgreSQL
+`default_transaction_read_only`, MySQL `SESSION transaction_read_only = 1`,
+SQLite `PRAGMA query_only = ON`, DuckDB read-only open). Results are additionally
+bounded by byte budgets — a 1 MiB per-cell cap and a 16 MiB total-result cap —
+and marked `truncated` when a row or byte limit is reached. Never put
 a raw password, private key, API key, or connection URL with embedded
 credentials in a committed file. Grant SAYA a database role that is itself
 read-only: AST validation cannot establish whether an arbitrary database
-function has side effects.
+function has side effects, and Snowflake has no equivalent session switch.

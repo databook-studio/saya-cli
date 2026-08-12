@@ -30,6 +30,12 @@ Gemini requests are treated as cloud; with data sharing disabled, schema metadat
 may be available but SQL tools and rows are blocked. Provider failures return exit
 code 5.
 
+Each agent tool carries typed capability flags (`ToolEffect { database_data,
+external_side_effect, requires_approval }`). Data sharing being disabled for a
+cloud provider filters out every tool with `database_data` (the bounded-SQL
+tools), while `requires_approval` tools (bounded SQL and `render_chart`) are
+gated by the approval policy before they run.
+
 ## Explicitly unavailable
 
 - Fully offline agent use is not available: the CLI still requires a configured

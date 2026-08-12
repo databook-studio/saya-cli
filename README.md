@@ -239,6 +239,17 @@ path = "./data/warehouse.duckdb"
 read_only = true
 ```
 
+A file-backed SQLite profile follows the same shape; `read_only` defaults to
+true and opens the file with `PRAGMA query_only = ON` (an in-memory `:memory:`
+path is rejected — point it at a file):
+
+```toml
+[profiles.sqlite_local]
+type = "sqlite"
+path = "./data/warehouse.sqlite3"
+read_only = true
+```
+
 Run `saya --env-file .env.saya --connections .saya/connections.toml
 --approval-mode read-only ask "show revenue"`. The newer provider env names
 (`SAYA_PROVIDER`, `SAYA_MODEL`, `SAYA_PROVIDER_BASE_URL`, `SAYA_API_KEY`) have
@@ -278,8 +289,10 @@ not for `externalbrowser`, which requires an interactive TTY.
 
 The intended MVP policy is read-only, bounded queries with cloud row sharing
 disabled. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake reject parse failures, writes, DDL, transaction/control
-statements, and multi-statements before execution. It observes one extra row to
-mark truncated results. Schema discovery is auto-allowed; bounded SQL is
+statements, and multi-statements before execution. Results are bounded by both a
+row cap (one extra row is observed to mark truncation) and byte budgets — a 1 MiB
+per-cell cap and a 16 MiB total-result cap — and `truncated` is set when either
+limit is reached. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly
 confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
 OpenAI, OpenAI-compatible, Anthropic, and Gemini providers are treated as
@@ -289,8 +302,9 @@ or row data. Ollama is treated as local for this MVP. `/privacy`, `/model`,
 (and `--include-profile`) connect additional read-only databases, and the agent
 navigates between all connected databases by passing an optional `connection`
 argument to its schema and query tools; the primary database is the default.
-Fully offline agent use and release signing are not implemented; provider
-execution is Ollama / OpenAI-compatible only.
+Fully offline agent use and release signing are not implemented. Provider
+execution covers Ollama, OpenAI, OpenAI-compatible endpoints, Anthropic, and
+Gemini.
 saya also enforces read-only at the **database session level** (PostgreSQL
 `default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
 `query_only`, and a read-only DuckDB open) on top of the AST checks. Because AST
