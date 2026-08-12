@@ -1,4 +1,4 @@
-use saya_agent::{ToolDefinition, ToolEffect};
+use saya_agent::{ToolDefinition, ToolEffect, ToolError};
 
 use super::DatabaseTools;
 
@@ -111,10 +111,11 @@ impl DatabaseTools {
     }
 }
 
-pub(super) fn validate_arguments(name: &str, arguments: &serde_json::Value) -> Result<(), String> {
-    let object = arguments
-        .as_object()
-        .ok_or("invalid tool arguments: expected an object")?;
+pub(super) fn validate_arguments(
+    name: &str,
+    arguments: &serde_json::Value,
+) -> Result<(), ToolError> {
+    let object = arguments.as_object().ok_or(ToolError::ArgumentsNotObject)?;
     let (allowed, requires_sql) = match name {
         "schema_discovery" => (&["connection"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
@@ -123,19 +124,19 @@ pub(super) fn validate_arguments(name: &str, arguments: &serde_json::Value) -> R
             &["connection", "sql", "chart_type", "x", "y", "title"][..],
             true,
         ),
-        _ => return Err("unsupported read-only tool".into()),
+        _ => return Err(ToolError::UnsupportedTool),
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
-        return Err("invalid tool arguments: unsupported property".into());
+        return Err(ToolError::UnsupportedProperty);
     }
     if object
         .get("connection")
         .is_some_and(|connection| !connection.is_string())
     {
-        return Err("invalid tool arguments: connection must be a string".into());
+        return Err(ToolError::ConnectionNotString);
     }
     if requires_sql && !object.get("sql").is_some_and(serde_json::Value::is_string) {
-        return Err("invalid tool arguments: sql must be a string".into());
+        return Err(ToolError::SqlNotString);
     }
     Ok(())
 }

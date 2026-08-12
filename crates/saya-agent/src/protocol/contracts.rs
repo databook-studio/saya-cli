@@ -138,6 +138,40 @@ impl ProviderError {
     }
 }
 
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ToolError {
+    #[error("data sharing is disabled for this cloud provider")]
+    DataSharingDisabled,
+    #[error("invalid query arguments")]
+    InvalidQueryArguments,
+    #[error("unsupported read-only tool")]
+    UnsupportedTool,
+    #[error("invalid tool arguments: expected an object")]
+    ArgumentsNotObject,
+    #[error("invalid tool arguments: unsupported property")]
+    UnsupportedProperty,
+    #[error("invalid tool arguments: connection must be a string")]
+    ConnectionNotString,
+    #[error("invalid tool arguments: sql must be a string")]
+    SqlNotString,
+    #[error("no database profile is selected")]
+    NoConnectionSelected,
+    #[error("unknown connection \"{target}\"; available connections: {available}")]
+    UnknownConnection { target: String, available: String },
+    #[error("read-only query failed")]
+    QueryFailed,
+    #[error("read-only query failed: {0}")]
+    QueryFailedDetail(String),
+    #[error("read-only query timed out")]
+    QueryTimedOut,
+    #[error("query result unavailable")]
+    QueryResultUnavailable,
+    #[error("schema discovery failed: {0}")]
+    SchemaDiscoveryFailed(String),
+    #[error("{0}")]
+    Chart(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolEffect {
     pub database_data: bool,
@@ -160,5 +194,5 @@ pub trait ToolExecutor: Send + Sync {
         &self,
         name: &str,
         arguments: serde_json::Value,
-    ) -> Result<serde_json::Value, String>;
+    ) -> Result<serde_json::Value, ToolError>;
 }

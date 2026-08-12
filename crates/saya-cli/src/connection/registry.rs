@@ -1,3 +1,4 @@
+use saya_agent::ToolError;
 use saya_connectors::DatabaseConnector;
 use saya_types::SqlDialect;
 use std::collections::HashMap;
@@ -84,7 +85,7 @@ impl ConnectionRegistry {
     /// Resolves an optional connection name to an entry. `None` or empty -> primary.
     /// Unknown name -> Err with a message listing the available names.
     /// Empty registry -> Err("no database profile is selected").
-    pub(crate) fn resolve(&self, name: Option<&str>) -> Result<&ConnectionEntry, String> {
+    pub(crate) fn resolve(&self, name: Option<&str>) -> Result<&ConnectionEntry, ToolError> {
         let target = match name {
             None | Some("") => self.primary.as_str(),
             Some(n) => n,
@@ -92,12 +93,13 @@ impl ConnectionRegistry {
         if let Some(entry) = self.map.get(target) {
             Ok(entry)
         } else if self.is_empty() {
-            Err("no database profile is selected".to_string())
+            Err(ToolError::NoConnectionSelected)
         } else {
             let available = self.names().join(", ");
-            Err(format!(
-                "unknown connection \"{target}\"; available connections: {available}"
-            ))
+            Err(ToolError::UnknownConnection {
+                target: target.to_string(),
+                available,
+            })
         }
     }
 

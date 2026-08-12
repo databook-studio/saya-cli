@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
     ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolEffect, ToolExecutor, run_agent,
-    run_agent_with_sink,
+    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
+    run_agent, run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
@@ -61,7 +61,11 @@ impl ApprovalDecider for DenyApproval {
 
 #[async_trait]
 impl ToolExecutor for MockTools {
-    async fn execute(&self, name: &str, _: serde_json::Value) -> Result<serde_json::Value, String> {
+    async fn execute(
+        &self,
+        name: &str,
+        _: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
         self.calls.lock().unwrap().push(name.into());
         Ok(serde_json::json!({"rows": 1}))
     }

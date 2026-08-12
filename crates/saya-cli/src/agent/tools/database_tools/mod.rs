@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use saya_agent::ToolError;
 use saya_store::SqliteStateStore;
 
 use crate::connection::ConnectionRegistry;
@@ -95,20 +96,20 @@ impl DatabaseTools {
         &self,
         name: &str,
         arguments: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, ToolError> {
         validate_arguments(name, &arguments)?;
         if matches!(
             name,
             "bounded_sql_query" | "bounded_sql_query_all" | "render_chart"
         ) && !self.allow_query_data
         {
-            return Err("data sharing is disabled for this cloud provider".into());
+            return Err(ToolError::DataSharingDisabled);
         }
         if name == "bounded_sql_query_all" {
             let sql = arguments
                 .get("sql")
                 .and_then(serde_json::Value::as_str)
-                .ok_or("invalid query arguments")?;
+                .ok_or(ToolError::InvalidQueryArguments)?;
             return self.query_all(sql).await;
         }
         let connection = arguments
@@ -128,7 +129,7 @@ impl DatabaseTools {
                 let sql = arguments
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or("invalid query arguments")?;
+                    .ok_or(ToolError::InvalidQueryArguments)?;
                 crate::agent::state_tools::query(
                     entry.connector.as_ref(),
                     sql,
@@ -139,7 +140,7 @@ impl DatabaseTools {
                 .await
             }
             "render_chart" => self.render_chart(&arguments).await,
-            _ => Err("unsupported read-only tool".into()),
+            _ => Err(ToolError::UnsupportedTool),
         }
     }
 }

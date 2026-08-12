@@ -1,4 +1,5 @@
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use saya_agent::ToolError;
 
 use super::DatabaseTools;
 
@@ -6,10 +7,10 @@ impl DatabaseTools {
     /// Runs `sql` against every connected database independently, collecting a
     /// per-database `result` or `error` so a dialect mismatch on one database
     /// never sinks the rest. A single approval covers the whole fan-out.
-    pub(super) async fn query_all(&self, sql: &str) -> Result<serde_json::Value, String> {
+    pub(super) async fn query_all(&self, sql: &str) -> Result<serde_json::Value, ToolError> {
         let entries = self.registry.entries();
         if entries.is_empty() {
-            return Err("no database profile is selected".into());
+            return Err(ToolError::NoConnectionSelected);
         }
         let mut entries = entries.into_iter().enumerate();
         let mut pending = FuturesUnordered::new();
@@ -39,7 +40,7 @@ impl DatabaseTools {
                         record.insert("result".into(), result);
                     }
                     Err(error) => {
-                        record.insert("error".into(), serde_json::Value::String(error));
+                        record.insert("error".into(), serde_json::Value::String(error.to_string()));
                     }
                 }
                 serde_json::Value::Object(record)
@@ -54,7 +55,7 @@ impl DatabaseTools {
         name: &str,
         entry: &crate::connection::ConnectionEntry,
         sql: &str,
-    ) -> (usize, String, String, Result<serde_json::Value, String>) {
+    ) -> (usize, String, String, Result<serde_json::Value, ToolError>) {
         let outcome = tokio::time::timeout(
             self.fan_out_query_timeout,
             crate::agent::state_tools::query(
@@ -66,7 +67,7 @@ impl DatabaseTools {
             ),
         )
         .await
-        .unwrap_or_else(|_| Err("read-only query timed out".into()));
+        .unwrap_or(Err(ToolError::QueryTimedOut));
         (
             index,
             name.to_string(),

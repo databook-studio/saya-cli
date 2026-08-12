@@ -334,7 +334,10 @@ async fn bounded_sql_query_all_is_blocked_when_data_sharing_is_disabled() {
         )
         .await
         .expect_err("fan-out must respect the data-sharing guard");
-    assert!(err.contains("data sharing is disabled"), "got: {err}");
+    assert!(
+        err.to_string().contains("data sharing is disabled"),
+        "got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -352,7 +355,10 @@ async fn tool_execution_rejects_arguments_outside_its_schema() {
             .execute(name, arguments)
             .await
             .expect_err("invalid tool arguments must not reach a connector");
-        assert!(error.contains("invalid tool arguments"), "got: {error}");
+        assert!(
+            error.to_string().contains("invalid tool arguments"),
+            "got: {error}"
+        );
     }
 }
 
@@ -489,8 +495,9 @@ async fn test_database_tools_multi_connection_routing() {
         )
         .await
         .expect_err("unknown connection should return error");
+    let err_str = err.to_string();
     assert!(
-        err.contains("primary") && err.contains("warehouse"),
-        "error message should list available connections, got: {err}"
+        err_str.contains("primary") && err_str.contains("warehouse"),
+        "error message should list available connections, got: {err_str}"
     );
 }

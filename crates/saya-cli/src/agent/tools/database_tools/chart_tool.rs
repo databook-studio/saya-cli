@@ -1,3 +1,5 @@
+use saya_agent::ToolError;
+
 use super::DatabaseTools;
 
 impl DatabaseTools {
@@ -6,18 +8,18 @@ impl DatabaseTools {
     pub(super) async fn render_chart(
         &self,
         arguments: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, ToolError> {
         let sql = arguments
             .get("sql")
             .and_then(serde_json::Value::as_str)
-            .ok_or("invalid query arguments")?;
+            .ok_or(ToolError::InvalidQueryArguments)?;
         let connection = arguments.get("connection").and_then(|v| v.as_str());
         let entry = self.registry.resolve(connection)?;
         let result = entry
             .connector
             .execute(saya_types::QueryRequest::new(sql, self.max_rows))
             .await
-            .map_err(|_| "read-only query failed".to_string())?;
+            .map_err(|_| ToolError::QueryFailed)?;
 
         let mut spec = crate::chart::suggest_spec(&result);
         if let Some(kind) = arguments
@@ -43,13 +45,13 @@ impl DatabaseTools {
             spec.title = Some(title.to_string());
         }
 
-        let html = crate::chart::render_html(&result, &spec)?;
+        let html = crate::chart::render_html(&result, &spec).map_err(ToolError::Chart)?;
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let path = std::env::temp_dir().join(format!("saya-chart-{unique}.html"));
-        crate::chart::write_html(&html, &path)?;
+        crate::chart::write_html(&html, &path).map_err(ToolError::Chart)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

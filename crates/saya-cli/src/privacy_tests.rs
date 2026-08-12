@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use saya_agent::{
     AgentLimits, AgentRequest, AllowReadOnlyApproval, ChatMessage, ChatProvider, ChatRequest,
-    ChatResponse, ToolCall, ToolExecutor, ToolMetadata, run_agent,
+    ChatResponse, ToolCall, ToolError, ToolExecutor, ToolMetadata, run_agent,
 };
 use std::sync::{Arc, Mutex};
 
@@ -31,7 +31,7 @@ struct SentinelExecutor;
 
 #[async_trait]
 impl ToolExecutor for SentinelExecutor {
-    async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, String> {
+    async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         Ok(serde_json::json!({"rows":[["CLOUD_SENTINEL"]]}))
     }
 }
@@ -131,7 +131,7 @@ async fn cloud_without_sharing_blocks_dispatch_even_for_direct_malicious_call() 
         .execute("bounded_sql_query", serde_json::json!({"sql":"select 1"}))
         .await
         .unwrap_err();
-    assert!(error.contains("data sharing is disabled"));
+    assert!(error.to_string().contains("data sharing is disabled"));
 }
 
 #[test]

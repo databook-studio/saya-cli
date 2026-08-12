@@ -1,3 +1,4 @@
+use saya_agent::ToolError;
 use saya_connectors::DatabaseConnector;
 use saya_store::{
     AuditEntry, AuditOperation, AuditStatus, AuditStore, SchemaStore, SqliteStateStore,
@@ -36,7 +37,7 @@ pub(crate) async fn schema(
     connector: &dyn DatabaseConnector,
     store: Option<&SqliteStateStore>,
     profile_id: Option<&str>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ToolError> {
     let started = Instant::now();
     match connector.schema().await {
         Ok(schema) => {
@@ -64,9 +65,9 @@ async fn cached(
     profile_id: Option<&str>,
     started: Instant,
     live_error: &saya_types::ConnectionError,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ToolError> {
     let (Some(store), Some(profile_id)) = (store, profile_id) else {
-        return Err(format!("schema discovery failed: {live_error}"));
+        return Err(ToolError::SchemaDiscoveryFailed(live_error.to_string()));
     };
     match store.get_schema(profile_id).await {
         Ok(Some(cached)) => {
@@ -102,7 +103,7 @@ async fn cached(
                 None,
             )
             .await;
-            Err(format!("schema discovery failed: {live_error}"))
+            Err(ToolError::SchemaDiscoveryFailed(live_error.to_string()))
         }
     }
 }
@@ -113,7 +114,7 @@ pub(crate) async fn query(
     max_rows: usize,
     store: Option<&SqliteStateStore>,
     profile_id: Option<&str>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ToolError> {
     let started = Instant::now();
     // Cap the rows the MODEL sees (not the /sql display path, which keeps max_rows).
     let model_rows = max_rows.min(MODEL_ROW_CAP);
@@ -131,7 +132,7 @@ pub(crate) async fn query(
                 )
                 .await;
             }
-            serde_json::to_value(result).map_err(|_| "query result unavailable".into())
+            serde_json::to_value(result).map_err(|_| ToolError::QueryResultUnavailable)
         }
         Err(error) => {
             if let (Some(store), Some(profile_id)) = (store, profile_id) {
@@ -149,7 +150,7 @@ pub(crate) async fn query(
             // Connector errors are intentionally sanitized at their boundary, so
             // their safe detail helps the agent distinguish dialect and syntax
             // mismatches without exposing driver internals or credentials.
-            Err(format!("read-only query failed: {error}"))
+            Err(ToolError::QueryFailedDetail(error.to_string()))
         }
     }
 }
