@@ -12,10 +12,18 @@ slow-timeout = { period = "60s", terminal-after = 3 }
 [profile.ci]
 # In CI we want the full failure picture in one run, not the first failure.
 fail-fast = false
-# Retry to absorb genuinely flaky live/network tests; a test that only passes on
-# retry is a bug to fix, not a state to accept.
-retries = 2
+# No retries by default: a unit/integration test that only passes on retry is a
+# bug to fix, not a state to mask. Retries are scoped to the live binaries below.
+retries = 0
 failure-output = "immediate-final"
+
+# Only the opt-in live contract tests may retry. They are env-gated
+# (SAYA_TEST_POSTGRES_URL / SAYA_TEST_MYSQL_URL / SAYA_TEST_SNOWFLAKE_*) and hit
+# real services over the network, so genuine transient flake is expected there.
+[[profile.ci.overrides]]
+filter = 'binary(postgres_live) or binary(mysql_live) or binary(snowflake_live)'
+retries = 2
+
 # Machine-readable results for the CI UI.
 [profile.ci.junit]
 path = "junit.xml"
