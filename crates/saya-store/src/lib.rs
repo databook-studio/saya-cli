@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 mod audit_store;
+mod error;
 mod filesystem;
 mod history;
 mod migration;
@@ -14,6 +14,7 @@ mod sqlite;
 mod sqlite_support;
 mod state_contracts;
 
+pub use error::StoreError;
 pub use filesystem::FsSessionStore;
 pub use redaction::redact;
 pub use sqlite::SqliteStateStore;
@@ -101,69 +102,10 @@ pub struct SessionSummary {
     pub modified_unix_ms: u128,
 }
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum StoreError {
-    #[error("local state store is unavailable")]
-    Unavailable,
-    #[error("the requested record does not exist")]
-    NotFound,
-    #[error("the record conflicts with an existing record")]
-    Conflict,
-    #[error("the value exceeds a store limit")]
-    LimitExceeded,
-    #[error("the value is not valid for storage")]
-    Invalid,
-    #[error("the state database was written by a newer version of saya")]
-    VersionUnsupported,
-}
-
-impl StoreError {
-    pub fn unavailable() -> Self {
-        Self::Unavailable
-    }
-    pub fn not_found() -> Self {
-        Self::NotFound
-    }
-    pub fn conflict() -> Self {
-        Self::Conflict
-    }
-    pub fn limit_exceeded() -> Self {
-        Self::LimitExceeded
-    }
-    pub fn invalid() -> Self {
-        Self::Invalid
-    }
-}
-
 #[async_trait]
 pub trait SessionStore: Send + Sync {
     async fn save(&self, session: RedactedSession) -> Result<(), StoreError>;
     async fn load(&self, id: &str) -> Result<Option<RedactedSession>, StoreError>;
     async fn most_recent(&self) -> Result<Option<RedactedSession>, StoreError>;
     async fn history(&self) -> Result<Vec<SessionSummary>, StoreError>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::StoreError;
-
-    #[test]
-    fn errors_are_payload_free_and_fieldless() {
-        let errors = [
-            StoreError::Unavailable,
-            StoreError::NotFound,
-            StoreError::Conflict,
-            StoreError::LimitExceeded,
-            StoreError::Invalid,
-            StoreError::VersionUnsupported,
-        ];
-        for error in errors {
-            let rendered = error.to_string();
-            assert!(!rendered.is_empty());
-            assert!(!rendered.contains('{'));
-            assert!(!rendered.contains(':'));
-            assert!(!rendered.contains("SUPERSECRETVALUE"));
-        }
-    }
 }
