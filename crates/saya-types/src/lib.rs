@@ -1,11 +1,17 @@
 //! Shared public contracts for SAYA CLI.
 
+mod contract;
 mod dialect;
 mod error;
 mod profile;
 mod query;
 mod schema;
 
+pub use contract::{
+    CLAIM_PAYLOAD_VERSION, Cardinality, ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus,
+    ColumnRole, ContractError, DatabaseObjectKind, DatabaseObjectRef, FINGERPRINT_VERSION,
+    MAX_NAME_CHARS, MAX_REFERENCED_COLUMNS, MAX_TEXT_CHARS, ProfileIdentity, SchemaFingerprint,
+};
 pub use dialect::SqlDialect;
 pub use error::ConnectionError;
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
