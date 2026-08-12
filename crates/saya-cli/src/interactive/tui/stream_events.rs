@@ -54,5 +54,6 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
         }
+        _ => {}
     }
 }

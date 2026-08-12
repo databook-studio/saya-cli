@@ -63,6 +63,7 @@ pub struct ChatResponse {
 // `PartialEq` only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AgentEvent {
     AssistantText {
         text: String,
@@ -85,6 +86,23 @@ pub enum AgentEvent {
     Complete,
 }
 
+impl AgentEvent {
+    pub fn assistant_text(text: impl Into<String>) -> Self {
+        Self::AssistantText { text: text.into() }
+    }
+
+    pub fn tool_requested(name: impl Into<String>, arguments: serde_json::Value) -> Self {
+        Self::ToolRequested {
+            name: name.into(),
+            arguments,
+        }
+    }
+
+    pub fn complete() -> Self {
+        Self::Complete
+    }
+}
+
 #[async_trait]
 pub trait ApprovalDecider: Send + Sync {
     /// Decides whether a tool call may run. `arguments` is the raw call payload
@@ -102,6 +120,7 @@ impl ApprovalDecider for AllowReadOnlyApproval {
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProviderError {
     #[error("provider request failed: {0}")]
     Request(String),
@@ -111,6 +130,12 @@ pub enum ProviderError {
     Configuration(String),
     #[error("provider stream was cancelled")]
     Cancelled,
+}
+
+impl ProviderError {
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::Configuration(message.into())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

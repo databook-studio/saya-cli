@@ -71,6 +71,12 @@ pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
         }
         AgentEvent::ToolDenied { name, reason } => TerminalEvent::ToolDenied { name, reason },
         AgentEvent::Complete => TerminalEvent::Complete,
+        // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
+        // yet understand must not silently terminate the stream (Complete) — surface
+        // it as an unimplemented event instead.
+        _ => TerminalEvent::NotImplemented {
+            feature: "unrecognized agent event".into(),
+        },
     }
 }
 
@@ -82,9 +88,7 @@ mod tests {
         let mut open = false;
         assert_eq!(
             render_agent(
-                AgentEvent::AssistantText {
-                    text: "thinking".into()
-                },
+                AgentEvent::assistant_text("thinking"),
                 RenderFormat::Text,
                 &mut open
             )
@@ -93,10 +97,7 @@ mod tests {
         );
         assert_eq!(
             render_agent(
-                AgentEvent::ToolRequested {
-                    name: "schema".into(),
-                    arguments: serde_json::Value::Null,
-                },
+                AgentEvent::tool_requested("schema", serde_json::Value::Null),
                 RenderFormat::Text,
                 &mut open
             )
@@ -104,7 +105,7 @@ mod tests {
             "\nUsing read-only tool: schema\n"
         );
         assert_eq!(
-            render_agent(AgentEvent::Complete, RenderFormat::Text, &mut open).stdout,
+            render_agent(AgentEvent::complete(), RenderFormat::Text, &mut open).stdout,
             ""
         );
     }
@@ -113,7 +114,7 @@ mod tests {
         let mut open = false;
         assert_eq!(
             render_agent(
-                AgentEvent::AssistantText { text: "x".into() },
+                AgentEvent::assistant_text("x"),
                 RenderFormat::Ndjson,
                 &mut open
             )
@@ -121,7 +122,7 @@ mod tests {
             "{\"event\":\"assistant_text\",\"text\":\"x\"}\n"
         );
         assert_eq!(
-            render_agent(AgentEvent::Complete, RenderFormat::Ndjson, &mut open).stdout,
+            render_agent(AgentEvent::complete(), RenderFormat::Ndjson, &mut open).stdout,
             "{\"event\":\"complete\"}\n"
         );
     }
@@ -129,14 +130,12 @@ mod tests {
     fn text_complete_closes_an_open_delta_line_once() {
         let mut open = false;
         let _ = render_agent(
-            AgentEvent::AssistantText {
-                text: "done".into(),
-            },
+            AgentEvent::assistant_text("done"),
             RenderFormat::Text,
             &mut open,
         );
         assert_eq!(
-            render_agent(AgentEvent::Complete, RenderFormat::Text, &mut open).stdout,
+            render_agent(AgentEvent::complete(), RenderFormat::Text, &mut open).stdout,
             "\n"
         );
     }

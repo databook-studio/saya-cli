@@ -85,9 +85,9 @@ pub(crate) async fn run_prompt_with_sink(
     };
 
     for (name, reason) in failures {
-        sink.emit(AgentEvent::AssistantText {
-            text: format!("skipped database '{name}': {reason}\n"),
-        })
+        sink.emit(AgentEvent::assistant_text(format!(
+            "skipped database '{name}': {reason}\n"
+        )))
         .await;
     }
 
