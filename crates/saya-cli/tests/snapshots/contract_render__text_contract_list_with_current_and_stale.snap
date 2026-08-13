@@ -1,0 +1,10 @@
+---
+source: crates/saya-cli/tests/contract_render.rs
+assertion_line: 63
+expression: "render_event(&event, RenderFormat::Text).stdout"
+---
+analytics.public.orders  [current]  (profile: warehouse)
+  c-1a2b…  default_time_column  confirmed  user_explicit  created_at
+  c-3c4d…  table_alias  confirmed  user_explicit  customers
+analytics.public.returns  [stale]  (profile: warehouse)  — a column it depends on is gone
+  c-9z9z…  column_role  stale  schema_observed  identifier

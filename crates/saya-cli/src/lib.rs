@@ -26,7 +26,10 @@ pub use cli::{Cli, Command, ConfigCommand, ConnectionCommand, FormatArg, GlobalO
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
-pub use render::{RenderFormat, TerminalEvent, render_event};
+pub use render::{
+    ContractClaimView, ContractConflictView, ContractView, RenderFormat, TerminalEvent,
+    render_event,
+};
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state_path::resolve_state_db_path;
 
