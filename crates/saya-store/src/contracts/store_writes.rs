@@ -1,3 +1,4 @@
+use crate::contracts::admission;
 use crate::contracts::keys::{claim_id, deduplication_key};
 use crate::contracts::records::{
     ClaimEvidence, MAX_CLAIM_PAYLOAD_BYTES, MAX_CLAIMS_PER_OBJECT, MAX_EVIDENCE_PER_CLAIM,
@@ -32,6 +33,7 @@ pub(crate) async fn propose_claim(
     if redact(&serialized) != serialized {
         return Err(StoreError::Invalid);
     }
+    admission::check(&serialized)?;
     let stamp = now();
     let mut tx = store
         .pool()

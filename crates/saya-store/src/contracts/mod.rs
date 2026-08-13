@@ -1,3 +1,4 @@
+mod admission;
 mod events;
 mod keys;
 mod records;

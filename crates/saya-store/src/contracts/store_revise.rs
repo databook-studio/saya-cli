@@ -5,6 +5,7 @@
 //! `payload_json`, so they carry the size, redaction, and deduplication rules that
 //! a plain status change does not.
 
+use crate::contracts::admission;
 use crate::contracts::events::ForgetReason;
 use crate::contracts::keys::deduplication_key;
 use crate::contracts::records::{MAX_CLAIM_PAYLOAD_BYTES, StoredClaim};
@@ -26,6 +27,7 @@ pub(crate) async fn edit_claim(
     if redact(&serialized) != serialized {
         return Err(StoreError::Invalid);
     }
+    admission::check(&serialized)?;
     let key = deduplication_key(&payload, &serialized);
     let referenced =
         serde_json::to_string(&payload.referenced_columns()).map_err(|_| StoreError::Invalid)?;
