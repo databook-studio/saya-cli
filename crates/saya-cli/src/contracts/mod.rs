@@ -1,0 +1,32 @@
+//! Shared contract-application operations: the typed layer every adapter renders.
+//!
+//! This slice computes and selects; it writes nothing to the store on the recall
+//! path and adds no policy of its own on the review path beyond what
+//! [`ContractStore`] already enforces. Presentation (rendering, clap, slash, agent
+//! tools) is a later slice — these modules return typed data only.
+
+mod assemble;
+mod conflict;
+mod recall;
+mod review;
+mod selection;
+mod validity;
+mod view;
+
+#[cfg(test)]
+mod tests;
+
+// This `pub(crate)` surface is the contract operations API the adapter slices
+// (2b-2/3/4: rendering, clap, slash, agent tools) will consume. Nothing in this
+// crate references it yet outside tests, so the re-exports read as unused in a
+// lib build — they are not dead code, they are the boundary this slice exposes.
+#[allow(unused_imports)]
+pub(crate) use recall::{RecallBounds, RecallRequest, recall};
+#[allow(unused_imports)]
+pub(crate) use review::{ContractOpError, confirm, edit, forget, propose, reject, show};
+#[allow(unused_imports)]
+pub(crate) use validity::schema_state_for;
+#[allow(unused_imports)]
+pub(crate) use view::{
+    ContractConflict, ContractSchemaState, RecallDiagnostics, RecallOutcome, RetrievedContract,
+};
