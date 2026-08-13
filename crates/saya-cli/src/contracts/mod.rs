@@ -5,6 +5,7 @@
 //! [`ContractStore`] already enforces. Presentation (rendering, clap, slash, agent
 //! tools) is a later slice — these modules return typed data only.
 
+pub(crate) mod args;
 mod assemble;
 mod conflict;
 mod recall;

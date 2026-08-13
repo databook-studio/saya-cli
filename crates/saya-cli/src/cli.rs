@@ -68,6 +68,10 @@ pub enum Command {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
+    Contracts {
+        #[command(subcommand)]
+        command: ContractsCommand,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -95,4 +99,58 @@ pub enum ConnectionCommand {
         #[arg(long)]
         refresh: bool,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ContractsCommand {
+    List {
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Show {
+        table: String,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Remember {
+        table: String,
+        #[arg(long, value_enum)]
+        kind: ClaimKindArg,
+        #[arg(long)]
+        value: String,
+        #[arg(long)]
+        column: Option<String>,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Review {
+        claim_id: String,
+        #[arg(long)]
+        confirm: bool,
+        #[arg(long)]
+        reject: bool,
+    },
+    Forget {
+        claim_id: String,
+        #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
+        reason: ForgetReasonArg,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ClaimKindArg {
+    Description,
+    Alias,
+    Grain,
+    ColumnDescription,
+    ColumnRole,
+    TimeColumn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ForgetReasonArg {
+    UserRequest,
+    Incorrect,
+    Obsolete,
+    Privacy,
 }

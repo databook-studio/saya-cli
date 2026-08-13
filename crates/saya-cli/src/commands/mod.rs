@@ -7,7 +7,11 @@ mod query;
 mod query_input;
 mod state;
 
-use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
+use crate::{
+    cli::Command,
+    config::runtime::RuntimeConfig,
+    render::{RenderFormat, TerminalEvent},
+};
 use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 
@@ -40,6 +44,15 @@ pub async fn run(
         }
         Command::Query { sql, file } => {
             query::run(sql, file, runtime, format, can_prompt, &state).await
+        }
+        Command::Contracts { .. } => {
+            output::emit(
+                TerminalEvent::NotImplemented {
+                    feature: "contracts".into(),
+                },
+                format,
+            );
+            Ok(0)
         }
     }
 }
