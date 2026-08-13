@@ -1,4 +1,5 @@
 use crate::StoreError;
+use crate::contracts::events::{ContractEvent, ForgetReason};
 use async_trait::async_trait;
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectRef, ProfileIdentity,
@@ -135,8 +136,6 @@ pub trait ContractStore: Send + Sync {
     ) -> Result<ContractObjectId, StoreError>;
     async fn propose_claim(&self, request: ProposeClaim) -> Result<ProposeOutcome, StoreError>;
     async fn get_claim(&self, id: &ClaimId) -> Result<Option<StoredClaim>, StoreError>;
-    /// If `statuses` is empty, claims of every status are returned; otherwise only
-    /// claims whose status appears in the slice.
     async fn list_claims(
         &self,
         object: &DatabaseObjectRef,
@@ -146,4 +145,18 @@ pub trait ContractStore: Send + Sync {
         &self,
         profile: &ProfileIdentity,
     ) -> Result<Vec<StoredObject>, StoreError>;
+    async fn confirm_claim(&self, id: &ClaimId) -> Result<StoredClaim, StoreError>;
+    async fn edit_claim(
+        &self,
+        id: &ClaimId,
+        payload: ClaimPayload,
+    ) -> Result<StoredClaim, StoreError>;
+    async fn reject_claim(&self, id: &ClaimId) -> Result<StoredClaim, StoreError>;
+    async fn forget_claim(&self, id: &ClaimId, reason: ForgetReason) -> Result<(), StoreError>;
+    async fn mark_stale(&self, id: &ClaimId) -> Result<StoredClaim, StoreError>;
+    async fn claim_events(
+        &self,
+        id: &ClaimId,
+        limit: usize,
+    ) -> Result<Vec<ContractEvent>, StoreError>;
 }

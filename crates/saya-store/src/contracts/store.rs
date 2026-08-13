@@ -1,11 +1,14 @@
+use crate::contracts::events::{ContractEvent, ForgetReason};
 use crate::contracts::keys::object_id;
 use crate::contracts::records::{
     ContractObjectId, ContractStore, ProposeClaim, ProposeOutcome, StoredClaim, StoredObject,
 };
-use crate::contracts::{store_reads, store_writes};
+use crate::contracts::{store_reads, store_revise, store_transitions, store_writes};
 use crate::{SqliteStateStore, StoreError};
 use async_trait::async_trait;
-use saya_types::{ClaimId, ClaimStatus, DatabaseObjectRef, ProfileIdentity, SchemaFingerprint};
+use saya_types::{
+    ClaimId, ClaimPayload, ClaimStatus, DatabaseObjectRef, ProfileIdentity, SchemaFingerprint,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[async_trait]
@@ -44,6 +47,32 @@ impl ContractStore for SqliteStateStore {
         profile: &ProfileIdentity,
     ) -> Result<Vec<StoredObject>, StoreError> {
         store_reads::list_objects(self, profile).await
+    }
+    async fn confirm_claim(&self, id: &ClaimId) -> Result<StoredClaim, StoreError> {
+        store_transitions::confirm_claim(self, id).await
+    }
+    async fn edit_claim(
+        &self,
+        id: &ClaimId,
+        payload: ClaimPayload,
+    ) -> Result<StoredClaim, StoreError> {
+        store_revise::edit_claim(self, id, payload).await
+    }
+    async fn reject_claim(&self, id: &ClaimId) -> Result<StoredClaim, StoreError> {
+        store_transitions::reject_claim(self, id).await
+    }
+    async fn forget_claim(&self, id: &ClaimId, reason: ForgetReason) -> Result<(), StoreError> {
+        store_revise::forget_claim(self, id, reason).await
+    }
+    async fn mark_stale(&self, id: &ClaimId) -> Result<StoredClaim, StoreError> {
+        store_transitions::mark_stale(self, id).await
+    }
+    async fn claim_events(
+        &self,
+        id: &ClaimId,
+        limit: usize,
+    ) -> Result<Vec<ContractEvent>, StoreError> {
+        store_reads::claim_events(self, id, limit).await
     }
 }
 

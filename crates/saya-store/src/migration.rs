@@ -70,7 +70,7 @@ async fn step2(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError
     .map_err(|_| StoreError::Unavailable)?;
     // contract_events.claim_id has no foreign key by design: events are an append-only audit
     // trail and must outlive a future hard purge of the claim they describe.
-    sqlx::query("CREATE TABLE IF NOT EXISTS contract_events(id INTEGER PRIMARY KEY, claim_id TEXT NOT NULL, object_id TEXT NOT NULL, event TEXT NOT NULL, from_status TEXT, to_status TEXT, origin TEXT NOT NULL, created_unix_ms INTEGER NOT NULL)").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("CREATE TABLE IF NOT EXISTS contract_events(id INTEGER PRIMARY KEY, claim_id TEXT NOT NULL, object_id TEXT NOT NULL, event TEXT NOT NULL, from_status TEXT, to_status TEXT, origin TEXT NOT NULL, created_unix_ms INTEGER NOT NULL, reason TEXT)").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
     sqlx::query("CREATE INDEX IF NOT EXISTS contract_events_claim ON contract_events(claim_id)")
         .execute(&mut **connection)
         .await

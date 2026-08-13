@@ -1,10 +1,14 @@
+mod events;
 mod keys;
 mod records;
 mod store;
 mod store_decode;
 mod store_reads;
+mod store_revise;
+mod store_transitions;
 mod store_writes;
 
+pub use events::{ContractEvent, ContractEventKind, ForgetReason};
 pub use keys::{claim_id, deduplication_key, object_id};
 pub use records::{
     ClaimEvidence, ContractObjectId, ContractStore, DeduplicationKey, EvidenceKind,

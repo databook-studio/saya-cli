@@ -1,8 +1,20 @@
+use crate::contracts::events::{ContractEvent, ContractEventKind, ForgetReason};
 use crate::contracts::keys::object_id;
-use crate::contracts::records::{MAX_LISTED_OBJECTS, StoredClaim, StoredObject};
+use crate::contracts::records::{ContractObjectId, MAX_LISTED_OBJECTS, StoredClaim, StoredObject};
 use crate::contracts::store_decode::{ClaimRow, ObjectRow, decode_claim, decode_object};
 use crate::{SqliteStateStore, StoreError};
-use saya_types::{ClaimId, ClaimStatus, DatabaseObjectRef, ProfileIdentity};
+use saya_types::{ClaimId, ClaimOrigin, ClaimStatus, DatabaseObjectRef, ProfileIdentity};
+
+type EventRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    i64,
+    Option<String>,
+);
 
 pub(crate) async fn get_claim(
     store: &SqliteStateStore,
@@ -53,4 +65,57 @@ pub(crate) async fn list_objects(
         .await
         .map_err(|_| StoreError::Unavailable)?;
     rows.into_iter().map(decode_object).collect()
+}
+
+pub(crate) async fn claim_events(
+    store: &SqliteStateStore,
+    id: &ClaimId,
+    limit: usize,
+) -> Result<Vec<ContractEvent>, StoreError> {
+    let pool = store.pool().await?;
+    let limit = limit.min(1000) as i64;
+
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM contract_claims WHERE id=?)")
+            .bind(id.as_str())
+            .fetch_one(pool)
+            .await
+            .map_err(|_| StoreError::Unavailable)?;
+    if !exists {
+        return Err(StoreError::NotFound);
+    }
+
+    let rows = sqlx::query_as::<_, EventRow>(
+        "SELECT claim_id, object_id, event, from_status, to_status, origin, created_unix_ms, reason FROM contract_events WHERE claim_id=? ORDER BY created_unix_ms ASC, id ASC LIMIT ?",
+    )
+    .bind(id.as_str())
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| StoreError::Unavailable)?;
+
+    rows.into_iter()
+        .map(|row| {
+            let (
+                claim_id,
+                object_id,
+                event,
+                from_status,
+                to_status,
+                origin,
+                created_unix_ms,
+                reason,
+            ) = row;
+            Ok(ContractEvent {
+                claim_id: ClaimId::parse(&claim_id).map_err(|_| StoreError::Invalid)?,
+                object_id: ContractObjectId::from_inner(object_id),
+                kind: ContractEventKind::parse(&event).ok_or(StoreError::Invalid)?,
+                from_status: from_status.as_deref().and_then(ClaimStatus::parse),
+                to_status: to_status.as_deref().and_then(ClaimStatus::parse),
+                reason: reason.as_deref().and_then(ForgetReason::parse),
+                origin: ClaimOrigin::parse(&origin).ok_or(StoreError::Invalid)?,
+                created_unix_ms,
+            })
+        })
+        .collect()
 }
