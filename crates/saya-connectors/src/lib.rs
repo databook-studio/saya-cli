@@ -17,8 +17,8 @@ pub use factory::{ConnectorOptions, build_connector, build_connector_with_prompt
 pub use mysql::MySqlConnector;
 pub use postgres::PostgresConnector;
 pub use safety::{
-    prepare_duckdb_sql, prepare_mysql_sql, prepare_postgres_sql, prepare_snowflake_sql,
-    prepare_sqlite_sql,
+    SqlReferences, prepare_duckdb_sql, prepare_mysql_sql, prepare_postgres_sql,
+    prepare_snowflake_sql, prepare_sqlite_sql, sql_references,
 };
 pub use snowflake::SnowflakeConnector;
 pub use sqlite::SqliteConnector;

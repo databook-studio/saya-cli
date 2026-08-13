@@ -1,4 +1,4 @@
-use saya_types::ConnectionError;
+use saya_types::{ConnectionError, SqlDialect};
 use std::ops::ControlFlow;
 
 use sqlparser::{
@@ -8,6 +8,23 @@ use sqlparser::{
     },
     parser::Parser,
 };
+
+/// The single place that maps a [`SqlDialect`] to the `sqlparser` dialect the
+/// safety layer parses with. Shared by the read-only `prepare_*` functions and
+/// by object/column extraction so the two never drift apart.
+pub(super) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
+    match dialect {
+        SqlDialect::Postgres => &PostgreSqlDialect {},
+        SqlDialect::Mysql => &MySqlDialect {},
+        SqlDialect::DuckDb => &DuckDbDialect,
+        SqlDialect::Snowflake => &SnowflakeDialect,
+        SqlDialect::Sqlite => &SQLiteDialect {},
+        // `SqlDialect` is `#[non_exhaustive]`. A dialect added later must be
+        // wired in explicitly; until then parse as Postgres (the broadest of the
+        // five) so the safety layer still rejects or accepts based on syntax.
+        _ => &PostgreSqlDialect {},
+    }
+}
 
 struct BackendPolicy {
     denied_functions: &'static [&'static str],
@@ -61,23 +78,48 @@ const SNOWFLAKE_POLICY: BackendPolicy = BackendPolicy {
 };
 
 pub fn prepare_postgres_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
-    prepare(sql, max_rows, &PostgreSqlDialect {}, &POSTGRES_POLICY)
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::Postgres),
+        &POSTGRES_POLICY,
+    )
 }
 
 pub fn prepare_mysql_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
-    prepare(sql, max_rows, &MySqlDialect {}, &MYSQL_POLICY)
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::Mysql),
+        &MYSQL_POLICY,
+    )
 }
 
 pub fn prepare_duckdb_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
-    prepare(sql, max_rows, &DuckDbDialect {}, &DUCKDB_POLICY)
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::DuckDb),
+        &DUCKDB_POLICY,
+    )
 }
 
 pub fn prepare_snowflake_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
-    prepare(sql, max_rows, &SnowflakeDialect {}, &SNOWFLAKE_POLICY)
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::Snowflake),
+        &SNOWFLAKE_POLICY,
+    )
 }
 
 pub fn prepare_sqlite_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
-    prepare(sql, max_rows, &SQLiteDialect {}, &SQLITE_POLICY)
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::Sqlite),
+        &SQLITE_POLICY,
+    )
 }
 
 fn prepare(

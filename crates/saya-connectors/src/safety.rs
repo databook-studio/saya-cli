@@ -1,6 +1,8 @@
 mod read_only;
+mod references;
 
 pub use read_only::{
     prepare_duckdb_sql, prepare_mysql_sql, prepare_postgres_sql, prepare_snowflake_sql,
     prepare_sqlite_sql,
 };
+pub use references::{SqlReferences, sql_references};
