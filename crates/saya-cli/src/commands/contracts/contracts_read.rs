@@ -4,7 +4,7 @@
 
 use super::contracts_map::contract_view;
 use super::contracts_profile::resolve_profile;
-use super::{ArgMessage, arg_failure, op_failure, unobserved_fingerprint};
+use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, op_failure, unobserved_fingerprint};
 use crate::commands::output::{emit, failure_message, result};
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::args::parse_qualified;
@@ -13,7 +13,12 @@ use crate::render::{RenderFormat, TerminalEvent};
 use saya_store::{ContractStore, SqliteStateStore};
 use saya_types::{DatabaseObjectKind, DatabaseObjectRef};
 
-const STORE_UNAVAILABLE_MSG: &str = "Local state store unavailable; no contracts listed.";
+// An unreadable store is not an empty store. `list` exits non-zero so "you have
+// no contracts" and "I could not read your contracts" stay distinguishable —
+// the same reason `show` propagates its error. Plan section 12's rule that
+// memory failure must not degrade the ordinary path governs the agent query
+// path, not a command whose only job is reading contracts.
+const STORE_UNAVAILABLE_MSG: &str = "Local state store unavailable; contracts could not be read.";
 
 pub(super) async fn list(
     store: &SqliteStateStore,
@@ -30,7 +35,9 @@ pub(super) async fn list(
     // selection, bounds, privacy and validity rules still all run inside recall.
     let objects = match store.list_objects(&identity).await {
         Ok(objects) => objects,
-        Err(_) => return result(STORE_UNAVAILABLE_MSG.into(), format),
+        Err(_) => {
+            return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);
+        }
     };
     let explicit_refs: Vec<DatabaseObjectRef> = objects.iter().map(|o| o.object.clone()).collect();
     let request = RecallRequest {
@@ -45,7 +52,7 @@ pub(super) async fn list(
     };
     let outcome = recall(store, request).await;
     if outcome.diagnostics.store_unavailable {
-        return result(STORE_UNAVAILABLE_MSG.into(), format);
+        return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);
     }
     let contracts: Vec<_> = outcome
         .contracts

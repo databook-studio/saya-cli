@@ -521,10 +521,12 @@ async fn opaque_profile_identity_never_reaches_rendered_output() {
 }
 
 // ---------------------------------------------------------------------------
-// 9. unopenable store: list exits 0 with a diagnostic; remember exits non-zero
+// 9. An unreadable store is not an empty store. `list` exits non-zero so that
+//    "you have no contracts" and "I could not read your contracts" stay
+//    distinguishable, matching `show`. Writes also fail.
 // ---------------------------------------------------------------------------
 #[tokio::test]
-async fn unopenable_store_list_exits_zero_and_write_exits_nonzero() {
+async fn unopenable_store_reads_and_writes_both_exit_nonzero() {
     let root = temp_root("unopenable");
     // A path whose parent is a regular file cannot be created as a directory,
     // so the store pool cannot open.
@@ -536,9 +538,9 @@ async fn unopenable_store_list_exits_zero_and_write_exits_nonzero() {
 
     let list = ContractsCommand::List { profile: None };
     let (code, out, err) = run(list, &runtime, &store, RenderFormat::Text).await;
-    assert_eq!(
+    assert_ne!(
         code, 0,
-        "list must exit 0 on an unopenable store: {out}{err}"
+        "list must exit non-zero on an unopenable store: {out}{err}"
     );
     let combined = format!("{out}{err}");
     assert!(

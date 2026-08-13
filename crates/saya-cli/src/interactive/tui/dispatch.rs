@@ -3,7 +3,9 @@
 //! results that would normally print to stdout are captured via `render_event`
 //! and pushed into the transcript instead.
 
-use super::dispatch_actions::{list_sessions, resume, run_chart, run_explain, run_export, run_sql};
+use super::dispatch_actions::{
+    list_sessions, resume, run_chart, run_contracts, run_explain, run_export, run_sql,
+};
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
 use crate::config::runtime::RuntimeConfig;
@@ -35,6 +37,7 @@ pub(crate) fn dispatch(
     state: &mut SessionState,
     runtime: &RuntimeConfig,
     store: &FsSessionStore,
+    state_db: &saya_store::SqliteStateStore,
     format: RenderFormat,
     last_query: &mut Option<LastQuery>,
 ) -> Dispatch {
@@ -52,6 +55,9 @@ pub(crate) fn dispatch(
             SessionAction::Resume(id) => resume(transcript, state, store, &id),
             SessionAction::Sql(sql) => {
                 run_sql(transcript, state, runtime, format, &sql, last_query)
+            }
+            SessionAction::Contracts(command) => {
+                run_contracts(transcript, state, runtime, state_db, format, &command)
             }
             SessionAction::Export(path) => {
                 run_export(transcript, runtime, state, last_query, &path)

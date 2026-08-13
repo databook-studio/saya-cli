@@ -101,7 +101,7 @@ pub enum ConnectionCommand {
     },
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum ContractsCommand {
     List {
         #[arg(long)]

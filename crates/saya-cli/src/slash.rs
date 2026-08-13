@@ -1,5 +1,8 @@
+use crate::cli::ContractsCommand;
 use saya_agent::ApprovalPolicy;
 use std::{fmt, str::FromStr};
+
+mod contracts;
 
 /// Known slash command names handled by `parse_slash_command`.
 const KNOWN_COMMANDS: &[&str] = &[
@@ -20,6 +23,10 @@ const KNOWN_COMMANDS: &[&str] = &[
     "history",
     "sessions",
     "resume",
+    "contracts",
+    "contract",
+    "remember",
+    "forget",
     "help",
     "exit",
     "quit",
@@ -44,6 +51,11 @@ pub enum SlashCommand {
     History,
     Sessions,
     Resume(String),
+    /// A contract slash command (`/contracts`, `/contract`, `/remember`,
+    /// `/forget`), already translated to the same `ContractsCommand` the
+    /// headless `saya contracts` parser produces. The adapter slice (2b-4)
+    /// hands it to the shared `run_contracts` dispatcher — no second parsing.
+    Contracts(ContractsCommand),
     Help(Option<String>),
     Exit,
 }
@@ -103,6 +115,13 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
+        "contracts" | "contract" | "remember" | "forget" => {
+            // The contract slash adapters: translate to the same
+            // `ContractsCommand` the headless parser produces and hand it to the
+            // shared dispatcher. No second parsing or DTO mapping lives here.
+            return contracts::parse_contract_command(name, &arg)
+                .map(|maybe| maybe.map(SlashCommand::Contracts));
+        }
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "exit" | "quit" => SlashCommand::Exit,
         other => {
@@ -173,7 +192,7 @@ fn parse_approval(value: &str) -> Result<Option<ApprovalPolicy>, SlashParseError
 }
 
 pub fn help_text() -> &'static str {
-    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit"
+    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit\n/contracts  /contract <table>  /remember <table> <kind> <value…>  /forget <id>"
 }
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
@@ -221,6 +240,18 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "history" => Some("history — display session history. Example: /history"),
         "sessions" => Some("sessions — list available interactive sessions. Example: /sessions"),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
+        "contracts" => {
+            Some("contracts — list recalled contracts for the active profile. Example: /contracts")
+        }
+        "contract" => Some(
+            "contract <catalog.schema.object> — show one object's contract. Example: /contract analytics.public.orders",
+        ),
+        "remember" => Some(
+            "remember <catalog.schema.object> <kind> <value…> — store a confirmed claim. Kinds: description, alias, grain, time-column, column-description <column> <value…>, column-role <column> <role>. Example: /remember analytics.public.orders alias customers",
+        ),
+        "forget" => Some(
+            "forget <claim-id> — tombstone a claim so recall excludes it. Example: /forget abc-123",
+        ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",
         ),

@@ -189,6 +189,7 @@ pub(crate) fn run(
                 state,
                 runtime,
                 store,
+                &app.state_db,
                 format,
                 &mut app.last_query,
             ) {
