@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use saya_agent::{
-    CancellationToken, ChatMessage, ChatProvider, ChatRequest, OllamaProvider,
+    CancellationToken, ChatMessage, ChatProvider, ChatRequest, LocalStateEffect, OllamaProvider,
     OpenAiCompatibleProvider, ProviderError, ProviderSettings, ToolDefinition, ToolEffect,
 };
 use std::{
@@ -104,6 +104,7 @@ fn request() -> ChatRequest {
                 database_data: false,
                 external_side_effect: false,
                 requires_approval: false,
+                local_state: LocalStateEffect::None,
             },
         }],
     }

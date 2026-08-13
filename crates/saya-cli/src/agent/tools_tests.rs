@@ -408,6 +408,41 @@ fn definitions_preserve_the_read_only_and_approval_contract() {
     assert!(all.parameters["properties"].get("connection").is_none());
 }
 
+/// Spec 3a §2: every existing tool declares the expected `local_state`. This is
+/// the test that fails when someone adds a tool without saying what local state
+/// it touches. With query data and a state store, all six tools are present.
+#[test]
+fn every_tool_declares_its_local_state_effect() {
+    use saya_agent::LocalStateEffect;
+
+    let tools = DatabaseTools::definitions(true, true);
+    let expected = [
+        ("schema_discovery", LocalStateEffect::None),
+        ("bounded_sql_query", LocalStateEffect::None),
+        ("bounded_sql_query_all", LocalStateEffect::None),
+        ("render_chart", LocalStateEffect::None),
+        ("contract_search", LocalStateEffect::Read),
+        ("contract_read", LocalStateEffect::Read),
+    ];
+    for (name, want) in expected {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap_or_else(|| panic!("{name} must be registered"));
+        assert_eq!(
+            tool.effect.local_state, want,
+            "{name} must declare local_state == {want:?}"
+        );
+    }
+    // Nothing advertises a candidate write yet (Phase 3c adds the first).
+    assert!(
+        !tools
+            .iter()
+            .any(|tool| tool.effect.local_state == LocalStateEffect::WriteCandidate),
+        "no tool may declare WriteCandidate in Phase 3a"
+    );
+}
+
 #[test]
 fn tool_call_detail_surfaces_the_sql() {
     // Single-connection query: the SQL, whitespace collapsed to one line.

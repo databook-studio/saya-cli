@@ -191,11 +191,34 @@ pub enum ToolError {
     Chart(String),
 }
 
+/// What local state a tool may touch — contracts, the schema cache, anything
+/// persisted on the user's machine. Declared per tool so "may this tool write
+/// local state?" is a property the loop reads rather than something inferred
+/// from a tool's name. Phase 3a introduces the type; Phase 3c adds the first
+/// tool that declares `WriteCandidate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LocalStateEffect {
+    /// Touches no local state.
+    #[default]
+    None,
+    /// Reads local state (contracts, cache) and writes nothing.
+    Read,
+    /// May persist a *candidate* claim. Never a confirmed one — confirmation is a
+    /// human action and has no tool.
+    WriteCandidate,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolEffect {
     pub database_data: bool,
     pub external_side_effect: bool,
     pub requires_approval: bool,
+    /// What local state this tool may touch. `#[serde(default)]` keeps the
+    /// pre-3a serialized form (no key) deserializing to `None`.
+    #[serde(default)]
+    pub local_state: LocalStateEffect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,4 +237,37 @@ pub trait ToolExecutor: Send + Sync {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalStateEffect;
+
+    /// The back-compat guarantee: a `ToolEffect` serialized before this slice
+    /// (no `local_state` key) deserializes to the default `None`.
+    #[test]
+    fn tool_effect_without_local_state_key_defaults_to_none() {
+        let json = r#"{
+            "database_data": false,
+            "external_side_effect": false,
+            "requires_approval": false
+        }"#;
+        let effect: super::ToolEffect = serde_json::from_str(json).expect("old form deserializes");
+        assert_eq!(effect.local_state, LocalStateEffect::None);
+    }
+
+    /// Each variant round-trips through snake_case.
+    #[test]
+    fn local_state_effect_round_trips_through_snake_case() {
+        for (variant, expected) in [
+            (LocalStateEffect::None, "none"),
+            (LocalStateEffect::Read, "read"),
+            (LocalStateEffect::WriteCandidate, "write_candidate"),
+        ] {
+            let text = serde_json::to_string(&variant).expect("serializes");
+            assert_eq!(text, format!("\"{expected}\""), "{variant:?}");
+            let back: LocalStateEffect = serde_json::from_str(&text).expect("deserializes back");
+            assert_eq!(back, variant, "{variant:?}");
+        }
+    }
 }

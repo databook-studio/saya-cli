@@ -1,4 +1,4 @@
-use saya_agent::{ToolDefinition, ToolEffect, ToolError};
+use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect, ToolError};
 
 use super::DatabaseTools;
 
@@ -31,6 +31,7 @@ impl DatabaseTools {
                 database_data: false,
                 external_side_effect: false,
                 requires_approval: false,
+                local_state: LocalStateEffect::None,
             },
         }];
         if allow_query_data {
@@ -54,6 +55,7 @@ impl DatabaseTools {
                     database_data: true,
                     external_side_effect: false,
                     requires_approval: true,
+                    local_state: LocalStateEffect::None,
                 },
             });
             tools.push(ToolDefinition {
@@ -80,6 +82,7 @@ impl DatabaseTools {
                     database_data: true,
                     external_side_effect: false,
                     requires_approval: true,
+                    local_state: LocalStateEffect::None,
                 },
             });
             tools.push(ToolDefinition {
@@ -110,6 +113,7 @@ impl DatabaseTools {
                     database_data: false,
                     external_side_effect: true,
                     requires_approval: true,
+                    local_state: LocalStateEffect::None,
                 },
             });
         }

@@ -104,7 +104,7 @@ pub(super) fn build_body(request: ChatRequest, max_tokens: u32) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChatMessage, ToolCall, ToolDefinition, ToolEffect};
+    use crate::{ChatMessage, LocalStateEffect, ToolCall, ToolDefinition, ToolEffect};
 
     #[test]
     fn test_message_mapping_and_system_extraction() {
@@ -144,6 +144,7 @@ mod tests {
                     database_data: false,
                     external_side_effect: false,
                     requires_approval: false,
+                    local_state: LocalStateEffect::None,
                 },
             }],
         };

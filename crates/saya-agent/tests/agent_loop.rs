@@ -82,6 +82,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 database_data: true,
                 external_side_effect: false,
                 requires_approval: true,
+                local_state: saya_agent::LocalStateEffect::None,
             },
         },
         ToolDefinition {
@@ -93,6 +94,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 database_data: true,
                 external_side_effect: false,
                 requires_approval: true,
+                local_state: saya_agent::LocalStateEffect::None,
             },
         },
         ToolDefinition {
@@ -104,6 +106,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 database_data: false,
                 external_side_effect: false,
                 requires_approval: false,
+                local_state: saya_agent::LocalStateEffect::None,
             },
         },
     ]
@@ -217,6 +220,7 @@ async fn tool_call_limits_stop_run_before_unbounded_execution() {
         AgentLimits {
             max_turns: 1,
             max_tool_calls: 0,
+            permit_candidate_writes: false,
         },
         &AllowReadOnlyApproval,
     )

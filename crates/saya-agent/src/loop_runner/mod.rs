@@ -75,7 +75,17 @@ pub async fn run_agent_with_sink(
                 .expect("validated");
             let approved = !definition.effect.requires_approval
                 || approval.approve(definition, &call.arguments).await;
-            let (result, summary) = if approved {
+            // Fail closed: a tool that may write a candidate claim is refused
+            // unless the runner was constructed with candidate writes
+            // permitted. The default is not permitted, so registering a
+            // `WriteCandidate` tool in a later slice cannot silently start
+            // writing. This denies rather than executes, so the turn
+            // continues and the model sees a `ToolDenied` event with a reason.
+            let candidate_denied = definition.effect.local_state
+                == crate::LocalStateEffect::WriteCandidate
+                && !limits.permit_candidate_writes;
+            let executed = approved && !candidate_denied;
+            let (result, summary) = if executed {
                 check_cancelled(&cancellation)?;
                 // Indicates a database-row-producing query tool ran.
                 if definition.effect.database_data {
@@ -88,7 +98,11 @@ pub async fn run_agent_with_sink(
                     sink,
                     AgentEvent::ToolDenied {
                         name: call.name.clone(),
-                        reason: "approval was not granted".into(),
+                        reason: if candidate_denied {
+                            "candidate writes are not permitted".into()
+                        } else {
+                            "approval was not granted".into()
+                        },
                     },
                 )
                 .await;
@@ -99,7 +113,7 @@ pub async fn run_agent_with_sink(
             };
             tool_metadata.push(crate::ToolMetadata {
                 name: call.name.clone(),
-                status: if approved {
+                status: if executed {
                     if summary.contains("failed") {
                         "failed"
                     } else {
@@ -111,7 +125,7 @@ pub async fn run_agent_with_sink(
                 .into(),
             });
             messages.push(tools::tool_message(call.id, result));
-            if approved {
+            if executed {
                 check_cancelled(&cancellation)?;
                 emit(
                     &mut events,

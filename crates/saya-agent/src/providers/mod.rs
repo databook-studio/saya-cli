@@ -30,7 +30,7 @@ mod context_block_tests {
         wire::{self, WireMessage},
     };
     use crate::{
-        ChatMessage, ChatRequest, ContextBlock, ToolDefinition, ToolEffect,
+        ChatMessage, ChatRequest, ContextBlock, LocalStateEffect, ToolDefinition, ToolEffect,
         history::build_messages,
         history_context::{CONTEXT_CLOSE, CONTEXT_OPEN},
     };
@@ -57,6 +57,7 @@ mod context_block_tests {
                 database_data: false,
                 external_side_effect: false,
                 requires_approval: false,
+                local_state: LocalStateEffect::None,
             },
         }]
     }

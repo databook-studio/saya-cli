@@ -152,6 +152,9 @@ pub(crate) async fn run_prompt_with_sink(
         AgentLimits {
             max_turns: runtime.resolved.max_iterations,
             max_tool_calls: runtime.resolved.max_iterations.saturating_mul(2),
+            // Candidate writes are not enabled until Phase 4 wires an explicit
+            // config setting; until then no tool may persist a candidate claim.
+            permit_candidate_writes: false,
         },
         approver,
         sink,

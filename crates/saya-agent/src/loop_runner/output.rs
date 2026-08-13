@@ -5,12 +5,20 @@ use thiserror::Error;
 pub struct AgentLimits {
     pub max_turns: usize,
     pub max_tool_calls: usize,
+    /// Whether the loop may execute tools that declare
+    /// [`LocalStateEffect::WriteCandidate`](crate::LocalStateEffect::WriteCandidate).
+    /// Defaults to **not permitted**: a tool that can write a candidate claim
+    /// must not start writing merely because it was registered. Phase 4 turns
+    /// this on under an explicit config setting; until then nothing can enable
+    /// it, which is correct.
+    pub permit_candidate_writes: bool,
 }
 impl Default for AgentLimits {
     fn default() -> Self {
         Self {
             max_turns: 12,
             max_tool_calls: 24,
+            permit_candidate_writes: false,
         }
     }
 }

@@ -1,6 +1,6 @@
 use saya_agent::{
-    AnthropicProvider, ChatMessage, ChatProvider, ChatRequest, ProviderSettings, ToolDefinition,
-    ToolEffect,
+    AnthropicProvider, ChatMessage, ChatProvider, ChatRequest, LocalStateEffect, ProviderSettings,
+    ToolDefinition, ToolEffect,
 };
 use std::{
     io::{Read, Write},
@@ -80,6 +80,7 @@ fn request() -> ChatRequest {
                 database_data: false,
                 external_side_effect: false,
                 requires_approval: false,
+                local_state: LocalStateEffect::None,
             },
         }],
     }
