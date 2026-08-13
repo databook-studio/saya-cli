@@ -16,6 +16,11 @@ mod contracts_profile;
 mod contracts_read;
 mod contracts_write;
 
+// The identity-dropping `RetrievedContract → ContractView` mapping, re-exported
+// `pub(crate)` so the agent contract tools (2b-3a) reuse it instead of carrying
+// a second mapping that could leak the opaque profile identity.
+pub(crate) use contracts_map::contract_view;
+
 use super::output::failure_message;
 use crate::cli::ContractsCommand;
 use crate::config::runtime::RuntimeConfig;
@@ -99,7 +104,10 @@ pub(super) fn arg_failure(
 /// guaranteed never to equal a real schema's — a later live schema reads the
 /// claim as `needs_review` (or `stale` if a referenced column is gone), never as
 /// `current`. Fabricating a real-looking digest would risk a false match.
-pub(super) fn unobserved_fingerprint() -> SchemaFingerprint {
+///
+/// `pub(crate)` so the agent contract tools (2b-3a) reuse this same sentinel
+/// instead of inventing a second all-zero digest convention.
+pub(crate) fn unobserved_fingerprint() -> SchemaFingerprint {
     SchemaFingerprint::from_parts(FINGERPRINT_VERSION, &"0".repeat(64))
         .expect("current format with a 64-hex-zero digest is a valid fingerprint")
 }

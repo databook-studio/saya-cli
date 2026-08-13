@@ -13,7 +13,10 @@ use saya_types::ClaimPayload;
 
 /// Maps one retrieved contract to its render DTO. `profile_name` is the name the
 /// adapter resolved for this contract's profile — never the identity.
-pub(super) fn contract_view(contract: &RetrievedContract, profile_name: &str) -> ContractView {
+///
+/// `pub(crate)` so the agent contract tools (2b-3a) reuse this same identity-dropping
+/// mapping instead of carrying a second one that could leak the opaque identity.
+pub(crate) fn contract_view(contract: &RetrievedContract, profile_name: &str) -> ContractView {
     ContractView {
         profile: profile_name.to_string(),
         object: contract.object.qualified_name(),

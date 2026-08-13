@@ -13,12 +13,15 @@ mod fan_out;
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
-    registry: ConnectionRegistry,
-    max_rows: usize,
-    allow_query_data: bool,
-    state_db: Option<SqliteStateStore>,
-    max_concurrent_fan_out_queries: usize,
-    fan_out_query_timeout: Duration,
+    // `pub(super)` so the sibling `contract_tools` module (also a child of
+    // `agent::tools`) can resolve a connection and read the privacy/store flags
+    // without re-deriving provider policy.
+    pub(super) registry: ConnectionRegistry,
+    pub(super) max_rows: usize,
+    pub(super) allow_query_data: bool,
+    pub(super) state_db: Option<SqliteStateStore>,
+    pub(super) max_concurrent_fan_out_queries: usize,
+    pub(super) fan_out_query_timeout: Duration,
 }
 
 impl DatabaseTools {
@@ -97,6 +100,12 @@ impl DatabaseTools {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
+        // Contract tools have their own argument validation and execution
+        // (sibling concern) and never reach a connector; route them before the
+        // database-tool validation, which would reject their names.
+        if matches!(name, "contract_search" | "contract_read") {
+            return self.execute_contract_tool(name, arguments).await;
+        }
         validate_arguments(name, &arguments)?;
         if matches!(
             name,
@@ -152,7 +161,7 @@ mod tests {
 
     #[test]
     fn render_chart_requires_approval() {
-        let tools = DatabaseTools::definitions(true);
+        let tools = DatabaseTools::definitions(true, false);
         let chart_tool = tools
             .iter()
             .find(|tool| tool.name == "render_chart")

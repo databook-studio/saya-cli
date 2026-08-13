@@ -364,13 +364,13 @@ async fn tool_execution_rejects_arguments_outside_its_schema() {
 
 #[test]
 fn definitions_include_fan_out_only_when_query_data_allowed() {
-    let with_data: Vec<String> = DatabaseTools::definitions(true)
+    let with_data: Vec<String> = DatabaseTools::definitions(true, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
     assert!(with_data.iter().any(|name| name == "bounded_sql_query_all"));
 
-    let without_data: Vec<String> = DatabaseTools::definitions(false)
+    let without_data: Vec<String> = DatabaseTools::definitions(false, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
@@ -384,7 +384,7 @@ fn definitions_include_fan_out_only_when_query_data_allowed() {
 
 #[test]
 fn definitions_preserve_the_read_only_and_approval_contract() {
-    let tools = DatabaseTools::definitions(true);
+    let tools = DatabaseTools::definitions(true, false);
     let tool = |name: &str| tools.iter().find(|tool| tool.name == name).unwrap();
 
     let schema = tool("schema_discovery");

@@ -109,6 +109,9 @@ pub(crate) async fn run_prompt_with_sink(
         }
     };
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
+    // Capture before `state_db` moves into the tools; the contract tools are
+    // advertised only when a store is present (spec 2b-3a §3).
+    let has_state_store = state_db.is_some();
     let tools = tools::DatabaseTools::with_registry(
         registry,
         runtime.resolved.max_rows,
@@ -134,7 +137,7 @@ pub(crate) async fn run_prompt_with_sink(
         &*provider,
         &tools,
         request,
-        tools::DatabaseTools::definitions(allow_query_data),
+        tools::DatabaseTools::definitions(allow_query_data, has_state_store),
         AgentLimits {
             max_turns: runtime.resolved.max_iterations,
             max_tool_calls: runtime.resolved.max_iterations.saturating_mul(2),

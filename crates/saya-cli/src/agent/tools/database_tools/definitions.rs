@@ -3,8 +3,14 @@ use saya_agent::{ToolDefinition, ToolEffect, ToolError};
 use super::DatabaseTools;
 
 impl DatabaseTools {
-    /// Returns available database tool definitions.
-    pub(crate) fn definitions(allow_query_data: bool) -> Vec<ToolDefinition> {
+    /// Returns available database tool definitions. Contract tools are appended
+    /// only when a state store is present **and** database context is allowed;
+    /// when the privacy gate forbids database context they are hidden rather
+    /// than advertised as always-empty (spec 2b-3a §3).
+    pub(crate) fn definitions(
+        allow_query_data: bool,
+        has_state_store: bool,
+    ) -> Vec<ToolDefinition> {
         let connection_prop = serde_json::json!({
             "type": "string",
             "description": "Optional. Name of the database connection to target; defaults to the primary. Available connections and their dialects are listed in the system context."
@@ -107,6 +113,15 @@ impl DatabaseTools {
                 },
             });
         }
+        // Contract tools are a sibling concern (see `contract_tools`); they are
+        // appended here so the agent receives one flat definition list, matching
+        // how this function is assembled for the database tools.
+        tools.extend(
+            crate::agent::tools::contract_tools::contract_tool_definitions(
+                allow_query_data,
+                has_state_store,
+            ),
+        );
         tools
     }
 }

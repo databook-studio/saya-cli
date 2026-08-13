@@ -66,6 +66,7 @@ async fn cloud_without_sharing_hides_sql_and_never_sends_rows() {
     ));
     let tools = crate::agent::tools::DatabaseTools::definitions(
         crate::agent::runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, false),
+        false,
     );
     run_agent(
         &provider,
@@ -109,6 +110,7 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
     ));
     let tools = crate::agent::tools::DatabaseTools::definitions(
         crate::agent::runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, true),
+        false,
     );
     run_agent(
         &provider,
