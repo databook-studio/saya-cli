@@ -116,6 +116,7 @@ fn request() -> AgentRequest {
         model: "mock-model".into(),
         system_prompt: None,
         history: Vec::new(),
+        context_blocks: Vec::new(),
     }
 }
 

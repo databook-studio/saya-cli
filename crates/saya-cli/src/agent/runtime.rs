@@ -121,6 +121,7 @@ pub(crate) async fn run_prompt_with_sink(
         model: ai.model,
         system_prompt,
         history,
+        context_blocks: Vec::new(),
     };
     // Use the caller-supplied decider (e.g. the TUI approval modal) when present,
     // otherwise the terminal prompt/policy decider.

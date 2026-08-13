@@ -22,6 +22,7 @@ pub async fn run_agent_with_sink(
 ) -> Result<AgentOutput, AgentError> {
     let mut messages = crate::history::build_messages(
         request.system_prompt.as_deref(),
+        &request.context_blocks,
         &request.prompt,
         &request.history,
     )?;

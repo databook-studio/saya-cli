@@ -43,6 +43,7 @@ fn request() -> AgentRequest {
         model: "model".into(),
         system_prompt: None,
         history: Vec::new(),
+        context_blocks: Vec::new(),
     }
 }
 
