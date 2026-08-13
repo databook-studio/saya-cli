@@ -1,8 +1,12 @@
-use saya_types::DatabaseProfile;
+use saya_types::{DatabaseProfile, ProfileIdentity};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Path) -> String {
+pub(crate) fn profile_identity(
+    name: &str,
+    profile: &DatabaseProfile,
+    scope: &Path,
+) -> ProfileIdentity {
     let mut hash = Sha256::new();
     field(&mut hash, name);
     field_bytes(&mut hash, scope.as_os_str().as_encoded_bytes());
@@ -79,7 +83,7 @@ pub(crate) fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Pa
     for byte in digest {
         value.push_str(&format!("{byte:02x}"));
     }
-    value
+    ProfileIdentity::parse(&value).expect("profile identity is constructed to the validated shape")
 }
 
 fn fields<'a>(hash: &mut Sha256, values: impl IntoIterator<Item = &'a str>) {
@@ -100,7 +104,7 @@ fn field_bytes(hash: &mut Sha256, value: &[u8]) {
 #[cfg(test)]
 mod tests {
     use saya_store::{SchemaStore, SqliteStateStore};
-    use saya_types::DatabaseProfile;
+    use saya_types::{DatabaseProfile, ProfileIdentity};
     use std::path::Path;
 
     #[test]
@@ -110,8 +114,21 @@ mod tests {
             &profile("one.duckdb"),
             Path::new("/project-one/connections.toml"),
         );
-        assert_eq!(value.len(), 66);
-        assert!(!value.contains("password"));
+        assert_eq!(value.as_str().len(), 66);
+        assert!(!value.as_str().contains("password"));
+    }
+
+    #[test]
+    fn derived_identity_parses_as_a_profile_identity() {
+        let value = super::profile_identity(
+            "parses",
+            &profile("parses.duckdb"),
+            Path::new("/project-parses/connections.toml"),
+        );
+        assert_eq!(
+            ProfileIdentity::parse(value.as_str()).unwrap().as_str(),
+            value.as_str()
+        );
     }
 
     #[tokio::test]
@@ -132,10 +149,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let store = SqliteStateStore::new(root.join("state.sqlite3"));
         store
-            .upsert_schema(&first, &saya_types::SchemaTree::default())
+            .upsert_schema(first.as_str(), &saya_types::SchemaTree::default())
             .await
             .unwrap();
-        assert!(store.get_schema(&second).await.unwrap().is_none());
+        assert!(store.get_schema(second.as_str()).await.unwrap().is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 

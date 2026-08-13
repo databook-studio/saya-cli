@@ -60,7 +60,7 @@ pub(crate) async fn build_registry(
         ConnectionEntry {
             connector,
             dialect,
-            profile_id: Some(profile_id),
+            profile_id: Some(profile_id.to_string()),
         },
     );
 
@@ -109,7 +109,7 @@ pub(crate) async fn build_registry(
                     entry: ConnectionEntry {
                         connector,
                         dialect,
-                        profile_id: Some(profile_id),
+                        profile_id: Some(profile_id.to_string()),
                     },
                 },
             )

@@ -45,7 +45,9 @@ async fn cached_schema_is_explicit_and_agent_query_audit_omits_sql() {
             read_only: Some(true),
         },
         std::path::Path::new("/agent-test/connections.toml"),
-    );
+    )
+    .as_str()
+    .to_owned();
     store
         .upsert_schema(&key, &SchemaTree::default())
         .await
