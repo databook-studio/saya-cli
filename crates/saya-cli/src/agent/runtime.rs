@@ -109,6 +109,17 @@ pub(crate) async fn run_prompt_with_sink(
         }
     };
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
+    // Recall remembered contracts into the prompt's context blocks (spec 2b-3b).
+    // Runs before `registry` and `state_db` move into the tools, by reference;
+    // the privacy gate (`allow_query_data`) skips the store entirely when off.
+    // Never touches `system_prompt` — learned content lives only in the block.
+    let context_blocks = super::recall_context::recall_context_blocks(
+        prompt,
+        allow_query_data,
+        &registry,
+        state_db.as_ref(),
+    )
+    .await;
     // Capture before `state_db` moves into the tools; the contract tools are
     // advertised only when a store is present (spec 2b-3a §3).
     let has_state_store = state_db.is_some();
@@ -124,7 +135,7 @@ pub(crate) async fn run_prompt_with_sink(
         model: ai.model,
         system_prompt,
         history,
-        context_blocks: Vec::new(),
+        context_blocks,
     };
     // Use the caller-supplied decider (e.g. the TUI approval modal) when present,
     // otherwise the terminal prompt/policy decider.

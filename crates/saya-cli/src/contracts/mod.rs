@@ -11,6 +11,7 @@ mod conflict;
 mod recall;
 mod review;
 mod selection;
+pub(crate) mod terms;
 mod validity;
 mod view;
 
@@ -31,3 +32,7 @@ pub(crate) use validity::schema_state_for;
 pub(crate) use view::{
     ContractConflict, ContractSchemaState, RecallDiagnostics, RecallOutcome, RetrievedContract,
 };
+// `PromptTerms` is the prompt-recall signal the agent runtime (2b-3b) consumes
+// alongside the recall request types above.
+#[allow(unused_imports)]
+pub(crate) use terms::PromptTerms;
