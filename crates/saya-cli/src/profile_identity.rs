@@ -2,11 +2,7 @@ use saya_types::{DatabaseProfile, ProfileIdentity};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) fn profile_identity(
-    name: &str,
-    profile: &DatabaseProfile,
-    scope: &Path,
-) -> ProfileIdentity {
+pub fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Path) -> ProfileIdentity {
     let mut hash = Sha256::new();
     field(&mut hash, name);
     field_bytes(&mut hash, scope.as_os_str().as_encoded_bytes());

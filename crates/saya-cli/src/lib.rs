@@ -22,10 +22,15 @@ mod state_path;
 use clap::Parser;
 
 pub use app::run;
-pub use cli::{Cli, Command, ConfigCommand, ConnectionCommand, FormatArg, GlobalOptions};
+pub use cli::{
+    ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
+    ForgetReasonArg, FormatArg, GlobalOptions,
+};
+pub use commands::{capture_output_start, capture_output_take, run_contracts};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
+pub use profile_identity::profile_identity;
 pub use render::{
     ContractClaimView, ContractConflictView, ContractView, RenderFormat, TerminalEvent,
     render_event,

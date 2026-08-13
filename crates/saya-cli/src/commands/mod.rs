@@ -2,18 +2,18 @@ mod config;
 pub(crate) mod connection;
 pub(crate) mod connection_schema;
 mod connection_schema_cache;
+mod contracts;
 mod output;
 mod query;
 mod query_input;
 mod state;
 
-use crate::{
-    cli::Command,
-    config::runtime::RuntimeConfig,
-    render::{RenderFormat, TerminalEvent},
-};
+use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
 use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
+
+pub use contracts::run_contracts;
+pub use output::{capture_output_start, capture_output_take};
 
 pub async fn run(
     command: Command,
@@ -45,14 +45,8 @@ pub async fn run(
         Command::Query { sql, file } => {
             query::run(sql, file, runtime, format, can_prompt, &state).await
         }
-        Command::Contracts { .. } => {
-            output::emit(
-                TerminalEvent::NotImplemented {
-                    feature: "contracts".into(),
-                },
-                format,
-            );
-            Ok(0)
+        Command::Contracts { command } => {
+            contracts::run_contracts(command, runtime, format, &state).await
         }
     }
 }
