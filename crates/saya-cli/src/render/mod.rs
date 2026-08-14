@@ -5,7 +5,9 @@ mod contract_view;
 mod render_contract;
 mod render_delta;
 mod render_json;
-pub use contract_view::{ContractClaimView, ContractConflictView, ContractView};
+pub use contract_view::{
+    ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
+};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,
@@ -78,6 +80,9 @@ pub enum TerminalEvent {
         claim_id: String,
         action: String,
         status: String,
+    },
+    ContractQueue {
+        items: Vec<ContractQueueItemView>,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +159,7 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             action,
             status,
         } => render_contract::changed(claim_id, action, status),
+        TerminalEvent::ContractQueue { items } => render_contract::queue(items),
     };
     Rendered {
         stdout: sanitize_terminal(&rendered.stdout),

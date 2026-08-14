@@ -32,8 +32,8 @@ pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
 pub use profile_identity::profile_identity;
 pub use render::{
-    ContractClaimView, ContractConflictView, ContractView, RenderFormat, TerminalEvent,
-    render_event,
+    ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView, RenderFormat,
+    TerminalEvent, render_event,
 };
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state_path::resolve_state_db_path;

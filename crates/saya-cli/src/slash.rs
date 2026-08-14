@@ -27,6 +27,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "contract",
     "remember",
     "forget",
+    "queue",
     "help",
     "exit",
     "quit",
@@ -115,7 +116,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
-        "contracts" | "contract" | "remember" | "forget" => {
+        "contracts" | "contract" | "remember" | "forget" | "queue" => {
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
             // shared dispatcher. No second parsing or DTO mapping lives here.
@@ -192,7 +193,7 @@ fn parse_approval(value: &str) -> Result<Option<ApprovalPolicy>, SlashParseError
 }
 
 pub fn help_text() -> &'static str {
-    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit\n/contracts  /contract <table>  /remember <table> <kind> <value…>  /forget <id>"
+    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit\n/contracts  /contract <table>  /remember <table> <kind> <value…>  /forget <id>  /queue [limit]"
 }
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
@@ -252,6 +253,9 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "forget" => Some(
             "forget <claim-id> — tombstone a claim so recall excludes it. Example: /forget abc-123",
         ),
+        "queue" => {
+            Some("queue [limit] — list candidate claims awaiting review. Example: /queue 20")
+        }
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",
         ),

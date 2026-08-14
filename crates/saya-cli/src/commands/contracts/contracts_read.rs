@@ -8,7 +8,7 @@ use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, op_failure, unobserved
 use crate::commands::output::{emit, failure_message, result};
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::args::parse_qualified;
-use crate::contracts::{RecallBounds, RecallRequest, recall, show as show_contract};
+use crate::contracts::{RecallBounds, RecallRequest, recall, review_queue, show as show_contract};
 use crate::render::{RenderFormat, TerminalEvent};
 use saya_store::{ContractStore, SqliteStateStore};
 use saya_types::{DatabaseObjectKind, DatabaseObjectRef};
@@ -104,5 +104,37 @@ pub(super) async fn show(
         },
         format,
     );
+    Ok(0)
+}
+
+/// The candidate review queue. Resolves a profile, lists its candidates, and
+/// renders them with the schema state and evidence count a reviewer needs. The
+/// headless adapter has no live schema, so each candidate reads
+/// `live_schema_unavailable` — the same posture as `show`'s
+/// `LiveSchemaUnavailable`. An unreadable store exits non-zero, matching `list`
+/// so "no candidates" and "could not read your candidates" stay distinguishable.
+pub(super) async fn queue(
+    store: &SqliteStateStore,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    profile: Option<&str>,
+    limit: Option<usize>,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let (name, identity) = match resolve_profile(runtime, profile) {
+        Ok(value) => value,
+        Err((code, message)) => return failure_message(code, message, format),
+    };
+    let limit = limit.unwrap_or(crate::contracts::QUEUE_DEFAULT_LIMIT);
+    let queued = match review_queue(store, std::slice::from_ref(&identity), &[], limit).await {
+        Ok(queued) => queued,
+        Err(_) => {
+            return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);
+        }
+    };
+    let items: Vec<_> = queued
+        .iter()
+        .map(|c| super::queue_item_view(c, &name))
+        .collect();
+    emit(TerminalEvent::ContractQueue { items }, format);
     Ok(0)
 }

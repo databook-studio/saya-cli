@@ -150,6 +150,45 @@ async fn confirm_candidate(
     id
 }
 
+/// Proposes a candidate claim and returns its id. `evidence_turns` repeats the
+/// proposal once per turn ordinal, each attaching one `RepeatedObservation`
+/// evidence row so the claim ends with `evidence_turns.len()` support. The
+/// queue orders by that count, so this is the lever the ordering test pulls.
+async fn propose_candidate(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    fingerprint: &SchemaFingerprint,
+    payload: ClaimPayload,
+    evidence_turns: &[u32],
+) -> ClaimId {
+    let turns = evidence_turns.to_vec();
+    let request = |turn: Option<u32>| ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint.clone(),
+        payload: payload.clone(),
+        origin: ClaimOrigin::AssistantInferred,
+        initial_status: ClaimStatus::Candidate,
+        evidence: turn.map(|t| saya_store::ClaimEvidence {
+            kind: saya_store::EvidenceKind::RepeatedObservation,
+            session_id: Some("s1".into()),
+            turn_ordinal: Some(t),
+            observed_unix_ms: 10_000 + t as i64,
+        }),
+    };
+    let first = match store
+        .propose_claim(request(turns.first().copied()))
+        .await
+        .unwrap()
+    {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    for turn in turns.into_iter().skip(1) {
+        store.propose_claim(request(Some(turn))).await.unwrap();
+    }
+    first
+}
+
 fn recall_request<'a>(
     profiles: &'a [ProfileIdentity],
     schemas: &'a [(ProfileIdentity, SchemaTree)],
@@ -875,8 +914,403 @@ async fn forgotten_claim_disappears_from_recall() {
 }
 
 // ---------------------------------------------------------------------------
-// Adapter smoke: review wrappers pass through and map NotFound
+// Phase 3d: the candidate review queue
 // ---------------------------------------------------------------------------
+//
+// `review_queue` is the opposite view from recall: recall answers "what is
+// true about this question", the queue answers "what is waiting for me". It
+// lists candidates only, ordered most-evidence-first then oldest then by claim
+// id, so a reviewer works a stable list. See .claude/specs/spec-3d-review-queue.md.
+
+use super::review_queue;
+
+#[tokio::test]
+async fn queue_lists_candidates_not_confirmed_or_forgotten() {
+    let root = temp_root("queue_membership");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
+    let obj = object_ref(&p, "orders");
+    let live = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+
+    // A confirmed claim and a forgotten one must not appear; a candidate must.
+    let _confirmed = confirm_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("confirmed_alias").unwrap(),
+    )
+    .await;
+    let cand_id = propose_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("cand_alias").unwrap(),
+        &[1],
+    )
+    .await;
+    let forgotten = propose_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("forgotten_alias").unwrap(),
+        &[1],
+    )
+    .await;
+    store
+        .forget_claim(&forgotten, ForgetReason::Obsolete)
+        .await
+        .unwrap();
+
+    let queued = review_queue(&store, std::slice::from_ref(&p), &[(p.clone(), live)], 200)
+        .await
+        .unwrap();
+
+    let ids: Vec<ClaimId> = queued.iter().map(|q| q.claim.id.clone()).collect();
+    assert!(ids.contains(&cand_id), "candidate missing from queue");
+    // Every queued claim is a candidate — neither confirmed nor forgotten
+    // leaks in. Reading each back lets the assertion stay sync inside `any`.
+    for id in &ids {
+        let claim = store.get_claim(id).await.unwrap().unwrap();
+        assert_eq!(
+            claim.status,
+            ClaimStatus::Candidate,
+            "non-candidate claim appeared in the queue"
+        );
+    }
+    assert!(
+        !ids.contains(&forgotten),
+        "a forgotten claim appeared in the queue"
+    );
+    // The queue carries one entry per candidate, not per claim-status.
+    assert_eq!(queued.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_orders_most_evidence_then_oldest_then_id() {
+    let root = temp_root("queue_order");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
+    // Three distinct objects so three candidates with distinct claim ids.
+    let live = schema_tree_for(&[
+        ("a", table(&[("id", "bigint", false)])),
+        ("b", table(&[("id", "bigint", false)])),
+        ("c", table(&[("id", "bigint", false)])),
+    ]);
+
+    // most: 3 evidence, middle: 2, least: 1.
+    let _most = propose_candidate(
+        &store,
+        &object_ref(&p, "a"),
+        &fp,
+        ClaimPayload::table_alias("a").unwrap(),
+        &[1, 2, 3],
+    )
+    .await;
+    let _middle = propose_candidate(
+        &store,
+        &object_ref(&p, "b"),
+        &fp,
+        ClaimPayload::table_alias("b").unwrap(),
+        &[1, 2],
+    )
+    .await;
+    let _least = propose_candidate(
+        &store,
+        &object_ref(&p, "c"),
+        &fp,
+        ClaimPayload::table_alias("c").unwrap(),
+        &[1],
+    )
+    .await;
+
+    let first = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live.clone())],
+        200,
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.len(), 3);
+    // Most evidence first: a (3) before b (2) before c (1).
+    let by_object: Vec<&str> = first.iter().map(|q| q.claim.object.object()).collect();
+    assert_eq!(
+        by_object,
+        vec!["a", "b", "c"],
+        "evidence order broken: {by_object:?}"
+    );
+
+    // Tie-break by oldest: two claims with equal evidence (1) on different
+    // objects, created in sequence, must come back oldest-first. A short sleep
+    // makes the millisecond timestamps differ so the secondary key is what
+    // decides — without it both land in the same ms and the test would only
+    // exercise the tertiary (id) key.
+    let live_tb = schema_tree_for(&[
+        ("old", table(&[("id", "bigint", false)])),
+        ("new", table(&[("id", "bigint", false)])),
+    ]);
+    let _old = propose_candidate(
+        &store,
+        &object_ref(&p, "old"),
+        &fp,
+        ClaimPayload::table_alias("old").unwrap(),
+        &[1],
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let _new = propose_candidate(
+        &store,
+        &object_ref(&p, "new"),
+        &fp,
+        ClaimPayload::table_alias("new").unwrap(),
+        &[1],
+    )
+    .await;
+
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live_tb)],
+        200,
+    )
+    .await
+    .unwrap();
+    // The store now holds a/b/c (evidence 3/2/1) plus old/new (evidence 1 each).
+    // The equal-evidence pair sorts oldest-first; assert the relative order of
+    // the two rather than the whole list, since a/b/c interleave by evidence.
+    let ordered: Vec<&str> = queued.iter().map(|q| q.claim.object.object()).collect();
+    let old_pos = ordered
+        .iter()
+        .position(|o| *o == "old")
+        .expect("old candidate missing");
+    let new_pos = ordered
+        .iter()
+        .position(|o| *o == "new")
+        .expect("new candidate missing");
+    assert!(
+        old_pos < new_pos,
+        "oldest-first tie-break broken: {ordered:?}"
+    );
+
+    // The full queue order must be identical on a second run — a queue whose
+    // order shifts between runs is one a user cannot work through. Both runs
+    // see the same five candidates now that the store holds a/b/c and old/new.
+    let live_all = schema_tree_for(&[
+        ("a", table(&[("id", "bigint", false)])),
+        ("b", table(&[("id", "bigint", false)])),
+        ("c", table(&[("id", "bigint", false)])),
+        ("old", table(&[("id", "bigint", false)])),
+        ("new", table(&[("id", "bigint", false)])),
+    ]);
+    let run_a = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live_all.clone())],
+        200,
+    )
+    .await
+    .unwrap();
+    let run_b = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live_all)],
+        200,
+    )
+    .await
+    .unwrap();
+    let ids_a: Vec<ClaimId> = run_a.iter().map(|q| q.claim.id.clone()).collect();
+    let ids_b: Vec<ClaimId> = run_b.iter().map(|q| q.claim.id.clone()).collect();
+    assert_eq!(ids_a, ids_b, "queue order was not stable across runs");
+    // And it still begins with the most-evidence candidate.
+    assert_eq!(run_a[0].claim.object.object(), "a");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_limit_is_respected_and_clamped_at_200() {
+    let root = temp_root("queue_limit");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
+    let live = schema_tree_for(&[]);
+    // Five candidates, equal evidence so the id tie-break orders them.
+    for i in 0..5 {
+        let obj = object_ref(&p, &format!("t{i}"));
+        let _ = propose_candidate(
+            &store,
+            &obj,
+            &fp,
+            ClaimPayload::table_alias(format!("t{i}")).unwrap(),
+            &[1],
+        )
+        .await;
+    }
+
+    // A small limit is honored exactly.
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live.clone())],
+        3,
+    )
+    .await
+    .unwrap();
+    assert_eq!(queued.len(), 3, "limit not respected");
+
+    // A limit of zero is an empty queue, not clamped up to 200 — "nothing
+    // waiting" is a legitimate answer.
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live.clone())],
+        0,
+    )
+    .await
+    .unwrap();
+    assert!(queued.is_empty(), "limit 0 returned candidates");
+
+    // An over-large limit clamps to 200 and does not error; with only five
+    // candidates present, all five come back. The clamp is a ceiling the
+    // operation enforces, not a promise to return more than exists.
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live)],
+        10_000,
+    )
+    .await
+    .unwrap();
+    assert_eq!(queued.len(), 5, "over-large limit misbehaved");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_reports_schema_state_for_a_changed_object() {
+    let root = temp_root("queue_schema_state");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let fp = fingerprint_for(&base);
+    let obj = object_ref(&p, "orders");
+    // Candidate proposed against the base schema, then the live schema drops a
+    // referenced column — the queue must flag it stale, not current.
+    let _id = propose_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+        &[1],
+    )
+    .await;
+    let live_dropped = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live_dropped)],
+        200,
+    )
+    .await
+    .unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(
+        queued[0].schema_state,
+        ContractSchemaState::Stale,
+        "a candidate whose referenced column is gone must read stale"
+    );
+
+    // Same candidate against the unchanged live schema reads current.
+    let live_current = schema_tree_for(&[("orders", base.clone())]);
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live_current)],
+        200,
+    )
+    .await
+    .unwrap();
+    assert_eq!(queued[0].schema_state, ContractSchemaState::Current);
+
+    // No live schema for the profile reads live_schema_unavailable.
+    let queued = review_queue(&store, std::slice::from_ref(&p), &[], 200)
+        .await
+        .unwrap();
+    assert_eq!(
+        queued[0].schema_state,
+        ContractSchemaState::LiveSchemaUnavailable
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_evidence_count_reflects_attached_evidence() {
+    let root = temp_root("queue_evidence_count");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
+    let obj = object_ref(&p, "orders");
+    let live = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+
+    // Three distinct evidence rows (distinct turn ordinals) -> count 3.
+    let _id = propose_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("orders").unwrap(),
+        &[1, 2, 3],
+    )
+    .await;
+    let queued = review_queue(&store, std::slice::from_ref(&p), &[(p.clone(), live)], 200)
+        .await
+        .unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].evidence_count, 3);
+
+    // The count the queue carries must match the store's own count read.
+    assert_eq!(
+        queued[0].evidence_count,
+        store.evidence_count(&queued[0].claim.id).await.unwrap()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_unopenable_store_errors_unavailable() {
+    let root = temp_root("queue_unavailable");
+    fs::write(root.join("blocker"), b"x").unwrap();
+    let bad = root.join("blocker/state.sqlite3");
+    let store = SqliteStateStore::new(&bad);
+
+    let p = profile_a();
+    let err = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), SchemaTree::default())],
+        200,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err, ContractOpError::Unavailable);
+
+    let _ = fs::remove_dir_all(root);
+}
 #[tokio::test]
 async fn review_wrappers_pass_through_and_map_errors() {
     let root = temp_root("review_wrappers");

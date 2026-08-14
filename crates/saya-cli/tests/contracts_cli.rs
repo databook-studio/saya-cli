@@ -635,3 +635,181 @@ async fn json_and_ndjson_carry_same_claim_ids_as_text() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+// ---------------------------------------------------------------------------
+// 11. Phase 3d: `saya contracts queue` lists candidates, and confirming one
+//     from the queue makes it recallable while rejecting it never does. The
+//     queue reuses the existing `review` operation — no new write tool.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn queue_lists_candidates_and_review_transitions_them() {
+    let root = temp_root("queue_review");
+    let (runtime, _c, _n) = runtime_at(&root);
+    let store = store_at(&root).await;
+
+    let cand_id = seed_candidate(&store, &runtime, "orders").await;
+    let queue = ContractsCommand::Queue {
+        profile: None,
+        limit: None,
+    };
+    let (code, out, err) = run(queue, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "queue stderr: {err}");
+    // The queue is a worklist: every entry is a candidate by definition, so the
+    // status word is not rendered. The fields a reviewer needs are the id, the
+    // kind/value, the object, the schema state, and the evidence count.
+    assert!(
+        out.contains(cand_id.as_str()),
+        "queue must name the candidate's full id: {out}"
+    );
+    assert!(out.contains("table_alias"), "queue must show kind: {out}");
+    assert!(out.contains("customers"), "queue must show value: {out}");
+    assert!(
+        out.contains("analytics.public.orders"),
+        "queue must show object: {out}"
+    );
+    assert!(
+        out.contains("live_schema_unavailable"),
+        "queue must show schema state: {out}"
+    );
+    assert!(
+        out.contains("evidence 0"),
+        "queue must show evidence count: {out}"
+    );
+
+    // Confirm the candidate: it becomes recallable (show lists it) and leaves
+    // the queue on the next read.
+    let confirm = ContractsCommand::Review {
+        claim_id: cand_id.as_str().into(),
+        confirm: true,
+        reject: false,
+    };
+    let (code, out, err) = run(confirm, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "confirm stderr: {err}");
+    assert!(out.contains("confirmed"), "confirm out: {out}");
+
+    let show = ContractsCommand::Show {
+        table: qualified().into(),
+        profile: None,
+    };
+    let (code, out, err) = run(show, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "show stderr: {err}");
+    assert!(
+        out.contains("customers"),
+        "confirmed candidate is now recallable: {out}"
+    );
+
+    let queue = ContractsCommand::Queue {
+        profile: None,
+        limit: None,
+    };
+    let (code, out, err) = run(queue, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "queue stderr: {err}");
+    assert!(
+        !out.contains(cand_id.as_str()),
+        "confirmed candidate must leave the queue: {out}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_rejected_candidate_never_becomes_recallable() {
+    let root = temp_root("queue_reject");
+    let (runtime, _c, _n) = runtime_at(&root);
+    let store = store_at(&root).await;
+
+    let cand_id = seed_candidate(&store, &runtime, "orders").await;
+    let reject = ContractsCommand::Review {
+        claim_id: cand_id.as_str().into(),
+        confirm: false,
+        reject: true,
+    };
+    let (code, out, err) = run(reject, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "reject stderr: {err}");
+    assert!(out.contains("rejected"), "reject out: {out}");
+
+    // The rejected candidate left the queue…
+    let queue = ContractsCommand::Queue {
+        profile: None,
+        limit: None,
+    };
+    let (code, out, err) = run(queue, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "queue stderr: {err}");
+    assert!(
+        !out.contains(cand_id.as_str()),
+        "rejected candidate must leave the queue: {out}"
+    );
+
+    // …and never becomes recallable: show finds no contract for the object.
+    let show = ContractsCommand::Show {
+        table: qualified().into(),
+        profile: None,
+    };
+    let (code, out, err) = run(show, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "show stderr: {err}");
+    assert!(
+        out.contains("No contract"),
+        "rejected candidate must never be recallable: {out}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_never_leaks_the_opaque_profile_identity() {
+    let root = temp_root("queue_identity");
+    let (runtime, _c, _n) = runtime_at(&root);
+    let store = store_at(&root).await;
+
+    let _id = seed_candidate(&store, &runtime, "orders").await;
+    let identity = identity_for(&runtime, "local");
+    let queue = ContractsCommand::Queue {
+        profile: None,
+        limit: None,
+    };
+    for format in [RenderFormat::Text, RenderFormat::Json, RenderFormat::Ndjson] {
+        let (code, out, err) = run(queue.clone(), &runtime, &store, format).await;
+        assert_eq!(code, 0, "queue {format:?} stderr: {err}");
+        for captured in [out.as_str(), err.as_str()] {
+            assert!(
+                !captured.contains(&identity),
+                "opaque identity leaked into queue {format:?}: {captured}"
+            );
+        }
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn queue_unopenable_store_exits_nonzero_like_list() {
+    let root = temp_root("queue_unopenable");
+    fs::write(root.join("blocker"), b"x").unwrap();
+    let bad = root.join("blocker/state.sqlite3");
+    let store = SqliteStateStore::new(&bad);
+    let (runtime, _c, _n) = runtime_at(&root);
+
+    let queue = ContractsCommand::Queue {
+        profile: None,
+        limit: None,
+    };
+    let (qcode, qout, qerr) = run(queue, &runtime, &store, RenderFormat::Text).await;
+    assert_ne!(
+        qcode, 0,
+        "queue must exit non-zero on an unopenable store: {qout}{qerr}"
+    );
+    assert!(
+        !format!("{qout}{qerr}").is_empty(),
+        "queue must emit a diagnostic on an unopenable store"
+    );
+
+    // The failure matches `list` — "no candidates" and "could not read" stay
+    // distinguishable the same way "no contracts" and "unreadable" do.
+    let list = ContractsCommand::List { profile: None };
+    let (lcode, lout, lerr) = run(list, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(qcode, lcode, "queue exit diverged from list");
+    assert_eq!(qout, lout, "queue stdout diverged from list");
+    assert_eq!(qerr, lerr, "queue stderr diverged from list");
+
+    let _ = fs::remove_dir_all(root);
+}

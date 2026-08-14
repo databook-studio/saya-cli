@@ -2,7 +2,7 @@
 //! derives on [`TerminalEvent`](super::TerminalEvent); text needs deliberate
 //! shaping, done here. See plan spec §3.
 
-use super::{ContractConflictView, ContractView, Rendered};
+use super::{ContractConflictView, ContractQueueItemView, ContractView, Rendered};
 
 /// Abbreviation width for display-only claim ids: first six chars + `…` when the
 /// id is longer. `ContractChanged.claim_id` is never abbreviated — the user has
@@ -62,6 +62,46 @@ pub(super) fn changed(claim_id: &str, action: &str, status: &str) -> Rendered {
     Rendered {
         stdout: line,
         stderr: String::new(),
+    }
+}
+
+/// The review queue: one line per candidate with the fields a reviewer needs to
+/// decide — the full claim id (pasted into `contracts review`), kind, value,
+/// object, schema state, and evidence count. The claim id is never abbreviated
+/// here, unlike the recall stanza, because the reviewer's next action keys on it.
+pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
+    if items.is_empty() {
+        // Not an error: an empty queue simply has nothing waiting.
+        return Rendered {
+            stdout: "No candidates awaiting review.\n".into(),
+            stderr: String::new(),
+        };
+    }
+    let mut stdout = String::new();
+    for item in items {
+        stdout.push_str(&format!(
+            "{id}  {kind}  {value}{column}  {object}  [{state}]{note}  evidence {count}  (profile: {profile})\n",
+            id = item.claim_id,
+            kind = item.kind,
+            value = item.value,
+            column = column_suffix(item.column.as_deref()),
+            object = item.object,
+            state = item.schema_state,
+            note = schema_state_note(&item.schema_state),
+            count = item.evidence_count,
+            profile = item.profile,
+        ));
+    }
+    Rendered {
+        stdout,
+        stderr: String::new(),
+    }
+}
+
+fn column_suffix(column: Option<&str>) -> String {
+    match column {
+        Some(column) => format!("  col:{column}"),
+        None => String::new(),
     }
 }
 

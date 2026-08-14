@@ -119,3 +119,28 @@ pub(crate) async fn claim_events(
         })
         .collect()
 }
+
+/// The count of evidence rows attached to `id`. A bare `COUNT(*)` — no row
+/// columns are selected, so no session id or turn ordinal ever leaves the
+/// table. An unknown claim is `NotFound`, not `0`.
+pub(crate) async fn evidence_count(
+    store: &SqliteStateStore,
+    id: &ClaimId,
+) -> Result<usize, StoreError> {
+    let pool = store.pool().await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM contract_claims WHERE id=?)")
+            .bind(id.as_str())
+            .fetch_one(pool)
+            .await
+            .map_err(|_| StoreError::Unavailable)?;
+    if !exists {
+        return Err(StoreError::NotFound);
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_evidence WHERE claim_id=?")
+        .bind(id.as_str())
+        .fetch_one(pool)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(count.max(0) as usize)
+}

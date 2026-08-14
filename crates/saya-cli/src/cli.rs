@@ -112,6 +112,14 @@ pub enum ContractsCommand {
         #[arg(long)]
         profile: Option<String>,
     },
+    Queue {
+        #[arg(long)]
+        profile: Option<String>,
+        /// Maximum candidates to list. Clamped to 200; a queue is a worklist,
+        /// not an archive.
+        #[arg(long)]
+        limit: Option<usize>,
+    },
     Remember {
         table: String,
         #[arg(long, value_enum)]

@@ -159,4 +159,9 @@ pub trait ContractStore: Send + Sync {
         id: &ClaimId,
         limit: usize,
     ) -> Result<Vec<ContractEvent>, StoreError>;
+    /// The number of evidence rows attached to a claim. Returns a bare count
+    /// only — never the rows themselves, which carry session ids and turn
+    /// ordinals the queue does not need. An unknown id is `NotFound`, not `0`:
+    /// a missing claim is not an empty evidence set.
+    async fn evidence_count(&self, id: &ClaimId) -> Result<usize, StoreError>;
 }

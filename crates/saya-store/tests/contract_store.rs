@@ -207,6 +207,71 @@ async fn evidence_cap_keeps_newest() {
 }
 
 #[tokio::test]
+async fn evidence_count_trait_reads_the_attached_rows() {
+    // The queue (Phase 3d) needs a per-claim evidence count to order
+    // candidates, but must not receive the evidence rows themselves (they
+    // carry session ids and turn ordinals). The trait method returns a bare
+    // count; this test asserts it matches the raw table count and that a
+    // claim with no evidence reads zero rather than erroring.
+    let root = temp_root("evidence_count");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    let no_evidence = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: ClaimPayload::table_description("no evidence").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Candidate,
+        evidence: None,
+    };
+    let bare_id = match store.propose_claim(no_evidence).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    assert_eq!(store.evidence_count(&bare_id).await.unwrap(), 0);
+
+    let evidence = |turn: u32| ClaimEvidence {
+        kind: EvidenceKind::RepeatedObservation,
+        session_id: Some("s1".into()),
+        turn_ordinal: Some(turn),
+        observed_unix_ms: 10_000 + turn as i64,
+    };
+    let request = |evidence: ClaimEvidence| ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: ClaimPayload::table_description("with evidence").unwrap(),
+        origin: ClaimOrigin::AssistantInferred,
+        initial_status: ClaimStatus::Candidate,
+        evidence: Some(evidence),
+    };
+    let id = match store.propose_claim(request(evidence(1))).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    store.propose_claim(request(evidence(2))).await.unwrap();
+    store.propose_claim(request(evidence(3))).await.unwrap();
+    // An identical repeat of turn 1 dedups and does not raise the count.
+    store.propose_claim(request(evidence(1))).await.unwrap();
+    assert_eq!(store.evidence_count(&id).await.unwrap(), 3);
+    assert_eq!(
+        store.evidence_count(&id).await.unwrap(),
+        evidence_count(&db, id.as_str()).await,
+        "trait count must match the raw table count"
+    );
+
+    // An unknown id reports NotFound, not zero — a missing claim is not an
+    // empty evidence set.
+    let unknown = saya_types::ClaimId::parse("c-deadbeef").unwrap();
+    assert_eq!(
+        store.evidence_count(&unknown).await.unwrap_err(),
+        StoreError::NotFound
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn claim_cap_rejects_overflow() {
     let root = temp_root("t8");
     let db = root.join("state.sqlite3");

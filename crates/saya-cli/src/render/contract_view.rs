@@ -47,3 +47,21 @@ pub struct ContractView {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
 }
+
+/// One candidate waiting for review, in renderable form. The queue is a flat
+/// per-candidate listing — not the object-grouped `ContractView` shape — so it
+/// gets its own DTO rather than a one-claim "contract" with a smuggled evidence
+/// count. `profile` is the profile *name*, never the opaque identity, and
+/// there is no field for the identity here either.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractQueueItemView {
+    pub profile: String,
+    pub claim_id: String,
+    pub kind: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
+    pub object: String,
+    pub schema_state: String,
+    pub evidence_count: usize,
+}

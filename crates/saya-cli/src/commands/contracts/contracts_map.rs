@@ -6,8 +6,8 @@
 //! identity is dropped here and must never appear in any field — the DTO has no
 //! field for it, and the only name we render is the one the caller resolved.
 
-use crate::contracts::{ContractConflict, ContractSchemaState, RetrievedContract};
-use crate::render::{ContractClaimView, ContractConflictView, ContractView};
+use crate::contracts::{ContractConflict, ContractSchemaState, QueuedCandidate, RetrievedContract};
+use crate::render::{ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView};
 use saya_store::StoredClaim;
 use saya_types::ClaimPayload;
 
@@ -57,7 +57,7 @@ fn claim_view(claim: &StoredClaim) -> ContractClaimView {
 
 /// The short rendered form of a payload: the alias, the text, the role, or the
 /// column — matching the render snapshots in `tests/contract_render.rs`.
-fn render_payload(payload: &ClaimPayload) -> (String, String, Option<String>) {
+pub(crate) fn render_payload(payload: &ClaimPayload) -> (String, String, Option<String>) {
     match payload {
         ClaimPayload::TableDescription { text, .. } => (payload.kind().into(), text.clone(), None),
         ClaimPayload::TableAlias { alias, .. } => (payload.kind().into(), alias.clone(), None),
@@ -91,5 +91,32 @@ fn conflict_view(conflict: &ContractConflict) -> ContractConflictView {
             .iter()
             .map(|id| id.as_str().to_string())
             .collect(),
+    }
+}
+
+/// Maps one queued candidate to its render DTO. `profile_name` is the name the
+/// adapter resolved — never the opaque identity, which has no field on the DTO.
+/// The full claim id is carried unabbreviated because the reviewer's next action
+/// (`contracts review <id>`) keys on it. A candidate always has a payload; the
+/// `None` arm is a defensive fallback, not a path that should render.
+pub(crate) fn queue_item_view(
+    candidate: &QueuedCandidate,
+    profile_name: &str,
+) -> ContractQueueItemView {
+    let (kind, value, column) = candidate
+        .claim
+        .payload
+        .as_ref()
+        .map(render_payload)
+        .unwrap_or_else(|| (String::new(), String::new(), None));
+    ContractQueueItemView {
+        profile: profile_name.to_string(),
+        claim_id: candidate.claim.id.as_str().to_string(),
+        kind,
+        value,
+        column,
+        object: candidate.claim.object.qualified_name(),
+        schema_state: schema_state_str(candidate.schema_state),
+        evidence_count: candidate.evidence_count,
     }
 }

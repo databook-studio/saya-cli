@@ -20,6 +20,7 @@ mod contracts_write;
 // `pub(crate)` so the agent contract tools (2b-3a) reuse it instead of carrying
 // a second mapping that could leak the opaque profile identity.
 pub(crate) use contracts_map::contract_view;
+pub(crate) use contracts_map::queue_item_view;
 
 use super::output::failure_message;
 use crate::cli::ContractsCommand;
@@ -48,6 +49,9 @@ pub async fn run_contracts(
         }
         ContractsCommand::Show { table, profile } => {
             contracts_read::show(store, runtime, format, &table, profile.as_deref()).await
+        }
+        ContractsCommand::Queue { profile, limit } => {
+            contracts_read::queue(store, runtime, format, profile.as_deref(), limit).await
         }
         ContractsCommand::Remember {
             table,

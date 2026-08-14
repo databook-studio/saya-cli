@@ -19,8 +19,11 @@ use saya_cli::{
     capture_output_start, capture_output_take, load_with_sources, parse_slash_command,
     profile_identity, run_contracts,
 };
-use saya_store::{SchemaStore, SqliteStateStore};
-use saya_types::SchemaTree;
+use saya_store::{ContractStore, ProposeClaim, SchemaStore, SqliteStateStore};
+use saya_types::{
+    ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity,
+    SchemaFingerprint, SchemaTree,
+};
 use std::{
     collections::BTreeMap,
     fs,
@@ -134,6 +137,14 @@ async fn run_slash(
 
 fn qualified() -> &'static str {
     "analytics.public.orders"
+}
+
+/// The "no schema observed" fingerprint the headless adapter stores: current
+/// format, all-zero digest. The parity test seeds candidates with it so their
+/// stored fingerprint matches what the headless `unobserved_fingerprint` would
+/// produce — keeping the two paths' records identical.
+fn unobserved_fingerprint() -> SchemaFingerprint {
+    SchemaFingerprint::from_parts(saya_types::FINGERPRINT_VERSION, &"0".repeat(64)).unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -745,4 +756,92 @@ async fn remember_column_kind_translates_to_headless_command() {
             profile: None,
         }
     );
+}
+
+// ---------------------------------------------------------------------------
+// 11. /queue and `saya contracts queue` return the same claim ids in the same
+//     order. Phase 3d parity: the slash adapter only translates `/queue` into
+//     the same `ContractsCommand::Queue` the headless parser produces and hands
+//     it to the shared dispatcher — no second queue read, no second DTO mapping.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn queue_slash_and_headless_agree_on_claim_ids_and_order() {
+    let root = temp_root("queue_parity");
+    let (runtime, _name) = runtime_at(&root);
+    let store = store_at(&root).await;
+
+    // Seed three candidates with distinct evidence counts so the queue order
+    // is observable, directly through the store (slash `remember` only confirms).
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    for (table, turns) in [("a", 3u32), ("b", 2), ("c", 1)] {
+        let object = DatabaseObjectRef::new(
+            profile.clone(),
+            "analytics",
+            "public",
+            table,
+            DatabaseObjectKind::Table,
+        )
+        .unwrap();
+        for turn in 0..turns {
+            let request = ProposeClaim {
+                object: object.clone(),
+                fingerprint: unobserved_fingerprint(),
+                payload: ClaimPayload::table_alias(table).unwrap(),
+                origin: ClaimOrigin::AssistantInferred,
+                initial_status: ClaimStatus::Candidate,
+                evidence: Some(saya_store::ClaimEvidence {
+                    kind: saya_store::EvidenceKind::RepeatedObservation,
+                    session_id: Some("s1".into()),
+                    turn_ordinal: Some(turn),
+                    observed_unix_ms: 10_000 + turn as i64,
+                }),
+            };
+            store.propose_claim(request).await.unwrap();
+        }
+    }
+
+    let headless = run_headless(
+        ContractsCommand::Queue {
+            profile: None,
+            limit: None,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    let (_cmd, code, out, err) = run_slash("/queue", &runtime, &store, RenderFormat::Text).await;
+
+    assert_eq!(code, 0, "/queue stderr: {err}");
+    // The translated slash command must equal the headless one — same operation.
+    assert_eq!(
+        _cmd,
+        ContractsCommand::Queue {
+            profile: None,
+            limit: None,
+        }
+    );
+    // Same claim ids, same order, byte for byte — a second queue read would
+    // diverge here.
+    assert_eq!(out, headless.1, "slash /queue diverged from headless queue");
+    assert_eq!(err, headless.2);
+
+    // The order is most-evidence-first: a (3) before b (2) before c (1). Assert
+    // it on the slash path so a drift in either adapter is caught.
+    let slash_ids: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("c-"))
+        .map(|l| l.split_whitespace().next().unwrap_or(""))
+        .collect();
+    assert_eq!(slash_ids.len(), 3, "/queue output: {out}");
+    let headless_ids: Vec<&str> = headless
+        .1
+        .lines()
+        .filter(|l| l.starts_with("c-"))
+        .map(|l| l.split_whitespace().next().unwrap_or(""))
+        .collect();
+    assert_eq!(slash_ids, headless_ids, "order diverged");
+
+    let _ = fs::remove_dir_all(root);
 }

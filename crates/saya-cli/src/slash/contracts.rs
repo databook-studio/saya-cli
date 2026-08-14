@@ -102,6 +102,11 @@ fn usage_forget() -> String {
     "/forget <claim-id>".into()
 }
 
+/// Payload-free usage for `/queue`. The limit is optional and numeric.
+fn usage_queue() -> String {
+    "/queue [limit]".into()
+}
+
 /// Translates a slash command name + its argument tail into the matching
 /// `ContractsCommand`, or a usage error. The argument is the raw text after the
 /// command word (already trimmed of the leading `/name`).
@@ -155,6 +160,26 @@ pub(crate) fn parse_contract_command(
             Ok(Some(ContractsCommand::Forget {
                 claim_id: id.to_string(),
                 reason: ForgetReasonArg::UserRequest,
+            }))
+        }
+        "queue" => {
+            // `/queue` with no args lists the active profile's candidates at the
+            // default limit. A single optional positional number overrides the
+            // limit. The slash path always uses the active profile — there is
+            // no `--profile` form here, matching `/contracts` → `List`.
+            let tokens: Vec<&str> = arg.split_whitespace().collect();
+            let limit = match tokens.len() {
+                0 => None,
+                1 => Some(
+                    tokens[0]
+                        .parse::<usize>()
+                        .map_err(|_| SlashParseError(usage_queue()))?,
+                ),
+                _ => return Err(SlashParseError(usage_queue())),
+            };
+            Ok(Some(ContractsCommand::Queue {
+                profile: None,
+                limit,
             }))
         }
         _ => Ok(None),
@@ -268,6 +293,35 @@ mod tests {
         );
         assert!(parse_contract_command("forget", "").is_err());
         assert!(parse_contract_command("forget", "a b").is_err());
+    }
+
+    #[test]
+    fn parse_queue_no_arg_is_default_limit() {
+        let cmd = parse_contract_command("queue", "").unwrap().unwrap();
+        assert_eq!(
+            cmd,
+            ContractsCommand::Queue {
+                profile: None,
+                limit: None
+            }
+        );
+    }
+
+    #[test]
+    fn parse_queue_optional_numeric_limit() {
+        let cmd = parse_contract_command("queue", "20").unwrap().unwrap();
+        assert_eq!(
+            cmd,
+            ContractsCommand::Queue {
+                profile: None,
+                limit: Some(20),
+            }
+        );
+        // A non-numeric limit is a usage error that does not echo the input.
+        let bad = parse_contract_command("queue", "lots").unwrap_err();
+        assert!(!bad.0.contains("lots"));
+        // Two tokens is a usage error.
+        assert!(parse_contract_command("queue", "1 2").is_err());
     }
 
     #[test]

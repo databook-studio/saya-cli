@@ -74,6 +74,9 @@ impl ContractStore for SqliteStateStore {
     ) -> Result<Vec<ContractEvent>, StoreError> {
         store_reads::claim_events(self, id, limit).await
     }
+    async fn evidence_count(&self, id: &ClaimId) -> Result<usize, StoreError> {
+        store_reads::evidence_count(self, id).await
+    }
 }
 
 pub(crate) async fn upsert_object_in_tx(
