@@ -14,7 +14,7 @@ use crate::connection::ConnectionRegistry;
 use crate::contracts::{ContractSchemaState, RetrievedContract};
 use saya_store::StoredClaim;
 use saya_types::ClaimPayload;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 /// `identity.as_str() → profile name` for the connections that resolved. The
@@ -53,12 +53,21 @@ pub(super) fn render_body(
             profile = profile_name,
             stale = stale_note(contract.schema_state),
         );
+        // 5e: ids of the claims this contract's conflicts name, so each disputed
+        // claim is marked in-band. Computed once per contract; empty (and thus a
+        // no-op) when there is no conflict, keeping clean contracts byte-identical.
+        let disputed: HashSet<String> = super::dispute::disputed_ids(&contract.conflicts);
         for claim in &contract.claims {
-            let line = claim_line(claim);
+            let is_disputed = disputed.contains(claim.id.as_str());
+            let line = claim_line(claim, is_disputed);
             if !line.is_empty() {
                 let _ = writeln!(out, "  {line}");
             }
         }
+        // 5e: one summary line per conflict plus the do-not-choose instruction.
+        // Appended after the claim lines so a reader scanning the stanza sees every
+        // disputed claim before the disagreement is named.
+        out.push_str(&super::dispute::conflict_lines(contract));
     }
     out
 }
@@ -68,13 +77,21 @@ pub(super) fn render_body(
 /// not the bookkeeping. **Status is the exception** (spec 4b §1): a `Candidate`
 /// claim is prefixed with a fixed, in-band `[candidate — unconfirmed]` marker
 /// so the model cannot read an inferred claim as an established fact (ADR 0002
-/// §4 — inference is not confirmation). Confirmed claims render with no marker,
-/// byte-identical to before this slice.
-fn claim_line(claim: &StoredClaim) -> String {
+/// §4 — inference is not confirmation). **A disputed claim is the other
+/// exception** (spec 5e §1): when `is_disputed`, the in-band `[disputed] ` marker
+/// is prepended too, so two contradictory confirmed claims never read as one
+/// settled fact. The markers never co-occur — conflicts name only `Confirmed`
+/// claims — but compose for safety. Confirmed, undisputed claims render with no
+/// marker, byte-identical to before this slice.
+fn claim_line(claim: &StoredClaim, is_disputed: bool) -> String {
     let Some(payload) = claim.payload.as_ref() else {
         return String::new();
     };
-    let marker = candidate_marker(claim.status);
+    let marker = format!(
+        "{}{}",
+        candidate_marker(claim.status),
+        super::dispute::dispute_marker(is_disputed),
+    );
     match payload {
         ClaimPayload::TableDescription { text, .. } => {
             format!("{marker}{}  {text}", payload.kind())

@@ -1024,3 +1024,304 @@ fn many_orders_schema(identity: &ProfileIdentity, count: usize) -> (ProfileIdent
         },
     )
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5e: conflicts surface in the prompt context block.
+//
+// recall already detects conflicts (2b-1) and returns them on the contract;
+// the render layer ignored that field. These tests pin the surfacing: each
+// disputed claim is marked in-band, the kind is named once per contract, and
+// the block tells the model not to choose between them silently. A contract
+// with no conflict renders byte-identically to before this slice.
+// ---------------------------------------------------------------------------
+
+/// Seeds two confirmed `table_grain` claims on `orders` that disagree — the one
+/// exclusive kind today (see `conflict.rs`). Returns the object so the caller
+/// can recall it.
+async fn seed_two_conflicting_grains(
+    store: &SqliteStateStore,
+    identity: &ProfileIdentity,
+) -> DatabaseObjectRef {
+    let obj = object(identity, "orders");
+    let tree = orders_schema(identity);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+    let fp = live_fingerprint(&orders_table());
+    remember_confirmed_grain(store, &obj, &fp, "one row per order").await;
+    remember_confirmed_grain(store, &obj, &fp, "one row per order line").await;
+    obj
+}
+
+async fn remember_confirmed_grain(
+    store: &SqliteStateStore,
+    obj: &DatabaseObjectRef,
+    fingerprint: &saya_types::SchemaFingerprint,
+    grain: &str,
+) -> ClaimId {
+    let request = ProposeClaim {
+        object: obj.clone(),
+        fingerprint: fingerprint.clone(),
+        payload: ClaimPayload::table_grain(grain).unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    }
+}
+
+/// Two confirmed `TableGrain` claims on one object: both reach the block, both
+/// are marked as disputed in-band, and the block names the disputed kind once
+/// (spec 5e §3 test 1).
+#[tokio::test]
+async fn conflicting_grains_both_appear_marked_and_kind_named() {
+    let root = temp_root("conflict_surface");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    seed_two_conflicting_grains(&store, &identity).await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1, "one block carrying the conflict");
+    let body = &blocks[0].body;
+
+    // Neither claim is dropped: both grains reach the body.
+    assert!(
+        body.contains("one row per order"),
+        "first conflicting grain reaches the body: {body}"
+    );
+    assert!(
+        body.contains("one row per order line"),
+        "second conflicting grain reaches the body: {body}"
+    );
+    // The disputed kind is named once per contract.
+    assert!(
+        body.contains("table_grain"),
+        "block names the disputed kind: {body}"
+    );
+    // Each disputed claim is marked in-band. The fixed token keeps the marker
+    // honest against a future change that softens it.
+    let disputed_markers = body.matches("[disputed]").count();
+    assert_eq!(
+        disputed_markers, 2,
+        "both disputed claims carry the in-band marker: {body}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The block carries an instruction that the model must not choose between the
+/// conflicting claims silently (spec 5e §3 test 2).
+#[tokio::test]
+async fn conflict_block_instructs_not_to_choose_silently() {
+    let root = temp_root("conflict_instruct");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    seed_two_conflicting_grains(&store, &identity).await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1);
+    let body = &blocks[0].body;
+    assert!(
+        body.contains("do not choose"),
+        "block tells the model not to choose between them: {body}"
+    );
+    assert!(
+        body.contains("unresolved"),
+        "block says the disputed point is unresolved: {body}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A contract with no conflict renders byte-identically to before this slice
+/// (spec 5e §3 test 3): construct the same input directly and assert the exact
+/// body, which contains no dispute marker and no instruction.
+#[tokio::test]
+async fn no_conflict_renders_byte_identically_to_before() {
+    use crate::contracts::{ContractConflict, RetrievedContract};
+    use saya_store::StoredClaim;
+
+    let identity = identity_for("analytics");
+    let obj = object(&identity, "orders");
+    let claim = StoredClaim {
+        id: ClaimId::parse("c-aaa111222333").unwrap(),
+        object: obj.clone(),
+        payload: Some(ClaimPayload::table_grain("one row per order").unwrap()),
+        origin: ClaimOrigin::UserExplicit,
+        status: ClaimStatus::Confirmed,
+        schema_fingerprint: live_fingerprint(&orders_table()),
+        referenced_columns: Vec::new(),
+        created_unix_ms: 0,
+        updated_unix_ms: 0,
+        last_verified_unix_ms: None,
+    };
+    let contract = RetrievedContract {
+        object: obj,
+        schema_state: crate::contracts::ContractSchemaState::Current,
+        claims: vec![claim],
+        conflicts: Vec::<ContractConflict>::new(),
+        truncated: false,
+    };
+    let name_of =
+        std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
+    let body = super::render::render_body(std::slice::from_ref(&contract), &name_of);
+
+    // The pre-slice rendering of one confirmed, non-disputed claim.
+    let expected = "catalog.public.orders  [current]  (profile: analytics)\n  table_grain  one row per order\n";
+    assert_eq!(
+        body, expected,
+        "no-conflict body is byte-identical to before"
+    );
+    assert!(!body.contains("[disputed]"), "no dispute marker when clean");
+    assert!(!body.contains("do not choose"), "no instruction when clean");
+}
+
+/// A conflict does not suppress the object's other, non-disputed claims: a
+/// confirmed alias on the same object as two conflicting grains still appears
+/// and carries no dispute marker (spec 5e §3 test 4).
+#[tokio::test]
+async fn conflict_does_not_suppress_non_disputed_claims() {
+    let root = temp_root("conflict_and_clean");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let obj = object(&identity, "orders");
+    let tree = orders_schema(&identity);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+    let fp = live_fingerprint(&orders_table());
+    remember_confirmed_grain(&store, &obj, &fp, "one row per order").await;
+    remember_confirmed_grain(&store, &obj, &fp, "one row per order line").await;
+    remember_confirmed_alias(&store, &obj, &fp, "orders").await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1);
+    let body = &blocks[0].body;
+    // The non-disputed alias survives and reads as an established fact.
+    assert!(
+        body.contains("table_alias  orders"),
+        "non-disputed alias survives the conflict: {body}"
+    );
+    // Exactly the two grains are disputed — the alias is not.
+    assert_eq!(
+        body.matches("[disputed]").count(),
+        2,
+        "only the conflicting grains are marked disputed: {body}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Conflict and candidate marking compose: under `include-candidates`, a
+/// contract can carry both a disputed confirmed pair and an admitted candidate,
+/// and both markers appear in the same block (spec 5e §3 test 5). A candidate
+/// can never itself be disputed — `is_recallable` is `Confirmed` only, so
+/// conflict detection never names a candidate id (SPEC REVIEW) — but the two
+/// in-band markers coexist on different lines.
+#[tokio::test]
+async fn conflict_and_candidate_markers_compose_in_one_block() {
+    let root = temp_root("conflict_and_candidate");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let obj = object(&identity, "orders");
+    let tree = orders_schema(&identity);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+    let fp = live_fingerprint(&orders_table());
+    remember_confirmed_grain(&store, &obj, &fp, "one row per order").await;
+    remember_confirmed_grain(&store, &obj, &fp, "one row per order line").await;
+    remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders",
+        true,
+        RecallMode::IncludeCandidates,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1);
+    let body = &blocks[0].body;
+    // The candidate is admitted and marked unconfirmed.
+    assert!(body.contains("created_at"), "candidate reaches the body");
+    assert!(
+        body.contains("[candidate — unconfirmed]"),
+        "candidate marker appears: {body}"
+    );
+    // The confirmed grains are disputed.
+    assert_eq!(
+        body.matches("[disputed]").count(),
+        2,
+        "both grains disputed alongside the candidate: {body}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The opaque profile identity still appears nowhere in a conflict block: the
+/// dispute summary names the kind and count, never the identity (spec 5e §3
+/// test 6).
+#[tokio::test]
+async fn opaque_identity_appears_nowhere_in_conflict_block() {
+    let root = temp_root("conflict_no_identity");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    seed_two_conflicting_grains(&store, &identity).await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1);
+    let body = &blocks[0].body;
+    assert!(
+        !body.contains(identity.as_str()),
+        "opaque identity leaked into conflict block: {body}"
+    );
+    assert!(body.contains("analytics"), "profile name appears instead");
+    let _ = fs::remove_dir_all(root);
+}

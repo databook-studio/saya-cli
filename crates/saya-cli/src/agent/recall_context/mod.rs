@@ -14,6 +14,7 @@
 //! - **Identities come from the registry** (profiles that actually connected),
 //!   not a re-derivation from `RuntimeConfig`.
 
+mod dispute;
 mod render;
 
 use crate::connection::ConnectionRegistry;
