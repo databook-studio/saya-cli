@@ -35,4 +35,16 @@ pub enum ContractError {
 
     #[error("schema fingerprint digest is malformed")]
     InvalidFingerprint,
+
+    /// A preference value was offered at the wrong scope. The string names the
+    /// scope the value requires (`"global"` or `"profile"`). Payload-free by the
+    /// security standard: it never echoes the value the caller tried to store.
+    #[error("preference requires a {0} scope")]
+    ScopeMismatch(&'static str),
+
+    #[error("timezone is not a well-shaped IANA name")]
+    InvalidTimezone,
+
+    #[error("profile name is not valid")]
+    InvalidProfileName,
 }

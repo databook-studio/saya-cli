@@ -16,13 +16,19 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
         0 => {
             step1(&mut connection).await?;
             step2(&mut connection).await?;
+            step3(&mut connection).await?;
             true
         }
         1 => {
             step2(&mut connection).await?;
+            step3(&mut connection).await?;
             true
         }
-        2 => false,
+        2 => {
+            step3(&mut connection).await?;
+            true
+        }
+        3 => false,
         _ => {
             sqlx::query("ROLLBACK").execute(&mut *connection).await.ok();
             return Err(StoreError::VersionUnsupported);
@@ -76,6 +82,20 @@ async fn step2(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError
         .await
         .map_err(|_| StoreError::Unavailable)?;
     sqlx::query("PRAGMA user_version = 2")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}
+
+/// Step 3 (Phase 5c-1): the preferences table. This is a *new* step, not an
+/// amendment to step 2 — `user_version = 2` now carries claims a developer may
+/// have stored, so an installed database upgrades in place rather than being
+/// rewritten under. The table holds settings, not claims: one value per kind
+/// per scope, no lifecycle, no evidence, no audit trail.
+async fn step3(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("CREATE TABLE IF NOT EXISTS user_preferences(scope_key TEXT NOT NULL, preference_kind TEXT NOT NULL, value_json TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (scope_key, preference_kind))").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 3")
         .execute(&mut **connection)
         .await
         .map_err(|_| StoreError::Unavailable)?;

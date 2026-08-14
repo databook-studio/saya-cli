@@ -29,13 +29,13 @@ type AuditRow = (
 );
 
 #[tokio::test]
-async fn fresh_database_reaches_version_two() {
+async fn fresh_database_reaches_version_three() {
     let root = temp_root("fresh");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 2);
+    assert_eq!(user_version(&db).await, 3);
     let tables = contract_tables(&db).await;
     for expected in CONTRACT_TABLES {
         assert!(
@@ -43,6 +43,10 @@ async fn fresh_database_reaches_version_two() {
             "missing {expected}"
         );
     }
+    assert!(
+        table_exists(&db, "user_preferences").await,
+        "missing user_preferences"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -54,7 +58,7 @@ async fn upgrade_from_version_one_preserves_data() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 2);
+    assert_eq!(user_version(&db).await, 3);
     let tables = contract_tables(&db).await;
     for expected in CONTRACT_TABLES {
         assert!(
@@ -89,12 +93,79 @@ async fn upgrade_from_version_one_preserves_data() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// A `user_version = 2` database — one a developer may already have, since the
+/// migration is unreleased — upgrades to 3 and keeps every existing claim,
+/// object, evidence and event row (spec test 7). Step 3 adds a *new* table; it
+/// must not touch the rows the ladder exists to preserve. Asserts the counts of
+/// all four contract tables and the full contents of one object row.
+#[tokio::test]
+async fn upgrade_from_version_two_preserves_every_contract_row() {
+    let root = temp_root("upgrade-v2");
+    let db = root.join("state.sqlite3");
+    build_version_two_database(&db).await;
+    let store = SqliteStateStore::new(&db);
+    store.list_schema_metadata().await.unwrap();
+    store.close().await;
+    assert_eq!(user_version(&db).await, 3);
+    assert!(
+        table_exists(&db, "user_preferences").await,
+        "upgrade did not add user_preferences"
+    );
+
+    let pool = read_pool(&db).await;
+    // One object, one claim, two evidence rows, one event — all survive.
+    let objects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_objects")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(objects, 1);
+    let claims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_claims")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(claims, 1);
+    let evidence: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_evidence")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(evidence, 2);
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 1);
+
+    // The one object row survives byte-for-byte: identity, kind, fingerprint.
+    let row: (String, String, String, String, String, String, String, i64, i64, i64) =
+        sqlx::query_as("SELECT id, profile_id, catalog_name, schema_name, object_name, object_kind, schema_fingerprint, fingerprint_version, first_seen_unix_ms, last_seen_unix_ms FROM contract_objects ORDER BY id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let (id, profile_id, catalog, schema, object, kind, fp, fpv, first, last) = row;
+    assert_eq!(id, "o-survives");
+    assert_eq!(profile_id, "p-test");
+    assert_eq!(catalog, "cat");
+    assert_eq!(schema, "sch");
+    assert_eq!(object, "orders");
+    assert_eq!(kind, "table");
+    assert_eq!(fp, "ff");
+    assert_eq!(fpv, 1);
+    assert_eq!(first, 11111);
+    assert_eq!(last, 22222);
+    pool.close().await;
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A version ahead of the highest step the migration knows about fails closed.
+/// Step 3 makes `user_version = 3` supported, so the future-version sentinel is
+/// now 4 — anything the running build cannot migrate *to* must be refused, not
+/// silently rewritten under.
 #[tokio::test]
 async fn unknown_future_version_fails_closed() {
     let root = temp_root("future");
     let db = root.join("state.sqlite3");
     let pool = create_pool(&db).await;
-    sqlx::query("PRAGMA user_version = 3")
+    sqlx::query("PRAGMA user_version = 4")
         .execute(&pool)
         .await
         .unwrap();
@@ -115,11 +186,11 @@ async fn migration_is_idempotent() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 2);
+    assert_eq!(user_version(&db).await, 3);
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 2);
+    assert_eq!(user_version(&db).await, 3);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -193,6 +264,54 @@ async fn build_version_one_database(db: &Path) {
     pool.close().await;
 }
 
+// Step 2's contract schema, mirrored verbatim so a v2 database built here is
+// byte-identical to one the real migration would have produced.
+const STEP2_OBJECTS: &str = "CREATE TABLE contract_objects(id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, catalog_name TEXT NOT NULL, schema_name TEXT NOT NULL, object_name TEXT NOT NULL, object_kind TEXT NOT NULL, schema_fingerprint TEXT NOT NULL, fingerprint_version INTEGER NOT NULL, first_seen_unix_ms INTEGER NOT NULL, last_seen_unix_ms INTEGER NOT NULL, UNIQUE(profile_id, catalog_name, schema_name, object_name, object_kind))";
+const STEP2_CLAIMS: &str = "CREATE TABLE contract_claims(id TEXT PRIMARY KEY, object_id TEXT NOT NULL REFERENCES contract_objects(id), claim_kind TEXT NOT NULL, payload_json TEXT NOT NULL, payload_version INTEGER NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, schema_fingerprint TEXT NOT NULL, referenced_columns_json TEXT NOT NULL, created_unix_ms INTEGER NOT NULL, updated_unix_ms INTEGER NOT NULL, last_verified_unix_ms INTEGER, deduplication_key TEXT NOT NULL, UNIQUE(object_id, deduplication_key))";
+const STEP2_EVIDENCE: &str = "CREATE TABLE contract_evidence(id INTEGER PRIMARY KEY, claim_id TEXT NOT NULL REFERENCES contract_claims(id), evidence_kind TEXT NOT NULL, session_id TEXT, turn_ordinal INTEGER, observed_unix_ms INTEGER NOT NULL)";
+const STEP2_EVENTS: &str = "CREATE TABLE contract_events(id INTEGER PRIMARY KEY, claim_id TEXT NOT NULL, object_id TEXT NOT NULL, event TEXT NOT NULL, from_status TEXT, to_status TEXT, origin TEXT NOT NULL, created_unix_ms INTEGER NOT NULL, reason TEXT)";
+
+/// Builds a database at `user_version = 2` with one object, one claim, two
+/// evidence rows, and one event — the four row kinds a developer's installed
+/// database may already hold. Step 3 must upgrade it without losing any.
+async fn build_version_two_database(db: &Path) {
+    let pool = create_pool(db).await;
+    sqlx::query(STEP1_SCHEMA_CACHE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(STEP1_AUDIT_LOG).execute(&pool).await.unwrap();
+    sqlx::query(STEP2_OBJECTS).execute(&pool).await.unwrap();
+    sqlx::query(STEP2_CLAIMS).execute(&pool).await.unwrap();
+    sqlx::query(STEP2_EVIDENCE).execute(&pool).await.unwrap();
+    sqlx::query(STEP2_EVENTS).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO contract_objects(id, profile_id, catalog_name, schema_name, object_name, object_kind, schema_fingerprint, fingerprint_version, first_seen_unix_ms, last_seen_unix_ms) VALUES ('o-survives', 'p-test', 'cat', 'sch', 'orders', 'table', 'ff', 1, 11111, 22222)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO contract_claims(id, object_id, claim_kind, payload_json, payload_version, origin, status, schema_fingerprint, referenced_columns_json, created_unix_ms, updated_unix_ms, last_verified_unix_ms, deduplication_key) VALUES ('c-survives', 'o-survives', 'table_alias', '{\"kind\":\"table_alias\",\"alias\":\"o\"}', 2, 'user_explicit', 'confirmed', 'ff', '[]', 11111, 22222, NULL, 'd-survives')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO contract_evidence(claim_id, evidence_kind, session_id, turn_ordinal, observed_unix_ms) VALUES ('c-survives', 'explicit_user_statement', 's1', 1, 33333)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO contract_evidence(claim_id, evidence_kind, session_id, turn_ordinal, observed_unix_ms) VALUES ('c-survives', 'successful_read_query', 's1', 2, 44444)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO contract_events(claim_id, object_id, event, from_status, to_status, origin, created_unix_ms, reason) VALUES ('c-survives', 'o-survives', 'proposed', NULL, 'confirmed', 'user_explicit', 11111, NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
 async fn user_version(db: &Path) -> i64 {
     let pool = read_pool(db).await;
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
@@ -213,6 +332,20 @@ async fn contract_tables(db: &Path) -> Vec<String> {
     .unwrap();
     pool.close().await;
     rows
+}
+
+/// True if `table` exists in `sqlite_master`. `user_preferences` is not a
+/// `contract_%` table, so it needs its own existence check.
+async fn table_exists(db: &Path, table: &str) -> bool {
+    let pool = read_pool(db).await;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    pool.close().await;
+    count > 0
 }
 
 async fn journal_mode(db: &Path) -> String {

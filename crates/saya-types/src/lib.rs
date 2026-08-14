@@ -9,9 +9,10 @@ mod schema;
 
 pub use contract::{
     CLAIM_PAYLOAD_VERSION, Cardinality, ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus,
-    ColumnRole, ContractError, DatabaseObjectKind, DatabaseObjectRef, FINGERPRINT_VERSION,
-    MAX_NAME_CHARS, MAX_REFERENCED_COLUMNS, MAX_TEXT_CHARS, ProfileIdentity, ReferencedColumn,
-    SchemaFingerprint,
+    ColumnRole, ContractError, DatabaseObjectKind, DatabaseObjectRef, DateGrain,
+    FINGERPRINT_VERSION, MAX_NAME_CHARS, MAX_PROFILE_NAME_CHARS, MAX_REFERENCED_COLUMNS,
+    MAX_TEXT_CHARS, MAX_TIMEZONE_CHARS, OutputStyle, PreferenceScope, PreferenceValue,
+    ProfileIdentity, ReferencedColumn, SchemaFingerprint, ScopeRequirement, Scoped,
 };
 pub use dialect::SqlDialect;
 pub use error::ConnectionError;
