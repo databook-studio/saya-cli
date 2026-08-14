@@ -590,8 +590,16 @@ async fn unopenable_store_reports_unavailable_without_erroring() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: validity matrix (see SPEC REVIEW for the retyped/nullability deviation)
+// Test 7: the 5b typed schema-drift matrix
 // ---------------------------------------------------------------------------
+//
+// One assertion per row of the §1 rule table in spec-5b-drift-rule.md. The rows
+// that exercise *type* and *nullability* drift need a **known** column
+// snapshot — a snapshot whose `data_type` and `nullable` were actually
+// observed at claim time — so they are proposed against the live table they
+// describe via `referenced_column_snapshots`. The pre-5a / unknown-snapshot
+// row uses the name-only path (`referenced_column_name_snapshots`), whose
+// empty `data_type` the reconciler treats as unknown rather than matched.
 #[tokio::test]
 async fn validity_matrix() {
     let root = temp_root("validity");
@@ -601,33 +609,57 @@ async fn validity_matrix() {
     let p = profile_a();
     let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
 
-    // Current
-    let fp = fingerprint_for(&base);
+    // A claim proposed against the live `base` table carries a *known*
+    // snapshot per referenced column: `amount` -> `numeric`, not-null.
+    async fn known_claim(
+        store: &SqliteStateStore,
+        object: &DatabaseObjectRef,
+        live: &Table,
+        payload: ClaimPayload,
+    ) -> StoredClaim {
+        let fp = SchemaFingerprint::of_table(DatabaseObjectKind::Table, live);
+        let referenced = payload.referenced_column_snapshots(live);
+        let req = ProposeClaim {
+            object: object.clone(),
+            fingerprint: fp.clone(),
+            payload,
+            origin: ClaimOrigin::UserExplicit,
+            initial_status: ClaimStatus::Confirmed,
+            evidence: None,
+            referenced_columns: referenced,
+        };
+        let id = match store.propose_claim(req).await.unwrap() {
+            ProposeOutcome::Stored(id) => id,
+            other => panic!("expected Stored, got {other:?}"),
+        };
+        store.get_claim(&id).await.unwrap().unwrap()
+    }
+
+    // Row 1: fingerprint matches -> Current.
     let obj_cur = object_ref(&p, "cur");
-    let id_cur = propose_confirmed(
+    let claim_cur = known_claim(
         &store,
         &obj_cur,
-        &fp,
-        ClaimPayload::table_alias("cur").unwrap(),
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
     )
     .await;
-    let claim_cur = store.get_claim(&id_cur).await.unwrap().unwrap();
     let live_cur = schema_tree_for(&[("cur", base.clone())]);
     assert_eq!(
         schema_state_for(&claim_cur, Some(&live_cur)),
         ContractSchemaState::Current
     );
 
-    // Unrelated column added -> NeedsReview
+    // Row 2: an unrelated column added -> NeedsReview, not Stale. The claim
+    // depends on `amount`, which is unchanged; `note` is none of its business.
     let obj_add = object_ref(&p, "added");
-    let id_add = confirm_candidate(
+    let claim_add = known_claim(
         &store,
         &obj_add,
-        &fp,
+        &base,
         ClaimPayload::column_description("amount", "how much").unwrap(),
     )
     .await;
-    let claim_add = store.get_claim(&id_add).await.unwrap().unwrap();
     let live_added = schema_tree_for(&[(
         "added",
         table(&[
@@ -638,35 +670,54 @@ async fn validity_matrix() {
     )]);
     assert_eq!(
         schema_state_for(&claim_add, Some(&live_added)),
-        ContractSchemaState::NeedsReview
+        ContractSchemaState::NeedsReview,
+        "an unrelated addition must not invalidate the claim"
     );
 
-    // Referenced column removed -> Stale
+    // Row 3: a referenced column removed -> Stale.
     let obj_rm = object_ref(&p, "removed");
-    let id_rm = confirm_candidate(
+    let claim_rm = known_claim(
         &store,
         &obj_rm,
-        &fingerprint_for(&base),
+        &base,
         ClaimPayload::column_description("amount", "how much").unwrap(),
     )
     .await;
-    let claim_rm = store.get_claim(&id_rm).await.unwrap().unwrap();
     let live_rm = schema_tree_for(&[("removed", table(&[("id", "bigint", false)]))]);
     assert_eq!(
         schema_state_for(&claim_rm, Some(&live_rm)),
         ContractSchemaState::Stale
     );
 
-    // Referenced column retyped (name kept) -> NeedsReview (SPEC REVIEW deviation)
-    let obj_rt = object_ref(&p, "retyped");
-    let id_rt = confirm_candidate(
+    // Row 4: a referenced column renamed -> Stale (absent by name).
+    let obj_rn = object_ref(&p, "renamed");
+    let claim_rn = known_claim(
         &store,
-        &obj_rt,
-        &fingerprint_for(&base),
+        &obj_rn,
+        &base,
         ClaimPayload::column_description("amount", "how much").unwrap(),
     )
     .await;
-    let claim_rt = store.get_claim(&id_rt).await.unwrap().unwrap();
+    let live_rn = schema_tree_for(&[(
+        "renamed",
+        table(&[("id", "bigint", false), ("amt", "numeric", false)]),
+    )]);
+    assert_eq!(
+        schema_state_for(&claim_rn, Some(&live_rn)),
+        ContractSchemaState::Stale,
+        "a renamed referenced column is absent by name -> Stale"
+    );
+
+    // Row 5: a referenced column retyped (name kept) -> Stale. This is the
+    // case that was impossible before 5a — name it so a regression is obvious.
+    let obj_rt = object_ref(&p, "retyped");
+    let claim_rt = known_claim(
+        &store,
+        &obj_rt,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
     let live_rt = schema_tree_for(&[(
         "retyped",
         table(&[
@@ -676,33 +727,108 @@ async fn validity_matrix() {
     )]);
     assert_eq!(
         schema_state_for(&claim_rt, Some(&live_rt)),
-        ContractSchemaState::NeedsReview,
-        "retyped referenced column should be NeedsReview (SPEC REVIEW deviation)"
+        ContractSchemaState::Stale,
+        "a retyped referenced column is Stale (this case was impossible before 5a)"
     );
 
-    // Table absent -> Stale
-    let obj_absent = object_ref(&p, "absent");
-    let id_absent = propose_confirmed(
+    // Row 6: a referenced column became nullable -> Stale. Gaining NULLs can
+    // silently change what a claim about it means.
+    let obj_null = object_ref(&p, "nullable");
+    let claim_null = known_claim(
         &store,
-        &obj_absent,
-        &fp,
-        ClaimPayload::table_alias("absent").unwrap(),
+        &obj_null,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
     )
     .await;
-    let claim_absent = store.get_claim(&id_absent).await.unwrap().unwrap();
+    let live_null = schema_tree_for(&[(
+        "nullable",
+        table(&[("id", "bigint", false), ("amount", "numeric", true)]),
+    )]);
+    assert_eq!(
+        schema_state_for(&claim_null, Some(&live_null)),
+        ContractSchemaState::Stale,
+        "a referenced column that gained NULLs is Stale"
+    );
+
+    // Row 7: a referenced column became non-nullable -> NeedsReview. Losing
+    // nullability only narrows what was already true.
+    let obj_nn_base = table(&[("id", "bigint", false), ("amount", "numeric", true)]);
+    let obj_nn = object_ref(&p, "nonnullable");
+    let claim_nn = known_claim(
+        &store,
+        &obj_nn,
+        &obj_nn_base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    let live_nn = schema_tree_for(&[(
+        "nonnullable",
+        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+    )]);
+    assert_eq!(
+        schema_state_for(&claim_nn, Some(&live_nn)),
+        ContractSchemaState::NeedsReview,
+        "a referenced column that lost nullability is NeedsReview, not Stale"
+    );
+
+    // Row 8: an unknown snapshot (pre-5a row) with a moved fingerprint ->
+    // NeedsReview, never Current. The claim may be fine, but nothing can
+    // prove it — the pre-5a behaviour, preserved exactly for pre-5a rows.
+    let obj_unk = object_ref(&p, "unknown");
+    let fp_unk = fingerprint_for(&base);
+    let id_unk = confirm_candidate(
+        &store,
+        &obj_unk,
+        &fp_unk,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    let claim_unk = store.get_claim(&id_unk).await.unwrap().unwrap();
+    assert!(
+        claim_unk
+            .referenced_columns
+            .iter()
+            .all(|c| c.data_type.is_empty()),
+        "confirm_candidate writes name-only (unknown) snapshots"
+    );
+    let live_unk = schema_tree_for(&[(
+        "unknown",
+        table(&[
+            ("id", "bigint", false),
+            ("amount", "double precision", false),
+        ]),
+    )]);
+    assert_eq!(
+        schema_state_for(&claim_unk, Some(&live_unk)),
+        ContractSchemaState::NeedsReview,
+        "an unknown snapshot plus a moved fingerprint is NeedsReview, not Current"
+    );
+
+    // Row 9: the object absent from live schema -> Stale.
+    let obj_absent = object_ref(&p, "absent");
+    let claim_absent = known_claim(
+        &store,
+        &obj_absent,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
     let live_absent = schema_tree_for(&[]);
     assert_eq!(
         schema_state_for(&claim_absent, Some(&live_absent)),
         ContractSchemaState::Stale
     );
 
-    // No live schema -> LiveSchemaUnavailable
+    // Row 10: no live schema -> LiveSchemaUnavailable.
     assert_eq!(
         schema_state_for(&claim_cur, None),
         ContractSchemaState::LiveSchemaUnavailable
     );
 
-    // Older fingerprint version -> NeedsReview, never Current
+    // Row 11: an older fingerprint version -> NeedsReview even if everything
+    // else matches. The version gate fires first, so the state is NeedsReview
+    // regardless of the live table.
     let old = SchemaFingerprint::from_parts(2, claim_cur.schema_fingerprint.as_str()).unwrap();
     let claim_old = StoredClaim {
         schema_fingerprint: old,
@@ -711,7 +837,36 @@ async fn validity_matrix() {
     assert_eq!(
         schema_state_for(&claim_old, Some(&live_cur)),
         ContractSchemaState::NeedsReview,
-        "older fingerprint version must be NeedsReview, never Current"
+        "an older fingerprint version is NeedsReview, never Current"
+    );
+
+    // Row 12: a claim with no referenced columns (a table description) and a
+    // moved fingerprint -> NeedsReview, not Stale: nothing it depends on can
+    // have broken.
+    let obj_desc = object_ref(&p, "desc");
+    let claim_desc = known_claim(
+        &store,
+        &obj_desc,
+        &base,
+        ClaimPayload::table_description("the orders table").unwrap(),
+    )
+    .await;
+    assert!(
+        claim_desc.referenced_columns.is_empty(),
+        "a table description has no referenced columns"
+    );
+    let live_desc = schema_tree_for(&[(
+        "desc",
+        table(&[
+            ("id", "bigint", false),
+            ("amount", "numeric", false),
+            ("note", "text", true),
+        ]),
+    )]);
+    assert_eq!(
+        schema_state_for(&claim_desc, Some(&live_desc)),
+        ContractSchemaState::NeedsReview,
+        "a table-level claim whose columns all survive an unrelated change is NeedsReview"
     );
 
     let _ = fs::remove_dir_all(root);
