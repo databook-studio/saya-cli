@@ -8,6 +8,7 @@
 pub(crate) mod args;
 mod assemble;
 mod conflict;
+pub(crate) mod discover;
 mod queue;
 mod recall;
 mod reconcile;
