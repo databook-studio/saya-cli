@@ -3,6 +3,7 @@ use saya_types::DatabaseProfile;
 use crate::{
     AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput,
     layers::{apply_cli, apply_env, merge},
+    memory::ResolvedMemory,
     profile_env::overlay_database_environment,
 };
 
@@ -19,6 +20,7 @@ pub struct ResolvedConfig {
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
+    pub memory: ResolvedMemory,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +70,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .transpose()?
         .flatten();
     let profile = overlay_database_environment(profile, &input.env_file, &input.process_env)?;
+    let memory = crate::memory::resolve(&file.memory)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
@@ -85,5 +88,6 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
+        memory,
     })
 }

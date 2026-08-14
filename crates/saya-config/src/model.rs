@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use saya_types::{DatabaseProfile, SecretRef};
 use serde::Deserialize;
 
-use crate::{AiProvider, ColorChoice, ConfigError, OutputFormat, RedactedDiagnostics};
+use crate::{
+    AiProvider, ColorChoice, ConfigError, MemoryLearning, MemoryRecall, OutputFormat,
+    RedactedDiagnostics,
+};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ConfigFile {
@@ -14,6 +17,8 @@ pub struct ConfigFile {
     pub run: RunFile,
     #[serde(default)]
     pub output: OutputFile,
+    #[serde(default)]
+    pub memory: MemoryFile,
 }
 
 impl ConfigFile {
@@ -60,4 +65,16 @@ pub struct RunFile {
 pub struct OutputFile {
     pub format: Option<OutputFormat>,
     pub color: Option<ColorChoice>,
+}
+
+/// The `[memory]` section. Mirrors `AiFile`/`RunFile`: `Option<T>` fields, struct-level
+/// `#[serde(default)]`, resolved into concrete values by `resolve`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MemoryFile {
+    pub recall: Option<MemoryRecall>,
+    pub learning: Option<MemoryLearning>,
+    pub max_contracts: Option<u32>,
+    pub max_claims_per_contract: Option<u32>,
+    pub max_context_bytes: Option<u32>,
+    pub retention_days: Option<u32>,
 }
