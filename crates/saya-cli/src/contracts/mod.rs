@@ -9,6 +9,7 @@ pub(crate) mod args;
 mod assemble;
 mod conflict;
 pub(crate) mod discover;
+pub(crate) mod io;
 mod queue;
 mod recall;
 mod reconcile;
@@ -33,6 +34,12 @@ pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
 pub(crate) use reconcile::{ReconcileOutcome, reconcile};
 #[allow(unused_imports)]
 pub(crate) use review::{ContractOpError, confirm, edit, forget, propose, reject, show};
+// 6b import/export: the typed operations the `contracts import`/`export`
+// adapter renders. Nothing outside this module references them yet in a
+// non-test build, so the re-exports read as unused — they are the boundary this
+// slice exposes, like the others above.
+#[allow(unused_imports)]
+pub(crate) use io::{ExportOutcome, ImportReport, export_contracts, import_contracts};
 #[allow(unused_imports)]
 pub(crate) use validity::schema_state_for;
 #[allow(unused_imports)]

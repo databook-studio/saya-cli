@@ -329,7 +329,9 @@ fn test_9_relationship_rejects_33_columns() {
 fn test_10_origin_may_confirm_directly() {
     use ClaimOrigin::*;
     assert!(UserExplicit.may_confirm_directly());
-    assert!(!TeamFile.may_confirm_directly());
+    // ADR 0002 §4: a reviewed team file enters confirmed within its declared
+    // scope, so TeamFile is confirmable without a per-claim review step.
+    assert!(TeamFile.may_confirm_directly());
     assert!(!SchemaObserved.may_confirm_directly());
     assert!(!QueryObserved.may_confirm_directly());
     assert!(!AssistantInferred.may_confirm_directly());

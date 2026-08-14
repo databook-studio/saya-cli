@@ -33,9 +33,23 @@ impl ClaimOrigin {
         }
     }
 
-    /// Only an explicit user statement may be confirmed without review (ADR 0002 section 4).
+    /// Whether a claim of this origin may be stored as `Confirmed` without a
+    /// per-claim review step (ADR 0002 section 4). Two origins qualify:
+    ///
+    /// - `UserExplicit`: the user said "remember that …" in their own words, so
+    ///   the confirmation is the act of asking.
+    /// - `TeamFile`: a claim read from `.saya/contracts/*.toml` that a teammate
+    ///   reviewed in Git before it reached this machine. The review happened
+    ///   outside saya; entering it confirmed within its declared scope is the
+    ///   recorded decision, and conflicts with local claims surface per ADR
+    ///   decision 3 rather than being silently dropped.
+    ///
+    /// Everything else (`SchemaObserved`, `QueryObserved`, `AssistantInferred`)
+    /// still enters the queue as a `Candidate`. This is the only place a
+    /// non-human origin can create a confirmed claim; widening it further is a
+    /// trust-model change that needs its own ADR entry.
     pub const fn may_confirm_directly(self) -> bool {
-        matches!(self, Self::UserExplicit)
+        matches!(self, Self::UserExplicit | Self::TeamFile)
     }
 }
 
@@ -154,7 +168,9 @@ mod tests {
     fn claim_origin_may_confirm_directly() {
         use ClaimOrigin::*;
         assert!(UserExplicit.may_confirm_directly());
-        assert!(!TeamFile.may_confirm_directly());
+        // ADR 0002 §4: a reviewed team file enters confirmed within its declared
+        // scope, so TeamFile is confirmable without a per-claim review step.
+        assert!(TeamFile.may_confirm_directly());
         assert!(!SchemaObserved.may_confirm_directly());
         assert!(!QueryObserved.may_confirm_directly());
         assert!(!AssistantInferred.may_confirm_directly());

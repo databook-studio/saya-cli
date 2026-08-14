@@ -147,6 +147,28 @@ pub enum ContractsCommand {
         #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
         reason: ForgetReasonArg,
     },
+    /// Import team contract files from `.saya/contracts/` into the store.
+    Import {
+        /// Project root to discover `.saya/contracts/` under. Defaults to the
+        /// current directory.
+        #[arg(default_value = ".")]
+        path: std::path::PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Export this profile's confirmed claims to discovered-shape files.
+    Export {
+        /// Destination directory. One `.toml` per object is written here.
+        destination: std::path::PathBuf,
+        #[arg(long)]
+        profile: Option<String>,
+        /// Overwrite an existing destination file. Without this flag an existing
+        /// file is a typed error, not a silent overwrite.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
