@@ -10,6 +10,7 @@ mod assemble;
 mod conflict;
 mod queue;
 mod recall;
+mod reconcile;
 mod review;
 mod selection;
 pub(crate) mod terms;
@@ -27,6 +28,8 @@ mod tests;
 pub(crate) use queue::{QUEUE_DEFAULT_LIMIT, QueuedCandidate, review_queue};
 #[allow(unused_imports)]
 pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
+#[allow(unused_imports)]
+pub(crate) use reconcile::{ReconcileOutcome, reconcile};
 #[allow(unused_imports)]
 pub(crate) use review::{ContractOpError, confirm, edit, forget, propose, reject, show};
 #[allow(unused_imports)]

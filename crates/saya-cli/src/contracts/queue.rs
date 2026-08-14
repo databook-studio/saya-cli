@@ -1,10 +1,16 @@
-//! The candidate review queue: the opposite view of recall. Recall answers
-//! "what is true about this question"; the queue answers "what is waiting for
-//! me". It lists `Candidate` claims only, ordered so a reviewer works a stable
-//! list, with the schema state and evidence count a human needs to decide.
+//! The review queue: the opposite view of recall. Recall answers "what is
+//! true about this question"; the queue answers "what is waiting for me". It
+//! lists `Candidate` claims and `Stale` claims, ordered so a reviewer works a
+//! stable list, with the schema state and evidence count a human needs to
+//! decide.
 //!
-//! No policy of its own: candidates become recallable only through the existing
-//! `review` operation (2b-2c), never here. See .claude/specs/spec-3d-review-queue.md.
+//! A `Stale` claim reaches the queue through reconciliation (5d): a referenced
+//! column broke, the 5b rule computed `Stale`, and `reconcile` persisted it —
+//! and a stale claim is exactly one a human should decide the fate of. `Stale`
+//! was added here when 5d began producing it; before that the queue was
+//! candidates-only (3d). No policy of its own beyond that: claims become
+//! recallable only through the existing `review` operation (2b-2c), never here.
+//! See .claude/specs/spec-3d-review-queue.md and spec-5d-reconciliation-writes.md.
 
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::ContractSchemaState;
@@ -22,10 +28,11 @@ pub(crate) const QUEUE_LIMIT_CAP: usize = 200;
 /// returns a workable list, not the whole archive.
 pub(crate) const QUEUE_DEFAULT_LIMIT: usize = 50;
 
-/// One candidate waiting for review. Carries the claim, the per-claim schema
-/// state (a candidate about a table that has since changed says so), and the
-/// evidence count that orders the queue. The evidence *rows* stay in the store
-/// — they carry session ids and turn ordinals the queue does not need.
+/// One claim waiting for review — a `Candidate` or a `Stale` claim. Carries
+/// the claim, the per-claim schema state (a candidate about a table that has
+/// since changed says so), and the evidence count that orders the queue. The
+/// evidence *rows* stay in the store — they carry session ids and turn ordinals
+/// the queue does not need.
 #[derive(Debug)]
 pub(crate) struct QueuedCandidate {
     pub claim: StoredClaim,
@@ -49,7 +56,10 @@ pub(crate) async fn review_queue(
     for profile in profiles {
         for object in store.list_objects(profile).await? {
             for claim in store
-                .list_claims(&object.object, &[ClaimStatus::Candidate])
+                .list_claims(
+                    &object.object,
+                    &[ClaimStatus::Candidate, ClaimStatus::Stale],
+                )
                 .await?
             {
                 let evidence_count = store.evidence_count(&claim.id).await?;

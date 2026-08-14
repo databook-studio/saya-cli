@@ -11,8 +11,8 @@ use super::{
     RecallRequest, confirm, edit, forget, propose, recall, reject, schema_state_for, show,
 };
 use saya_store::{
-    ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
-    StoredClaim,
+    ContractEventKind, ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore,
+    SqliteStateStore, StoredClaim,
 };
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, Database, DatabaseObjectKind,
@@ -1543,6 +1543,531 @@ async fn review_wrappers_pass_through_and_map_errors() {
         .unwrap();
     let shown = show(&store, &obj, &fp).await.unwrap();
     assert!(shown.is_none(), "forgotten-only contract should show None");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5d: reconciliation writes — persisting the 5b verdict.
+//
+// `reconcile` examines only Candidate/Confirmed claims, computes the 5b state
+// against a live schema per profile, and persists Stale (and only Stale) via
+// the existing `mark_stale`. A profile with no live schema is skipped, never
+// marked: a network blip must not destroy a user's accumulated knowledge. See
+// .claude/specs/spec-5d-reconciliation-writes.md.
+// ---------------------------------------------------------------------------
+
+use super::reconcile;
+
+/// A confirmed claim proposed against `live`, carrying a *known* per-column
+/// snapshot (observed type + nullability) so the 5b rule can compute Stale or
+/// NeedsReview rather than the unknown-snapshot fallback. Mirrors `known_claim`
+/// in the validity matrix, lifted to module scope so every 5d test shares it.
+async fn known_claim(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    live: &Table,
+    payload: ClaimPayload,
+) -> StoredClaim {
+    let fp = SchemaFingerprint::of_table(DatabaseObjectKind::Table, live);
+    let referenced = payload.referenced_column_snapshots(live);
+    let req = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fp,
+        payload,
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: referenced,
+    };
+    let id = match store.propose_claim(req).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    store.get_claim(&id).await.unwrap().unwrap()
+}
+
+/// The number of events recorded for `id` — the lever the "no new event"
+/// assertions pull, since a reconcile that writes nothing must append nothing.
+async fn event_count(store: &SqliteStateStore, id: &ClaimId) -> usize {
+    store.claim_events(id, 1000).await.unwrap().len()
+}
+
+#[tokio::test]
+async fn reconcile_marks_a_removed_column_stale_and_appends_marked_stale() {
+    let root = temp_root("reconcile_removed");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let obj = object_ref(&p, "orders");
+    let claim = known_claim(
+        &store,
+        &obj,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+
+    // Live schema drops `amount` -> the 5b rule reads Stale.
+    let live = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    let outcome = reconcile(&store, std::slice::from_ref(&p), &[(p.clone(), live)])
+        .await
+        .unwrap();
+    assert_eq!(outcome.marked_stale, 1);
+    assert!(outcome.examined >= 1);
+    assert_eq!(outcome.skipped_unavailable, 0);
+    assert!(!outcome.truncated);
+
+    let after = store.get_claim(&claim.id).await.unwrap().unwrap();
+    assert_eq!(after.status, ClaimStatus::Stale);
+
+    // The transition is audited: a MarkedStale event from Confirmed -> Stale.
+    let events = store.claim_events(&claim.id, 100).await.unwrap();
+    let marked = events
+        .iter()
+        .find(|e| e.kind == ContractEventKind::MarkedStale);
+    assert!(
+        marked.is_some(),
+        "expected a MarkedStale event, got {events:?}"
+    );
+    assert_eq!(marked.unwrap().from_status, Some(ClaimStatus::Confirmed));
+    assert_eq!(marked.unwrap().to_status, Some(ClaimStatus::Stale));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn reconcile_leaves_a_current_claim_untouched() {
+    let root = temp_root("reconcile_current");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let obj = object_ref(&p, "orders");
+    let claim = known_claim(
+        &store,
+        &obj,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    let before_status = claim.status;
+    let before_updated = claim.updated_unix_ms;
+    let before_events = event_count(&store, &claim.id).await;
+
+    // The live schema is unchanged -> Current. Nothing is written.
+    let live = schema_tree_for(&[("orders", base.clone())]);
+    let outcome = reconcile(&store, std::slice::from_ref(&p), &[(p.clone(), live)])
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome.marked_stale, 0,
+        "a current claim must not be marked"
+    );
+
+    let after = store.get_claim(&claim.id).await.unwrap().unwrap();
+    assert_eq!(after.status, before_status);
+    assert_eq!(
+        after.updated_unix_ms, before_updated,
+        "a current claim's updated stamp must not move"
+    );
+    assert_eq!(
+        event_count(&store, &claim.id).await,
+        before_events,
+        "a current claim must gain no new event"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn needs_review_is_computed_at_read_not_persisted() {
+    let root = temp_root("reconcile_needs_review");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let obj = object_ref(&p, "orders");
+    let claim = known_claim(
+        &store,
+        &obj,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    let before_events = event_count(&store, &claim.id).await;
+
+    // An unrelated column is added: the fingerprint moves but nothing the claim
+    // depends on broke, so the 5b rule computes NeedsReview. Reconcile must
+    // NOT write it — NeedsReview is a read-time opinion, never persisted.
+    let live = schema_tree_for(&[(
+        "orders",
+        table(&[
+            ("id", "bigint", false),
+            ("amount", "numeric", false),
+            ("note", "text", true),
+        ]),
+    )]);
+    assert_eq!(
+        schema_state_for(&claim, Some(&live)),
+        ContractSchemaState::NeedsReview,
+        "fixture must compute NeedsReview for this test to mean anything"
+    );
+    let outcome = reconcile(&store, std::slice::from_ref(&p), &[(p.clone(), live)])
+        .await
+        .unwrap();
+    assert_eq!(outcome.marked_stale, 0);
+
+    let after = store.get_claim(&claim.id).await.unwrap().unwrap();
+    assert_eq!(
+        after.status,
+        ClaimStatus::Confirmed,
+        "NeedsReview must not be persisted as a status"
+    );
+    assert_eq!(
+        event_count(&store, &claim.id).await,
+        before_events,
+        "a NeedsReview claim must gain no event"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn reconcile_is_idempotent_a_second_pass_marks_nothing() {
+    let root = temp_root("reconcile_idempotent");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let obj = object_ref(&p, "orders");
+    let claim = known_claim(
+        &store,
+        &obj,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    let live = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+
+    let first = reconcile(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live.clone())],
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.marked_stale, 1);
+    let events_after_first = event_count(&store, &claim.id).await;
+
+    // The claim is now Stale, and Stale is not examined — so the second pass
+    // marks nothing and appends nothing. `mark_stale` on an already-stale claim
+    // is a Conflict, which a naive re-run would hit; reconciliation must skip it.
+    let second = reconcile(&store, std::slice::from_ref(&p), &[(p.clone(), live)])
+        .await
+        .unwrap();
+    assert_eq!(second.marked_stale, 0, "second pass must not re-mark");
+    assert_eq!(
+        event_count(&store, &claim.id).await,
+        events_after_first,
+        "second pass must append no events"
+    );
+    let after = store.get_claim(&claim.id).await.unwrap().unwrap();
+    assert_eq!(after.status, ClaimStatus::Stale);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn reconcile_skips_a_profile_with_no_live_schema_and_counts_it() {
+    let root = temp_root("reconcile_unavailable");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let obj = object_ref(&p, "orders");
+    let claim = known_claim(
+        &store,
+        &obj,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    let before_events = event_count(&store, &claim.id).await;
+
+    // The profile is asked for but no live schema is supplied for it: we could
+    // not look, so we must not mark. The claims are counted as skipped, not
+    // examined, and never marked.
+    let outcome = reconcile(&store, std::slice::from_ref(&p), &[])
+        .await
+        .unwrap();
+    assert_eq!(outcome.marked_stale, 0);
+    assert_eq!(
+        outcome.skipped_unavailable, 1,
+        "the skipped claim is counted"
+    );
+    assert_eq!(outcome.examined, 0);
+
+    let after = store.get_claim(&claim.id).await.unwrap().unwrap();
+    assert_eq!(after.status, ClaimStatus::Confirmed);
+    assert_eq!(
+        event_count(&store, &claim.id).await,
+        before_events,
+        "a skipped claim must gain no event"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn reconcile_does_not_examine_rejected_forgotten_or_already_stale_claims() {
+    let root = temp_root("reconcile_membership");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let obj = object_ref(&p, "orders");
+    let fp = fingerprint_for(&base);
+
+    // A confirmed claim that will drift to Stale (the only one examined).
+    let confirmed = known_claim(
+        &store,
+        &obj,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    // A rejected claim: propose a candidate then reject it.
+    let rejected = propose_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("rj").unwrap(),
+        &[],
+    )
+    .await;
+    store.reject_claim(&rejected).await.unwrap();
+    // A forgotten claim.
+    let forgotten = propose_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("fg").unwrap(),
+        &[],
+    )
+    .await;
+    store
+        .forget_claim(&forgotten, ForgetReason::Obsolete)
+        .await
+        .unwrap();
+    // An already-stale claim: propose a candidate then mark it stale directly.
+    let prestale = propose_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("ps").unwrap(),
+        &[],
+    )
+    .await;
+    store.mark_stale(&prestale).await.unwrap();
+
+    let rej_events = event_count(&store, &rejected).await;
+    let fg_events = event_count(&store, &forgotten).await;
+    let ps_events = event_count(&store, &prestale).await;
+
+    let live = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    let outcome = reconcile(&store, std::slice::from_ref(&p), &[(p.clone(), live)])
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome.marked_stale, 1,
+        "only the confirmed claim is marked"
+    );
+    assert_eq!(outcome.examined, 1, "only the confirmed claim is examined");
+
+    // The three non-examined claims keep their statuses and gain no events.
+    assert_eq!(
+        store.get_claim(&rejected).await.unwrap().unwrap().status,
+        ClaimStatus::Rejected
+    );
+    assert_eq!(
+        store.get_claim(&forgotten).await.unwrap().unwrap().status,
+        ClaimStatus::Forgotten
+    );
+    assert_eq!(
+        store.get_claim(&prestale).await.unwrap().unwrap().status,
+        ClaimStatus::Stale
+    );
+    assert_eq!(event_count(&store, &rejected).await, rej_events);
+    assert_eq!(event_count(&store, &forgotten).await, fg_events);
+    assert_eq!(event_count(&store, &prestale).await, ps_events);
+    assert_eq!(
+        store
+            .get_claim(&confirmed.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        ClaimStatus::Stale
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn a_stale_marked_claim_leaves_recall_and_enters_the_review_queue() {
+    let root = temp_root("reconcile_recall_queue");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let obj = object_ref(&p, "orders");
+    let claim = known_claim(
+        &store,
+        &obj,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+
+    // Before reconcile the confirmed claim is recallable.
+    let live_current = schema_tree_for(&[("orders", base.clone())]);
+    let before = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), live_current.clone())],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        before.contracts.len(),
+        1,
+        "confirmed claim should be recallable"
+    );
+
+    // Reconcile against a schema that dropped `amount` -> Stale, persisted.
+    let live_drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    let outcome = reconcile(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live_drifted.clone())],
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.marked_stale, 1);
+
+    // A stale claim is not recallable, so it disappears from recall.
+    let after = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), live_drifted.clone())],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        after.contracts.len(),
+        0,
+        "a stale claim must not be recalled"
+    );
+
+    // And it surfaces in the review queue — a stale claim is waiting for a
+    // human to decide its fate, which is the point of persisting Stale.
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), live_drifted)],
+        200,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<ClaimId> = queued.iter().map(|q| q.claim.id.clone()).collect();
+    assert!(
+        ids.contains(&claim.id),
+        "a stale-marked claim should appear in the review queue, got {ids:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn reconcile_binds_at_1000_claims_and_reports_truncation() {
+    let root = temp_root("reconcile_bound");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let fp = fingerprint_for(&table(&[
+        ("id", "bigint", false),
+        ("amount", "numeric", false),
+    ]));
+
+    // More than 1000 examine claims: 128 per object across 8 objects = 1024,
+    // each with a distinct alias so they do not dedup. The per-object cap is
+    // MAX_CLAIMS_PER_OBJECT (128), so the work spreads across objects.
+    let mut ids: Vec<ClaimId> = Vec::new();
+    for obj_idx in 0..8u32 {
+        let obj = object_ref(&p, &format!("t{obj_idx}"));
+        for i in 0..128u32 {
+            let id = confirm_candidate(
+                &store,
+                &obj,
+                &fp,
+                ClaimPayload::table_alias(format!("a{obj_idx}-{i}")).unwrap(),
+            )
+            .await;
+            ids.push(id);
+        }
+    }
+    assert_eq!(ids.len(), 1024);
+
+    // Every object is absent from the live schema -> each claim computes Stale.
+    // Without the bound all 1024 would be marked; the bound caps examination at
+    // 1000, so the remaining claims are left untouched and truncation reported.
+    let live = SchemaTree::default();
+    let outcome = reconcile(&store, std::slice::from_ref(&p), &[(p.clone(), live)])
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome.examined, 1000,
+        "the bound caps examination at 1000 claims"
+    );
+    assert_eq!(
+        outcome.marked_stale, 1000,
+        "each examined claim computed Stale"
+    );
+    assert!(
+        outcome.truncated,
+        "truncation must be reported when the bound fires"
+    );
+
+    // Exactly 1000 were marked; the 24 beyond the bound stayed Confirmed.
+    let mut stale = 0;
+    let mut confirmed = 0;
+    for id in &ids {
+        match store.get_claim(id).await.unwrap().unwrap().status {
+            ClaimStatus::Stale => stale += 1,
+            ClaimStatus::Confirmed => confirmed += 1,
+            other => panic!("unexpected status {other:?} for {id}"),
+        }
+    }
+    assert_eq!(stale, 1000);
+    assert_eq!(confirmed, 24);
 
     let _ = fs::remove_dir_all(root);
 }
