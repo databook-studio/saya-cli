@@ -7,8 +7,8 @@
 //! external consumers. See the spec at .claude/specs/spec-2b1-contract-operations.md.
 
 use super::{
-    ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallRequest, confirm,
-    edit, forget, propose, recall, reject, schema_state_for, show,
+    ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
+    RecallRequest, confirm, edit, forget, propose, recall, reject, schema_state_for, show,
 };
 use saya_store::{
     ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
@@ -203,6 +203,9 @@ fn recall_request<'a>(
         allow_database_context,
         schemas,
         bounds,
+        // The existing recall tests model today's behaviour: confirmed only.
+        // A test that needs `IncludeCandidates` builds its own request.
+        recall_mode: RecallMode::Confirmed,
     }
 }
 

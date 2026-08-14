@@ -40,11 +40,6 @@ pub(crate) enum ObservationOutcome {
 }
 
 /// The drained log plus whether the 32-observation cap dropped records.
-//
-// Unused in the production lib today: Phase 3c is the first caller, draining
-// the log from the application operation after a turn. `expect` documents that
-// this is intentional and will flag the attribute if a caller appears.
-#[cfg_attr(not(test), expect(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DrainedObservations {
     pub(crate) observations: Vec<ToolObservation>,
@@ -81,10 +76,6 @@ impl ObservationLog {
 
     /// Returns and clears the turn's observations, reporting whether the cap
     /// dropped any. A second call returns nothing — a turn cannot double-count.
-    //
-    // Unused in the production lib today: Phase 3c drains from the application
-    // operation. See `DrainedObservations` for the `expect` rationale.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn drain(&self) -> DrainedObservations {
         let mut guard = self
             .observations

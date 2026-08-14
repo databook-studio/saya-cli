@@ -47,11 +47,13 @@ pub(crate) async fn select(
         let all = store.list_claims(&obj.object, &[]).await?;
         let recallable: Vec<StoredClaim> = all
             .into_iter()
-            .filter(|c| c.status.is_recallable())
+            .filter(|c| request.recall_mode.admits(c.status))
             .collect();
         if recallable.is_empty() {
-            // The object has claims but none are recallable — every one was a
-            // candidate, rejected, stale, contradicted, or forgotten.
+            // The object has claims but none are admitted by this mode — under
+            // `Confirmed` every one was a candidate/rejected/stale/contradicted/
+            // forgotten; under `IncludeCandidates` it had none of confirmed or
+            // candidate.
             excluded_by_status += 1;
             continue;
         }

@@ -15,13 +15,13 @@ mod observations;
 pub(super) mod propose;
 mod recorder;
 
-// `ObservationLog` types the `observations` field; `DrainedObservations` and
-// `ToolObservation` are re-exported only so the integration test in
-// `tools/observations_tests.rs` (a sibling of `database_tools` under `tools`)
+// `ObservationLog` types the `observations` field; the observation records and
+// the drained log are re-exported so the agent runtime's learning wiring
+// (`agent::learning`) and the sibling integration test (`observations_tests`)
 // can reach them without the private `observations` submodule being public.
-pub(crate) use observations::ObservationLog;
-#[cfg(test)]
-pub(crate) use observations::{DrainedObservations, ObservationOutcome, ToolObservation};
+pub(crate) use observations::{
+    DrainedObservations, ObservationLog, ObservationOutcome, ToolObservation,
+};
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
@@ -84,7 +84,10 @@ impl DatabaseTools {
         }
     }
 
-    /// Creates database tools configured with a connection registry.
+    /// Creates database tools configured with a connection registry, with no
+    /// observation log attached. Used by tests that drive tools without a
+    /// learning setup; the production path uses [`Self::with_learning`].
+    #[cfg(test)]
     pub(crate) fn with_registry(
         registry: ConnectionRegistry,
         max_rows: usize,
@@ -99,6 +102,29 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
+            candidate_proposals: AtomicUsize::new(0),
+        }
+    }
+
+    /// Production construction with a learning-derived observation log attached.
+    /// `observations` is `None` for `learning = off` (no collector exists); `Some`
+    /// for `suggest` and `auto-candidate`, so the runtime can drain it after the
+    /// turn to report or persist what was observed (spec 4b §2).
+    pub(crate) fn with_learning(
+        registry: ConnectionRegistry,
+        max_rows: usize,
+        allow_query_data: bool,
+        state_db: Option<SqliteStateStore>,
+        observations: Option<Arc<ObservationLog>>,
+    ) -> Self {
+        Self {
+            registry,
+            max_rows,
+            allow_query_data,
+            state_db,
+            max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
+            fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
+            observations,
             candidate_proposals: AtomicUsize::new(0),
         }
     }

@@ -64,30 +64,50 @@ pub(super) fn render_body(
 }
 
 /// One claim rendered as `kind  value` (or `kind  column: value` when the
-/// claim is column-scoped). No claim id, origin, or status — the model needs
-/// the fact, not the bookkeeping.
+/// claim is column-scoped). No claim id or origin — the model needs the fact,
+/// not the bookkeeping. **Status is the exception** (spec 4b §1): a `Candidate`
+/// claim is prefixed with a fixed, in-band `[candidate — unconfirmed]` marker
+/// so the model cannot read an inferred claim as an established fact (ADR 0002
+/// §4 — inference is not confirmation). Confirmed claims render with no marker,
+/// byte-identical to before this slice.
 fn claim_line(claim: &StoredClaim) -> String {
     let Some(payload) = claim.payload.as_ref() else {
         return String::new();
     };
+    let marker = candidate_marker(claim.status);
     match payload {
-        ClaimPayload::TableDescription { text, .. } => format!("{}  {text}", payload.kind()),
-        ClaimPayload::TableAlias { alias, .. } => format!("{}  {alias}", payload.kind()),
+        ClaimPayload::TableDescription { text, .. } => {
+            format!("{marker}{}  {text}", payload.kind())
+        }
+        ClaimPayload::TableAlias { alias, .. } => format!("{marker}{}  {alias}", payload.kind()),
         ClaimPayload::TableGrain { description, .. } => {
-            format!("{}  {description}", payload.kind())
+            format!("{marker}{}  {description}", payload.kind())
         }
         ClaimPayload::ColumnDescription { column, text, .. } => {
-            format!("{}  {column}: {text}", payload.kind())
+            format!("{marker}{}  {column}: {text}", payload.kind())
         }
         ClaimPayload::ColumnRole { column, role, .. } => {
-            format!("{}  {column}: {}", payload.kind(), role.as_str())
+            format!("{marker}{}  {column}: {}", payload.kind(), role.as_str())
         }
         ClaimPayload::DefaultTimeColumn { column, .. } => {
-            format!("{}  {column}", payload.kind())
+            format!("{marker}{}  {column}", payload.kind())
         }
         // `Relationship` is not exposed on the CLI in this slice; a future
         // variant is handled here too. No value leaks for an unknown shape.
-        _ => payload.kind().to_string(),
+        _ => format!("{marker}{}", payload.kind()),
+    }
+}
+
+/// The in-band prefix that marks a claim as an unconfirmed candidate. Empty for
+/// every confirmed claim (so the body is byte-identical to before this slice);
+/// `[candidate — unconfirmed] ` for a `Candidate` claim. The marker is fixed and
+/// in-band on the claim line, so a model cannot read an inferred claim as an
+/// established fact (spec 4b §1, ADR 0002 §4). Every other status is excluded
+/// from recall before it reaches the renderer, so it never produces a marker.
+fn candidate_marker(status: saya_types::ClaimStatus) -> &'static str {
+    match status {
+        saya_types::ClaimStatus::Candidate => "[candidate — unconfirmed] ",
+        _ => "",
     }
 }
 

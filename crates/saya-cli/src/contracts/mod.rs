@@ -26,7 +26,7 @@ mod tests;
 #[allow(unused_imports)]
 pub(crate) use queue::{QUEUE_DEFAULT_LIMIT, QueuedCandidate, review_queue};
 #[allow(unused_imports)]
-pub(crate) use recall::{RecallBounds, RecallRequest, recall};
+pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
 #[allow(unused_imports)]
 pub(crate) use review::{ContractOpError, confirm, edit, forget, propose, reject, show};
 #[allow(unused_imports)]

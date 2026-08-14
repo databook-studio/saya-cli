@@ -25,7 +25,7 @@ use validation::validate_arguments;
 use super::DatabaseTools;
 use crate::commands::unobserved_fingerprint;
 use crate::contracts::args::parse_qualified;
-use crate::contracts::{RecallBounds, RecallRequest, recall, show as show_contract};
+use crate::contracts::{RecallBounds, RecallMode, RecallRequest, recall, show as show_contract};
 
 impl DatabaseTools {
     /// Dispatches a contract tool call: validates arguments, resolves the
@@ -94,6 +94,12 @@ impl DatabaseTools {
             allow_database_context: true,
             schemas: &[],
             bounds: RecallBounds::defaults(),
+            // The agent's own search tool stays Confirmed-only: a candidate is
+            // not an established fact, and surfacing one through a read tool the
+            // model trusts would let inference read inference as confirmation.
+            // Candidates reach the model only through the context block (recall
+            // mode), where the render layer labels them unconfirmed.
+            recall_mode: RecallMode::Confirmed,
         };
         // Recall degrades a store failure to an empty outcome with a diagnostic;
         // surface the diagnostic as the reason so the model does not retry.

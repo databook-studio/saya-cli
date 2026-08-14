@@ -8,7 +8,9 @@ use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, op_failure, unobserved
 use crate::commands::output::{emit, failure_message, result};
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::args::parse_qualified;
-use crate::contracts::{RecallBounds, RecallRequest, recall, review_queue, show as show_contract};
+use crate::contracts::{
+    RecallBounds, RecallMode, RecallRequest, recall, review_queue, show as show_contract,
+};
 use crate::render::{RenderFormat, TerminalEvent};
 use saya_store::{ContractStore, SqliteStateStore};
 use saya_types::{DatabaseObjectKind, DatabaseObjectRef};
@@ -49,6 +51,9 @@ pub(super) async fn list(
         allow_database_context: true,
         schemas: &[],
         bounds: RecallBounds::defaults(),
+        // `contracts list` shows confirmed contracts — the review queue is the
+        // view for candidates, so the list command does not widen to them.
+        recall_mode: RecallMode::Confirmed,
     };
     let outcome = recall(store, request).await;
     if outcome.diagnostics.store_unavailable {

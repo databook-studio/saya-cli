@@ -17,7 +17,7 @@
 mod render;
 
 use crate::connection::ConnectionRegistry;
-use crate::contracts::{PromptTerms, RecallBounds, RecallRequest, recall, terms};
+use crate::contracts::{PromptTerms, RecallBounds, RecallMode, RecallRequest, recall, terms};
 use saya_agent::ContextBlock;
 use saya_store::{SchemaStore, SqliteStateStore};
 use saya_types::{DatabaseObjectRef, ProfileIdentity, SchemaTree};
@@ -31,9 +31,16 @@ pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 /// queried (§3.1: not querying is both cheaper and a stronger guarantee). Zero
 /// contracts → no block at all (§3.5). Store failure → no block and no error
 /// (§4). `truncated` is true if recall truncated at any bound (§3.4).
+///
+/// `recall_mode` selects which claim statuses reach the block: `Confirmed`
+/// (today's behaviour) or `IncludeCandidates` (candidates admitted and
+/// plainly labelled as unconfirmed by the render layer). `bounds` replace the
+/// hard-coded `RecallBounds::defaults()`; the caller reads them from config.
 pub(crate) async fn recall_context_blocks(
     prompt: &str,
     allow_database_context: bool,
+    recall_mode: RecallMode,
+    bounds: RecallBounds,
     registry: &ConnectionRegistry,
     state_db: Option<&SqliteStateStore>,
 ) -> Vec<ContextBlock> {
@@ -67,7 +74,8 @@ pub(crate) async fn recall_context_blocks(
         terms: &terms,
         allow_database_context: true,
         schemas: &schemas,
-        bounds: RecallBounds::defaults(),
+        bounds,
+        recall_mode,
     };
     let outcome = recall(store, request).await;
     // §4: store failure or nothing selected → no block, no error.

@@ -109,25 +109,44 @@ pub(crate) async fn run_prompt_with_sink(
         }
     };
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
-    // Recall remembered contracts into the prompt's context blocks (spec 2b-3b).
-    // Runs before `registry` and `state_db` move into the tools, by reference;
-    // the privacy gate (`allow_query_data`) skips the store entirely when off.
-    // Never touches `system_prompt` — learned content lives only in the block.
-    let context_blocks = super::recall_context::recall_context_blocks(
-        prompt,
-        allow_query_data,
-        &registry,
-        state_db.as_ref(),
-    )
-    .await;
+    let memory = &runtime.resolved.memory;
+    // Recall mode from `[memory] recall`. `Off` skips recall entirely — no
+    // store query, no block (spec 4b §1). The privacy gate (`allow_query_data`)
+    // is independent and still skips recall when sharing is off regardless of
+    // `recall` (spec 4b §4).
+    let recall_mode = super::learning::recall_mode_for(memory.recall);
+    let context_blocks = match recall_mode {
+        Some(mode) if allow_query_data => {
+            super::recall_context::recall_context_blocks(
+                prompt,
+                allow_query_data,
+                mode,
+                super::learning::bounds_from(memory),
+                &registry,
+                state_db.as_ref(),
+            )
+            .await
+        }
+        // `Off`, or any mode under a closed privacy gate → no block. The gate
+        // wins: with sharing disabled no contract content reaches a provider
+        // regardless of `recall` (spec 4b §4, test 10).
+        _ => Vec::new(),
+    };
+    // Learning mode → write permission + observation-log attachment (spec 4b
+    // §2). `Off` attaches nothing; `suggest`/`auto-candidate` attach a log the
+    // runtime drains after the turn. The runtime keeps its own `Arc` handle so
+    // it can drain after `tools` consumes its clone.
+    let learning = super::learning::LearningSetup::from(memory.learning);
+    let observation_log = learning.observations.clone();
     // Capture before `state_db` moves into the tools; the contract tools are
     // advertised only when a store is present (spec 2b-3a §3).
     let has_state_store = state_db.is_some();
-    let tools = tools::DatabaseTools::with_registry(
+    let tools = tools::DatabaseTools::with_learning(
         registry,
         runtime.resolved.max_rows,
         allow_query_data,
         state_db,
+        learning.observations,
     );
     let request = AgentRequest {
         prompt: prompt.into(),
@@ -144,16 +163,16 @@ pub(crate) async fn run_prompt_with_sink(
         Some(decider) => decider,
         None => &fallback_approval,
     };
-    // Candidate writes are not enabled until Phase 4 wires an explicit config
-    // setting; until then no tool may persist a candidate claim. The definitions
-    // list and the loop guard read the same flag so a hidden tool and a denied
-    // tool agree.
+    // `permit_candidate_writes` is true only for `auto-candidate`; `suggest`
+    // and `off` leave it false so `contract_propose` is hidden (definitions) and
+    // denied (loop guard) in agreement (spec 4b §2). Changing the mode applies
+    // on the next turn: this flag is read once per `run_prompt_with_sink` call.
     let limits = AgentLimits {
         max_turns: runtime.resolved.max_iterations,
         max_tool_calls: runtime.resolved.max_iterations.saturating_mul(2),
-        permit_candidate_writes: false,
+        permit_candidate_writes: learning.permit_candidate_writes,
     };
-    run_agent_with_sink(
+    let output = run_agent_with_sink(
         &*provider,
         &tools,
         request,
@@ -167,8 +186,18 @@ pub(crate) async fn run_prompt_with_sink(
         sink,
         cancellation,
     )
-    .await
-    .map_err(|error| match error {
+    .await;
+    // `suggest` reports what the turn would have proposed after the loop is
+    // done; nothing is stored. See `emit_suggest_report` for the gate (only a
+    // completed `suggest` turn reports) and the report's shape.
+    super::learning::emit_suggest_report(
+        memory.learning,
+        observation_log.as_ref(),
+        output.is_ok(),
+        sink,
+    )
+    .await;
+    output.map_err(|error| match error {
         AgentError::Provider(error) => AgentRuntimeError::Provider(error.to_string()),
         AgentError::Limit(error) => {
             AgentRuntimeError::Agent(format!("agent limit reached: {error}"))

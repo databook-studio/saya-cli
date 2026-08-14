@@ -30,6 +30,39 @@ impl RecallBounds {
     }
 }
 
+/// Which claim statuses a recall admits. `Off` never reaches here — the caller
+/// skips recall entirely when there is nothing to recall — so this enum models
+/// only the two modes the pipeline distinguishes. Kept in the contracts layer
+/// (not `saya_config::MemoryRecall`) so the typed operations stay free of the
+/// config crate; the agent runtime maps the config enum onto this.
+///
+/// `Confirmed` is today's behaviour: only confirmed claims are recallable.
+/// `IncludeCandidates` admits `Candidate` claims too, so the render layer can
+/// show them plainly labelled as unconfirmed (ADR 0002 §4: inference is not
+/// confirmation; including a candidate is the user opting to see it anyway).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RecallMode {
+    #[default]
+    Confirmed,
+    IncludeCandidates,
+}
+
+impl RecallMode {
+    /// Whether `status` is admitted by this mode. `Confirmed` keeps today's
+    /// `is_recallable` filter; `IncludeCandidates` widens it to candidates.
+    pub(crate) fn admits(self, status: saya_types::ClaimStatus) -> bool {
+        use saya_types::ClaimStatus;
+        match self {
+            Self::Confirmed => status.is_recallable(),
+            // A candidate joins confirmed claims; every other non-confirmed
+            // status (rejected, stale, contradicted, forgotten) stays excluded.
+            Self::IncludeCandidates => {
+                matches!(status, ClaimStatus::Confirmed | ClaimStatus::Candidate)
+            }
+        }
+    }
+}
+
 /// A recall request. `schemas` carries the live schema per active profile so
 /// validity can compare the stored fingerprint to the live one without this
 /// module re-deriving it; the caller already holds live schema for query-building.
@@ -40,6 +73,10 @@ pub(crate) struct RecallRequest<'a> {
     pub allow_database_context: bool,
     pub schemas: &'a [(ProfileIdentity, SchemaTree)],
     pub bounds: RecallBounds,
+    /// Which statuses this recall admits. Defaults to `Confirmed` (today's
+    /// behaviour); `IncludeCandidates` widens the filter so candidates reach
+    /// the render layer to be shown labelled as unconfirmed.
+    pub recall_mode: RecallMode,
 }
 
 /// Runs a recall against `store`. Store failure returns an empty outcome with

@@ -9,6 +9,7 @@
 //! The scenarios mirror plan §15 scenario 1 (test 1) and the §5 list.
 
 use super::*;
+use crate::contracts::{RecallBounds, RecallMode};
 use async_trait::async_trait;
 use saya_connectors::DatabaseConnector;
 use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
@@ -232,7 +233,15 @@ async fn acceptance_remembered_time_column_reaches_one_block_not_system_prompt()
     seed_orders_with_created_at(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
 
     assert_eq!(blocks.len(), 1, "exactly one block");
     let block = &blocks[0];
@@ -267,7 +276,15 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
     let (obj, fp) = seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let before = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let before = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert_eq!(before.len(), 1);
 
     // The store path the contract tools use to forget a claim.
@@ -290,7 +307,15 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
         .unwrap();
     let _ = fp; // fingerprint was only for seeding
 
-    let after = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let after = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert!(after.is_empty(), "forgetting reverts the block immediately");
     let _ = fs::remove_dir_all(root);
 }
@@ -315,7 +340,15 @@ async fn candidate_claim_never_appears_in_block() {
     remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert!(blocks.is_empty(), "a candidate claim produces no block");
     let _ = fs::remove_dir_all(root);
 }
@@ -337,7 +370,15 @@ async fn privacy_off_produces_no_block_and_does_not_query_store() {
     let store = SqliteStateStore::new(&bad_path);
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders by month", false, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        false,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert!(blocks.is_empty(), "privacy gate off → no block");
     // The bad store was never opened: its parent is still a regular file,
     // so opening it would have panicked/migrated. The gate held.
@@ -370,6 +411,8 @@ async fn explicit_ref_selects_object_without_term_match() {
     let blocks = recall_context_blocks(
         "summarize @catalog.public.obscure_table_name",
         true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
         &registry,
         Some(&store),
     )
@@ -396,6 +439,8 @@ async fn prompt_matching_nothing_produces_no_block() {
     let blocks = recall_context_blocks(
         "completely unrelated zzztop words",
         true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
         &registry,
         Some(&store),
     )
@@ -417,7 +462,15 @@ async fn unopenable_store_produces_no_block_and_no_error() {
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
 
-    let blocks = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert!(blocks.is_empty());
     let _ = fs::remove_dir_all(root);
 }
@@ -435,7 +488,15 @@ async fn opaque_identity_appears_nowhere_in_block() {
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let blocks = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert_eq!(blocks.len(), 1);
     let body = &blocks[0].body;
     assert!(
@@ -480,7 +541,15 @@ async fn injection_text_reaches_body_unmodified() {
     store.propose_claim(request).await.unwrap();
 
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert_eq!(blocks.len(), 1);
     assert!(
         blocks[0].body.contains("<<<CONTEXT_BLOCK_END>>>"),
@@ -521,7 +590,15 @@ async fn stale_claim_is_included_but_labelled_out_of_date() {
     remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert_eq!(blocks.len(), 1, "stale claim is included, not excluded");
     let body = &blocks[0].body;
     assert!(
@@ -557,7 +634,15 @@ async fn no_profiles_produces_no_block() {
             profile_id: None,
         },
     );
-    let blocks = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert!(blocks.is_empty());
     let _ = fs::remove_dir_all(root);
 }
@@ -570,7 +655,15 @@ async fn empty_prompt_produces_no_block() {
     let store = store_at(&db, &identity).await;
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("   ", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "   ",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert!(blocks.is_empty());
     let _ = fs::remove_dir_all(root);
 }
@@ -598,7 +691,15 @@ async fn recall_truncation_flags_the_block() {
         remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
     }
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
     assert_eq!(blocks.len(), 1);
     assert!(blocks[0].truncated, "recall truncation must flag the block");
     let _ = fs::remove_dir_all(root);
@@ -613,7 +714,15 @@ async fn no_state_db_produces_no_block() {
     let root = temp_root("no_store");
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders by month", true, &registry, None).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        None,
+    )
+    .await;
     assert!(blocks.is_empty());
     let _ = root; // nothing was written
 }
@@ -635,7 +744,15 @@ async fn claim_text_lives_only_in_block_body_not_describe_context() {
     let store = store_at(&db, &identity).await;
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
-    let blocks = recall_context_blocks("orders by month", true, &registry, Some(&store)).await;
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
 
     // The system-prompt source for a single-connection registry is `None`.
     let system_prompt = registry.describe_context();
@@ -645,6 +762,179 @@ async fn claim_text_lives_only_in_block_body_not_describe_context() {
     );
     assert_eq!(blocks.len(), 1);
     assert!(blocks[0].body.contains("created_at"));
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4b: recall = include-candidates admits a candidate, plainly labelled
+// unconfirmed; recall = confirmed keeps today's behaviour (no candidate).
+// ---------------------------------------------------------------------------
+
+/// A confirmed claim and a candidate claim on the same object, under matching
+/// schema. Used by the include-candidates / confirmed tests below.
+async fn seed_orders_confirmed_and_candidate(
+    store: &SqliteStateStore,
+    identity: &ProfileIdentity,
+) -> (DatabaseObjectRef, saya_types::SchemaFingerprint) {
+    let obj = object(identity, "orders");
+    let tree = orders_schema(identity);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+    let fp = live_fingerprint(&orders_table());
+    // Confirmed: the alias "orders" — recallable today.
+    remember_confirmed_alias(store, &obj, &fp, "orders").await;
+    // Candidate: a default time column the assistant inferred but no human
+    // confirmed. Under `confirmed` it is excluded; under `include-candidates`
+    // it is admitted and must be labelled unconfirmed.
+    remember_candidate_default_time_column(store, &obj, &fp, "created_at").await;
+    (obj, fp)
+}
+
+async fn remember_confirmed_alias(
+    store: &SqliteStateStore,
+    obj: &DatabaseObjectRef,
+    fingerprint: &saya_types::SchemaFingerprint,
+    alias: &str,
+) -> ClaimId {
+    let request = ProposeClaim {
+        object: obj.clone(),
+        fingerprint: fingerprint.clone(),
+        payload: ClaimPayload::table_alias(alias).unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+    };
+    match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    }
+}
+
+/// recall = include-candidates: the candidate reaches the block, and the body
+/// marks it unconfirmed so the model cannot read it as an established fact
+/// (spec 4b §1, test 3). The confirmed alias is unmarked.
+#[tokio::test]
+async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
+    let root = temp_root("include_candidates");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    seed_orders_confirmed_and_candidate(&store, &identity).await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::IncludeCandidates,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1, "one block with the candidate admitted");
+    let body = &blocks[0].body;
+    // The candidate's column reaches the body — it was admitted.
+    assert!(
+        body.contains("created_at"),
+        "candidate claim reaches the body"
+    );
+    // The candidate is plainly labelled unconfirmed, in-band on its line, so a
+    // model cannot read it as an established fact (ADR 0002 §4). The label is a
+    // fixed token the render layer owns; asserting the token keeps the marker
+    // honest against a future change that softens it.
+    assert!(
+        body.contains("candidate"),
+        "candidate claim is labelled as a candidate: {body}"
+    );
+    assert!(
+        body.contains("unconfirmed") || body.contains("not confirmed"),
+        "candidate claim is marked unconfirmed: {body}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// recall = confirmed: the candidate is excluded — today's behaviour, unchanged
+/// (spec 4b §1, test 4). Only the confirmed alias reaches the block, and it
+/// carries no candidate marker.
+#[tokio::test]
+async fn confirmed_excludes_candidates_unchanged_behaviour() {
+    let root = temp_root("confirmed_excludes");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    seed_orders_confirmed_and_candidate(&store, &identity).await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1, "confirmed recall still produces a block");
+    let body = &blocks[0].body;
+    // The confirmed alias reaches the block.
+    assert!(body.contains("orders"), "confirmed alias reaches the body");
+    // The candidate's column does NOT reach the body under confirmed recall.
+    assert!(
+        !body.contains("created_at"),
+        "candidate claim is excluded under confirmed recall: {body}"
+    );
+    // And no candidate marker appears, since no candidate was admitted.
+    assert!(
+        !body.contains("candidate"),
+        "no candidate marker when none was admitted: {body}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Bounds from config are honoured: lowering `max_contracts` (max_objects) to 1
+/// returns exactly one contract even when two match (spec 4b §1, test 5).
+#[tokio::test]
+async fn bounds_from_config_lowering_max_contracts_returns_one_contract() {
+    let root = temp_root("bounds_one");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    // Two matching objects, each with a confirmed claim.
+    let tree = many_orders_schema(&identity, 2);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+    let fp = live_fingerprint(&orders_table());
+    for i in 0..2 {
+        let obj = object(&identity, &format!("orders{i}"));
+        remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
+    }
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds {
+            max_objects: 1,
+            max_claims_per_object: 12,
+            max_bytes: 16384,
+        },
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(blocks.len(), 1, "one block");
+    // max_objects = 1 truncates: the block flags it, and the body carries one
+    // object only.
+    assert!(blocks[0].truncated, "lowering max_contracts truncates");
+    assert!(
+        blocks[0].body.matches("orders0").count() == 1
+            || blocks[0].body.matches("orders1").count() == 1,
+        "exactly one object's claims in the body"
+    );
     let _ = fs::remove_dir_all(root);
 }
 

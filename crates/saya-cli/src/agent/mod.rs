@@ -1,3 +1,4 @@
+pub(crate) mod learning;
 pub(crate) mod profile;
 pub(crate) mod provider;
 pub(crate) mod recall_context;

@@ -10,6 +10,13 @@ mod sql_format;
 mod tool_calls;
 
 pub(crate) use database_tools::DatabaseTools;
+// Re-exported through `tools` (not the private `database_tools` module) so the
+// agent runtime's learning wiring and tests can reach the observation types.
+// `ToolObservation` is consumed only by tests; the others by `agent::learning`.
+#[allow(unused_imports)]
+pub(crate) use database_tools::{
+    DrainedObservations, ObservationLog, ObservationOutcome, ToolObservation,
+};
 #[allow(unused_imports)]
 pub(crate) use sql_format::format_sql;
 #[allow(unused_imports)]
