@@ -44,9 +44,14 @@ pub(super) async fn remember(
         Ok(object) => object,
         Err(_) => return arg_failure(ArgMessage::MalformedTable, format),
     };
+    let referenced_columns = payload.referenced_column_name_snapshots();
     let request = ProposeClaim {
         object,
         fingerprint: unobserved_fingerprint(),
+        // The headless `remember` has no live schema, so it records the
+        // referenced column names without claiming a type — a later live
+        // schema still reads a removed referenced column as Stale.
+        referenced_columns,
         payload,
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,

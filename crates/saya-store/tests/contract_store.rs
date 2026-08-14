@@ -4,7 +4,8 @@ use saya_store::{
 };
 use saya_types::{
     Cardinality, ClaimOrigin, ClaimPayload, ClaimStatus, ColumnRole, DatabaseObjectKind,
-    DatabaseObjectRef, MAX_NAME_CHARS, MAX_REFERENCED_COLUMNS, ProfileIdentity, SchemaFingerprint,
+    DatabaseObjectRef, FINGERPRINT_VERSION, MAX_NAME_CHARS, MAX_REFERENCED_COLUMNS,
+    ProfileIdentity, ReferencedColumn, SchemaFingerprint, Table,
 };
 use sqlx::{
     SqlitePool,
@@ -26,6 +27,9 @@ async fn user_explicit_confirmed_claim_round_trips() {
     let request = ProposeClaim {
         object: object.clone(),
         fingerprint: fingerprint(),
+        // No live schema here, so the column is recorded by name only — the
+        // behaviour pre-5a had (a bare name list), now a name-only snapshot.
+        referenced_columns: payload.referenced_column_name_snapshots(),
         payload: payload.clone(),
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
@@ -41,7 +45,14 @@ async fn user_explicit_confirmed_claim_round_trips() {
     assert_eq!(stored.status, ClaimStatus::Confirmed);
     assert_eq!(stored.origin, ClaimOrigin::UserExplicit);
     assert_eq!(stored.payload, Some(payload));
-    assert_eq!(stored.referenced_columns, vec!["user_id".to_string()]);
+    assert_eq!(
+        stored.referenced_columns,
+        vec![ReferencedColumn {
+            name: "user_id".to_string(),
+            data_type: String::new(),
+            nullable: false,
+        }]
+    );
     assert!(stored.last_verified_unix_ms.is_none());
     let _ = fs::remove_dir_all(root);
 }
@@ -59,6 +70,7 @@ async fn assistant_inferred_cannot_be_confirmed() {
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let error = store.propose_claim(request).await.unwrap_err();
     assert_eq!(error, StoreError::Invalid);
@@ -79,6 +91,7 @@ async fn duplicate_payload_returns_same_id() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let first_id = match store.propose_claim(make()).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -110,6 +123,7 @@ async fn column_role_contradiction_dedups() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let _ = store.propose_claim(request(first)).await.unwrap();
     match store.propose_claim(request(second)).await.unwrap() {
@@ -133,6 +147,7 @@ async fn column_role_distinct_columns_distinct_rows() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let _ = store.propose_claim(request("user_id")).await.unwrap();
     let _ = store.propose_claim(request("event_id")).await.unwrap();
@@ -159,6 +174,7 @@ async fn identical_evidence_dedups_but_turn_ordinal_distinguishes() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: Some(evidence),
+        referenced_columns: Vec::new(),
     };
     let id = match store.propose_claim(request(evidence(1))).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -190,6 +206,7 @@ async fn evidence_cap_keeps_newest() {
             turn_ordinal: Some(i),
             observed_unix_ms: base + i as i64,
         }),
+        referenced_columns: Vec::new(),
     };
     let id = match store.propose_claim(request(1)).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -224,6 +241,7 @@ async fn evidence_count_trait_reads_the_attached_rows() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let bare_id = match store.propose_claim(no_evidence).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -244,6 +262,7 @@ async fn evidence_count_trait_reads_the_attached_rows() {
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
         evidence: Some(evidence),
+        referenced_columns: Vec::new(),
     };
     let id = match store.propose_claim(request(evidence(1))).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -285,6 +304,7 @@ async fn claim_cap_rejects_overflow() {
             origin: ClaimOrigin::UserExplicit,
             initial_status: ClaimStatus::Candidate,
             evidence: None,
+            referenced_columns: Vec::new(),
         };
         let _ = store.propose_claim(request).await.unwrap();
     }
@@ -299,6 +319,7 @@ async fn claim_cap_rejects_overflow() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let error = store.propose_claim(overflow).await.unwrap_err();
     assert_eq!(error, StoreError::LimitExceeded);
@@ -329,6 +350,7 @@ async fn oversized_payload_rejected() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let error = store.propose_claim(request).await.unwrap_err();
     assert_eq!(error, StoreError::LimitExceeded);
@@ -349,6 +371,7 @@ async fn secret_payload_refused() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let error = store.propose_claim(request).await.unwrap_err();
     assert_eq!(error, StoreError::Invalid);
@@ -372,6 +395,7 @@ async fn claims_never_cross_profile_boundaries() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let id_a = match store
         .propose_claim(request(ref_a.clone(), "a events"))
@@ -418,6 +442,7 @@ async fn ids_are_deterministic_across_stores() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let id_a = match store_a.propose_claim(request.clone()).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -455,6 +480,7 @@ async fn concurrent_proposes_one_stored_seven_duplicate() {
                 origin: ClaimOrigin::UserExplicit,
                 initial_status: ClaimStatus::Candidate,
                 evidence: None,
+                referenced_columns: Vec::new(),
             };
             store.propose_claim(request).await.unwrap()
         }));
@@ -486,6 +512,7 @@ async fn list_claims_status_filter() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let candidate = ProposeClaim {
         object: object.clone(),
@@ -494,6 +521,7 @@ async fn list_claims_status_filter() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let _ = store.propose_claim(confirmed).await.unwrap();
     let _ = store.propose_claim(candidate).await.unwrap();
@@ -504,6 +532,270 @@ async fn list_claims_status_filter() {
         .unwrap();
     assert_eq!(only_confirmed.len(), 1);
     assert_eq!(only_confirmed[0].status, ClaimStatus::Confirmed);
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5a — referenced-column snapshots
+// ---------------------------------------------------------------------------
+
+/// A claim proposed against a live table stores a snapshot per referenced
+/// column with the right type and nullability (spec test 1).
+#[tokio::test]
+async fn claim_proposed_with_live_table_stores_typed_snapshot() {
+    let root = temp_root("snap-live");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    let table = Table {
+        name: "events".into(),
+        columns: vec![
+            saya_types::Column {
+                name: "user_id".into(),
+                data_type: "bigint".into(),
+                nullable: false,
+            },
+            saya_types::Column {
+                name: "amount".into(),
+                data_type: "numeric".into(),
+                nullable: true,
+            },
+        ],
+    };
+    let payload = ClaimPayload::column_description("amount", "how much").unwrap();
+    let snapshots = payload.referenced_column_snapshots(&table);
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload,
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: snapshots,
+    };
+    let id = match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    let stored = store.get_claim(&id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.referenced_columns,
+        vec![ReferencedColumn {
+            name: "amount".to_string(),
+            data_type: "numeric".to_string(),
+            nullable: true,
+        }]
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A referenced column absent from the live table stores no snapshot for it,
+/// and the claim still stores (spec test 2).
+#[tokio::test]
+async fn absent_referenced_column_stores_no_snapshot() {
+    let root = temp_root("snap-absent");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    let table = Table {
+        name: "events".into(),
+        columns: vec![saya_types::Column {
+            name: "id".into(),
+            data_type: "bigint".into(),
+            nullable: false,
+        }],
+    };
+    let payload = ClaimPayload::column_description("missing", "gone").unwrap();
+    let snapshots = payload.referenced_column_snapshots(&table);
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: payload.clone(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: snapshots,
+    };
+    let id = match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    let stored = store.get_claim(&id).await.unwrap().unwrap();
+    assert!(
+        stored.referenced_columns.is_empty(),
+        "absent column produced a snapshot: {:?}",
+        stored.referenced_columns
+    );
+    assert_eq!(stored.payload, Some(payload));
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A row written in the old `["a","b"]` shape decodes to snapshots marked
+/// unknown (empty type), not to snapshots claiming a type (spec test 3).
+#[tokio::test]
+async fn old_name_list_shape_decodes_to_unknown_snapshots() {
+    let root = temp_root("snap-old");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: ClaimPayload::column_description("user_id", "the id").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    let id = match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+
+    // Rewrite the column to the pre-5a shape: a bare array of names.
+    let pool = read_pool(&db).await;
+    sqlx::query("UPDATE contract_claims SET referenced_columns_json='[\"user_id\"]' WHERE id=?")
+        .bind(id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let stored = store.get_claim(&id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.referenced_columns,
+        vec![ReferencedColumn {
+            name: "user_id".to_string(),
+            data_type: String::new(),
+            nullable: false,
+        }],
+        "an old name-list row decoded to a snapshot that claims a type: {:?}",
+        stored.referenced_columns
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Snapshots survive store and load byte-identically (spec test 4).
+#[tokio::test]
+async fn snapshots_survive_round_trip_byte_identically() {
+    let root = temp_root("snap-rt");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    let table = Table {
+        name: "events".into(),
+        columns: vec![
+            saya_types::Column {
+                name: "a".into(),
+                data_type: "int".into(),
+                nullable: false,
+            },
+            saya_types::Column {
+                name: "b".into(),
+                data_type: "text".into(),
+                nullable: true,
+            },
+        ],
+    };
+    let target = object_ref(&profile_a(), "targets");
+    let payload = ClaimPayload::relationship(
+        target,
+        vec!["a".into(), "b".into()],
+        vec!["x".into(), "y".into()],
+        Cardinality::OneToMany,
+    )
+    .unwrap();
+    let snapshots = payload.referenced_column_snapshots(&table);
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: payload.clone(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: snapshots.clone(),
+    };
+    let id = match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    let stored = store.get_claim(&id).await.unwrap().unwrap();
+    assert_eq!(stored.referenced_columns, snapshots);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A stored claim records `CLAIM_PAYLOAD_VERSION` 2 (spec test 5).
+#[tokio::test]
+async fn stored_claim_records_payload_version_two() {
+    let root = temp_root("snap-ver");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: ClaimPayload::table_alias("a").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    let id = match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    let pool = read_pool(&db).await;
+    let version: i64 = sqlx::query_scalar("SELECT payload_version FROM contract_claims WHERE id=?")
+        .bind(id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    assert_eq!(version, saya_types::CLAIM_PAYLOAD_VERSION as i64);
+    assert_eq!(saya_types::CLAIM_PAYLOAD_VERSION, 2);
+    // FINGERPRINT_VERSION is unrelated but asserted here to prove the version
+    // recorded is read from the data, not from the running build — see SPEC REVIEW.
+    let _ = FINGERPRINT_VERSION;
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A snapshot carries a type name, so no sentinel value reaches the database
+/// through this new field (spec test 6). `referenced_columns_json` is a new
+/// persisted channel; the security standard says any such field goes through
+/// the same admission gate as the payload, so a secret-bearing snapshot type
+/// is refused — not stored, not redacted-and-stored.
+#[tokio::test]
+async fn no_sentinel_reaches_db_through_snapshot_type() {
+    let root = temp_root("snap-sentinel");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: ClaimPayload::column_description("user_id", "the id").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Candidate,
+        evidence: None,
+        referenced_columns: vec![ReferencedColumn {
+            name: "user_id".to_string(),
+            // A credential URL is a structural secret the admission gate refuses
+            // in payloads; the same shape in a snapshot type must be refused too.
+            data_type: "postgres://user:SENTINELPASSWORD@host/db".to_string(),
+            nullable: false,
+        }],
+    };
+    let err = store.propose_claim(request).await.unwrap_err();
+    assert_eq!(err, StoreError::Invalid);
+    // Nothing was stored: no claim, and the sentinel is not in the bytes.
+    assert!(store.list_claims(&object, &[]).await.unwrap().is_empty());
+    let bytes = fs::read(&db).unwrap_or_default();
+    assert!(
+        !bytes
+            .windows(b"SENTINELPASSWORD".len())
+            .any(|w| w == b"SENTINELPASSWORD"),
+        "LEAK: sentinel reached the database bytes through referenced_columns_json"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -592,6 +884,7 @@ async fn duplicate_evidence_at_the_cap_does_not_evict_anything() {
             turn_ordinal: Some(i),
             observed_unix_ms: base + i as i64,
         }),
+        referenced_columns: Vec::new(),
     };
     let id = match store.propose_claim(request(1)).await.unwrap() {
         ProposeOutcome::Stored(id) => id,

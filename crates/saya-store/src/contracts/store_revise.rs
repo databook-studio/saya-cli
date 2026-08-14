@@ -29,8 +29,16 @@ pub(crate) async fn edit_claim(
     }
     admission::check(&serialized)?;
     let key = deduplication_key(&payload, &serialized);
-    let referenced =
-        serde_json::to_string(&payload.referenced_columns()).map_err(|_| StoreError::Invalid)?;
+    // Edit has no live table, so the edited claim records name-only snapshots
+    // (empty `data_type`) — the same unknown treatment a no-schema proposal
+    // gets. Fabricating a type here would be the silent coercion the spec warns
+    // against. The behaviour is unchanged: pre-5a edit stored bare names too.
+    let referenced = payload.referenced_column_name_snapshots();
+    let referenced = serde_json::to_string(&referenced).map_err(|_| StoreError::Invalid)?;
+    if redact(&referenced) != referenced {
+        return Err(StoreError::Invalid);
+    }
+    admission::check(&referenced)?;
     let stamp = now();
     let mut tx = store
         .pool()

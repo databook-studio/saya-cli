@@ -150,10 +150,15 @@ async fn remember_confirmed_default_time_column(
     fingerprint: &saya_types::SchemaFingerprint,
     column: &str,
 ) -> ClaimId {
+    let payload = ClaimPayload::default_time_column(column).unwrap();
     let request = ProposeClaim {
         object: obj.clone(),
         fingerprint: fingerprint.clone(),
-        payload: ClaimPayload::default_time_column(column).unwrap(),
+        // The column is recorded by name only; the live tree may later drop
+        // it, which must read the claim as Stale — a typed snapshot is not
+        // available at this no-schema proposal site.
+        referenced_columns: payload.referenced_column_name_snapshots(),
+        payload,
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
@@ -170,10 +175,12 @@ async fn remember_candidate_default_time_column(
     fingerprint: &saya_types::SchemaFingerprint,
     column: &str,
 ) -> ClaimId {
+    let payload = ClaimPayload::default_time_column(column).unwrap();
     let request = ProposeClaim {
         object: obj.clone(),
         fingerprint: fingerprint.clone(),
-        payload: ClaimPayload::default_time_column(column).unwrap(),
+        referenced_columns: payload.referenced_column_name_snapshots(),
+        payload,
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
@@ -537,6 +544,7 @@ async fn injection_text_reaches_body_unmodified() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     store.propose_claim(request).await.unwrap();
 
@@ -805,6 +813,7 @@ async fn remember_confirmed_alias(
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Stored(id) => id,

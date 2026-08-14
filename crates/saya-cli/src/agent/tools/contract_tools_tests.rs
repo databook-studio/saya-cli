@@ -104,6 +104,7 @@ async fn remember_confirmed(
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -123,6 +124,7 @@ async fn remember_candidate(
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Stored(id) => id,

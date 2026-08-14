@@ -86,9 +86,14 @@ impl DatabaseTools {
             return Err(ToolError::QueryFailed);
         }
 
+        let referenced_columns = payload.referenced_column_name_snapshots();
         let request = ProposeClaim {
             object,
             fingerprint: unobserved_fingerprint(),
+            // The agent proposal path has no live schema in hand, so it records
+            // referenced column names without claiming a type — the same
+            // unknown treatment the headless `remember` path uses.
+            referenced_columns,
             payload,
             origin: ClaimOrigin::AssistantInferred,
             initial_status: ClaimStatus::Candidate,

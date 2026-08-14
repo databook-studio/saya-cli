@@ -158,6 +158,7 @@ async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Stored(id) => id,

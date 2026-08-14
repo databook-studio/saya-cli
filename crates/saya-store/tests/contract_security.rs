@@ -101,6 +101,7 @@ async fn propose_text_as(
         origin: ClaimOrigin::UserExplicit,
         initial_status: status,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await? {
         ProposeOutcome::Stored(id) => Ok(id),
@@ -207,6 +208,7 @@ async fn full_lifecycle_leaves_no_sentinels_in_db_or_sidecars() {
                 turn_ordinal: Some(1),
                 observed_unix_ms: 1_000,
             }),
+            referenced_columns: Vec::new(),
         })
         .await
         .unwrap();
@@ -425,6 +427,7 @@ async fn future_version_rejects_every_method_and_preserves_bytes() {
                 origin: ClaimOrigin::UserExplicit,
                 initial_status: ClaimStatus::Candidate,
                 evidence: None,
+                referenced_columns: Vec::new(),
             })
             .await
             .unwrap_err(),
@@ -506,6 +509,7 @@ async fn error_messages_carry_no_input_payload() {
             origin: ClaimOrigin::UserExplicit,
             initial_status: ClaimStatus::Candidate,
             evidence: None,
+            referenced_columns: Vec::new(),
         })
         .await
         .unwrap_err();
@@ -543,6 +547,7 @@ async fn error_messages_carry_no_input_payload() {
                 origin: ClaimOrigin::UserExplicit,
                 initial_status: ClaimStatus::Candidate,
                 evidence: None,
+                referenced_columns: Vec::new(),
             })
             .await
             .unwrap();
@@ -556,6 +561,7 @@ async fn error_messages_carry_no_input_payload() {
             origin: ClaimOrigin::UserExplicit,
             initial_status: ClaimStatus::Candidate,
             evidence: None,
+            referenced_columns: Vec::new(),
         })
         .await
         .unwrap_err();

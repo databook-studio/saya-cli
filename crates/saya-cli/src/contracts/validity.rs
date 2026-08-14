@@ -67,7 +67,7 @@ fn referenced_column_missing(claim: &StoredClaim, live: &Table) -> bool {
         !live
             .columns
             .iter()
-            .any(|c| c.name.eq_ignore_ascii_case(col))
+            .any(|c| c.name.eq_ignore_ascii_case(&col.name))
     })
 }
 

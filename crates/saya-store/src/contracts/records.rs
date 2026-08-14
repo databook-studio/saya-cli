@@ -3,7 +3,7 @@ use crate::contracts::events::{ContractEvent, ForgetReason};
 use async_trait::async_trait;
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectRef, ProfileIdentity,
-    SchemaFingerprint,
+    ReferencedColumn, SchemaFingerprint,
 };
 
 pub const MAX_CLAIM_PAYLOAD_BYTES: usize = 4096;
@@ -65,7 +65,11 @@ pub struct StoredClaim {
     pub origin: ClaimOrigin,
     pub status: ClaimStatus,
     pub schema_fingerprint: SchemaFingerprint,
-    pub referenced_columns: Vec<String>,
+    /// Per-referenced-column snapshots persisted for Phase 5 drift detection.
+    /// A claim proposed without a live schema stores name-only snapshots
+    /// (empty `data_type`), which the reconciler treats as unknown rather than
+    /// matched — see `store_decode` for the old `["a","b"]` shape upgrade.
+    pub referenced_columns: Vec<ReferencedColumn>,
     pub created_unix_ms: i64,
     pub updated_unix_ms: i64,
     pub last_verified_unix_ms: Option<i64>,
@@ -119,6 +123,12 @@ pub struct ProposeClaim {
     pub origin: ClaimOrigin,
     pub initial_status: ClaimStatus,
     pub evidence: Option<ClaimEvidence>,
+    /// Snapshots of the claim's referenced columns resolved against the live
+    /// table. The caller — which has the live schema — builds these via
+    /// `ClaimPayload::referenced_column_snapshots`. A caller with no live
+    /// schema passes an empty vec; the store persists no type, and the
+    /// reconciler treats the column as unknown.
+    pub referenced_columns: Vec<ReferencedColumn>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

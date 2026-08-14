@@ -4,6 +4,24 @@ use crate::contract::claim::{MAX_REFERENCED_COLUMNS, validate_text};
 use crate::contract::claim_enums::{Cardinality, ColumnRole};
 use crate::contract::error::ContractError;
 use crate::contract::identity::{DatabaseObjectRef, validate_name};
+use crate::schema::Table;
+
+/// A referenced column snapshotted at claim time: its name plus the type and
+/// nullability the connector reported when the claim was made.
+///
+/// Phase 5a persists this so a later schema change can tell a *retyped*
+/// referenced column (the claim may now be wrong) from an *unrelated* column
+/// changing elsewhere (the claim is fine). A claim proposed without a live
+/// table stores no snapshot; `data_type` is then empty and `nullable` is
+/// `false`, which the reconciler treats as "unknown" rather than "matched".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferencedColumn {
+    pub name: String,
+    /// The column's type as the connector reported it when the claim was made.
+    /// Empty for old `["a","b"]`-shape rows upgraded in place by the store.
+    pub data_type: String,
+    pub nullable: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -61,6 +79,47 @@ impl ClaimPayload {
                 local_columns.iter().map(|s| s.as_str()).collect()
             }
         }
+    }
+
+    /// Snapshots of this claim's referenced columns, resolved against `table`.
+    /// A referenced column absent from `table` is skipped — a claim cannot
+    /// snapshot what does not exist, and the caller decides what that means.
+    /// Name matching is case-insensitive, the same convention the schema
+    /// fingerprint and the validity reconciler use, so a column that kept its
+    /// name but changed type resolves here and is detected as a change later.
+    pub fn referenced_column_snapshots(&self, table: &Table) -> Vec<ReferencedColumn> {
+        self.referenced_columns()
+            .iter()
+            .filter_map(|name| {
+                table
+                    .columns
+                    .iter()
+                    .find(|col| col.name.eq_ignore_ascii_case(name))
+                    .map(|col| ReferencedColumn {
+                        name: name.to_string(),
+                        data_type: col.data_type.clone(),
+                        nullable: col.nullable,
+                    })
+            })
+            .collect()
+    }
+
+    /// Name-only snapshots of this claim's referenced columns, for a caller
+    /// that has no live schema to resolve types against. Each referenced
+    /// column becomes a snapshot with an empty `data_type` and `nullable:
+    /// false`, which the reconciler treats as *unknown* rather than matched —
+    /// so a no-schema proposal still records the column names a later drift
+    /// rule needs (a removed referenced column reads as Stale), without ever
+    /// claiming a type it never observed.
+    pub fn referenced_column_name_snapshots(&self) -> Vec<ReferencedColumn> {
+        self.referenced_columns()
+            .into_iter()
+            .map(|name| ReferencedColumn {
+                name: name.to_string(),
+                data_type: String::new(),
+                nullable: false,
+            })
+            .collect()
     }
 
     pub fn table_description(text: impl Into<String>) -> Result<Self, ContractError> {
@@ -134,7 +193,7 @@ impl ClaimPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contract::claim::MAX_TEXT_CHARS;
+    use crate::contract::claim::{CLAIM_PAYLOAD_VERSION, MAX_TEXT_CHARS};
     use crate::contract::claim_enums::{Cardinality, ColumnRole};
     use crate::{DatabaseObjectKind, ProfileIdentity};
 
@@ -364,5 +423,149 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let deserialized: ClaimPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(payload, deserialized);
+    }
+
+    fn table_with(cols: &[(&str, &str, bool)]) -> crate::Table {
+        crate::Table {
+            name: "t".into(),
+            columns: cols
+                .iter()
+                .map(|(name, ty, nullable)| crate::Column {
+                    name: (*name).into(),
+                    data_type: (*ty).into(),
+                    nullable: *nullable,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn snapshots_resolve_type_and_nullability_from_the_live_table() {
+        let table = table_with(&[("user_id", "bigint", false), ("amount", "numeric", true)]);
+        let payload = ClaimPayload::column_description("user_id", "the user id").unwrap();
+        assert_eq!(
+            payload.referenced_column_snapshots(&table),
+            vec![ReferencedColumn {
+                name: "user_id".into(),
+                data_type: "bigint".into(),
+                nullable: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn snapshot_skips_a_referenced_column_absent_from_the_table() {
+        // A claim cannot snapshot what does not exist; the caller decides what
+        // that means. The helper returns only the columns it could resolve.
+        let table = table_with(&[("id", "bigint", false)]);
+        let payload = ClaimPayload::column_description("missing", "gone").unwrap();
+        assert!(payload.referenced_column_snapshots(&table).is_empty());
+    }
+
+    #[test]
+    fn snapshots_match_case_insensitively_like_fingerprinting_does() {
+        // Schema discovery and fingerprint comparison are case-insensitive on
+        // object and column names; a snapshot must resolve the same way or a
+        // retyped column would read as "absent" instead of "changed".
+        let table = table_with(&[("User_Id", "bigint", false)]);
+        let payload = ClaimPayload::column_description("user_id", "the id").unwrap();
+        assert_eq!(
+            payload.referenced_column_snapshots(&table),
+            vec![ReferencedColumn {
+                name: "user_id".into(),
+                data_type: "bigint".into(),
+                nullable: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn relationship_snapshots_all_local_columns() {
+        let table = table_with(&[
+            ("local_a", "int", false),
+            ("local_b", "text", true),
+            ("unrelated", "int", false),
+        ]);
+        let target = make_target();
+        let payload = ClaimPayload::relationship(
+            target,
+            vec!["local_a".into(), "local_b".into()],
+            vec!["x".into(), "y".into()],
+            Cardinality::OneToMany,
+        )
+        .unwrap();
+        assert_eq!(
+            payload.referenced_column_snapshots(&table),
+            vec![
+                ReferencedColumn {
+                    name: "local_a".into(),
+                    data_type: "int".into(),
+                    nullable: false,
+                },
+                ReferencedColumn {
+                    name: "local_b".into(),
+                    data_type: "text".into(),
+                    nullable: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn table_level_claims_snapshot_nothing() {
+        let table = table_with(&[("id", "bigint", false)]);
+        assert!(
+            ClaimPayload::table_description("desc")
+                .unwrap()
+                .referenced_column_snapshots(&table)
+                .is_empty()
+        );
+        assert!(
+            ClaimPayload::table_alias("a")
+                .unwrap()
+                .referenced_column_snapshots(&table)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn name_only_snapshots_record_names_without_claiming_a_type() {
+        // A no-schema caller records the column names a drift rule needs, but
+        // with an empty type so the reconciler treats them as unknown.
+        let payload = ClaimPayload::column_description("user_id", "the id").unwrap();
+        assert_eq!(
+            payload.referenced_column_name_snapshots(),
+            vec![ReferencedColumn {
+                name: "user_id".into(),
+                data_type: String::new(),
+                nullable: false,
+            }]
+        );
+        assert!(
+            ClaimPayload::table_description("desc")
+                .unwrap()
+                .referenced_column_name_snapshots()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn referenced_column_serde_round_trips() {
+        let col = ReferencedColumn {
+            name: "amount".into(),
+            data_type: "numeric".into(),
+            nullable: true,
+        };
+        let json = serde_json::to_string(&col).unwrap();
+        let back: ReferencedColumn = serde_json::from_str(&json).unwrap();
+        assert_eq!(col, back);
+    }
+
+    #[test]
+    fn claim_payload_version_is_two() {
+        // Phase 5a persists per-column type/nullability snapshots, so a stored
+        // claim records payload_version 2. A claim proposed before this change
+        // carries version 1 and must still decode (the store handles both).
+        assert_eq!(CLAIM_PAYLOAD_VERSION, 2);
     }
 }

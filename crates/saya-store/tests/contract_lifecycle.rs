@@ -95,6 +95,7 @@ async fn propose_candidate(
         origin,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -114,6 +115,7 @@ async fn propose_confirmed(
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -378,6 +380,7 @@ async fn forgetting_a_claim_erases_its_payload() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
         evidence: Some(ev),
+        referenced_columns: Vec::new(),
     };
     let _ = store.propose_claim(dup).await.unwrap();
 
@@ -503,6 +506,7 @@ async fn repropose_after_forget_duplicates() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Duplicate { id: did, status } => {

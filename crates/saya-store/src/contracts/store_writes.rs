@@ -34,6 +34,17 @@ pub(crate) async fn propose_claim(
         return Err(StoreError::Invalid);
     }
     admission::check(&serialized)?;
+    let referenced =
+        serde_json::to_string(&request.referenced_columns).map_err(|_| StoreError::Invalid)?;
+    // `referenced_columns_json` is a new persisted channel: a snapshot's
+    // `data_type` is connector-reported text, but the field is opaque to the
+    // store, so it gets the same credential/SQL/path gate as the payload. A
+    // secret shape there is refused, not redacted-and-stored — laundering it
+    // would hide that a connector reported something it never should have.
+    if redact(&referenced) != referenced {
+        return Err(StoreError::Invalid);
+    }
+    admission::check(&referenced)?;
     let stamp = now();
     let mut tx = store
         .pool()
@@ -69,8 +80,6 @@ pub(crate) async fn propose_claim(
         return Err(StoreError::LimitExceeded);
     }
     let claim_id = claim_id(&object_id, &key)?;
-    let referenced = serde_json::to_string(&request.payload.referenced_columns())
-        .map_err(|_| StoreError::Invalid)?;
     sqlx::query("INSERT INTO contract_claims(id, object_id, claim_kind, payload_json, payload_version, origin, status, schema_fingerprint, referenced_columns_json, created_unix_ms, updated_unix_ms, last_verified_unix_ms, deduplication_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)")
         .bind(claim_id.as_str())
         .bind(object_id.as_str())

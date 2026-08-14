@@ -796,6 +796,7 @@ async fn queue_slash_and_headless_agree_on_claim_ids_and_order() {
                     turn_ordinal: Some(turn),
                     observed_unix_ms: 10_000 + turn as i64,
                 }),
+                referenced_columns: Vec::new(),
             };
             store.propose_claim(request).await.unwrap();
         }

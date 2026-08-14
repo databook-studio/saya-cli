@@ -114,9 +114,11 @@ async fn propose_confirmed(
     fingerprint: &SchemaFingerprint,
     payload: ClaimPayload,
 ) -> ClaimId {
+    let referenced_columns = payload.referenced_column_name_snapshots();
     let request = ProposeClaim {
         object: object.clone(),
         fingerprint: fingerprint.clone(),
+        referenced_columns,
         payload,
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
@@ -134,9 +136,11 @@ async fn confirm_candidate(
     fingerprint: &SchemaFingerprint,
     payload: ClaimPayload,
 ) -> ClaimId {
+    let referenced_columns = payload.referenced_column_name_snapshots();
     let request = ProposeClaim {
         object: object.clone(),
         fingerprint: fingerprint.clone(),
+        referenced_columns,
         payload,
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Candidate,
@@ -162,9 +166,11 @@ async fn propose_candidate(
     evidence_turns: &[u32],
 ) -> ClaimId {
     let turns = evidence_turns.to_vec();
+    let referenced_columns = payload.referenced_column_name_snapshots();
     let request = |turn: Option<u32>| ProposeClaim {
         object: object.clone(),
         fingerprint: fingerprint.clone(),
+        referenced_columns: referenced_columns.clone(),
         payload: payload.clone(),
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
@@ -300,6 +306,7 @@ async fn candidate_claims_never_appear_in_recall() {
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let _ = store.propose_claim(req).await.unwrap();
 
@@ -1331,6 +1338,7 @@ async fn review_wrappers_pass_through_and_map_errors() {
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let id = match propose(&store, req).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
@@ -1365,6 +1373,7 @@ async fn review_wrappers_pass_through_and_map_errors() {
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
+        referenced_columns: Vec::new(),
     };
     let cand_id = match propose(&store, cand).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
