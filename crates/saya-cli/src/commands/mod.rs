@@ -5,6 +5,7 @@ mod connection_schema_cache;
 mod connection_schema_reconcile;
 mod contracts;
 mod output;
+mod preferences;
 mod query;
 mod query_input;
 mod state;
@@ -15,6 +16,7 @@ use saya_store::SqliteStateStore;
 
 pub use contracts::run_contracts;
 pub use output::{capture_output_start, capture_output_take};
+pub use preferences::run_preferences;
 // Re-exported `pub(crate)` so the agent contract tools (2b-3a) reuse the single
 // all-zero "no schema observed" fingerprint rather than inventing a second one.
 pub(crate) use contracts::unobserved_fingerprint;
@@ -54,6 +56,9 @@ pub async fn run(
         }
         Command::Contracts { command } => {
             contracts::run_contracts(command, runtime, format, &state).await
+        }
+        Command::Preferences { command } => {
+            preferences::run_preferences(command, runtime, format, &state).await
         }
     }
 }

@@ -2,12 +2,14 @@ use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
 mod contract_view;
+mod preferences_view;
 mod render_contract;
 mod render_delta;
 mod render_json;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
+pub use preferences_view::PreferenceView;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,
@@ -83,6 +85,9 @@ pub enum TerminalEvent {
     },
     ContractQueue {
         items: Vec<ContractQueueItemView>,
+    },
+    PreferenceList {
+        preferences: Vec<PreferenceView>,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +165,7 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             status,
         } => render_contract::changed(claim_id, action, status),
         TerminalEvent::ContractQueue { items } => render_contract::queue(items),
+        TerminalEvent::PreferenceList { preferences } => render_contract::preferences(preferences),
     };
     Rendered {
         stdout: sanitize_terminal(&rendered.stdout),

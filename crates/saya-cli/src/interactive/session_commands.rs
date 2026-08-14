@@ -1,6 +1,6 @@
 use super::session_state::SessionState;
 use crate::agent::runtime::PromptOverrides;
-use crate::cli::ContractsCommand;
+use crate::cli::{ContractsCommand, PreferencesCommand};
 use crate::slash::SlashCommand;
 use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;
@@ -25,6 +25,10 @@ pub enum SessionAction {
     /// headless `saya contracts` parser produces. The loops hand it to the
     /// shared `run_contracts` dispatcher — no second parsing or DTO mapping.
     Contracts(ContractsCommand),
+    /// A preferences slash command, translated to the same `PreferencesCommand`
+    /// the headless `saya preferences list` parser produces. The loops hand it
+    /// to the shared `run_preferences` dispatcher — no second parsing or mapping.
+    Preferences(PreferencesCommand),
     Exit,
 }
 
@@ -130,6 +134,7 @@ impl SessionState {
                 SessionAction::Message(crate::slash::help_for(topic.as_deref()))
             }
             SlashCommand::Contracts(command) => SessionAction::Contracts(command),
+            SlashCommand::Preferences(command) => SessionAction::Preferences(command),
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

@@ -2,7 +2,7 @@
 //! derives on [`TerminalEvent`](super::TerminalEvent); text needs deliberate
 //! shaping, done here. See plan spec §3.
 
-use super::{ContractConflictView, ContractQueueItemView, ContractView, Rendered};
+use super::{ContractConflictView, ContractQueueItemView, ContractView, PreferenceView, Rendered};
 
 /// Abbreviation width for display-only claim ids: first six chars + `…` when the
 /// id is longer. `ContractChanged.claim_id` is never abbreviated — the user has
@@ -90,6 +90,31 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
             note = schema_state_note(&item.schema_state),
             count = item.evidence_count,
             profile = item.profile,
+        ));
+    }
+    Rendered {
+        stdout,
+        stderr: String::new(),
+    }
+}
+
+/// One line per preference: kind, value, and scope (profile name or `global`),
+/// in the order the dispatcher sorted them. An empty list is one plain line —
+/// not an error — so "no preferences" reads plainly.
+pub(super) fn preferences(items: &[PreferenceView]) -> Rendered {
+    if items.is_empty() {
+        return Rendered {
+            stdout: "No preferences set.\n".into(),
+            stderr: String::new(),
+        };
+    }
+    let mut stdout = String::new();
+    for item in items {
+        stdout.push_str(&format!(
+            "{kind}  {value}  (scope: {scope})\n",
+            kind = item.kind,
+            value = item.value,
+            scope = item.scope,
         ));
     }
     Rendered {

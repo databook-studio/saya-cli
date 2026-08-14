@@ -21,6 +21,9 @@ mod contracts_write;
 // a second mapping that could leak the opaque profile identity.
 pub(crate) use contracts_map::contract_view;
 pub(crate) use contracts_map::queue_item_view;
+// The identity-dropping profile resolution, re-exported `pub(crate)` so the
+// preferences adapter (5c-2) reuses it rather than carrying a second one.
+pub(crate) use contracts_profile::resolve_profile;
 
 use super::output::failure_message;
 use crate::cli::ContractsCommand;
@@ -29,8 +32,6 @@ use crate::contracts::ContractOpError;
 use crate::render::RenderFormat;
 use saya_store::SqliteStateStore;
 use saya_types::{ClaimId, FINGERPRINT_VERSION, SchemaFingerprint};
-
-use contracts_profile::resolve_profile;
 
 /// Exit code for any typed contract-command failure (usage error, op error, or a
 /// write against an unavailable store). Matches the user-error code `config`

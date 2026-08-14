@@ -189,6 +189,15 @@ fn handle_line(
         block_on(store.save(state.redacted()))?;
         return Ok(false);
     }
+    if let SessionAction::Preferences(command) = action {
+        // The slash adapter hands the translated `PreferencesCommand` to the same
+        // `run_preferences` dispatcher the headless `saya preferences` path uses.
+        block_on(crate::commands::run_preferences(
+            command, runtime, format, state_db,
+        ))?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
     if let SessionAction::Resume(id) = action {
         let defaults = super::session_resume::SessionDefaults {
             provider: state.provider.clone(),

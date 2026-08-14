@@ -6,8 +6,10 @@ use super::exec;
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
 use crate::cli::ContractsCommand;
+use crate::cli::PreferencesCommand;
 use crate::commands::{
     capture_output_start, capture_output_take, run_contracts as run_contracts_command,
+    run_preferences as run_preferences_command,
 };
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_resume::{SessionDefaults, block_on, resume_session};
@@ -244,6 +246,55 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
         },
         // `Review` and `Forget` are keyed by claim id, not profile.
         other => other.clone(),
+    }
+}
+
+/// Runs a preferences slash command through the shared `run_preferences`
+/// dispatcher and pushes its rendered output into the transcript. Mirrors
+/// `run_contracts`: the session's selected profile maps to the headless
+/// `--profile` field, and a non-zero exit surfaces as an error block.
+pub(super) fn run_preferences(
+    transcript: &mut Transcript,
+    state: &SessionState,
+    runtime: &RuntimeConfig,
+    state_db: &saya_store::SqliteStateStore,
+    format: RenderFormat,
+    command: &PreferencesCommand,
+) {
+    let command = with_pref_profile(command, state.profile.as_deref());
+    capture_output_start();
+    let code = match block_on(run_preferences_command(command, runtime, format, state_db)) {
+        Ok(code) => code,
+        Err(error) => {
+            capture_output_take();
+            transcript.push(BlockKind::Error, error.to_string());
+            return;
+        }
+    };
+    let (out, err) = capture_output_take();
+    let body = if out.trim().is_empty() { err } else { out };
+    if code == 0 {
+        transcript.push(BlockKind::System, body.trim_end().to_string());
+    } else {
+        transcript.push(BlockKind::Error, body.trim_end().to_string());
+    }
+}
+
+/// Sets the `profile` field on a `PreferencesCommand` to the session's active
+/// profile — the same field the headless `--profile` flag sets.
+fn with_pref_profile(command: &PreferencesCommand, profile: Option<&str>) -> PreferencesCommand {
+    let profile = profile.map(str::to_string);
+    match command {
+        PreferencesCommand::List { .. } => PreferencesCommand::List { profile },
+        PreferencesCommand::Set { kind, value, .. } => PreferencesCommand::Set {
+            kind: *kind,
+            value: value.clone(),
+            profile,
+        },
+        PreferencesCommand::Unset { kind, .. } => PreferencesCommand::Unset {
+            kind: *kind,
+            profile,
+        },
     }
 }
 

@@ -12,7 +12,11 @@ use saya_types::ProfileIdentity;
 /// active/default profile. An unknown name is a typed error listing available
 /// names; the identity is never in the message. The returned name is the one a
 /// render DTO carries; the identity stays in the request and out of every message.
-pub(super) fn resolve_profile(
+///
+/// `pub(crate)` so the preferences adapter (5c-2) reuses the same identity-
+/// dropping resolution rather than carrying a second one that could leak the
+/// opaque profile identity into a scope name.
+pub(crate) fn resolve_profile(
     runtime: &RuntimeConfig,
     name: Option<&str>,
 ) -> Result<(String, ProfileIdentity), (i32, String)> {

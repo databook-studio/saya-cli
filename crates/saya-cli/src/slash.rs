@@ -1,8 +1,9 @@
-use crate::cli::ContractsCommand;
+use crate::cli::{ContractsCommand, PreferencesCommand};
 use saya_agent::ApprovalPolicy;
 use std::{fmt, str::FromStr};
 
 mod contracts;
+mod preferences;
 
 /// Known slash command names handled by `parse_slash_command`.
 const KNOWN_COMMANDS: &[&str] = &[
@@ -28,6 +29,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "remember",
     "forget",
     "queue",
+    "preferences",
     "help",
     "exit",
     "quit",
@@ -57,6 +59,11 @@ pub enum SlashCommand {
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
     /// hands it to the shared `run_contracts` dispatcher — no second parsing.
     Contracts(ContractsCommand),
+    /// A preferences slash command (`/preferences`), already translated to the
+    /// same `PreferencesCommand` the headless `saya preferences list` parser
+    /// produces. The 5c-2 adapter hands it to the shared `run_preferences`
+    /// dispatcher — no second parsing or DTO mapping.
+    Preferences(PreferencesCommand),
     Help(Option<String>),
     Exit,
 }
@@ -122,6 +129,11 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // shared dispatcher. No second parsing or DTO mapping lives here.
             return contracts::parse_contract_command(name, &arg)
                 .map(|maybe| maybe.map(SlashCommand::Contracts));
+        }
+        "preferences" => {
+            // The preferences slash adapter: `/preferences` mirrors `list` only.
+            return preferences::parse_preferences_command(name, &arg)
+                .map(|maybe| maybe.map(SlashCommand::Preferences));
         }
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "exit" | "quit" => SlashCommand::Exit,
@@ -193,7 +205,7 @@ fn parse_approval(value: &str) -> Result<Option<ApprovalPolicy>, SlashParseError
 }
 
 pub fn help_text() -> &'static str {
-    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit\n/contracts  /contract <table>  /remember <table> <kind> <value…>  /forget <id>  /queue [limit]"
+    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit\n/contracts  /contract <table>  /remember <table> <kind> <value…>  /forget <id>  /queue [limit]  /preferences"
 }
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
@@ -256,6 +268,9 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "queue" => {
             Some("queue [limit] — list candidate claims awaiting review. Example: /queue 20")
         }
+        "preferences" => Some(
+            "preferences — list user preferences for the active profile. Example: /preferences",
+        ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",
         ),

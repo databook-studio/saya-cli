@@ -4,7 +4,8 @@
 //! and pushed into the transcript instead.
 
 use super::dispatch_actions::{
-    list_sessions, resume, run_chart, run_contracts, run_explain, run_export, run_sql,
+    list_sessions, resume, run_chart, run_contracts, run_explain, run_export, run_preferences,
+    run_sql,
 };
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
@@ -58,6 +59,9 @@ pub(crate) fn dispatch(
             }
             SessionAction::Contracts(command) => {
                 run_contracts(transcript, state, runtime, state_db, format, &command)
+            }
+            SessionAction::Preferences(command) => {
+                run_preferences(transcript, state, runtime, state_db, format, &command)
             }
             SessionAction::Export(path) => {
                 run_export(transcript, runtime, state, last_query, &path)

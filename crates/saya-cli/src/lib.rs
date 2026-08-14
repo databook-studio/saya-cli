@@ -24,16 +24,16 @@ use clap::Parser;
 pub use app::run;
 pub use cli::{
     ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
-    ForgetReasonArg, FormatArg, GlobalOptions,
+    ForgetReasonArg, FormatArg, GlobalOptions, PreferenceKindArg, PreferencesCommand,
 };
-pub use commands::{capture_output_start, capture_output_take, run_contracts};
+pub use commands::{capture_output_start, capture_output_take, run_contracts, run_preferences};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
 pub use profile_identity::profile_identity;
 pub use render::{
-    ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView, RenderFormat,
-    TerminalEvent, render_event,
+    ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView, PreferenceView,
+    RenderFormat, TerminalEvent, render_event,
 };
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state_path::resolve_state_db_path;
