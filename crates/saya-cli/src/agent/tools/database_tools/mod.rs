@@ -1,15 +1,24 @@
+use std::sync::Arc;
 use std::time::Duration;
 
-use saya_agent::ToolError;
 use saya_store::SqliteStateStore;
 
 use crate::connection::ConnectionRegistry;
 
-use definitions::validate_arguments;
-
 mod chart_tool;
 mod definitions;
+mod dispatch;
 mod fan_out;
+mod observations;
+mod recorder;
+
+// `ObservationLog` types the `observations` field; `DrainedObservations` and
+// `ToolObservation` are re-exported only so the integration test in
+// `tools/observations_tests.rs` (a sibling of `database_tools` under `tools`)
+// can reach them without the private `observations` submodule being public.
+pub(crate) use observations::ObservationLog;
+#[cfg(test)]
+pub(crate) use observations::{DrainedObservations, ObservationOutcome, ToolObservation};
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
@@ -22,6 +31,11 @@ pub(crate) struct DatabaseTools {
     pub(super) state_db: Option<SqliteStateStore>,
     pub(super) max_concurrent_fan_out_queries: usize,
     pub(super) fan_out_query_timeout: Duration,
+    /// Request-scoped observation collector. `None` leaves behaviour identical
+    // to before Phase 3b-2; recording is a no-op when absent (spec §4). An
+    // `Arc` lets the application operation that creates the log keep a handle to
+    // drain it after the turn while the tools hold their own reference.
+    pub(super) observations: Option<Arc<ObservationLog>>,
 }
 
 impl DatabaseTools {
@@ -56,6 +70,7 @@ impl DatabaseTools {
             state_db: None,
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
+            observations: None,
         }
     }
 
@@ -73,6 +88,7 @@ impl DatabaseTools {
             state_db,
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
+            observations: None,
         }
     }
 
@@ -91,65 +107,28 @@ impl DatabaseTools {
             state_db: None,
             max_concurrent_fan_out_queries: max_concurrent_fan_out_queries.max(1),
             fan_out_query_timeout,
+            observations: None,
         }
     }
 
-    /// Dispatches a read-only agent tool call to its selected connection.
-    pub(super) async fn execute_read_only(
-        &self,
-        name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
-        // Contract tools have their own argument validation and execution
-        // (sibling concern) and never reach a connector; route them before the
-        // database-tool validation, which would reject their names.
-        if matches!(name, "contract_search" | "contract_read") {
-            return self.execute_contract_tool(name, arguments).await;
-        }
-        validate_arguments(name, &arguments)?;
-        if matches!(
-            name,
-            "bounded_sql_query" | "bounded_sql_query_all" | "render_chart"
-        ) && !self.allow_query_data
-        {
-            return Err(ToolError::DataSharingDisabled);
-        }
-        if name == "bounded_sql_query_all" {
-            let sql = arguments
-                .get("sql")
-                .and_then(serde_json::Value::as_str)
-                .ok_or(ToolError::InvalidQueryArguments)?;
-            return self.query_all(sql).await;
-        }
-        let connection = arguments
-            .get("connection")
-            .and_then(serde_json::Value::as_str);
-        let entry = self.registry.resolve(connection)?;
-        match name {
-            "schema_discovery" => {
-                crate::agent::state_tools::schema(
-                    entry.connector.as_ref(),
-                    self.state_db.as_ref(),
-                    entry.profile_id.as_deref(),
-                )
-                .await
-            }
-            "bounded_sql_query" => {
-                let sql = arguments
-                    .get("sql")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or(ToolError::InvalidQueryArguments)?;
-                crate::agent::state_tools::query(
-                    entry.connector.as_ref(),
-                    sql,
-                    self.max_rows,
-                    self.state_db.as_ref(),
-                    entry.profile_id.as_deref(),
-                )
-                .await
-            }
-            "render_chart" => self.render_chart(&arguments).await,
-            _ => Err(ToolError::UnsupportedTool),
+    /// Test-only construction with a shared observation log attached, so a test
+    /// can drive tools through `execute` and then `drain` the same log.
+    #[cfg(test)]
+    pub(super) fn with_registry_and_observations(
+        registry: ConnectionRegistry,
+        max_rows: usize,
+        allow_query_data: bool,
+        state_db: Option<SqliteStateStore>,
+        observations: Arc<ObservationLog>,
+    ) -> Self {
+        Self {
+            registry,
+            max_rows,
+            allow_query_data,
+            state_db,
+            max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
+            fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
+            observations: Some(observations),
         }
     }
 }

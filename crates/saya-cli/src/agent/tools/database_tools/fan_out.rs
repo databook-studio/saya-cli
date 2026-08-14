@@ -68,6 +68,17 @@ impl DatabaseTools {
         )
         .await
         .unwrap_or(Err(ToolError::QueryTimedOut));
+        // Record one observation per connection: a fan-out that touched five
+        // databases is five observations, each with its own profile (spec §3).
+        if let Some(log) = &self.observations {
+            log.record_query(
+                "bounded_sql_query_all",
+                sql,
+                entry.dialect,
+                entry.profile_id.as_deref(),
+                outcome.as_ref().ok(),
+            );
+        }
         (
             index,
             name.to_string(),
