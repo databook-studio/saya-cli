@@ -40,6 +40,25 @@ pub(crate) fn parse_qualified(input: &str) -> Result<QualifiedName, ArgError> {
     })
 }
 
+/// Maps a kind word to [`ClaimKindArg`]. Accepts clap's canonical kebab-case
+/// `--kind` values (the headless form) and snake_case aliases for typing
+/// friendliness; both map to the same variant so the agent tool, the slash
+/// adapter, and the CLI all agree on what `time-column` means. This is the one
+/// kind-word parser in the crate — the headless clap `--kind` derives its
+/// vocabulary from `ClaimKindArg`'s `ValueEnum`, and the slash adapter and the
+/// `contract_propose` agent tool both call this so no second vocabulary exists.
+pub(crate) fn parse_kind(word: &str) -> Option<ClaimKindArg> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "description" | "table-description" => Some(ClaimKindArg::Description),
+        "alias" | "table-alias" => Some(ClaimKindArg::Alias),
+        "grain" | "table-grain" => Some(ClaimKindArg::Grain),
+        "time-column" | "time_column" => Some(ClaimKindArg::TimeColumn),
+        "column-description" | "column_description" => Some(ClaimKindArg::ColumnDescription),
+        "column-role" | "column_role" => Some(ClaimKindArg::ColumnRole),
+        _ => None,
+    }
+}
+
 pub(crate) fn build_payload(
     kind: ClaimKindArg,
     value: &str,
@@ -138,6 +157,32 @@ mod tests {
 
     /// Sentinel that must never appear in any rendered [`ArgError`] message.
     const SENTINEL: &str = "SENTINELVALUE";
+
+    #[test]
+    fn parse_kind_canonical_and_aliases() {
+        // Kebab (headless clap) and snake_case aliases map to the same variant.
+        assert_eq!(parse_kind("alias"), Some(K::Alias));
+        assert_eq!(parse_kind("table-alias"), Some(K::Alias));
+        assert_eq!(parse_kind("time-column"), Some(K::TimeColumn));
+        assert_eq!(parse_kind("time_column"), Some(K::TimeColumn));
+        assert_eq!(parse_kind("column-role"), Some(K::ColumnRole));
+        assert_eq!(parse_kind("column_role"), Some(K::ColumnRole));
+        assert_eq!(parse_kind("description"), Some(K::Description));
+        assert_eq!(parse_kind("grain"), Some(K::Grain));
+        assert_eq!(parse_kind("column-description"), Some(K::ColumnDescription));
+    }
+
+    #[test]
+    fn parse_kind_trims_and_lowercases() {
+        assert_eq!(parse_kind("  Alias  "), Some(K::Alias));
+        assert_eq!(parse_kind("ALIAS"), Some(K::Alias));
+    }
+
+    #[test]
+    fn parse_kind_unknown_is_none() {
+        assert_eq!(parse_kind("not-a-kind"), None);
+        assert_eq!(parse_kind(""), None);
+    }
 
     #[test]
     fn parse_qualified_accepts_three_parts() {

@@ -364,13 +364,13 @@ async fn tool_execution_rejects_arguments_outside_its_schema() {
 
 #[test]
 fn definitions_include_fan_out_only_when_query_data_allowed() {
-    let with_data: Vec<String> = DatabaseTools::definitions(true, false)
+    let with_data: Vec<String> = DatabaseTools::definitions(true, false, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
     assert!(with_data.iter().any(|name| name == "bounded_sql_query_all"));
 
-    let without_data: Vec<String> = DatabaseTools::definitions(false, false)
+    let without_data: Vec<String> = DatabaseTools::definitions(false, false, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
@@ -384,7 +384,7 @@ fn definitions_include_fan_out_only_when_query_data_allowed() {
 
 #[test]
 fn definitions_preserve_the_read_only_and_approval_contract() {
-    let tools = DatabaseTools::definitions(true, false);
+    let tools = DatabaseTools::definitions(true, false, false);
     let tool = |name: &str| tools.iter().find(|tool| tool.name == name).unwrap();
 
     let schema = tool("schema_discovery");
@@ -408,14 +408,15 @@ fn definitions_preserve_the_read_only_and_approval_contract() {
     assert!(all.parameters["properties"].get("connection").is_none());
 }
 
-/// Spec 3a §2: every existing tool declares the expected `local_state`. This is
-/// the test that fails when someone adds a tool without saying what local state
-/// it touches. With query data and a state store, all six tools are present.
+/// Spec 3a §2 / 3c: every existing tool declares the expected `local_state`.
+/// This is the test that fails when someone adds a tool without saying what
+/// local state it touches. With query data and a state store but candidate
+/// writes off, the six pre-3c tools are present and none writes local state.
 #[test]
 fn every_tool_declares_its_local_state_effect() {
     use saya_agent::LocalStateEffect;
 
-    let tools = DatabaseTools::definitions(true, true);
+    let tools = DatabaseTools::definitions(true, true, false);
     let expected = [
         ("schema_discovery", LocalStateEffect::None),
         ("bounded_sql_query", LocalStateEffect::None),
@@ -434,12 +435,28 @@ fn every_tool_declares_its_local_state_effect() {
             "{name} must declare local_state == {want:?}"
         );
     }
-    // Nothing advertises a candidate write yet (Phase 3c adds the first).
+    // With writes off, contract_propose is hidden, so none writes local state.
     assert!(
         !tools
             .iter()
             .any(|tool| tool.effect.local_state == LocalStateEffect::WriteCandidate),
-        "no tool may declare WriteCandidate in Phase 3a"
+        "no tool may declare WriteCandidate when writes are not permitted"
+    );
+
+    // With writes permitted, contract_propose appears and is the only writer.
+    let tools = DatabaseTools::definitions(true, true, true);
+    let propose = tools
+        .iter()
+        .find(|tool| tool.name == "contract_propose")
+        .expect("contract_propose is registered when writes are permitted");
+    assert_eq!(propose.effect.local_state, LocalStateEffect::WriteCandidate);
+    assert!(
+        !propose.read_only,
+        "contract_propose writes local state, so it is not read-only"
+    );
+    assert!(
+        !propose.effect.requires_approval,
+        "the permission gate is permit_candidate_writes, not per-call approval"
     );
 }
 

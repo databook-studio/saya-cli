@@ -16,6 +16,7 @@
 //! value. See [`RememberSpec`] and the SPEC REVIEW.
 
 use crate::cli::{ClaimKindArg, ContractsCommand, ForgetReasonArg};
+use crate::contracts::args::parse_kind;
 use crate::slash::SlashParseError;
 
 /// The fixed shape of a parsed `/remember` request, before it becomes a
@@ -81,22 +82,6 @@ fn rest_after<'a, I: Iterator<Item = &'a str>>(mut parts: I) -> Option<String> {
         value.push_str(token);
     }
     Some(value)
-}
-
-/// Maps a kind word to `ClaimKindArg`. Accepts clap's canonical kebab-case
-/// `--kind` values (the headless form) and snake_case aliases for typing
-/// friendliness; both map to the same variant so the translated command equals
-/// the headless one regardless of which form the user typed.
-fn parse_kind(word: &str) -> Option<ClaimKindArg> {
-    match word.trim().to_ascii_lowercase().as_str() {
-        "description" | "table-description" => Some(ClaimKindArg::Description),
-        "alias" | "table-alias" => Some(ClaimKindArg::Alias),
-        "grain" | "table-grain" => Some(ClaimKindArg::Grain),
-        "time-column" | "time_column" => Some(ClaimKindArg::TimeColumn),
-        "column-description" | "column_description" => Some(ClaimKindArg::ColumnDescription),
-        "column-role" | "column_role" => Some(ClaimKindArg::ColumnRole),
-        _ => None,
-    }
 }
 
 /// Payload-free usage for `/remember`. Never echoes the untrusted tail.

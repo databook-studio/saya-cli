@@ -3,13 +3,17 @@ use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect, ToolError};
 use super::DatabaseTools;
 
 impl DatabaseTools {
-    /// Returns available database tool definitions. Contract tools are appended
-    /// only when a state store is present **and** database context is allowed;
-    /// when the privacy gate forbids database context they are hidden rather
-    /// than advertised as always-empty (spec 2b-3a §3).
+    /// Returns available database tool definitions. Contract read tools are
+    /// appended only when a state store is present **and** database context is
+    /// allowed; when the privacy gate forbids database context they are hidden
+    /// rather than advertised as always-empty (spec 2b-3a §3). `contract_propose`
+    /// is appended only when candidate writes are permitted **and** a store is
+    /// present **and** the gate is open (spec 3c §3) — hidden, not advertised and
+    /// denied, matching the read-tool precedent (SPEC REVIEW, Q1).
     pub(crate) fn definitions(
         allow_query_data: bool,
         has_state_store: bool,
+        permit_candidate_writes: bool,
     ) -> Vec<ToolDefinition> {
         let connection_prop = serde_json::json!({
             "type": "string",
@@ -126,6 +130,11 @@ impl DatabaseTools {
                 has_state_store,
             ),
         );
+        // The first writing tool: registered only when writes are permitted, a
+        // store is present, and the privacy gate is open. Hidden otherwise.
+        if permit_candidate_writes && allow_query_data && has_state_store {
+            tools.push(super::propose::propose_definition());
+        }
         tools
     }
 }

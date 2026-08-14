@@ -28,8 +28,13 @@ impl DatabaseTools {
         // memory is not evidence about a database object, and recording it would
         // let memory reinforce itself (spec §3). This early return is the whole
         // of that rule: no recording, ever, for `contract_search`/`contract_read`.
+        // `contract_propose` records nothing either — a proposal about memory is
+        // not a query about a database object — and it never reaches a connector.
         if matches!(name, "contract_search" | "contract_read") {
             return self.execute_contract_tool(name, arguments).await;
+        }
+        if name == "contract_propose" {
+            return self.execute_contract_propose(arguments).await;
         }
         validate_arguments(name, &arguments)?;
         if matches!(

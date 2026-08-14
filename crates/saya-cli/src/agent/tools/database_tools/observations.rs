@@ -96,6 +96,43 @@ impl ObservationLog {
             observations,
         }
     }
+
+    /// Reports whether a succeeded observation this turn touched the given
+    /// qualified object. A read-only, non-consuming read: `contract_propose` calls
+    /// it *during* the turn (before the application drains) to pick an evidence
+    /// kind, so it must not clear the log.
+    ///
+    /// Matching is case-insensitive on the trailing parts the observation
+    /// actually named: a proposal for `analytics.public.orders` matches an
+    /// observation of `orders`, `public.orders`, or `analytics.public.orders`.
+    /// Only a `Succeeded` observation is evidence a proposal can lean on — a
+    /// failed or denied query touched nothing it can claim.
+    pub(crate) fn touched(&self, catalog: &str, schema: &str, object: &str) -> bool {
+        let guard = self
+            .observations
+            .lock()
+            .expect("observation log not poisoned");
+        let proposed = [catalog, schema, object];
+        guard.iter().any(|obs| {
+            obs.outcome == ObservationOutcome::Succeeded
+                && obs.objects.iter().any(|path| path_matches(path, &proposed))
+        })
+    }
+}
+
+/// True when the observed `path` (1–3 parts, as written) names the same object
+/// as the proposed `[catalog, schema, object]`, anchored at the trailing parts
+/// and compared case-insensitively.
+fn path_matches(path: &[String], proposed: &[&str; 3]) -> bool {
+    let n = path.len().min(3);
+    if n == 0 {
+        return false;
+    }
+    // Compare the trailing `n` parts: path[-n..] vs proposed[3-n..].
+    path.iter()
+        .skip(path.len() - n)
+        .zip(proposed.iter().skip(3 - n))
+        .all(|(obs, want)| obs.eq_ignore_ascii_case(want))
 }
 
 impl Default for ObservationLog {
@@ -118,6 +155,16 @@ mod tests {
             row_count: None,
             truncated: None,
             references_partial: false,
+        }
+    }
+
+    fn obs_with_objects(tool: &str, objects: &[&[&str]]) -> ToolObservation {
+        ToolObservation {
+            objects: objects
+                .iter()
+                .map(|parts| parts.iter().map(|s| s.to_string()).collect())
+                .collect(),
+            ..obs(tool)
         }
     }
 
@@ -152,5 +199,74 @@ mod tests {
         assert_eq!(drained.observations.len(), MAX_OBSERVATIONS);
         assert_eq!(drained.observations.last().unwrap().tool, "t31");
         assert!(drained.truncated);
+    }
+
+    #[test]
+    fn touched_matches_underspecified_observations_anchored_at_trailing_parts() {
+        let log = ObservationLog::new();
+        // A 3-part observation pins its catalog: the same 3-part proposal matches,
+        // but a different-catalog proposal for the same schema+object does not —
+        // the query touched `analytics.public.orders`, never `cat.public.orders`.
+        log.record(obs_with_objects(
+            "bounded_sql_query",
+            &[&["analytics", "public", "orders"]],
+        ));
+        assert!(log.touched("analytics", "public", "orders"));
+        assert!(!log.touched("cat", "public", "orders"));
+
+        // An under-specified observation (fewer parts) matches any proposal that
+        // agrees on the trailing parts the observation actually named.
+        let log = ObservationLog::new();
+        log.record(obs_with_objects(
+            "bounded_sql_query",
+            &[&["public", "orders"]],
+        ));
+        assert!(log.touched("analytics", "public", "orders"));
+        assert!(log.touched("cat", "public", "orders"));
+
+        let log = ObservationLog::new();
+        log.record(obs_with_objects("bounded_sql_query", &[&["orders"]]));
+        assert!(log.touched("analytics", "public", "orders"));
+        assert!(log.touched("cat", "schema", "orders"));
+    }
+
+    #[test]
+    fn touched_misses_a_different_object() {
+        let log = ObservationLog::new();
+        log.record(obs_with_objects(
+            "bounded_sql_query",
+            &[&["public", "orders"]],
+        ));
+        assert!(!log.touched("analytics", "public", "lineitems"));
+        assert!(!log.touched("analytics", "staging", "orders"));
+    }
+
+    #[test]
+    fn touched_ignores_failed_and_denied_observations() {
+        let log = ObservationLog::new();
+        let mut failed = obs_with_objects("bounded_sql_query", &[&["public", "orders"]]);
+        failed.outcome = ObservationOutcome::Failed;
+        log.record(failed);
+        let mut denied = obs_with_objects("bounded_sql_query", &[&["public", "orders"]]);
+        denied.outcome = ObservationOutcome::Denied;
+        log.record(denied);
+        assert!(
+            !log.touched("analytics", "public", "orders"),
+            "a failed or denied query touched nothing a proposal can lean on"
+        );
+    }
+
+    #[test]
+    fn touched_is_non_consuming() {
+        let log = ObservationLog::new();
+        log.record(obs_with_objects(
+            "bounded_sql_query",
+            &[&["public", "orders"]],
+        ));
+        assert!(log.touched("cat", "public", "orders"));
+        // The log is unchanged: a second read still sees the observation, and a
+        // later drain returns it. `contract_propose` reads mid-turn.
+        assert!(log.touched("cat", "public", "orders"));
+        assert_eq!(log.drain().observations.len(), 1);
     }
 }

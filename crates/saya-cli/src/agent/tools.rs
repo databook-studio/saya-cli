@@ -24,6 +24,10 @@ mod tests;
 mod contract_tools_tests;
 
 #[cfg(test)]
+#[path = "tools/propose_tools_tests.rs"]
+mod propose_tools_tests;
+
+#[cfg(test)]
 #[path = "tools/format_tests.rs"]
 mod format_tests;
 

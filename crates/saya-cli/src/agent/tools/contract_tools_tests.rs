@@ -244,7 +244,7 @@ async fn contract_read_returns_one_contract_and_rejects_malformed_table() {
         "malformed table should be InvalidQueryArguments: {err}"
     );
 
-    let defs = DatabaseTools::definitions(true, true);
+    let defs = DatabaseTools::definitions(true, true, false);
     let read_def = defs
         .iter()
         .find(|t| t.name == "contract_read")
@@ -463,7 +463,7 @@ async fn unopenable_store_returns_empty_result_not_error() {
 // ---------------------------------------------------------------------------
 #[test]
 fn contract_tool_definitions_are_read_only_unapproved_and_not_writable() {
-    let tools = DatabaseTools::definitions(true, true);
+    let tools = DatabaseTools::definitions(true, true, false);
     let search = tools
         .iter()
         .find(|t| t.name == "contract_search")
@@ -499,7 +499,7 @@ fn contract_tool_definitions_are_read_only_unapproved_and_not_writable() {
 // ---------------------------------------------------------------------------
 #[test]
 fn contract_tools_are_hidden_without_a_store_or_when_the_gate_is_closed() {
-    let with_store_and_gate = DatabaseTools::definitions(true, true);
+    let with_store_and_gate = DatabaseTools::definitions(true, true, false);
     assert!(
         with_store_and_gate
             .iter()
@@ -511,11 +511,11 @@ fn contract_tools_are_hidden_without_a_store_or_when_the_gate_is_closed() {
             .any(|t| t.name == "contract_read")
     );
 
-    let no_store = DatabaseTools::definitions(true, false);
+    let no_store = DatabaseTools::definitions(true, false, false);
     assert!(!no_store.iter().any(|t| t.name == "contract_search"));
     assert!(!no_store.iter().any(|t| t.name == "contract_read"));
 
-    let gate_closed = DatabaseTools::definitions(false, true);
+    let gate_closed = DatabaseTools::definitions(false, true, false);
     assert!(!gate_closed.iter().any(|t| t.name == "contract_search"));
     assert!(!gate_closed.iter().any(|t| t.name == "contract_read"));
 }

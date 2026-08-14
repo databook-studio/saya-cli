@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use saya_store::SqliteStateStore;
@@ -10,6 +11,8 @@ mod definitions;
 mod dispatch;
 mod fan_out;
 mod observations;
+// `pub(super)` so the sibling `definitions` module can reach the tool definition.
+pub(super) mod propose;
 mod recorder;
 
 // `ObservationLog` types the `observations` field; `DrainedObservations` and
@@ -36,6 +39,12 @@ pub(crate) struct DatabaseTools {
     // `Arc` lets the application operation that creates the log keep a handle to
     // drain it after the turn while the tools hold their own reference.
     pub(super) observations: Option<Arc<ObservationLog>>,
+    /// Per-request count of candidate proposals made this turn. `contract_propose`
+    // refuses the ninth (spec 3c §2). A `DatabaseTools` is constructed once per
+    // `run_prompt_with_sink` call and shared by `&self` across the loop, so this
+    // is the request scope — not global — the bound is meant to cover. Atomic so
+    // the `&self` executor can bump it without `&mut self`.
+    pub(super) candidate_proposals: AtomicUsize,
 }
 
 impl DatabaseTools {
@@ -71,6 +80,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
+            candidate_proposals: AtomicUsize::new(0),
         }
     }
 
@@ -89,6 +99,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
+            candidate_proposals: AtomicUsize::new(0),
         }
     }
 
@@ -108,6 +119,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: max_concurrent_fan_out_queries.max(1),
             fan_out_query_timeout,
             observations: None,
+            candidate_proposals: AtomicUsize::new(0),
         }
     }
 
@@ -129,6 +141,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: Some(observations),
+            candidate_proposals: AtomicUsize::new(0),
         }
     }
 }
@@ -140,7 +153,7 @@ mod tests {
 
     #[test]
     fn render_chart_requires_approval() {
-        let tools = DatabaseTools::definitions(true, false);
+        let tools = DatabaseTools::definitions(true, false, false);
         let chart_tool = tools
             .iter()
             .find(|tool| tool.name == "render_chart")
