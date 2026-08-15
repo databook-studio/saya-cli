@@ -1,10 +1,14 @@
 //! Assembling selected candidates into bounded `RetrievedContract`s.
 //!
 //! Split from `recall.rs` by concern: `recall` decides what to ask for and how
-//! to fail; this module applies the per-object and per-byte bounds and builds
-//! the typed contracts. `max_bytes` is enforced over the serialized claim
-//! payloads actually selected, before returning, so a caller never receives
-//! more than it asked for.
+//! to fail; this module applies the per-object and per-claim **count** bounds
+//! and builds the typed contracts. The byte bound is *not* applied here: it
+//! belongs to the rendered block the caller sends, and what reaches the request
+//! is the rendered body (headers, markers, conflict lines, the wrapper), not
+//! serialized payloads. Measuring payloads here would bound the wrong unit, and
+//! the count-bounded contracts this returns are trimmed against the rendered
+//! body — and the agent message budget — by the prompt-recall caller. See
+//! `crate::agent::recall_context`.
 //!
 //! This module computes each contract's schema state (including `Stale`) and
 //! returns the contract regardless of state — it does **not** decide who sees
@@ -21,6 +25,11 @@ use saya_store::StoredClaim;
 use saya_types::ProfileIdentity;
 
 /// Turns the ranked candidates into bounded contracts, recording diagnostics.
+///
+/// Only the count bounds (`max_objects`, `max_claims_per_object`) are applied
+/// here. `max_bytes` is the caller's concern — it bounds the rendered block, not
+/// the serialized payloads this layer sees, so it is enforced where the body is
+/// rendered (the prompt-recall path).
 pub(crate) fn assemble(
     candidates: &[Candidate],
     schemas: &[(ProfileIdentity, SchemaAvailability)],
@@ -29,7 +38,6 @@ pub(crate) fn assemble(
     diag: &mut RecallDiagnostics,
 ) -> Vec<RetrievedContract> {
     let mut out: Vec<RetrievedContract> = Vec::new();
-    let mut bytes = 0usize;
     for candidate in candidates {
         if out.len() >= bounds.max_objects {
             // Object-bound truncation: further matches were dropped. Flag the
@@ -41,12 +49,7 @@ pub(crate) fn assemble(
             diag.excluded_by_schema += candidates.len().saturating_sub(out.len());
             break;
         }
-        let Some(contract) =
-            build_contract(candidate, schemas, bounds, freshness, &mut bytes, diag)
-        else {
-            continue;
-        };
-        out.push(contract);
+        out.push(build_contract(candidate, schemas, bounds, freshness));
     }
     out
 }
@@ -56,45 +59,27 @@ fn build_contract(
     schemas: &[(ProfileIdentity, SchemaAvailability)],
     bounds: super::RecallBounds,
     freshness: SchemaFreshness,
-    bytes: &mut usize,
-    diag: &mut RecallDiagnostics,
-) -> Option<RetrievedContract> {
+) -> RetrievedContract {
     let mut claims: Vec<StoredClaim> = candidate.claims.clone();
     let mut truncated = false;
     if claims.len() > bounds.max_claims_per_object {
         claims.truncate(bounds.max_claims_per_object);
         truncated = true;
     }
-    let mut kept = Vec::new();
-    for claim in claims {
-        let size = serde_json::to_string(&claim.payload)
-            .map(|s| s.len())
-            .unwrap_or(0);
-        if *bytes + size > bounds.max_bytes && !kept.is_empty() {
-            truncated = true;
-            break;
-        }
-        *bytes += size;
-        kept.push(claim);
-    }
-    if kept.is_empty() {
-        diag.excluded_by_schema += 1;
-        return None;
-    }
     let live = schemas
         .iter()
         .find(|(p, _)| p == candidate.object.profile())
         .map(|(_, avail)| avail);
-    let state = kept
+    let state = claims
         .iter()
         .map(|c| schema_state_for(c, live.unwrap_or(&SchemaAvailability::Missing), freshness))
         .fold(ContractSchemaState::Current, |acc, s| acc.aggregate(s));
-    let conflicts = conflicts_for(&kept);
-    Some(RetrievedContract {
+    let conflicts = conflicts_for(&claims);
+    RetrievedContract {
         object: candidate.object.clone(),
         schema_state: state,
-        claims: kept,
+        claims,
         conflicts,
         truncated,
-    })
+    }
 }

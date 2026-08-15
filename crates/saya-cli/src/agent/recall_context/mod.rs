@@ -14,6 +14,7 @@
 //! - **Identities come from the registry** (profiles that actually connected),
 //!   not a re-derivation from `RuntimeConfig`.
 
+mod budget;
 mod dispute;
 mod render;
 
@@ -40,8 +41,19 @@ pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 /// (today's behaviour) or `IncludeCandidates` (candidates admitted and
 /// plainly labelled as unconfirmed by the render layer). `bounds` replace the
 /// hard-coded `RecallBounds::defaults()`; the caller reads them from config.
+///
+/// `system_prompt` is the extra system context the runtime has already assembled
+/// (connection descriptions, the last-SQL hint). It is `None` when there is none.
+/// The byte bound is enforced against the *rendered* block the request actually
+/// sends — not the serialized payloads `recall` selected — and against what is
+/// left of the agent message budget after the system prompt and the user's own
+/// question. The question is the point and the context is the assist, so context
+/// never consumes the bytes the prompt needs: [`bound_body`] drops contracts from
+/// the end (least-relevant first) until the rendered block fits, and if even the
+/// first contract does not fit it is omitted and the block is marked truncated.
 pub(crate) async fn recall_context_blocks(
     prompt: &str,
+    system_prompt: Option<&str>,
     allow_database_context: bool,
     recall_mode: RecallMode,
     bounds: RecallBounds,
@@ -93,15 +105,33 @@ pub(crate) async fn recall_context_blocks(
     }
 
     let name_of = render::name_by_identity(registry);
-    let truncated = outcome.contracts.iter().any(|c| c.truncated);
-    let body = render::render_body(&outcome.contracts, &name_of);
+    // `truncated` is true if a *count* bound (objects or claims-per-object) cut
+    // a contract short — the byte bound below sets its own flag when it drops
+    // contracts to fit the rendered budget.
+    let count_truncated = outcome.contracts.iter().any(|c| c.truncated);
+    let (body, byte_truncated) = budget::bound_body(
+        &outcome.contracts,
+        &name_of,
+        system_prompt,
+        prompt,
+        bounds.max_bytes,
+    );
+    // `bound_body` returns an empty body only when even the first contract's
+    // rendered stanza does not fit the budget — the oversized-first-claim case the
+    // old code let through. Omit every claim but still surface a truncated block
+    // so the model learns recall happened and the context was too large to
+    // include, rather than reading silence as "nothing was remembered".
     if body.is_empty() {
-        return Vec::new();
+        return vec![ContextBlock {
+            label: BLOCK_LABEL.to_string(),
+            body,
+            truncated: true,
+        }];
     }
     vec![ContextBlock {
         label: BLOCK_LABEL.to_string(),
         body,
-        truncated,
+        truncated: count_truncated || byte_truncated,
     }]
 }
 

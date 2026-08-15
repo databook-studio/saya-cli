@@ -1,5 +1,6 @@
 //! Shared public contracts for SAYA CLI.
 
+mod budget;
 mod contract;
 mod dialect;
 mod error;
@@ -7,6 +8,7 @@ mod profile;
 mod query;
 mod schema;
 
+pub use budget::MAX_MESSAGE_BYTES;
 pub use contract::{
     CLAIM_PAYLOAD_VERSION, Cardinality, ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus,
     ColumnRole, ContractError, DatabaseObjectKind, DatabaseObjectRef, DateGrain,

@@ -370,10 +370,20 @@ async fn candidate_claims_never_appear_in_recall() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: bounds hold on objects, claims, and bytes
+// Test 3: bounds hold on objects and claims.
+//
+// The byte bound used to be asserted here too, against serialized claim payloads
+// inside `recall`/`assemble`. That assertion encoded the bug the P1 fix removes:
+// payload length is not the unit that reaches the request — the rendered block
+// (headers, markers, conflict lines, the wrapper) is — and the bound skipped the
+// first claim of every object, so it was never a bound at all. The byte bound now
+// lives in the prompt-recall path, against the rendered body and the agent message
+// budget; its tests are in `recall_context_tests.rs` (the layer that renders). The
+// count bounds this test still pins — `max_objects` and `max_claims_per_object` —
+// are the ones `recall`/`assemble` actually enforce.
 // ---------------------------------------------------------------------------
 #[tokio::test]
-async fn bounds_hold_on_objects_claims_and_bytes() {
+async fn bounds_hold_on_objects_and_claims() {
     let root = temp_root("bounds");
     let db = root.join("state.sqlite3");
     let store = store_at(&db).await;
@@ -457,37 +467,6 @@ async fn bounds_hold_on_objects_claims_and_bytes() {
     assert_eq!(outcome2.contracts.len(), 1);
     assert_eq!(outcome2.contracts[0].claims.len(), 3);
     assert!(outcome2.contracts[0].truncated);
-
-    // max_bytes = 80: serialized payloads never exceed the budget, and it truncates.
-    let bounds3 = RecallBounds {
-        max_objects: 5,
-        max_claims_per_object: 12,
-        max_bytes: 80,
-    };
-    let outcome3 = recall(
-        &store,
-        recall_request(
-            std::slice::from_ref(&p),
-            &[(p.clone(), avail(schema_h))],
-            &["heavy".to_string()],
-            true,
-            bounds3,
-        ),
-    )
-    .await;
-    let serialized: usize = outcome3
-        .contracts
-        .iter()
-        .flat_map(|c| c.claims.iter())
-        .map(|c| {
-            serde_json::to_string(&c.payload)
-                .map(|s| s.len())
-                .unwrap_or(0)
-        })
-        .sum();
-    assert!(serialized <= 80, "max_bytes exceeded: {serialized}");
-    assert!(!outcome3.contracts.is_empty());
-    assert!(outcome3.contracts[0].truncated);
 
     let _ = fs::remove_dir_all(root);
 }

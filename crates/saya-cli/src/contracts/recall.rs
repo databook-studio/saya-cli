@@ -9,6 +9,15 @@ use saya_store::SqliteStateStore;
 use saya_types::{DatabaseObjectRef, ProfileIdentity};
 
 /// Bounds for a recall, from plan §11.2.
+///
+/// `max_objects` and `max_claims_per_object` are count bounds [`recall`]/`assemble`
+/// apply to the contracts they return. `max_bytes` is **not** applied by `recall`:
+/// it bounds the *rendered* block the prompt-recall caller sends, and what reaches
+/// the request is the rendered body (headers, markers, conflict lines), not the
+/// serialized payloads `assemble` sees. Measuring payloads here would bound the
+/// wrong unit, so the byte bound lives in `crate::agent::recall_context`, against
+/// the rendered body and the agent message budget. Callers that do not render a
+/// prompt block (the `contract_search` tool) pass it through unused.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RecallBounds {
     pub max_objects: usize,

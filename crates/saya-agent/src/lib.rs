@@ -8,6 +8,7 @@ mod protocol;
 mod providers;
 
 pub use agent_entry::run_agent;
+pub use history::{MAX_HISTORY_BYTES, turn_bytes};
 pub use loop_runner::{AgentError, AgentLimits, AgentOutput, run_agent_with_sink};
 pub use protocol::approval::{ApprovalPolicy, ApprovalPolicyParseError};
 pub use protocol::contracts::{

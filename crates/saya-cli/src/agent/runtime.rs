@@ -119,6 +119,7 @@ pub(crate) async fn run_prompt_with_sink(
         Some(mode) if allow_query_data => {
             super::recall_context::recall_context_blocks(
                 prompt,
+                system_prompt.as_deref(),
                 allow_query_data,
                 mode,
                 super::learning::bounds_from(memory),

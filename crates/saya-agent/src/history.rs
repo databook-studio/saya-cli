@@ -2,7 +2,12 @@ use crate::history_context::render_context;
 use crate::{AgentError, ChatMessage, ContextBlock};
 
 pub const MAX_HISTORY_MESSAGES: usize = 20;
-pub const MAX_HISTORY_BYTES: usize = 32 * 1024;
+/// The agent's whole-message byte budget. Re-exported from [`saya_types`] so the
+/// prompt-recall path and the `[memory] max_context_bytes` clamp read the same
+/// number the history bound enforces — a duplicated limit would drift. See
+/// [`saya_types::MAX_MESSAGE_BYTES`] for why the constant lives in the shared
+/// leaf, not here.
+pub const MAX_HISTORY_BYTES: usize = saya_types::MAX_MESSAGE_BYTES;
 const SYSTEM_PROMPT: &str = "You are SAYA, a database assistant. Use only the supplied read-only tools. Never claim to have written data or used unsupported tools.";
 
 /// Builds the message list for the agent from optional extra system prompt context,
@@ -16,10 +21,7 @@ pub fn build_messages(
     prompt: &str,
     history: &[ChatMessage],
 ) -> Result<Vec<ChatMessage>, AgentError> {
-    let system_content = match system_extra {
-        Some(s) if !s.trim().is_empty() => format!("{SYSTEM_PROMPT}\n\n{s}"),
-        _ => SYSTEM_PROMPT.to_string(),
-    };
+    let system_content = system_content(system_extra);
     let user_content = render_context(context_blocks, prompt);
     let current = [
         ChatMessage::text("system", system_content),
@@ -50,6 +52,31 @@ pub fn build_messages(
     messages.extend(chosen.into_iter().flatten());
     messages.push(current[1].clone());
     Ok(messages)
+}
+
+/// The system message content [`build_messages`] would assemble from optional
+/// extra context: the fixed [`SYSTEM_PROMPT`], plus the extra when it is non-empty.
+/// Shared with [`turn_bytes`] so the pre-build budget check and the post-build
+/// message use one system-message shape and cannot drift.
+fn system_content(extra: Option<&str>) -> String {
+    match extra {
+        Some(s) if !s.trim().is_empty() => format!("{SYSTEM_PROMPT}\n\n{s}"),
+        _ => SYSTEM_PROMPT.to_string(),
+    }
+}
+
+/// The exact byte size of the system + user messages [`build_messages`] would
+/// assemble from `system`, `blocks`, and `prompt` (no history): the post-escape,
+/// post-wrapper content the agent will actually send. Exposed so the
+/// prompt-recall path can bound a context block body to what fits *before* the
+/// request is built, using the same accounting [`build_messages`] uses, so the
+/// two cannot drift. The block's `truncated` flag changes the wrapper size, so a
+/// caller reserving the worst case passes `truncated: true`.
+pub fn turn_bytes(system: Option<&str>, blocks: &[ContextBlock], prompt: &str) -> usize {
+    let system_msg = system_content(system);
+    let user_content = render_context(blocks, prompt);
+    message_bytes(&ChatMessage::text("system", system_msg))
+        + message_bytes(&ChatMessage::text("user", user_content))
 }
 
 fn validate(history: &[ChatMessage]) -> Result<(), AgentError> {
@@ -323,5 +350,64 @@ mod tests {
             matches!(result, Err(AgentError::ContextLimit)),
             "oversized context must fail closed, not silently exceed the limit"
         );
+    }
+
+    // --- P1: a legal-max context block must not break an ordinary prompt --------
+
+    /// The regression that motivated the fix: a user who set `max_context_bytes`
+    /// to the (old) legal maximum saw ordinary questions fail with `ContextLimit`,
+    /// a memory setting breaking the thing memory is supposed to help. The
+    /// `max_context_bytes` ceiling is now derived below the message budget, so a
+    /// block at that ceiling plus an ordinary prompt still builds (spec test 7).
+    /// The `4096` is the reservation `saya-config` derives the ceiling from
+    /// (`MAX_MESSAGE_BYTES - CONTEXT_RESERVATION_BYTES`); named concretely here
+    /// because `saya-agent` cannot depend on `saya-config` for the constant.
+    #[test]
+    fn legal_max_context_block_with_an_ordinary_prompt_builds_without_context_limit() {
+        let ceiling = saya_types::MAX_MESSAGE_BYTES - 4096;
+        let block = ContextBlock {
+            label: "database-contracts".into(),
+            // A body at the legal maximum — the most context the config permits.
+            body: "y".repeat(ceiling),
+            truncated: true,
+        };
+        let result = build_messages(None, &[block], "show me orders by month", &[]);
+        assert!(
+            result.is_ok(),
+            "a legal-max context block must not break an ordinary prompt: {result:?}"
+        );
+    }
+
+    /// `turn_bytes` is the exact size `build_messages` enforces, so a caller can
+    /// bound a context body to what fits before building the request. A body that
+    /// `turn_bytes` says fits must build; one byte more must fail closed — the two
+    /// share one accounting and cannot drift.
+    #[test]
+    fn turn_bytes_matches_the_build_messages_limit() {
+        let body = "x".repeat(2048);
+        let block = ContextBlock {
+            label: "database-contracts".into(),
+            body: body.clone(),
+            truncated: false,
+        };
+        let fits = turn_bytes(None, std::slice::from_ref(&block), "prompt");
+        assert!(
+            fits <= MAX_HISTORY_BYTES,
+            "turn_bytes must not exceed the limit it reports against"
+        );
+        assert!(build_messages(None, &[block], "prompt", &[]).is_ok());
+
+        // A block exactly one byte over the limit fails closed in both views.
+        let over_body = "z".repeat(MAX_HISTORY_BYTES);
+        let over = ContextBlock {
+            label: "database-contracts".into(),
+            body: over_body,
+            truncated: false,
+        };
+        assert!(turn_bytes(None, std::slice::from_ref(&over), "p") > MAX_HISTORY_BYTES);
+        assert!(matches!(
+            build_messages(None, &[over], "p", &[]),
+            Err(AgentError::ContextLimit)
+        ));
     }
 }

@@ -50,7 +50,7 @@ fn out_of_range_numbers_are_typed_errors_naming_the_field_and_range() {
         ("max_claims_per_contract", "0"),
         ("max_claims_per_contract", "101"),
         ("max_context_bytes", "1023"),
-        ("max_context_bytes", "262145"),
+        ("max_context_bytes", "28673"),
         ("retention_days", "0"),
         ("retention_days", "3651"),
     ];
@@ -69,6 +69,50 @@ fn out_of_range_numbers_are_typed_errors_naming_the_field_and_range() {
             "expected MemoryRange for {field}={value}, got {rendered}"
         );
     }
+}
+
+/// `max_context_bytes` is clamped below the agent message budget: a setting above
+/// the ceiling is a typed error naming both the configured value and the maximum,
+/// not a silent clamp (spec test 5). A user who wrote the old 256 KiB should learn
+/// it is impossible, not have it quietly become something else.
+#[test]
+fn max_context_bytes_above_the_ceiling_names_the_value_and_the_maximum() {
+    // The pre-P1 ceiling was 256 KiB; a user carrying that config forward must be
+    // told it is now refused, and why.
+    let config = ConfigFile::from_toml("[memory]\nmax_context_bytes = 262144\n").unwrap();
+    let error =
+        resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config)).unwrap_err();
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("262144"),
+        "error must name the configured value: {rendered}"
+    );
+    assert!(
+        rendered.contains("28672"),
+        "error must name the maximum (the ceiling): {rendered}"
+    );
+    assert!(
+        matches!(
+            error,
+            ConfigError::MemoryRange {
+                field: "max_context_bytes",
+                value: 262144,
+                max: 28672,
+                ..
+            }
+        ),
+        "expected MemoryRange naming the configured value and the ceiling: {rendered}"
+    );
+}
+
+/// `max_context_bytes` at the ceiling is accepted (spec test 6): the boundary is
+/// inclusive, only values above it are refused.
+#[test]
+fn max_context_bytes_at_the_ceiling_is_accepted() {
+    let config = ConfigFile::from_toml("[memory]\nmax_context_bytes = 28672\n").unwrap();
+    let resolved = resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config))
+        .expect("the ceiling is accepted");
+    assert_eq!(resolved.memory.max_context_bytes, 28672);
 }
 
 /// An unknown mode string is a typed error naming the accepted values. These are the
@@ -133,7 +177,7 @@ fn a_fully_set_memory_section_round_trips() {
          learning = 'auto-candidate'\n\
          max_contracts = 50\n\
          max_claims_per_contract = 100\n\
-         max_context_bytes = 262144\n\
+         max_context_bytes = 28672\n\
          retention_days = 3650\n",
     )
     .unwrap();
@@ -143,7 +187,7 @@ fn a_fully_set_memory_section_round_trips() {
     assert_eq!(resolved.memory.learning, MemoryLearning::AutoCandidate);
     assert_eq!(resolved.memory.max_contracts, 50);
     assert_eq!(resolved.memory.max_claims_per_contract, 100);
-    assert_eq!(resolved.memory.max_context_bytes, 262144);
+    assert_eq!(resolved.memory.max_context_bytes, 28672);
     assert_eq!(resolved.memory.retention_days, 3650);
 }
 
@@ -170,7 +214,7 @@ fn the_numeric_bounds_are_inclusive_at_both_ends() {
         "[memory]\n\
          max_contracts = 50\n\
          max_claims_per_contract = 100\n\
-         max_context_bytes = 262144\n\
+         max_context_bytes = 28672\n\
          retention_days = 3650\n",
     )
     .unwrap();
@@ -178,6 +222,6 @@ fn the_numeric_bounds_are_inclusive_at_both_ends() {
         resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config)).unwrap();
     assert_eq!(resolved.memory.max_contracts, 50);
     assert_eq!(resolved.memory.max_claims_per_contract, 100);
-    assert_eq!(resolved.memory.max_context_bytes, 262144);
+    assert_eq!(resolved.memory.max_context_bytes, 28672);
     assert_eq!(resolved.memory.retention_days, 3650);
 }

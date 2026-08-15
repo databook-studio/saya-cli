@@ -20,9 +20,10 @@ pub enum ConfigError {
     KeyringUnavailable,
     #[error("could not read secret file: {0}")]
     SecretFile(String),
-    #[error("memory setting {field} must be within {min}..={max}")]
+    #[error("memory setting {field} = {value} must be within {min}..={max}")]
     MemoryRange {
         field: &'static str,
+        value: u32,
         min: u32,
         max: u32,
     },

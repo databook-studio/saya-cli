@@ -11,6 +11,7 @@
 use super::*;
 use crate::contracts::{RecallBounds, RecallMode};
 use async_trait::async_trait;
+use saya_agent::{MAX_HISTORY_BYTES, turn_bytes};
 use saya_connectors::DatabaseConnector;
 use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -242,6 +243,7 @@ async fn acceptance_remembered_time_column_reaches_one_block_not_system_prompt()
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -285,6 +287,7 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
 
     let before = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -316,6 +319,7 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
 
     let after = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -349,6 +353,7 @@ async fn candidate_claim_never_appears_in_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -379,6 +384,7 @@ async fn privacy_off_produces_no_block_and_does_not_query_store() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         false,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -417,6 +423,7 @@ async fn explicit_ref_selects_object_without_term_match() {
     // No term matches "obscure_table_name"; only the explicit @ref does.
     let blocks = recall_context_blocks(
         "summarize @catalog.public.obscure_table_name",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -445,6 +452,7 @@ async fn prompt_matching_nothing_produces_no_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "completely unrelated zzztop words",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -471,6 +479,7 @@ async fn unopenable_store_produces_no_block_and_no_error() {
 
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -497,6 +506,7 @@ async fn opaque_identity_appears_nowhere_in_block() {
 
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -551,6 +561,7 @@ async fn injection_text_reaches_body_unmodified() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -611,6 +622,7 @@ async fn stale_claim_is_excluded_from_the_model_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -670,6 +682,7 @@ async fn needs_review_claim_still_reaches_the_model_labelled() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -717,6 +730,7 @@ async fn no_profiles_produces_no_block() {
     );
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -738,6 +752,7 @@ async fn empty_prompt_produces_no_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "   ",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -774,6 +789,7 @@ async fn recall_truncation_flags_the_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -797,6 +813,7 @@ async fn no_state_db_produces_no_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -827,6 +844,7 @@ async fn claim_text_lives_only_in_block_body_not_describe_context() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -908,6 +926,7 @@ async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::IncludeCandidates,
         RecallBounds::defaults(),
@@ -951,6 +970,7 @@ async fn confirmed_excludes_candidates_unchanged_behaviour() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -997,6 +1017,7 @@ async fn bounds_from_config_lowering_max_contracts_returns_one_contract() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds {
@@ -1162,6 +1183,7 @@ async fn conflicting_grains_both_appear_marked_and_kind_named() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -1209,6 +1231,7 @@ async fn conflict_block_instructs_not_to_choose_silently() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -1295,6 +1318,7 @@ async fn conflict_does_not_suppress_non_disputed_claims() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -1344,6 +1368,7 @@ async fn conflict_and_candidate_markers_compose_in_one_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders",
+        None,
         true,
         RecallMode::IncludeCandidates,
         RecallBounds::defaults(),
@@ -1382,6 +1407,7 @@ async fn opaque_identity_appears_nowhere_in_conflict_block() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -1427,6 +1453,7 @@ async fn missing_cache_entry_keeps_the_claim_labelled_not_muted_as_stale() {
     let registry = registry_for("analytics", &identity);
     let blocks = recall_context_blocks(
         "orders by month",
+        None,
         true,
         RecallMode::Confirmed,
         RecallBounds::defaults(),
@@ -1459,4 +1486,443 @@ async fn missing_cache_entry_keeps_the_claim_labelled_not_muted_as_stale() {
         "a missing cache is not staleness: {body}"
     );
     let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// P1 byte-budget: the bound is on the rendered block, against what is left of
+// the agent message budget, and it bounds the first claim too.
+//
+// The old bound in `assemble` measured serialized claim payloads and skipped the
+// first claim of every object, so it was neither the right unit nor a real bound.
+// The fix renders the body, measures the rendered block (headers, markers,
+// conflict lines, the wrapper) with the same accounting `build_messages`
+// enforces, and drops contracts from the end until it fits — including the
+// first. The budget is the agent message budget less the system prompt and the
+// user's own question, so context never crowds out the question.
+// ---------------------------------------------------------------------------
+
+/// A confirmed description with the largest text a claim allows. The rendered
+/// line is `table_description  <text>` — over a KiB — so a budget of a few hundred
+/// bytes admits no such claim. Used by the byte-budget tests below.
+async fn seed_large_description(
+    store: &SqliteStateStore,
+    identity: &ProfileIdentity,
+    object_name: &str,
+    text: &str,
+) -> DatabaseObjectRef {
+    let obj = object(identity, object_name);
+    let tree = orders_schema_named(identity, object_name);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+    let fp = live_fingerprint(&table_named(object_name));
+    let request = ProposeClaim {
+        object: obj.clone(),
+        fingerprint: fp,
+        payload: ClaimPayload::table_description(text).unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    store.propose_claim(request).await.unwrap();
+    obj
+}
+
+/// Spec test 1: a single claim larger than the budget is **omitted**, and the
+/// result is marked truncated. The old code admitted the first claim of every
+/// object regardless of size; this is exactly that case, and the fix must not
+/// let it through.
+#[tokio::test]
+async fn a_single_oversized_claim_is_omitted_and_the_block_is_marked_truncated() {
+    let root = temp_root("p1_byte_single");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let big = "z".repeat(1024);
+    seed_large_description(&store, &identity, "orders", &big).await;
+
+    let registry = registry_for("analytics", &identity);
+    // A budget far smaller than the claim's rendered line (~1 KiB) but large
+    // enough that the object header alone would fit if the claim were small —
+    // so the omission is the claim's size, not the header's.
+    let bounds = RecallBounds {
+        max_objects: 5,
+        max_claims_per_object: 12,
+        max_bytes: 512,
+    };
+    let blocks = recall_context_blocks(
+        "orders",
+        None,
+        true,
+        RecallMode::Confirmed,
+        bounds,
+        &registry,
+        Some(&store),
+    )
+    .await;
+    // The contract's rendered stanza (header + the 1 KiB claim line) exceeds
+    // 512, so no contract fits. The block is still produced, marked truncated,
+    // and the oversized claim never reaches the body.
+    assert_eq!(
+        blocks.len(),
+        1,
+        "a truncated block is produced, not silence"
+    );
+    assert!(
+        blocks[0].truncated,
+        "an oversized first claim must mark the block truncated"
+    );
+    assert!(
+        !blocks[0].body.contains(&big),
+        "the oversized claim must be omitted from the body: {}",
+        blocks[0].body
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Spec test 2: five objects each with one oversized claim produce a block within
+/// budget, not five unbounded claims. The old code admitted the first claim of
+/// every object regardless of size — five objects meant five unbounded claims.
+/// The fix drops contracts from the end until the rendered block fits, so the
+/// block carries only what fits and is marked truncated.
+#[tokio::test]
+async fn five_objects_with_oversized_claims_do_not_admit_five_unbounded_claims() {
+    let root = temp_root("p1_byte_five");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let big = "z".repeat(1024);
+    // Five objects, each with one claim whose rendered line is ~1 KiB. The
+    // objects share one schema tree so each reads `current` (this test is about
+    // bytes, not staleness).
+    let tables: Vec<Table> = (0..5)
+        .map(|i| table_named_with(&format!("orders{i}"), &[("id", "bigint", false)]))
+        .collect();
+    let tree = SchemaTree {
+        databases: vec![Database {
+            name: "catalog".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables,
+            }],
+        }],
+    };
+    store.upsert_schema(identity.as_str(), &tree).await.unwrap();
+    for i in 0..5 {
+        let obj = object(&identity, &format!("orders{i}"));
+        let fp = live_fingerprint(&table_named_with(
+            &format!("orders{i}"),
+            &[("id", "bigint", false)],
+        ));
+        let request = ProposeClaim {
+            object: obj,
+            fingerprint: fp,
+            payload: ClaimPayload::table_description(&big).unwrap(),
+            origin: ClaimOrigin::UserExplicit,
+            initial_status: ClaimStatus::Confirmed,
+            evidence: None,
+            referenced_columns: Vec::new(),
+        };
+        store.propose_claim(request).await.unwrap();
+    }
+
+    let registry = registry_for("analytics", &identity);
+    // A budget that admits a couple of the 1 KiB stanzas but not all five. The
+    // old code would have admitted all five first claims (~5 KiB), far over 2300.
+    let bounds = RecallBounds {
+        max_objects: 5,
+        max_claims_per_object: 12,
+        max_bytes: 2300,
+    };
+    let blocks = recall_context_blocks(
+        "orders",
+        None,
+        true,
+        RecallMode::Confirmed,
+        bounds,
+        &registry,
+        Some(&store),
+    )
+    .await;
+    let block = &blocks[0];
+    // The block is within the configured byte budget...
+    assert!(
+        block.body.len() <= 2300,
+        "the rendered body must be within the byte budget: {}",
+        block.body.len()
+    );
+    // ...and it does not carry five claims — the bound dropped the excess. Each
+    // object's header line is `catalog.public.ordersN  [current]  ...`; count
+    // them to assert how many stanzas survived.
+    let stanza_count = block.body.matches("[current]").count();
+    assert!(
+        stanza_count < 5,
+        "five oversized claims must not all be admitted: {stanza_count} stanzas in {}",
+        block.body
+    );
+    assert!(
+        block.truncated,
+        "dropping contracts to fit the budget must mark the block truncated"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Spec test 3: the measured size accounts for rendered overhead, and the
+/// accounting is not payload length. A contract with a conflict carries
+/// dispute markers and a conflict line on top of its claim payloads, so its
+/// rendered stanza is materially larger than its serialized payloads. With a
+/// budget between the two, the rendered bound drops the contract (a payload
+/// bound would have admitted it and exceeded the budget); with a budget above
+/// the rendered stanza, the conflict block is produced and within budget.
+#[tokio::test]
+async fn the_byte_bound_measures_the_rendered_block_not_the_payload() {
+    let root = temp_root("p1_byte_rendered");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    // Two conflicting grains: the rendered stanza carries `[disputed]` markers
+    // and a conflict line, which the serialized payloads do not.
+    seed_two_conflicting_grains(&store, &identity).await;
+
+    let registry = registry_for("analytics", &identity);
+    let name_of = super::render::name_by_identity(&registry);
+
+    // Reconstruct the one contract the way recall would, to measure its rendered
+    // stanza and its serialized payloads against the same claims.
+    use saya_store::StoredClaim;
+    let obj = object(&identity, "orders");
+    let fp = live_fingerprint(&orders_table());
+    let grain_a = StoredClaim {
+        id: ClaimId::parse("c-aaa111222000").unwrap(),
+        object: obj.clone(),
+        payload: Some(ClaimPayload::table_grain("one row per order").unwrap()),
+        origin: ClaimOrigin::UserExplicit,
+        status: ClaimStatus::Confirmed,
+        schema_fingerprint: fp.clone(),
+        referenced_columns: Vec::new(),
+        created_unix_ms: 0,
+        updated_unix_ms: 0,
+        last_verified_unix_ms: None,
+    };
+    let grain_b = StoredClaim {
+        id: ClaimId::parse("c-aaa111222001").unwrap(),
+        object: obj.clone(),
+        payload: Some(ClaimPayload::table_grain("one row per order line").unwrap()),
+        origin: ClaimOrigin::UserExplicit,
+        status: ClaimStatus::Confirmed,
+        schema_fingerprint: fp,
+        referenced_columns: Vec::new(),
+        created_unix_ms: 0,
+        updated_unix_ms: 0,
+        last_verified_unix_ms: None,
+    };
+    let contract = crate::contracts::RetrievedContract {
+        object: obj.clone(),
+        schema_state: crate::contracts::ContractSchemaState::Current,
+        claims: vec![grain_a, grain_b],
+        conflicts: conflicts_for_in_test(&[obj]),
+        truncated: false,
+    };
+    let rendered_stanza = super::render::render_body(std::slice::from_ref(&contract), &name_of);
+    let payload_bytes: usize = contract
+        .claims
+        .iter()
+        .map(|c| {
+            serde_json::to_string(&c.payload)
+                .map(|s| s.len())
+                .unwrap_or(0)
+        })
+        .sum();
+    // The case the spec asks for: the two differ materially (the rendered
+    // stanza carries the dispute markers + conflict line the payloads do not).
+    assert!(
+        rendered_stanza.len() > payload_bytes + 64,
+        "rendered stanza must materially exceed the payloads: rendered={} payload={}",
+        rendered_stanza.len(),
+        payload_bytes
+    );
+    // A budget between the two: payload fits, rendered does not.
+    let between = payload_bytes + (rendered_stanza.len() - payload_bytes) / 2;
+    assert!(
+        payload_bytes < between && between < rendered_stanza.len(),
+        "budget must sit between payload and rendered"
+    );
+
+    let bounds_between = RecallBounds {
+        max_objects: 5,
+        max_claims_per_object: 12,
+        max_bytes: between,
+    };
+    let blocks = recall_context_blocks(
+        "orders by month",
+        None,
+        true,
+        RecallMode::Confirmed,
+        bounds_between,
+        &registry,
+        Some(&store),
+    )
+    .await;
+    // The rendered bound drops the contract: its stanza exceeds the budget
+    // even though its payloads alone would fit. A payload bound (the bug)
+    // would have admitted it and produced a body over the budget.
+    assert!(
+        blocks[0].truncated,
+        "the conflict contract is dropped by the rendered bound: {:?}",
+        blocks[0]
+    );
+    assert!(
+        !blocks[0].body.contains("do not choose"),
+        "the conflict contract's stanza must not be admitted when its rendered size exceeds budget"
+    );
+
+    // With a budget above the rendered stanza, the conflict block is produced
+    // and within budget — the overhead is accounted, not ignored.
+    let bounds_generous = RecallBounds {
+        max_objects: 5,
+        max_claims_per_object: 12,
+        max_bytes: rendered_stanza.len() + 64,
+    };
+    let blocks = recall_context_blocks(
+        "orders by month",
+        None,
+        true,
+        RecallMode::Confirmed,
+        bounds_generous,
+        &registry,
+        Some(&store),
+    )
+    .await;
+    let body = &blocks[0].body;
+    assert!(
+        body.contains("do not choose"),
+        "the conflict block is produced when it fits: {body}"
+    );
+    assert!(
+        body.contains("[disputed]"),
+        "the dispute markers are part of the rendered body: {body}"
+    );
+    assert!(
+        body.len() <= rendered_stanza.len() + 64,
+        "the produced body is within the rendered budget: {}",
+        body.len()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Spec test 4: context never consumes the budget the user's own prompt needs.
+/// A long prompt leaves less for context, and the request still builds — the
+/// context block is squeezed to what fits under the message budget alongside the
+/// prompt, never pushing the turn over the limit.
+#[tokio::test]
+async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
+    let root = temp_root("p1_byte_long_prompt");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let big = "z".repeat(1024);
+    // Five objects each with a ~1 KiB claim: five stanzas total ~5.5 KiB.
+    let tables: Vec<Table> = (0..5)
+        .map(|i| table_named_with(&format!("orders{i}"), &[("id", "bigint", false)]))
+        .collect();
+    let tree = SchemaTree {
+        databases: vec![Database {
+            name: "catalog".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables,
+            }],
+        }],
+    };
+    store.upsert_schema(identity.as_str(), &tree).await.unwrap();
+    for i in 0..5 {
+        let obj = object(&identity, &format!("orders{i}"));
+        let fp = live_fingerprint(&table_named_with(
+            &format!("orders{i}"),
+            &[("id", "bigint", false)],
+        ));
+        let request = ProposeClaim {
+            object: obj,
+            fingerprint: fp,
+            payload: ClaimPayload::table_description(&big).unwrap(),
+            origin: ClaimOrigin::UserExplicit,
+            initial_status: ClaimStatus::Confirmed,
+            evidence: None,
+            referenced_columns: Vec::new(),
+        };
+        store.propose_claim(request).await.unwrap();
+    }
+
+    let registry = registry_for("analytics", &identity);
+    let bounds = RecallBounds::defaults();
+
+    // A short prompt: the whole message budget is available for context, so all
+    // five contracts fit (their ~5.5 KiB is well under the 16 KiB configured cap
+    // and the ~32 KiB message budget).
+    let short_blocks = recall_context_blocks(
+        "orders",
+        None,
+        true,
+        RecallMode::Confirmed,
+        bounds,
+        &registry,
+        Some(&store),
+    )
+    .await;
+    let short_stanzas = short_blocks[0].body.matches("[current]").count();
+    assert_eq!(
+        short_stanzas, 5,
+        "a short prompt admits all five contracts: {}",
+        short_blocks[0].body
+    );
+
+    // A long prompt: the prompt itself consumes most of the message budget, so
+    // little is left for context. The block is squeezed to what fits and the
+    // request still builds — `turn_bytes` (the exact size `build_messages`
+    // enforces) stays under the message budget.
+    let long_prompt = format!("orders {}", "x".repeat(30_000));
+    let long_blocks = recall_context_blocks(
+        &long_prompt,
+        None,
+        true,
+        RecallMode::Confirmed,
+        bounds,
+        &registry,
+        Some(&store),
+    )
+    .await;
+    let block = &long_blocks[0];
+    let long_stanzas = block.body.matches("[current]").count();
+    assert!(
+        long_stanzas < short_stanzas,
+        "a long prompt must admit fewer contracts than a short one: long={long_stanzas} short={short_stanzas}"
+    );
+    assert!(
+        block.truncated,
+        "squeezing context to fit a long prompt must mark the block truncated"
+    );
+    // The regression guard: the request still builds — the context block, the
+    // long prompt, and the system message together stay under the message budget.
+    let turn = turn_bytes(None, std::slice::from_ref(block), &long_prompt);
+    assert!(
+        turn <= MAX_HISTORY_BYTES,
+        "context must not consume the budget the prompt needs: turn={turn} budget={MAX_HISTORY_BYTES}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Detects the two-grain conflict the way `recall` does, for the rendered-size
+/// test. Mirrors `contracts::conflict::conflicts_for` without importing the
+/// private operation, so the test's `RetrievedContract` carries the conflict the
+/// real path would surface.
+fn conflicts_for_in_test(_obj: &[DatabaseObjectRef]) -> Vec<crate::contracts::ContractConflict> {
+    vec![crate::contracts::ContractConflict {
+        kind: "table_grain",
+        claim_ids: vec![
+            ClaimId::parse("c-aaa111222000").unwrap(),
+            ClaimId::parse("c-aaa111222001").unwrap(),
+        ],
+    }]
 }
