@@ -7,6 +7,7 @@
 
 pub(crate) mod args;
 mod assemble;
+mod availability;
 mod conflict;
 pub(crate) mod discover;
 pub(crate) mod io;
@@ -41,6 +42,10 @@ pub(crate) use review::{ContractOpError, confirm, edit, forget, propose, reject,
 // adapter renders. Nothing outside this module references them yet in a
 // non-test build, so the re-exports read as unused — they are the boundary this
 // slice exposes, like the others above.
+#[allow(unused_imports)]
+pub(crate) use availability::{
+    MODEL_SCHEMA_MAX_AGE_MS, SchemaAvailability, SchemaFreshness, now_unix_ms,
+};
 #[allow(unused_imports)]
 pub(crate) use io::{ExportOutcome, ImportReport, export_contracts, import_contracts};
 #[allow(unused_imports)]

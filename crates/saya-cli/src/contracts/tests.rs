@@ -8,8 +8,8 @@
 
 use super::{
     ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
-    RecallRequest, RetrievalPolicy, confirm, edit, forget, propose, recall, reject,
-    schema_state_for, show,
+    RecallRequest, RetrievalPolicy, SchemaAvailability, SchemaFreshness, confirm, edit, forget,
+    propose, recall, reject, schema_state_for, show,
 };
 use saya_store::{
     ContractEventKind, ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore,
@@ -50,6 +50,31 @@ fn profile_a() -> ProfileIdentity {
 
 fn profile_b() -> ProfileIdentity {
     ProfileIdentity::parse(&format!("p-{}", "b".repeat(64))).unwrap()
+}
+
+/// A fixed "now" for the model-path freshness bound. Far from any boundary so
+/// a cache observed at 0 (the test default) is well within the 24h bound and
+/// the age gate never fires — these tests exercise recall/validity, not the
+/// bound (which has its own unit tests in `availability` and `validity`).
+const FRESH_NOW: i64 = 1_000_000;
+
+/// Wraps a tree as a fresh `Available` schema (observed at 0, well within the
+/// bound against `FRESH_NOW`) so a test's inline schema classifies normally.
+fn avail(tree: SchemaTree) -> SchemaAvailability {
+    SchemaAvailability::available(tree, 0)
+}
+
+/// Builds the `(profile, availability)` list recall/review_queue/reconcile take,
+/// mapping the `(profile, tree)` pairs tests naturally build. Each tree is
+/// fresh (`avail`), so the model-path age gate does not fire.
+fn schemas_for(
+    profile: &ProfileIdentity,
+    trees: &[SchemaTree],
+) -> Vec<(ProfileIdentity, SchemaAvailability)> {
+    trees
+        .iter()
+        .map(|tree| (profile.clone(), avail(tree.clone())))
+        .collect()
 }
 
 fn object_ref(profile: &ProfileIdentity, name: &str) -> DatabaseObjectRef {
@@ -198,7 +223,7 @@ async fn propose_candidate(
 
 fn recall_request<'a>(
     profiles: &'a [ProfileIdentity],
-    schemas: &'a [(ProfileIdentity, SchemaTree)],
+    schemas: &'a [(ProfileIdentity, SchemaAvailability)],
     terms: &'a [String],
     allow_database_context: bool,
     bounds: RecallBounds,
@@ -209,6 +234,7 @@ fn recall_request<'a>(
         terms,
         allow_database_context,
         schemas,
+        now_unix_ms: FRESH_NOW,
         bounds,
         // The existing recall tests model today's behaviour: confirmed only.
         // A test that needs `IncludeCandidates` builds its own request.
@@ -256,7 +282,7 @@ async fn cross_profile_alias_resolves_only_in_its_own_profile() {
         &store,
         recall_request(
             std::slice::from_ref(&a),
-            &[(a.clone(), schema_a)],
+            &[(a.clone(), avail(schema_a))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -271,7 +297,7 @@ async fn cross_profile_alias_resolves_only_in_its_own_profile() {
         &store,
         recall_request(
             std::slice::from_ref(&b),
-            &[(b.clone(), schema_b)],
+            &[(b.clone(), avail(schema_b))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -320,7 +346,7 @@ async fn candidate_claims_never_appear_in_recall() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -397,7 +423,7 @@ async fn bounds_hold_on_objects_claims_and_bytes() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &terms,
             true,
             bounds,
@@ -421,7 +447,7 @@ async fn bounds_hold_on_objects_claims_and_bytes() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema_h.clone())],
+            &[(p.clone(), avail(schema_h.clone()))],
             &["heavy".to_string()],
             true,
             bounds2,
@@ -442,7 +468,7 @@ async fn bounds_hold_on_objects_claims_and_bytes() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema_h)],
+            &[(p.clone(), avail(schema_h))],
             &["heavy".to_string()],
             true,
             bounds3,
@@ -502,7 +528,7 @@ async fn ambiguous_alias_returns_every_match() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["shared".to_string()],
             true,
             RecallBounds::defaults(),
@@ -550,7 +576,7 @@ async fn privacy_gate_returns_zero_and_counts_excluded() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["orders".to_string()],
             false,
             RecallBounds::defaults(),
@@ -587,7 +613,7 @@ async fn unopenable_store_reports_unavailable_without_erroring() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -659,7 +685,11 @@ async fn validity_matrix() {
     .await;
     let live_cur = schema_tree_for(&[("cur", base.clone())]);
     assert_eq!(
-        schema_state_for(&claim_cur, Some(&live_cur)),
+        schema_state_for(
+            &claim_cur,
+            &avail(live_cur.clone()),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::Current
     );
 
@@ -682,7 +712,11 @@ async fn validity_matrix() {
         ]),
     )]);
     assert_eq!(
-        schema_state_for(&claim_add, Some(&live_added)),
+        schema_state_for(
+            &claim_add,
+            &avail(live_added),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::NeedsReview,
         "an unrelated addition must not invalidate the claim"
     );
@@ -698,7 +732,11 @@ async fn validity_matrix() {
     .await;
     let live_rm = schema_tree_for(&[("removed", table(&[("id", "bigint", false)]))]);
     assert_eq!(
-        schema_state_for(&claim_rm, Some(&live_rm)),
+        schema_state_for(
+            &claim_rm,
+            &avail(live_rm),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::Stale
     );
 
@@ -716,7 +754,11 @@ async fn validity_matrix() {
         table(&[("id", "bigint", false), ("amt", "numeric", false)]),
     )]);
     assert_eq!(
-        schema_state_for(&claim_rn, Some(&live_rn)),
+        schema_state_for(
+            &claim_rn,
+            &avail(live_rn),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::Stale,
         "a renamed referenced column is absent by name -> Stale"
     );
@@ -739,7 +781,11 @@ async fn validity_matrix() {
         ]),
     )]);
     assert_eq!(
-        schema_state_for(&claim_rt, Some(&live_rt)),
+        schema_state_for(
+            &claim_rt,
+            &avail(live_rt),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::Stale,
         "a retyped referenced column is Stale (this case was impossible before 5a)"
     );
@@ -759,7 +805,11 @@ async fn validity_matrix() {
         table(&[("id", "bigint", false), ("amount", "numeric", true)]),
     )]);
     assert_eq!(
-        schema_state_for(&claim_null, Some(&live_null)),
+        schema_state_for(
+            &claim_null,
+            &avail(live_null),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::Stale,
         "a referenced column that gained NULLs is Stale"
     );
@@ -780,7 +830,11 @@ async fn validity_matrix() {
         table(&[("id", "bigint", false), ("amount", "numeric", false)]),
     )]);
     assert_eq!(
-        schema_state_for(&claim_nn, Some(&live_nn)),
+        schema_state_for(
+            &claim_nn,
+            &avail(live_nn),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::NeedsReview,
         "a referenced column that lost nullability is NeedsReview, not Stale"
     );
@@ -813,7 +867,11 @@ async fn validity_matrix() {
         ]),
     )]);
     assert_eq!(
-        schema_state_for(&claim_unk, Some(&live_unk)),
+        schema_state_for(
+            &claim_unk,
+            &avail(live_unk),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::NeedsReview,
         "an unknown snapshot plus a moved fingerprint is NeedsReview, not Current"
     );
@@ -829,13 +887,23 @@ async fn validity_matrix() {
     .await;
     let live_absent = schema_tree_for(&[]);
     assert_eq!(
-        schema_state_for(&claim_absent, Some(&live_absent)),
+        schema_state_for(
+            &claim_absent,
+            &avail(live_absent),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::Stale
     );
 
-    // Row 10: no live schema -> LiveSchemaUnavailable.
+    // Row 10: no live schema -> LiveSchemaUnavailable. `Missing` (nothing
+    // discovered yet) classifies the same as `Unavailable` — both "cannot
+    // look", never the `Stale` a collapsed empty tree would have produced.
     assert_eq!(
-        schema_state_for(&claim_cur, None),
+        schema_state_for(
+            &claim_cur,
+            &SchemaAvailability::Missing,
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::LiveSchemaUnavailable
     );
 
@@ -848,7 +916,11 @@ async fn validity_matrix() {
         ..claim_cur.clone()
     };
     assert_eq!(
-        schema_state_for(&claim_old, Some(&live_cur)),
+        schema_state_for(
+            &claim_old,
+            &avail(live_cur),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::NeedsReview,
         "an older fingerprint version is NeedsReview, never Current"
     );
@@ -877,7 +949,11 @@ async fn validity_matrix() {
         ]),
     )]);
     assert_eq!(
-        schema_state_for(&claim_desc, Some(&live_desc)),
+        schema_state_for(
+            &claim_desc,
+            &avail(live_desc),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::NeedsReview,
         "a table-level claim whose columns all survive an unrelated change is NeedsReview"
     );
@@ -917,7 +993,7 @@ async fn two_table_grain_claims_conflict_but_both_returned() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -976,7 +1052,7 @@ async fn two_table_description_claims_do_not_conflict() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -1022,7 +1098,7 @@ async fn recall_diagnostics_carry_no_claim_text() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -1076,7 +1152,7 @@ async fn forgotten_claim_disappears_from_recall() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), schema)],
+            &[(p.clone(), avail(schema))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -1142,9 +1218,14 @@ async fn queue_lists_candidates_not_confirmed_or_forgotten() {
         .await
         .unwrap();
 
-    let queued = review_queue(&store, std::slice::from_ref(&p), &[(p.clone(), live)], 200)
-        .await
-        .unwrap();
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), avail(live))],
+        200,
+    )
+    .await
+    .unwrap();
 
     let ids: Vec<ClaimId> = queued.iter().map(|q| q.claim.id.clone()).collect();
     assert!(ids.contains(&cand_id), "candidate missing from queue");
@@ -1212,7 +1293,7 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
     let first = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live.clone())],
+        &[(p.clone(), avail(live.clone()))],
         200,
     )
     .await
@@ -1256,7 +1337,7 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live_tb)],
+        &[(p.clone(), avail(live_tb))],
         200,
     )
     .await
@@ -1291,7 +1372,7 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
     let run_a = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live_all.clone())],
+        &[(p.clone(), avail(live_all.clone()))],
         200,
     )
     .await
@@ -1299,7 +1380,7 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
     let run_b = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live_all)],
+        &[(p.clone(), avail(live_all))],
         200,
     )
     .await
@@ -1339,7 +1420,7 @@ async fn queue_limit_is_respected_and_clamped_at_200() {
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live.clone())],
+        &[(p.clone(), avail(live.clone()))],
         3,
     )
     .await
@@ -1351,7 +1432,7 @@ async fn queue_limit_is_respected_and_clamped_at_200() {
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live.clone())],
+        &[(p.clone(), avail(live.clone()))],
         0,
     )
     .await
@@ -1364,7 +1445,7 @@ async fn queue_limit_is_respected_and_clamped_at_200() {
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live)],
+        &[(p.clone(), avail(live))],
         10_000,
     )
     .await
@@ -1398,7 +1479,7 @@ async fn queue_reports_schema_state_for_a_changed_object() {
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live_dropped)],
+        &[(p.clone(), avail(live_dropped))],
         200,
     )
     .await
@@ -1415,7 +1496,7 @@ async fn queue_reports_schema_state_for_a_changed_object() {
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live_current)],
+        &[(p.clone(), avail(live_current))],
         200,
     )
     .await
@@ -1454,9 +1535,14 @@ async fn queue_evidence_count_reflects_attached_evidence() {
         &[1, 2, 3],
     )
     .await;
-    let queued = review_queue(&store, std::slice::from_ref(&p), &[(p.clone(), live)], 200)
-        .await
-        .unwrap();
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), avail(live))],
+        200,
+    )
+    .await
+    .unwrap();
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].evidence_count, 3);
 
@@ -1480,7 +1566,7 @@ async fn queue_unopenable_store_errors_unavailable() {
     let err = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), SchemaTree::default())],
+        &[(p.clone(), avail(SchemaTree::default()))],
         200,
     )
     .await
@@ -1554,9 +1640,15 @@ async fn review_wrappers_pass_through_and_map_errors() {
     forget(&store, &id, ForgetReason::UserRequest)
         .await
         .unwrap();
-    let shown = show(&store, &obj, None, RetrievalPolicy::ForHumanReview)
-        .await
-        .unwrap();
+    let shown = show(
+        &store,
+        &obj,
+        &SchemaAvailability::Missing,
+        RetrievalPolicy::ForHumanReview,
+        FRESH_NOW,
+    )
+    .await
+    .unwrap();
     assert!(shown.is_none(), "forgotten-only contract should show None");
 
     let _ = fs::remove_dir_all(root);
@@ -1608,11 +1700,12 @@ async fn show_keeps_a_stale_contract_with_state_and_claims_for_a_human() {
     let shown = show(
         &store,
         &obj,
-        Some(&schema_tree_for(&[(
+        &avail(schema_tree_for(&[(
             "orders",
             table(&[("id", "bigint", false)]),
         )])),
         RetrievalPolicy::ForHumanReview,
+        FRESH_NOW,
     )
     .await
     .unwrap()
@@ -1646,11 +1739,12 @@ async fn show_for_model_drops_a_stale_contracts_claims_but_names_the_object() {
     let shown = show(
         &store,
         &obj,
-        Some(&schema_tree_for(&[(
+        &avail(schema_tree_for(&[(
             "orders",
             table(&[("id", "bigint", false)]),
         )])),
         RetrievalPolicy::ForModel,
+        FRESH_NOW,
     )
     .await
     .unwrap()
@@ -1682,7 +1776,7 @@ async fn recall_for_model_counts_a_stale_exclusion() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), drifted)],
+            &[(p.clone(), avail(drifted))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -1869,7 +1963,11 @@ async fn needs_review_is_computed_at_read_not_persisted() {
         ]),
     )]);
     assert_eq!(
-        schema_state_for(&claim, Some(&live)),
+        schema_state_for(
+            &claim,
+            &avail(live.clone()),
+            SchemaFreshness::for_model(FRESH_NOW)
+        ),
         ContractSchemaState::NeedsReview,
         "fixture must compute NeedsReview for this test to mean anything"
     );
@@ -2100,7 +2198,7 @@ async fn a_stale_marked_claim_leaves_recall_and_enters_the_review_queue() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), live_current.clone())],
+            &[(p.clone(), avail(live_current.clone()))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -2129,7 +2227,7 @@ async fn a_stale_marked_claim_leaves_recall_and_enters_the_review_queue() {
         &store,
         recall_request(
             std::slice::from_ref(&p),
-            &[(p.clone(), live_drifted.clone())],
+            &[(p.clone(), avail(live_drifted.clone()))],
             &["orders".to_string()],
             true,
             RecallBounds::defaults(),
@@ -2147,7 +2245,7 @@ async fn a_stale_marked_claim_leaves_recall_and_enters_the_review_queue() {
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), live_drifted)],
+        &[(p.clone(), avail(live_drifted))],
         200,
     )
     .await
@@ -2226,4 +2324,154 @@ async fn reconcile_binds_at_1000_claims_and_reports_truncation() {
     assert_eq!(confirmed, 24);
 
     let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// P1 / freshness: model vs human path against a stale-by-age cached schema.
+//
+// A cached schema older than the model bound (24h) must not classify a claim
+// `Current` on the model path — "current" must mean "matches the schema now",
+// not "matches whatever we last wrote down". It reads `LiveSchemaUnavailable`,
+// so the contract is *kept* and labelled (not silently dropped as `Stale`, and
+// not silently read as `Current`). The human-review path (`contracts list`/
+// `show`/`queue`) is unbounded: the same stale-by-age cache classifies
+// normally, because a reviewer is not asked to trust a query built on their
+// own contracts. These exercise the policy branch in `recall` directly; the
+// pure age comparison is unit-tested in `availability`.
+// ---------------------------------------------------------------------------
+
+/// A confirmed `default_time_column` claim whose fingerprint matches `table`,
+/// so a matching cache reads `Current`. Seeded under a fresh cache so the claim
+/// itself is sound; only the cache's *age* varies between the two paths.
+async fn seed_current_time_column(
+    store: &SqliteStateStore,
+    obj: &DatabaseObjectRef,
+    table: &Table,
+    column: &str,
+) {
+    let fp = SchemaFingerprint::of_table(DatabaseObjectKind::Table, table);
+    propose_confirmed(
+        store,
+        obj,
+        &fp,
+        ClaimPayload::default_time_column(column).unwrap(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn model_path_treats_a_stale_by_age_cache_as_live_schema_unavailable() {
+    let root = temp_root("freshness_model_stale_by_age");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let table = table(&[("id", "bigint", false), ("created_at", "timestamp", false)]);
+    seed_current_time_column(&store, &obj, &table, "created_at").await;
+
+    // The cache matches the claim, but was observed 25h ago — past the 24h
+    // bound. `now` is 25h after observation (0).
+    let stale_by_age = SchemaAvailability::available(schema_tree_for(&[("orders", table)]), 0);
+    let now = 25 * 60 * 60 * 1000;
+    let outcome = recall(
+        &store,
+        recall_request_with_freshness(
+            std::slice::from_ref(&p),
+            &[(p.clone(), stale_by_age)],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+            now,
+            RetrievalPolicy::ForModel,
+        ),
+    )
+    .await;
+    // The contract is NOT dropped (only computed-`Stale` is dropped): it
+    // survives, classified `LiveSchemaUnavailable` so the model sees the claim
+    // labelled, never silently `Current`.
+    assert_eq!(
+        outcome.contracts.len(),
+        1,
+        "a stale-by-age contract is kept for the model, labelled — not dropped"
+    );
+    assert_eq!(
+        outcome.contracts[0].schema_state,
+        ContractSchemaState::LiveSchemaUnavailable,
+        "a stale-by-age cache cannot vouch for currency on the model path"
+    );
+    assert_eq!(
+        outcome.diagnostics.excluded_by_schema, 0,
+        "a stale-by-age contract is not excluded as stale: {:?}",
+        outcome.diagnostics
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn human_path_uses_a_stale_by_age_cache_to_classify_current() {
+    let root = temp_root("freshness_human_stale_by_age");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let table = table(&[("id", "bigint", false), ("created_at", "timestamp", false)]);
+    seed_current_time_column(&store, &obj, &table, "created_at").await;
+
+    // Same 25h-old cache, but the human-review path is unbounded: the cache
+    // classifies normally. `contracts list`/`show`/`queue` rely on this — a
+    // reviewer looking at their own contracts is not asked to trust a query
+    // built on them.
+    let stale_by_age = SchemaAvailability::available(schema_tree_for(&[("orders", table)]), 0);
+    let now = 25 * 60 * 60 * 1000;
+    let outcome = recall(
+        &store,
+        recall_request_with_freshness(
+            std::slice::from_ref(&p),
+            &[(p.clone(), stale_by_age)],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+            now,
+            RetrievalPolicy::ForHumanReview,
+        ),
+    )
+    .await;
+    assert_eq!(
+        outcome.contracts.len(),
+        1,
+        "the human path shows the contract despite the stale-by-age cache"
+    );
+    assert_eq!(
+        outcome.contracts[0].schema_state,
+        ContractSchemaState::Current,
+        "the human path classifies against the stale-by-age cache as current"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Like [`recall_request`] but lets a test name the policy and the "now" the
+/// freshness bound compares against. The default helper fixes both for the
+/// common (model-path, fresh) case; the freshness tests need to vary them.
+fn recall_request_with_freshness<'a>(
+    profiles: &'a [ProfileIdentity],
+    schemas: &'a [(ProfileIdentity, SchemaAvailability)],
+    terms: &'a [String],
+    allow_database_context: bool,
+    bounds: RecallBounds,
+    now_unix_ms: i64,
+    policy: RetrievalPolicy,
+) -> RecallRequest<'a> {
+    RecallRequest {
+        profiles,
+        explicit_refs: &[],
+        terms,
+        allow_database_context,
+        schemas,
+        now_unix_ms,
+        bounds,
+        recall_mode: RecallMode::Confirmed,
+        policy,
+    }
 }

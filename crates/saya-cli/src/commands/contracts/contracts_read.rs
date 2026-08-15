@@ -4,12 +4,12 @@
 
 use super::contracts_map::contract_view;
 use super::contracts_profile::resolve_profile;
-use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, cached_schema, op_failure};
+use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, cached_schema_availability, op_failure};
 use crate::commands::output::{emit, failure_message, result};
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::args::parse_qualified;
 use crate::contracts::{
-    RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, recall, review_queue,
+    RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, now_unix_ms, recall, review_queue,
     show as show_contract,
 };
 use crate::render::{RenderFormat, TerminalEvent};
@@ -44,13 +44,11 @@ pub(super) async fn list(
     };
     let explicit_refs: Vec<DatabaseObjectRef> = objects.iter().map(|o| o.object.clone()).collect();
     // The cached schema classifies each claim — what `connection schema
-    // --refresh` wrote. A missing cache stays `None` so the honest
-    // `live_schema_unavailable` is preserved, not fabricated into `current`.
-    let cached_schema = cached_schema(store, &identity).await;
-    let schemas = cached_schema
-        .iter()
-        .map(|tree| (identity.clone(), tree.clone()))
-        .collect::<Vec<_>>();
+    // --refresh` wrote. `Missing` and `Unavailable` stay distinct (not collapsed
+    // to an empty tree) so the honest `live_schema_unavailable` is preserved.
+    let cached = cached_schema_availability(store, &identity).await;
+    let schema_pair = (identity.clone(), cached);
+    let schemas = std::slice::from_ref(&schema_pair);
     let request = RecallRequest {
         profiles: std::slice::from_ref(&identity),
         explicit_refs: &explicit_refs,
@@ -58,14 +56,18 @@ pub(super) async fn list(
         // The user is reading their own local store; nothing is sent to a
         // provider, so the database-context privacy gate does not apply here.
         allow_database_context: true,
-        schemas: &schemas,
+        schemas,
+        // `now_unix_ms` is unused on the human path (`ForHumanReview` is
+        // unbounded), but the field is required; pass the real clock.
+        now_unix_ms: now_unix_ms(),
         bounds: RecallBounds::defaults(),
         // `contracts list` shows confirmed contracts — the review queue is the
         // view for candidates, so the list command does not widen to them.
         recall_mode: RecallMode::Confirmed,
         // A human is reviewing; keep stale contracts so the list stays a true
         // picture of what is stored. The model-facing recall path is the one
-        // that drops.
+        // that drops. Unbounded freshness: a stale-by-age cache still shows
+        // what it knows — a reviewer is not asked to trust a query built on it.
         policy: RetrievalPolicy::ForHumanReview,
     };
     let outcome = recall(store, request).await;
@@ -107,16 +109,20 @@ pub(super) async fn show(
         Err(_) => return arg_failure(ArgMessage::MalformedTable, format),
     };
     // `show` classifies against the cached schema, the same source `list` uses;
-    // a missing cache stays `None` (`live_schema_unavailable`).
-    let cached_schema = cached_schema(store, &identity).await;
+    // `Missing`/`Unavailable` stay distinct so the honest `live_schema_unavailable`
+    // is preserved, not fabricated into `current` or `stale`.
+    let cached = cached_schema_availability(store, &identity).await;
     // `contracts show` is a human-review path: keep a stale contract, its
     // fingerprints and the reason it is stale — that is what the reviewer is
     // here to act on. The model-facing `contract_read` is the path that drops.
+    // `now_unix_ms` is unused here (`ForHumanReview` is unbounded), but the
+    // field is required; pass the real clock.
     let retrieved = match show_contract(
         store,
         &object,
-        cached_schema.as_ref(),
+        &cached,
         RetrievalPolicy::ForHumanReview,
+        now_unix_ms(),
     )
     .await
     {
@@ -160,14 +166,13 @@ pub(super) async fn queue(
     };
     let limit = limit.unwrap_or(crate::contracts::QUEUE_DEFAULT_LIMIT);
     // The cached schema classifies each queued claim — the same source `list`
-    // and `show` read. A missing cache stays `None` (`live_schema_unavailable`);
-    // never a second way to load a cached schema.
-    let cached_schema = cached_schema(store, &identity).await;
-    let schemas = cached_schema
-        .iter()
-        .map(|tree| (identity.clone(), tree.clone()))
-        .collect::<Vec<_>>();
-    let queued = match review_queue(store, std::slice::from_ref(&identity), &schemas, limit).await {
+    // and `show` read. `Missing`/`Unavailable` stay distinct (not an empty
+    // tree) so a candidate made right after a refresh reads a real state, and a
+    // store error reads the honest `live_schema_unavailable`.
+    let cached = cached_schema_availability(store, &identity).await;
+    let schema_pair = (identity.clone(), cached);
+    let schemas = std::slice::from_ref(&schema_pair);
+    let queued = match review_queue(store, std::slice::from_ref(&identity), schemas, limit).await {
         Ok(queued) => queued,
         Err(_) => {
             return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);

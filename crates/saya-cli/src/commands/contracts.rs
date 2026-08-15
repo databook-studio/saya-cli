@@ -31,6 +31,7 @@ use super::output::failure_message;
 use crate::cli::ContractsCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::ContractOpError;
+use crate::contracts::SchemaAvailability;
 use crate::render::RenderFormat;
 use saya_store::{SchemaStore, SqliteStateStore};
 use saya_types::{ClaimId, FINGERPRINT_VERSION, ProfileIdentity, SchemaFingerprint, SchemaTree};
@@ -165,6 +166,25 @@ pub(crate) async fn cached_schema(
         .ok()
         .flatten()
         .map(|cached| cached.schema)
+}
+
+/// The schema known for a profile as a three-state [`SchemaAvailability`]: a
+/// real cache (`Available`, carrying when it was observed), no cache entry yet
+/// (`Missing`), or a store that could not be read (`Unavailable`). The read
+/// commands and the agent contract tools use this — *not* [`cached_schema`] —
+/// so a store error or an undiscovered profile classifies `LiveSchemaUnavailable`
+/// instead of collapsing to an empty tree that would read `Stale` (the P1 bug).
+/// The write path (`remember`/`import`) keeps [`cached_schema`]: it resolves a
+/// fingerprint against whatever the cache holds, which is not a classification.
+pub(crate) async fn cached_schema_availability(
+    store: &SqliteStateStore,
+    identity: &ProfileIdentity,
+) -> SchemaAvailability {
+    match store.get_schema(identity.as_str()).await {
+        Ok(Some(cached)) => SchemaAvailability::available(cached.schema, cached.updated_unix_ms),
+        Ok(None) => SchemaAvailability::Missing,
+        Err(_) => SchemaAvailability::Unavailable,
+    }
 }
 
 /// Parses a claim id, mapping a malformed one to a payload-free typed message

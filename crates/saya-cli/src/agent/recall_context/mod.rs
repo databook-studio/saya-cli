@@ -19,11 +19,12 @@ mod render;
 
 use crate::connection::ConnectionRegistry;
 use crate::contracts::{
-    PromptTerms, RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, recall, terms,
+    PromptTerms, RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, SchemaAvailability,
+    recall, terms,
 };
 use saya_agent::ContextBlock;
 use saya_store::{SchemaStore, SqliteStateStore};
-use saya_types::{DatabaseObjectRef, ProfileIdentity, SchemaTree};
+use saya_types::{DatabaseObjectRef, ProfileIdentity};
 
 /// Label every produced block carries. Stable and machine-ish, never localised.
 pub(crate) const BLOCK_LABEL: &str = "database-contracts";
@@ -77,6 +78,7 @@ pub(crate) async fn recall_context_blocks(
         terms: &terms,
         allow_database_context: true,
         schemas: &schemas,
+        now_unix_ms: crate::contracts::now_unix_ms(),
         bounds,
         recall_mode,
         // This block is shown to the model, so a contract computed `Stale` is
@@ -103,12 +105,25 @@ pub(crate) async fn recall_context_blocks(
     }]
 }
 
-/// Resolves the connected profiles to identities plus their cached schemas.
-/// Returns `None` when no profile carries an identity (e.g. a test registry).
+/// Resolves the connected profiles to identities plus their schema
+/// availability. Returns `None` when no profile carries an identity (e.g. a
+/// test registry).
+///
+/// The three-way distinction is the P1 fix: a store error (`Unavailable`), a
+/// missing cache entry (`Missing`), and a real cache (`Available`) are kept
+/// apart. Collapsing the first two into an empty `SchemaTree` — the old
+/// behaviour — made validity see a schema that exists but lacks the object and
+/// classify every claim `Stale`, so a store hiccup silently muted the model's
+/// whole memory and blamed drift. `Missing` and `Unavailable` both classify
+/// `LiveSchemaUnavailable`; the freshness bound (applied in `recall` for the
+/// model path) treats a too-old `Available` the same way.
 async fn resolve_profiles(
     registry: &ConnectionRegistry,
     store: &SqliteStateStore,
-) -> Option<(Vec<ProfileIdentity>, Vec<(ProfileIdentity, SchemaTree)>)> {
+) -> Option<(
+    Vec<ProfileIdentity>,
+    Vec<(ProfileIdentity, SchemaAvailability)>,
+)> {
     let mut identities = Vec::new();
     let mut schemas = Vec::new();
     for (_name, entry) in registry.entries() {
@@ -118,18 +133,18 @@ async fn resolve_profiles(
         let Ok(identity) = ProfileIdentity::parse(id_str) else {
             continue;
         };
-        // Store-cached schema, not a live connector round-trip (SPEC REVIEW): a
-        // missing cache degrades to an empty tree → `live_schema_unavailable`,
-        // never a fabricated real one.
-        let schema = store
-            .get_schema(identity.as_str())
-            .await
-            .ok()
-            .flatten()
-            .map(|cached| cached.schema)
-            .unwrap_or_default();
+        // Store-cached schema, not a live connector round-trip (SPEC REVIEW):
+        // a missing cache and a store error are *not* an empty tree — they are
+        // "cannot classify", kept distinct so a diagnostic can name which.
+        let availability = match store.get_schema(identity.as_str()).await {
+            Ok(Some(cached)) => {
+                SchemaAvailability::available(cached.schema, cached.updated_unix_ms)
+            }
+            Ok(None) => SchemaAvailability::Missing,
+            Err(_) => SchemaAvailability::Unavailable,
+        };
         identities.push(identity.clone());
-        schemas.push((identity, schema));
+        schemas.push((identity, availability));
     }
     if identities.is_empty() {
         None

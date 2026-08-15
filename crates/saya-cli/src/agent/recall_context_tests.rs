@@ -1398,3 +1398,65 @@ async fn opaque_identity_appears_nowhere_in_conflict_block() {
     assert!(body.contains("analytics"), "profile name appears instead");
     let _ = fs::remove_dir_all(root);
 }
+
+// ---------------------------------------------------------------------------
+// P1 regression: a missing cache entry must not mute the model's memory.
+//
+// The bug (`resolve_profiles` collapsing `Ok(None)` to `SchemaTree::default()`)
+// made a profile with claims but no cached schema classify every claim `Stale`,
+// and stale contracts are excluded from the model — so a user who had never
+// run `connection schema --refresh` saw an empty context block and the model
+// quietly forgot everything, with schema drift blamed. The fix keeps `Missing`
+// distinct: it classifies `LiveSchemaUnavailable`, which is *not* excluded, so
+// the claim still reaches the model, plainly labelled.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn missing_cache_entry_keeps_the_claim_labelled_not_muted_as_stale() {
+    let root = temp_root("p1_missing_cache");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    // Open the store but DO NOT cache a schema — the `Missing` case. The
+    // `store_at` helper caches `SchemaTree::default()`, which would hide the
+    // bug (an empty *cached* tree is `Available`, not `Missing`).
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&identity, "orders");
+    let fp = live_fingerprint(&orders_table());
+    remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders by month",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    // The bug produced an empty block (everything classified Stale → excluded).
+    // The fix keeps the contract: one block, labelled `live_schema_unavailable`,
+    // so the model still sees the claim and knows the schema could not be vouched
+    // for — never a silent empty memory.
+    assert_eq!(
+        blocks.len(),
+        1,
+        "a missing cache keeps the claim; the bug would have muted it"
+    );
+    let body = &blocks[0].body;
+    assert!(
+        body.contains("created_at"),
+        "the claim still reaches the model: {body}"
+    );
+    assert!(
+        body.contains("live_schema_unavailable"),
+        "the missing cache is labelled, not read as current: {body}"
+    );
+    // The diagnostic must not blame drift: the column is not gone, the schema
+    // was simply never cached.
+    assert!(
+        !body.contains("possibly out of date"),
+        "a missing cache is not staleness: {body}"
+    );
+    let _ = fs::remove_dir_all(root);
+}

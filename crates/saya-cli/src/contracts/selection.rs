@@ -13,8 +13,9 @@
 //! No cross-profile fallback: a term that matches nothing in the active profiles
 //! matches nothing. Ambiguity returns every match.
 
+use crate::contracts::availability::SchemaAvailability;
 use saya_store::{ContractStore, SqliteStateStore, StoredClaim, StoredObject};
-use saya_types::{ClaimPayload, DatabaseObjectRef, ProfileIdentity, SchemaTree};
+use saya_types::{ClaimPayload, DatabaseObjectRef, ProfileIdentity};
 
 /// One object's recallable claims plus the live schema for its profile and the
 /// `last_seen` stamp used only as a tie-breaker.
@@ -36,7 +37,7 @@ pub(crate) struct Selection {
 pub(crate) async fn select(
     store: &SqliteStateStore,
     request: &super::RecallRequest<'_>,
-    live_schemas: &[(ProfileIdentity, SchemaTree)],
+    live_schemas: &[(ProfileIdentity, SchemaAvailability)],
 ) -> Result<Selection, saya_store::StoreError> {
     let active: Vec<StoredObject> = collect_objects(store, request.profiles).await?;
     let considered = active.len();

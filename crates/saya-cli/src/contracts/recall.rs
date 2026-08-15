@@ -1,11 +1,12 @@
 //! Recall: selecting and ranking contracts for an agent's context block.
 
 use crate::contracts::assemble::assemble;
+use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::retrieval::{self, RetrievalPolicy};
 use crate::contracts::selection::select;
 use crate::contracts::view::{RecallDiagnostics, RecallOutcome};
 use saya_store::SqliteStateStore;
-use saya_types::{DatabaseObjectRef, ProfileIdentity, SchemaTree};
+use saya_types::{DatabaseObjectRef, ProfileIdentity};
 
 /// Bounds for a recall, from plan §11.2.
 #[derive(Debug, Clone, Copy)]
@@ -64,15 +65,23 @@ impl RecallMode {
     }
 }
 
-/// A recall request. `schemas` carries the live schema per active profile so
-/// validity can compare the stored fingerprint to the live one without this
-/// module re-deriving it; the caller already holds live schema for query-building.
+/// A recall request. `schemas` carries the schema known per active profile so
+/// validity can compare the stored fingerprint to the known one without this
+/// module re-deriving it. Each entry is a [`SchemaAvailability`] — `Missing` or
+/// `Unavailable` classifies `LiveSchemaUnavailable`, never `Stale`, so a store
+/// hiccup or undiscovered profile cannot mute a claim as drift.
+///
+/// `now_unix_ms` is the instant the model path bounds cached-schema freshness
+/// against: a schema older than [`super::availability::MODEL_SCHEMA_MAX_AGE_MS`]
+/// cannot classify a claim as `Current`. The human-review path (`ForHumanReview`)
+/// ignores it and uses the cache regardless of age.
 pub(crate) struct RecallRequest<'a> {
     pub profiles: &'a [ProfileIdentity],
     pub explicit_refs: &'a [DatabaseObjectRef],
     pub terms: &'a [String],
     pub allow_database_context: bool,
-    pub schemas: &'a [(ProfileIdentity, SchemaTree)],
+    pub schemas: &'a [(ProfileIdentity, SchemaAvailability)],
+    pub now_unix_ms: i64,
     pub bounds: RecallBounds,
     /// Which statuses this recall admits. Defaults to `Confirmed` (today's
     /// behaviour); `IncludeCandidates` widens the filter so candidates reach
@@ -119,6 +128,7 @@ pub(crate) async fn recall(store: &SqliteStateStore, request: RecallRequest<'_>)
         &selection.candidates,
         request.schemas,
         request.bounds,
+        freshness_for(request.policy, request.now_unix_ms),
         &mut diag,
     );
     // One policy, applied here for every recall caller: a contract computed
@@ -139,5 +149,17 @@ fn empty(diag: RecallDiagnostics) -> RecallOutcome {
     RecallOutcome {
         contracts: Vec::new(),
         diagnostics: diag,
+    }
+}
+
+/// The freshness a recall applies to each profile's cached schema. The model
+/// path bounds age against `now_unix_ms`: a stale-by-age cache cannot vouch
+/// for currency and so classifies `LiveSchemaUnavailable`. The human-review
+/// path is unbounded — `contracts list`/`show`/`queue` use the cache to show
+/// what it knows, not to trust a query built on it.
+fn freshness_for(policy: RetrievalPolicy, now_unix_ms: i64) -> SchemaFreshness {
+    match policy {
+        RetrievalPolicy::ForModel => SchemaFreshness::for_model(now_unix_ms),
+        RetrievalPolicy::ForHumanReview => SchemaFreshness::Unbounded,
     }
 }

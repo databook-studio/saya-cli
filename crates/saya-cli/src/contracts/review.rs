@@ -6,6 +6,7 @@
 
 use thiserror::Error;
 
+use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::conflict::conflicts_for;
 use crate::contracts::retrieval::RetrievalPolicy;
 use crate::contracts::validity::schema_state_for;
@@ -14,7 +15,7 @@ use saya_store::{
     ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SqliteStateStore, StoreError,
     StoredClaim,
 };
-use saya_types::{ClaimId, ClaimPayload, DatabaseObjectRef, SchemaTree};
+use saya_types::{ClaimId, ClaimPayload, DatabaseObjectRef};
 
 /// Adapter-facing review errors. Payload-free, mapping [`StoreError`] so a store
 /// variant added later does not silently become an unhandled case in an adapter.
@@ -91,27 +92,31 @@ pub(crate) async fn forget(
 /// conflicts, and a schema state. Returns `None` when no recallable claim
 /// remains.
 ///
-/// `schema` is the cached live schema for the object's profile, or `None` when
-/// no schema is cached. The state is the worst verdict across the kept claims —
-/// the same aggregation `recall` uses (`ContractSchemaState::aggregate`). A
-/// missing cache honestly reads `LiveSchemaUnavailable`; a cached tree is
-/// compared against each claim's stored fingerprint, so `show` reports
+/// `schema` is the schema known for the object's profile — a
+/// [`SchemaAvailability`], so a missing or unreadable cache classifies
+/// `LiveSchemaUnavailable` rather than collapsing to an empty tree that would
+/// read `Stale`. The state is the worst verdict across the kept claims — the
+/// same aggregation `recall` uses (`ContractSchemaState::aggregate`). A cached
+/// tree is compared against each claim's stored fingerprint, so `show` reports
 /// `current` / `needs_review` / `stale` like the agent recall path, not a
 /// constant `LiveSchemaUnavailable`.
 ///
-/// `policy` is the shared retrieval policy (see [`super::retrieval`]).
-/// [`RetrievalPolicy::ForModel`] — used by `contract_read` — does not hand the
-/// model a stale contract's claim *payloads*: when the aggregated state is
-/// `Stale` it returns a contract that still names the object and reports
-/// `schema_state: Stale` but carries **no claims**, so the model learns the
-/// object is stale without reading a gone-column claim as a current fact. The
-/// human `contracts show` path passes [`RetrievalPolicy::ForHumanReview`] and
-/// keeps the claims, the state and the reason.
+/// `policy` is the shared retrieval policy (see [`super::retrieval`]) and also
+/// selects the freshness gate: [`RetrievalPolicy::ForModel`] — used by
+/// `contract_read` — bounds cached-schema age against `now_unix_ms`, so a
+/// stale-by-age cache cannot vouch for currency; [`RetrievalPolicy::ForHumanReview`]
+/// — used by `contracts show` — is unbounded, so a reviewer sees what the cache
+/// knows regardless of age. `ForModel` also does not hand the model a stale
+/// contract's claim *payloads*: when the aggregated state is `Stale` it returns
+/// a contract that still names the object and reports `schema_state: Stale` but
+/// carries **no claims**, so the model learns the object is stale without
+/// reading a gone-column claim as a current fact.
 pub(crate) async fn show(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
-    schema: Option<&SchemaTree>,
+    schema: &SchemaAvailability,
     policy: RetrievalPolicy,
+    now_unix_ms: i64,
 ) -> Result<Option<RetrievedContract>, ContractOpError> {
     let claims = store.list_claims(object, &[]).await?;
     let recallable: Vec<StoredClaim> = claims
@@ -121,9 +126,13 @@ pub(crate) async fn show(
     if recallable.is_empty() {
         return Ok(None);
     }
+    let freshness = match policy {
+        RetrievalPolicy::ForModel => SchemaFreshness::for_model(now_unix_ms),
+        RetrievalPolicy::ForHumanReview => SchemaFreshness::Unbounded,
+    };
     let schema_state = recallable
         .iter()
-        .map(|c| schema_state_for(c, schema))
+        .map(|c| schema_state_for(c, schema, freshness))
         .fold(ContractSchemaState::Current, |acc, s| acc.aggregate(s));
     let conflicts = conflicts_for(&recallable);
     // The same policy `recall` applies: a model-facing caller does not receive a

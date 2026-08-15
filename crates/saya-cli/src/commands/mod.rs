@@ -25,8 +25,13 @@ pub(crate) use contracts::unobserved_fingerprint;
 pub(crate) use contracts::contract_view;
 // Re-exported `pub(crate)` so the agent contract tools load the cached schema
 // the same way the CLI read commands do — one schema-lookup convention, not a
-// second one that could disagree on "no cache" vs "empty cache".
-pub(crate) use contracts::cached_schema;
+// second one that could disagree on "no cache" vs "empty cache". The write
+// path (`remember`/`import`) keeps its own `cached_schema` (it resolves a
+// fingerprint, not a classification); the read/classify paths use
+// `cached_schema_availability` so a store error or undiscovered profile is
+// `LiveSchemaUnavailable`, not a collapsed empty tree that would read `Stale`
+// (the P1 bug).
+pub(crate) use contracts::cached_schema_availability;
 
 pub async fn run(
     command: Command,

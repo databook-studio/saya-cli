@@ -8,6 +8,7 @@
 //! live schema could not be read is SKIPPED, never marked: marking claims stale
 //! over a network blip would destroy a user's accumulated knowledge (spec §2).
 
+use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::review::ContractOpError;
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::ContractSchemaState;
@@ -65,6 +66,11 @@ pub(crate) async fn reconcile(
     };
     for profile in profiles {
         let live = live_schema(schemas, profile);
+        // Reconcile is handed a live schema just fetched from the connector,
+        // so it is current by construction — `Unbounded` freshness, never
+        // age-gated. Built once per profile (not per claim) so a large tree is
+        // not cloned for every claim in the pass.
+        let availability = live.map(|schema| SchemaAvailability::available(schema.clone(), 0));
         for object in store.list_objects(profile).await? {
             for claim in store.list_claims(&object.object, &[]).await? {
                 // Only Candidate/Confirmed are re-examined. Rejected, Forgotten
@@ -76,7 +82,7 @@ pub(crate) async fn reconcile(
                 ) {
                     continue;
                 }
-                let Some(schema) = live else {
+                let Some(availability) = availability.as_ref() else {
                     // No live schema for this profile: we could not look, so we
                     // must not mark. The claim is counted as skipped, not
                     // examined, and never touches the bound.
@@ -91,7 +97,8 @@ pub(crate) async fn reconcile(
                     return Ok(outcome);
                 }
                 outcome.examined += 1;
-                if schema_state_for(&claim, Some(schema)) == ContractSchemaState::Stale
+                if schema_state_for(&claim, availability, SchemaFreshness::Unbounded)
+                    == ContractSchemaState::Stale
                     && store.mark_stale(&claim.id).await.is_ok()
                 {
                     // `mark_stale` can only Conflict if the status changed

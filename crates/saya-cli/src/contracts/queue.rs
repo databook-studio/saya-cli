@@ -12,10 +12,11 @@
 //! recallable only through the existing `review` operation (2b-2c), never here.
 //! See .claude/specs/spec-3d-review-queue.md and spec-5d-reconciliation-writes.md.
 
+use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::ContractSchemaState;
 use saya_store::{ContractStore, SqliteStateStore, StoredClaim};
-use saya_types::{ClaimStatus, ProfileIdentity, SchemaTree};
+use saya_types::{ClaimStatus, ProfileIdentity};
 
 use crate::contracts::review::ContractOpError;
 
@@ -48,7 +49,7 @@ pub(crate) struct QueuedCandidate {
 pub(crate) async fn review_queue(
     store: &SqliteStateStore,
     profiles: &[ProfileIdentity],
-    schemas: &[(ProfileIdentity, SchemaTree)],
+    schemas: &[(ProfileIdentity, SchemaAvailability)],
     limit: usize,
 ) -> Result<Vec<QueuedCandidate>, ContractOpError> {
     let limit = limit.min(QUEUE_LIMIT_CAP);
@@ -64,7 +65,10 @@ pub(crate) async fn review_queue(
             {
                 let evidence_count = store.evidence_count(&claim.id).await?;
                 let live = live_schema(schemas, claim.object.profile());
-                let schema_state = schema_state_for(&claim, live);
+                // The queue is a human-review path: Unbounded freshness, so a
+                // stale-by-age cache still classifies what it knows. A reviewer
+                // is not being asked to trust a query built on these contracts.
+                let schema_state = schema_state_for(&claim, live, SchemaFreshness::Unbounded);
                 queued.push(QueuedCandidate {
                     claim,
                     schema_state,
@@ -84,11 +88,12 @@ pub(crate) async fn review_queue(
 }
 
 fn live_schema<'s>(
-    schemas: &'s [(ProfileIdentity, SchemaTree)],
+    schemas: &'s [(ProfileIdentity, SchemaAvailability)],
     profile: &ProfileIdentity,
-) -> Option<&'s SchemaTree> {
+) -> &'s SchemaAvailability {
     schemas
         .iter()
         .find(|(p, _)| p == profile)
-        .map(|(_, tree)| tree)
+        .map(|(_, avail)| avail)
+        .unwrap_or(&SchemaAvailability::Missing)
 }

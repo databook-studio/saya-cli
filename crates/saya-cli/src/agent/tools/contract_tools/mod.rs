@@ -23,10 +23,11 @@ use mapping::{
 use validation::validate_arguments;
 
 use super::DatabaseTools;
-use crate::commands::cached_schema;
+use crate::commands::cached_schema_availability;
 use crate::contracts::args::parse_qualified;
 use crate::contracts::{
-    RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, recall, show as show_contract,
+    RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, now_unix_ms, recall,
+    show as show_contract,
 };
 
 impl DatabaseTools {
@@ -91,20 +92,21 @@ impl DatabaseTools {
             .unwrap_or_default();
         // Load the cached schema the way the CLI's read commands do, so the
         // contract's staleness is *computed* — passing no schema and calling
-        // the result "not stale" is the same bug in a different hat. A missing
-        // cache stays `None` (the honest `live_schema_unavailable`), never
-        // fabricated into a tree that could read `current`.
-        let cached = cached_schema(store, identity).await;
-        let schemas = cached
-            .iter()
-            .map(|tree| (identity.clone(), tree.clone()))
-            .collect::<Vec<_>>();
+        // the result "not stale" is the same bug in a different hat. `Missing`
+        // and `Unavailable` stay distinct (the honest `live_schema_unavailable`),
+        // never fabricated into a tree that could read `current`.
+        let cached = cached_schema_availability(store, identity).await;
+        let schema_pair = (identity.clone(), cached);
+        let schemas = std::slice::from_ref(&schema_pair);
         let request = RecallRequest {
             profiles: std::slice::from_ref(identity),
             explicit_refs: &[],
             terms: &terms,
             allow_database_context: true,
-            schemas: &schemas,
+            schemas,
+            // The model path bounds cached-schema age: a stale-by-age cache
+            // cannot vouch for currency and classifies `live_schema_unavailable`.
+            now_unix_ms: now_unix_ms(),
             bounds: RecallBounds::defaults(),
             // The agent's own search tool stays Confirmed-only: a candidate is
             // not an established fact, and surfacing one through a read tool the
@@ -163,14 +165,23 @@ impl DatabaseTools {
 
         // The cached schema for the profile classifies the claim, so the model
         // sees `current`/`needs_review`/`stale` — the same projection the CLI's
-        // `show` renders — not a constant `live_schema_unavailable`. A missing
-        // cache stays `None` (the honest answer), mirroring the CLI adapter.
-        let schema = cached_schema(store, identity).await;
+        // `show` renders — not a constant `live_schema_unavailable`. `Missing`
+        // and `Unavailable` stay distinct (the honest answer), mirroring the
+        // CLI adapter; the model path bounds the cache's age.
+        let schema = cached_schema_availability(store, identity).await;
         // `contract_read` is model-facing: `show` with `ForModel` returns a
         // stale object with `schema_state: Stale` and **no claims**, so the
         // model learns the object is stale without reading a gone-column claim
         // as a current fact. The human `contracts show` path keeps the claims.
-        match show_contract(store, &object, schema.as_ref(), RetrievalPolicy::ForModel).await {
+        match show_contract(
+            store,
+            &object,
+            &schema,
+            RetrievalPolicy::ForModel,
+            now_unix_ms(),
+        )
+        .await
+        {
             Ok(Some(retrieved)) => Ok(contract(read_payload(&retrieved, profile_name))),
             Ok(None) => Ok(empty(REASON_NO_CONTRACT)),
             Err(_) => Ok(empty(REASON_STORE)),

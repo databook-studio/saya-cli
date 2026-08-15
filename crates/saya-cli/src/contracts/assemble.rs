@@ -12,18 +12,20 @@
 //! for the model and kept for human review, in one place rather than per
 //! adapter.
 
+use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::conflict::conflicts_for;
 use crate::contracts::selection::Candidate;
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::{ContractSchemaState, RecallDiagnostics, RetrievedContract};
 use saya_store::StoredClaim;
-use saya_types::{ProfileIdentity, SchemaTree};
+use saya_types::ProfileIdentity;
 
 /// Turns the ranked candidates into bounded contracts, recording diagnostics.
 pub(crate) fn assemble(
     candidates: &[Candidate],
-    schemas: &[(ProfileIdentity, SchemaTree)],
+    schemas: &[(ProfileIdentity, SchemaAvailability)],
     bounds: super::RecallBounds,
+    freshness: SchemaFreshness,
     diag: &mut RecallDiagnostics,
 ) -> Vec<RetrievedContract> {
     let mut out: Vec<RetrievedContract> = Vec::new();
@@ -39,7 +41,9 @@ pub(crate) fn assemble(
             diag.excluded_by_schema += candidates.len().saturating_sub(out.len());
             break;
         }
-        let Some(contract) = build_contract(candidate, schemas, bounds, &mut bytes, diag) else {
+        let Some(contract) =
+            build_contract(candidate, schemas, bounds, freshness, &mut bytes, diag)
+        else {
             continue;
         };
         out.push(contract);
@@ -49,8 +53,9 @@ pub(crate) fn assemble(
 
 fn build_contract(
     candidate: &Candidate,
-    schemas: &[(ProfileIdentity, SchemaTree)],
+    schemas: &[(ProfileIdentity, SchemaAvailability)],
     bounds: super::RecallBounds,
+    freshness: SchemaFreshness,
     bytes: &mut usize,
     diag: &mut RecallDiagnostics,
 ) -> Option<RetrievedContract> {
@@ -79,10 +84,10 @@ fn build_contract(
     let live = schemas
         .iter()
         .find(|(p, _)| p == candidate.object.profile())
-        .map(|(_, tree)| tree);
+        .map(|(_, avail)| avail);
     let state = kept
         .iter()
-        .map(|c| schema_state_for(c, live))
+        .map(|c| schema_state_for(c, live.unwrap_or(&SchemaAvailability::Missing), freshness))
         .fold(ContractSchemaState::Current, |acc, s| acc.aggregate(s));
     let conflicts = conflicts_for(&kept);
     Some(RetrievedContract {
