@@ -4,7 +4,7 @@
 
 use super::contracts_map::contract_view;
 use super::contracts_profile::resolve_profile;
-use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, op_failure};
+use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, cached_schema, op_failure};
 use crate::commands::output::{emit, failure_message, result};
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::args::parse_qualified;
@@ -12,8 +12,8 @@ use crate::contracts::{
     RecallBounds, RecallMode, RecallRequest, recall, review_queue, show as show_contract,
 };
 use crate::render::{RenderFormat, TerminalEvent};
-use saya_store::{ContractStore, SchemaStore, SqliteStateStore};
-use saya_types::{DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity, SchemaTree};
+use saya_store::{ContractStore, SqliteStateStore};
+use saya_types::{DatabaseObjectKind, DatabaseObjectRef};
 
 // An unreadable store is not an empty store. `list` exits non-zero so "you have
 // no contracts" and "I could not read your contracts" stay distinguishable —
@@ -123,13 +123,15 @@ pub(super) async fn show(
     Ok(0)
 }
 
-/// The candidate review queue. Resolves a profile, lists its candidates, and
-/// renders them with the schema state and evidence count a reviewer needs. The
-/// queue does not load the cached schema (candidates read
-/// `live_schema_unavailable`); `list` and `show` do, and report
-/// `current`/`needs_review`/`stale`. An unreadable store exits non-zero, matching
-/// `list` so "no candidates" and "could not read your candidates" stay
-/// distinguishable.
+/// The candidate review queue. Resolves a profile, lists its candidates and
+/// stale claims, and renders them with the schema state and evidence count a
+/// reviewer needs. The queue classifies against the cached schema — the same
+/// source `list`/`show` use, via the shared `cached_schema` helper — so a
+/// candidate made right after a `connection schema --refresh` reads a real
+/// state, not a constant `live_schema_unavailable`. A missing cache stays
+/// `None` so the honest `live_schema_unavailable` is preserved. An unreadable
+/// store exits non-zero, matching `list` so "no candidates" and "could not read
+/// your candidates" stay distinguishable.
 pub(super) async fn queue(
     store: &SqliteStateStore,
     runtime: &RuntimeConfig,
@@ -142,7 +144,15 @@ pub(super) async fn queue(
         Err((code, message)) => return failure_message(code, message, format),
     };
     let limit = limit.unwrap_or(crate::contracts::QUEUE_DEFAULT_LIMIT);
-    let queued = match review_queue(store, std::slice::from_ref(&identity), &[], limit).await {
+    // The cached schema classifies each queued claim — the same source `list`
+    // and `show` read. A missing cache stays `None` (`live_schema_unavailable`);
+    // never a second way to load a cached schema.
+    let cached_schema = cached_schema(store, &identity).await;
+    let schemas = cached_schema
+        .iter()
+        .map(|tree| (identity.clone(), tree.clone()))
+        .collect::<Vec<_>>();
+    let queued = match review_queue(store, std::slice::from_ref(&identity), &schemas, limit).await {
         Ok(queued) => queued,
         Err(_) => {
             return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);
@@ -154,19 +164,4 @@ pub(super) async fn queue(
         .collect();
     emit(TerminalEvent::ContractQueue { items }, format);
     Ok(0)
-}
-
-/// The cached schema for `identity`, or `None` when nothing is cached. Mirrors
-/// the agent recall path's `SchemaStore::get_schema` lookup, but without the
-/// `.unwrap_or_default()` that collapses "no cache" onto an empty tree: a
-/// missing cache stays `None` so validity reads the honest
-/// `live_schema_unavailable`, while a cached-but-empty tree reads `stale`. A
-/// store read failure degrades to `None` — not a crash on this read path.
-async fn cached_schema(store: &SqliteStateStore, identity: &ProfileIdentity) -> Option<SchemaTree> {
-    store
-        .get_schema(identity.as_str())
-        .await
-        .ok()
-        .flatten()
-        .map(|cached| cached.schema)
 }

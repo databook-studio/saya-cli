@@ -3,8 +3,11 @@
 //! `ContractChanged` event. A write against an unavailable store is a genuine
 //! failure and exits non-zero — the user asked for something that did not happen.
 
+use super::contracts_remember_schema::{
+    SchemaCheck, fingerprint_of, refuse_unknown, resolved_against,
+};
 use super::{
-    ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, op_failure, parse_claim_id,
+    ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, cached_schema, op_failure, parse_claim_id,
     unobserved_fingerprint,
 };
 use crate::cli::{ClaimKindArg, ForgetReasonArg};
@@ -17,15 +20,43 @@ use saya_types::{
     ClaimOrigin, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity,
 };
 
+/// What the user asked to remember: the qualified object, the kind, and the
+/// claim value (with its optional column). Borrows the parsed strings so a
+/// `remember` call allocates nothing it does not have to.
+pub(super) struct RememberRequest<'a> {
+    pub table: &'a str,
+    pub kind: ClaimKindArg,
+    pub value: &'a str,
+    pub column: Option<&'a str>,
+}
+
+/// Where it is being remembered: the store, the render format, and the
+/// resolved profile (name + opaque identity). The name is what renders; the
+/// identity is what the schema cache and the stored `DatabaseObjectRef` are
+/// keyed by.
+pub(super) struct RememberContext<'a> {
+    pub store: &'a SqliteStateStore,
+    pub format: RenderFormat,
+    pub profile_name: &'a str,
+    pub identity: &'a ProfileIdentity,
+}
+
 pub(super) async fn remember(
-    store: &SqliteStateStore,
-    format: RenderFormat,
-    identity: &ProfileIdentity,
-    table: &str,
-    kind: ClaimKindArg,
-    value: &str,
-    column: Option<&str>,
+    request: RememberRequest<'_>,
+    context: RememberContext<'_>,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    let RememberRequest {
+        table,
+        kind,
+        value,
+        column,
+    } = request;
+    let RememberContext {
+        store,
+        format,
+        profile_name,
+        identity,
+    } = context;
     let qualified = match parse_qualified(table) {
         Ok(q) => q,
         Err(_) => return arg_failure(ArgMessage::MalformedTable, format),
@@ -44,13 +75,33 @@ pub(super) async fn remember(
         Ok(object) => object,
         Err(_) => return arg_failure(ArgMessage::MalformedTable, format),
     };
-    let referenced_columns = payload.referenced_column_name_snapshots();
+    // `remember` classifies against the cached schema — the same source
+    // `list`/`show` use — so a claim made right after a `connection schema
+    // --refresh` stores the real digest and reads `current`, and a claim keyed
+    // to an object the cache lacks is refused here, not stored silently and
+    // marked stale only at the next refresh. No cache, or an empty cached tree
+    // (no real schema information), keeps the original behaviour: the
+    // unobserved sentinel and no validation. The check lives in
+    // `contracts_remember_schema`; this is the call site.
+    let cached = cached_schema(store, identity).await;
+    let (fingerprint, referenced_columns) = match resolved_against(&cached, &object) {
+        SchemaCheck::Found(table) => (
+            fingerprint_of(table),
+            payload.referenced_column_snapshots(table),
+        ),
+        SchemaCheck::Absent => return refuse_unknown(&object, profile_name, format),
+        SchemaCheck::NoSchema => (
+            unobserved_fingerprint(),
+            payload.referenced_column_name_snapshots(),
+        ),
+    };
     let request = ProposeClaim {
         object,
-        fingerprint: unobserved_fingerprint(),
-        // The headless `remember` has no live schema, so it records the
-        // referenced column names without claiming a type — a later live
-        // schema still reads a removed referenced column as Stale.
+        fingerprint,
+        // With a real cached table the columns carry the resolved type and
+        // nullability; with no schema they carry the names only (empty type),
+        // which the reconciler treats as unknown — a later live schema still
+        // reads a removed referenced column as Stale.
         referenced_columns,
         payload,
         origin: ClaimOrigin::UserExplicit,

@@ -725,3 +725,222 @@ async fn unreadable_store_import_and_dry_run_fail_nonzero() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------
+// 10. Symptom B on the import path: an imported claim for an object the cached
+//     schema contains (and whose referenced columns it contains) must store
+//     the real digest and read `current`, not `needs_review`. Before the fix
+//     `propose_imported` stored the all-zeros unobserved sentinel for every
+//     Added claim, so a valid imported fact read `needs_review` the moment it
+//     landed — the same bug `remember` had. Import already refused absent
+//     objects (symptom A) via the Stale verdict, so only symptom B needed
+//     fixing here.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn import_added_claim_against_cached_schema_reads_current_not_needs_review() {
+    let root = temp_root("import_current_not_needs_review");
+    let (runtime, _) = runtime_at(&root);
+    let store = store_at(&root).await;
+    // Cache `analytics.public.orders` with a `created_at` column the claim
+    // references — what `connection schema local --refresh` would write.
+    let table = Table {
+        name: "orders".into(),
+        columns: vec![
+            Column {
+                name: "id".into(),
+                data_type: "bigint".into(),
+                nullable: false,
+            },
+            Column {
+                name: "created_at".into(),
+                data_type: "timestamp".into(),
+                nullable: false,
+            },
+        ],
+    };
+    let schema = SchemaTree {
+        databases: vec![Database {
+            name: "analytics".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![table.clone()],
+            }],
+        }],
+    };
+    store
+        .upsert_schema(&identity_for(&runtime, "local"), &schema)
+        .await
+        .unwrap();
+
+    // A default-time-column claim for `created_at` — object present, column
+    // present, so import classifies it Added and stores it.
+    write_contract(
+        &root,
+        "orders.toml",
+        "version = 1\nobject = \"analytics.public.orders\"\n[[claims]]\nkind = \"time-column\"\nvalue = \"created_at\"\n",
+    );
+    let import = ContractsCommand::Import {
+        path: root.clone(),
+        dry_run: false,
+        profile: None,
+    };
+    let (code, out, err) = run(import, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "import stderr: {err}");
+    assert!(out.contains("added"), "claim must be added: {out}");
+
+    // The stored claim's fingerprint is the cached table's real digest, not
+    // the all-zeros sentinel — the load-bearing assertion.
+    let claims = store
+        .list_claims(&object_ref(&runtime, "orders"), &[])
+        .await
+        .unwrap();
+    assert_eq!(claims.len(), 1, "{claims:?}");
+    let real = saya_types::SchemaFingerprint::of_table(DatabaseObjectKind::Table, &table);
+    assert_eq!(
+        claims[0].schema_fingerprint, real,
+        "import stored the unobserved sentinel, not the cached table's real digest"
+    );
+    // And the column snapshot carries the resolved type, not the empty type.
+    assert_eq!(claims[0].referenced_columns.len(), 1, "{claims:?}");
+    assert_eq!(claims[0].referenced_columns[0].name, "created_at");
+    assert_eq!(
+        claims[0].referenced_columns[0].data_type, "timestamp",
+        "imported column snapshot must carry the cached type: {:?}",
+        claims[0].referenced_columns
+    );
+
+    // `show` reads `current`, not `needs_review`.
+    let show = ContractsCommand::Show {
+        table: "analytics.public.orders".into(),
+        profile: None,
+    };
+    let (code, out, err) = run(show, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "show stderr: {err}");
+    assert!(
+        out.contains("[current]"),
+        "imported claim must read current: {out}"
+    );
+    assert!(
+        !out.contains("needs_review"),
+        "a valid imported claim must not read needs_review: {out}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+// A table-level imported claim (no referenced columns) against a cached
+// schema must also read `current`: before the fix the all-zeros sentinel made
+// even a table-level claim read `needs_review` (fingerprint moved, no columns
+// to break → NeedsReview).
+#[tokio::test]
+async fn import_table_level_claim_against_cached_schema_reads_current() {
+    let root = temp_root("import_table_current");
+    let (runtime, _) = runtime_at(&root);
+    let store = store_at(&root).await;
+    let table = Table {
+        name: "orders".into(),
+        columns: vec![Column {
+            name: "id".into(),
+            data_type: "bigint".into(),
+            nullable: false,
+        }],
+    };
+    let schema = SchemaTree {
+        databases: vec![Database {
+            name: "analytics".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![table.clone()],
+            }],
+        }],
+    };
+    store
+        .upsert_schema(&identity_for(&runtime, "local"), &schema)
+        .await
+        .unwrap();
+
+    write_contract(
+        &root,
+        "orders.toml",
+        "version = 1\nobject = \"analytics.public.orders\"\n[[claims]]\nkind = \"alias\"\nvalue = \"customers\"\n",
+    );
+    let import = ContractsCommand::Import {
+        path: root.clone(),
+        dry_run: false,
+        profile: None,
+    };
+    let (code, out, err) = run(import, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "import stderr: {err}");
+    assert!(out.contains("added"), "claim must be added: {out}");
+
+    let claims = store
+        .list_claims(&object_ref(&runtime, "orders"), &[])
+        .await
+        .unwrap();
+    assert_eq!(claims.len(), 1, "{claims:?}");
+    let real = saya_types::SchemaFingerprint::of_table(DatabaseObjectKind::Table, &table);
+    assert_eq!(
+        claims[0].schema_fingerprint, real,
+        "table-level import must store the real digest, not the sentinel"
+    );
+
+    let show = ContractsCommand::Show {
+        table: "analytics.public.orders".into(),
+        profile: None,
+    };
+    let (code, out, err) = run(show, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "show stderr: {err}");
+    assert!(
+        out.contains("[current]"),
+        "table-level import must read current: {out}"
+    );
+    assert!(
+        !out.contains("needs_review"),
+        "table-level import must not read needs_review: {out}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+// Import with no cached schema keeps the original behaviour: the unobserved
+// sentinel. There is nothing to compute a real digest against, and refusing
+// would make import unusable before a first refresh. (Import already reports
+// Stale only against a non-empty cache; with no cache every claim is Added.)
+#[tokio::test]
+async fn import_with_no_cached_schema_keeps_sentinel() {
+    let root = temp_root("import_no_cache_sentinel");
+    let (runtime, _) = runtime_at(&root);
+    let store = store_at(&root).await;
+    // Drop the empty default `store_at` cached so there is genuinely no cache.
+    store
+        .invalidate_schema(&identity_for(&runtime, "local"))
+        .await
+        .unwrap();
+
+    write_contract(
+        &root,
+        "orders.toml",
+        "version = 1\nobject = \"analytics.public.orders\"\n[[claims]]\nkind = \"alias\"\nvalue = \"customers\"\n",
+    );
+    let import = ContractsCommand::Import {
+        path: root.clone(),
+        dry_run: false,
+        profile: None,
+    };
+    let (code, out, err) = run(import, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "import with no cache must succeed: {err}");
+    assert!(out.contains("added"), "claim must be added: {out}");
+
+    let claims = store
+        .list_claims(&object_ref(&runtime, "orders"), &[])
+        .await
+        .unwrap();
+    assert_eq!(claims.len(), 1, "{claims:?}");
+    assert_eq!(
+        claims[0].schema_fingerprint,
+        unobserved_fingerprint(),
+        "no-cache import must store the unobserved sentinel, not a real digest"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}

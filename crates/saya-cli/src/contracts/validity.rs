@@ -64,20 +64,7 @@ enum Drift {
 
 fn live_table<'s>(schema: &'s SchemaTree, claim: &StoredClaim) -> Option<&'s Table> {
     let obj = &claim.object;
-    schema
-        .databases
-        .iter()
-        .find(|db| db.name.eq_ignore_ascii_case(obj.catalog()))
-        .and_then(|db| {
-            db.schemas
-                .iter()
-                .find(|s| s.name.eq_ignore_ascii_case(obj.schema()))
-        })
-        .and_then(|s| {
-            s.tables
-                .iter()
-                .find(|t| t.name.eq_ignore_ascii_case(obj.object()))
-        })
+    schema.find_table(obj.catalog(), obj.schema(), obj.object())
 }
 
 /// The worst verdict across the claim's referenced columns, or `None` when

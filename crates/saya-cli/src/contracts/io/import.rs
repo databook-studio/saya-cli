@@ -45,7 +45,7 @@ pub(crate) async fn import_contracts(
             match verdict {
                 V::Added => {
                     if !dry_run {
-                        propose_imported(store, &object, payload).await?;
+                        propose_imported(store, &object, payload, schema.as_ref()).await?;
                     }
                     report.added.push(result);
                 }
@@ -90,19 +90,43 @@ fn build_object(
 /// `Added`, and the store returning `Duplicate` would only mean a claim with
 /// the same dedup key appeared between the scan and the propose, which a
 /// single-threaded CLI cannot observe; either way the claim is in the store.
+///
+/// When the cached `schema` contains the object, store the real
+/// `SchemaFingerprint::of_table` digest and typed `referenced_column_snapshots`
+/// — the same `remember` does — so a valid imported claim reads `current`, not
+/// `needs_review`. The pre-scan already verified the object and every
+/// referenced column are present for an `Added` verdict, so a present schema
+/// guarantees a found table; the lookup is defensive anyway. No schema, an
+/// empty cached tree, or an object the cache lacks keeps the unobserved
+/// sentinel and name-only snapshots: there is nothing real to record against,
+/// and a later reconcile catches drift.
 async fn propose_imported(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
     payload: &saya_types::ClaimPayload,
+    schema: Option<&SchemaTree>,
 ) -> Result<(), ContractOpError> {
+    let table = schema
+        .filter(|s| !s.databases.is_empty())
+        .and_then(|s| s.find_table(object.catalog(), object.schema(), object.object()));
+    let (fingerprint, referenced_columns) = match table {
+        Some(table) => (
+            saya_types::SchemaFingerprint::of_table(saya_types::DatabaseObjectKind::Table, table),
+            payload.referenced_column_snapshots(table),
+        ),
+        None => (
+            crate::commands::unobserved_fingerprint(),
+            payload.referenced_column_name_snapshots(),
+        ),
+    };
     let request = ProposeClaim {
         object: object.clone(),
-        fingerprint: crate::commands::unobserved_fingerprint(),
+        fingerprint,
         payload: payload.clone(),
         origin: ClaimOrigin::TeamFile,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
-        referenced_columns: payload.referenced_column_name_snapshots(),
+        referenced_columns,
     };
     match store.propose_claim(request).await {
         Ok(ProposeOutcome::Stored(_)) | Ok(ProposeOutcome::Duplicate { .. }) => Ok(()),

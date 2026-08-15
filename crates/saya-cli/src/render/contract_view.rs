@@ -48,15 +48,24 @@ pub struct ContractView {
     pub truncated: bool,
 }
 
-/// One candidate waiting for review, in renderable form. The queue is a flat
-/// per-candidate listing — not the object-grouped `ContractView` shape — so it
-/// gets its own DTO rather than a one-claim "contract" with a smuggled evidence
-/// count. `profile` is the profile *name*, never the opaque identity, and
-/// there is no field for the identity here either.
+/// One claim waiting for review — a `Candidate` or a persisted `Stale` claim —
+/// in renderable form. The queue is a flat per-claim listing — not the
+/// object-grouped `ContractView` shape — so it gets its own DTO rather than a
+/// one-claim "contract" with a smuggled evidence count. `profile` is the
+/// profile *name*, never the opaque identity, and there is no field for the
+/// identity here either.
+///
+/// `status` distinguishes the decision a reviewer is being asked to make:
+/// `candidate` (a fresh claim to confirm or reject) from `stale` (a confirmed
+/// claim reconciliation marked because the schema drifted, to re-confirm or
+/// forget). Without it both appear and a reviewer cannot tell which.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractQueueItemView {
     pub profile: String,
     pub claim_id: String,
+    /// The claim's persisted status word (`candidate` or `stale`) — the decision
+    /// the reviewer is being asked to make, since the queue holds both.
+    pub status: String,
     pub kind: String,
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

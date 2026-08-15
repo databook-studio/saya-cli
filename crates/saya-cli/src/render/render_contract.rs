@@ -65,10 +65,13 @@ pub(super) fn changed(claim_id: &str, action: &str, status: &str) -> Rendered {
     }
 }
 
-/// The review queue: one line per candidate with the fields a reviewer needs to
-/// decide — the full claim id (pasted into `contracts review`), kind, value,
-/// object, schema state, and evidence count. The claim id is never abbreviated
-/// here, unlike the recall stanza, because the reviewer's next action keys on it.
+/// The review queue: one line per waiting claim with the fields a reviewer
+/// needs to decide — the full claim id (pasted into `contracts review`), the
+/// status word, kind, value, object, schema state, and evidence count. The
+/// status distinguishes a `candidate` (confirm or reject) from a persisted
+/// `stale` claim (re-confirm or forget) so a reviewer can tell which decision
+/// is being asked. The claim id is never abbreviated here, unlike the recall
+/// stanza, because the reviewer's next action keys on it.
 pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
     if items.is_empty() {
         // Not an error: an empty queue simply has nothing waiting.
@@ -80,8 +83,9 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
     let mut stdout = String::new();
     for item in items {
         stdout.push_str(&format!(
-            "{id}  {kind}  {value}{column}  {object}  [{state}]{note}  evidence {count}  (profile: {profile})\n",
+            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}  evidence {count}  (profile: {profile})\n",
             id = item.claim_id,
+            status = item.status,
             kind = item.kind,
             value = item.value,
             column = column_suffix(item.column.as_deref()),

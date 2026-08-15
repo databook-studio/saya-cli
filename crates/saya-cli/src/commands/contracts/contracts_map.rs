@@ -94,11 +94,14 @@ fn conflict_view(conflict: &ContractConflict) -> ContractConflictView {
     }
 }
 
-/// Maps one queued candidate to its render DTO. `profile_name` is the name the
+/// Maps one queued claim to its render DTO. `profile_name` is the name the
 /// adapter resolved — never the opaque identity, which has no field on the DTO.
 /// The full claim id is carried unabbreviated because the reviewer's next action
-/// (`contracts review <id>`) keys on it. A candidate always has a payload; the
-/// `None` arm is a defensive fallback, not a path that should render.
+/// (`contracts review <id>`) keys on it. `status` carries the claim's persisted
+/// status word so a `candidate` (confirm/reject) is distinguishable from a
+/// persisted `stale` claim (re-confirm/forget). A queued claim always has a
+/// payload; the `None` arm is a defensive fallback, not a path that should
+/// render.
 pub(crate) fn queue_item_view(
     candidate: &QueuedCandidate,
     profile_name: &str,
@@ -112,6 +115,7 @@ pub(crate) fn queue_item_view(
     ContractQueueItemView {
         profile: profile_name.to_string(),
         claim_id: candidate.claim.id.as_str().to_string(),
+        status: candidate.claim.status.as_str().to_string(),
         kind,
         value,
         column,

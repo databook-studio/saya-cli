@@ -114,7 +114,7 @@ fn is_stale(
     if schema.databases.is_empty() {
         return false;
     }
-    let Some(table) = live_table(schema, object) else {
+    let Some(table) = schema.find_table(object.catalog(), object.schema(), object.object()) else {
         return true;
     };
     for name in payload.referenced_columns() {
@@ -127,24 +127,4 @@ fn is_stale(
         }
     }
     false
-}
-
-fn live_table<'s>(
-    schema: &'s SchemaTree,
-    object: &DatabaseObjectRef,
-) -> Option<&'s saya_types::Table> {
-    schema
-        .databases
-        .iter()
-        .find(|db| db.name.eq_ignore_ascii_case(object.catalog()))
-        .and_then(|db| {
-            db.schemas
-                .iter()
-                .find(|s| s.name.eq_ignore_ascii_case(object.schema()))
-        })
-        .and_then(|s| {
-            s.tables
-                .iter()
-                .find(|t| t.name.eq_ignore_ascii_case(object.object()))
-        })
 }

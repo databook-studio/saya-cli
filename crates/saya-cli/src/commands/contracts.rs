@@ -15,6 +15,7 @@ mod contracts_io;
 mod contracts_map;
 mod contracts_profile;
 mod contracts_read;
+mod contracts_remember_schema;
 mod contracts_write;
 
 // The identity-dropping `RetrievedContract → ContractView` mapping, re-exported
@@ -31,8 +32,8 @@ use crate::cli::ContractsCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::ContractOpError;
 use crate::render::RenderFormat;
-use saya_store::SqliteStateStore;
-use saya_types::{ClaimId, FINGERPRINT_VERSION, SchemaFingerprint};
+use saya_store::{SchemaStore, SqliteStateStore};
+use saya_types::{ClaimId, FINGERPRINT_VERSION, ProfileIdentity, SchemaFingerprint, SchemaTree};
 
 /// Exit code for any typed contract-command failure (usage error, op error, or a
 /// write against an unavailable store). Matches the user-error code `config`
@@ -62,15 +63,20 @@ pub async fn run_contracts(
             column,
             profile,
         } => match resolve_profile(runtime, profile.as_deref()) {
-            Ok((_name, identity)) => {
+            Ok((name, identity)) => {
                 contracts_write::remember(
-                    store,
-                    format,
-                    &identity,
-                    &table,
-                    kind,
-                    &value,
-                    column.as_deref(),
+                    contracts_write::RememberRequest {
+                        table: &table,
+                        kind,
+                        value: &value,
+                        column: column.as_deref(),
+                    },
+                    contracts_write::RememberContext {
+                        store,
+                        format,
+                        profile_name: &name,
+                        identity: &identity,
+                    },
                 )
                 .await
             }
@@ -136,6 +142,28 @@ pub(super) fn arg_failure(
 pub(crate) fn unobserved_fingerprint() -> SchemaFingerprint {
     SchemaFingerprint::from_parts(FINGERPRINT_VERSION, &"0".repeat(64))
         .expect("current format with a 64-hex-zero digest is a valid fingerprint")
+}
+
+/// The cached schema for `identity`, or `None` when nothing is cached. Mirrors
+/// the agent recall path's `SchemaStore::get_schema` lookup, but without the
+/// `.unwrap_or_default()` that collapses "no cache" onto an empty tree: a
+/// missing cache stays `None` so validity reads the honest
+/// `live_schema_unavailable`, while a cached-but-empty tree reads `stale`. A
+/// store read failure degrades to `None` — not a crash on a read path.
+///
+/// Shared by the read commands (`list`/`show`) and the write command
+/// (`remember`), so every adapter that classifies a claim against the cached
+/// schema does it the same way — never a second lookup convention.
+pub(super) async fn cached_schema(
+    store: &SqliteStateStore,
+    identity: &ProfileIdentity,
+) -> Option<SchemaTree> {
+    store
+        .get_schema(identity.as_str())
+        .await
+        .ok()
+        .flatten()
+        .map(|cached| cached.schema)
 }
 
 /// Parses a claim id, mapping a malformed one to a payload-free typed message
