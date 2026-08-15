@@ -12,10 +12,10 @@ use crate::contracts::retrieval::RetrievalPolicy;
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::{ContractSchemaState, RetrievedContract};
 use saya_store::{
-    ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SqliteStateStore, StoreError,
-    StoredClaim,
+    ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
+    StoreError, StoredClaim,
 };
-use saya_types::{ClaimId, ClaimPayload, DatabaseObjectRef};
+use saya_types::{ClaimId, ClaimPayload, ClaimStatus, DatabaseObjectRef, Table};
 
 /// Adapter-facing review errors. Payload-free, mapping [`StoreError`] so a store
 /// variant added later does not silently become an unhandled case in an adapter.
@@ -32,6 +32,12 @@ pub(crate) enum ContractOpError {
     Limit,
     #[error("the state store is unavailable")]
     Unavailable,
+    /// Revalidating a Stale claim needs a live schema to fingerprint against,
+    /// and none was available — no cached schema for the claim's profile, or
+    /// the store could not be read. Distinct from [`Self::Unavailable`]: the
+    /// store may be fine; the schema cache is what is missing.
+    #[error("no schema is available to revalidate the claim against")]
+    SchemaUnavailable,
 }
 
 impl From<StoreError> for ContractOpError {
@@ -61,7 +67,59 @@ pub(crate) async fn confirm(
     store: &SqliteStateStore,
     id: &ClaimId,
 ) -> Result<StoredClaim, ContractOpError> {
-    Ok(store.confirm_claim(id).await?)
+    // A Stale claim cannot be confirmed by a status-only flip: the stored
+    // fingerprint would stay untouched, so the next read would recompute the
+    // digest, find it still differs, and return Stale again — a silent no-op.
+    // Revalidate it against the live schema: rewrite the fingerprint and
+    // snapshots in the same transaction as the status flip. The schema comes
+    // from the claim's own profile (a confirm carries no --profile flag), read
+    // from the same cache `remember`/`show` use. With no schema there is
+    // nothing to revalidate against — refuse, do not guess.
+    let claim = store
+        .get_claim(id)
+        .await?
+        .ok_or(ContractOpError::NotFound)?;
+    if claim.status != ClaimStatus::Stale {
+        return Ok(store.confirm_claim(id).await?);
+    }
+    let availability = schema_availability_for(store, claim.object.profile().as_str()).await;
+    let live_table = live_table_for(&claim, &availability)?.ok_or(ContractOpError::Conflict)?;
+    Ok(store.revalidate_claim(id, live_table).await?)
+}
+
+/// The schema known for `profile_id` as a three-state [`SchemaAvailability`]:
+/// the cached tree, `Missing` (no cache entry), or `Unavailable` (store error).
+/// The same construction `commands::cached_schema_availability` uses, kept here
+/// so the operations layer can resolve a claim's schema without reaching up
+/// into the presentation layer (`commands` depends on `contracts`, not the
+/// reverse).
+async fn schema_availability_for(store: &SqliteStateStore, profile_id: &str) -> SchemaAvailability {
+    match store.get_schema(profile_id).await {
+        Ok(Some(cached)) => SchemaAvailability::available(cached.schema, cached.updated_unix_ms),
+        Ok(None) => SchemaAvailability::Missing,
+        Err(_) => SchemaAvailability::Unavailable,
+    }
+}
+
+/// The live table the claim's object resolves to in `availability`, or `None`
+/// when no schema is available at all. A human is confirming, so the freshness
+/// gate is unbounded — a reviewer is not asked to trust a query built on their
+/// own contracts, and a confirm must work against whatever the cache knows.
+fn live_table_for<'a>(
+    claim: &StoredClaim,
+    availability: &'a SchemaAvailability,
+) -> Result<Option<&'a Table>, ContractOpError> {
+    let Some(schema) = availability.live_table_schema(SchemaFreshness::Unbounded) else {
+        // No schema to revalidate against. `Missing` and `Unavailable` both
+        // land here; the caller refuses with `SchemaUnavailable` rather than
+        // reviving a claim it cannot check.
+        return Err(ContractOpError::SchemaUnavailable);
+    };
+    Ok(schema.find_table(
+        claim.object.catalog(),
+        claim.object.schema(),
+        claim.object.object(),
+    ))
 }
 
 pub(crate) async fn edit(

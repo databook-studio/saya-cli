@@ -51,6 +51,13 @@ impl ContractStore for SqliteStateStore {
     async fn confirm_claim(&self, id: &ClaimId) -> Result<StoredClaim, StoreError> {
         store_transitions::confirm_claim(self, id).await
     }
+    async fn revalidate_claim(
+        &self,
+        id: &ClaimId,
+        live_table: &saya_types::Table,
+    ) -> Result<StoredClaim, StoreError> {
+        store_revise::revalidate_claim(self, id, live_table).await
+    }
     async fn edit_claim(
         &self,
         id: &ClaimId,

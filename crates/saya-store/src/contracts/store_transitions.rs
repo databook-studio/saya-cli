@@ -33,10 +33,12 @@ pub(crate) async fn confirm_claim(
         .map_err(|_| StoreError::Unavailable)?;
     let (status, object_id, origin) = meta_of(&mut tx, id).await?;
     let status = ClaimStatus::parse(&status).ok_or(StoreError::Invalid)?;
-    let legal = matches!(
-        status,
-        ClaimStatus::Candidate | ClaimStatus::Stale | ClaimStatus::Contradicted
-    );
+    // Status-only confirmation accepts Candidate and Contradicted only. A
+    // Stale claim must take the schema-aware `revalidate_claim` path: a
+    // status-only flip left the stored fingerprint untouched, so the next read
+    // recomputed the digest and returned Stale again — a silent no-op the user
+    // could not repair. See `store_revise::revalidate_claim`.
+    let legal = matches!(status, ClaimStatus::Candidate | ClaimStatus::Contradicted);
     if !legal {
         return Err(StoreError::Conflict);
     }

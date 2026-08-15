@@ -3,7 +3,7 @@ use crate::contracts::events::{ContractEvent, ForgetReason};
 use async_trait::async_trait;
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectRef, ProfileIdentity,
-    ReferencedColumn, SchemaFingerprint,
+    ReferencedColumn, SchemaFingerprint, Table,
 };
 
 pub const MAX_CLAIM_PAYLOAD_BYTES: usize = 4096;
@@ -156,6 +156,18 @@ pub trait ContractStore: Send + Sync {
         profile: &ProfileIdentity,
     ) -> Result<Vec<StoredObject>, StoreError>;
     async fn confirm_claim(&self, id: &ClaimId) -> Result<StoredClaim, StoreError>;
+    /// Reconfirm a claim against a live table, rewriting its fingerprint and
+    /// referenced-column snapshots in the same transaction as the status flip.
+    /// The counterpart to [`ContractStore::confirm_claim`] for a Stale claim:
+    /// a status-only flip left the stored digest untouched, so the next read
+    /// returned Stale again. Refuses with [`StoreError::Conflict`] when a
+    /// referenced column is absent from `live_table` — never revive a claim
+    /// against a schema its dependency vanished from.
+    async fn revalidate_claim(
+        &self,
+        id: &ClaimId,
+        live_table: &Table,
+    ) -> Result<StoredClaim, StoreError>;
     async fn edit_claim(
         &self,
         id: &ClaimId,

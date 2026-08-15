@@ -2454,3 +2454,178 @@ fn recall_request_with_freshness<'a>(
         policy,
     }
 }
+
+// ---------------------------------------------------------------------------
+// P1 wiring: confirming a stale claim revalidates it against the cached
+// schema (the claim's own profile), so it reads Current on the next read
+// instead of bouncing back to Stale. See `contract_revalidate.rs` for the
+// store-layer behaviour these exercise through the `confirm` wrapper.
+// ---------------------------------------------------------------------------
+
+/// Propose a confirmed claim against `base`, then reconcile against a live
+/// schema that drops a referenced column so the claim is persisted Stale — the
+/// state the bug left a user in. Returns the now-Stale stored claim.
+async fn seed_persisted_stale(store: &SqliteStateStore, object: &DatabaseObjectRef) -> StoredClaim {
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    let claim = known_claim(
+        store,
+        object,
+        &base,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    // Reconcile against a live schema that dropped `amount` -> Stale, persisted.
+    let drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    let p = object.profile().clone();
+    let outcome = reconcile(store, std::slice::from_ref(&p), &[(p.clone(), drifted)])
+        .await
+        .unwrap();
+    assert_eq!(outcome.marked_stale, 1, "the claim should be marked stale");
+    store
+        .get_claim(&claim.id)
+        .await
+        .unwrap()
+        .expect("the stale claim is still stored")
+}
+
+#[tokio::test]
+async fn confirm_revalidates_a_stale_claim_against_the_cached_schema() {
+    let root = temp_root("confirm_revalidates");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let stale = seed_persisted_stale(&store, &obj).await;
+    assert_eq!(stale.status, ClaimStatus::Stale);
+
+    // Cache the schema the claim was originally made against — `amount` is
+    // present — so the confirm path has a live table to revalidate against.
+    let base = schema_tree_for(&[(
+        "orders",
+        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+    )]);
+    store.upsert_schema(p.as_str(), &base).await.unwrap();
+
+    // Confirming revalidates: it rewrites the fingerprint to the live digest and
+    // flips the status to Confirmed, so the next read is Current. Before the fix
+    // this was a silent no-op that left the claim Stale.
+    let confirmed = confirm(&store, &stale.id).await.unwrap();
+    assert_eq!(confirmed.status, ClaimStatus::Confirmed);
+
+    let stored = store.get_claim(&stale.id).await.unwrap().unwrap();
+    assert_eq!(stored.status, ClaimStatus::Confirmed);
+    assert_eq!(
+        stored.schema_fingerprint,
+        fingerprint_for(&table(&[
+            ("id", "bigint", false),
+            ("amount", "numeric", false)
+        ])),
+        "the stored fingerprint is now the live table's digest"
+    );
+
+    // The next read classifies it Current: the fingerprint matches the cache.
+    let shown = show(
+        &store,
+        &obj,
+        &avail(base),
+        RetrievalPolicy::ForHumanReview,
+        FRESH_NOW,
+    )
+    .await
+    .unwrap()
+    .expect("a confirmed-against-schema contract is shown");
+    assert_eq!(
+        shown.schema_state,
+        ContractSchemaState::Current,
+        "a revalidated claim reads Current, not Stale"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn confirm_refuses_a_stale_claim_with_no_cached_schema() {
+    let root = temp_root("confirm_no_schema");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let stale = seed_persisted_stale(&store, &obj).await;
+
+    // `store_at` left an empty/default cached schema; drop it so there is no
+    // cache entry for the profile — nothing to revalidate against.
+    store.invalidate_schema(p.as_str()).await.unwrap();
+
+    let err = confirm(&store, &stale.id).await.unwrap_err();
+    assert_eq!(
+        err,
+        ContractOpError::SchemaUnavailable,
+        "a stale claim cannot be revalidated without a schema"
+    );
+    // The claim is unchanged.
+    assert_eq!(
+        store.get_claim(&stale.id).await.unwrap().unwrap().status,
+        ClaimStatus::Stale
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn confirm_refuses_a_stale_claim_whose_referenced_column_is_gone() {
+    let root = temp_root("confirm_column_gone");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let stale = seed_persisted_stale(&store, &obj).await;
+
+    // Cache the drifted schema — `orders` still exists, but `amount` is gone.
+    let drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    store.upsert_schema(p.as_str(), &drifted).await.unwrap();
+
+    let err = confirm(&store, &stale.id).await.unwrap_err();
+    assert_eq!(
+        err,
+        ContractOpError::Conflict,
+        "do not revive a claim whose referenced column is gone"
+    );
+    assert_eq!(
+        store.get_claim(&stale.id).await.unwrap().unwrap().status,
+        ClaimStatus::Stale
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn confirm_a_candidate_is_status_only_and_needs_no_schema() {
+    let root = temp_root("confirm_candidate");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+
+    // A candidate proposed with no live schema (the unobserved fingerprint) and
+    // no cached schema for the profile. Confirming it is a user assertion — it
+    // does not need a schema, and must not require one.
+    store.invalidate_schema(p.as_str()).await.unwrap();
+    let req = ProposeClaim {
+        object: obj.clone(),
+        fingerprint: SchemaFingerprint::from_parts(1, &"0".repeat(64)).unwrap(),
+        payload: ClaimPayload::table_description("the orders table").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Candidate,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    let id = match store.propose_claim(req).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+
+    let confirmed = confirm(&store, &id).await.unwrap();
+    assert_eq!(confirmed.status, ClaimStatus::Confirmed);
+
+    let _ = fs::remove_dir_all(root);
+}
