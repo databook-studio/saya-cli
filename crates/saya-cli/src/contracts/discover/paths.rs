@@ -136,8 +136,10 @@ pub(crate) fn open_regular(candidate: &Candidate) -> io::Result<Option<(fs::File
 
 /// True if `child` is `root` or below it, by canonical-path components. This
 /// is the check that `..` and escaping symlinks cannot defeat: we compare
-/// canonical components, not a string prefix.
-fn contains(root: &Path, child: &Path) -> bool {
+/// canonical components, not a string prefix. Reused by the export *write*
+/// side (slice 6b, see `contracts::io::write`) so reading and writing share
+/// one containment check rather than two.
+pub(crate) fn contains(root: &Path, child: &Path) -> bool {
     // `starts_with` on `Path` compares components, not bytes, so `a/b` does
     // not wrongly contain `a/bc`. Both paths are canonical (absolute, no
     // `..`, symlinks resolved), so this is a real containment test.

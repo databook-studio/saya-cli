@@ -12,7 +12,7 @@ use saya_cli::{
 };
 use saya_store::{
     ClaimEvidence, ContractStore, EvidenceKind, ProposeClaim, ProposeOutcome, SchemaStore,
-    SqliteStateStore,
+    SqliteStateStore, object_id,
 };
 use saya_types::{
     ClaimOrigin, ClaimStatus, Column, ColumnRole, Database, DatabaseObjectKind, DatabaseObjectRef,
@@ -114,6 +114,15 @@ fn object_ref(runtime: &RuntimeConfig, table: &str) -> DatabaseObjectRef {
         DatabaseObjectKind::Table,
     )
     .unwrap()
+}
+
+/// The filename export writes for `object`: the encoded object identity
+/// (`o-<64 hex>.toml`), derived — not the raw qualified name. A database
+/// identifier is attacker-influenceable and may contain `/` or `..`, so the
+/// filename is built from the filesystem-safe encoded identity and the
+/// qualified name lives inside the file as data. See the export-escape P1.
+fn export_filename(object: &DatabaseObjectRef) -> String {
+    format!("{}.toml", object_id(object))
 }
 
 /// Seed a confirmed claim straight through the store, with optional evidence.
@@ -436,7 +445,8 @@ async fn export_then_import_round_trips() {
     let (code, out, err) = run(export, &runtime_src, &store_src, RenderFormat::Text).await;
     assert_eq!(code, 0, "export stderr: {err}");
     assert!(out.contains("exported"), "export out: {out}");
-    assert!(dest.join("analytics.public.orders.toml").exists());
+    let orders = object_ref(&runtime_src, "orders");
+    assert!(dest.join(export_filename(&orders)).exists());
 
     let import = ContractsCommand::Import {
         path: dst.clone(),
@@ -521,7 +531,7 @@ async fn export_leaks_no_identity_evidence_or_absolute_path() {
     };
     let (code, out, err) = run(export, &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "export stderr: {err}");
-    let file = dest.join("analytics.public.orders.toml");
+    let file = dest.join(export_filename(&object_ref(&runtime, "orders")));
     let bytes = fs::read_to_string(&file).unwrap();
 
     let identity = identity_for(&runtime, "local");
@@ -597,12 +607,14 @@ async fn export_writes_confirmed_only_candidate_absent() {
     };
     let (code, out, err) = run(export, &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "export stderr: {err}");
-    assert!(dest.join("analytics.public.orders.toml").exists());
+    let orders = object_ref(&runtime, "orders");
+    let candidates = object_ref(&runtime, "candidates");
+    assert!(dest.join(export_filename(&orders)).exists());
     assert!(
-        !dest.join("analytics.public.candidates.toml").exists(),
+        !dest.join(export_filename(&candidates)).exists(),
         "a candidate must not be exported: {out}"
     );
-    let orders_bytes = fs::read_to_string(dest.join("analytics.public.orders.toml")).unwrap();
+    let orders_bytes = fs::read_to_string(dest.join(export_filename(&orders))).unwrap();
     assert!(
         !orders_bytes.contains("cand"),
         "candidate value leaked into another object's file: {orders_bytes}"

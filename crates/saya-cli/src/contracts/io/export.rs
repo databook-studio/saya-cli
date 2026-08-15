@@ -6,10 +6,24 @@
 //! [`super::render`]), and writes one file per object atomically (see
 //! [`super::write`]). Confirmed claims only — a candidate is an unreviewed
 //! guess and exporting it would launder it into a file someone else will trust.
+//!
+//! # Filename is derived, not copied (P1: export escape)
+//!
+//! The export filename is built from the encoded object identity
+//! ([`object_id`], `o-<64 hex>`), never from the raw catalog/schema/object
+//! name. A database identifier is attacker-influenceable and `validate_name`
+//! permits `/`, `\`, `..` and absolute paths, so `destination.join(name)`
+//! with a raw name can discard the destination and land outside it. The
+//! encoded identity is filesystem-safe by construction — no separator, no
+//! `..`, no absolute prefix — so the join cannot escape. The object's
+//! qualified name still appears **inside** the file (`object = "..."`),
+//! where it is data, not a path. Containment is still verified at write time
+//! (see [`super::write`]) as defense in depth and to catch a symlinked
+//! destination honestly.
 
 use super::render::ExportObject;
 use crate::contracts::review::ContractOpError;
-use saya_store::{ContractStore, SqliteStateStore};
+use saya_store::{ContractStore, SqliteStateStore, object_id};
 use saya_types::{ClaimStatus, DatabaseObjectRef, ProfileIdentity};
 
 /// Export every confirmed claim bound to `identity` to one discovered-shape file
@@ -44,9 +58,11 @@ pub(crate) async fn export_contracts(
             // All claims were Relationship (or tombstones) — nothing to write.
             continue;
         };
+        // The filename is the encoded identity, not the raw qualified name —
+        // see the module docs. The write side canonicalises `destination` and
+        // verifies the target's resolved parent stays inside it.
         let path = destination.join(filename_for(&object.object));
-        super::write::write_atomic(&path, &body, overwrite)
-            .map_err(|_| ContractOpError::Unavailable)?;
+        super::write::write_atomic(&path, &body, overwrite)?;
         written.push(path);
     }
     Ok(ExportOutcome {
@@ -64,8 +80,12 @@ pub(crate) struct ExportOutcome {
     pub skipped_relationship: usize,
 }
 
+/// `o-<64 hex>.toml` — the encoded object identity, filesystem-safe by
+/// construction. Deriving the name (rather than copying the raw qualified name)
+/// is the load-bearing fix for the export-escape P1: a hostile catalog or
+/// object name containing `/` or `..` cannot reach the path at all.
 fn filename_for(object: &DatabaseObjectRef) -> String {
-    format!("{}.toml", object.qualified_name())
+    format!("{}.toml", object_id(object))
 }
 
 fn is_relationship(claim: &saya_store::StoredClaim) -> bool {

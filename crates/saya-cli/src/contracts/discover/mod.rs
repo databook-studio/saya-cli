@@ -39,6 +39,10 @@ pub(crate) use format::ParsedContract;
 pub(crate) use pass::discover_contracts;
 #[allow(unused_imports)]
 pub(crate) use paths::RootError;
+// The component-wise containment check the read side (6a) and the write side
+// (6b) share. `pub(crate)` so `contracts::io::write` can reuse it instead of a
+// second containment check — one path-safety primitive, both directions.
+pub(crate) use paths::contains;
 
 // Used only by tests to assert the claims-per-file cap; the bound itself is
 // enforced in `format::parse_file`.
