@@ -846,3 +846,144 @@ async fn queue_slash_and_headless_agree_on_claim_ids_and_order() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+// ---------------------------------------------------------------------------
+// 12. The TUI `/queue` adapter routes at the session's active profile, not the
+//     configured default. Regression for the P2 defect where `with_profile`
+//     (crates/saya-cli/src/interactive/tui/dispatch_actions.rs) fell through for
+//     `Queue`, so a `/queue` parsed to `Queue { profile: None }` reached the
+//     dispatcher un-stamped and resolved the configured default — reading another
+//     profile's candidates. The queue is where a human confirms a claim, so
+//     cross-profile isolation (an invariant with a named test in every layer
+//     beneath) must hold at the adapter too.
+//
+//     The slash path parses `/queue` to `Queue { profile: None }` (test 11); the
+//     TUI adapter's only addition is stamping the active profile onto that
+//     `None`. This test proves the stamp is what routes the queue: with the
+//     configured default set to `local` and a candidate seeded only under
+//     `staging` (the profile a `/connect staging` would have made active),
+//     `Queue { profile: Some("staging") }` — what the adapter now produces —
+//     lists the candidate, while the un-stamped `Queue { profile: None }` the
+//     broken adapter emitted resolves the default `local` and does not.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn tui_queue_routes_at_active_profile_not_configured_default() {
+    let root = temp_root("queue_active_profile");
+    // Two profiles; `local` is the configured default (via the `--profile` the
+    // headless harness sets on load). `staging` is the profile a `/connect`
+    // would have made active in the TUI — distinct from the default.
+    let local_db = root.join("local.sqlite3");
+    let staging_db = root.join("staging.sqlite3");
+    fs::write(&local_db, b"").unwrap();
+    fs::write(&staging_db, b"").unwrap();
+    let connections = root.join("connections.toml");
+    fs::write(
+        &connections,
+        format!(
+            "[profiles.local]\ntype = 'sqlite'\npath = '{}'\n\n\
+             [profiles.staging]\ntype = 'sqlite'\npath = '{}'\n",
+            local_db.display(),
+            staging_db.display(),
+        ),
+    )
+    .unwrap();
+    let options = saya_cli::GlobalOptions {
+        connections: Some(connections),
+        profile: Some("local".into()),
+        ..Default::default()
+    };
+    let runtime = load_with_sources(&options, &root, &root, BTreeMap::new()).unwrap();
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    // Migrate the pool and seed an (empty) cached schema for `staging` so its
+    // candidates classify against a real cache state, not a missing one.
+    let staging_identity = identity_for(&runtime, "staging");
+    store
+        .upsert_schema(&staging_identity, &SchemaTree::default())
+        .await
+        .unwrap();
+
+    // Seed one candidate under `staging` only, directly through the store.
+    let staging_profile = ProfileIdentity::parse(&staging_identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        staging_profile.clone(),
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    store
+        .propose_claim(ProposeClaim {
+            object: object.clone(),
+            fingerprint: unobserved_fingerprint(),
+            payload: ClaimPayload::table_alias("orders").unwrap(),
+            origin: ClaimOrigin::AssistantInferred,
+            initial_status: ClaimStatus::Candidate,
+            evidence: Some(saya_store::ClaimEvidence {
+                kind: saya_store::EvidenceKind::RepeatedObservation,
+                session_id: Some("s1".into()),
+                turn_ordinal: Some(0),
+                observed_unix_ms: 10_000,
+            }),
+            referenced_columns: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    // The adapter's output: the active profile (`staging`) stamped onto the
+    // `Queue { profile: None }` the slash parser produced. The candidate appears.
+    let (active_code, active_out, active_err) = run_headless(
+        ContractsCommand::Queue {
+            profile: Some("staging".into()),
+            limit: None,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_eq!(active_code, 0, "active queue stderr: {active_err}");
+    assert!(
+        active_out.contains("c-"),
+        "active (staging) queue should list the seeded candidate: {active_out}"
+    );
+
+    // The broken adapter's output: `Queue { profile: None }` un-stamped, which
+    // resolves the configured default (`local`). The candidate must NOT appear —
+    // it lives under `staging`. This is the divergence the stamp prevents.
+    let (default_code, default_out, default_err) = run_headless(
+        ContractsCommand::Queue {
+            profile: None,
+            limit: None,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_eq!(default_code, 0, "default queue stderr: {default_err}");
+    assert!(
+        !default_out.contains("c-"),
+        "un-stamped queue resolved the default (local) and must not show staging's \
+         candidate — the bug the adapter's stamp prevents: {default_out}"
+    );
+
+    // Sanity: the default profile is `local`, and its queue is empty too.
+    let (local_code, local_out, local_err) = run_headless(
+        ContractsCommand::Queue {
+            profile: Some("local".into()),
+            limit: None,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_eq!(local_code, 0, "local queue stderr: {local_err}");
+    assert!(
+        !local_out.contains("c-"),
+        "local queue should be empty: {local_out}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}

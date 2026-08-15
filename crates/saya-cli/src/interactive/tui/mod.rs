@@ -14,6 +14,7 @@ mod clipboard;
 mod complete;
 mod dispatch;
 mod dispatch_actions;
+mod dispatch_contracts;
 mod exec;
 mod export;
 mod fuzzy;

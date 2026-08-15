@@ -3,10 +3,8 @@
 //! results that would normally print to stdout are captured via `render_event`
 //! and pushed into the transcript instead.
 
-use super::dispatch_actions::{
-    list_sessions, resume, run_chart, run_contracts, run_explain, run_export, run_preferences,
-    run_sql,
-};
+use super::dispatch_actions::{list_sessions, resume, run_chart, run_explain, run_export, run_sql};
+use super::dispatch_contracts::{run_contracts, run_preferences};
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
 use crate::config::runtime::RuntimeConfig;
