@@ -8,7 +8,8 @@
 
 use super::{
     ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
-    RecallRequest, confirm, edit, forget, propose, recall, reject, schema_state_for, show,
+    RecallRequest, RetrievalPolicy, confirm, edit, forget, propose, recall, reject,
+    schema_state_for, show,
 };
 use saya_store::{
     ContractEventKind, ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore,
@@ -212,6 +213,10 @@ fn recall_request<'a>(
         // The existing recall tests model today's behaviour: confirmed only.
         // A test that needs `IncludeCandidates` builds its own request.
         recall_mode: RecallMode::Confirmed,
+        // The helper defaults to the model-facing policy so the existing tests
+        // exercise the same exclusion a real prompt recall applies. A test that
+        // wants the human-review path (stale kept) builds its own request.
+        policy: RetrievalPolicy::ForModel,
     }
 }
 
@@ -372,14 +377,22 @@ async fn bounds_hold_on_objects_claims_and_bytes() {
         .await;
     }
 
-    // max_objects = 2 over 3 matches -> exactly 2, truncated.
+    // max_objects = 2 over 3 matches -> exactly 2, truncated. All three orders
+    // objects are present in the live schema so each reads `current` -- this
+    // test is about bounds, not staleness, and a stale match would be dropped
+    // by the model-facing policy before the object bound applied,
+    // contaminating the count.
     let terms: Vec<String> = objs.iter().map(|o| o.object().to_string()).collect();
     let bounds = RecallBounds {
         max_objects: 2,
         max_claims_per_object: 12,
         max_bytes: 16384,
     };
-    let schema = schema_tree_for(&[("orders0", table(&[("id", "bigint", false)]))]);
+    let schema = schema_tree_for(&[
+        ("orders0", table(&[("id", "bigint", false)])),
+        ("orders1", table(&[("id", "bigint", false)])),
+        ("orders2", table(&[("id", "bigint", false)])),
+    ]);
     let outcome = recall(
         &store,
         recall_request(
@@ -1541,8 +1554,151 @@ async fn review_wrappers_pass_through_and_map_errors() {
     forget(&store, &id, ForgetReason::UserRequest)
         .await
         .unwrap();
-    let shown = show(&store, &obj, None).await.unwrap();
+    let shown = show(&store, &obj, None, RetrievalPolicy::ForHumanReview)
+        .await
+        .unwrap();
     assert!(shown.is_none(), "forgotten-only contract should show None");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5b-fix: the shared retrieval policy — computed-stale and the human path.
+// ---------------------------------------------------------------------------
+//
+// `show` and `recall` route their output through one policy (`retrieval`). A
+// contract computed `Stale` is dropped for the model and counted; kept for a
+// human reviewer with its state and reason. `NeedsReview` is never excluded —
+// only `Stale` is, and the two states must keep meaning different things.
+
+/// A confirmed `default_time_column` claim on `created_at`, made against a
+/// two-column table whose live schema then drops `created_at`, so the contract
+/// aggregates to `Stale` (computed, not persisted). The claim's status stays
+/// `Confirmed`; only the schema drifted.
+async fn seed_computed_stale(store: &SqliteStateStore, object: &DatabaseObjectRef) -> StoredClaim {
+    let full = table(&[("id", "bigint", false), ("created_at", "timestamp", false)]);
+    let claim = known_claim(
+        store,
+        object,
+        &full,
+        ClaimPayload::default_time_column("created_at").unwrap(),
+    )
+    .await;
+    // Live schema drops `created_at`; the claim's referenced column is gone.
+    let drifted = schema_tree_for(&[(object.object(), table(&[("id", "bigint", false)]))]);
+    store
+        .upsert_schema(object.profile().as_str(), &drifted)
+        .await
+        .unwrap();
+    claim
+}
+
+#[tokio::test]
+async fn show_keeps_a_stale_contract_with_state_and_claims_for_a_human() {
+    let root = temp_root("show_stale_human");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let claim = seed_computed_stale(&store, &obj).await;
+
+    // The human-review path: `show` keeps the stale contract, its `Stale`
+    // state, and the claim itself so a reviewer can act on it. The model path
+    // (`ForModel`) is what drops; `contracts show` is `ForHumanReview`.
+    let shown = show(
+        &store,
+        &obj,
+        Some(&schema_tree_for(&[(
+            "orders",
+            table(&[("id", "bigint", false)]),
+        )])),
+        RetrievalPolicy::ForHumanReview,
+    )
+    .await
+    .unwrap()
+    .expect("a stale contract is shown to a human, not hidden");
+    assert_eq!(
+        shown.schema_state,
+        ContractSchemaState::Stale,
+        "the state is reported as stale"
+    );
+    let ids: Vec<ClaimId> = shown.claims.iter().map(|c| c.id.clone()).collect();
+    assert!(
+        ids.contains(&claim.id),
+        "the stale claim is kept for a human reviewer, got {ids:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn show_for_model_drops_a_stale_contracts_claims_but_names_the_object() {
+    let root = temp_root("show_stale_model");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    seed_computed_stale(&store, &obj).await;
+
+    // The model-facing path: `contract_read` uses `ForModel`. The object is
+    // still named and reported `Stale`, but the gone-column claim is not handed
+    // to the model as a current fact.
+    let shown = show(
+        &store,
+        &obj,
+        Some(&schema_tree_for(&[(
+            "orders",
+            table(&[("id", "bigint", false)]),
+        )])),
+        RetrievalPolicy::ForModel,
+    )
+    .await
+    .unwrap()
+    .expect("the stale object is reported, not hidden");
+    assert_eq!(shown.schema_state, ContractSchemaState::Stale);
+    assert!(
+        shown.claims.is_empty(),
+        "no claims to act on for a stale object, got {}",
+        shown.claims.len()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn recall_for_model_counts_a_stale_exclusion() {
+    let root = temp_root("recall_stale_count");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    seed_computed_stale(&store, &obj).await;
+
+    // The model-facing recall path drops the computed-stale contract and
+    // counts it in `excluded_by_schema`, so a user can see why a fact they
+    // remembered stopped appearing — the exclusion is not silent.
+    let drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    let outcome = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), drifted)],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        outcome.contracts.len(),
+        0,
+        "the stale contract is dropped for the model"
+    );
+    assert!(
+        outcome.diagnostics.excluded_by_schema >= 1,
+        "the stale exclusion is counted: {:?}",
+        outcome.diagnostics
+    );
 
     let _ = fs::remove_dir_all(root);
 }

@@ -571,12 +571,23 @@ async fn injection_text_reaches_body_unmodified() {
 }
 
 // ---------------------------------------------------------------------------
-// Test (stale): a stale claim is included but plainly labelled
+// Test (stale): a computed-stale confirmed claim does NOT reach the model.
 // ---------------------------------------------------------------------------
+//
+// This replaces an earlier test that asserted the opposite — that a stale
+// claim was *included* in the block, plainly labelled. That assertion was the
+// bug: it is the exact behaviour `docs/memory.md` and ADR 0002 say must not
+// happen (a stale claim — a column it depends on is gone — read as a current
+// fact). The standards say never weaken an assertion to make a suite green;
+// this is the stated exception, with its reasoning: the old assertion encoded
+// the wrong behaviour, so keeping it would defend the bug. What was *right*
+// in the old test — that a stale claim is plainly labelled wherever a human
+// sees it — survives in the human-path tests (`contracts show`/queue), not
+// here: the model path excludes, the human path labels.
 
 #[tokio::test]
-async fn stale_claim_is_included_but_labelled_out_of_date() {
-    let root = temp_root("stale_label");
+async fn stale_claim_is_excluded_from_the_model_block() {
+    let root = temp_root("stale_excluded");
     let db = root.join("state.sqlite3");
     let identity = identity_for("analytics");
     let store = store_at(&db, &identity).await;
@@ -607,16 +618,78 @@ async fn stale_claim_is_included_but_labelled_out_of_date() {
         Some(&store),
     )
     .await;
-    assert_eq!(blocks.len(), 1, "stale claim is included, not excluded");
+    // A computed-stale contract is dropped for the model: no block at all, and
+    // the gone-column claim ("created_at") never reaches the body.
+    assert!(blocks.is_empty(), "stale claim must not reach the model");
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Test (needs_review): a needs_review claim still reaches the model, labelled.
+// ---------------------------------------------------------------------------
+//
+// The distinction that must survive: only computed `Stale` is excluded.
+// `NeedsReview` still reaches the model — if it were excluded too, a single
+// unrelated column added to a wide table would silently mute every claim on
+// that table, and `Stale` and `NeedsReview` would stop meaning different
+// things. Here the fingerprint moves (an unrelated column was added) but the
+// claim's own referenced column is untouched, so validity reads
+// `needs_review`, and the block still carries the claim.
+
+#[tokio::test]
+async fn needs_review_claim_still_reaches_the_model_labelled() {
+    let root = temp_root("needs_review_reaches");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let obj = object(&identity, "orders");
+
+    // The claim is made against the two-column table, then the live schema
+    // adds an *unrelated* column (`note`). The fingerprint moves, but
+    // `created_at` is still present and unchanged, so the claim reads
+    // `needs_review` (drift outside the claim's columns), not `stale`.
+    let fp = live_fingerprint(&table_named_with(
+        "orders",
+        &[("id", "bigint", false), ("created_at", "timestamp", false)],
+    ));
+    remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
+    let tree = schema_tree_with(
+        &identity,
+        "orders",
+        &[
+            ("id", "bigint", false),
+            ("created_at", "timestamp", false),
+            ("note", "text", true),
+        ],
+    );
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+
+    let registry = registry_for("analytics", &identity);
+    let blocks = recall_context_blocks(
+        "orders",
+        true,
+        RecallMode::Confirmed,
+        RecallBounds::defaults(),
+        &registry,
+        Some(&store),
+    )
+    .await;
+    assert_eq!(
+        blocks.len(),
+        1,
+        "needs_review claim still reaches the model"
+    );
     let body = &blocks[0].body;
     assert!(
         body.contains("created_at"),
-        "the stale column is still named"
+        "the needs_review claim is still named: {body}"
     );
-    assert!(body.contains("stale"));
     assert!(
-        body.contains("possibly out of date"),
-        "stale contract is plainly labelled"
+        body.contains("needs_review"),
+        "needs_review state is shown in-band: {body}"
     );
     let _ = fs::remove_dir_all(root);
 }

@@ -26,6 +26,11 @@ pub(super) const REASON_NO_IDENTITY: &str =
 pub(super) const REASON_STORE: &str = "local contract store is unavailable";
 pub(super) const REASON_NO_MATCH: &str = "no contract matches the given terms";
 pub(super) const REASON_NO_CONTRACT: &str = "no contract is stored for this object";
+/// Every match for the terms was a contract computed `Stale` — a column it
+/// depends on is gone — so the model-facing search dropped them all. Distinct
+/// from `REASON_NO_MATCH` so the model does not retry the same terms expecting a
+/// different answer, and so the exclusion is not silent.
+pub(super) const REASON_STALE: &str = "every matching contract is stale; refresh the schema";
 
 /// Serializes one object's contract for the model. The `ContractView` DTO has
 /// no field for the opaque identity, so neither does this payload.

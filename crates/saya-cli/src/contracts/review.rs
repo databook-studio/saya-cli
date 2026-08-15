@@ -7,6 +7,7 @@
 use thiserror::Error;
 
 use crate::contracts::conflict::conflicts_for;
+use crate::contracts::retrieval::RetrievalPolicy;
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::{ContractSchemaState, RetrievedContract};
 use saya_store::{
@@ -97,10 +98,20 @@ pub(crate) async fn forget(
 /// compared against each claim's stored fingerprint, so `show` reports
 /// `current` / `needs_review` / `stale` like the agent recall path, not a
 /// constant `LiveSchemaUnavailable`.
+///
+/// `policy` is the shared retrieval policy (see [`super::retrieval`]).
+/// [`RetrievalPolicy::ForModel`] — used by `contract_read` — does not hand the
+/// model a stale contract's claim *payloads*: when the aggregated state is
+/// `Stale` it returns a contract that still names the object and reports
+/// `schema_state: Stale` but carries **no claims**, so the model learns the
+/// object is stale without reading a gone-column claim as a current fact. The
+/// human `contracts show` path passes [`RetrievalPolicy::ForHumanReview`] and
+/// keeps the claims, the state and the reason.
 pub(crate) async fn show(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
     schema: Option<&SchemaTree>,
+    policy: RetrievalPolicy,
 ) -> Result<Option<RetrievedContract>, ContractOpError> {
     let claims = store.list_claims(object, &[]).await?;
     let recallable: Vec<StoredClaim> = claims
@@ -115,10 +126,21 @@ pub(crate) async fn show(
         .map(|c| schema_state_for(c, schema))
         .fold(ContractSchemaState::Current, |acc, s| acc.aggregate(s));
     let conflicts = conflicts_for(&recallable);
+    // The same policy `recall` applies: a model-facing caller does not receive a
+    // stale contract's claims. Unlike `recall` (which drops the contract and
+    // counts it) `show` returns the object with `Stale` and an empty claim list,
+    // so `contract_read` can tell the model *why* there is nothing to act on
+    // rather than silently returning an empty result.
+    let (claims, conflicts) =
+        if policy == RetrievalPolicy::ForModel && schema_state == ContractSchemaState::Stale {
+            (Vec::new(), Vec::new())
+        } else {
+            (recallable, conflicts)
+        };
     Ok(Some(RetrievedContract {
         object: object.clone(),
         schema_state,
-        claims: recallable,
+        claims,
         conflicts,
         truncated: false,
     }))

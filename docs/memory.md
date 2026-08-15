@@ -146,8 +146,9 @@ that against the live database:
 That last row matters: an unreachable database is not evidence that anything changed, and marking
 claims stale over a network blip would destroy knowledge you spent time building.
 
-Stale claims stop reaching the model and appear in `contracts queue` so you can confirm, edit or
-forget them.
+Stale claims stop reaching the model. They still appear in `contracts list` and `contracts show`
+so you can see what changed, and once reconciliation has marked one it surfaces in `contracts
+queue` for you to confirm, edit or forget.
 
 ## Contradictions
 

@@ -5,6 +5,12 @@
 //! the typed contracts. `max_bytes` is enforced over the serialized claim
 //! payloads actually selected, before returning, so a caller never receives
 //! more than it asked for.
+//!
+//! This module computes each contract's schema state (including `Stale`) and
+//! returns the contract regardless of state — it does **not** decide who sees
+//! it. That decision is [`super::retrieval`]'s: a `Stale` contract is dropped
+//! for the model and kept for human review, in one place rather than per
+//! adapter.
 
 use crate::contracts::conflict::conflicts_for;
 use crate::contracts::selection::Candidate;

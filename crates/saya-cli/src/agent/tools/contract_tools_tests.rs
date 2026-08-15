@@ -12,9 +12,9 @@ use saya_agent::{ToolError, ToolExecutor};
 use saya_connectors::DatabaseConnector;
 use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
 use saya_types::{
-    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, ConnectionError, DatabaseObjectKind,
-    DatabaseObjectRef, DatabaseProfile, ProfileIdentity, QueryRequest, QueryResult, SchemaTree,
-    SqlDialect,
+    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, ConnectionError, Database,
+    DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, ProfileIdentity, QueryRequest,
+    QueryResult, Schema, SchemaFingerprint, SchemaTree, SqlDialect, Table,
 };
 use std::{
     fs,
@@ -92,14 +92,54 @@ async fn store_at(db: &Path) -> SqliteStateStore {
     store
 }
 
+/// A one-column live table for `object`, so a claim stored under its
+/// fingerprint reads `current` (the fingerprint matches and `table_alias` /
+/// `table_description` claims reference no columns to drift). This keeps the
+/// fixture honest: these tests exercise confirmed-vs-candidate filtering,
+/// truncation and identity-leak — not staleness — so the claim must not be
+/// stale. Storing under the all-zero `unobserved_fingerprint` against an empty
+/// cached schema would compute `Stale`, which the model-facing policy now drops.
+fn current_table(object: &DatabaseObjectRef) -> Table {
+    Table {
+        name: object.object().to_string(),
+        columns: vec![Column {
+            name: "id".into(),
+            data_type: "bigint".into(),
+            nullable: false,
+        }],
+    }
+}
+
+/// Seeds a cached schema for `object`'s profile carrying `object`'s table, and
+/// returns that table's fingerprint — so a claim stored under it reads
+/// `current` against the cache. Called by the remember-helpers below.
+async fn seed_current(store: &SqliteStateStore, object: &DatabaseObjectRef) -> SchemaFingerprint {
+    let table = current_table(object);
+    let tree = SchemaTree {
+        databases: vec![Database {
+            name: object.catalog().to_string(),
+            schemas: vec![Schema {
+                name: object.schema().to_string(),
+                tables: vec![table.clone()],
+            }],
+        }],
+    };
+    store
+        .upsert_schema(object.profile().as_str(), &tree)
+        .await
+        .unwrap();
+    SchemaFingerprint::of_table(DatabaseObjectKind::Table, &table)
+}
+
 async fn remember_confirmed(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
     payload: ClaimPayload,
 ) -> ClaimId {
+    let fingerprint = seed_current(store, object).await;
     let request = ProposeClaim {
         object: object.clone(),
-        fingerprint: crate::commands::unobserved_fingerprint(),
+        fingerprint,
         payload,
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
@@ -117,9 +157,10 @@ async fn remember_candidate(
     object: &DatabaseObjectRef,
     payload: ClaimPayload,
 ) -> ClaimId {
+    let fingerprint = seed_current(store, object).await;
     let request = ProposeClaim {
         object: object.clone(),
-        fingerprint: crate::commands::unobserved_fingerprint(),
+        fingerprint,
         payload,
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
@@ -597,6 +638,173 @@ async fn contract_read_on_unknown_object_returns_empty_with_reason() {
         .and_then(|v| v.as_str())
         .expect("a short reason explains the empty result");
     assert!(!reason.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: a confirmed claim computed `stale` is dropped from contract_search,
+// and the result says so rather than silently returning an empty list.
+// ---------------------------------------------------------------------------
+
+/// Seeds a confirmed `default_time_column` claim on `object` whose referenced
+/// column (`created_at`) is then dropped from the live schema, so the contract
+/// aggregates to `stale`. Mirrors the recall-context stale fixture: the claim
+/// is *computed* stale (status still Confirmed), not persisted stale.
+async fn remember_confirmed_stale(store: &SqliteStateStore, object: &DatabaseObjectRef) {
+    let full = Table {
+        name: object.object().to_string(),
+        columns: vec![
+            Column {
+                name: "id".into(),
+                data_type: "bigint".into(),
+                nullable: false,
+            },
+            Column {
+                name: "created_at".into(),
+                data_type: "timestamp".into(),
+                nullable: false,
+            },
+        ],
+    };
+    let fp = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &full);
+    let payload = ClaimPayload::default_time_column("created_at").unwrap();
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fp,
+        referenced_columns: payload.referenced_column_name_snapshots(),
+        payload,
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+    };
+    match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(_) => {}
+        other => panic!("expected Stored, got {other:?}"),
+    }
+    // Live schema drops `created_at`; the claim's referenced column is gone.
+    let drifted = SchemaTree {
+        databases: vec![Database {
+            name: object.catalog().to_string(),
+            schemas: vec![Schema {
+                name: object.schema().to_string(),
+                tables: vec![Table {
+                    name: object.object().to_string(),
+                    columns: vec![Column {
+                        name: "id".into(),
+                        data_type: "bigint".into(),
+                        nullable: false,
+                    }],
+                }],
+            }],
+        }],
+    };
+    store
+        .upsert_schema(object.profile().as_str(), &drifted)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn contract_search_drops_a_stale_claim_and_says_so() {
+    let root = temp_root("search_stale");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let obj = object_ref(&identity, "orders");
+    remember_confirmed_stale(&store, &obj).await;
+
+    let tools = DatabaseTools::with_registry(
+        registry_with_primary("primary", &identity),
+        100,
+        true,
+        Some(store),
+    );
+    let res = tools
+        .execute("contract_search", serde_json::json!({"terms": ["orders"]}))
+        .await
+        .expect("contract_search should succeed");
+    // The stale contract is dropped for the model — no contracts array entries.
+    let contracts = res
+        .get("contracts")
+        .and_then(|v| v.as_array())
+        .expect("result carries a `contracts` array");
+    assert!(
+        contracts.is_empty(),
+        "stale contract must not appear: {res}"
+    );
+    // The result says *why* it is empty, so the model does not retry the same
+    // terms expecting a different answer.
+    let reason = res
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .expect("a stale exclusion carries a reason");
+    assert!(
+        reason.contains("stale"),
+        "reason names staleness, got: {reason}"
+    );
+    // The gone-column claim value never reaches the result.
+    let text = serde_json::to_string(&res).unwrap();
+    assert!(
+        !text.contains("created_at"),
+        "stale claim text must not leak: {text}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: contract_read on a stale object reports the object as stale and
+// returns no claims to act on.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn contract_read_on_a_stale_object_reports_stale_with_no_claims() {
+    let root = temp_root("read_stale");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let obj = object_ref(&identity, "orders");
+    remember_confirmed_stale(&store, &obj).await;
+
+    let tools = DatabaseTools::with_registry(
+        registry_with_primary("primary", &identity),
+        100,
+        true,
+        Some(store),
+    );
+    let res = tools
+        .execute(
+            "contract_read",
+            serde_json::json!({"table": "catalog.public.orders"}),
+        )
+        .await
+        .expect("contract_read should succeed");
+    // The object is reported as stale — the model learns the object is stale,
+    // not that no contract exists (which would be the same bug in a different
+    // hat).
+    let contract = res.get("contract").expect("contract object present: {res}");
+    assert_eq!(
+        contract["schema_state"], "stale",
+        "stale object is reported stale: {res}"
+    );
+    assert_eq!(
+        contract["object"], "catalog.public.orders",
+        "the stale object is named: {res}"
+    );
+    // And there are no claims to act on — the gone-column claim is not handed
+    // to the model as a current fact.
+    let claims = contract
+        .get("claims")
+        .and_then(|v| v.as_array())
+        .expect("claims array present");
+    assert!(
+        claims.is_empty(),
+        "no claims to act on for a stale object: {res}"
+    );
+    let text = serde_json::to_string(&res).unwrap();
+    assert!(
+        !text.contains("created_at"),
+        "stale claim text must not leak: {text}"
+    );
 
     let _ = fs::remove_dir_all(root);
 }

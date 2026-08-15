@@ -17,15 +17,17 @@ use saya_agent::ToolError;
 use saya_types::{DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity};
 
 use mapping::{
-    REASON_NO_CONTRACT, REASON_NO_IDENTITY, REASON_NO_MATCH, REASON_PRIVACY, REASON_STORE,
-    contract, contract_payload, contracts, empty_for, read_payload,
+    REASON_NO_CONTRACT, REASON_NO_IDENTITY, REASON_NO_MATCH, REASON_PRIVACY, REASON_STALE,
+    REASON_STORE, contract, contract_payload, contracts, empty_for, read_payload,
 };
 use validation::validate_arguments;
 
 use super::DatabaseTools;
+use crate::commands::cached_schema;
 use crate::contracts::args::parse_qualified;
-use crate::contracts::{RecallBounds, RecallMode, RecallRequest, recall, show as show_contract};
-use saya_store::SchemaStore;
+use crate::contracts::{
+    RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, recall, show as show_contract,
+};
 
 impl DatabaseTools {
     /// Dispatches a contract tool call: validates arguments, resolves the
@@ -87,12 +89,22 @@ impl DatabaseTools {
                     .collect()
             })
             .unwrap_or_default();
+        // Load the cached schema the way the CLI's read commands do, so the
+        // contract's staleness is *computed* — passing no schema and calling
+        // the result "not stale" is the same bug in a different hat. A missing
+        // cache stays `None` (the honest `live_schema_unavailable`), never
+        // fabricated into a tree that could read `current`.
+        let cached = cached_schema(store, identity).await;
+        let schemas = cached
+            .iter()
+            .map(|tree| (identity.clone(), tree.clone()))
+            .collect::<Vec<_>>();
         let request = RecallRequest {
             profiles: std::slice::from_ref(identity),
             explicit_refs: &[],
             terms: &terms,
             allow_database_context: true,
-            schemas: &[],
+            schemas: &schemas,
             bounds: RecallBounds::defaults(),
             // The agent's own search tool stays Confirmed-only: a candidate is
             // not an established fact, and surfacing one through a read tool the
@@ -100,6 +112,9 @@ impl DatabaseTools {
             // Candidates reach the model only through the context block (recall
             // mode), where the render layer labels them unconfirmed.
             recall_mode: RecallMode::Confirmed,
+            // A model-facing path: a contract computed `Stale` is dropped (and
+            // counted) so a gone-column claim never reads as a current fact.
+            policy: RetrievalPolicy::ForModel,
         };
         // Recall degrades a store failure to an empty outcome with a diagnostic;
         // surface the diagnostic as the reason so the model does not retry.
@@ -108,6 +123,12 @@ impl DatabaseTools {
             return Ok(empty(REASON_STORE));
         }
         if outcome.contracts.is_empty() {
+            // Distinguish "nothing matched" from "matched but every match was
+            // stale": a stale exclusion is non-silent, so the model does not
+            // retry the same terms expecting a different answer.
+            if outcome.diagnostics.excluded_by_schema > 0 {
+                return Ok(empty(REASON_STALE));
+            }
             return Ok(empty(REASON_NO_MATCH));
         }
         let payload: Vec<serde_json::Value> = outcome
@@ -144,13 +165,12 @@ impl DatabaseTools {
         // sees `current`/`needs_review`/`stale` — the same projection the CLI's
         // `show` renders — not a constant `live_schema_unavailable`. A missing
         // cache stays `None` (the honest answer), mirroring the CLI adapter.
-        let schema = store
-            .get_schema(identity.as_str())
-            .await
-            .ok()
-            .flatten()
-            .map(|cached| cached.schema);
-        match show_contract(store, &object, schema.as_ref()).await {
+        let schema = cached_schema(store, identity).await;
+        // `contract_read` is model-facing: `show` with `ForModel` returns a
+        // stale object with `schema_state: Stale` and **no claims**, so the
+        // model learns the object is stale without reading a gone-column claim
+        // as a current fact. The human `contracts show` path keeps the claims.
+        match show_contract(store, &object, schema.as_ref(), RetrievalPolicy::ForModel).await {
             Ok(Some(retrieved)) => Ok(contract(read_payload(&retrieved, profile_name))),
             Ok(None) => Ok(empty(REASON_NO_CONTRACT)),
             Err(_) => Ok(empty(REASON_STORE)),

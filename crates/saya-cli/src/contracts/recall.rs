@@ -1,6 +1,7 @@
 //! Recall: selecting and ranking contracts for an agent's context block.
 
 use crate::contracts::assemble::assemble;
+use crate::contracts::retrieval::{self, RetrievalPolicy};
 use crate::contracts::selection::select;
 use crate::contracts::view::{RecallDiagnostics, RecallOutcome};
 use saya_store::SqliteStateStore;
@@ -77,6 +78,13 @@ pub(crate) struct RecallRequest<'a> {
     /// behaviour); `IncludeCandidates` widens the filter so candidates reach
     /// the render layer to be shown labelled as unconfirmed.
     pub recall_mode: RecallMode,
+    /// Who the result is for. `ForModel` (the default) drops a contract whose
+    /// computed schema state is `Stale` and counts it in `excluded_by_schema`;
+    /// `ForHumanReview` keeps stale contracts so a human can act on them. The
+    /// default is `ForModel` because `recall` feeds prompt context and the
+    /// agent's `contract_search` — the human-facing `contracts list` opts into
+    /// `ForHumanReview`. See [`retrieval`] and [`RetrievalPolicy`].
+    pub policy: RetrievalPolicy,
 }
 
 /// Runs a recall against `store`. Store failure returns an empty outcome with
@@ -107,12 +115,15 @@ pub(crate) async fn recall(store: &SqliteStateStore, request: RecallRequest<'_>)
         return empty(diag);
     }
 
-    let contracts = assemble(
+    let assembled = assemble(
         &selection.candidates,
         request.schemas,
         request.bounds,
         &mut diag,
     );
+    // One policy, applied here for every recall caller: a contract computed
+    // `Stale` is dropped for `ForModel` (and counted), kept for `ForHumanReview`.
+    let contracts = retrieval::apply(assembled, request.policy, &mut diag);
     diag.selected = contracts.len();
     RecallOutcome {
         contracts,

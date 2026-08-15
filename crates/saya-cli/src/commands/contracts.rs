@@ -151,10 +151,11 @@ pub(crate) fn unobserved_fingerprint() -> SchemaFingerprint {
 /// `live_schema_unavailable`, while a cached-but-empty tree reads `stale`. A
 /// store read failure degrades to `None` — not a crash on a read path.
 ///
-/// Shared by the read commands (`list`/`show`) and the write command
-/// (`remember`), so every adapter that classifies a claim against the cached
-/// schema does it the same way — never a second lookup convention.
-pub(super) async fn cached_schema(
+/// Shared by the read commands (`list`/`show`), the write command (`remember`),
+/// and the agent contract tools (`contract_search`), so every adapter that
+/// classifies a claim against the cached schema does it the same way — never a
+/// second lookup convention.
+pub(crate) async fn cached_schema(
     store: &SqliteStateStore,
     identity: &ProfileIdentity,
 ) -> Option<SchemaTree> {

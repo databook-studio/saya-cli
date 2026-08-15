@@ -18,7 +18,9 @@ mod dispute;
 mod render;
 
 use crate::connection::ConnectionRegistry;
-use crate::contracts::{PromptTerms, RecallBounds, RecallMode, RecallRequest, recall, terms};
+use crate::contracts::{
+    PromptTerms, RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, recall, terms,
+};
 use saya_agent::ContextBlock;
 use saya_store::{SchemaStore, SqliteStateStore};
 use saya_types::{DatabaseObjectRef, ProfileIdentity, SchemaTree};
@@ -77,6 +79,10 @@ pub(crate) async fn recall_context_blocks(
         schemas: &schemas,
         bounds,
         recall_mode,
+        // This block is shown to the model, so a contract computed `Stale` is
+        // dropped (and counted) rather than read as a current fact. The
+        // human-facing `contracts list` is the path that keeps stale.
+        policy: RetrievalPolicy::ForModel,
     };
     let outcome = recall(store, request).await;
     // §4: store failure or nothing selected → no block, no error.

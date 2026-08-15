@@ -9,7 +9,8 @@ use crate::commands::output::{emit, failure_message, result};
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::args::parse_qualified;
 use crate::contracts::{
-    RecallBounds, RecallMode, RecallRequest, recall, review_queue, show as show_contract,
+    RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, recall, review_queue,
+    show as show_contract,
 };
 use crate::render::{RenderFormat, TerminalEvent};
 use saya_store::{ContractStore, SqliteStateStore};
@@ -62,6 +63,10 @@ pub(super) async fn list(
         // `contracts list` shows confirmed contracts — the review queue is the
         // view for candidates, so the list command does not widen to them.
         recall_mode: RecallMode::Confirmed,
+        // A human is reviewing; keep stale contracts so the list stays a true
+        // picture of what is stored. The model-facing recall path is the one
+        // that drops.
+        policy: RetrievalPolicy::ForHumanReview,
     };
     let outcome = recall(store, request).await;
     if outcome.diagnostics.store_unavailable {
@@ -104,7 +109,17 @@ pub(super) async fn show(
     // `show` classifies against the cached schema, the same source `list` uses;
     // a missing cache stays `None` (`live_schema_unavailable`).
     let cached_schema = cached_schema(store, &identity).await;
-    let retrieved = match show_contract(store, &object, cached_schema.as_ref()).await {
+    // `contracts show` is a human-review path: keep a stale contract, its
+    // fingerprints and the reason it is stale — that is what the reviewer is
+    // here to act on. The model-facing `contract_read` is the path that drops.
+    let retrieved = match show_contract(
+        store,
+        &object,
+        cached_schema.as_ref(),
+        RetrievalPolicy::ForHumanReview,
+    )
+    .await
+    {
         Ok(retrieved) => retrieved,
         Err(error) => return op_failure(error, format),
     };

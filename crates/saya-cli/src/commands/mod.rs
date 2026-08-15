@@ -23,6 +23,10 @@ pub(crate) use contracts::unobserved_fingerprint;
 // Re-exported `pub(crate)` so the agent contract tools reuse the single
 // identity-dropping `RetrievedContract → ContractView` mapping.
 pub(crate) use contracts::contract_view;
+// Re-exported `pub(crate)` so the agent contract tools load the cached schema
+// the same way the CLI read commands do — one schema-lookup convention, not a
+// second one that could disagree on "no cache" vs "empty cache".
+pub(crate) use contracts::cached_schema;
 
 pub async fn run(
     command: Command,

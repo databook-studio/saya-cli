@@ -13,6 +13,7 @@ pub(crate) mod io;
 mod queue;
 mod recall;
 mod reconcile;
+mod retrieval;
 mod review;
 mod selection;
 pub(crate) mod terms;
@@ -32,6 +33,8 @@ pub(crate) use queue::{QUEUE_DEFAULT_LIMIT, QueuedCandidate, review_queue};
 pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
 #[allow(unused_imports)]
 pub(crate) use reconcile::{ReconcileOutcome, reconcile};
+#[allow(unused_imports)]
+pub(crate) use retrieval::RetrievalPolicy;
 #[allow(unused_imports)]
 pub(crate) use review::{ContractOpError, confirm, edit, forget, propose, reject, show};
 // 6b import/export: the typed operations the `contracts import`/`export`
