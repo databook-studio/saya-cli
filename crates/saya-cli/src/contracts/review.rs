@@ -7,12 +7,13 @@
 use thiserror::Error;
 
 use crate::contracts::conflict::conflicts_for;
+use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::{ContractSchemaState, RetrievedContract};
 use saya_store::{
     ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SqliteStateStore, StoreError,
     StoredClaim,
 };
-use saya_types::{ClaimId, ClaimPayload, DatabaseObjectRef, SchemaFingerprint};
+use saya_types::{ClaimId, ClaimPayload, DatabaseObjectRef, SchemaTree};
 
 /// Adapter-facing review errors. Payload-free, mapping [`StoreError`] so a store
 /// variant added later does not silently become an unhandled case in an adapter.
@@ -87,12 +88,19 @@ pub(crate) async fn forget(
 
 /// Assembles one object's contract for display: its recallable claims, their
 /// conflicts, and a schema state. Returns `None` when no recallable claim
-/// remains. `show` has no live schema to compare against, so the state is
-/// `LiveSchemaUnavailable`; a later slice with a live tree recomputes it.
+/// remains.
+///
+/// `schema` is the cached live schema for the object's profile, or `None` when
+/// no schema is cached. The state is the worst verdict across the kept claims —
+/// the same aggregation `recall` uses (`ContractSchemaState::aggregate`). A
+/// missing cache honestly reads `LiveSchemaUnavailable`; a cached tree is
+/// compared against each claim's stored fingerprint, so `show` reports
+/// `current` / `needs_review` / `stale` like the agent recall path, not a
+/// constant `LiveSchemaUnavailable`.
 pub(crate) async fn show(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
-    _fingerprint: &SchemaFingerprint,
+    schema: Option<&SchemaTree>,
 ) -> Result<Option<RetrievedContract>, ContractOpError> {
     let claims = store.list_claims(object, &[]).await?;
     let recallable: Vec<StoredClaim> = claims
@@ -102,10 +110,14 @@ pub(crate) async fn show(
     if recallable.is_empty() {
         return Ok(None);
     }
+    let schema_state = recallable
+        .iter()
+        .map(|c| schema_state_for(c, schema))
+        .fold(ContractSchemaState::Current, |acc, s| acc.aggregate(s));
     let conflicts = conflicts_for(&recallable);
     Ok(Some(RetrievedContract {
         object: object.clone(),
-        schema_state: ContractSchemaState::LiveSchemaUnavailable,
+        schema_state,
         claims: recallable,
         conflicts,
         truncated: false,

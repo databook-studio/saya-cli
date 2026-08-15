@@ -4,7 +4,7 @@
 
 use super::contracts_map::contract_view;
 use super::contracts_profile::resolve_profile;
-use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, op_failure, unobserved_fingerprint};
+use super::{ArgMessage, EXIT_CONTRACT_ERROR, arg_failure, op_failure};
 use crate::commands::output::{emit, failure_message, result};
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::args::parse_qualified;
@@ -12,8 +12,8 @@ use crate::contracts::{
     RecallBounds, RecallMode, RecallRequest, recall, review_queue, show as show_contract,
 };
 use crate::render::{RenderFormat, TerminalEvent};
-use saya_store::{ContractStore, SqliteStateStore};
-use saya_types::{DatabaseObjectKind, DatabaseObjectRef};
+use saya_store::{ContractStore, SchemaStore, SqliteStateStore};
+use saya_types::{DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity, SchemaTree};
 
 // An unreadable store is not an empty store. `list` exits non-zero so "you have
 // no contracts" and "I could not read your contracts" stay distinguishable —
@@ -42,6 +42,14 @@ pub(super) async fn list(
         }
     };
     let explicit_refs: Vec<DatabaseObjectRef> = objects.iter().map(|o| o.object.clone()).collect();
+    // The cached schema classifies each claim — what `connection schema
+    // --refresh` wrote. A missing cache stays `None` so the honest
+    // `live_schema_unavailable` is preserved, not fabricated into `current`.
+    let cached_schema = cached_schema(store, &identity).await;
+    let schemas = cached_schema
+        .iter()
+        .map(|tree| (identity.clone(), tree.clone()))
+        .collect::<Vec<_>>();
     let request = RecallRequest {
         profiles: std::slice::from_ref(&identity),
         explicit_refs: &explicit_refs,
@@ -49,7 +57,7 @@ pub(super) async fn list(
         // The user is reading their own local store; nothing is sent to a
         // provider, so the database-context privacy gate does not apply here.
         allow_database_context: true,
-        schemas: &[],
+        schemas: &schemas,
         bounds: RecallBounds::defaults(),
         // `contracts list` shows confirmed contracts — the review queue is the
         // view for candidates, so the list command does not widen to them.
@@ -84,7 +92,7 @@ pub(super) async fn show(
         Err(_) => return arg_failure(ArgMessage::MalformedTable, format),
     };
     let object = match DatabaseObjectRef::new(
-        identity,
+        identity.clone(),
         &qualified.catalog,
         &qualified.schema,
         &qualified.object,
@@ -93,7 +101,10 @@ pub(super) async fn show(
         Ok(object) => object,
         Err(_) => return arg_failure(ArgMessage::MalformedTable, format),
     };
-    let retrieved = match show_contract(store, &object, &unobserved_fingerprint()).await {
+    // `show` classifies against the cached schema, the same source `list` uses;
+    // a missing cache stays `None` (`live_schema_unavailable`).
+    let cached_schema = cached_schema(store, &identity).await;
+    let retrieved = match show_contract(store, &object, cached_schema.as_ref()).await {
         Ok(retrieved) => retrieved,
         Err(error) => return op_failure(error, format),
     };
@@ -114,10 +125,11 @@ pub(super) async fn show(
 
 /// The candidate review queue. Resolves a profile, lists its candidates, and
 /// renders them with the schema state and evidence count a reviewer needs. The
-/// headless adapter has no live schema, so each candidate reads
-/// `live_schema_unavailable` — the same posture as `show`'s
-/// `LiveSchemaUnavailable`. An unreadable store exits non-zero, matching `list`
-/// so "no candidates" and "could not read your candidates" stay distinguishable.
+/// queue does not load the cached schema (candidates read
+/// `live_schema_unavailable`); `list` and `show` do, and report
+/// `current`/`needs_review`/`stale`. An unreadable store exits non-zero, matching
+/// `list` so "no candidates" and "could not read your candidates" stay
+/// distinguishable.
 pub(super) async fn queue(
     store: &SqliteStateStore,
     runtime: &RuntimeConfig,
@@ -142,4 +154,19 @@ pub(super) async fn queue(
         .collect();
     emit(TerminalEvent::ContractQueue { items }, format);
     Ok(0)
+}
+
+/// The cached schema for `identity`, or `None` when nothing is cached. Mirrors
+/// the agent recall path's `SchemaStore::get_schema` lookup, but without the
+/// `.unwrap_or_default()` that collapses "no cache" onto an empty tree: a
+/// missing cache stays `None` so validity reads the honest
+/// `live_schema_unavailable`, while a cached-but-empty tree reads `stale`. A
+/// store read failure degrades to `None` — not a crash on this read path.
+async fn cached_schema(store: &SqliteStateStore, identity: &ProfileIdentity) -> Option<SchemaTree> {
+    store
+        .get_schema(identity.as_str())
+        .await
+        .ok()
+        .flatten()
+        .map(|cached| cached.schema)
 }

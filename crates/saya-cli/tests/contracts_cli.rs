@@ -13,8 +13,8 @@ use saya_cli::{
 };
 use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
 use saya_types::{
-    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef,
-    ProfileIdentity, SchemaFingerprint, SchemaTree,
+    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, Database, DatabaseObjectKind,
+    DatabaseObjectRef, ProfileIdentity, Schema, SchemaFingerprint, SchemaTree, Table,
 };
 use std::{
     collections::BTreeMap,
@@ -811,6 +811,157 @@ async fn queue_unopenable_store_exits_nonzero_like_list() {
     assert_eq!(qcode, lcode, "queue exit diverged from list");
     assert_eq!(qout, lout, "queue stdout diverged from list");
     assert_eq!(qerr, lerr, "queue stderr diverged from list");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// 12. `contracts list` / `show` report schema state from the cached schema,
+//     not a constant `live_schema_unavailable`. Regression for a bug found by
+//     exercising the built binary: both commands passed `schemas: &[]` (list)
+//     and `unobserved_fingerprint()` (show) and never loaded the cached schema,
+//     so validity could only ever compute LiveSchemaUnavailable — even right
+//     after a `connection schema --refresh` that populated the cache. Every
+//     unit test built the schemas explicitly, so no test caught it.
+//
+//     The claim is seeded with the *real* fingerprint of the cached table (not
+//     the unobserved sentinel `remember` stores), so a matching cache reads
+//     `current`. When no schema is cached, `live_schema_unavailable` stays the
+//     honest answer — that path is asserted too, so the fix cannot regress to
+//     fabricating `current` from an empty cache.
+// ---------------------------------------------------------------------------
+fn orders_table() -> Table {
+    Table {
+        name: "orders".into(),
+        columns: vec![Column {
+            name: "id".into(),
+            data_type: "bigint".into(),
+            nullable: false,
+        }],
+    }
+}
+
+fn orders_schema() -> SchemaTree {
+    SchemaTree {
+        databases: vec![Database {
+            name: "analytics".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![orders_table()],
+            }],
+        }],
+    }
+}
+
+/// Seeds a confirmed claim whose stored fingerprint *equals* the cached
+/// table's, so a matching cache classifies it `current`. `remember` would
+/// store the unobserved all-zeros sentinel, which never equals a real digest
+/// and so could only ever read `needs_review` against a live table — not
+/// enough to prove the bug is fixed.
+async fn seed_current_claim(store: &SqliteStateStore, runtime: &RuntimeConfig) {
+    let identity = identity_for(runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let fingerprint = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &orders_table());
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint,
+        payload: ClaimPayload::table_alias("orders").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(_) => {}
+        other => panic!("expected Stored, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn list_and_show_report_current_against_a_cached_schema() {
+    let root = temp_root("list_show_cached_schema_state");
+    let (runtime, _c, _n) = runtime_at(&root);
+    let store = store_at(&root).await;
+    seed_current_claim(&store, &runtime).await;
+    // Cache the schema that matches the seeded claim — what
+    // `connection schema <profile> --refresh` would have written.
+    let identity = identity_for(&runtime, "local");
+    store
+        .upsert_schema(&identity, &orders_schema())
+        .await
+        .unwrap();
+
+    // `list` must report `current`, not `live_schema_unavailable`.
+    let list = ContractsCommand::List { profile: None };
+    let (code, out, err) = run(list, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "list stderr: {err}");
+    assert!(
+        out.contains("[current]"),
+        "list must report current against the cached schema: {out}"
+    );
+    assert!(
+        !out.contains("live_schema_unavailable"),
+        "list must not report live_schema_unavailable when a schema is cached: {out}"
+    );
+
+    // `show` must report `current` for the same reason.
+    let show = ContractsCommand::Show {
+        table: qualified().into(),
+        profile: None,
+    };
+    let (code, out, err) = run(show, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "show stderr: {err}");
+    assert!(
+        out.contains("[current]"),
+        "show must report current against the cached schema: {out}"
+    );
+    assert!(
+        !out.contains("live_schema_unavailable"),
+        "show must not report live_schema_unavailable when a schema is cached: {out}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn list_and_show_report_live_schema_unavailable_when_nothing_is_cached() {
+    let root = temp_root("list_show_no_cache");
+    let (runtime, _c, _n) = runtime_at(&root);
+    // A store whose only cached schema is the empty default `store_at` writes
+    // for *its* profile — invalidate it so there is genuinely no cache.
+    let store = store_at(&root).await;
+    let identity = identity_for(&runtime, "local");
+    store.invalidate_schema(&identity).await.unwrap();
+    seed_current_claim(&store, &runtime).await;
+
+    // With no cached schema, `live_schema_unavailable` is the honest answer —
+    // not a fallback the fix fabricates a `current` from.
+    let list = ContractsCommand::List { profile: None };
+    let (code, out, err) = run(list, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "list stderr: {err}");
+    assert!(
+        out.contains("live_schema_unavailable"),
+        "list must report live_schema_unavailable when no schema is cached: {out}"
+    );
+
+    let show = ContractsCommand::Show {
+        table: qualified().into(),
+        profile: None,
+    };
+    let (code, out, err) = run(show, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "show stderr: {err}");
+    assert!(
+        out.contains("live_schema_unavailable"),
+        "show must report live_schema_unavailable when no schema is cached: {out}"
+    );
 
     let _ = fs::remove_dir_all(root);
 }

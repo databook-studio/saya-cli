@@ -1541,7 +1541,7 @@ async fn review_wrappers_pass_through_and_map_errors() {
     forget(&store, &id, ForgetReason::UserRequest)
         .await
         .unwrap();
-    let shown = show(&store, &obj, &fp).await.unwrap();
+    let shown = show(&store, &obj, None).await.unwrap();
     assert!(shown.is_none(), "forgotten-only contract should show None");
 
     let _ = fs::remove_dir_all(root);

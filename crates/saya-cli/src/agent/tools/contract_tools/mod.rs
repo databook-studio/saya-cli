@@ -23,9 +23,9 @@ use mapping::{
 use validation::validate_arguments;
 
 use super::DatabaseTools;
-use crate::commands::unobserved_fingerprint;
 use crate::contracts::args::parse_qualified;
 use crate::contracts::{RecallBounds, RecallMode, RecallRequest, recall, show as show_contract};
+use saya_store::SchemaStore;
 
 impl DatabaseTools {
     /// Dispatches a contract tool call: validates arguments, resolves the
@@ -140,7 +140,17 @@ impl DatabaseTools {
         )
         .map_err(|_| ToolError::InvalidQueryArguments)?;
 
-        match show_contract(store, &object, &unobserved_fingerprint()).await {
+        // The cached schema for the profile classifies the claim, so the model
+        // sees `current`/`needs_review`/`stale` — the same projection the CLI's
+        // `show` renders — not a constant `live_schema_unavailable`. A missing
+        // cache stays `None` (the honest answer), mirroring the CLI adapter.
+        let schema = store
+            .get_schema(identity.as_str())
+            .await
+            .ok()
+            .flatten()
+            .map(|cached| cached.schema);
+        match show_contract(store, &object, schema.as_ref()).await {
             Ok(Some(retrieved)) => Ok(contract(read_payload(&retrieved, profile_name))),
             Ok(None) => Ok(empty(REASON_NO_CONTRACT)),
             Err(_) => Ok(empty(REASON_STORE)),
