@@ -13,7 +13,7 @@ use crate::contracts::review::ContractOpError;
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::ContractSchemaState;
 use saya_store::{ContractStore, SqliteStateStore};
-use saya_types::{ClaimStatus, ProfileIdentity, SchemaTree};
+use saya_types::{ClaimId, ClaimStatus, ProfileIdentity, SchemaTree};
 
 /// The most claims one pass will examine. A bound keeps an explicit refresh's
 /// cost predictable; the pass truncates and reports when more examinable claims
@@ -21,6 +21,7 @@ use saya_types::{ClaimStatus, ProfileIdentity, SchemaTree};
 /// counted but never consume it.
 const RECONCILE_MAX_CLAIMS: usize = 1000;
 
+#[derive(Debug)]
 pub(crate) struct ReconcileOutcome {
     pub examined: usize,
     pub marked_stale: usize,
@@ -46,13 +47,20 @@ impl ReconcileOutcome {
 
 /// Runs the 5b rule over every `Candidate`/`Confirmed` claim of `profiles`
 /// against the supplied live `schemas`, and persists `Stale` (and only `Stale`)
-/// via the existing `mark_stale`. A profile absent from `schemas` is skipped —
-/// its claims are counted in `skipped_unavailable` and never marked.
+/// in a single batched transaction. A profile absent from `schemas` is skipped
+/// — its claims are counted in `skipped_unavailable` and never marked.
 ///
 /// Idempotent: a claim already `Stale` is not `Candidate`/`Confirmed`, so a
-/// second pass does not re-examine it (and `mark_stale` on an already-stale
-/// claim is a `Conflict` that a naive re-run would hit). One claim failing to
-/// transition does not abort the run — it is counted as examined and skipped.
+/// second pass does not re-examine it (and the batch's legal check skips an
+/// already-stale claim rather than hitting a `Conflict`). One claim failing to
+/// transition does not abort the run — it is counted as examined and not marked.
+///
+/// Examination uses one [`ContractStore::list_claims_for_profile`] per profile
+/// (not one `list_claims` per object), and the claims that compute `Stale` are
+/// marked in one [`ContractStore::mark_stale_batch`] transaction — every
+/// transition and its audit event commit together, so a store error rolls the
+/// whole batch back and leaves no partial state where the per-claim path left
+/// earlier claims already committed.
 pub(crate) async fn reconcile(
     store: &SqliteStateStore,
     profiles: &[ProfileIdentity],
@@ -64,6 +72,7 @@ pub(crate) async fn reconcile(
         skipped_unavailable: 0,
         truncated: false,
     };
+    let mut to_mark: Vec<ClaimId> = Vec::new();
     for profile in profiles {
         let live = live_schema(schemas, profile);
         // Reconcile is handed a live schema just fetched from the connector,
@@ -71,44 +80,48 @@ pub(crate) async fn reconcile(
         // age-gated. Built once per profile (not per claim) so a large tree is
         // not cloned for every claim in the pass.
         let availability = live.map(|schema| SchemaAvailability::available(schema.clone(), 0));
-        for object in store.list_objects(profile).await? {
-            for claim in store.list_claims(&object.object, &[]).await? {
-                // Only Candidate/Confirmed are re-examined. Rejected, Forgotten
-                // and already-Stale claims are left alone — the last is why a
-                // second pass is a no-op rather than a `Conflict` storm.
-                if !matches!(
-                    claim.status,
-                    ClaimStatus::Candidate | ClaimStatus::Confirmed
-                ) {
-                    continue;
-                }
-                let Some(availability) = availability.as_ref() else {
-                    // No live schema for this profile: we could not look, so we
-                    // must not mark. The claim is counted as skipped, not
-                    // examined, and never touches the bound.
-                    outcome.skipped_unavailable += 1;
-                    continue;
-                };
-                if outcome.examined >= RECONCILE_MAX_CLAIMS {
-                    // An examinable claim we cannot look at without exceeding the
-                    // bound. The pass was truncated of real work — report it and
-                    // stop, leaving this and later claims for a future pass.
-                    outcome.truncated = true;
-                    return Ok(outcome);
-                }
-                outcome.examined += 1;
-                if schema_state_for(&claim, availability, SchemaFreshness::Unbounded)
-                    == ContractSchemaState::Stale
-                    && store.mark_stale(&claim.id).await.is_ok()
-                {
-                    // `mark_stale` can only Conflict if the status changed
-                    // between the snapshot and the mark (a race); either way the
-                    // run continues. Counted as examined, not marked, on failure.
-                    outcome.marked_stale += 1;
-                }
+        for claim in store.list_claims_for_profile(profile).await? {
+            // Only Candidate/Confirmed are re-examined. Rejected, Forgotten
+            // and already-Stale claims are left alone — the last is why a
+            // second pass is a no-op rather than a `Conflict` storm.
+            if !matches!(
+                claim.status,
+                ClaimStatus::Candidate | ClaimStatus::Confirmed
+            ) {
+                continue;
+            }
+            let Some(availability) = availability.as_ref() else {
+                // No live schema for this profile: we could not look, so we
+                // must not mark. The claim is counted as skipped, not
+                // examined, and never touches the bound.
+                outcome.skipped_unavailable += 1;
+                continue;
+            };
+            if outcome.examined >= RECONCILE_MAX_CLAIMS {
+                // An examinable claim we cannot look at without exceeding the
+                // bound. The pass was truncated of real work — report it and
+                // stop collecting, leaving this and later claims for a future
+                // pass. The claims already collected still get marked below.
+                outcome.truncated = true;
+                break;
+            }
+            outcome.examined += 1;
+            if schema_state_for(&claim, availability, SchemaFreshness::Unbounded)
+                == ContractSchemaState::Stale
+            {
+                to_mark.push(claim.id);
             }
         }
+        if outcome.truncated {
+            break;
+        }
     }
+    // One transaction for every Stale verdict the pass collected. A claim
+    // raced out of the legal set between snapshot and mark is skipped by the
+    // batch (counted as examined, not marked), exactly as the per-claim
+    // `mark_stale` would have refused with `Conflict`. A store error rolls the
+    // whole batch back and surfaces — no partial state.
+    outcome.marked_stale = store.mark_stale_batch(&to_mark).await?;
     Ok(outcome)
 }
 

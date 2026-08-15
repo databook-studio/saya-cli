@@ -16,6 +16,7 @@
 use crate::contracts::availability::SchemaAvailability;
 use saya_store::{ContractStore, SqliteStateStore, StoredClaim, StoredObject};
 use saya_types::{ClaimPayload, DatabaseObjectRef, ProfileIdentity};
+use std::collections::HashMap;
 
 /// One object's recallable claims plus the live schema for its profile and the
 /// `last_seen` stamp used only as a tie-breaker.
@@ -34,6 +35,14 @@ pub(crate) struct Selection {
 
 /// Builds the ranked candidate list for `request` against `store`. Returns the
 /// selection untouched by bounds or privacy — the caller applies those.
+///
+/// Two store round trips per profile, not one per object: a single
+/// [`ContractStore::list_claims_for_profile`] fetches every claim of a profile,
+/// and the objects come from [`ContractStore::list_objects`]. Claims are grouped
+/// by object and filtered by recall mode in Rust — `best_tier` scores from the
+/// decoded payload text, so selection cannot filter before decoding, and the
+/// `excluded_by_status` count depends on the full claim set (an object whose
+/// claims are all non-admitted reads the same as one with none).
 pub(crate) async fn select(
     store: &SqliteStateStore,
     request: &super::RecallRequest<'_>,
@@ -41,20 +50,26 @@ pub(crate) async fn select(
 ) -> Result<Selection, saya_store::StoreError> {
     let active: Vec<StoredObject> = collect_objects(store, request.profiles).await?;
     let considered = active.len();
+    let claims_by_object = collect_claims(store, request.profiles).await?;
 
     let mut by_object: Vec<Candidate> = Vec::new();
     let mut excluded_by_status = 0usize;
     for obj in &active {
-        let all = store.list_claims(&obj.object, &[]).await?;
-        let recallable: Vec<StoredClaim> = all
-            .into_iter()
-            .filter(|c| request.recall_mode.admits(c.status))
-            .collect();
+        let all = claims_by_object.get(&obj.object);
+        let recallable: Vec<StoredClaim> = match all {
+            Some(claims) => claims
+                .iter()
+                .filter(|c| request.recall_mode.admits(c.status))
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        };
         if recallable.is_empty() {
             // The object has claims but none are admitted by this mode — under
             // `Confirmed` every one was a candidate/rejected/stale/contradicted/
             // forgotten; under `IncludeCandidates` it had none of confirmed or
-            // candidate.
+            // candidate. An object with no claims at all lands here too: the
+            // count matches the per-object loop it replaces.
             excluded_by_status += 1;
             continue;
         }
@@ -102,6 +117,27 @@ async fn collect_objects(
         out.extend(store.list_objects(profile).await?);
     }
     Ok(out)
+}
+
+/// Every claim of every active profile, grouped by object — one
+/// `list_claims_for_profile` per profile rather than one `list_claims` per
+/// object. The grouping key is the decoded [`DatabaseObjectRef`], the same value
+/// `StoredObject.object` carries, so the object loop looks up its claims without
+/// re-deriving the store's object id.
+async fn collect_claims(
+    store: &SqliteStateStore,
+    profiles: &[ProfileIdentity],
+) -> Result<HashMap<DatabaseObjectRef, Vec<StoredClaim>>, saya_store::StoreError> {
+    let mut by_object: HashMap<DatabaseObjectRef, Vec<StoredClaim>> = HashMap::new();
+    for profile in profiles {
+        for claim in store.list_claims_for_profile(profile).await? {
+            by_object
+                .entry(claim.object.clone())
+                .or_default()
+                .push(claim);
+        }
+    }
+    Ok(by_object)
 }
 
 fn best_tier(

@@ -4,6 +4,7 @@ mod keys;
 mod preferences;
 mod records;
 mod store;
+mod store_bulk;
 mod store_decode;
 mod store_reads;
 mod store_revise;

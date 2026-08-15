@@ -732,3 +732,147 @@ async fn forgetting_records_why_without_recording_what() {
     }
     let _ = fs::remove_dir_all(root);
 }
+
+// ---------------------------------------------------------------------------
+// P2: `mark_stale_batch` writes every transition and its audit event in one
+// transaction, so a failure after the first claim's `UPDATE`+`INSERT` have run
+// rolls the whole batch back. The first claim's status flip is undone — no
+// partial state. A per-claim-commit design would have committed that first
+// claim before the second failed, leaving it `Stale`.
+//
+// The failure is a `BEFORE INSERT` trigger on `contract_events` that raises
+// `FAIL` for one chosen claim id, so the first claim's audit INSERT succeeds
+// (inside the transaction) and the second's aborts it. The batch processes the
+// ids in the order passed, so passing `[first, second]` makes the failure
+// genuinely mid-batch.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn mark_stale_batch_rolls_back_on_a_mid_batch_failure() {
+    let root = temp_root("batch_rollback");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+
+    let object = object_ref(&profile_a(), "events");
+    let first =
+        propose_confirmed(&store, &object, ClaimPayload::table_alias("first").unwrap()).await;
+    let second = propose_confirmed(
+        &store,
+        &object,
+        ClaimPayload::table_alias("second").unwrap(),
+    )
+    .await;
+    // Each confirmed claim has one `Proposed` event before the batch runs.
+    let first_events_before = store.claim_events(&first, 100).await.unwrap().len();
+    let second_events_before = store.claim_events(&second, 100).await.unwrap().len();
+
+    // Fail the audit INSERT for the second claim only. The first claim's
+    // transition and event run inside the transaction before this fires.
+    use sqlx::Connection;
+    let options = SqliteConnectOptions::new().filename(&db);
+    let mut conn = sqlx::sqlite::SqliteConnection::connect_with(&options)
+        .await
+        .unwrap();
+    // A persistent trigger (not TEMP) lives in the database file, so the
+    // store's pooled connections see it too. `RAISE(FAIL)` aborts the statement
+    // and the transaction when the poisoned claim's event is inserted.
+    sqlx::query(&format!(
+        "CREATE TRIGGER fail_mid_batch BEFORE INSERT ON contract_events WHEN NEW.claim_id = '{}' BEGIN SELECT RAISE(FAIL, 'poisoned'); END",
+        second.as_str()
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    conn.close().await.unwrap();
+
+    // `[first, second]`: the batch marks `first` (UPDATE + INSERT succeed
+    // in-tx), then hits `second`'s INSERT and aborts. One transaction, so the
+    // rollback undoes `first`'s status flip as well.
+    let err = store
+        .mark_stale_batch(&[first.clone(), second.clone()])
+        .await
+        .unwrap_err();
+    assert_eq!(err, StoreError::Unavailable);
+
+    // Neither claim transitioned: `first`'s UPDATE ran but was rolled back.
+    assert_eq!(
+        store.get_claim(&first).await.unwrap().unwrap().status,
+        ClaimStatus::Confirmed,
+        "first was marked despite the batch rolling back — partial state"
+    );
+    assert_eq!(
+        store.get_claim(&second).await.unwrap().unwrap().status,
+        ClaimStatus::Confirmed,
+        "second was marked despite the batch aborting"
+    );
+    // No `MarkedStale` event survived: `first`'s event INSERT was undone by the
+    // same rollback that undid its status flip — transition and event moved
+    // together, or neither survived.
+    assert_eq!(
+        store.claim_events(&first, 100).await.unwrap().len(),
+        first_events_before,
+        "first gained an event despite the rollback"
+    );
+    assert_eq!(
+        store.claim_events(&second, 100).await.unwrap().len(),
+        second_events_before,
+        "second gained an event despite the abort"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// `mark_stale_batch` skips a claim raced out of the legal set (already Stale)
+// rather than aborting the batch, and still marks the rest — one failing claim
+// does not abort the run. The outcome count reflects only the legal marks.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn mark_stale_batch_skips_a_raced_claim_and_marks_the_rest() {
+    let root = temp_root("batch_skip_raced");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+
+    let object = object_ref(&profile_a(), "events");
+    let legal =
+        propose_confirmed(&store, &object, ClaimPayload::table_alias("legal").unwrap()).await;
+    let raced =
+        propose_confirmed(&store, &object, ClaimPayload::table_alias("raced").unwrap()).await;
+    // `raced` is already Stale before the batch runs — the legal check inside
+    // the batch must skip it (not `Conflict`, not abort) and mark `legal`.
+    store.mark_stale(&raced).await.unwrap();
+
+    let marked = store
+        .mark_stale_batch(&[legal.clone(), raced.clone()])
+        .await
+        .unwrap();
+    assert_eq!(marked, 1, "only the legal claim should be marked");
+    assert_eq!(
+        store.get_claim(&legal).await.unwrap().unwrap().status,
+        ClaimStatus::Stale
+    );
+    assert_eq!(
+        store.get_claim(&raced).await.unwrap().unwrap().status,
+        ClaimStatus::Stale,
+        "the raced claim stays Stale, not re-marked or errored"
+    );
+    // `legal` gained exactly one MarkedStale event; `raced` gained none here.
+    let legal_events = store.claim_events(&legal, 100).await.unwrap();
+    assert_eq!(
+        legal_events
+            .iter()
+            .filter(|e| e.kind == ContractEventKind::MarkedStale)
+            .count(),
+        1
+    );
+    let raced_events = store.claim_events(&raced, 100).await.unwrap();
+    assert_eq!(
+        raced_events
+            .iter()
+            .filter(|e| e.kind == ContractEventKind::MarkedStale)
+            .count(),
+        1,
+        "raced has its one MarkedStale event from the earlier mark_stale, no new one"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}

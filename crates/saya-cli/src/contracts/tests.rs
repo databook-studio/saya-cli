@@ -124,6 +124,27 @@ fn schema_tree_for(tables: &[(&str, Table)]) -> SchemaTree {
     }
 }
 
+/// Like [`schema_tree_for`] but takes owned table names, for tests that build
+/// names in a loop (`format!("t{i}")`) and cannot hand the borrow to a
+/// `&[(&str, Table)]` slice without leaking.
+fn schema_tree_for_owned(tables: &[(String, Table)]) -> SchemaTree {
+    SchemaTree {
+        databases: vec![Database {
+            name: "catalog".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: tables
+                    .iter()
+                    .map(|(name, t)| Table {
+                        name: name.clone(),
+                        columns: t.columns.clone(),
+                    })
+                    .collect(),
+            }],
+        }],
+    }
+}
+
 async fn store_at(db: &Path) -> SqliteStateStore {
     let store = SqliteStateStore::new(db);
     // Touch the pool so migrations run and the schema exists.
@@ -2301,6 +2322,145 @@ async fn reconcile_binds_at_1000_claims_and_reports_truncation() {
     }
     assert_eq!(stale, 1000);
     assert_eq!(confirmed, 24);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// P2: bulk store reads — recall over many objects, and reconcile atomicity.
+//
+// The N+1 fix moves recall, the queue, and reconcile from one store round trip
+// per object (and per claim, for evidence counts and mark-stale transitions) to
+// a bounded number per profile. These prove the property the binding names:
+// recall over several objects is correct under the bulk path, and a reconcile
+// pass writes every transition and its audit event in one transaction so a
+// mid-batch store failure leaves no partial state.
+//
+// What this does NOT assert: the exact number of store round trips. Counting
+// them would need a test-only counter in production code (the store exposes no
+// statement hook), and the spec warns against a counter that only tests exist
+// to satisfy. The atomicity test below is the stronger claim anyway — a single
+// transaction is what bounds the round trips and what guarantees no partial
+// state, and it is observable through the rollback.
+// ---------------------------------------------------------------------------
+
+/// Recall over many objects of one profile returns every match — the bulk
+/// `list_claims_for_profile` path groups claims across objects without a query
+/// per object, and selection still ranks and admits them as the per-object loop
+/// did. Twenty objects is well under the object cap, so all reach selection.
+#[tokio::test]
+async fn recall_over_many_objects_returns_every_match() {
+    let root = temp_root("recall_many_objects");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
+    let names: Vec<String> = (0..20).map(|i| format!("orders{i}")).collect();
+    for name in &names {
+        let obj = object_ref(&p, name);
+        let _ = propose_confirmed(
+            &store,
+            &obj,
+            &fp,
+            ClaimPayload::table_alias(name.as_str()).unwrap(),
+        )
+        .await;
+    }
+
+    // The live schema names all twenty so each reads `current` — staleness is
+    // not what this test exercises, and a stale match would be dropped by the
+    // model-facing policy before the object bound applied, contaminating the
+    // count. A term that matches every object by name selects all twenty.
+    let tables: Vec<(&str, Table)> = names
+        .iter()
+        .map(|n| (n.as_str(), table(&[("id", "bigint", false)])))
+        .collect();
+    let schema = schema_tree_for(&tables);
+    let terms: Vec<String> = vec!["orders".to_string()];
+    let outcome = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(schema))],
+            &terms,
+            true,
+            RecallBounds {
+                max_objects: 20,
+                max_claims_per_object: 12,
+                max_bytes: 16384,
+            },
+        ),
+    )
+    .await;
+    assert_eq!(
+        outcome.contracts.len(),
+        20,
+        "bulk recall must return every matching object, got {}",
+        outcome.contracts.len()
+    );
+    let selected: Vec<String> = outcome
+        .contracts
+        .iter()
+        .map(|c| c.object.object().to_string())
+        .collect();
+    for name in &names {
+        assert!(selected.contains(name), "missing {name} in {selected:?}");
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A reconcile pass that marks many claims writes each transition and its
+/// audit event together: every marked claim gains exactly one `MarkedStale`
+/// event with the right `from`/`to`, and the event count equals the marked
+/// count — no claim is marked without its event and no event without its mark.
+/// This is the "transition and audit event move together" half of the
+/// atomicity guarantee; the next test covers the "no partial state on failure"
+/// half.
+#[tokio::test]
+async fn reconcile_marks_many_claims_and_each_carries_its_audit_event() {
+    let root = temp_root("reconcile_many_together");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
+    // Five confirmed claims across five objects, each depending on `amount`.
+    let mut ids: Vec<ClaimId> = Vec::new();
+    for i in 0..5u32 {
+        let obj = object_ref(&p, &format!("t{i}"));
+        let claim = known_claim(
+            &store,
+            &obj,
+            &base,
+            ClaimPayload::column_description("amount", "how much").unwrap(),
+        )
+        .await;
+        ids.push(claim.id);
+    }
+    // Live schema drops `amount` from every table -> each computes Stale.
+    let drifted: Vec<(String, Table)> = (0..5)
+        .map(|i| (format!("t{i}"), table(&[("id", "bigint", false)])))
+        .collect();
+    let live = schema_tree_for_owned(&drifted);
+    let outcome = reconcile(&store, std::slice::from_ref(&p), &[(p.clone(), live)])
+        .await
+        .unwrap();
+    assert_eq!(outcome.marked_stale, 5, "every claim should compute Stale");
+
+    for id in &ids {
+        let after = store.get_claim(id).await.unwrap().unwrap();
+        assert_eq!(after.status, ClaimStatus::Stale, "{id} was not marked");
+        let events = store.claim_events(id, 100).await.unwrap();
+        let marked: Vec<_> = events
+            .iter()
+            .filter(|e| e.kind == ContractEventKind::MarkedStale)
+            .collect();
+        assert_eq!(marked.len(), 1, "{id} should have one MarkedStale event");
+        assert_eq!(marked[0].from_status, Some(ClaimStatus::Confirmed));
+        assert_eq!(marked[0].to_status, Some(ClaimStatus::Stale));
+    }
 
     let _ = fs::remove_dir_all(root);
 }

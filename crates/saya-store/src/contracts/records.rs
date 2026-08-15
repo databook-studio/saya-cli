@@ -163,6 +163,16 @@ pub trait ContractStore: Send + Sync {
         object: &DatabaseObjectRef,
         statuses: &[ClaimStatus],
     ) -> Result<Vec<StoredClaim>, StoreError>;
+    /// Every claim for `profile` in one query — the bulk counterpart to
+    /// [`ContractStore::list_claims`], which fetches a single object. Recall
+    /// and the review queue use this to avoid one claim query per object (an
+    /// N+1 on the path of every question). Returns every status; the CLI
+    /// filters by recall mode in Rust, so this does not take a `statuses`
+    /// filter.
+    async fn list_claims_for_profile(
+        &self,
+        profile: &ProfileIdentity,
+    ) -> Result<Vec<StoredClaim>, StoreError>;
     async fn list_objects(
         &self,
         profile: &ProfileIdentity,
@@ -188,6 +198,12 @@ pub trait ContractStore: Send + Sync {
     async fn reject_claim(&self, id: &ClaimId) -> Result<StoredClaim, StoreError>;
     async fn forget_claim(&self, id: &ClaimId, reason: ForgetReason) -> Result<(), StoreError>;
     async fn mark_stale(&self, id: &ClaimId) -> Result<StoredClaim, StoreError>;
+    /// Mark every claim in `ids` stale in one transaction — the bulk counterpart
+    /// to [`ContractStore::mark_stale`]. Reconciliation batches the claims the 5b
+    /// rule computed `Stale` so their transitions and audit events move together
+    /// and a store error leaves no partial state. A claim raced out of the legal
+    /// set is skipped (not marked); returns the number actually transitioned.
+    async fn mark_stale_batch(&self, ids: &[ClaimId]) -> Result<usize, StoreError>;
     async fn claim_events(
         &self,
         id: &ClaimId,
@@ -198,4 +214,10 @@ pub trait ContractStore: Send + Sync {
     /// ordinals the queue does not need. An unknown id is `NotFound`, not `0`:
     /// a missing claim is not an empty evidence set.
     async fn evidence_count(&self, id: &ClaimId) -> Result<usize, StoreError>;
+    /// Evidence counts for a set of claims in one query — the bulk counterpart
+    /// to [`ContractStore::evidence_count`]. The review queue asks for one count
+    /// per claim it returns; this replaces N `COUNT(*)` round trips with one
+    /// `LEFT JOIN ... GROUP BY`. Every `id` came from a `list_claims` call, so a
+    /// claim with no evidence reads `0` (not `NotFound`).
+    async fn evidence_counts(&self, ids: &[ClaimId]) -> Result<Vec<(ClaimId, usize)>, StoreError>;
 }

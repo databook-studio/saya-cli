@@ -536,6 +536,173 @@ async fn list_claims_status_filter() {
 }
 
 // ---------------------------------------------------------------------------
+// P2 — bulk reads: `list_claims_for_profile` and `evidence_counts`.
+//
+// Recall, the queue, and reconciliation moved from one query per object (and
+// one `COUNT(*)` per claim) to one query per profile. These prove the bulk APIs
+// return what the per-object/per-claim ones did: every claim of a profile
+// across every object (every status, no filter), and evidence counts for a set
+// of claims in one `GROUP BY` — a claim with no evidence reads `0`, matching
+// the per-claim `evidence_count`.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_claims_for_profile_returns_every_claim_across_objects() {
+    let root = temp_root("bulk_list_claims");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+
+    let a = profile_a();
+    let b = profile_b();
+    let obj_a1 = object_ref(&a, "orders");
+    let obj_a2 = object_ref(&a, "events");
+    let obj_b = object_ref(&b, "orders");
+
+    let req = |object: DatabaseObjectRef, alias: &str, status: ClaimStatus| ProposeClaim {
+        object,
+        fingerprint: fingerprint(),
+        payload: ClaimPayload::table_alias(alias).unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: status,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    // Profile A: two objects, three claims of mixed status.
+    store
+        .propose_claim(req(obj_a1.clone(), "a1c", ClaimStatus::Confirmed))
+        .await
+        .unwrap();
+    store
+        .propose_claim(req(obj_a1.clone(), "a1k", ClaimStatus::Candidate))
+        .await
+        .unwrap();
+    store
+        .propose_claim(req(obj_a2.clone(), "a2c", ClaimStatus::Confirmed))
+        .await
+        .unwrap();
+    // Profile B: one claim — must not appear in A's bulk read.
+    store
+        .propose_claim(req(obj_b.clone(), "bc", ClaimStatus::Confirmed))
+        .await
+        .unwrap();
+
+    let bulk = store.list_claims_for_profile(&a).await.unwrap();
+    // Every claim of profile A, every status — the union the per-object loop
+    // produced. No statuses are filtered (the CLI filters by recall mode).
+    assert_eq!(bulk.len(), 3, "every claim of the profile, got {bulk:?}");
+    assert!(bulk.iter().all(|c| c.object.profile() == &a));
+    let objects: Vec<&str> = bulk.iter().map(|c| c.object.object()).collect();
+    assert!(objects.contains(&"orders") && objects.contains(&"events"));
+
+    // The per-object reads agree with the bulk read for each object.
+    let a1 = store.list_claims(&obj_a1, &[]).await.unwrap();
+    let a2 = store.list_claims(&obj_a2, &[]).await.unwrap();
+    let bulk_a1: Vec<&saya_store::StoredClaim> =
+        bulk.iter().filter(|c| c.object == obj_a1).collect();
+    let bulk_a2: Vec<&saya_store::StoredClaim> =
+        bulk.iter().filter(|c| c.object == obj_a2).collect();
+    assert_eq!(bulk_a1.len(), a1.len());
+    assert_eq!(bulk_a2.len(), a2.len());
+
+    // Profile B's bulk read is isolated to its own claims.
+    let bulk_b = store.list_claims_for_profile(&b).await.unwrap();
+    assert_eq!(bulk_b.len(), 1);
+    assert_eq!(bulk_b[0].object, obj_b);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn evidence_counts_aggregates_in_one_query_and_zero_for_no_evidence() {
+    let root = temp_root("bulk_evidence_counts");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+
+    let evidence = |turn: u32| ClaimEvidence {
+        kind: EvidenceKind::RepeatedObservation,
+        session_id: Some("s1".into()),
+        turn_ordinal: Some(turn),
+        observed_unix_ms: 10_000 + turn as i64,
+    };
+    let req = |evidence: Option<ClaimEvidence>, alias: &str| ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint(),
+        payload: ClaimPayload::table_alias(alias).unwrap(),
+        origin: ClaimOrigin::AssistantInferred,
+        initial_status: ClaimStatus::Candidate,
+        evidence,
+        referenced_columns: Vec::new(),
+    };
+    // three claims: 3 evidence, 1 evidence, 0 evidence.
+    let id_three = match store
+        .propose_claim(req(Some(evidence(1)), "three"))
+        .await
+        .unwrap()
+    {
+        ProposeOutcome::Stored(id) => id,
+        _ => unreachable!(),
+    };
+    store
+        .propose_claim(req(Some(evidence(2)), "three"))
+        .await
+        .unwrap();
+    store
+        .propose_claim(req(Some(evidence(3)), "three"))
+        .await
+        .unwrap();
+    let id_one = match store
+        .propose_claim(req(Some(evidence(1)), "one"))
+        .await
+        .unwrap()
+    {
+        ProposeOutcome::Stored(id) => id,
+        _ => unreachable!(),
+    };
+    let id_none = match store.propose_claim(req(None, "none")).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        _ => unreachable!(),
+    };
+
+    let counts: std::collections::HashMap<_, _> = store
+        .evidence_counts(&[id_three.clone(), id_one.clone(), id_none.clone()])
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
+    // A claim with no evidence rows is absent from the LEFT JOIN result; the
+    // caller treats a missing id as 0 (the queue does). The two with evidence
+    // match the per-claim `evidence_count`.
+    assert_eq!(*counts.get(&id_three).unwrap_or(&0), 3);
+    assert_eq!(*counts.get(&id_one).unwrap_or(&0), 1);
+    // The LEFT JOIN yields a row per claim, so a no-evidence claim reads `0`,
+    // not absent — the same value the per-claim `evidence_count` returns.
+    assert_eq!(
+        counts.get(&id_none),
+        Some(&0),
+        "a no-evidence claim reads 0"
+    );
+    // And the bulk counts match the per-claim trait counts exactly.
+    assert_eq!(
+        counts.get(&id_three),
+        Some(&store.evidence_count(&id_three).await.unwrap())
+    );
+    assert_eq!(
+        counts.get(&id_one),
+        Some(&store.evidence_count(&id_one).await.unwrap())
+    );
+    assert_eq!(
+        counts.get(&id_none),
+        Some(&store.evidence_count(&id_none).await.unwrap())
+    );
+
+    // An empty input is a no-op (no round trip).
+    assert!(store.evidence_counts(&[]).await.unwrap().is_empty());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
 // Phase 5a — referenced-column snapshots
 // ---------------------------------------------------------------------------
 

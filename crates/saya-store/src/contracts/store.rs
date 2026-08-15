@@ -3,7 +3,7 @@ use crate::contracts::keys::object_id;
 use crate::contracts::records::{
     ContractObjectId, ContractStore, ProposeClaim, ProposeOutcome, StoredClaim, StoredObject,
 };
-use crate::contracts::{store_reads, store_revise, store_transitions, store_writes};
+use crate::contracts::{store_bulk, store_reads, store_revise, store_transitions, store_writes};
 use crate::{SqliteStateStore, StoreError};
 use async_trait::async_trait;
 use saya_types::{
@@ -49,6 +49,12 @@ impl ContractStore for SqliteStateStore {
     ) -> Result<Vec<StoredClaim>, StoreError> {
         store_reads::list_claims(self, object, statuses).await
     }
+    async fn list_claims_for_profile(
+        &self,
+        profile: &ProfileIdentity,
+    ) -> Result<Vec<StoredClaim>, StoreError> {
+        store_bulk::list_claims_for_profile(self, profile).await
+    }
     async fn list_objects(
         &self,
         profile: &ProfileIdentity,
@@ -81,6 +87,9 @@ impl ContractStore for SqliteStateStore {
     async fn mark_stale(&self, id: &ClaimId) -> Result<StoredClaim, StoreError> {
         store_transitions::mark_stale(self, id).await
     }
+    async fn mark_stale_batch(&self, ids: &[ClaimId]) -> Result<usize, StoreError> {
+        store_transitions::mark_stale_batch(self, ids).await
+    }
     async fn claim_events(
         &self,
         id: &ClaimId,
@@ -90,6 +99,9 @@ impl ContractStore for SqliteStateStore {
     }
     async fn evidence_count(&self, id: &ClaimId) -> Result<usize, StoreError> {
         store_reads::evidence_count(self, id).await
+    }
+    async fn evidence_counts(&self, ids: &[ClaimId]) -> Result<Vec<(ClaimId, usize)>, StoreError> {
+        store_bulk::evidence_counts(self, ids).await
     }
 }
 
