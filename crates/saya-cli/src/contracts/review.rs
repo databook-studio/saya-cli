@@ -38,6 +38,20 @@ pub(crate) enum ContractOpError {
     /// store may be fine; the schema cache is what is missing.
     #[error("no schema is available to revalidate the claim against")]
     SchemaUnavailable,
+    /// The claim's table is not in the live schema, so there is nothing to
+    /// revalidate against. Distinct from [`Self::Conflict`]: nothing conflicts
+    /// — the object is simply gone.
+    #[error(
+        "the table this claim describes is no longer in the schema; forget the claim, or refresh if the table still exists"
+    )]
+    ObjectGone,
+    /// A column the claim depends on is absent from the live table. Confirming
+    /// would revive a claim whose dependency vanished, so the user must point
+    /// it somewhere real or drop it.
+    #[error(
+        "a column this claim depends on is gone; edit the claim to name a column that exists, or forget it"
+    )]
+    ColumnGone,
 }
 
 impl From<StoreError> for ContractOpError {
@@ -83,7 +97,13 @@ pub(crate) async fn confirm(
         return Ok(store.confirm_claim(id).await?);
     }
     let availability = schema_availability_for(store, claim.object.profile().as_str()).await;
-    let live_table = live_table_for(&claim, &availability)?.ok_or(ContractOpError::Conflict)?;
+    let live_table = live_table_for(&claim, &availability)?.ok_or(ContractOpError::ObjectGone)?;
+    // Name the actual obstacle before the store refuses generically. The store
+    // still checks independently; this exists so the message tells a reviewer
+    // which of the two repairs — edit or forget — applies to them.
+    if first_missing_column(&claim, live_table).is_some() {
+        return Err(ContractOpError::ColumnGone);
+    }
     Ok(store.revalidate_claim(id, live_table).await?)
 }
 
@@ -120,6 +140,18 @@ fn live_table_for<'a>(
         claim.object.schema(),
         claim.object.object(),
     ))
+}
+
+/// The first referenced column absent from `live`, if any. Compared
+/// case-insensitively, matching how validity classifies drift.
+fn first_missing_column<'a>(claim: &'a StoredClaim, live: &Table) -> Option<&'a str> {
+    claim.referenced_columns.iter().find_map(|col| {
+        (!live
+            .columns
+            .iter()
+            .any(|c| c.name.eq_ignore_ascii_case(&col.name)))
+        .then_some(col.name.as_str())
+    })
 }
 
 pub(crate) async fn edit(

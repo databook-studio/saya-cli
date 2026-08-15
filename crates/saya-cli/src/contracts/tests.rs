@@ -2745,9 +2745,12 @@ async fn confirm_refuses_a_stale_claim_whose_referenced_column_is_gone() {
     store.upsert_schema(p.as_str(), &drifted).await.unwrap();
 
     let err = confirm(&store, &stale.id).await.unwrap_err();
+    // The refusal itself is the invariant and is unchanged; the error is now
+    // specific rather than the generic conflict, so a reviewer is told which
+    // repair applies instead of being told a claim conflicts with nothing.
     assert_eq!(
         err,
-        ContractOpError::Conflict,
+        ContractOpError::ColumnGone,
         "do not revive a claim whose referenced column is gone"
     );
     assert_eq!(
@@ -2787,5 +2790,36 @@ async fn confirm_a_candidate_is_status_only_and_needs_no_schema() {
     let confirmed = confirm(&store, &id).await.unwrap();
     assert_eq!(confirmed.status, ClaimStatus::Confirmed);
 
+    let _ = fs::remove_dir_all(root);
+}
+
+// --- Confirming a stale claim refuses with a message naming the obstacle and
+// --- the repair, rather than reporting a conflict with a claim that does not
+// --- exist. Found by running the binary: both refusals rendered identically.
+#[tokio::test]
+async fn confirming_a_stale_claim_names_the_missing_column_and_the_repair() {
+    let root = temp_root("confirm-colgone");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "orders");
+
+    let claim = seed_computed_stale(&store, &object).await;
+    store.mark_stale(&claim.id).await.unwrap();
+
+    let error = confirm(&store, &claim.id).await.unwrap_err();
+    assert_eq!(error, ContractOpError::ColumnGone);
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("column"),
+        "names the obstacle: {rendered}"
+    );
+    assert!(
+        rendered.contains("edit") && rendered.contains("forget"),
+        "names both repairs: {rendered}"
+    );
+    assert!(
+        !rendered.contains("conflict"),
+        "must not claim a conflict with another claim: {rendered}"
+    );
     let _ = fs::remove_dir_all(root);
 }
