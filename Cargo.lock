@@ -3119,6 +3119,7 @@ dependencies = [
  "futures-util",
  "insta",
  "libc",
+ "proptest",
  "ratatui",
  "saya-agent",
  "saya-config",
@@ -3189,6 +3190,7 @@ dependencies = [
 name = "saya-types"
 version = "0.3.0"
 dependencies = [
+ "proptest",
  "serde",
  "serde_json",
  "sha2",

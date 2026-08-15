@@ -155,3 +155,131 @@ pub(crate) enum RootError {
     #[error("contracts root is not a directory")]
     NotADirectory,
 }
+
+#[cfg(test)]
+mod property_tests {
+    //! Property 6 (spec §2): discovery never escapes its root. The safety core
+    //! is [`contains`] — the component-structural containment test that `..` and
+    //! escaping symlinks cannot defeat *once both paths are canonical* (the real
+    //! `check_entry` canonicalises the candidate before calling `contains`). This
+    //! module property-tests [`contains`] directly over component sequences so it
+    //! explores traversal shapes (`..`, `.`, empty, unicode) rather than random
+    //! bytes, with no filesystem and no async.
+    //!
+    //! The two properties: (a) `contains` is a *component*-prefix test, not a
+    //! byte-prefix test — so `/a/b` does not contain `/a/bc` — verified against an
+    //! independent oracle built from `Path::components`; (b) on canonical-shape
+    //! paths (no `..`, `.`, or empty — what `canonicalize` actually produces)
+    //! `contains`-true implies genuine structural containment. A regression to a
+    //! byte `str::starts_with` fails (a): the oracle is component-structural.
+    use super::contains;
+    use proptest::prelude::*;
+    use std::path::{Component, Path, PathBuf};
+
+    /// One path component. The vocabulary includes single letters (so `b` vs
+    /// `bc` exercises the byte-prefix trap), `..`, `.`, empty, and unicode.
+    fn component() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "bc".to_string(),
+            "c".to_string(),
+            "..".to_string(),
+            ".".to_string(),
+            String::new(),
+            "é".to_string(),
+        ])
+    }
+
+    /// A canonical-shape component: a real name, no traversal tokens. This is
+    /// what `Path::canonicalize` yields — no `..`, `.`, or empty.
+    fn canonical_component() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "bc".to_string(),
+            "c".to_string(),
+            "orders".to_string(),
+            "é".to_string(),
+        ])
+    }
+
+    fn components_strategy(
+        strategy: impl Strategy<Value = String>,
+    ) -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec(strategy, 1..=5)
+    }
+
+    /// Build an absolute path from raw components by joining with `/`, preserving
+    /// `..`, `.`, and empty as the string parser would, then let `PathBuf` parse
+    /// it. This is how traversal shapes reach `contains` in practice.
+    fn build(comps: &[String]) -> PathBuf {
+        let mut s = String::from("/");
+        s.push_str(&comps.join("/"));
+        PathBuf::from(s)
+    }
+
+    /// Independent oracle: `child` is contained iff its `Path::components` list
+    /// begins with `root`'s component list. Built from `components()`, so it is
+    /// component-structural and disagrees with any byte-prefix implementation.
+    fn oracle_comps(p: &Path) -> Vec<String> {
+        p.components()
+            .map(|c| match c {
+                Component::RootDir => "/".to_string(),
+                Component::Normal(s) => s.to_string_lossy().into_owned(),
+                Component::ParentDir => "..".to_string(),
+                Component::CurDir => ".".to_string(),
+                Component::Prefix(p) => p.as_os_str().to_string_lossy().into_owned(),
+            })
+            .collect()
+    }
+
+    fn oracle(root: &Path, child: &Path) -> bool {
+        let r = oracle_comps(root);
+        let c = oracle_comps(child);
+        c.len() >= r.len() && c[..r.len()] == r[..]
+    }
+
+    proptest! {
+        /// Property 6a — `contains` equals the independent component-prefix
+        /// oracle over traversal shapes (`..`, `.`, empty, unicode). A switch to
+        /// a byte `str::starts_with` diverges here on `/a/b` vs `/a/bc`.
+        #[test]
+        fn contains_is_component_structural(
+            root_comps in components_strategy(component()),
+            child_comps in components_strategy(component()),
+        ) {
+            let root = build(&root_comps);
+            let child = build(&child_comps);
+            prop_assert_eq!(
+                contains(&root, &child),
+                oracle(&root, &child),
+                "root={:?} child={:?}",
+                root,
+                child
+            );
+        }
+
+        /// Property 6b — on canonical-shape paths (what `canonicalize` produces,
+        /// no `..`/`.`/empty), `contains`-true implies genuine structural
+        /// containment: the child's components extend the root's exactly.
+        #[test]
+        fn contains_sound_on_canonical_shapes(
+            root_comps in components_strategy(canonical_component()),
+            child_comps in components_strategy(canonical_component()),
+        ) {
+            let root = build(&root_comps);
+            let child = build(&child_comps);
+            if contains(&root, &child) {
+                let r = oracle_comps(&root);
+                let c = oracle_comps(&child);
+                prop_assert!(
+                    c.len() >= r.len() && c[..r.len()] == r[..],
+                    "canonical child contained but not a component extension: root={:?} child={:?}",
+                    root,
+                    child
+                );
+            }
+        }
+    }
+}

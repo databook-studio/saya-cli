@@ -149,3 +149,89 @@ fn per_file_bound_reason(bound: TruncationBound) -> String {
 fn escaped_reason() -> String {
     "path escapes the contracts root".into()
 }
+
+#[cfg(test)]
+mod property_tests {
+    //! Property 7 (spec §2): no absolute path ever reaches a report. Both
+    //! accepted `source` paths and rejected paths originate in [`relative_for`],
+    //! which rebuilds the display path from the entry's file name under
+    //! `.saya/contracts` rather than from the canonical (absolute) path — so no
+    //! absolute path or root-identifying prefix can leak. The rejection reasons
+    //! are constant strings that never carry a path. Pure: no filesystem, no
+    //! async; [`relative_for`] only manipulates `Path`s.
+    //!
+    //! A path "leaks the root" when it is absolute or has the absolute root as a
+    //! *path prefix* — not when the root happens to appear as a substring inside
+    //! a relative component (e.g. root `/c` inside `/contracts`). The earlier
+    //! substring detector was an over-strong oracle that flagged that
+    //! coincidence as a leak; the prefix test is the real invariant.
+    use super::{escaped_reason, per_file_bound_reason, relative_for};
+    use crate::contracts::discover::TruncationBound;
+    use proptest::prelude::*;
+    use std::path::{Path, PathBuf};
+
+    /// An entry name a hostile directory might place: ordinary, unicode, dots,
+    /// dotdot, slashes, and absolute-looking fragments.
+    fn entry_name() -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<char>(), 0..=20).prop_map(|chars| chars.into_iter().collect())
+    }
+
+    /// An absolute project root, the shape the real caller supplies.
+    fn project_root() -> impl Strategy<Value = PathBuf> {
+        prop::collection::vec("[a-z]{1,3}", 1..=4).prop_map(|parts| {
+            let mut p = PathBuf::from("/");
+            for part in parts {
+                p.push(part);
+            }
+            p
+        })
+    }
+
+    /// True iff `p` is absolute or begins with the absolute `root` as a path
+    /// prefix — the two ways an absolute root can reach a report.
+    fn leaks_root(p: &Path, root: &Path) -> bool {
+        p.is_absolute() || p.starts_with(root)
+    }
+
+    proptest! {
+        /// Property 7a — for any entry name and any absolute project root,
+        /// `relative_for` yields a *relative* path that is not the absolute root
+        /// and does not have it as a path prefix. A regression that returned the
+        /// canonical (absolute) path would fail here on `is_absolute()`.
+        #[test]
+        fn relative_for_never_absolute(
+            root in project_root(),
+            name in entry_name(),
+        ) {
+            // The entry path the real caller passes: root/.saya/contracts/<name>.
+            // Build it so `file_name()` behaves as it would in the pass.
+            let entry = root.join(".saya").join("contracts").join(&name);
+            let rel = relative_for(&root, &entry);
+            prop_assert!(
+                !leaks_root(&rel, &root),
+                "absolute path or root prefix leaked into report: {:?} (root={:?})",
+                rel,
+                root
+            );
+        }
+
+        /// Property 7b — the rejection reasons are payload-free of any path: a
+        /// path needs a separator, and none of the reason strings contains one,
+        /// so no filesystem location can be read from a rejection.
+        #[test]
+        fn rejection_reasons_carry_no_path(
+            _root in project_root(),
+        ) {
+            let escaped = escaped_reason();
+            prop_assert!(!escaped.contains('/') && !escaped.contains('\\'));
+
+            for bound in [
+                TruncationBound::BytesPerFile,
+                TruncationBound::ClaimsPerFile,
+            ] {
+                let reason = per_file_bound_reason(bound);
+                prop_assert!(!reason.contains('/') && !reason.contains('\\'));
+            }
+        }
+    }
+}
