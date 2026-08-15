@@ -5,6 +5,42 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Added
+
+- **Memory and data contracts** — SAYA can remember typed facts about your tables
+  (a reporting time column, an alias, a grain, a column's role) and use them when
+  building later queries. Confirm a fact with `saya contracts remember`, see what
+  it knows with `contracts list` / `contracts show`, and reverse it with
+  `contracts forget` — the change takes effect on the next question.
+
+  **Nothing is remembered unless you ask.** `[memory] recall` defaults to
+  `confirmed` and `learning` to `off`, so upgrading changes nothing. Turning
+  learning on lets SAYA *propose* candidates, which stay inert until a human
+  confirms them in `contracts queue`; repetition never promotes a candidate.
+
+  Claims are typed and bounded, not free text: they cannot hold SQL, credentials,
+  file paths or instructions, and the store refuses those shapes rather than
+  scrubbing them. Recalled context reaches the model as quoted, delimited data
+  marked untrusted — never as instruction — so a claim can never enable a tool or
+  authorise a query. Every statement still passes the same read-only safety layer.
+
+  Claims know the shape of the object they describe, so a schema refresh marks a
+  claim stale when a column it depends on is removed, renamed, retyped or becomes
+  nullable — and marks nothing at all when the database simply could not be
+  reached. Two confirmed claims that contradict each other are both shown and
+  marked disputed rather than silently resolved.
+
+  Contracts can be shared: commit them as TOML under `.saya/contracts/` and use
+  `contracts import --dry-run` / `contracts export`. Discovery is bounded and
+  refuses symlinks escaping the directory; exports carry no profile identity,
+  evidence, session ids or absolute paths.
+
+  Also adds scoped preferences (`saya preferences`) for timezone, date grain,
+  output style and default profile.
+
+  See [docs/memory.md](docs/memory.md) for the full behaviour, including what is
+  and is not stored, and what `forget` does and does not erase.
+
 ## 0.3.0 — 2026-08-10
 
 ### Added
