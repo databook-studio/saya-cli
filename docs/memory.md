@@ -54,7 +54,6 @@ learning = "off"               # off | suggest | auto-candidate
 max_contracts = 5
 max_claims_per_contract = 12
 max_context_bytes = 16384
-retention_days = 180
 ```
 
 **`recall`** — what reaches the model when you ask a question.

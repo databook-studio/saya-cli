@@ -129,7 +129,6 @@ fn default_memory() -> ResolvedMemory {
         max_contracts: 5,
         max_claims_per_contract: 12,
         max_context_bytes: 16384,
-        retention_days: 180,
     }
 }
 
@@ -543,7 +542,6 @@ fn bounds_from_config_copy_the_resolved_numbers() {
         max_contracts: 3,
         max_claims_per_contract: 7,
         max_context_bytes: 2048,
-        retention_days: 30,
     };
     let bounds = bounds_from(&memory);
     assert_eq!(bounds.max_objects, 3);

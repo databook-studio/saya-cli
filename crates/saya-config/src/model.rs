@@ -76,5 +76,4 @@ pub struct MemoryFile {
     pub max_contracts: Option<u32>,
     pub max_claims_per_contract: Option<u32>,
     pub max_context_bytes: Option<u32>,
-    pub retention_days: Option<u32>,
 }

@@ -35,6 +35,13 @@ impl ContractStore for SqliteStateStore {
     async fn get_claim(&self, id: &ClaimId) -> Result<Option<StoredClaim>, StoreError> {
         store_reads::get_claim(self, id).await
     }
+    async fn find_claim_by_dedup_key(
+        &self,
+        object: &DatabaseObjectRef,
+        key: &crate::contracts::records::DeduplicationKey,
+    ) -> Result<Option<StoredClaim>, StoreError> {
+        store_reads::find_claim_by_dedup_key(self, object, key).await
+    }
     async fn list_claims(
         &self,
         object: &DatabaseObjectRef,

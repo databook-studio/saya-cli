@@ -24,7 +24,7 @@
 //! rule that a missing live schema skips marking rather than destroying
 //! knowledge.
 
-use saya_store::{ContractStore, StoredClaim};
+use saya_store::{ContractStore, DeduplicationKey, StoredClaim};
 use saya_types::{ClaimPayload, DatabaseObjectRef, SchemaTree};
 
 /// One claim's import verdict. `Existing` claims carry the id and status of the
@@ -59,29 +59,37 @@ pub(crate) async fn classify(
     if is_stale(payload, object, schema) {
         return Ok(ImportVerdict::Stale);
     }
-    let existing = store.list_claims(object, &[]).await?;
     let file_key = dedup_key(payload);
-    for claim in &existing {
-        let Some(existing_payload) = claim.payload.as_ref() else {
-            continue;
-        };
-        if dedup_key(existing_payload) == file_key {
-            return Ok(verdict_for_existing(claim, payload));
-        }
-    }
-    Ok(ImportVerdict::Added)
+    // Ask the store whether this dedup slot is already taken — including by a
+    // forgotten tombstone, whose payload is cleared but whose dedup key
+    // survives. The pre-scan cannot reconstruct a tombstone's key from its
+    // (erased) payload, so the store is the only honest oracle; this is the
+    // same lookup `propose_claim` makes at write time, so a dry run and a real
+    // import agree. Before this, the scan skipped payload-free rows and a
+    // forgotten duplicate read "added".
+    let Some(existing) = store.find_claim_by_dedup_key(object, &file_key).await? else {
+        return Ok(ImportVerdict::Added);
+    };
+    Ok(verdict_for_existing(&existing, payload))
 }
 
 /// Decide `Duplicate` vs `Conflicting` for an existing claim that shares the
 /// dedup identity with the file's payload. Same value → duplicate (carrying the
 /// real status so a duplicate of a forgotten claim reads forgotten); a
-/// different value → conflicting.
+/// different value → conflicting. A forgotten tombstone has no payload to
+/// compare, but its slot is taken and the store returns `Duplicate { Forgotten }`
+/// on a re-proposal regardless of the file's value — so it reads as a duplicate
+/// of the forgotten claim, never "added": the tombstone decision means
+/// re-proposing a forgotten claim must not read as success.
 fn verdict_for_existing(existing: &StoredClaim, file_payload: &ClaimPayload) -> ImportVerdict {
     match existing.payload.as_ref() {
         Some(existing_payload) if existing_payload == file_payload => ImportVerdict::Duplicate {
             existing_status: existing.status.as_str().into(),
         },
-        _ => ImportVerdict::Conflicting {
+        None => ImportVerdict::Duplicate {
+            existing_status: existing.status.as_str().into(),
+        },
+        Some(_) => ImportVerdict::Conflicting {
             existing_id: existing.id.as_str().to_string(),
         },
     }
@@ -90,7 +98,7 @@ fn verdict_for_existing(existing: &StoredClaim, file_payload: &ClaimPayload) -> 
 /// The dedup identity of a payload, matching the store's `deduplication_key`.
 /// Two claims with the same key occupy the same slot; whether they agree is a
 /// separate payload-equality check.
-fn dedup_key(payload: &ClaimPayload) -> saya_store::DeduplicationKey {
+fn dedup_key(payload: &ClaimPayload) -> DeduplicationKey {
     let serialized = serde_json::to_string(payload).unwrap_or_default();
     saya_store::deduplication_key(payload, &serialized)
 }

@@ -1,6 +1,8 @@
 use crate::contracts::events::{ContractEvent, ContractEventKind, ForgetReason};
 use crate::contracts::keys::object_id;
-use crate::contracts::records::{ContractObjectId, MAX_LISTED_OBJECTS, StoredClaim, StoredObject};
+use crate::contracts::records::{
+    ContractObjectId, DeduplicationKey, MAX_LISTED_OBJECTS, StoredClaim, StoredObject,
+};
 use crate::contracts::store_decode::{ClaimRow, ObjectRow, decode_claim, decode_object};
 use crate::{SqliteStateStore, StoreError};
 use saya_types::{ClaimId, ClaimOrigin, ClaimStatus, DatabaseObjectRef, ProfileIdentity};
@@ -52,6 +54,28 @@ pub(crate) async fn list_claims(
         .await
         .map_err(|_| StoreError::Unavailable)?;
     rows.into_iter().map(decode_claim).collect()
+}
+
+/// The claim occupying a dedup slot for `object` under `key`, including a
+/// forgotten tombstone (its payload is cleared but its dedup key survives, so
+/// the slot stays taken). The same row `propose_claim` matches at write time;
+/// this is the read-only counterpart the import pre-scan uses so a dry run and
+/// a real import agree. `None` when no row holds that key.
+pub(crate) async fn find_claim_by_dedup_key(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    key: &DeduplicationKey,
+) -> Result<Option<StoredClaim>, StoreError> {
+    let object_id = object_id(object);
+    let row = sqlx::query_as::<_, ClaimRow>(
+        "SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, o.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE c.object_id=? AND c.deduplication_key=?",
+    )
+    .bind(object_id.as_str())
+    .bind(key.as_str())
+    .fetch_optional(store.pool().await?)
+    .await
+    .map_err(|_| StoreError::Unavailable)?;
+    row.map(decode_claim).transpose()
 }
 
 pub(crate) async fn list_objects(

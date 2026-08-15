@@ -10,14 +10,12 @@ pub struct ResolvedMemory {
     pub max_contracts: u32,
     pub max_claims_per_contract: u32,
     pub max_context_bytes: u32,
-    pub retention_days: u32,
 }
 
 /// Safe defaults so an upgrade changes nothing until the user opts in (ADR 0002, plan §10).
 const DEFAULT_MAX_CONTRACTS: u32 = 5;
 const DEFAULT_MAX_CLAIMS_PER_CONTRACT: u32 = 12;
 const DEFAULT_MAX_CONTEXT_BYTES: u32 = 16384;
-const DEFAULT_RETENTION_DAYS: u32 = 180;
 
 /// The floor reserved out of the agent message budget for the parts a request
 /// needs besides memory context: the fixed system prompt, the context-block
@@ -45,7 +43,6 @@ pub(crate) fn resolve(file: &MemoryFile) -> Result<ResolvedMemory, ConfigError> 
         .max_claims_per_contract
         .unwrap_or(DEFAULT_MAX_CLAIMS_PER_CONTRACT);
     let max_context_bytes = file.max_context_bytes.unwrap_or(DEFAULT_MAX_CONTEXT_BYTES);
-    let retention_days = file.retention_days.unwrap_or(DEFAULT_RETENTION_DAYS);
     require_range("max_contracts", max_contracts, 1, 50)?;
     require_range("max_claims_per_contract", max_claims_per_contract, 1, 100)?;
     require_range(
@@ -54,14 +51,12 @@ pub(crate) fn resolve(file: &MemoryFile) -> Result<ResolvedMemory, ConfigError> 
         1024,
         MAX_CONTEXT_BYTES_CEILING,
     )?;
-    require_range("retention_days", retention_days, 1, 3650)?;
     Ok(ResolvedMemory {
         recall,
         learning,
         max_contracts,
         max_claims_per_contract,
         max_context_bytes,
-        retention_days,
     })
 }
 

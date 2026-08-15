@@ -13,7 +13,6 @@ fn an_empty_config_upgrades_to_the_safe_memory_defaults() {
     assert_eq!(resolved.memory.max_contracts, 5);
     assert_eq!(resolved.memory.max_claims_per_contract, 12);
     assert_eq!(resolved.memory.max_context_bytes, 16384);
-    assert_eq!(resolved.memory.retention_days, 180);
 }
 
 /// Each valid string parses to its variant. Kebab spellings differ only for the
@@ -51,8 +50,6 @@ fn out_of_range_numbers_are_typed_errors_naming_the_field_and_range() {
         ("max_claims_per_contract", "101"),
         ("max_context_bytes", "1023"),
         ("max_context_bytes", "28673"),
-        ("retention_days", "0"),
-        ("retention_days", "3651"),
     ];
     for (field, value) in cases {
         let toml = format!("[memory]\n{field} = {value}\n");
@@ -143,7 +140,6 @@ fn a_partial_memory_section_fills_unspecified_fields_from_the_defaults() {
     assert_eq!(resolved.memory.learning, MemoryLearning::Off);
     assert_eq!(resolved.memory.max_claims_per_contract, 12);
     assert_eq!(resolved.memory.max_context_bytes, 16384);
-    assert_eq!(resolved.memory.retention_days, 180);
 }
 
 /// The resolved values appear in redacted diagnostics so `saya config show --resolved`
@@ -177,8 +173,7 @@ fn a_fully_set_memory_section_round_trips() {
          learning = 'auto-candidate'\n\
          max_contracts = 50\n\
          max_claims_per_contract = 100\n\
-         max_context_bytes = 28672\n\
-         retention_days = 3650\n",
+         max_context_bytes = 28672\n",
     )
     .unwrap();
     let resolved =
@@ -188,7 +183,6 @@ fn a_fully_set_memory_section_round_trips() {
     assert_eq!(resolved.memory.max_contracts, 50);
     assert_eq!(resolved.memory.max_claims_per_contract, 100);
     assert_eq!(resolved.memory.max_context_bytes, 28672);
-    assert_eq!(resolved.memory.retention_days, 3650);
 }
 
 /// The lower and upper bounds are inclusive at both ends — the boundary values
@@ -199,8 +193,7 @@ fn the_numeric_bounds_are_inclusive_at_both_ends() {
         "[memory]\n\
          max_contracts = 1\n\
          max_claims_per_contract = 1\n\
-         max_context_bytes = 1024\n\
-         retention_days = 1\n",
+         max_context_bytes = 1024\n",
     )
     .unwrap();
     let resolved =
@@ -208,14 +201,12 @@ fn the_numeric_bounds_are_inclusive_at_both_ends() {
     assert_eq!(resolved.memory.max_contracts, 1);
     assert_eq!(resolved.memory.max_claims_per_contract, 1);
     assert_eq!(resolved.memory.max_context_bytes, 1024);
-    assert_eq!(resolved.memory.retention_days, 1);
 
     let config = ConfigFile::from_toml(
         "[memory]\n\
          max_contracts = 50\n\
          max_claims_per_contract = 100\n\
-         max_context_bytes = 28672\n\
-         retention_days = 3650\n",
+         max_context_bytes = 28672\n",
     )
     .unwrap();
     let resolved =
@@ -223,5 +214,4 @@ fn the_numeric_bounds_are_inclusive_at_both_ends() {
     assert_eq!(resolved.memory.max_contracts, 50);
     assert_eq!(resolved.memory.max_claims_per_contract, 100);
     assert_eq!(resolved.memory.max_context_bytes, 28672);
-    assert_eq!(resolved.memory.retention_days, 3650);
 }

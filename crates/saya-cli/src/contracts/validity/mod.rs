@@ -5,6 +5,12 @@
 //! harder to undo than one that only reports. See the SPEC REVIEW in the
 //! report for the two gaps found in spec-5b (the table's row order is a
 //! condition list, not the rule's precedence; the version gate stays first).
+//!
+//! The orchestration lives here: schema availability, the fingerprint-format
+//! gate, the object lookup, and the aggregation of the per-column verdicts.
+//! The per-column drift comparison itself is in [`drift`].
+
+mod drift;
 
 use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::view::ContractSchemaState;
@@ -51,8 +57,8 @@ pub(crate) fn schema_state_for(
     // referenced column that broke the claim reads Stale; one that only
     // narrowed reads NeedsReview; a drift entirely outside the claim's
     // columns reads NeedsReview too (the claim may still be true).
-    match referenced_column_drift(claim, live_table) {
-        Some(Drift::Stale) => ContractSchemaState::Stale,
+    match drift::referenced_column_drift(claim, live_table) {
+        Some(drift::Drift::Stale) => ContractSchemaState::Stale,
         // NeedsReview covers both a narrowed referenced column and the
         // "all my columns match but the fingerprint moved" case (the drift is
         // in columns the claim does not depend on). Either way a human, not
@@ -61,73 +67,9 @@ pub(crate) fn schema_state_for(
     }
 }
 
-/// How a single referenced column's snapshot relates to the live column.
-#[derive(Debug, PartialEq, Eq)]
-enum Drift {
-    /// The column is gone, or it changed in a way that can silently break a
-    /// claim built on the old shape: a different type, or it gained NULLs.
-    Stale,
-    /// The column narrowed — it became non-nullable when it was not. That
-    /// only makes a previously-sometimes-null value always present, so the
-    /// claim may still hold; a human should confirm.
-    NeedsReview,
-}
-
 fn live_table<'s>(schema: &'s SchemaTree, claim: &StoredClaim) -> Option<&'s Table> {
     let obj = &claim.object;
     schema.find_table(obj.catalog(), obj.schema(), obj.object())
-}
-
-/// The worst verdict across the claim's referenced columns, or `None` when
-/// every referenced column matches its snapshot. `None` is *not* Current —
-/// the fingerprint already differed, so a caller that returns here must fall
-/// through to NeedsReview: the drift is in something the claim does not
-/// depend on.
-///
-/// A claim with no referenced columns returns `None`: nothing it depends on
-/// can have broken, so it is NeedsReview (never Stale) when the fingerprint
-/// moves.
-fn referenced_column_drift(claim: &StoredClaim, live: &Table) -> Option<Drift> {
-    let mut worst: Option<Drift> = None;
-    for snap in &claim.referenced_columns {
-        let Some(col) = live
-            .columns
-            .iter()
-            .find(|c| c.name.eq_ignore_ascii_case(&snap.name))
-        else {
-            // Absent by name — renamed or dropped. The claim lost something it
-            // referenced.
-            return Some(Drift::Stale);
-        };
-        // An unknown snapshot (empty type) can prove nothing: never match, so
-        // a pre-5a row with a moved fingerprint never reads Current. We cannot
-        // distinguish "retyped" from "unchanged" without a stored type, so
-        // fall through to NeedsReview rather than guessing either way.
-        if snap.data_type.trim().is_empty() {
-            worst = worst.or(Some(Drift::NeedsReview));
-            continue;
-        }
-        // Exact string equality after trimming. No cross-dialect normalisation:
-        // `int4` and `integer` may or may not coincide by backend, and a
-        // permissive guess keeps a stale claim alive silently — the exact
-        // failure this rule exists to prevent. The same discovery path writes
-        // both the snapshot and the live type, so the round-trip it actually
-        // compares is exact-by-construction; this only refuses to guess across
-        // *different* backends, which is the safe refusal.
-        if col.data_type.trim() != snap.data_type.trim() {
-            return Some(Drift::Stale);
-        }
-        // Nullable-ward is Stale: a "default time column" that is now sometimes
-        // null breaks the queries the claim exists to shape. Non-nullable-ward
-        // (lost nullability) only narrows what was already true -> NeedsReview.
-        if col.nullable && !snap.nullable {
-            return Some(Drift::Stale);
-        }
-        if !col.nullable && snap.nullable {
-            worst = worst.or(Some(Drift::NeedsReview));
-        }
-    }
-    worst
 }
 
 #[cfg(test)]
@@ -193,55 +135,6 @@ mod unit {
             schema_state_for(
                 &claim,
                 &SchemaAvailability::available(schema, FRESH_NOW),
-                SchemaFreshness::for_model(FRESH_NOW)
-            ),
-            ContractSchemaState::NeedsReview
-        );
-    }
-
-    #[test]
-    fn no_referenced_columns_with_moved_fingerprint_is_needs_review() {
-        // A table-level claim depends on nothing: a moved fingerprint cannot
-        // have broken any column it references, so it is NeedsReview, not
-        // Stale. The live digest differs from the stored one by construction.
-        let mut claim = base_claim();
-        let table = Table {
-            name: "orders".into(),
-            columns: vec![Column {
-                name: "id".into(),
-                data_type: "bigint".into(),
-                nullable: false,
-            }],
-        };
-        claim.schema_fingerprint = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &table);
-        // Add a column to move the fingerprint without touching the claim.
-        let drifted = Table {
-            name: "orders".into(),
-            columns: vec![
-                Column {
-                    name: "id".into(),
-                    data_type: "bigint".into(),
-                    nullable: false,
-                },
-                Column {
-                    name: "note".into(),
-                    data_type: "text".into(),
-                    nullable: true,
-                },
-            ],
-        };
-        assert_eq!(
-            referenced_column_drift(&claim, &drifted),
-            None,
-            "a claim with no referenced columns has no drift"
-        );
-        // And the public rule turns that None plus a moved fingerprint into
-        // NeedsReview, never Stale.
-        let live = schema_with(drifted);
-        assert_eq!(
-            schema_state_for(
-                &claim,
-                &SchemaAvailability::available(live, FRESH_NOW),
                 SchemaFreshness::for_model(FRESH_NOW)
             ),
             ContractSchemaState::NeedsReview

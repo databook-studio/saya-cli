@@ -23,7 +23,6 @@ pub struct RedactedDiagnostics {
     pub memory_max_contracts: Option<u32>,
     pub memory_max_claims_per_contract: Option<u32>,
     pub memory_max_context_bytes: Option<u32>,
-    pub memory_retention_days: Option<u32>,
 }
 
 /// A display-safe view of effective runtime settings with no resolved secrets.
@@ -48,7 +47,6 @@ pub struct ResolvedDiagnostics {
     pub memory_max_contracts: u32,
     pub memory_max_claims_per_contract: u32,
     pub memory_max_context_bytes: u32,
-    pub memory_retention_days: u32,
 }
 
 impl RedactedDiagnostics {
@@ -72,7 +70,6 @@ impl RedactedDiagnostics {
             memory_max_contracts: file.memory.max_contracts,
             memory_max_claims_per_contract: file.memory.max_claims_per_contract,
             memory_max_context_bytes: file.memory.max_context_bytes,
-            memory_retention_days: file.memory.retention_days,
         }
     }
 }
@@ -102,7 +99,6 @@ impl ResolvedConfig {
             memory_max_contracts: self.memory.max_contracts,
             memory_max_claims_per_contract: self.memory.max_claims_per_contract,
             memory_max_context_bytes: self.memory.max_context_bytes,
-            memory_retention_days: self.memory.retention_days,
         }
     }
 }

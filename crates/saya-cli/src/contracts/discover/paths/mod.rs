@@ -22,6 +22,17 @@
 //! regular file (closes the FIFO/device DoS, and a swap *to* a non-regular
 //! file), but a same-type regular-file swap to a different in-root file is
 //! not caught. Stated plainly rather than pretended closed.
+//!
+//! Three concerns, three submodules: [`entry`] decides which directory entries
+//! are candidates under the root; [`open`] opens a candidate as a regular
+//! file only; this module resolves the root and holds the shared [`contains`]
+//! primitive both sides (and the export *write* side, `io::write`) reuse.
+
+mod entry;
+mod open;
+
+pub(crate) use entry::check_entry;
+pub(crate) use open::open_regular;
 
 use std::fs;
 use std::io;
@@ -63,75 +74,6 @@ pub(crate) enum Checked {
     Candidate(Candidate),
     Skip,
     Escaped(PathBuf),
-}
-
-/// Check a raw directory entry against the root, **without** following the
-/// entry's own symlink for the escape decision: we canonicalise the entry and
-/// require the canonical path to be inside the canonical root. A symlink whose
-/// target is outside the root therefore fails this check and is rejected.
-pub(crate) fn check_entry(
-    root: &Path,
-    entry_path: &Path,
-    relative: &Path,
-) -> Result<Checked, RootError> {
-    // Extension filter first — cheap, and a directory named `x.toml` should be
-    // skipped, not canonicalised. `extension()` is None for `.toml` at the
-    // root edge cases but `.toml` is well-formed here.
-    if !is_toml(entry_path) {
-        return Ok(Checked::Skip);
-    }
-    // Canonicalise the entry. This follows symlinks; an escaping symlink's
-    // canonical path will be outside `root`, which the contains() check
-    // rejects. A symlink inside the root canonicalises inside the root and is
-    // accepted. We do NOT follow-then-trust: we re-verify the opened file's
-    // type at read time (see `open_regular`).
-    let canonical = match entry_path.canonicalize() {
-        Ok(p) => p,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Checked::Skip),
-        // A broken symlink canonicalises to an error; skip it rather than
-        // aborting the whole pass.
-        Err(_) => return Ok(Checked::Skip),
-    };
-    if !contains(root, &canonical) {
-        return Ok(Checked::Escaped(relative.to_path_buf()));
-    }
-    Ok(Checked::Candidate(Candidate {
-        relative: relative.to_path_buf(),
-        canonical,
-    }))
-}
-
-/// Open a candidate as a **regular file only**.
-///
-/// Order matters: a FIFO opened for reading with no writer blocks forever —
-/// a DoS that looks like a hang (spec §4). So we check the file type with
-/// `symlink_metadata` (no open, no block) **before** `File::open`, and reject
-/// anything that is not a regular file without ever opening it. After opening
-/// we re-verify the handle's own metadata (`fstat`) so a type-swap between
-/// the pre-open check and the open is still caught for non-regular targets.
-///
-/// Race we do NOT close: a same-type regular-file swap between the pre-open
-/// `symlink_metadata` and the open is not caught — both checks see a regular
-/// file. Stated plainly in the module docs; the stdlib has no portable
-/// `openat`-with-`O_NOFOLLOW` to do better.
-///
-/// Returns `Ok(None)` if the candidate is not a regular file (skip, do not
-/// abort the pass); `Err` only on a read failure of the root itself.
-pub(crate) fn open_regular(candidate: &Candidate) -> io::Result<Option<(fs::File, u64)>> {
-    // Pre-open type check — never open a FIFO/device/directory. The path is
-    // already canonical, so symlink_metadata reports the real target's type.
-    let pre = fs::symlink_metadata(&candidate.canonical)?;
-    if !pre.is_file() {
-        return Ok(None);
-    }
-    let file = fs::File::open(&candidate.canonical)?;
-    // Post-open re-verify via the handle (fstat), catching a swap to a
-    // non-regular file between the two checks.
-    let post = file.metadata()?;
-    if !post.is_file() {
-        return Ok(None);
-    }
-    Ok(Some((file, post.len())))
 }
 
 /// True if `child` is `root` or below it, by canonical-path components. This

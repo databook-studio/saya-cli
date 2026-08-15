@@ -11,8 +11,8 @@ use saya_cli::{
     load_with_sources, profile_identity, run_contracts,
 };
 use saya_store::{
-    ClaimEvidence, ContractStore, EvidenceKind, ProposeClaim, ProposeOutcome, SchemaStore,
-    SqliteStateStore, object_id,
+    ClaimEvidence, ContractStore, EvidenceKind, ForgetReason, ProposeClaim, ProposeOutcome,
+    SchemaStore, SqliteStateStore, object_id,
 };
 use saya_types::{
     ClaimOrigin, ClaimStatus, Column, ColumnRole, Database, DatabaseObjectKind, DatabaseObjectRef,
@@ -146,6 +146,29 @@ async fn seed_confirmed(
         store.propose_claim(request).await.unwrap(),
         ProposeOutcome::Stored(_)
     ));
+}
+
+/// Forget the first claim for `table` whose payload equals `payload`, leaving
+/// the tombstone (payload cleared, dedup key preserved). Re-proposing the same
+/// fact must read as a forgotten duplicate, never "added".
+async fn forget_first(
+    store: &SqliteStateStore,
+    runtime: &RuntimeConfig,
+    table: &str,
+    payload: saya_types::ClaimPayload,
+) {
+    let claims = store
+        .list_claims(&object_ref(runtime, table), &[])
+        .await
+        .unwrap();
+    let target = claims
+        .iter()
+        .find(|c| c.payload.as_ref() == Some(&payload))
+        .unwrap_or_else(|| panic!("no claim with payload {payload:?} to forget"));
+    store
+        .forget_claim(&target.id, ForgetReason::UserRequest)
+        .await
+        .unwrap();
 }
 
 fn unobserved_fingerprint() -> saya_types::SchemaFingerprint {
@@ -366,6 +389,92 @@ async fn real_import_stores_then_re_import_duplicates() {
         claims.len(),
         2,
         "re-import stored something new: {claims:?}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+// ---------------------------------------------------------------------------
+// 3b. A forgotten claim is a tombstone: its payload is cleared but its dedup
+//     key survives, so re-proposing the same fact hits the store's Duplicate
+//     path and stores nothing. Before the fix the pre-scan skipped the
+//     payload-free tombstone and classified the file as "added", so the report
+//     told the user something was imported that was not — the tombstone
+//     decision must never read as success. (Dry run and real import share the
+//     same pre-scan, so both must read the forgotten duplicate.)
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn re_importing_a_forgotten_claim_reads_duplicate_forgotten_not_added() {
+    let root = temp_root("import-forgotten-dup");
+    let (runtime, _) = runtime_at(&root);
+    let store = store_at(&root).await;
+    let alias = saya_types::ClaimPayload::table_alias("customers").unwrap();
+    seed_confirmed(&store, &runtime, "orders", alias.clone(), None).await;
+    // Tombstone the alias: payload cleared, dedup key preserved.
+    forget_first(&store, &runtime, "orders", alias.clone()).await;
+    let before = store
+        .list_claims(&object_ref(&runtime, "orders"), &[])
+        .await
+        .unwrap();
+    assert_eq!(before.len(), 1, "{before:?}");
+    assert_eq!(before[0].status, ClaimStatus::Forgotten);
+    assert!(
+        before[0].payload.is_none(),
+        "forgotten claim is a tombstone"
+    );
+
+    write_contract(
+        &root,
+        "orders.toml",
+        "version = 1\nobject = \"analytics.public.orders\"\n[[claims]]\nkind = \"alias\"\nvalue = \"customers\"\n",
+    );
+    let import = || ContractsCommand::Import {
+        path: root.clone(),
+        dry_run: false,
+        profile: None,
+    };
+
+    // A dry run must report the forgotten duplicate, not "added".
+    let dry = ContractsCommand::Import {
+        path: root.clone(),
+        dry_run: true,
+        profile: None,
+    };
+    let (code, out, err) = run(dry, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(
+        out.contains("duplicate") && out.contains("(forgotten)"),
+        "dry run must report a forgotten duplicate: {out}"
+    );
+    assert!(
+        !out.contains("0 added, 0 duplicate") && !out.contains("1 added"),
+        "dry run must not read the forgotten claim as added: {out}"
+    );
+
+    // A real import must report the same and store nothing new.
+    let (code, out, err) = run(import(), &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(
+        out.contains("duplicate") && out.contains("(forgotten)"),
+        "import must report a forgotten duplicate: {out}"
+    );
+    assert!(
+        !out.contains("1 added"),
+        "import must not read the forgotten claim as added: {out}"
+    );
+    let after = store
+        .list_claims(&object_ref(&runtime, "orders"), &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        after.len(),
+        1,
+        "re-proposing a forgotten claim must not store a new claim: {after:?}"
+    );
+    assert_eq!(after[0].status, ClaimStatus::Forgotten);
+    assert!(
+        after[0].payload.is_none(),
+        "the tombstone must not be resurrected: {after:?}"
     );
 
     let _ = fs::remove_dir_all(&root);

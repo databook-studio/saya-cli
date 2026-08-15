@@ -146,6 +146,18 @@ pub trait ContractStore: Send + Sync {
     ) -> Result<ContractObjectId, StoreError>;
     async fn propose_claim(&self, request: ProposeClaim) -> Result<ProposeOutcome, StoreError>;
     async fn get_claim(&self, id: &ClaimId) -> Result<Option<StoredClaim>, StoreError>;
+    /// The claim already occupying a dedup slot for `object` under `key`,
+    /// including a **forgotten tombstone**: forgetting clears the payload but
+    /// preserves the dedup key, so the slot stays taken and a re-proposal must
+    /// read as a duplicate rather than silently resurrecting. Returns `None`
+    /// when no claim — live or tombstoned — holds that key. The import
+    /// pre-scan uses this so a dry run and a real import agree on a forgotten
+    /// duplicate; `propose_claim` makes the same lookup at write time.
+    async fn find_claim_by_dedup_key(
+        &self,
+        object: &DatabaseObjectRef,
+        key: &DeduplicationKey,
+    ) -> Result<Option<StoredClaim>, StoreError>;
     async fn list_claims(
         &self,
         object: &DatabaseObjectRef,
