@@ -22,6 +22,12 @@ connected databases at once.
 - 🛡️ **Safe by default** — every query is bounded and read-only, and the
   **exact SQL is shown** in the approval prompt (and echoed to the transcript)
   before it runs; sessions are redacted before being persisted.
+- 🧠 **Memory** — tell it what your tables mean once (`saya contracts remember
+  orders --kind time-column --value created_at`) and later questions carry that
+  context. Facts are typed, bound to a table and its schema shape, and go stale
+  when a column they depend on changes. It never confirms anything by itself,
+  never picks between contradictions, and is **off by default**. Shareable via
+  `.saya/contracts/` in your repo. → [docs/memory.md](docs/memory.md)
 - 🔌 **Databases** — PostgreSQL, MySQL, SQLite, DuckDB, Snowflake; query several
   connected databases at once, or run **one query across every connected
   database** and get per-database results side by side.
