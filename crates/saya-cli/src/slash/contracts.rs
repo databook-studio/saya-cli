@@ -15,7 +15,7 @@
 //! kinds the column is the next positional and everything after it is the
 //! value. See [`RememberSpec`] and the SPEC REVIEW.
 
-use crate::cli::{ClaimKindArg, ContractsCommand, ForgetReasonArg};
+use crate::cli::{ClaimKindArg, ContractsCommand, ForgetReasonArg, ReviewDecisionArg};
 use crate::contracts::args::parse_kind;
 use crate::slash::SlashParseError;
 
@@ -107,6 +107,38 @@ fn usage_queue() -> String {
     "/queue [limit]".into()
 }
 
+/// Payload-free usage for the spec-D decide commands. One token: a stored
+/// claim-id prefix (the `c-xxxx` form `contracts list` abbreviates to). Never
+/// echoes the untrusted prefix.
+fn usage_decide() -> String {
+    "/confirm|/reject|/use <claim-id-prefix>".into()
+}
+
+/// Parses the tail of a `/confirm`, `/reject`, or `/use` command: exactly one
+/// token (the claim-id prefix). The decision is fixed by the command name.
+/// Translates to `ContractsCommand::Decide` with `profile: None` — the TUI
+/// stamps the active profile, the headless path resolves the default, exactly
+/// as `/queue` does. A too-short prefix is not refused here: the resolve step
+/// refuses `c` or empty with a typed message, so parsing stays shape-only.
+fn parse_decide(
+    _name: &str,
+    arg: &str,
+    decision: ReviewDecisionArg,
+) -> Result<Option<ContractsCommand>, SlashParseError> {
+    let tokens: Vec<&str> = arg.split_whitespace().collect();
+    let prefix = tokens
+        .first()
+        .ok_or_else(|| SlashParseError(usage_decide()))?;
+    if tokens.len() != 1 {
+        return Err(SlashParseError(usage_decide()));
+    }
+    Ok(Some(ContractsCommand::Decide {
+        prefix: prefix.to_string(),
+        decision,
+        profile: None,
+    }))
+}
+
 /// Translates a slash command name + its argument tail into the matching
 /// `ContractsCommand`, or a usage error. The argument is the raw text after the
 /// command word (already trimmed of the leading `/name`).
@@ -182,6 +214,12 @@ pub(crate) fn parse_contract_command(
                 limit,
             }))
         }
+        // Spec D: act on the claim the last turn showed, by a short stored
+        // claim-id prefix rather than a 64-character id. The decision is fixed
+        // by the command name; the prefix is the one positional. See
+        // `parse_decide` and the §4 defence in the report.
+        "confirm" => parse_decide(name, arg, ReviewDecisionArg::Confirm),
+        "reject" => parse_decide(name, arg, ReviewDecisionArg::Reject),
         _ => Ok(None),
     }
 }
@@ -322,6 +360,59 @@ mod tests {
         assert!(!bad.0.contains("lots"));
         // Two tokens is a usage error.
         assert!(parse_contract_command("queue", "1 2").is_err());
+    }
+
+    #[test]
+    fn parse_confirm_one_prefix() {
+        let cmd = parse_contract_command("confirm", "c-a86a3f")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            cmd,
+            ContractsCommand::Decide {
+                prefix: "c-a86a3f".into(),
+                decision: ReviewDecisionArg::Confirm,
+                profile: None,
+            }
+        );
+        // No token is a usage error that does not echo anything.
+        let bad = parse_contract_command("confirm", "").unwrap_err();
+        assert!(!bad.0.contains("c-"));
+        assert!(!bad.0.is_empty());
+        // Two tokens is a usage error that does not echo the input.
+        let bad = parse_contract_command("confirm", "c-abc c-def").unwrap_err();
+        assert!(!bad.0.contains("c-abc"));
+        assert!(!bad.0.contains("c-def"));
+    }
+
+    #[test]
+    fn parse_reject_translates_to_decide() {
+        assert_eq!(
+            parse_contract_command("reject", "c-1").unwrap().unwrap(),
+            ContractsCommand::Decide {
+                prefix: "c-1".into(),
+                decision: ReviewDecisionArg::Reject,
+                profile: None,
+            }
+        );
+        // Refuses a missing prefix without panicking.
+        assert!(parse_contract_command("reject", "").is_err());
+        // Refuses two tokens.
+        assert!(parse_contract_command("reject", "a b").is_err());
+    }
+
+    /// `/use` is deliberately absent. `use_candidate_once` validates a claim but
+    /// the interactive session does not yet thread the admission into the next
+    /// recall, so the command could not do what its name promises. Shipping it
+    /// would have told a user their candidate was admitted when nothing had
+    /// changed — the exact overstatement this feature exists to avoid. It
+    /// returns here once the admission is threaded.
+    #[test]
+    fn use_is_not_a_contract_command_until_the_admission_is_threaded() {
+        assert!(
+            parse_contract_command("use", "c-1").unwrap().is_none(),
+            "/use must not parse while it cannot admit anything"
+        );
     }
 
     #[test]

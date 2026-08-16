@@ -142,6 +142,21 @@ pub enum ContractsCommand {
         #[arg(long)]
         reject: bool,
     },
+    /// Act on a claim from the turn that just showed it, by a short stored
+    /// claim-id prefix (the `c-xxxx` `contracts list` abbreviates to), not a
+    /// 64-character id. Spec D. The `prefix` is resolved against the resolved
+    /// profile's claims to exactly one claim, or refused; the decision then
+    /// reaches the existing `confirm`/`reject`/`use_candidate_once` operations
+    /// — it is not a second implementation of them.
+    Decide {
+        /// A leading prefix of a stored claim id. Unambiguous-or-refused: zero
+        /// matches or more than one is a typed error that changes nothing.
+        prefix: String,
+        #[arg(long, value_enum)]
+        decision: ReviewDecisionArg,
+        #[arg(long)]
+        profile: Option<String>,
+    },
     Forget {
         claim_id: String,
         #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
@@ -187,6 +202,18 @@ pub enum ForgetReasonArg {
     Incorrect,
     Obsolete,
     Privacy,
+}
+
+/// The decision a `/confirm`, `/reject`, or `/use` short-reference command
+/// carries, resolved by `run_contracts` against the stored claim the prefix
+/// names. Spec D. `Confirm` and `Reject` reach the existing mutating ops; `UseOnce`
+/// reaches `use_candidate_once`, which validates and admits for one recall
+/// without promoting — a candidate stays a candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ReviewDecisionArg {
+    Confirm,
+    Reject,
+    UseOnce,
 }
 
 /// `saya preferences` — the four kinds a preference value can be. The value's

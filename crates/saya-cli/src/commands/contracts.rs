@@ -11,6 +11,7 @@
 //! `contracts_profile.rs`, read commands in `contracts_read.rs`, write commands
 //! in `contracts_write.rs`, and view→DTO mapping in `contracts_map.rs`.
 
+mod contracts_decide;
 mod contracts_io;
 mod contracts_map;
 mod contracts_profile;
@@ -88,6 +89,16 @@ pub async fn run_contracts(
             confirm,
             reject,
         } => contracts_write::review(store, format, &claim_id, confirm, reject).await,
+        ContractsCommand::Decide {
+            prefix,
+            decision,
+            profile,
+        } => match resolve_profile(runtime, profile.as_deref()) {
+            Ok((name, identity)) => {
+                contracts_decide::decide(store, format, &prefix, decision, &name, &identity).await
+            }
+            Err((code, message)) => failure_message(code, message, format),
+        },
         ContractsCommand::Forget { claim_id, reason } => {
             contracts_write::forget_claim(store, format, &claim_id, reason).await
         }
@@ -201,6 +212,12 @@ pub(super) enum ArgMessage {
     MalformedClaimId,
     BadValue,
     AmbiguousReview,
+    /// A short-reference prefix matched more than one claim (spec D). The typed
+    /// prefixes never reach the message — the user must type more characters.
+    AmbiguousPrefix,
+    /// A short-reference prefix matched no claim (spec D). Payload-free: the
+    /// prefix the user typed is untrusted and never echoed.
+    PrefixNotFound,
 }
 
 impl std::fmt::Display for ArgMessage {
@@ -213,6 +230,14 @@ impl std::fmt::Display for ArgMessage {
             Self::MalformedClaimId => write!(f, "claim id must be alphanumeric, '-', or '_'"),
             Self::BadValue => write!(f, "claim value is invalid"),
             Self::AmbiguousReview => write!(f, "choose exactly one of --confirm or --reject"),
+            Self::AmbiguousPrefix => write!(
+                f,
+                "that claim reference matches more than one claim; type more characters"
+            ),
+            Self::PrefixNotFound => write!(
+                f,
+                "no claim matches that reference; it may have been forgotten, or the prefix is too short"
+            ),
         }
     }
 }

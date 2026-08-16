@@ -103,10 +103,11 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
-        "contracts" | "contract" | "remember" | "forget" | "queue" => {
+        "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject" => {
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
             // shared dispatcher. No second parsing or DTO mapping lives here.
+            // `confirm`/`reject` (spec D) translate to `ContractsCommand::Decide`.
             return contracts::parse_contract_command(name, &arg)
                 .map(|maybe| maybe.map(SlashCommand::Contracts));
         }

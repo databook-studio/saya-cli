@@ -25,6 +25,7 @@ pub use app::run;
 pub use cli::{
     ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
     ForgetReasonArg, FormatArg, GlobalOptions, PreferenceKindArg, PreferencesCommand,
+    ReviewDecisionArg,
 };
 pub use commands::{capture_output_start, capture_output_take, run_contracts, run_preferences};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};

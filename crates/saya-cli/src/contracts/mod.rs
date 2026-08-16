@@ -9,6 +9,7 @@ pub(crate) mod args;
 mod assemble;
 mod availability;
 mod conflict;
+mod decide;
 pub(crate) mod discover;
 pub(crate) mod io;
 mod name_match;
@@ -36,6 +37,8 @@ mod tests;
 // (2b-2/3/4: rendering, clap, slash, agent tools) will consume. Nothing in this
 // crate references it yet outside tests, so the re-exports read as unused in a
 // lib build — they are not dead code, they are the boundary this slice exposes.
+#[allow(unused_imports)]
+pub(crate) use decide::resolve_prefix;
 #[allow(unused_imports)]
 pub(crate) use op_error::ContractOpError;
 #[allow(unused_imports)]

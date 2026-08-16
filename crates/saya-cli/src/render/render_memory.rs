@@ -106,10 +106,14 @@ fn contract_header(contract: &SuppliedContractDto) -> String {
     )
 }
 
-/// One claim line: kind, value, an optional column, and the status word —
-/// with an explicit `unconfirmed` mark when the status is not `Confirmed`
-/// (spec §4: unconfirmed claims are marked wherever claims are shown).
+/// One claim line: the short claim-id prefix (the `c-xxxx` the user types into
+/// `/confirm`/`/reject`/`/use`), kind, value, an optional column, and the status
+/// word — with an explicit `unconfirmed` mark when the status is not `Confirmed`
+/// (spec §4: unconfirmed claims are marked wherever claims are shown). The id
+/// prefix is shown here so a user can act on the claim from the turn that just
+/// displayed it, without finding and copying a 64-character id (spec D).
 fn claim_line(claim: &SuppliedClaimDto) -> String {
+    let id = abbreviate_id(claim.claim_id.as_str());
     let kind = claim.kind.as_str();
     let value = claim.value.as_str();
     let column = match &claim.column {
@@ -122,7 +126,21 @@ fn claim_line(claim: &SuppliedClaimDto) -> String {
     } else {
         "  (unconfirmed)".to_string()
     };
-    format!("    {kind}  {value}{column}  {status}{mark}\n")
+    format!("    {id}  {kind}  {value}{column}  {status}{mark}\n")
+}
+
+/// Abbreviation for the on-screen claim-id reference: the first six chars + `…`
+/// when the id is longer. Mirrors `render_contract::abbreviate_id`'s width so
+/// the memory receipt and `contracts list` show the same short reference a
+/// `/confirm` prefix can match. The full id is never needed here — the prefix
+/// is the reference, and the resolve step matches by leading chars.
+fn abbreviate_id(id: &str) -> String {
+    const PREFIX: usize = 6;
+    if id.len() > PREFIX + 1 {
+        format!("{}…", &id[..PREFIX])
+    } else {
+        id.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -353,5 +371,41 @@ mod tests {
         let json = serde_json::to_string(&event).expect("serializes");
         assert!(json.contains(r#""type":"knowledge_supplied""#), "{json}");
         assert!(json.contains("supplied"), "{json}");
+    }
+
+    /// Each claim line shows the short claim-id prefix (spec D): it is the
+    /// reference a user types into `/confirm`/`/reject`/`/use` to act on the
+    /// claim from this turn. The full 64-char id never appears — the prefix is
+    /// the reference, and `abbreviate_id` keeps it to the same width
+    /// `contracts list` shows.
+    #[test]
+    fn claim_line_shows_the_short_id_prefix_not_the_full_id() {
+        // A realistic 67-char id (`c-` + 64 hex). `abbreviate_id` keeps the
+        // first 6 chars + `…`.
+        let long_id = "c-a86a3f0e9d7c5b4a2f0e9d7c5b4a2f0e9d7c5b4a2f0e9d7c5b4a2f0e9d7c5b4a";
+        let text = knowledge_supplied_text(
+            ran(false),
+            &[contract(
+                "analytics",
+                "catalog.public.orders",
+                "current",
+                vec![claim(
+                    long_id,
+                    "table_alias",
+                    "orders",
+                    None,
+                    ClaimStatus::Candidate,
+                )],
+            )],
+            0,
+        );
+        assert!(
+            text.contains("c-a86a…"),
+            "short prefix must appear so the user can type it: {text}"
+        );
+        assert!(
+            !text.contains(&long_id[7..]),
+            "the full id beyond the prefix must not appear: {text}"
+        );
     }
 }
