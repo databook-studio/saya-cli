@@ -35,7 +35,6 @@ use crate::commands::unobserved_fingerprint;
 use crate::contracts::args::{QualifiedName, build_payload, parse_kind, parse_qualified};
 use crate::contracts::propose as propose_op;
 
-use evidence::{TOUCHED, UNTOUCHED};
 use mapping::{now_unix_ms, outcome_payload};
 use validation::parse_arguments;
 
@@ -155,14 +154,19 @@ impl DatabaseTools {
     }
 
     /// `SuccessfulReadQuery` when a succeeded observation touched the proposed
-    /// object this turn, else the weaker `RepeatedObservation`.
-    fn evidence_kind(&self, qualified: &QualifiedName) -> EvidenceKind {
-        match &self.observations {
-            Some(log) if log.touched(&qualified.catalog, &qualified.schema, &qualified.object) => {
-                TOUCHED
-            }
-            _ => UNTOUCHED,
-        }
+    /// object this turn AND no claims for this object were supplied this turn;
+    /// else the weaker `RepeatedObservation`.
+    pub(crate) fn evidence_kind(&self, qualified: &QualifiedName) -> EvidenceKind {
+        let proposed = format!(
+            "{}.{}.{}",
+            qualified.catalog, qualified.schema, qualified.object
+        );
+        let supplied = evidence::is_supplied_object(&self.supplied_objects, &proposed);
+        let touched = match &self.observations {
+            Some(log) => log.touched(&qualified.catalog, &qualified.schema, &qualified.object),
+            None => false,
+        };
+        evidence::decide_evidence_kind(touched, supplied)
     }
 }
 

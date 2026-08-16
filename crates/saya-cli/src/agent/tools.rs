@@ -42,3 +42,7 @@ mod format_tests;
 #[cfg(test)]
 #[path = "tools/observations_tests.rs"]
 mod observations_tests;
+
+#[cfg(test)]
+#[path = "tools/propose_event_tests.rs"]
+mod propose_event_tests;

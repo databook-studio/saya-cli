@@ -55,6 +55,13 @@ pub(crate) struct DatabaseTools {
     // absent log means no event is emitted, it never affects persistence. An
     // `Arc` lets the runtime keep a handle to drain after the turn.
     pub(super) proposed_claims: Option<Arc<ProposedClaimsLog>>,
+    /// Qualified `catalog.schema.object` names of objects whose claims were
+    /// supplied to the model this turn via recall.
+    ///
+    /// A proposal for any object in this list must not earn the strong `TOUCHED`
+    /// evidence kind even if a query touched it this turn: the query was caused
+    /// by the supplied claim and is not independent confirmation.
+    pub(super) supplied_objects: Vec<String>,
 }
 
 impl DatabaseTools {
@@ -92,6 +99,7 @@ impl DatabaseTools {
             observations: None,
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims: None,
+            supplied_objects: Vec::new(),
         }
     }
 
@@ -115,6 +123,7 @@ impl DatabaseTools {
             observations: None,
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims: None,
+            supplied_objects: Vec::new(),
         }
     }
 
@@ -146,7 +155,14 @@ impl DatabaseTools {
             observations,
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims,
+            supplied_objects: Vec::new(),
         }
+    }
+
+    /// Attaches the turn's supplied qualified object names (from `RecallReceipt::supplied`).
+    pub(crate) fn with_supplied_objects(mut self, supplied_objects: Vec<String>) -> Self {
+        self.supplied_objects = supplied_objects;
+        self
     }
 
     #[cfg(test)]
@@ -167,6 +183,7 @@ impl DatabaseTools {
             observations: None,
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims: None,
+            supplied_objects: Vec::new(),
         }
     }
 
@@ -194,6 +211,7 @@ impl DatabaseTools {
             observations: Some(observations),
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims,
+            supplied_objects: Vec::new(),
         }
     }
 }

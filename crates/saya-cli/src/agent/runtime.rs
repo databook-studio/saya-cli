@@ -153,7 +153,8 @@ pub(crate) async fn run_prompt_with_inputs(
         state_db,
         learning.observations,
         proposed_claims_log.clone(),
-    );
+    )
+    .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect());
     let request = AgentRequest {
         prompt: prompt.into(),
         profile_names,
