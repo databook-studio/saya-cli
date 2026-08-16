@@ -7,6 +7,9 @@ pub(crate) mod identity;
 pub(crate) mod preference;
 pub(crate) mod preference_serde;
 pub(crate) mod scope;
+pub(crate) mod slot;
+pub(crate) mod slot_state;
+pub(crate) mod slot_values;
 
 pub use claim::{CLAIM_PAYLOAD_VERSION, ClaimId, MAX_REFERENCED_COLUMNS, MAX_TEXT_CHARS};
 pub use claim_enums::{Cardinality, ClaimOrigin, ClaimStatus, ColumnRole};
@@ -19,3 +22,6 @@ pub use preference::{
     PreferenceValue,
 };
 pub use scope::{ScopeRequirement, Scoped};
+pub use slot::{KnowledgeSlot, MAX_MULTI_SLOT_VALUES, SlotCardinality, SlotParseError};
+pub use slot_state::KnowledgeState;
+pub use slot_values::{SlotError, SlotValues};
