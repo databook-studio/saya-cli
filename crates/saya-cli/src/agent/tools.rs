@@ -13,12 +13,10 @@ pub(crate) use database_tools::DatabaseTools;
 // Re-exported through `tools` (not the private `database_tools` module) so the
 // agent runtime's learning wiring and tests can reach the observation types.
 // `ToolObservation` is consumed only by tests; the others by `agent::learning`.
-// `ProposedClaimsLog` is drained by the runtime to emit `KnowledgeProposed`.
 // `OverrideLog` is drained by the runtime to emit `KnowledgeOverridden` (A1).
 #[allow(unused_imports)]
 pub(crate) use database_tools::{
-    DrainedObservations, ObservationLog, ObservationOutcome, OverrideLog, ProposedClaimsLog,
-    ToolObservation,
+    DrainedObservations, ObservationLog, ObservationOutcome, OverrideLog, ToolObservation,
 };
 #[allow(unused_imports)]
 pub(crate) use sql_format::format_sql;
@@ -34,17 +32,9 @@ mod tests;
 mod contract_tools_tests;
 
 #[cfg(test)]
-#[path = "tools/propose_tools_tests.rs"]
-mod propose_tools_tests;
-
-#[cfg(test)]
 #[path = "tools/format_tests.rs"]
 mod format_tests;
 
 #[cfg(test)]
 #[path = "tools/observations_tests.rs"]
 mod observations_tests;
-
-#[cfg(test)]
-#[path = "tools/propose_event_tests.rs"]
-mod propose_event_tests;

@@ -103,6 +103,22 @@ impl ConnectionRegistry {
         }
     }
 
+    /// The connection name whose stored profile identity is `identity`, if any.
+    ///
+    /// The observation collector records the opaque [`ProfileIdentity`] (the
+    /// stable object identity, never a name a user chose); the turn record
+    /// resolves objects back to a connection *by name*, because that is what
+    /// [`ConnectionRegistry::resolve`] keys on. This is the one place the
+    /// identity the observation carries is turned into the name the resolver
+    /// expects, so a turn that touched a non-primary connection is attributed to
+    /// the connection it actually used rather than collapsed onto the primary.
+    pub(crate) fn name_for_identity(&self, identity: &str) -> Option<&str> {
+        self.entries()
+            .into_iter()
+            .find(|(_, entry)| entry.profile_id.as_deref() == Some(identity))
+            .map(|(name, _)| name)
+    }
+
     /// System-prompt addendum listing every connection and its dialect, instructing the
     /// model to pass the `connection` argument and inspect each database separately then
     /// combine findings. Returns None when there is <= 1 connection (no navigation needed).

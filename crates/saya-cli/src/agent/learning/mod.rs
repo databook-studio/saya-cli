@@ -16,6 +16,43 @@
 //!   nothing (§2). `Assisted` attaches an observation log and permits candidate
 //!   writes via `contract_propose`.
 
+pub(crate) mod extractor;
+pub(crate) mod extractor_prompt;
+pub(crate) mod extractor_schema;
+pub(crate) mod gate;
+pub(crate) mod ingest;
+pub(crate) mod resolver;
+pub(crate) mod runner;
+pub(crate) mod turn_record;
+pub(crate) mod turn_table;
+
+#[allow(unused_imports)]
+pub(crate) use extractor::parse_extraction_response;
+#[allow(unused_imports)]
+pub(crate) use extractor_prompt::build_extraction_prompt;
+#[allow(unused_imports)]
+pub(crate) use extractor_schema::{
+    ExtractedProposal, ExtractionError, MAX_PROPOSALS_PER_EXTRACTION, ProposalOrigin,
+};
+#[allow(unused_imports)]
+pub(crate) use gate::{GatingDecision, ProposalGating};
+#[allow(unused_imports)]
+pub(crate) use ingest::{
+    IngestionError, filter_anti_self_reinforcement, filter_anti_self_reinforcement_dto,
+    ingest_proposals,
+};
+#[allow(unused_imports)]
+pub(crate) use resolver::{ResolutionError, ResolvedProposal, resolve_proposal};
+#[allow(unused_imports)]
+pub(crate) use runner::{ExtractionRunnerError, run_extraction};
+#[allow(unused_imports)]
+pub(crate) use turn_record::{
+    MAX_ANSWER_BYTES, MAX_PROMPT_BYTES, MAX_TURN_RECORD_BYTES, SuppliedClaimDto,
+    SuppliedContractDto, TurnRecord,
+};
+#[allow(unused_imports)]
+pub(crate) use turn_table::{MAX_TURN_OBJECTS, TurnObjectEntry, TurnObjectId, TurnObjectTable};
+
 use crate::agent::tools::ObservationLog;
 use crate::contracts::{RecallBounds, RecallMode};
 use saya_config::{MemoryMode, ResolvedMemory};

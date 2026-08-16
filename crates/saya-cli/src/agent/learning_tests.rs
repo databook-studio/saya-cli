@@ -12,20 +12,20 @@ use super::*;
 use async_trait::async_trait;
 use saya_agent::{
     AgentLimits, AgentRequest, AllowReadOnlyApproval, ChatMessage, ChatProvider, ChatRequest,
-    ChatResponse, ToolCall, ToolExecutor, run_agent,
+    ChatResponse, ToolCall, run_agent,
 };
 use saya_config::{
     ConfigFile, ConnectionsFile, MemoryMode, ResolutionInput, ResolvedMemory, resolve,
 };
 use saya_store::{ContractStore, SchemaStore, SqliteStateStore};
 use saya_types::{
-    ClaimStatus, ConnectionError, DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile,
-    ProfileIdentity, QueryRequest, QueryResult, SchemaTree, SqlDialect,
+    ConnectionError, DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, ProfileIdentity,
+    QueryRequest, QueryResult, SchemaTree, SqlDialect,
 };
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -186,7 +186,6 @@ async fn run_one_turn(mode: MemoryMode) -> (SqliteStateStore, ProfileIdentity, P
         true,
         Some(store.clone()),
         setup.observations.clone(),
-        None,
     );
     let limits = AgentLimits {
         max_turns: 4,
@@ -270,48 +269,12 @@ async fn mode_assisted_recalls_candidates_and_permits_proposals() {
     assert!(setup.permit_candidate_writes);
     assert!(setup.observes());
 
-    // 3. Definitions include contract_propose.
+    // 3. Definitions do NOT include contract_propose (deprecated in Phase F).
     let defs = DatabaseTools::definitions(true, true, setup.permit_candidate_writes);
     assert!(
-        defs.iter().any(|d| d.name == "contract_propose"),
-        "contract_propose is registered under assisted mode"
+        defs.iter().all(|d| d.name != "contract_propose"),
+        "contract_propose is removed from model tools"
     );
-
-    // 4. Executing proposal stores a Candidate claim (never confirmed).
-    let root = temp_root("assisted_proposal");
-    let identity = profile_identity("primary");
-    let store = store_at(&root.join("state.sqlite3"), &identity).await;
-    let tools = DatabaseTools::with_learning(
-        registry_with_primary("primary", &identity),
-        100,
-        true,
-        Some(store.clone()),
-        Some(Arc::new(crate::agent::tools::ObservationLog::new())),
-        None,
-    );
-    tools
-        .execute(
-            "contract_propose",
-            serde_json::json!({"table": "catalog.public.orders", "kind": "alias", "value": "orders"}),
-        )
-        .await
-        .unwrap();
-
-    let obj = object_ref(&identity, "orders");
-    let candidates = store
-        .list_claims(&obj, &[ClaimStatus::Candidate])
-        .await
-        .unwrap();
-    assert_eq!(candidates.len(), 1, "exactly one candidate stored");
-    assert_eq!(candidates[0].status, ClaimStatus::Candidate);
-
-    let confirmed = store
-        .list_claims(&obj, &[ClaimStatus::Confirmed])
-        .await
-        .unwrap();
-    assert!(confirmed.is_empty(), "assisted proposal never confirms");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,43 +339,25 @@ fn legacy_two_axis_configuration_fails_loudly_at_parse_time() {
 
 #[tokio::test]
 async fn changing_memory_mode_takes_effect_on_the_next_turn() {
-    let root = temp_root("next_turn");
-    let identity = profile_identity("primary");
-    let store = store_at(&root.join("state.sqlite3"), &identity).await;
-    let obj = object_ref(&identity, "orders");
-    let propose =
-        serde_json::json!({"table": "catalog.public.orders", "kind": "alias", "value": "orders"});
-
-    // Turn 1: off -> contract_propose is hidden.
+    // Turn 1: off -> no candidate writes, no observations.
     let off = LearningSetup::from(MemoryMode::Off);
+    assert!(!off.permit_candidate_writes);
+    assert!(!off.observes());
     let off_defs = DatabaseTools::definitions(true, true, off.permit_candidate_writes);
     assert!(
         off_defs.iter().all(|d| d.name != "contract_propose"),
         "turn 1 (off): contract_propose is hidden"
     );
 
-    // Turn 2: assisted -> contract_propose is registered and stores candidate.
+    // Turn 2: assisted -> permits candidate writes and attaches observations.
     let assisted = LearningSetup::from(MemoryMode::Assisted);
+    assert!(assisted.permit_candidate_writes);
+    assert!(assisted.observes());
     let assisted_defs = DatabaseTools::definitions(true, true, assisted.permit_candidate_writes);
     assert!(
-        assisted_defs.iter().any(|d| d.name == "contract_propose"),
-        "turn 2 (assisted): contract_propose is registered"
+        assisted_defs.iter().all(|d| d.name != "contract_propose"),
+        "turn 2 (assisted): contract_propose is never advertised to the model"
     );
-    let tools = DatabaseTools::with_learning(
-        registry_with_primary("primary", &identity),
-        100,
-        true,
-        Some(store.clone()),
-        assisted.observations.clone(),
-        None,
-    );
-    tools.execute("contract_propose", propose).await.unwrap();
-    let candidates = store
-        .list_claims(&obj, &[ClaimStatus::Candidate])
-        .await
-        .unwrap();
-    assert_eq!(candidates.len(), 1, "turn 2 stored the candidate");
-    let _ = fs::remove_dir_all(root);
 }
 
 // ---------------------------------------------------------------------------

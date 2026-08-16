@@ -40,7 +40,7 @@ pub(crate) enum ObservationOutcome {
 }
 
 /// The drained log plus whether the 32-observation cap dropped records.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 /// Kept for Phase F's bounded turn record, which is the mechanism that stops
 /// learning depending on the model volunteering a `contract_propose` call. Its
 /// previous consumer was the `suggest`-mode report, removed when the two config
@@ -105,6 +105,12 @@ impl ObservationLog {
     /// observation of `orders`, `public.orders`, or `analytics.public.orders`.
     /// Only a `Succeeded` observation is evidence a proposal can lean on — a
     /// failed or denied query touched nothing it can claim.
+    /// Retained for its tests only. This graded evidence for the old
+    /// anti-self-reinforcement rule — a claim supplied this turn could not earn
+    /// the strong evidence kind from a query it had caused. Phase F replaced that
+    /// with receipt dedup, and `knowledge_items` has no evidence column for a
+    /// grade to live in, so nothing in production asks this any more.
+    #[allow(dead_code)]
     pub(crate) fn touched(&self, catalog: &str, schema: &str, object: &str) -> bool {
         let guard = self
             .observations

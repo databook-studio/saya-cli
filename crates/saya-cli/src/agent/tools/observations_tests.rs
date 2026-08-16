@@ -136,7 +136,6 @@ fn log_and_tools(
         allow_query_data,
         None,
         log.clone(),
-        None,
     );
     (log, tools)
 }
@@ -444,7 +443,6 @@ async fn no_collector_means_byte_identical_output() {
         true,
         None,
         with_log.clone(),
-        None,
     );
 
     let args = serde_json::json!({"sql": "SELECT id FROM orders"});

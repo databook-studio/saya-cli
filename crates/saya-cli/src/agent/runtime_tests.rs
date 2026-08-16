@@ -26,11 +26,13 @@ use saya_agent::{
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
 };
-use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
+use saya_store::{
+    ContractStore, KnowledgeItemStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
+};
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, ConnectionError, Database,
-    DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, ProfileIdentity, QueryRequest,
-    QueryResult, Schema, SchemaTree, SqlDialect, Table,
+    DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, KnowledgeSlot, KnowledgeState,
+    ProfileIdentity, QueryRequest, QueryResult, Schema, SchemaTree, SqlDialect, Table,
 };
 use std::{
     collections::BTreeMap,
@@ -771,58 +773,56 @@ fn knowledge_supplied_round_trips_through_serde_with_type_tag() {
 }
 
 // ===========================================================================
-// P2d — a persisted proposal emits one KnowledgeProposed through the runtime.
-//
-// The tool-level tests (propose_tools_tests) assert the data the event would
-// carry by draining the `ProposedClaimsLog` directly; this test proves the
-// runtime actually emits the event — once per persisted claim, after the loop
-// drains the log, naming what was stored (spec P2d §2/§5.1).
+// Chunk 4: Post-turn structured extraction runtime integration tests
 // ===========================================================================
 
-/// A provider that issues one `contract_propose` call on the first request and
-/// a text answer on every subsequent one — a one-proposal turn that completes.
-struct ProposeProvider {
-    calls: Mutex<usize>,
+struct TurnAndExtractionProvider {
+    turn_step: Mutex<usize>,
+    turn_steps: Vec<ChatResponse>,
+    extraction_response: Result<ChatResponse, ProviderError>,
+    extraction_calls: Mutex<usize>,
 }
 
 #[async_trait]
-impl ChatProvider for ProposeProvider {
+impl ChatProvider for TurnAndExtractionProvider {
     fn name(&self) -> &str {
-        "propose-once"
+        "turn-and-extraction-provider"
     }
-    async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-        let mut calls = self.calls.lock().unwrap();
-        if *calls == 0 {
-            *calls = 1;
-            Ok(ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call".into(),
-                        name: "contract_propose".into(),
-                        arguments: serde_json::json!({
-                            "table": "catalog.public.orders",
-                            "kind": "alias",
-                            "value": "orders",
-                        }),
-                    }],
-                    tool_call_id: None,
-                },
-            })
+    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        // The extraction request is the one whose system prompt identifies SAYA's
+        // post-turn extractor (`build_extraction_prompt` opens with that line). A
+        // turn request's system prompt is the connection context, which never
+        // contains this phrase, so the two are distinguished by content — the one
+        // stable marker the production prompt guarantees.
+        let is_extraction = request
+            .messages
+            .first()
+            .map(|m| m.content.contains("precision schema knowledge extractor"))
+            .unwrap_or(false);
+        if is_extraction {
+            let mut calls = self.extraction_calls.lock().unwrap();
+            *calls += 1;
+            self.extraction_response.clone()
         } else {
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-            })
+            let mut step = self.turn_step.lock().unwrap();
+            let idx = *step;
+            *step += 1;
+            if idx < self.turn_steps.len() {
+                Ok(self.turn_steps[idx].clone())
+            } else {
+                Ok(ChatResponse {
+                    message: ChatMessage::text("assistant", "done"),
+                })
+            }
         }
     }
 }
 
-/// A turn that persists one proposal emits exactly one `KnowledgeProposed`,
-/// naming the claim that was stored (spec P2d §5.1).
+/// 1. Integration test: agent runs, completes answer, harness executes extraction,
+/// writes to store, and sink receives KnowledgeProposed.
 #[tokio::test]
-async fn a_turn_persisting_a_proposal_emits_one_knowledge_proposed() {
-    let root = temp_root("p2d_emit");
+async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
+    let root = temp_root("post_turn_extract");
     let db = root.join("state.sqlite3");
     let identity = identity_for("analytics");
     let store = store_at(&db, &identity).await;
@@ -841,17 +841,47 @@ async fn a_turn_persisting_a_proposal_emits_one_knowledge_proposed() {
             allow_data_sharing: true,
             temperature: 0.0,
         },
-        provider: Box::new(ProposeProvider {
-            calls: Mutex::new(0),
+        provider: Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: vec![
+                ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: "call-1".into(),
+                            name: "bounded_sql_query".into(),
+                            arguments: serde_json::json!({
+                                "connection": "analytics",
+                                "sql": "SELECT id, status FROM catalog.public.orders",
+                            }),
+                        }],
+                        tool_call_id: None,
+                    },
+                },
+                ChatResponse {
+                    message: ChatMessage::text(
+                        "assistant",
+                        "The orders table contains customer orders.",
+                    ),
+                },
+            ],
+            extraction_response: Ok(ChatResponse {
+                message: ChatMessage::text(
+                    "assistant",
+                    r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
+                ),
+            }),
+            extraction_calls: Mutex::new(0),
         }),
         registry: registry_for("analytics", &identity),
         failures: Vec::new(),
     };
     let runtime = test_runtime(assisted_memory());
-    run_prompt_with_inputs(
+    let out = run_prompt_with_inputs(
         &runtime,
         inputs,
-        "remember the orders alias",
+        "table orders has alias orders",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
         Vec::new(),
@@ -864,7 +894,12 @@ async fn a_turn_persisting_a_proposal_emits_one_knowledge_proposed() {
     .await
     .expect("turn completes");
 
-    let claim_id = {
+    assert_eq!(out.answer, "The orders table contains customer orders.");
+
+    // The event assertions run under the sink lock; the store query below
+    // awaits, so the guard is dropped before it (holding a std `Mutex` guard
+    // across an await is a clippy error and a real footgun).
+    {
         let captured = events.lock().unwrap();
         let proposed: Vec<&ProposedClaimDto> = captured
             .iter()
@@ -873,109 +908,38 @@ async fn a_turn_persisting_a_proposal_emits_one_knowledge_proposed() {
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            proposed.len(),
-            1,
-            "exactly one KnowledgeProposed: {captured:?}"
-        );
-        let claim = proposed[0];
-        assert_eq!(
-            claim.profile, "analytics",
-            "the profile name, not the identity"
-        );
-        assert_eq!(claim.object, "catalog.public.orders");
-        assert_eq!(claim.kind, "table_alias");
-        assert_eq!(claim.value, "orders");
-        assert_eq!(
-            claim.status,
-            ClaimStatus::Candidate,
-            "landed as a candidate"
-        );
-        // The opaque identity never appears in the emitted event stream.
-        let identity_str = identity.as_str();
-        let stream_json = serde_json::to_string(captured.as_slice()).unwrap_or_default();
-        assert!(
-            !stream_json.contains(identity_str),
-            "opaque identity leaked into the event stream: {stream_json}"
-        );
-        claim.claim_id.clone()
-    };
+        assert_eq!(proposed.len(), 1, "exactly one KnowledgeProposed emitted");
+        assert_eq!(proposed[0].profile, "analytics");
+        assert_eq!(proposed[0].object, "catalog.public.orders");
+        assert_eq!(proposed[0].kind, "table_alias");
+        assert_eq!(proposed[0].value, "orders");
+        // The user explicitly asserted the alias, so per spec F Chunk 3 +
+        // `ClaimOrigin::may_confirm_directly` the proposal lands `Active`, which
+        // the DTO reports as `Confirmed` — a user assertion is the act of
+        // confirmation, not a candidate pending it.
+        assert_eq!(proposed[0].status, ClaimStatus::Confirmed);
+    }
 
-    // The event's claim id is the one the store actually persisted. Done
-    // outside the event-lock guard — the store query awaits.
     let obj = object(&identity, "orders");
-    let stored = store
-        .list_claims(&obj, &[ClaimStatus::Candidate])
-        .await
-        .unwrap();
-    assert_eq!(stored.len(), 1, "exactly one candidate stored");
-    assert_eq!(stored[0].id.as_str(), claim_id.as_str());
+    // Phase F persists to `knowledge_items` (D-3's projection), not the legacy
+    // `contract_claims` table the retired `contract_propose` wrote to — so the
+    // end-to-end persistence is asserted through the knowledge-items read.
+    let stored = store.knowledge_for_object(&obj).await.unwrap();
+    assert_eq!(stored.len(), 1, "persisted in knowledge_items");
+    assert_eq!(stored[0].slot, KnowledgeSlot::TableAlias);
+    assert_eq!(stored[0].state, KnowledgeState::Active);
+    assert_eq!(stored[0].source, ClaimOrigin::UserExplicit);
 
     let _ = fs::remove_dir_all(root);
 }
 
-/// A turn that proposes a *duplicate* (the claim already exists) emits no
-/// `KnowledgeProposed` — a duplicate is not a new proposal (spec P2d §5.2). The
-/// provider proposes the same alias twice; only the first persists.
+/// 2. Mock provider returns error during extraction; agent output is returned successfully and unaffected (Safety Property 1).
 #[tokio::test]
-async fn a_duplicate_proposal_emits_no_knowledge_proposed() {
-    let root = temp_root("p2d_dup_runtime");
+async fn test_runtime_extraction_failure_never_fails_turn() {
+    let root = temp_root("extract_fail_safe");
     let db = root.join("state.sqlite3");
     let identity = identity_for("analytics");
     let store = store_at(&db, &identity).await;
-
-    // Seed the claim first, so both tool calls are duplicates of it.
-    let obj = object(&identity, "orders");
-    store
-        .propose_claim(ProposeClaim {
-            object: obj.clone(),
-            fingerprint: crate::commands::unobserved_fingerprint(),
-            referenced_columns: Vec::new(),
-            payload: ClaimPayload::table_alias("orders").unwrap(),
-            origin: ClaimOrigin::UserExplicit,
-            initial_status: ClaimStatus::Candidate,
-            evidence: None,
-        })
-        .await
-        .unwrap();
-
-    /// Issues the same `contract_propose` call twice, then answers — so both
-    /// calls are duplicates and neither should emit.
-    struct ProposeTwiceProvider {
-        calls: Mutex<usize>,
-    }
-    #[async_trait]
-    impl ChatProvider for ProposeTwiceProvider {
-        fn name(&self) -> &str {
-            "propose-twice"
-        }
-        async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-            let mut calls = self.calls.lock().unwrap();
-            *calls += 1;
-            if *calls <= 2 {
-                Ok(ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: format!("call-{calls}"),
-                            name: "contract_propose".into(),
-                            arguments: serde_json::json!({
-                                "table": "catalog.public.orders",
-                                "kind": "alias",
-                                "value": "orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                })
-            } else {
-                Ok(ChatResponse {
-                    message: ChatMessage::text("assistant", "done"),
-                })
-            }
-        }
-    }
 
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = RecordingSink {
@@ -991,17 +955,141 @@ async fn a_duplicate_proposal_emits_no_knowledge_proposed() {
             allow_data_sharing: true,
             temperature: 0.0,
         },
-        provider: Box::new(ProposeTwiceProvider {
-            calls: Mutex::new(0),
+        provider: Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: vec![
+                ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: "call-1".into(),
+                            name: "bounded_sql_query".into(),
+                            arguments: serde_json::json!({
+                                "connection": "analytics",
+                                "sql": "SELECT id, status FROM catalog.public.orders",
+                            }),
+                        }],
+                        tool_call_id: None,
+                    },
+                },
+                ChatResponse {
+                    message: ChatMessage::text(
+                        "assistant",
+                        "The orders table was inspected successfully.",
+                    ),
+                },
+            ],
+            extraction_response: Err(ProviderError::configuration("http 500 error")),
+            extraction_calls: Mutex::new(0),
         }),
         registry: registry_for("analytics", &identity),
         failures: Vec::new(),
     };
     let runtime = test_runtime(assisted_memory());
-    run_prompt_with_inputs(
+    let out = run_prompt_with_inputs(
         &runtime,
         inputs,
-        "remember the orders alias",
+        "table orders has alias orders",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store.clone()),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes despite extraction failure (fail-soft)");
+
+    assert_eq!(out.answer, "The orders table was inspected successfully.");
+
+    let captured = events.lock().unwrap();
+    let proposed_count = captured
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::KnowledgeProposed { .. }))
+        .count();
+    assert_eq!(
+        proposed_count, 0,
+        "no proposals emitted when extraction fails"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 3. When memory.mode = MemoryMode::Off, zero extraction requests occur.
+#[tokio::test]
+async fn test_runtime_extraction_skipped_when_memory_mode_off() {
+    let root = temp_root("extract_off");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let provider = Arc::new(TurnAndExtractionProvider {
+        turn_step: Mutex::new(0),
+        turn_steps: vec![
+            ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                },
+            },
+            ChatResponse {
+                message: ChatMessage::text("assistant", "query completed"),
+            },
+        ],
+        extraction_response: Ok(ChatResponse {
+            message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
+        }),
+        extraction_calls: Mutex::new(0),
+    });
+
+    struct SharedProvider(Arc<TurnAndExtractionProvider>);
+    #[async_trait]
+    impl ChatProvider for SharedProvider {
+        fn name(&self) -> &str {
+            "shared"
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            self.0.complete(req).await
+        }
+    }
+
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(SharedProvider(provider.clone())),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let mut mem = assisted_memory();
+    mem.mode = saya_config::MemoryMode::Off;
+    let runtime = test_runtime(mem);
+    let out = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "table orders has alias orders",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
         Vec::new(),
@@ -1014,25 +1102,138 @@ async fn a_duplicate_proposal_emits_no_knowledge_proposed() {
     .await
     .expect("turn completes");
 
-    {
-        let captured = events.lock().unwrap();
-        let proposed_count = captured
-            .iter()
-            .filter(|event| matches!(event, AgentEvent::KnowledgeProposed { .. }))
-            .count();
-        assert_eq!(
-            proposed_count, 0,
-            "a duplicate emits no KnowledgeProposed: {captured:?}"
-        );
-    }
-    // Still exactly one candidate in the store (the seed); the duplicates did
-    // not add a second. Done outside the event-lock guard — the store query
-    // awaits.
-    let stored = store
-        .list_claims(&obj, &[ClaimStatus::Candidate])
+    assert_eq!(out.answer, "query completed");
+    assert_eq!(
+        *provider.extraction_calls.lock().unwrap(),
+        0,
+        "extraction was never called"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 4. Asserts contract_propose is absent from DatabaseTools::definitions(...).
+#[test]
+fn test_contract_propose_tool_not_advertised_to_model() {
+    let tools = super::tools::DatabaseTools::definitions(true, true, true);
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(
+        !names.contains(&"contract_propose"),
+        "contract_propose must not be advertised"
+    );
+    assert!(names.contains(&"schema_discovery"));
+    assert!(names.contains(&"bounded_sql_query"));
+    assert!(names.contains(&"contract_search"));
+    assert!(names.contains(&"contract_read"));
+}
+
+/// 5. Supplied contract in recall receipt prevents duplicate candidate proposal from being emitted or stored during the turn (Safety Property 4).
+#[tokio::test]
+async fn test_anti_self_reinforcement_end_to_end() {
+    let root = temp_root("anti_self_reinforce_e2e");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    // Seed confirmed claim on orders
+    let obj = object(&identity, "orders");
+    let tree = orders_schema(&identity);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
         .await
         .unwrap();
-    assert_eq!(stored.len(), 1, "the duplicates stored nothing new");
+    let fp = live_fingerprint(&orders_table());
+    let _ = remember_default_time_column(
+        &store,
+        &obj,
+        &fp,
+        "created_at",
+        ClaimStatus::Confirmed,
+        ClaimOrigin::UserExplicit,
+    )
+    .await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: vec![
+                ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: "call-1".into(),
+                            name: "bounded_sql_query".into(),
+                            arguments: serde_json::json!({
+                                "connection": "analytics",
+                                "sql": "SELECT id, created_at FROM catalog.public.orders",
+                            }),
+                        }],
+                        tool_call_id: None,
+                    },
+                },
+                ChatResponse {
+                    message: ChatMessage::text("assistant", "Order dates checked."),
+                },
+            ],
+            // The model re-infers the *same* default-time claim recall already
+            // supplied (`default_time_column=created_at` → slot `table.default_time`,
+            // value `created_at`), as `assistant_inferred`. Anti-self-reinforcement
+            // drops it as an exact duplicate of the supplied claim — the property
+            // this test exists for. A different-slot inference would NOT be dropped,
+            // so the fixture must duplicate the supplied slot+value to exercise it.
+            extraction_response: Ok(ChatResponse {
+                message: ChatMessage::text(
+                    "assistant",
+                    r#"{"proposals": [{"object_id": "T0", "slot": "table.default_time", "value": "created_at", "origin": "assistant_inferred"}]}"#,
+                ),
+            }),
+            extraction_calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(assisted_memory());
+    let out = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "show me orders",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store.clone()),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    assert_eq!(out.answer, "Order dates checked.");
+
+    let captured = events.lock().unwrap();
+    let proposed_count = captured
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::KnowledgeProposed { .. }))
+        .count();
+    assert_eq!(
+        proposed_count, 0,
+        "anti-self-reinforcement dropped duplicate inference"
+    );
 
     let _ = fs::remove_dir_all(root);
 }

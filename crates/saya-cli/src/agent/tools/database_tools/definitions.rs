@@ -130,11 +130,7 @@ impl DatabaseTools {
                 has_state_store,
             ),
         );
-        // The first writing tool: registered only when writes are permitted, a
-        // store is present, and the privacy gate is open. Hidden otherwise.
-        if permit_candidate_writes && allow_query_data && has_state_store {
-            tools.push(super::propose::propose_definition());
-        }
+        let _ = permit_candidate_writes;
         tools
     }
 }

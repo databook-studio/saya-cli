@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use saya_store::SqliteStateStore;
@@ -12,8 +11,6 @@ mod definitions;
 mod dispatch;
 mod fan_out;
 mod observations;
-// `pub(super)` so the sibling `definitions` module can reach the tool definition.
-pub(super) mod propose;
 mod recorder;
 // A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
 // runtime drains it after the loop to emit one `KnowledgeOverridden` event.
@@ -26,10 +23,6 @@ mod override_log;
 pub(crate) use observations::{
     DrainedObservations, ObservationLog, ObservationOutcome, ToolObservation,
 };
-// `ProposedClaimsLog` types the `proposed_claims` field; re-exported the same
-// way so the agent runtime can drain it after the turn to emit one
-// `KnowledgeProposed` event per persisted claim (spec P2d).
-pub(crate) use propose::ProposedClaimsLog;
 // `OverrideLog` types the `override_log` field; re-exported so the runtime can
 // drain it to emit one `KnowledgeOverridden` event (spec A1).
 pub(crate) use override_log::OverrideLog;
@@ -50,24 +43,8 @@ pub(crate) struct DatabaseTools {
     // `Arc` lets the application operation that creates the log keep a handle to
     // drain it after the turn while the tools hold their own reference.
     pub(super) observations: Option<Arc<ObservationLog>>,
-    /// Per-request count of candidate proposals made this turn. `contract_propose`
-    // refuses the ninth (spec 3c §2). A `DatabaseTools` is constructed once per
-    // `run_prompt_with_sink` call and shared by `&self` across the loop, so this
-    // is the request scope — not global — the bound is meant to cover. Atomic so
-    // the `&self` executor can bump it without `&mut self`.
-    pub(super) candidate_proposals: AtomicUsize,
-    /// Request-scoped log of the candidate claims *persisted* this turn, for
-    // the runtime to drain and emit as one `KnowledgeProposed` event per claim
-    // (spec P2d). `None` in tests that drive the executor without a log; an
-    // absent log means no event is emitted, it never affects persistence. An
-    // `Arc` lets the runtime keep a handle to drain after the turn.
-    pub(super) proposed_claims: Option<Arc<ProposedClaimsLog>>,
     /// Qualified `catalog.schema.object` names of objects whose claims were
     /// supplied to the model this turn via recall.
-    ///
-    /// A proposal for any object in this list must not earn the strong `TOUCHED`
-    /// evidence kind even if a query touched it this turn: the query was caused
-    /// by the supplied claim and is not independent confirmation.
     pub(super) supplied_objects: Vec<String>,
     /// The turn's recall receipt, shared with the override detector. `None` in
     /// tests that drive the executor without a receipt; an absent receipt means
@@ -114,8 +91,6 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
-            candidate_proposals: AtomicUsize::new(0),
-            proposed_claims: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
@@ -140,8 +115,6 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
-            candidate_proposals: AtomicUsize::new(0),
-            proposed_claims: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
@@ -150,21 +123,13 @@ impl DatabaseTools {
 
     /// Production construction with a learning-derived observation log attached.
     /// `observations` is `None` for `learning = off` (no collector exists); `Some`
-    /// for `suggest` and `auto-candidate`, so the runtime can drain it after the
-    /// turn to report or persist what was observed (spec 4b §2). `proposed_claims`
-    /// is the request-scoped log `contract_propose` records a persisted claim
-    /// into, which the runtime drains after the turn to emit one
-    /// `KnowledgeProposed` event per claim (spec P2d). `None` only when no store
-    /// is present (no proposals can persist); the runtime drains it regardless
-    /// of whether the turn succeeded — a persisted write is reported even when
-    /// the turn later fails (spec P2d §3).
+    /// for `assisted`, so the runtime can drain it after the turn for extraction.
     pub(crate) fn with_learning(
         registry: ConnectionRegistry,
         max_rows: usize,
         allow_query_data: bool,
         state_db: Option<SqliteStateStore>,
         observations: Option<Arc<ObservationLog>>,
-        proposed_claims: Option<Arc<ProposedClaimsLog>>,
     ) -> Self {
         Self {
             registry,
@@ -174,12 +139,20 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations,
-            candidate_proposals: AtomicUsize::new(0),
-            proposed_claims,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
         }
+    }
+
+    /// Returns a reference to the active connection registry.
+    pub(crate) fn registry(&self) -> &ConnectionRegistry {
+        &self.registry
+    }
+
+    /// Returns a reference to the optional state database.
+    pub(crate) fn state_db(&self) -> Option<&SqliteStateStore> {
+        self.state_db.as_ref()
     }
 
     /// Attaches the turn's supplied qualified object names (from `RecallReceipt::supplied`).
@@ -204,19 +177,13 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: max_concurrent_fan_out_queries.max(1),
             fan_out_query_timeout,
             observations: None,
-            candidate_proposals: AtomicUsize::new(0),
-            proposed_claims: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
         }
     }
 
-    /// Test-only construction with a shared observation log attached, so a test
-    // can drive tools through `execute` and then `drain` the same log. An
-    // optional `proposed_claims` log lets a test assert what a persisted proposal
-    // records for a `KnowledgeProposed` event (spec P2d §5); absent, no event data
-    // is captured.
+    /// Test-only construction with a shared observation log attached.
     #[cfg(test)]
     pub(super) fn with_registry_and_observations(
         registry: ConnectionRegistry,
@@ -224,7 +191,6 @@ impl DatabaseTools {
         allow_query_data: bool,
         state_db: Option<SqliteStateStore>,
         observations: Arc<ObservationLog>,
-        proposed_claims: Option<Arc<ProposedClaimsLog>>,
     ) -> Self {
         Self {
             registry,
@@ -234,8 +200,6 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: Some(observations),
-            candidate_proposals: AtomicUsize::new(0),
-            proposed_claims,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,

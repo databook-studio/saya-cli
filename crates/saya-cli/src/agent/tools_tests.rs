@@ -443,20 +443,21 @@ fn every_tool_declares_its_local_state_effect() {
         "no tool may declare WriteCandidate when writes are not permitted"
     );
 
-    // With writes permitted, contract_propose appears and is the only writer.
+    // No agent tool writes local state any more. Phase F retired
+    // `contract_propose`: the harness extracts proposals post-turn from a bounded
+    // turn record, so learning no longer depends on the model volunteering a call.
+    // Asserting the tool is *absent* is the point — if it reappears, two paths to
+    // the same write exist again and the model has to choose between them.
     let tools = DatabaseTools::definitions(true, true, true);
-    let propose = tools
-        .iter()
-        .find(|tool| tool.name == "contract_propose")
-        .expect("contract_propose is registered when writes are permitted");
-    assert_eq!(propose.effect.local_state, LocalStateEffect::WriteCandidate);
     assert!(
-        !propose.read_only,
-        "contract_propose writes local state, so it is not read-only"
+        !tools.iter().any(|tool| tool.name == "contract_propose"),
+        "contract_propose is retired; the harness owns proposals"
     );
     assert!(
-        !propose.effect.requires_approval,
-        "the permission gate is permit_candidate_writes, not per-call approval"
+        !tools
+            .iter()
+            .any(|tool| tool.effect.local_state == LocalStateEffect::WriteCandidate),
+        "no agent tool writes local state once the harness owns extraction"
     );
 }
 

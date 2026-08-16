@@ -1,0 +1,175 @@
+//! Schema definitions and DTOs for structured extraction — spec F Chunk 2.
+//!
+//! Defines `ExtractedProposal`, `ProposalOrigin`, `ExtractionError`, and wire representations
+//! for LLM-based knowledge extraction.
+
+use saya_types::{ClaimOrigin, ClaimPayload, ColumnRole, KnowledgeSlot};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use super::turn_table::TurnObjectId;
+
+/// Maximum proposals retained from a single extraction turn (Safety Property 3).
+#[allow(dead_code)]
+pub const MAX_PROPOSALS_PER_EXTRACTION: usize = 8;
+
+/// Origin indicating whether a proposal was explicitly stated by user or inferred by assistant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum ProposalOrigin {
+    UserExplicit,
+    AssistantInferred,
+}
+
+impl ProposalOrigin {
+    /// Parses a string into a `ProposalOrigin` with tolerance for common synonyms.
+    #[allow(dead_code)]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "user_explicit" | "user" | "explicit" => Some(Self::UserExplicit),
+            "assistant_inferred" | "assistant" | "inferred" | "model" => {
+                Some(Self::AssistantInferred)
+            }
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UserExplicit => "user_explicit",
+            Self::AssistantInferred => "assistant_inferred",
+        }
+    }
+}
+
+impl From<ProposalOrigin> for ClaimOrigin {
+    fn from(origin: ProposalOrigin) -> Self {
+        match origin {
+            ProposalOrigin::UserExplicit => ClaimOrigin::UserExplicit,
+            ProposalOrigin::AssistantInferred => ClaimOrigin::AssistantInferred,
+        }
+    }
+}
+
+/// A typed, validated proposal candidate produced by structured extraction.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+pub struct ExtractedProposal {
+    pub object_id: TurnObjectId,
+    pub slot: KnowledgeSlot,
+    pub value: ClaimPayload,
+    pub origin: ProposalOrigin,
+    pub confidence: f32,
+}
+
+/// Errors occurring during structured extraction response parsing.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ExtractionError {
+    #[error("failed to parse extraction JSON response: {0}")]
+    JsonParse(String),
+    #[error("invalid proposal payload: {0}")]
+    InvalidPayload(String),
+    #[error("no valid proposals found in extraction response")]
+    Empty,
+}
+
+/// Wire envelope for model extraction JSON responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct ExtractionResponseJson {
+    #[serde(default)]
+    pub proposals: Vec<RawProposalJson>,
+}
+
+/// Wire representation of a single extracted proposal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct RawProposalJson {
+    pub object_id: String,
+    pub slot: String,
+    pub value: String,
+    #[serde(default = "default_origin")]
+    pub origin: String,
+    #[serde(default = "default_confidence")]
+    pub confidence: Option<f32>,
+}
+
+#[allow(dead_code)]
+fn default_origin() -> String {
+    "assistant_inferred".to_string()
+}
+
+#[allow(dead_code)]
+fn default_confidence() -> Option<f32> {
+    Some(0.8)
+}
+
+/// Detects API key, token, or credential patterns in candidate values.
+#[allow(dead_code)]
+pub fn is_sensitive_or_credential_value(val: &str) -> bool {
+    let lower = val.to_lowercase();
+    let patterns = [
+        "bearer ",
+        "ghp_",
+        "gho_",
+        "github_pat_",
+        "glpat-",
+        "sk-",
+        "sk_live_",
+        "sk_test_",
+        "xoxb-",
+        "xoxp-",
+        "-----begin private key-----",
+        "-----begin rsa private key-----",
+        "password=",
+        "api_key=",
+        "apikey=",
+        "secret_key=",
+    ];
+    patterns.iter().any(|&p| lower.contains(p))
+}
+
+/// Parses slot and value into a validated `ClaimPayload`.
+#[allow(dead_code)]
+pub fn build_claim_payload(
+    slot: &KnowledgeSlot,
+    raw_value: &str,
+) -> Result<ClaimPayload, ExtractionError> {
+    let clean = raw_value.trim();
+    if clean.is_empty() {
+        return Err(ExtractionError::InvalidPayload("empty value".into()));
+    }
+    if is_sensitive_or_credential_value(clean) {
+        return Err(ExtractionError::InvalidPayload(
+            "sensitive credential detected".into(),
+        ));
+    }
+
+    match slot {
+        KnowledgeSlot::TableDescription => ClaimPayload::table_description(clean)
+            .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
+        KnowledgeSlot::TableAlias => ClaimPayload::table_alias(clean)
+            .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
+        KnowledgeSlot::TableGrain => ClaimPayload::table_grain(clean)
+            .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
+        KnowledgeSlot::TableDefaultTime => ClaimPayload::default_time_column(clean)
+            .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
+        KnowledgeSlot::ColumnDescription { column } => {
+            ClaimPayload::column_description(column, clean)
+                .map_err(|e| ExtractionError::InvalidPayload(e.to_string()))
+        }
+        KnowledgeSlot::ColumnRole { column } => {
+            let role = ColumnRole::parse(clean.to_lowercase().as_str()).ok_or_else(|| {
+                ExtractionError::InvalidPayload(format!("unknown column role '{clean}'"))
+            })?;
+            ClaimPayload::column_role(column, role)
+                .map_err(|e| ExtractionError::InvalidPayload(e.to_string()))
+        }
+        _ => Err(ExtractionError::InvalidPayload(format!(
+            "unsupported slot '{slot}'"
+        ))),
+    }
+}
