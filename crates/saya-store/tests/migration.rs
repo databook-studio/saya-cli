@@ -29,13 +29,13 @@ type AuditRow = (
 );
 
 #[tokio::test]
-async fn fresh_database_reaches_version_three() {
+async fn fresh_database_reaches_version_four() {
     let root = temp_root("fresh");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 3);
+    assert_eq!(user_version(&db).await, 4);
     let tables = contract_tables(&db).await;
     for expected in CONTRACT_TABLES {
         assert!(
@@ -58,7 +58,7 @@ async fn upgrade_from_version_one_preserves_data() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 3);
+    assert_eq!(user_version(&db).await, 4);
     let tables = contract_tables(&db).await;
     for expected in CONTRACT_TABLES {
         assert!(
@@ -106,10 +106,18 @@ async fn upgrade_from_version_two_preserves_every_contract_row() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 3);
+    assert_eq!(user_version(&db).await, 4);
     assert!(
         table_exists(&db, "user_preferences").await,
         "upgrade did not add user_preferences"
+    );
+    // Step 4 added the claim's own fingerprint-version column to the legacy
+    // v2 table (step 2's CREATE is a no-op on an existing table, so the ALTER
+    // is what upgrades an installed database). A claim written under version A
+    // must decode under A even after the object row drifts — see contract_store.
+    assert!(
+        claim_has_fingerprint_version_column(&db).await,
+        "upgrade did not add contract_claims.fingerprint_version"
     );
 
     let pool = read_pool(&db).await;
@@ -157,15 +165,15 @@ async fn upgrade_from_version_two_preserves_every_contract_row() {
 }
 
 /// A version ahead of the highest step the migration knows about fails closed.
-/// Step 3 makes `user_version = 3` supported, so the future-version sentinel is
-/// now 4 — anything the running build cannot migrate *to* must be refused, not
+/// Step 4 makes `user_version = 4` supported, so the future-version sentinel is
+/// now 5 — anything the running build cannot migrate *to* must be refused, not
 /// silently rewritten under.
 #[tokio::test]
 async fn unknown_future_version_fails_closed() {
     let root = temp_root("future");
     let db = root.join("state.sqlite3");
     let pool = create_pool(&db).await;
-    sqlx::query("PRAGMA user_version = 4")
+    sqlx::query("PRAGMA user_version = 5")
         .execute(&pool)
         .await
         .unwrap();
@@ -186,11 +194,11 @@ async fn migration_is_idempotent() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 3);
+    assert_eq!(user_version(&db).await, 4);
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 3);
+    assert_eq!(user_version(&db).await, 4);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -341,6 +349,20 @@ async fn table_exists(db: &Path, table: &str) -> bool {
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
             .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    pool.close().await;
+    count > 0
+}
+
+/// True if `contract_claims` carries the `fingerprint_version` column Step 4
+/// adds. Asserted on upgrade so a missing ALTER is caught here, not silently
+/// when a claim decodes under the wrong version later.
+async fn claim_has_fingerprint_version_column(db: &Path) -> bool {
+    let pool = read_pool(db).await;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('contract_claims') WHERE name='fingerprint_version'")
             .fetch_one(&pool)
             .await
             .unwrap();

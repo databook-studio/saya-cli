@@ -17,18 +17,25 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step1(&mut connection).await?;
             step2(&mut connection).await?;
             step3(&mut connection).await?;
+            step4(&mut connection).await?;
             true
         }
         1 => {
             step2(&mut connection).await?;
             step3(&mut connection).await?;
+            step4(&mut connection).await?;
             true
         }
         2 => {
             step3(&mut connection).await?;
+            step4(&mut connection).await?;
             true
         }
-        3 => false,
+        3 => {
+            step4(&mut connection).await?;
+            true
+        }
+        4 => false,
         _ => {
             sqlx::query("ROLLBACK").execute(&mut *connection).await.ok();
             return Err(StoreError::VersionUnsupported);
@@ -96,6 +103,44 @@ async fn step2(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError
 async fn step3(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
     sqlx::query("CREATE TABLE IF NOT EXISTS user_preferences(scope_key TEXT NOT NULL, preference_kind TEXT NOT NULL, value_json TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (scope_key, preference_kind))").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
     sqlx::query("PRAGMA user_version = 3")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}
+
+/// Step 4 (Spec C): the claim's own fingerprint version. A claim was decoded
+/// under the *object* row's `fingerprint_version`, which `upsert_object_in_tx`
+/// overwrites on every schema refresh — so a claim written under version A read
+/// back under whatever version the object row carries now, silently
+/// misclassifying it at the first format change. The version now travels with
+/// the claim: a `fingerprint_version` column on `contract_claims`, written at
+/// propose time from the fingerprint the caller supplied.
+///
+/// A new step, not an amendment to step 2: `user_version = 3` carries claims a
+/// developer's unreleased database may already hold, and step 2's
+/// `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so it cannot
+/// add the column in place. Step 4 owns the column for every database — the
+/// `ALTER TABLE` upgrades an installed v3 database without rewriting the rows
+/// it exists to preserve, and the explicit presence check makes it idempotent
+/// on a fresh database that ran step 2 still missing the column. SQLite's
+/// `ALTER TABLE ADD COLUMN` lacks `IF NOT EXISTS`, so the check is manual.
+async fn step4(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    let has_column: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('contract_claims') WHERE name='fingerprint_version'",
+    )
+    .fetch_one(&mut **connection)
+    .await
+    .map_err(|_| StoreError::Unavailable)?;
+    if has_column == 0 {
+        sqlx::query(
+            "ALTER TABLE contract_claims ADD COLUMN fingerprint_version INTEGER NOT NULL DEFAULT 1",
+        )
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    }
+    sqlx::query("PRAGMA user_version = 4")
         .execute(&mut **connection)
         .await
         .map_err(|_| StoreError::Unavailable)?;

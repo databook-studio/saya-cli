@@ -190,8 +190,9 @@ pub(crate) async fn revalidate_claim(
     if !legal {
         return Err(StoreError::Conflict);
     }
-    sqlx::query("UPDATE contract_claims SET status='confirmed', schema_fingerprint=?, referenced_columns_json=?, last_verified_unix_ms=?, updated_unix_ms=? WHERE id=?")
+    sqlx::query("UPDATE contract_claims SET status='confirmed', schema_fingerprint=?, fingerprint_version=?, referenced_columns_json=?, last_verified_unix_ms=?, updated_unix_ms=? WHERE id=?")
         .bind(fingerprint.as_str())
+        .bind(fingerprint.version() as i64)
         .bind(&referenced_serialized)
         .bind(stamp)
         .bind(stamp)

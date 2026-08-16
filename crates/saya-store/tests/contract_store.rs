@@ -926,6 +926,137 @@ async fn stored_claim_records_payload_version_two() {
     let _ = fs::remove_dir_all(root);
 }
 
+// ---------------------------------------------------------------------------
+// Spec C: a claim decodes with the fingerprint version it was written under,
+// not the object row's current version. `upsert_object_in_tx` overwrites the
+// object row's `fingerprint_version` on every schema refresh, so a claim
+// written under version A reads back under whatever version the object row
+// carries now — silently misclassifying it at the first format change. The
+// claim must carry its own version column.
+//
+// The skew is constructed deliberately: propose a claim under version A,
+// then rewrite the *object* row's `fingerprint_version` to B directly (the
+// overwrite a refresh performs), and read the claim back. It must report A.
+// Before the fix every claim read joined `o.fingerprint_version`, so this
+// read B and the test failed for exactly that reason.
+// ---------------------------------------------------------------------------
+
+/// A claim proposed under version A, read back after the object row moved to
+/// version B, decodes with A — the per-claim read paths (`get_claim`).
+#[tokio::test]
+async fn claim_decodes_with_its_own_fingerprint_version_after_object_drifts() {
+    let root = temp_root("fpv-own-get");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let object = object_ref(&profile_a(), "events");
+    // A version ahead of the current format, so the object-row overwrite to it
+    // is an unambiguous skew the claim must not inherit.
+    let written_version = FINGERPRINT_VERSION;
+    let drifted_version = FINGERPRINT_VERSION + 1;
+    let fingerprint = SchemaFingerprint::from_parts(written_version, &"a".repeat(64)).unwrap();
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint.clone(),
+        payload: ClaimPayload::table_description("the events table").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    let id = match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+
+    // Move the object row's version on, as a schema refresh does. The claim's
+    // own digest is left exactly as written; only the object row changes.
+    bump_object_fingerprint_version(&db, &object, drifted_version).await;
+
+    let stored = store.get_claim(&id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.schema_fingerprint.version(),
+        written_version,
+        "get_claim decoded the claim under the object row's version, not its own"
+    );
+    assert_eq!(stored.schema_fingerprint, fingerprint);
+
+    // The object row legitimately keeps the drifted version — that is the
+    // *object's* version, used for drift computation. The slice does not change it.
+    let objects = store.list_objects(&profile_a()).await.unwrap();
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects[0].fingerprint_version, drifted_version);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Every claim read path decodes the claim under its own version, not the
+/// object row's: `list_claims`, `find_claim_by_dedup_key`, and the bulk
+/// `list_claims_for_profile` as well as `get_claim`.
+#[tokio::test]
+async fn every_claim_read_decodes_with_its_own_fingerprint_version() {
+    let root = temp_root("fpv-own-all-reads");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let profile = profile_a();
+    let object = object_ref(&profile, "events");
+    let written_version = FINGERPRINT_VERSION;
+    let drifted_version = FINGERPRINT_VERSION + 1;
+    let fingerprint = SchemaFingerprint::from_parts(written_version, &"b".repeat(64)).unwrap();
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint.clone(),
+        payload: ClaimPayload::table_alias("events").unwrap(),
+        origin: ClaimOrigin::UserExplicit,
+        initial_status: ClaimStatus::Confirmed,
+        evidence: None,
+        referenced_columns: Vec::new(),
+    };
+    let id = match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    };
+    bump_object_fingerprint_version(&db, &object, drifted_version).await;
+
+    // list_claims
+    let listed = store.list_claims(&object, &[]).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].schema_fingerprint.version(), written_version);
+
+    // find_claim_by_dedup_key — the same key propose computed.
+    let key = saya_store::deduplication_key(
+        &ClaimPayload::table_alias("events").unwrap(),
+        &serde_json::to_string(&ClaimPayload::table_alias("events").unwrap()).unwrap(),
+    );
+    let found = store
+        .find_claim_by_dedup_key(&object, &key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.id, id);
+    assert_eq!(found.schema_fingerprint.version(), written_version);
+
+    // list_claims_for_profile — the bulk path recall and the queue use.
+    let bulk = store.list_claims_for_profile(&profile).await.unwrap();
+    assert_eq!(bulk.len(), 1);
+    assert_eq!(bulk[0].schema_fingerprint.version(), written_version);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Moves the object row's `fingerprint_version` to `version` without touching
+/// the claim — the overwrite `upsert_object_in_tx` performs on every refresh.
+async fn bump_object_fingerprint_version(db: &Path, object: &DatabaseObjectRef, version: u32) {
+    let pool = read_pool(db).await;
+    let oid = object_id(object);
+    sqlx::query("UPDATE contract_objects SET fingerprint_version=? WHERE id=?")
+        .bind(version as i64)
+        .bind(oid.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
 /// A snapshot carries a type name, so no sentinel value reaches the database
 /// through this new field (spec test 6). `referenced_columns_json` is a new
 /// persisted channel; the security standard says any such field goes through

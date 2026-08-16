@@ -48,7 +48,7 @@ pub(crate) async fn list_claims_for_profile(
     store: &SqliteStateStore,
     profile: &ProfileIdentity,
 ) -> Result<Vec<StoredClaim>, StoreError> {
-    let rows = sqlx::query_as::<_, ClaimRow>("SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, o.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE o.id IN (SELECT id FROM contract_objects WHERE profile_id=? ORDER BY last_seen_unix_ms DESC, id ASC LIMIT ?) ORDER BY o.last_seen_unix_ms DESC, o.id ASC, c.created_unix_ms ASC, c.id ASC")
+    let rows = sqlx::query_as::<_, ClaimRow>("SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, c.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE o.id IN (SELECT id FROM contract_objects WHERE profile_id=? ORDER BY last_seen_unix_ms DESC, id ASC LIMIT ?) ORDER BY o.last_seen_unix_ms DESC, o.id ASC, c.created_unix_ms ASC, c.id ASC")
         .bind(profile.as_str())
         .bind(MAX_LISTED_OBJECTS as i64)
         .fetch_all(store.pool().await?)

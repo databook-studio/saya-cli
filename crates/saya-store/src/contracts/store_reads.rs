@@ -22,7 +22,7 @@ pub(crate) async fn get_claim(
     store: &SqliteStateStore,
     id: &ClaimId,
 ) -> Result<Option<StoredClaim>, StoreError> {
-    let row = sqlx::query_as::<_, ClaimRow>("SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, o.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE c.id = ?")
+    let row = sqlx::query_as::<_, ClaimRow>("SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, c.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE c.id = ?")
         .bind(id.as_str())
         .fetch_optional(store.pool().await?)
         .await
@@ -37,7 +37,7 @@ pub(crate) async fn list_claims(
 ) -> Result<Vec<StoredClaim>, StoreError> {
     let object_id = object_id(object);
     let mut sql = String::from(
-        "SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, o.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE c.object_id=?",
+        "SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, c.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE c.object_id=?",
     );
     if !statuses.is_empty() {
         sql.push_str(" AND c.status IN (");
@@ -68,7 +68,7 @@ pub(crate) async fn find_claim_by_dedup_key(
 ) -> Result<Option<StoredClaim>, StoreError> {
     let object_id = object_id(object);
     let row = sqlx::query_as::<_, ClaimRow>(
-        "SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, o.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE c.object_id=? AND c.deduplication_key=?",
+        "SELECT c.id, c.payload_json, c.origin, c.status, c.schema_fingerprint, c.referenced_columns_json, c.created_unix_ms, c.updated_unix_ms, c.last_verified_unix_ms, o.profile_id, o.catalog_name, o.schema_name, o.object_name, o.object_kind, c.fingerprint_version FROM contract_claims c JOIN contract_objects o ON o.id = c.object_id WHERE c.object_id=? AND c.deduplication_key=?",
     )
     .bind(object_id.as_str())
     .bind(key.as_str())

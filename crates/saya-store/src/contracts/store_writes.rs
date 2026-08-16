@@ -80,7 +80,7 @@ pub(crate) async fn propose_claim(
         return Err(StoreError::LimitExceeded);
     }
     let claim_id = claim_id(&object_id, &key)?;
-    sqlx::query("INSERT INTO contract_claims(id, object_id, claim_kind, payload_json, payload_version, origin, status, schema_fingerprint, referenced_columns_json, created_unix_ms, updated_unix_ms, last_verified_unix_ms, deduplication_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)")
+    sqlx::query("INSERT INTO contract_claims(id, object_id, claim_kind, payload_json, payload_version, origin, status, schema_fingerprint, fingerprint_version, referenced_columns_json, created_unix_ms, updated_unix_ms, last_verified_unix_ms, deduplication_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)")
         .bind(claim_id.as_str())
         .bind(object_id.as_str())
         .bind(request.payload.kind())
@@ -89,6 +89,7 @@ pub(crate) async fn propose_claim(
         .bind(request.origin.as_str())
         .bind(request.initial_status.as_str())
         .bind(request.fingerprint.as_str())
+        .bind(request.fingerprint.version() as i64)
         .bind(&referenced)
         .bind(stamp)
         .bind(stamp)
