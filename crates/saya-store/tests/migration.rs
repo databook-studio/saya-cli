@@ -29,13 +29,13 @@ type AuditRow = (
 );
 
 #[tokio::test]
-async fn fresh_database_reaches_version_four() {
+async fn fresh_database_reaches_version_five() {
     let root = temp_root("fresh");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 4);
+    assert_eq!(user_version(&db).await, 5);
     let tables = contract_tables(&db).await;
     for expected in CONTRACT_TABLES {
         assert!(
@@ -46,6 +46,11 @@ async fn fresh_database_reaches_version_four() {
     assert!(
         table_exists(&db, "user_preferences").await,
         "missing user_preferences"
+    );
+    // Step 5 adds the knowledge_items table; a fresh database reaches it.
+    assert!(
+        table_exists(&db, "knowledge_items").await,
+        "missing knowledge_items"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -58,7 +63,7 @@ async fn upgrade_from_version_one_preserves_data() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 4);
+    assert_eq!(user_version(&db).await, 5);
     let tables = contract_tables(&db).await;
     for expected in CONTRACT_TABLES {
         assert!(
@@ -106,10 +111,15 @@ async fn upgrade_from_version_two_preserves_every_contract_row() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 4);
+    assert_eq!(user_version(&db).await, 5);
     assert!(
         table_exists(&db, "user_preferences").await,
         "upgrade did not add user_preferences"
+    );
+    // Step 5 adds knowledge_items; an upgraded v2 database reaches it too.
+    assert!(
+        table_exists(&db, "knowledge_items").await,
+        "upgrade did not add knowledge_items"
     );
     // Step 4 added the claim's own fingerprint-version column to the legacy
     // v2 table (step 2's CREATE is a no-op on an existing table, so the ALTER
@@ -164,16 +174,44 @@ async fn upgrade_from_version_two_preserves_every_contract_row() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// A `user_version = 4` database — the latest before step 5 — upgrades to 5 and
+/// gains `knowledge_items` without losing the contract row it already holds.
+/// Step 5 adds a new table; like step 3, it must not touch the rows the ladder
+/// exists to preserve.
+#[tokio::test]
+async fn upgrade_from_version_four_adds_knowledge_items() {
+    let root = temp_root("upgrade-v4");
+    let db = root.join("state.sqlite3");
+    build_version_four_database(&db).await;
+    let store = SqliteStateStore::new(&db);
+    store.list_schema_metadata().await.unwrap();
+    store.close().await;
+    assert_eq!(user_version(&db).await, 5);
+    assert!(
+        table_exists(&db, "knowledge_items").await,
+        "upgrade did not add knowledge_items"
+    );
+    // The claim written under v4 survives the v5 upgrade untouched.
+    let pool = read_pool(&db).await;
+    let claims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_claims")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(claims, 1);
+    pool.close().await;
+    let _ = fs::remove_dir_all(root);
+}
+
 /// A version ahead of the highest step the migration knows about fails closed.
-/// Step 4 makes `user_version = 4` supported, so the future-version sentinel is
-/// now 5 — anything the running build cannot migrate *to* must be refused, not
+/// Step 5 makes `user_version = 5` supported, so the future-version sentinel is
+/// now 6 — anything the running build cannot migrate *to* must be refused, not
 /// silently rewritten under.
 #[tokio::test]
 async fn unknown_future_version_fails_closed() {
     let root = temp_root("future");
     let db = root.join("state.sqlite3");
     let pool = create_pool(&db).await;
-    sqlx::query("PRAGMA user_version = 5")
+    sqlx::query("PRAGMA user_version = 6")
         .execute(&pool)
         .await
         .unwrap();
@@ -194,11 +232,11 @@ async fn migration_is_idempotent() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 4);
+    assert_eq!(user_version(&db).await, 5);
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 4);
+    assert_eq!(user_version(&db).await, 5);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -314,6 +352,30 @@ async fn build_version_two_database(db: &Path) {
         .await
         .unwrap();
     sqlx::query("PRAGMA user_version = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+/// A database at `user_version = 4` — the latest before step 5. Built from the
+/// v2 schema plus step 4's `ALTER TABLE` (the column the v4 ladder added),
+/// backfilled on the existing claim, so it is byte-identical to what a v4 build
+/// would have produced before step 5 existed.
+async fn build_version_four_database(db: &Path) {
+    build_version_two_database(db).await;
+    let pool = create_pool(db).await;
+    sqlx::query(
+        "ALTER TABLE contract_claims ADD COLUMN fingerprint_version INTEGER NOT NULL DEFAULT 1",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE contract_claims SET fingerprint_version=1 WHERE id='c-survives'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 4")
         .execute(&pool)
         .await
         .unwrap();

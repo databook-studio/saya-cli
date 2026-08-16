@@ -1,0 +1,74 @@
+//! The `knowledge_items` repository — one current-state row per knowledge slot.
+//!
+//! This is the home D-1 (typed slots) and D-2 (computed staleness) were given
+//! a table for. Object identity is inlined on the row rather than joined to
+//! `contract_objects`, so "what does SAYA know about this profile" is one
+//! query. Cardinality is enforced at the storage boundary: a partial unique
+//! index refuses two single-valued rows for the same object and slot — a
+//! Rust-side guard alone is a convention, and conventions are what this
+//! subsystem exists to delete.
+//!
+//! Nothing adopts this yet. The existing `contract_*` tables and every current
+//! caller keep working; a later slice switches over.
+
+mod binding;
+mod error;
+mod keys;
+mod reads;
+mod records;
+mod writes;
+
+use async_trait::async_trait;
+pub use error::KnowledgeStoreError;
+pub use records::{KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES};
+
+use crate::SqliteStateStore;
+use saya_types::{DatabaseObjectRef, ProfileIdentity};
+
+/// The repository over the `knowledge_items` table. Insert/replace enforces
+/// the slot's cardinality and the payload discipline; the two reads are each
+/// one query, scoped absolutely to a profile.
+#[async_trait]
+pub trait KnowledgeItemStore: Send + Sync {
+    /// Insert a knowledge item, replacing the one row a single-valued slot
+    /// admits, or appending a distinct value to a multi-valued slot (refused
+    /// past its declared bound). Refuses a payload that does not match the
+    /// slot, an oversized value, or a value that structurally resembles a
+    /// credential or raw SQL.
+    async fn put_knowledge_item(
+        &self,
+        request: KnowledgeItemRequest,
+    ) -> Result<(), KnowledgeStoreError>;
+    /// Every knowledge item for `profile` in one query.
+    async fn knowledge_for_profile(
+        &self,
+        profile: &ProfileIdentity,
+    ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError>;
+    /// Every knowledge item for `object` in one query.
+    async fn knowledge_for_object(
+        &self,
+        object: &DatabaseObjectRef,
+    ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError>;
+}
+
+#[async_trait]
+impl KnowledgeItemStore for SqliteStateStore {
+    async fn put_knowledge_item(
+        &self,
+        request: KnowledgeItemRequest,
+    ) -> Result<(), KnowledgeStoreError> {
+        writes::insert_or_replace(self, &request).await
+    }
+    async fn knowledge_for_profile(
+        &self,
+        profile: &ProfileIdentity,
+    ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError> {
+        reads::read_for_profile(self, profile).await
+    }
+    async fn knowledge_for_object(
+        &self,
+        object: &DatabaseObjectRef,
+    ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError> {
+        reads::read_for_object(self, object).await
+    }
+}

@@ -18,24 +18,32 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step2(&mut connection).await?;
             step3(&mut connection).await?;
             step4(&mut connection).await?;
+            step5(&mut connection).await?;
             true
         }
         1 => {
             step2(&mut connection).await?;
             step3(&mut connection).await?;
             step4(&mut connection).await?;
+            step5(&mut connection).await?;
             true
         }
         2 => {
             step3(&mut connection).await?;
             step4(&mut connection).await?;
+            step5(&mut connection).await?;
             true
         }
         3 => {
             step4(&mut connection).await?;
+            step5(&mut connection).await?;
             true
         }
-        4 => false,
+        4 => {
+            step5(&mut connection).await?;
+            true
+        }
+        5 => false,
         _ => {
             sqlx::query("ROLLBACK").execute(&mut *connection).await.ok();
             return Err(StoreError::VersionUnsupported);
@@ -141,6 +149,52 @@ async fn step4(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError
         .map_err(|_| StoreError::Unavailable)?;
     }
     sqlx::query("PRAGMA user_version = 4")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}
+
+/// Step 5 (Spec D-3): the `knowledge_items` table — one current-state row per
+/// knowledge slot, where object identity is *inlined* rather than joined to
+/// `contract_objects`. That join was where the version defect lived: a claim
+/// decoded under the object row's `fingerprint_version`, which a refresh
+/// overwrites, so the version now travels on the row that carries the binding
+/// it describes (`fingerprint_version` here, written from the caller's
+/// fingerprint at insert time).
+///
+/// Cardinality is enforced at the storage boundary, not only in the type: a
+/// single-valued slot (`table.grain`, `table.default_time`, `column:<c>.role`)
+/// admits one row per object. SQL cannot see the slot's typed cardinality, so
+/// the row carries a `cardinality` column the partial unique index below keys
+/// on — `WHERE cardinality='single'` over the object identity plus slot. A
+/// Rust-side guard alone is a convention; this index is the contract.
+///
+/// A new step, not an amendment: nothing has shipped, so there is no data to
+/// preserve, and `CREATE TABLE IF NOT EXISTS` is idempotent on a fresh database.
+/// The existing `contract_*` tables and their callers are untouched.
+async fn step5(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("CREATE TABLE IF NOT EXISTS knowledge_items(id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, catalog TEXT NOT NULL, schema TEXT NOT NULL, object TEXT NOT NULL, object_kind TEXT NOT NULL, slot TEXT NOT NULL, cardinality TEXT NOT NULL, value_json TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL, schema_binding_json TEXT NOT NULL, fingerprint_version INTEGER NOT NULL, created_unix_ms INTEGER NOT NULL, updated_unix_ms INTEGER NOT NULL)").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS knowledge_items_profile ON knowledge_items(profile_id)",
+    )
+    .execute(&mut **connection)
+    .await
+    .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS knowledge_items_object ON knowledge_items(profile_id, catalog, schema, object, object_kind)")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    // The storage-boundary invariant: one row per single-valued slot per object.
+    // A partial unique index — multi-valued slots are excluded so their several
+    // rows coexist, and `cardinality='multi'` rows never collide here. Writing a
+    // second value to a single-valued slot must hit this and force a replace,
+    // not a second insert.
+    sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS knowledge_items_single ON knowledge_items(profile_id, catalog, schema, object, object_kind, slot) WHERE cardinality = 'single'")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 5")
         .execute(&mut **connection)
         .await
         .map_err(|_| StoreError::Unavailable)?;

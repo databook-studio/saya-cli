@@ -8,6 +8,7 @@ mod contracts;
 mod error;
 mod filesystem;
 mod history;
+mod knowledge_items;
 mod migration;
 mod redaction;
 mod schema_store;
@@ -24,6 +25,10 @@ pub use contracts::{
 };
 pub use error::StoreError;
 pub use filesystem::FsSessionStore;
+pub use knowledge_items::{
+    KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
+    MAX_KNOWLEDGE_ITEM_BYTES,
+};
 pub use redaction::redact;
 pub use sqlite::SqliteStateStore;
 pub use sqlite_support::state_sidecar_path;

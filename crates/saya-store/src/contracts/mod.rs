@@ -1,9 +1,9 @@
-mod admission;
+pub(crate) mod admission;
 mod events;
 mod keys;
 mod preferences;
 mod records;
-mod store;
+pub(crate) mod store;
 mod store_bulk;
 mod store_decode;
 mod store_reads;
