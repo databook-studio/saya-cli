@@ -10,6 +10,7 @@ mod assemble;
 mod availability;
 mod conflict;
 mod decide;
+mod knowledge_validity;
 mod name_match;
 mod op_error;
 mod queue;
@@ -56,6 +57,14 @@ pub(crate) use review::{confirm, forget, propose, reject, show};
 pub(crate) use use_once::use_candidate_once;
 #[allow(unused_imports)]
 pub(crate) use validity::schema_state_for;
+// D-2: the computed validity vocabulary over KnowledgeState. Pure, uncalled
+// this slice — the adopting slice will switch to it. Re-exported here
+// alongside the other contract operations, reading unused like the others
+// until something consumes it.
+#[allow(unused_imports)]
+pub(crate) use knowledge_validity::{
+    KnowledgeValidity, knowledge_state_from_status, knowledge_validity_for,
+};
 #[allow(unused_imports)]
 pub(crate) use view::{
     ContractConflict, ContractSchemaState, RecallDiagnostics, RecallOutcome, RetrievedContract,
