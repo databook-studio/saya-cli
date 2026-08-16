@@ -38,14 +38,14 @@ use saya_types::{ClaimId, ClaimStatus};
 /// means the supply path kept everything it selected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecallReceipt {
-    /// Whether recall ran, or was skipped by policy. See [`RecallOutcomeKind`].
+    /// Whether recall ran, or was skipped by policy or configuration. See [`RecallOutcomeKind`].
     pub kind: RecallOutcomeKind,
     /// One entry per object whose claims reached the rendered context block,
-    /// in the order they appear in the block. Empty for [`RecallOutcomeKind::Skipped`]
-    /// and for a recall that matched nothing.
+    /// in the order they appear in the block. Empty when recall did not run
+    /// or when a recall matched nothing.
     pub supplied: Vec<SuppliedContract>,
     /// Claims dropped by the byte or count caps (not by schema policy). Zero
-    /// when nothing was selected or recall was skipped.
+    /// when nothing was selected or recall did not run.
     pub dropped_by_bounds: usize,
 }
 
@@ -59,23 +59,36 @@ impl RecallReceipt {
         }
     }
 
-    /// A receipt for a recall skipped by policy (privacy gate closed). The
-    /// `recall = off` arm constructs the same variant — wired in P1b, not this
-    /// slice (spec §6: runtime out of scope).
-    pub(crate) fn skipped() -> Self {
+    /// A receipt for a recall disabled by configuration (`recall = off`).
+    /// SAYA was configured not to look; no store query was performed.
+    pub(crate) fn configured_off() -> Self {
         Self {
-            kind: RecallOutcomeKind::Skipped,
+            kind: RecallOutcomeKind::ConfiguredOff,
+            supplied: Vec::new(),
+            dropped_by_bounds: 0,
+        }
+    }
+
+    /// A receipt for a recall skipped because the privacy gate is closed.
+    /// SAYA was not permitted to query the store or supply database contracts.
+    pub(crate) fn privacy_gate_closed() -> Self {
+        Self {
+            kind: RecallOutcomeKind::PrivacyGateClosed,
             supplied: Vec::new(),
             dropped_by_bounds: 0,
         }
     }
 }
 
-/// Whether a recall ran against the store, or was skipped by policy before any
-/// store query. The distinction the receipt exists to make: an empty `supplied`
-/// under [`RecallOutcomeKind::Ran`] means "recall ran and matched nothing"
-/// (or the store was unavailable); under [`RecallOutcomeKind::Skipped`] it
-/// means "recall did not run" — different facts, never collapsible.
+/// Whether a recall ran against the store, or was not run due to configuration
+/// or policy.
+///
+/// The distinction the receipt exists to make: an empty `supplied` under
+/// [`RecallOutcomeKind::Ran`] means "recall ran and matched nothing" (or the
+/// store was unavailable); under [`RecallOutcomeKind::ConfiguredOff`] it means
+/// "recall was configured off"; under [`RecallOutcomeKind::PrivacyGateClosed`]
+/// it means "recall was skipped because the privacy gate was closed" — three
+/// distinct facts, never collapsible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecallOutcomeKind {
     /// Recall ran (or attempted) against the store. `store_unavailable` is
@@ -83,11 +96,13 @@ pub(crate) enum RecallOutcomeKind {
     /// turn still completes (recall is fail-soft). When false and `supplied`
     /// is empty, recall ran and matched nothing.
     Ran { store_unavailable: bool },
-    /// Recall was skipped by policy before any store query — the privacy gate
-    /// was closed. No claim was selected, none dropped. `recall = off` emits
-    /// this variant too (P1b wiring; this slice's `recall_context_blocks` is
-    /// never called with recall off, so it cannot observe that arm).
-    Skipped,
+    /// Recall was disabled by configuration (`recall = off`); SAYA did not look.
+    /// No store query was performed, and no claims were selected or dropped.
+    ConfiguredOff,
+    /// Recall was skipped because the privacy gate is closed (`allow_query_data`
+    /// is false); SAYA was not permitted to look. No store query was performed,
+    /// and no contract content reaches a provider.
+    PrivacyGateClosed,
 }
 
 /// One object's claims, as supplied to the prompt. `schema_state` is the

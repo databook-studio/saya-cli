@@ -2517,18 +2517,20 @@ async fn claims_dropped_by_the_byte_bound_are_counted() {
 }
 
 /// Spec test 3: `recall = off` / privacy-gate-closed is distinguishable from
+/// Spec test 3: `recall = off` / privacy-gate-closed is distinguishable from
 /// "recall ran and found nothing". The privacy-gate-closed path returns a
-/// `Skipped` receipt; a prompt that matches nothing returns a `Ran` receipt
+/// `PrivacyGateClosed` receipt; a prompt that matches nothing returns a `Ran` receipt
 /// with empty `supplied`. The two must not be confusable. (The `recall = off`
-/// arm is a runtime concern wired in P1b; this slice's `recall_context_blocks`
-/// is never called with recall off, so it cannot observe it — but the
-/// `Skipped` variant it constructs is the same one the runtime will emit.)
+/// arm is a runtime concern producing `ConfiguredOff`; this slice's
+/// `recall_context_blocks` is never called with recall off, so it cannot observe it —
+/// but the `PrivacyGateClosed` variant it constructs is distinct from `ConfiguredOff`
+/// and `Ran`.)
 #[tokio::test]
 async fn skipped_is_distinguishable_from_ran_and_found_nothing() {
-    use crate::contracts::RecallOutcomeKind;
+    use crate::contracts::{RecallOutcomeKind, RecallReceipt};
 
     // Privacy gate closed: the function returns before any store query, with a
-    // Skipped receipt. The store is intentionally unopenable to prove it was
+    // PrivacyGateClosed receipt. The store is intentionally unopenable to prove it was
     // never queried: had it been, the call would error rather than skip.
     let root = temp_root("p1a_skipped");
     fs::write(root.join("blocker"), b"x").unwrap();
@@ -2546,13 +2548,13 @@ async fn skipped_is_distinguishable_from_ran_and_found_nothing() {
         Some(&unopenable),
     )
     .await;
-    assert_eq!(skipped.kind, RecallOutcomeKind::Skipped);
+    assert_eq!(skipped.kind, RecallOutcomeKind::PrivacyGateClosed);
     assert!(skipped.supplied.is_empty());
     assert_eq!(skipped.dropped_by_bounds, 0);
     let _ = fs::remove_dir_all(root);
 
     // Ran and found nothing: a prompt matching nothing yields a Ran receipt with
-    // empty supplied — the same shape as Skipped's, but a different `kind`.
+    // empty supplied — the same shape as PrivacyGateClosed's, but a different `kind`.
     let root2 = temp_root("p1a_ran_empty");
     let db2 = root2.join("state.sqlite3");
     let store2 = store_at(&db2, &identity).await;
@@ -2576,8 +2578,15 @@ async fn skipped_is_distinguishable_from_ran_and_found_nothing() {
         }
     );
     assert!(ran_empty.supplied.is_empty());
-    // The two are distinguishable: Skipped ≠ Ran.
+    // The two are distinguishable: PrivacyGateClosed ≠ Ran.
     assert_ne!(skipped.kind, ran_empty.kind);
+
+    // Configured off is also distinguishable: ConfiguredOff ≠ PrivacyGateClosed ≠ Ran.
+    let configured_off = RecallReceipt::configured_off();
+    assert_eq!(configured_off.kind, RecallOutcomeKind::ConfiguredOff);
+    assert_ne!(configured_off.kind, skipped.kind);
+    assert_ne!(configured_off.kind, ran_empty.kind);
+
     let _ = fs::remove_dir_all(root2);
 }
 

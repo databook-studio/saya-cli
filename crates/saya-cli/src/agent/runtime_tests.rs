@@ -42,7 +42,7 @@ use std::{
 };
 
 use crate::config::runtime::RuntimeConfig;
-use crate::contracts::{RecallMode, RecallOutcomeKind, RecallReceipt};
+use crate::contracts::{RecallOutcomeKind, RecallReceipt};
 
 // ---------------------------------------------------------------------------
 // shared harness
@@ -503,7 +503,9 @@ async fn knowledge_supplied_precedes_the_provider_request() {
 #[test]
 fn recall_off_emits_the_off_outcome() {
     // recall = off: SAYA did not look. Distinct from the privacy gate.
-    let event = knowledge_supplied_event(None, true, None);
+    let receipt = RecallReceipt::configured_off();
+    assert_eq!(receipt.kind, RecallOutcomeKind::ConfiguredOff);
+    let event = knowledge_supplied_event(&receipt);
     assert!(matches!(
         event,
         AgentEvent::KnowledgeSupplied {
@@ -516,9 +518,10 @@ fn recall_off_emits_the_off_outcome() {
 
 #[test]
 fn privacy_gate_closed_emits_the_skipped_outcome() {
-    // Privacy gate closed (allow_query_data false) under a recall mode: SAYA
-    // was not allowed to look. No store query, no receipt needed.
-    let event = knowledge_supplied_event(Some(RecallMode::Confirmed), false, None);
+    // Privacy gate closed: SAYA was not allowed to look. No store query.
+    let receipt = RecallReceipt::privacy_gate_closed();
+    assert_eq!(receipt.kind, RecallOutcomeKind::PrivacyGateClosed);
+    let event = knowledge_supplied_event(&receipt);
     assert!(matches!(
         event,
         AgentEvent::KnowledgeSupplied {
@@ -535,7 +538,7 @@ fn recall_ran_and_found_nothing_emits_ran_distinct_from_off_and_skipped() {
     // is the third state — distinct from Off (did not look) and Skipped (not
     // allowed to look). The three outcomes must not collapse.
     let receipt = RecallReceipt::ran_empty(false);
-    let event = knowledge_supplied_event(Some(RecallMode::Confirmed), true, Some(&receipt));
+    let event = knowledge_supplied_event(&receipt);
     assert!(matches!(
         event,
         AgentEvent::KnowledgeSupplied {
@@ -545,9 +548,9 @@ fn recall_ran_and_found_nothing_emits_ran_distinct_from_off_and_skipped() {
         } if contracts.is_empty()
     ));
     // The three are distinguishable.
-    let off = knowledge_supplied_event(None, true, None);
-    let skipped = knowledge_supplied_event(Some(RecallMode::Confirmed), false, None);
-    let ran = knowledge_supplied_event(Some(RecallMode::Confirmed), true, Some(&receipt));
+    let off = knowledge_supplied_event(&RecallReceipt::configured_off());
+    let skipped = knowledge_supplied_event(&RecallReceipt::privacy_gate_closed());
+    let ran = knowledge_supplied_event(&receipt);
     assert_ne!(outcome_of(&off), outcome_of(&skipped));
     assert_ne!(outcome_of(&skipped), outcome_of(&ran));
     assert_ne!(outcome_of(&off), outcome_of(&ran));
@@ -586,7 +589,7 @@ fn a_candidate_claims_status_survives_into_the_event() {
         }],
         dropped_by_bounds: 0,
     };
-    let event = knowledge_supplied_event(Some(RecallMode::IncludeCandidates), true, Some(&receipt));
+    let event = knowledge_supplied_event(&receipt);
     let contracts = match event {
         AgentEvent::KnowledgeSupplied { contracts, .. } => contracts,
         _ => panic!("expected KnowledgeSupplied"),
@@ -705,7 +708,7 @@ fn no_opaque_profile_identity_value_appears_in_the_event() {
         }],
         dropped_by_bounds: 0,
     };
-    let event = knowledge_supplied_event(Some(RecallMode::Confirmed), true, Some(&receipt));
+    let event = knowledge_supplied_event(&receipt);
     let json = serde_json::to_string(&event).expect("serializes");
     // The opaque identity string appears nowhere in the serialized event.
     assert!(
@@ -1036,4 +1039,124 @@ async fn a_duplicate_proposal_emits_no_knowledge_proposed() {
     assert_eq!(stored.len(), 1, "the duplicates stored nothing new");
 
     let _ = fs::remove_dir_all(root);
+}
+
+// ===========================================================================
+// Test 11: runtime turn with recall = off builds ConfiguredOff receipt and
+// emits KnowledgeOutcome::Off.
+// ===========================================================================
+
+#[tokio::test]
+async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: log.clone(),
+    };
+    let provider = AnswerProvider {
+        answer: "done",
+        log: log.clone(),
+    };
+    let identity = identity_for("analytics");
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(provider),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let mut memory = default_memory();
+    memory.recall = saya_config::MemoryRecall::Off;
+    let runtime = test_runtime(memory);
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let captured = events.lock().unwrap();
+    let outcome = captured
+        .iter()
+        .find_map(|e| match e {
+            AgentEvent::KnowledgeSupplied { outcome, .. } => Some(*outcome),
+            _ => None,
+        })
+        .expect("KnowledgeSupplied present");
+    assert_eq!(outcome, KnowledgeOutcome::Off);
+}
+
+// ===========================================================================
+// Test 12: runtime turn with closed privacy gate builds PrivacyGateClosed
+// receipt and emits KnowledgeOutcome::Skipped.
+// ===========================================================================
+
+#[tokio::test]
+async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: log.clone(),
+    };
+    let provider = AnswerProvider {
+        answer: "done",
+        log: log.clone(),
+    };
+    let identity = identity_for("analytics");
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Anthropic,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: false, // privacy gate closed for cloud providers
+            temperature: 0.0,
+        },
+        provider: Box::new(provider),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(default_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let captured = events.lock().unwrap();
+    let outcome = captured
+        .iter()
+        .find_map(|e| match e {
+            AgentEvent::KnowledgeSupplied { outcome, .. } => Some(*outcome),
+            _ => None,
+        })
+        .expect("KnowledgeSupplied present");
+    assert_eq!(outcome, KnowledgeOutcome::Skipped);
 }

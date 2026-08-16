@@ -104,11 +104,16 @@ pub(crate) async fn run_prompt_with_inputs(
     // `recall` (spec 4b §4).
     let recall_mode = super::learning::recall_mode_for(memory.recall);
     let (context_blocks, receipt) = match recall_mode {
-        Some(mode) if allow_query_data => {
-            // P1a: `recall_context_blocks` returns a `RecallReceipt` beside the
-            // blocks naming exactly which claims were supplied. P1b emits it as
-            // a `KnowledgeSupplied` event before the provider call.
-            let (blocks, receipt) = super::recall_context::recall_context_blocks(
+        None => (
+            Vec::new(),
+            crate::contracts::RecallReceipt::configured_off(),
+        ),
+        Some(_) if !allow_query_data => (
+            Vec::new(),
+            crate::contracts::RecallReceipt::privacy_gate_closed(),
+        ),
+        Some(mode) => {
+            super::recall_context::recall_context_blocks(
                 prompt,
                 system_prompt.as_deref(),
                 allow_query_data,
@@ -117,24 +122,14 @@ pub(crate) async fn run_prompt_with_inputs(
                 &registry,
                 state_db.as_ref(),
             )
-            .await;
-            (blocks, Some(receipt))
+            .await
         }
-        // `Off`, or any mode under a closed privacy gate → no block, no
-        // receipt. The gate wins: with sharing disabled no contract content
-        // reaches a provider regardless of `recall` (spec 4b §4, test 10).
-        _ => (Vec::new(), None),
     };
     // The emit is the point of this slice: one `KnowledgeSupplied` per turn,
-    // before any provider request, naming what recall supplied (or that it did
+    // before any provider request, naming what recall supplied (or why it did
     // not run). Emitting must never fail the turn — `sink.emit` is infallible
     // and the mapping is pure, so the prompt still runs regardless (spec §3).
-    sink.emit(knowledge_supplied_event(
-        recall_mode,
-        allow_query_data,
-        receipt.as_ref(),
-    ))
-    .await;
+    sink.emit(knowledge_supplied_event(&receipt)).await;
     // Learning mode → write permission + observation-log attachment (spec 4b
     // §2). `Off` attaches nothing; `suggest`/`auto-candidate` attach a log the
     // runtime drains after the turn. The runtime keeps its own `Arc` handle so

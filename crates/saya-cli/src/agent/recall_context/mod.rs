@@ -42,7 +42,7 @@ pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 ///
 /// `allow_database_context == false` skips recall entirely — the store is not
 /// queried (§3.1: not querying is both cheaper and a stronger guarantee) and the
-/// receipt's [`RecallOutcomeKind`] is `Skipped`. Zero contracts → no block at
+/// receipt's [`RecallOutcomeKind`] is `PrivacyGateClosed`. Zero contracts → no block at
 /// all (§3.5) and an empty `Ran` receipt. Store failure → no block and no error
 /// (§4) and an empty `Ran { store_unavailable: true }` receipt. `truncated` is
 /// true if recall truncated at any bound (§3.4); the receipt's `dropped_by_bounds`
@@ -73,9 +73,9 @@ pub(crate) async fn recall_context_blocks(
 ) -> (Vec<ContextBlock>, RecallReceipt) {
     // §3.1: skip recall entirely when database context is off. Not querying is
     // both cheaper and a stronger guarantee than querying and discarding. The
-    // receipt marks this as Skipped (policy), distinct from Ran-and-found-nothing.
+    // receipt marks this as PrivacyGateClosed (policy), distinct from Ran-and-found-nothing.
     if !allow_database_context {
-        return (Vec::new(), RecallReceipt::skipped());
+        return (Vec::new(), RecallReceipt::privacy_gate_closed());
     }
     let Some(store) = state_db else {
         return (Vec::new(), RecallReceipt::ran_empty(false));
