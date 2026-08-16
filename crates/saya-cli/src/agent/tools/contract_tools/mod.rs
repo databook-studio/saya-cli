@@ -114,6 +114,9 @@ impl DatabaseTools {
             // Candidates reach the model only through the context block (recall
             // mode), where the render layer labels them unconfirmed.
             recall_mode: RecallMode::Confirmed,
+            // The search tool does not honour a per-claim admission; `None`
+            // keeps the Confirmed-only mode.
+            admit_candidate: None,
             // A model-facing path: a contract computed `Stale` is dropped (and
             // counted) so a gone-column claim never reads as a current fact.
             policy: RetrievalPolicy::ForModel,

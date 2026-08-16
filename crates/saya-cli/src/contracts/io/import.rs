@@ -9,8 +9,8 @@
 
 use super::classify::ImportVerdict as V;
 use super::{ImportClaimResult, ImportReport};
+use crate::contracts::ContractOpError;
 use crate::contracts::discover::{DiscoveredContract, discover_contracts};
-use crate::contracts::review::ContractOpError;
 use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
 use saya_types::{ClaimOrigin, ClaimStatus, DatabaseObjectRef, ProfileIdentity, SchemaTree};
 

@@ -11,6 +11,8 @@ mod availability;
 mod conflict;
 pub(crate) mod discover;
 pub(crate) mod io;
+mod name_match;
+mod op_error;
 mod queue;
 mod recall;
 mod receipt;
@@ -19,6 +21,7 @@ mod retrieval;
 mod review;
 mod selection;
 pub(crate) mod terms;
+mod use_once;
 mod validity;
 mod view;
 // P2b-1: the override detector. A pure function nobody calls yet — P2b-2 will
@@ -34,6 +37,8 @@ mod tests;
 // crate references it yet outside tests, so the re-exports read as unused in a
 // lib build — they are not dead code, they are the boundary this slice exposes.
 #[allow(unused_imports)]
+pub(crate) use op_error::ContractOpError;
+#[allow(unused_imports)]
 pub(crate) use queue::{QUEUE_DEFAULT_LIMIT, QueuedCandidate, review_queue};
 #[allow(unused_imports)]
 pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
@@ -41,8 +46,9 @@ pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
 pub(crate) use reconcile::{ReconcileOutcome, reconcile};
 #[allow(unused_imports)]
 pub(crate) use retrieval::RetrievalPolicy;
+pub(crate) use review::{confirm, forget, propose, reject, show};
 #[allow(unused_imports)]
-pub(crate) use review::{ContractOpError, confirm, edit, forget, propose, reject, show};
+pub(crate) use use_once::use_candidate_once;
 // 6b import/export: the typed operations the `contracts import`/`export`
 // adapter renders. Nothing outside this module references them yet in a
 // non-test build, so the re-exports read as unused — they are the boundary this

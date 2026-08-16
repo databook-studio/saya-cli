@@ -4,7 +4,7 @@
 //! `initial_status` through and lets the store refuse anything but
 //! `UserExplicit` storing confirmed.
 
-use thiserror::Error;
+use super::op_error::ContractOpError;
 
 use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::conflict::conflicts_for;
@@ -13,63 +13,11 @@ use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::{ContractSchemaState, RetrievedContract};
 use saya_store::{
     ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
-    StoreError, StoredClaim,
+    StoredClaim,
 };
 use saya_types::{ClaimId, ClaimPayload, ClaimStatus, DatabaseObjectRef, Table};
 
 /// Adapter-facing review errors. Payload-free, mapping [`StoreError`] so a store
-/// variant added later does not silently become an unhandled case in an adapter.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[non_exhaustive]
-pub(crate) enum ContractOpError {
-    #[error("the requested claim does not exist")]
-    NotFound,
-    #[error("the operation conflicts with an existing claim")]
-    Conflict,
-    #[error("the value is not valid for storage")]
-    Invalid,
-    #[error("the value exceeds a store limit")]
-    Limit,
-    #[error("the state store is unavailable")]
-    Unavailable,
-    /// Revalidating a Stale claim needs a live schema to fingerprint against,
-    /// and none was available — no cached schema for the claim's profile, or
-    /// the store could not be read. Distinct from [`Self::Unavailable`]: the
-    /// store may be fine; the schema cache is what is missing.
-    #[error("no schema is available to revalidate the claim against")]
-    SchemaUnavailable,
-    /// The claim's table is not in the live schema, so there is nothing to
-    /// revalidate against. Distinct from [`Self::Conflict`]: nothing conflicts
-    /// — the object is simply gone.
-    #[error(
-        "the table this claim describes is no longer in the schema; forget the claim, or refresh if the table still exists"
-    )]
-    ObjectGone,
-    /// A column the claim depends on is absent from the live table. Confirming
-    /// would revive a claim whose dependency vanished, so the user must point
-    /// it somewhere real or drop it.
-    #[error(
-        "a column this claim depends on is gone; edit the claim to name a column that exists, or forget it"
-    )]
-    ColumnGone,
-}
-
-impl From<StoreError> for ContractOpError {
-    fn from(error: StoreError) -> Self {
-        match error {
-            StoreError::NotFound => Self::NotFound,
-            StoreError::Conflict => Self::Conflict,
-            StoreError::Invalid => Self::Invalid,
-            StoreError::LimitExceeded => Self::Limit,
-            StoreError::Unavailable | StoreError::VersionUnsupported => Self::Unavailable,
-            // StoreError is #[non_exhaustive]; a future variant is a store
-            // problem the adapter cannot route around, so it degrades to
-            // Unavailable rather than becoming an unhandled case.
-            _ => Self::Unavailable,
-        }
-    }
-}
-
 pub(crate) async fn propose(
     store: &SqliteStateStore,
     request: ProposeClaim,

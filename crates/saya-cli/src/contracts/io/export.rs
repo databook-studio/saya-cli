@@ -22,7 +22,7 @@
 //! destination honestly.
 
 use super::render::ExportObject;
-use crate::contracts::review::ContractOpError;
+use crate::contracts::ContractOpError;
 use saya_store::{ContractStore, SqliteStateStore, object_id};
 use saya_types::{ClaimStatus, DatabaseObjectRef, ProfileIdentity};
 

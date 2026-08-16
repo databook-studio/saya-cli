@@ -19,7 +19,7 @@ use saya_store::{ContractStore, SqliteStateStore, StoredClaim};
 use saya_types::{ClaimId, ClaimStatus, ProfileIdentity};
 use std::collections::HashMap;
 
-use crate::contracts::review::ContractOpError;
+use crate::contracts::ContractOpError;
 
 /// The largest queue a single read returns. A reviewer works the top of the
 /// list; beyond this the list stops being a queue and becomes an archive.

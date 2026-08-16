@@ -8,9 +8,12 @@
 
 use super::{
     ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
-    RecallRequest, RetrievalPolicy, SchemaAvailability, SchemaFreshness, confirm, edit, forget,
-    propose, recall, reject, schema_state_for, show,
+    RecallRequest, RetrievalPolicy, SchemaAvailability, SchemaFreshness, confirm, forget, propose,
+    recall, reject, schema_state_for, show, use_candidate_once,
 };
+// `edit` has only test callers, so it is reached through its own module
+// rather than a `contracts` re-export the library itself never uses.
+use super::review::edit;
 use saya_store::{
     ContractEventKind, ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore,
     SqliteStateStore, StoredClaim,
@@ -260,6 +263,10 @@ fn recall_request<'a>(
         // The existing recall tests model today's behaviour: confirmed only.
         // A test that needs `IncludeCandidates` builds its own request.
         recall_mode: RecallMode::Confirmed,
+        // No per-claim admission on the legacy recall tests; `None` keeps the
+        // mode. The `use_candidate_once` tests build their own request with a
+        // real admission.
+        admit_candidate: None,
         // The helper defaults to the model-facing policy so the existing tests
         // exercise the same exclusion a real prompt recall applies. A test that
         // wants the human-review path (stale kept) builds its own request.
@@ -2611,6 +2618,7 @@ fn recall_request_with_freshness<'a>(
         now_unix_ms,
         bounds,
         recall_mode: RecallMode::Confirmed,
+        admit_candidate: None,
         policy,
     }
 }
@@ -3122,6 +3130,418 @@ async fn same_prompt_selects_the_same_objects_in_the_same_order() {
     );
     // All three matched objects are returned (under the object cap) and ranked.
     assert_eq!(names_a.len(), 3);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// Spec C — use_candidate_once: admit one candidate to recall for one turn,
+// without confirming it. The admission is in-memory and request-scoped (the
+// §4 decision): nothing is persisted, so a claim used once and left cannot be
+// found admissible later. These tests exercise the shared operation and the
+// per-claim exception in selection; no adapter calls it yet.
+// ---------------------------------------------------------------------------
+
+/// Proposes a candidate claim with `AssistantInferred` origin and no evidence,
+/// returning its id. Mirrors how `contract_propose` stores a candidate: the
+/// model inferred it, no human confirmed it, no observation supports it yet.
+async fn propose_inferred_candidate(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    fingerprint: &SchemaFingerprint,
+    payload: ClaimPayload,
+) -> ClaimId {
+    let referenced_columns = payload.referenced_column_name_snapshots();
+    let request = ProposeClaim {
+        object: object.clone(),
+        fingerprint: fingerprint.clone(),
+        referenced_columns,
+        payload,
+        origin: ClaimOrigin::AssistantInferred,
+        initial_status: ClaimStatus::Candidate,
+        evidence: None,
+    };
+    match store.propose_claim(request).await.unwrap() {
+        ProposeOutcome::Stored(id) => id,
+        other => panic!("expected Stored, got {other:?}"),
+    }
+}
+
+/// A recall request under `Confirmed` mode that admits one named candidate via
+/// `use_candidate_once`. Everything else is the `recall_request` default: the
+/// model-facing policy, fresh schemas, no explicit refs.
+fn recall_admitting_one<'a>(
+    profiles: &'a [ProfileIdentity],
+    schemas: &'a [(ProfileIdentity, SchemaAvailability)],
+    terms: &'a [String],
+    admit: Option<ClaimId>,
+) -> RecallRequest<'a> {
+    RecallRequest {
+        profiles,
+        explicit_refs: &[],
+        terms,
+        allow_database_context: true,
+        schemas,
+        now_unix_ms: FRESH_NOW,
+        bounds: RecallBounds::defaults(),
+        recall_mode: RecallMode::Confirmed,
+        policy: RetrievalPolicy::ForModel,
+        admit_candidate: admit,
+    }
+}
+
+/// The candidate the operation admits, once, for the recall that follows. A
+/// fresh schema names the table so the candidate reads `Current`, not `Stale`
+/// — staleness is not what these tests exercise, and a stale match would be
+/// dropped by the model-facing policy before the admission could be observed.
+async fn seed_one_candidate(
+    store: &SqliteStateStore,
+) -> (ProfileIdentity, DatabaseObjectRef, ClaimId) {
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let tree = schema_tree_for(&[(
+        "orders",
+        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+    )]);
+    store.upsert_schema(p.as_str(), &tree).await.unwrap();
+    let fp = fingerprint_for(&table(&[
+        ("id", "bigint", false),
+        ("amount", "numeric", false),
+    ]));
+    let id = propose_inferred_candidate(
+        store,
+        &obj,
+        &fp,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+    )
+    .await;
+    (p, obj, id)
+}
+
+/// 1. Using a candidate once leaves its status `Candidate` and its origin
+/// `AssistantInferred`. The operation writes nothing to the store — it cannot
+/// promote, and a user who uses one and walks away must find it unchanged.
+#[tokio::test]
+async fn use_candidate_once_leaves_status_and_origin_unchanged() {
+    let root = temp_root("use_once_unchanged");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let (_p, _obj, id) = seed_one_candidate(&store).await;
+
+    let before = store.get_claim(&id).await.unwrap().unwrap();
+    assert_eq!(before.status, ClaimStatus::Candidate);
+    assert_eq!(before.origin, ClaimOrigin::AssistantInferred);
+
+    use_candidate_once(&store, &id).await.unwrap();
+
+    let after = store.get_claim(&id).await.unwrap().unwrap();
+    assert_eq!(
+        after.status,
+        ClaimStatus::Candidate,
+        "using a candidate must not confirm it"
+    );
+    assert_eq!(
+        after.origin,
+        ClaimOrigin::AssistantInferred,
+        "using a candidate must not change its origin"
+    );
+    // Nothing durable moved: the fingerprint, timestamps, and audit are the
+    // stored claim's own — the operation touched no row.
+    assert_eq!(after.schema_fingerprint, before.schema_fingerprint);
+    assert_eq!(after.updated_unix_ms, before.updated_unix_ms);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 2. The admitted candidate becomes recallable within the scope, under
+/// `recall = "confirmed"`, where it would otherwise be excluded.
+#[tokio::test]
+async fn use_candidate_once_admits_it_within_the_scope() {
+    let root = temp_root("use_once_admits");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let (p, obj, id) = seed_one_candidate(&store).await;
+    use_candidate_once(&store, &id).await.unwrap();
+
+    let tree = schema_tree_for(&[(
+        "orders",
+        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+    )]);
+    let terms: Vec<String> = vec!["orders".to_string()];
+    // Without the admission, the candidate is excluded under Confirmed.
+    let without = recall(
+        &store,
+        recall_admitting_one(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(tree.clone()))],
+            &terms,
+            None,
+        ),
+    )
+    .await;
+    assert!(
+        without.contracts.is_empty(),
+        "a candidate is not recallable under confirmed without admission"
+    );
+
+    // With the admission, the candidate's claim reaches the contract.
+    let with = recall(
+        &store,
+        recall_admitting_one(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(tree))],
+            &terms,
+            Some(id.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(
+        with.contracts.len(),
+        1,
+        "the admitted candidate is selected"
+    );
+    assert_eq!(with.contracts[0].object, obj);
+    let admitted: Vec<ClaimId> = with.contracts[0]
+        .claims
+        .iter()
+        .map(|c| c.id.clone())
+        .collect();
+    assert!(
+        admitted.contains(&id),
+        "the named candidate is in the contract"
+    );
+    // The admitted claim is still `Candidate` in the contract recall returns.
+    // The render layer marks a claim `[candidate — unconfirmed]` solely from
+    // `status == Candidate`, so this is the property that keeps an admitted
+    // candidate indistinguishable-from-nothing-special in the prompt: being
+    // chosen for one turn confers no authority (spec C §3). If this read
+    // `Confirmed`, the admission would have silently promoted it.
+    let stored_admitted = with.contracts[0]
+        .claims
+        .iter()
+        .find(|c| c.id == id)
+        .expect("the admitted claim is in the contract");
+    assert_eq!(
+        stored_admitted.status,
+        ClaimStatus::Candidate,
+        "the admitted claim stays Candidate — it still renders unconfirmed"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 3. Outside the scope it is not recallable again. The admission is
+/// request-scoped: a second recall, without the admission, excludes it — even
+/// on the very next call against the same store.
+#[tokio::test]
+async fn use_candidate_once_does_not_persist_across_recalls() {
+    let root = temp_root("use_once_not_persisted");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let (p, _obj, id) = seed_one_candidate(&store).await;
+    use_candidate_once(&store, &id).await.unwrap();
+
+    let tree = schema_tree_for(&[(
+        "orders",
+        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+    )]);
+    let terms: Vec<String> = vec!["orders".to_string()];
+    let schemas = &[(p.clone(), avail(tree))][..];
+    let profiles = std::slice::from_ref(&p);
+
+    // First recall admits it.
+    let first = recall(
+        &store,
+        recall_admitting_one(profiles, schemas, &terms, Some(id)),
+    )
+    .await;
+    assert_eq!(first.contracts.len(), 1);
+
+    // A second recall, with no admission, excludes it again. The admission
+    // died with the first request.
+    let second = recall(
+        &store,
+        recall_admitting_one(profiles, schemas, &terms, None),
+    )
+    .await;
+    assert!(
+        second.contracts.is_empty(),
+        "the admission is request-scoped: a later recall excludes the candidate again"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 4. A rejected / forgotten / stale claim is refused with a typed error. The
+/// operation admits a live candidate only; the rest are not silently no-op'd.
+#[tokio::test]
+async fn use_candidate_once_refuses_non_candidate_claims() {
+    let root = temp_root("use_once_refuses");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
+
+    // Rejected: propose a candidate, then reject it.
+    let rejected_id = propose_inferred_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("orders").unwrap(),
+    )
+    .await;
+    reject(&store, &rejected_id).await.unwrap();
+    let err = use_candidate_once(&store, &rejected_id).await.unwrap_err();
+    assert_eq!(err, ContractOpError::NotACandidate, "rejected is refused");
+    assert_eq!(
+        store.get_claim(&rejected_id).await.unwrap().unwrap().status,
+        ClaimStatus::Rejected,
+        "the refusal changed nothing"
+    );
+
+    // Forgotten: propose another, then forget it.
+    let forgotten_id = propose_inferred_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("orders2").unwrap(),
+    )
+    .await;
+    forget(&store, &forgotten_id, ForgetReason::UserRequest)
+        .await
+        .unwrap();
+    let err = use_candidate_once(&store, &forgotten_id).await.unwrap_err();
+    assert_eq!(err, ContractOpError::NotACandidate, "forgotten is refused");
+
+    // Stale: seed a persisted-stale claim (a column it referenced is gone).
+    let stale = seed_persisted_stale(&store, &obj).await;
+    let err = use_candidate_once(&store, &stale.id).await.unwrap_err();
+    assert_eq!(err, ContractOpError::NotACandidate, "stale is refused");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 5. A confirmed claim is refused, not a no-op. The operation's contract is
+/// "admit an unconfirmed candidate"; a confirmed claim is already admissible by
+/// the mode, so using it once is a category error. Refusing (rather than
+/// silently succeeding) keeps the caller from believing it did something it did
+/// not — the same fail-closed posture as the other non-candidate refusals.
+#[tokio::test]
+async fn use_candidate_once_refuses_a_confirmed_claim() {
+    let root = temp_root("use_once_confirmed");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
+    let confirmed_id = propose_confirmed(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::table_alias("orders").unwrap(),
+    )
+    .await;
+
+    let err = use_candidate_once(&store, &confirmed_id).await.unwrap_err();
+    assert_eq!(
+        err,
+        ContractOpError::NotACandidate,
+        "a confirmed claim is refused, not a silent no-op"
+    );
+    // And the claim is untouched.
+    assert_eq!(
+        store
+            .get_claim(&confirmed_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        ClaimStatus::Confirmed
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 6. Only the named claim is admitted; a sibling candidate on the same object
+/// is not. The admission is per-claim, not per-object — the whole point of the
+/// feature is to avoid the `include-candidates`-for-everything shape.
+#[tokio::test]
+async fn use_candidate_once_admits_only_the_named_claim() {
+    let root = temp_root("use_once_only_named");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let (p, obj, admitted_id) = seed_one_candidate(&store).await;
+
+    // A sibling candidate on the same object, same fingerprint.
+    let fp = fingerprint_for(&table(&[
+        ("id", "bigint", false),
+        ("amount", "numeric", false),
+    ]));
+    let sibling_id = propose_inferred_candidate(
+        &store,
+        &obj,
+        &fp,
+        ClaimPayload::default_time_column("amount").unwrap(),
+    )
+    .await;
+    assert_ne!(sibling_id, admitted_id);
+    use_candidate_once(&store, &admitted_id).await.unwrap();
+
+    let tree = schema_tree_for(&[(
+        "orders",
+        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+    )]);
+    let terms: Vec<String> = vec!["orders".to_string()];
+    let outcome = recall(
+        &store,
+        recall_admitting_one(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(tree))],
+            &terms,
+            Some(admitted_id.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(outcome.contracts.len(), 1, "the object is selected");
+    let ids: Vec<ClaimId> = outcome.contracts[0]
+        .claims
+        .iter()
+        .map(|c| c.id.clone())
+        .collect();
+    assert!(
+        ids.contains(&admitted_id),
+        "the named candidate is admitted"
+    );
+    assert!(
+        !ids.contains(&sibling_id),
+        "the sibling candidate is not admitted — admission is per-claim"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 7. Using a candidate produces no evidence record. Using is not an
+/// observation about the database; the operation writes nothing to the store,
+/// so no evidence row can appear.
+#[tokio::test]
+async fn use_candidate_once_creates_no_evidence() {
+    let root = temp_root("use_once_no_evidence");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let (_p, _obj, id) = seed_one_candidate(&store).await;
+
+    // The candidate starts with no evidence (proposed with evidence: None).
+    assert_eq!(store.evidence_count(&id).await.unwrap(), 0);
+
+    use_candidate_once(&store, &id).await.unwrap();
+
+    // And using it attached none.
+    assert_eq!(
+        store.evidence_count(&id).await.unwrap(),
+        0,
+        "using a candidate is not an observation; no evidence is created"
+    );
 
     let _ = fs::remove_dir_all(root);
 }

@@ -8,8 +8,8 @@
 //! live schema could not be read is SKIPPED, never marked: marking claims stale
 //! over a network blip would destroy a user's accumulated knowledge (spec §2).
 
+use crate::contracts::ContractOpError;
 use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
-use crate::contracts::review::ContractOpError;
 use crate::contracts::validity::schema_state_for;
 use crate::contracts::view::ContractSchemaState;
 use saya_store::{ContractStore, SqliteStateStore};

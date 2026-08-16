@@ -105,6 +105,10 @@ pub(crate) async fn recall_context_blocks(
         now_unix_ms: crate::contracts::now_unix_ms(),
         bounds,
         recall_mode,
+        // No candidate is admitted per-claim yet — the prompt-recall caller has
+        // no `use_candidate_once` path this slice (the `/queue` wiring is a later
+        // slice). `None` keeps today's behaviour: the mode alone decides.
+        admit_candidate: None,
         // This block is shown to the model, so a contract computed `Stale` is
         // dropped (and counted) rather than read as a current fact. The
         // human-facing `contracts list` is the path that keeps stale.

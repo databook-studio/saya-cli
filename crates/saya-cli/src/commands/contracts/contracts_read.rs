@@ -64,6 +64,8 @@ pub(super) async fn list(
         // `contracts list` shows confirmed contracts — the review queue is the
         // view for candidates, so the list command does not widen to them.
         recall_mode: RecallMode::Confirmed,
+        // No per-claim admission on the human list path; `None` keeps the mode.
+        admit_candidate: None,
         // A human is reviewing; keep stale contracts so the list stays a true
         // picture of what is stored. The model-facing recall path is the one
         // that drops. Unbounded freshness: a stale-by-age cache still shows

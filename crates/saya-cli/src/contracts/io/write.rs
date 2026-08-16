@@ -40,8 +40,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::contracts::ContractOpError;
 use crate::contracts::discover::contains;
-use crate::contracts::review::ContractOpError;
 
 /// Per-process counter for unique temp-file names. Paired with the process id
 /// it is unique across concurrent exports in one process (the counter) and

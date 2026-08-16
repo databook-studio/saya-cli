@@ -96,6 +96,21 @@ pub(crate) struct RecallRequest<'a> {
     /// behaviour); `IncludeCandidates` widens the filter so candidates reach
     /// the render layer to be shown labelled as unconfirmed.
     pub recall_mode: RecallMode,
+    /// One candidate [`use_candidate_once`](super::use_once::use_candidate_once)
+    /// admitted to *this* recall despite `recall_mode`. `None` is today's
+    /// behaviour: the mode alone decides. `Some(id)` lets exactly that one
+    /// `Candidate` claim through selection under `Confirmed`, without
+    /// promoting it — the claim keeps its status, so the render layer still
+    /// marks it `[candidate — unconfirmed]`.
+    ///
+    /// Request-scoped by construction: the field lives on the request, which
+    /// is built and consumed once per recall and then dropped, so an admission
+    /// cannot survive the turn it was made for (spec C §4 — one turn,
+    /// in-memory). Selection honours the exception only for a live `Candidate`
+    /// — a non-candidate id here is a no-op, because
+    /// [`use_candidate_once`] refuses to mint an admission for anything but a
+    /// live candidate, so a stale or rejected id never reaches a request.
+    pub admit_candidate: Option<saya_types::ClaimId>,
     /// Who the result is for. `ForModel` (the default) drops a contract whose
     /// computed schema state is `Stale` and counts it in `excluded_by_schema`;
     /// `ForHumanReview` keeps stale contracts so a human can act on them. The
