@@ -1,3 +1,4 @@
+pub(crate) mod binding;
 pub(crate) mod claim;
 pub(crate) mod claim_enums;
 pub(crate) mod claim_payload;
@@ -11,6 +12,10 @@ pub(crate) mod slot;
 pub(crate) mod slot_state;
 pub(crate) mod slot_values;
 
+pub use binding::{
+    BindingValidity, ColumnRequirement, SchemaBinding, is_numeric_type, is_temporal_type,
+    validate_table,
+};
 pub use claim::{CLAIM_PAYLOAD_VERSION, ClaimId, MAX_REFERENCED_COLUMNS, MAX_TEXT_CHARS};
 pub use claim_enums::{Cardinality, ClaimOrigin, ClaimStatus, ColumnRole};
 pub use claim_payload::{ClaimPayload, ReferencedColumn};
