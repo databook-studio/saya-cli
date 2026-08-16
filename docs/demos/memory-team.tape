@@ -10,9 +10,9 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 70ms
 
 Hide
-Type "bash docs/demos/_fixture.sh /tmp/saya-demo-team && cd /tmp/saya-demo-team"
+Type "REPO=$(pwd); bash docs/demos/_fixture.sh /tmp/saya-demo-team && cd /tmp/saya-demo-team"
 Enter
-Type "export HOME=/tmp/saya-demo-team/home; S='<path>/saya --config config.toml --connections connections.toml --profile shop'"
+Type "export HOME=/tmp/saya-demo-team/home; S=$REPO/target/release/saya' --config config.toml --connections connections.toml --profile shop'"
 Enter
 Type "$S connection schema shop --refresh >/dev/null 2>&1"
 Enter
@@ -28,19 +28,19 @@ Show
 
 Type "$S contracts export .saya/contracts"
 Enter
-Sleep 2500
+Sleep 2500ms
 Type "cat .saya/contracts/*.toml"
 Enter
-Sleep 4000
+Sleep 4000ms
 
 Type "# Commit that. A teammate clones the repo:"
 Enter
-Sleep 1500
+Sleep 1500ms
 Type "export HOME=/tmp/saya-demo-team/home2; mkdir -p $HOME"
 Enter
 Type "$S connection schema shop --refresh >/dev/null 2>&1; $S contracts import . --dry-run"
 Enter
-Sleep 3500
+Sleep 3500ms
 Type "$S contracts import ."
 Enter
-Sleep 3000
+Sleep 3000ms

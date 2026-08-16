@@ -10,9 +10,11 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 70ms
 
 Hide
-Type "bash docs/demos/_fixture.sh /tmp/saya-demo-remember && cd /tmp/saya-demo-remember"
+Type "REPO=$(pwd); bash docs/demos/_fixture.sh /tmp/saya-demo-remember && cd /tmp/saya-demo-remember"
 Enter
-Type "export HOME=/tmp/saya-demo-remember/home; S='<path>/saya --config config.toml --connections connections.toml --profile shop'"
+Type "export HOME=/tmp/saya-demo-remember/home; S=$REPO/target/release/saya' --config config.toml --connections connections.toml --profile shop'"
+Enter
+Type "$S connection schema shop --refresh >/dev/null 2>&1"
 Enter
 Type "clear"
 Enter
@@ -20,15 +22,15 @@ Show
 
 Type "# saya knows the schema. It does not know what the columns MEAN."
 Enter
-Sleep 1500
+Sleep 1500ms
 Type "$S contracts remember shop.main.orders --kind time-column --value created_at"
 Enter
-Sleep 2500
+Sleep 2500ms
 
 Type "$S contracts list"
 Enter
-Sleep 3000
+Sleep 3000ms
 
 Type "# One typed fact, bound to this table and this connection."
 Enter
-Sleep 2000
+Sleep 2000ms
