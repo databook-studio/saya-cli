@@ -22,6 +22,10 @@ mod recorder;
 pub(crate) use observations::{
     DrainedObservations, ObservationLog, ObservationOutcome, ToolObservation,
 };
+// `ProposedClaimsLog` types the `proposed_claims` field; re-exported the same
+// way so the agent runtime can drain it after the turn to emit one
+// `KnowledgeProposed` event per persisted claim (spec P2d).
+pub(crate) use propose::ProposedClaimsLog;
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
@@ -45,6 +49,12 @@ pub(crate) struct DatabaseTools {
     // is the request scope — not global — the bound is meant to cover. Atomic so
     // the `&self` executor can bump it without `&mut self`.
     pub(super) candidate_proposals: AtomicUsize,
+    /// Request-scoped log of the candidate claims *persisted* this turn, for
+    // the runtime to drain and emit as one `KnowledgeProposed` event per claim
+    // (spec P2d). `None` in tests that drive the executor without a log; an
+    // absent log means no event is emitted, it never affects persistence. An
+    // `Arc` lets the runtime keep a handle to drain after the turn.
+    pub(super) proposed_claims: Option<Arc<ProposedClaimsLog>>,
 }
 
 impl DatabaseTools {
@@ -81,6 +91,7 @@ impl DatabaseTools {
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
             candidate_proposals: AtomicUsize::new(0),
+            proposed_claims: None,
         }
     }
 
@@ -103,19 +114,27 @@ impl DatabaseTools {
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
             candidate_proposals: AtomicUsize::new(0),
+            proposed_claims: None,
         }
     }
 
     /// Production construction with a learning-derived observation log attached.
     /// `observations` is `None` for `learning = off` (no collector exists); `Some`
     /// for `suggest` and `auto-candidate`, so the runtime can drain it after the
-    /// turn to report or persist what was observed (spec 4b §2).
+    /// turn to report or persist what was observed (spec 4b §2). `proposed_claims`
+    /// is the request-scoped log `contract_propose` records a persisted claim
+    /// into, which the runtime drains after the turn to emit one
+    /// `KnowledgeProposed` event per claim (spec P2d). `None` only when no store
+    /// is present (no proposals can persist); the runtime drains it regardless
+    /// of whether the turn succeeded — a persisted write is reported even when
+    /// the turn later fails (spec P2d §3).
     pub(crate) fn with_learning(
         registry: ConnectionRegistry,
         max_rows: usize,
         allow_query_data: bool,
         state_db: Option<SqliteStateStore>,
         observations: Option<Arc<ObservationLog>>,
+        proposed_claims: Option<Arc<ProposedClaimsLog>>,
     ) -> Self {
         Self {
             registry,
@@ -126,6 +145,7 @@ impl DatabaseTools {
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations,
             candidate_proposals: AtomicUsize::new(0),
+            proposed_claims,
         }
     }
 
@@ -146,11 +166,15 @@ impl DatabaseTools {
             fan_out_query_timeout,
             observations: None,
             candidate_proposals: AtomicUsize::new(0),
+            proposed_claims: None,
         }
     }
 
     /// Test-only construction with a shared observation log attached, so a test
-    /// can drive tools through `execute` and then `drain` the same log.
+    // can drive tools through `execute` and then `drain` the same log. An
+    // optional `proposed_claims` log lets a test assert what a persisted proposal
+    // records for a `KnowledgeProposed` event (spec P2d §5); absent, no event data
+    // is captured.
     #[cfg(test)]
     pub(super) fn with_registry_and_observations(
         registry: ConnectionRegistry,
@@ -158,6 +182,7 @@ impl DatabaseTools {
         allow_query_data: bool,
         state_db: Option<SqliteStateStore>,
         observations: Arc<ObservationLog>,
+        proposed_claims: Option<Arc<ProposedClaimsLog>>,
     ) -> Self {
         Self {
             registry,
@@ -168,6 +193,7 @@ impl DatabaseTools {
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: Some(observations),
             candidate_proposals: AtomicUsize::new(0),
+            proposed_claims,
         }
     }
 }

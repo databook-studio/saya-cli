@@ -198,6 +198,7 @@ async fn run_one_turn(learning: MemoryLearning) -> (SqliteStateStore, ProfileIde
         true,
         Some(store.clone()),
         setup.observations.clone(),
+        None,
     );
     let limits = AgentLimits {
         max_turns: 4,
@@ -421,6 +422,7 @@ async fn learning_auto_candidate_registers_tool_and_stores_candidate() {
         true,
         Some(store.clone()),
         Some(Arc::new(ObservationLog::new())),
+        None,
     );
     tools
         .execute(
@@ -490,6 +492,7 @@ async fn changing_learning_mode_takes_effect_on_the_next_turn() {
         true,
         Some(store.clone()),
         auto.observations.clone(),
+        None,
     );
     tools.execute("contract_propose", propose).await.unwrap();
     let candidates = store

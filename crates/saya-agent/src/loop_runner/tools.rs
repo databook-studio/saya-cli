@@ -15,16 +15,35 @@ pub(super) fn check_call(
         Ok(())
     }
 }
+/// Runs a tool and returns its result with a completion summary that reflects
+/// the tool's *declared* `read_only`, not its name. A write tool (`read_only:
+/// false`, e.g. one that persists a candidate claim) must not read as a
+/// "read-only" completion — that would be a false statement in the feature whose
+/// pitch is that it does not overstate what it knows (spec P2d §4). The summary
+/// drives `tool_metadata.status` via a `contains("failed")` check, so every
+/// failure string keeps the substring "failed".
 pub(super) async fn execute(
     tools: &dyn ToolExecutor,
     name: &str,
     arguments: Value,
+    read_only: bool,
 ) -> (Value, &'static str) {
     match tools.execute(name, arguments).await {
-        Ok(value) => (value, "read-only database tool completed"),
+        Ok(value) => (
+            value,
+            if read_only {
+                "read-only database tool completed"
+            } else {
+                "local-state write completed"
+            },
+        ),
         Err(_) => (
-            serde_json::json!({"error":"read-only database tool failed"}),
-            "read-only database tool failed",
+            serde_json::json!({"error":"database tool failed"}),
+            if read_only {
+                "read-only database tool failed"
+            } else {
+                "local-state write failed"
+            },
         ),
     }
 }

@@ -133,10 +133,11 @@ fn claim_line(claim: &StoredClaim, is_disputed: bool) -> String {
 /// The short rendered value for a claim, plus the column name when the claim is
 /// column-scoped. This is the single source of truth for what a claim "shows"
 /// as a value: the prompt body ([`claim_line`]) and the P1a recall receipt both
-/// read it here, so the receipt can never name a value the prompt did not.
+/// read it here, so the receipt can never name a value the prompt did not; the
+/// propose tool reuses it so a `KnowledgeProposed` event names the same value.
 /// `value` is `""` only for a payload shape this slice does not render (a
 /// future variant); the `kind` still identifies it.
-pub(super) fn claim_value(payload: &ClaimPayload) -> (Option<String>, String) {
+pub(crate) fn claim_value(payload: &ClaimPayload) -> (Option<String>, String) {
     match payload {
         ClaimPayload::TableDescription { text, .. } => (None, text.clone()),
         ClaimPayload::TableAlias { alias, .. } => (None, alias.clone()),

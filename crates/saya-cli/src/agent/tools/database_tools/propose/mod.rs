@@ -16,18 +16,21 @@
 
 mod definition;
 mod evidence;
+mod log;
 mod mapping;
 mod validation;
 
 pub(crate) use definition::definition as propose_definition;
+pub(crate) use log::ProposedClaimsLog;
 
-use saya_agent::ToolError;
-use saya_store::{ClaimEvidence, EvidenceKind, ProposeClaim};
+use saya_agent::{ProposedClaimDto, ToolError};
+use saya_store::{ClaimEvidence, EvidenceKind, ProposeClaim, ProposeOutcome};
 use saya_types::{
     ClaimOrigin, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity,
 };
 
 use super::DatabaseTools;
+use crate::agent::recall_context::claim_value;
 use crate::commands::unobserved_fingerprint;
 use crate::contracts::args::{QualifiedName, build_payload, parse_kind, parse_qualified};
 use crate::contracts::propose as propose_op;
@@ -62,6 +65,14 @@ impl DatabaseTools {
             .ok_or(ToolError::NoConnectionSelected)?;
         let identity =
             ProfileIdentity::parse(identity).map_err(|_| ToolError::InvalidQueryArguments)?;
+        // The profile *name* the event carries (never the opaque identity). The
+        // connection the model named, or the primary when it left `connection`
+        // blank — the same resolution `registry.resolve` just validated.
+        let profile_name = args
+            .connection
+            .filter(|name| !name.is_empty())
+            .unwrap_or(self.registry.primary_name())
+            .to_string();
         let kind = parse_kind(args.kind).ok_or(ToolError::InvalidQueryArguments)?;
         let payload = build_payload(kind, args.value, args.column)
             .map_err(|_| ToolError::InvalidQueryArguments)?;
@@ -86,6 +97,13 @@ impl DatabaseTools {
             return Err(ToolError::QueryFailed);
         }
 
+        // Pre-compute the `KnowledgeProposed` fields before `payload`/`object`
+        // move into the store request. `claim_value` is the recall render path's
+        // single source, so the event names the same value a later recall would.
+        let object_qualified = object.qualified_name();
+        let kind_str = payload.kind().to_string();
+        let (claim_column, claim_value) = claim_value(&payload);
+
         let referenced_columns = payload.referenced_column_name_snapshots();
         let request = ProposeClaim {
             object,
@@ -107,10 +125,33 @@ impl DatabaseTools {
         let Some(store) = self.state_db.as_ref() else {
             return Err(ToolError::QueryFailed);
         };
-        propose_op(store, request)
+        let outcome = propose_op(store, request)
             .await
-            .map_err(|_| ToolError::QueryFailed)
-            .map(outcome_payload)
+            .map_err(|_| ToolError::QueryFailed)?;
+        // Record only what was *persisted*. A `Stored` outcome is a new
+        // candidate; a `Duplicate` (live or forgotten) is not a new proposal, and
+        // the `Err` arms above already returned. So the event's data is captured
+        // here and only here — on the write, not on the tool call (spec P2d §3).
+        // The runtime drains the log after the turn and emits one
+        // `KnowledgeProposed` per recorded claim; recording never fails the turn
+        // or rolls back the write, and a missing log (tests without one) is a
+        // no-op.
+        if let ProposeOutcome::Stored(claim_id) = &outcome
+            && let Some(log) = self.proposed_claims.as_ref()
+        {
+            log.record(ProposedClaimDto {
+                claim_id: claim_id.clone(),
+                profile: profile_name,
+                object: object_qualified,
+                kind: kind_str,
+                value: claim_value,
+                column: claim_column,
+                // A proposal is always a candidate — inert until a human
+                // confirms it — so the event never reads as established.
+                status: ClaimStatus::Candidate,
+            });
+        }
+        Ok(outcome_payload(outcome))
     }
 
     /// `SuccessfulReadQuery` when a succeeded observation touched the proposed

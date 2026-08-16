@@ -19,6 +19,12 @@ mod dispute;
 mod receipt;
 mod render;
 
+// The single source of truth for the short rendered value a claim shows. The
+// prompt body and the recall receipt read it inside this module; the propose
+// tool reuses it so a `KnowledgeProposed` event names the same value a later
+// recall would, never a divergent one (spec P2d).
+pub(crate) use render::claim_value;
+
 use crate::connection::ConnectionRegistry;
 use crate::contracts::{
     PromptTerms, RecallBounds, RecallMode, RecallOutcomeKind, RecallReceipt, RecallRequest,

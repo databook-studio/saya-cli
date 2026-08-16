@@ -91,7 +91,7 @@ pub async fn run_agent_with_sink(
                 if definition.effect.database_data {
                     used_bounded_sql_query = true;
                 }
-                tools::execute(tools, &call.name, call.arguments).await
+                tools::execute(tools, &call.name, call.arguments, definition.read_only).await
             } else {
                 emit(
                     &mut events,

@@ -145,6 +145,39 @@ pub struct SuppliedContractDto {
     pub claims: Vec<SuppliedClaimDto>,
 }
 
+/// One candidate claim **proposed** (persisted) this turn, in the DTO shape that
+/// crosses the crate boundary into [`AgentEvent::KnowledgeProposed`] (spec P2d).
+/// Mirrors [`SuppliedClaimDto`]'s vocabulary — same `claim_id` / `kind` / `value`
+/// / `column` / `status` — and adds `profile` and `object`, because a proposal is
+/// a single flat claim, not a claim nested under a contract stanza. `profile` is
+/// the human-facing profile **name**, never the opaque
+/// [`saya_types::ProfileIdentity`] (no identity field, by construction).
+///
+/// `value` is the same short rendered form a later recall would show (a column
+/// name, an alias), reusing the recall render path's `claim_value` so a proposal
+/// can never name a value recall would not — not the stored payload. `status` is
+/// the status the claim *landed with*: `contract_propose` stores only a
+/// `Candidate`, so a `KnowledgeProposed` event never reads as established (a
+/// candidate is inert until a human confirms it). No raw SQL, evidence, or cells.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposedClaimDto {
+    pub claim_id: ClaimId,
+    /// The human-facing profile name. Never the opaque identity.
+    pub profile: String,
+    /// The object's qualified name (`catalog.schema.object`).
+    pub object: String,
+    /// The claim kind token (`table_alias`, `default_time_column`, …).
+    pub kind: String,
+    /// The short rendered value, not the stored payload.
+    pub value: String,
+    /// A column name when the claim is column-scoped; `None` for table-level
+    /// claims. `skip_serializing_if` keeps it off the wire when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
+    /// The status the claim landed with — `Candidate` for a proposal.
+    pub status: ClaimStatus,
+}
+
 // `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
 // `PartialEq` only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -183,6 +216,18 @@ pub enum AgentEvent {
         /// subset, not the whole"; zero means the supply path kept everything.
         dropped_by_bounds: usize,
     },
+    /// A candidate claim was **proposed** — persisted — this turn (spec P2d).
+    /// Emitted once per persisted proposal, at the moment the store accepts it
+    /// (the `Stored` arm), so a refused, duplicate, or validation-failed proposal
+    /// emits nothing: the event names what was *written*, never what was merely
+    /// *asked for*. Carries the persisted claim's id, profile name, object, kind,
+    /// rendered value, and the `Candidate` status it landed with — never the
+    /// opaque identity, raw SQL, or evidence. Bounded by the tool's per-turn
+    /// proposal cap (≤8); the event stream inherits that bound, so no unbounded
+    /// field is needed.
+    KnowledgeProposed {
+        claim: ProposedClaimDto,
+    },
     Complete,
 }
 
@@ -210,6 +255,12 @@ impl AgentEvent {
             contracts,
             dropped_by_bounds,
         }
+    }
+
+    /// Builds the per-proposal `KnowledgeProposed` event for one persisted
+    /// candidate claim. The caller is the propose tool, at the `Stored` arm.
+    pub fn knowledge_proposed(claim: ProposedClaimDto) -> Self {
+        Self::KnowledgeProposed { claim }
     }
 
     pub fn complete() -> Self {

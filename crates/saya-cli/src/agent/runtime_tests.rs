@@ -20,7 +20,8 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    KnowledgeOutcome, ProviderError, SuppliedClaimDto, SuppliedContractDto,
+    KnowledgeOutcome, ProposedClaimDto, ProviderError, SuppliedClaimDto, SuppliedContractDto,
+    ToolCall,
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryLearning, MemoryRecall, OutputFormat, ResolvedAi,
@@ -220,6 +221,18 @@ fn default_memory() -> ResolvedMemory {
     ResolvedMemory {
         recall: MemoryRecall::Confirmed,
         learning: MemoryLearning::Off,
+        max_contracts: 5,
+        max_claims_per_contract: 12,
+        max_context_bytes: 16384,
+    }
+}
+
+/// `auto-candidate` memory: the learning mode that permits candidate writes, so
+/// `contract_propose` is registered and the loop will execute it (spec 4b §2).
+fn auto_candidate_memory() -> ResolvedMemory {
+    ResolvedMemory {
+        recall: MemoryRecall::Off,
+        learning: MemoryLearning::AutoCandidate,
         max_contracts: 5,
         max_claims_per_contract: 12,
         max_context_bytes: 16384,
@@ -756,4 +769,271 @@ fn knowledge_supplied_round_trips_through_serde_with_type_tag() {
         let back: KnowledgeOutcome = serde_json::from_str(&text).expect("deserializes back");
         assert_eq!(back, outcome, "outcome {outcome:?} round-trips");
     }
+}
+
+// ===========================================================================
+// P2d — a persisted proposal emits one KnowledgeProposed through the runtime.
+//
+// The tool-level tests (propose_tools_tests) assert the data the event would
+// carry by draining the `ProposedClaimsLog` directly; this test proves the
+// runtime actually emits the event — once per persisted claim, after the loop
+// drains the log, naming what was stored (spec P2d §2/§5.1).
+// ===========================================================================
+
+/// A provider that issues one `contract_propose` call on the first request and
+/// a text answer on every subsequent one — a one-proposal turn that completes.
+struct ProposeProvider {
+    calls: Mutex<usize>,
+}
+
+#[async_trait]
+impl ChatProvider for ProposeProvider {
+    fn name(&self) -> &str {
+        "propose-once"
+    }
+    async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        let mut calls = self.calls.lock().unwrap();
+        if *calls == 0 {
+            *calls = 1;
+            Ok(ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call".into(),
+                        name: "contract_propose".into(),
+                        arguments: serde_json::json!({
+                            "table": "catalog.public.orders",
+                            "kind": "alias",
+                            "value": "orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                },
+            })
+        } else {
+            Ok(ChatResponse {
+                message: ChatMessage::text("assistant", "done"),
+            })
+        }
+    }
+}
+
+/// A turn that persists one proposal emits exactly one `KnowledgeProposed`,
+/// naming the claim that was stored (spec P2d §5.1).
+#[tokio::test]
+async fn a_turn_persisting_a_proposal_emits_one_knowledge_proposed() {
+    let root = temp_root("p2d_emit");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(ProposeProvider {
+            calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(auto_candidate_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "remember the orders alias",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store.clone()),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    let claim_id = {
+        let captured = events.lock().unwrap();
+        let proposed: Vec<&ProposedClaimDto> = captured
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::KnowledgeProposed { claim } => Some(claim),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            proposed.len(),
+            1,
+            "exactly one KnowledgeProposed: {captured:?}"
+        );
+        let claim = proposed[0];
+        assert_eq!(
+            claim.profile, "analytics",
+            "the profile name, not the identity"
+        );
+        assert_eq!(claim.object, "catalog.public.orders");
+        assert_eq!(claim.kind, "table_alias");
+        assert_eq!(claim.value, "orders");
+        assert_eq!(
+            claim.status,
+            ClaimStatus::Candidate,
+            "landed as a candidate"
+        );
+        // The opaque identity never appears in the emitted event stream.
+        let identity_str = identity.as_str();
+        let stream_json = serde_json::to_string(captured.as_slice()).unwrap_or_default();
+        assert!(
+            !stream_json.contains(identity_str),
+            "opaque identity leaked into the event stream: {stream_json}"
+        );
+        claim.claim_id.clone()
+    };
+
+    // The event's claim id is the one the store actually persisted. Done
+    // outside the event-lock guard — the store query awaits.
+    let obj = object(&identity, "orders");
+    let stored = store
+        .list_claims(&obj, &[ClaimStatus::Candidate])
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 1, "exactly one candidate stored");
+    assert_eq!(stored[0].id.as_str(), claim_id.as_str());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A turn that proposes a *duplicate* (the claim already exists) emits no
+/// `KnowledgeProposed` — a duplicate is not a new proposal (spec P2d §5.2). The
+/// provider proposes the same alias twice; only the first persists.
+#[tokio::test]
+async fn a_duplicate_proposal_emits_no_knowledge_proposed() {
+    let root = temp_root("p2d_dup_runtime");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    // Seed the claim first, so both tool calls are duplicates of it.
+    let obj = object(&identity, "orders");
+    store
+        .propose_claim(ProposeClaim {
+            object: obj.clone(),
+            fingerprint: crate::commands::unobserved_fingerprint(),
+            referenced_columns: Vec::new(),
+            payload: ClaimPayload::table_alias("orders").unwrap(),
+            origin: ClaimOrigin::UserExplicit,
+            initial_status: ClaimStatus::Candidate,
+            evidence: None,
+        })
+        .await
+        .unwrap();
+
+    /// Issues the same `contract_propose` call twice, then answers — so both
+    /// calls are duplicates and neither should emit.
+    struct ProposeTwiceProvider {
+        calls: Mutex<usize>,
+    }
+    #[async_trait]
+    impl ChatProvider for ProposeTwiceProvider {
+        fn name(&self) -> &str {
+            "propose-twice"
+        }
+        async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls <= 2 {
+                Ok(ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: format!("call-{calls}"),
+                            name: "contract_propose".into(),
+                            arguments: serde_json::json!({
+                                "table": "catalog.public.orders",
+                                "kind": "alias",
+                                "value": "orders",
+                            }),
+                        }],
+                        tool_call_id: None,
+                    },
+                })
+            } else {
+                Ok(ChatResponse {
+                    message: ChatMessage::text("assistant", "done"),
+                })
+            }
+        }
+    }
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(ProposeTwiceProvider {
+            calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(auto_candidate_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "remember the orders alias",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store.clone()),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    {
+        let captured = events.lock().unwrap();
+        let proposed_count = captured
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::KnowledgeProposed { .. }))
+            .count();
+        assert_eq!(
+            proposed_count, 0,
+            "a duplicate emits no KnowledgeProposed: {captured:?}"
+        );
+    }
+    // Still exactly one candidate in the store (the seed); the duplicates did
+    // not add a second. Done outside the event-lock guard — the store query
+    // awaits.
+    let stored = store
+        .list_claims(&obj, &[ClaimStatus::Candidate])
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 1, "the duplicates stored nothing new");
+
+    let _ = fs::remove_dir_all(root);
 }

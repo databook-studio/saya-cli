@@ -22,6 +22,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::agent::tools::ProposedClaimsLog;
 use crate::agent::tools::database_tools::ObservationLog;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 
@@ -103,12 +104,23 @@ fn object_ref(profile: &ProfileIdentity, name: &str) -> DatabaseObjectRef {
 }
 
 /// Tools with a store and a shared observation log, ready to drive propose.
+/// `proposed_claims` is the request-scoped log `contract_propose` records a
+/// persisted claim into; pass `Some` to assert the `KnowledgeProposed` payload
+/// (spec P2d), `None` for tests that do not inspect the event.
 fn propose_tools(
     registry: ConnectionRegistry,
     store: SqliteStateStore,
     observations: Arc<ObservationLog>,
+    proposed_claims: Option<Arc<ProposedClaimsLog>>,
 ) -> DatabaseTools {
-    DatabaseTools::with_registry_and_observations(registry, 100, true, Some(store), observations)
+    DatabaseTools::with_registry_and_observations(
+        registry,
+        100,
+        true,
+        Some(store),
+        observations,
+        proposed_claims,
+    )
 }
 
 fn propose_args(table: &str, kind: &str, value: &str) -> serde_json::Value {
@@ -154,6 +166,7 @@ async fn proposal_stores_assistant_inferred_candidate() {
         registry_with_primary("primary", &identity),
         store.clone(),
         Arc::new(ObservationLog::new()),
+        None,
     );
 
     let res = tools
@@ -184,6 +197,7 @@ async fn stored_candidate_does_not_appear_in_recall() {
         registry_with_primary("primary", &identity),
         store.clone(),
         Arc::new(ObservationLog::new()),
+        None,
     );
     tools
         .execute(
@@ -223,6 +237,7 @@ async fn ninth_proposal_in_a_turn_is_refused_and_eight_stored() {
         registry_with_primary("primary", &identity),
         store.clone(),
         Arc::new(ObservationLog::new()),
+        None,
     );
 
     // Eight distinct objects, one proposal each — all store.
@@ -277,6 +292,7 @@ async fn malformed_input_is_a_typed_error_and_stores_nothing() {
         registry_with_primary("primary", &identity),
         store.clone(),
         Arc::new(ObservationLog::new()),
+        None,
     );
 
     // Malformed table (two parts).
@@ -345,6 +361,7 @@ async fn bad_value_is_typed_error_without_echo_and_stores_nothing() {
         registry_with_primary("primary", &identity),
         store.clone(),
         Arc::new(ObservationLog::new()),
+        None,
     );
 
     const SENTINEL: &str = "SENTINELVALUE";
@@ -411,6 +428,7 @@ async fn duplicate_returns_existing_id_and_status() {
         registry_with_primary("primary", &identity),
         store.clone(),
         Arc::new(ObservationLog::new()),
+        None,
     );
 
     let res = tools
@@ -527,6 +545,7 @@ async fn untouched_object_stores_with_weaker_evidence() {
         registry_with_primary("primary", &identity),
         store.clone(),
         log.clone(),
+        None,
     );
 
     // No query ran this turn, so the proposed object was never touched.
@@ -561,6 +580,7 @@ async fn touched_object_stores_a_candidate() {
         registry_with_primary("primary", &identity),
         store.clone(),
         log.clone(),
+        None,
     );
 
     // A succeeded query this turn named `catalog.public.orders`.
@@ -602,6 +622,7 @@ async fn no_opaque_profile_identity_in_propose_result() {
         registry_with_primary("primary", &identity),
         store.clone(),
         Arc::new(ObservationLog::new()),
+        None,
     );
 
     let res = tools
@@ -619,6 +640,336 @@ async fn no_opaque_profile_identity_in_propose_result() {
     assert!(
         !text.contains(identity_str),
         "identity leaked into contract_propose result: {text}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ===========================================================================
+// P2d — `KnowledgeProposed`: what was *written*, not just that something was.
+//
+// These drive `contract_propose` through the executor with a `ProposedClaimsLog`
+// attached (the request-scoped log the runtime drains to emit the event), then
+// `drain` it. The log records only on the `Stored` arm — so what it holds is,
+// by construction, only what was persisted (spec P2d §3). The runtime-level
+// test (one event actually emitted through `run_prompt_with_inputs`) lives in
+// `runtime_tests`; these assert the data the event would carry.
+// ===========================================================================
+
+/// Tools with a store, an observation log, and a proposed-claims log.
+fn propose_tools_with_log(
+    registry: ConnectionRegistry,
+    store: SqliteStateStore,
+    log: Arc<ProposedClaimsLog>,
+) -> DatabaseTools {
+    propose_tools(registry, store, Arc::new(ObservationLog::new()), Some(log))
+}
+
+/// A persisted proposal records exactly one claim naming what was stored —
+/// claim id, profile name, object, kind, rendered value, and `Candidate`
+/// status (spec P2d §5.1).
+#[tokio::test]
+async fn persisted_proposal_records_one_claim_naming_what_was_stored() {
+    let root = temp_root("p2d_stored");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = propose_tools_with_log(
+        registry_with_primary("primary", &identity),
+        store.clone(),
+        log.clone(),
+    );
+
+    let res = tools
+        .execute(
+            "contract_propose",
+            propose_args("catalog.public.orders", "alias", "orders"),
+        )
+        .await
+        .expect("proposal stores");
+    let claim_id = res["claim_id"].as_str().unwrap().to_string();
+
+    let recorded = log.drain();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "exactly one claim recorded: {recorded:?}"
+    );
+    let claim = &recorded[0];
+    assert_eq!(
+        claim.claim_id.as_str(),
+        claim_id,
+        "carries the stored claim id"
+    );
+    assert_eq!(
+        claim.profile, "primary",
+        "the profile name, not the identity"
+    );
+    assert_eq!(
+        claim.object, "catalog.public.orders",
+        "the qualified object"
+    );
+    assert_eq!(claim.kind, "table_alias", "the claim kind token");
+    assert_eq!(claim.value, "orders", "the rendered value, not the payload");
+    assert!(claim.column.is_none(), "a table-level claim has no column");
+    assert_eq!(
+        claim.status,
+        ClaimStatus::Candidate,
+        "landed as a candidate"
+    );
+
+    // The store is the authority: the recorded claim is the one that persisted.
+    let obj = object_ref(&identity, "orders");
+    let stored = assert_one_candidate(&store, &obj).await;
+    assert_eq!(stored.id.as_str(), claim.claim_id.as_str());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A column-scoped proposal records the column too (the `claim_value` shape).
+#[tokio::test]
+async fn column_scoped_proposal_records_the_column() {
+    let root = temp_root("p2d_column");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = propose_tools_with_log(
+        registry_with_primary("primary", &identity),
+        store.clone(),
+        log.clone(),
+    );
+
+    tools
+        .execute(
+            "contract_propose",
+            serde_json::json!({
+                "table": "catalog.public.orders",
+                "kind": "column-role",
+                "value": "dimension",
+                "column": "amount",
+            }),
+        )
+        .await
+        .unwrap();
+
+    let recorded = log.drain();
+    assert_eq!(recorded.len(), 1);
+    let claim = &recorded[0];
+    assert_eq!(claim.kind, "column_role");
+    assert_eq!(claim.value, "dimension", "the role renders as the value");
+    assert_eq!(
+        claim.column.as_deref(),
+        Some("amount"),
+        "a column-scoped claim carries its column"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A refused, duplicate, or validation-failed proposal records nothing — the
+/// event names what was *written*, never what was merely asked for (spec P2d
+/// §3, §5.2). Each failure mode is a separate turn (its own `DatabaseTools` /
+/// log) so the per-turn counter and the log start clean.
+#[tokio::test]
+async fn refused_duplicate_and_malformed_proposals_record_nothing() {
+    // --- validation-failed: a malformed table stores nothing, records nothing.
+    let root = temp_root("p2d_malformed");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = propose_tools_with_log(
+        registry_with_primary("primary", &identity),
+        store.clone(),
+        log.clone(),
+    );
+    let err = tools
+        .execute(
+            "contract_propose",
+            propose_args("public.orders", "alias", "orders"),
+        )
+        .await
+        .expect_err("malformed table is a typed error");
+    assert!(matches!(err, ToolError::InvalidQueryArguments));
+    assert!(
+        log.drain().is_empty(),
+        "a validation failure records nothing"
+    );
+    let _ = fs::remove_dir_all(root);
+
+    // --- refused: a closed privacy gate refuses before any write, records
+    // nothing. A separate `DatabaseTools` with `allow_query_data = false`.
+    let root = temp_root("p2d_refused");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = DatabaseTools::with_registry_and_observations(
+        registry_with_primary("primary", &identity),
+        100,
+        false, // privacy gate closed
+        Some(store.clone()),
+        Arc::new(ObservationLog::new()),
+        Some(log.clone()),
+    );
+    let err = tools
+        .execute(
+            "contract_propose",
+            propose_args("catalog.public.orders", "alias", "orders"),
+        )
+        .await
+        .expect_err("a closed gate refuses the proposal");
+    assert!(matches!(err, ToolError::DataSharingDisabled));
+    assert!(log.drain().is_empty(), "a refused proposal records nothing");
+    let _ = fs::remove_dir_all(root);
+
+    // --- duplicate: the first proposal stores and records; a duplicate of it
+    // returns the existing id but is NOT a new proposal, so it records nothing.
+    let root = temp_root("p2d_duplicate");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = propose_tools_with_log(
+        registry_with_primary("primary", &identity),
+        store.clone(),
+        log.clone(),
+    );
+    tools
+        .execute(
+            "contract_propose",
+            propose_args("catalog.public.orders", "alias", "orders"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(log.drain().len(), 1, "the first proposal records one");
+
+    let dup = tools
+        .execute(
+            "contract_propose",
+            propose_args("catalog.public.orders", "alias", "orders"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(dup["action"], "duplicate", "the second call is a duplicate");
+    assert!(
+        log.drain().is_empty(),
+        "a duplicate is not a new proposal — records nothing"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The recorded claim's `Candidate` status is distinguishable from `Confirmed`
+/// — a candidate never reads as established (spec P2d §3, §5.3).
+#[tokio::test]
+async fn recorded_status_is_candidate_distinguishable_from_confirmed() {
+    let root = temp_root("p2d_status");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = propose_tools_with_log(
+        registry_with_primary("primary", &identity),
+        store.clone(),
+        log.clone(),
+    );
+    tools
+        .execute(
+            "contract_propose",
+            propose_args("catalog.public.orders", "alias", "orders"),
+        )
+        .await
+        .unwrap();
+    let claim = &log.drain()[0];
+    assert_eq!(claim.status, ClaimStatus::Candidate);
+    assert_ne!(
+        claim.status,
+        ClaimStatus::Confirmed,
+        "a proposal never lands as confirmed"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The serialized `KnowledgeProposed` event carries no opaque `ProfileIdentity`
+/// — the profile *name* only (spec P2d §3, §5.4).
+#[tokio::test]
+async fn no_opaque_profile_identity_in_proposed_event() {
+    let root = temp_root("p2d_no_identity");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = propose_tools_with_log(
+        registry_with_primary("primary", &identity),
+        store.clone(),
+        log.clone(),
+    );
+    tools
+        .execute(
+            "contract_propose",
+            propose_args("catalog.public.orders", "alias", "orders"),
+        )
+        .await
+        .unwrap();
+    let claim = log.drain().pop().unwrap();
+    let event = saya_agent::AgentEvent::knowledge_proposed(claim);
+    let json = serde_json::to_string(&event).expect("serializes");
+    let identity_str = identity.as_str();
+    assert_eq!(identity_str.len(), 66);
+    assert!(identity_str.starts_with("p-"));
+    assert!(
+        !json.contains(identity_str),
+        "opaque identity leaked into the KnowledgeProposed event: {json}"
+    );
+    assert!(
+        json.contains("primary"),
+        "the profile name (not the identity) is what the event carries: {json}"
+    );
+    // Round-trips through serde with the `knowledge_proposed` type tag.
+    assert!(
+        json.contains(r#""type":"knowledge_proposed""#),
+        "carries the type tag: {json}"
+    );
+    let back: saya_agent::AgentEvent = serde_json::from_str(&json).expect("deserializes back");
+    assert_eq!(back, event, "round-trips with the claim intact");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The per-turn proposal bound still holds: exactly eight proposals store and
+/// record; the ninth is refused and records nothing (spec P2d §3, §5.6).
+#[tokio::test]
+async fn per_turn_bound_holds_and_ninth_refused_records_nothing() {
+    let root = temp_root("p2d_bound");
+    let store = store_at(&root.join("state.sqlite3")).await;
+    let identity = profile_identity("primary");
+    let log = Arc::new(ProposedClaimsLog::new());
+    let tools = propose_tools_with_log(
+        registry_with_primary("primary", &identity),
+        store.clone(),
+        log.clone(),
+    );
+
+    for i in 0..8 {
+        tools
+            .execute(
+                "contract_propose",
+                propose_args(
+                    &format!("catalog.public.t{i}"),
+                    "description",
+                    "a fact table",
+                ),
+            )
+            .await
+            .expect("first eight proposals store");
+    }
+    assert_eq!(log.drain().len(), 8, "exactly eight recorded");
+
+    let err = tools
+        .execute(
+            "contract_propose",
+            propose_args("catalog.public.t8", "description", "a fact table"),
+        )
+        .await
+        .expect_err("the ninth is refused");
+    assert!(matches!(err, ToolError::QueryFailed), "got: {err}");
+    assert!(
+        log.drain().is_empty(),
+        "the refused ninth records nothing — the event stream inherits the bound"
     );
 
     let _ = fs::remove_dir_all(root);

@@ -144,12 +144,20 @@ pub(crate) async fn run_prompt_with_inputs(
     // Capture before `state_db` moves into the tools; the contract tools are
     // advertised only when a store is present (spec 2b-3a §3).
     let has_state_store = state_db.is_some();
+    // P2d: a request-scoped log `contract_propose` records a *persisted*
+    // candidate claim into. Attached only when a store is present (a proposal
+    // can persist nowhere else); draining an empty log is a no-op. The runtime
+    // keeps its own `Arc` handle so it can drain after `tools` consumes its
+    // clone — the same shared-handle pattern `observation_log` uses.
+    let proposed_claims_log =
+        has_state_store.then(|| std::sync::Arc::new(tools::ProposedClaimsLog::new()));
     let tools = tools::DatabaseTools::with_learning(
         registry,
         runtime.resolved.max_rows,
         allow_query_data,
         state_db,
         learning.observations,
+        proposed_claims_log.clone(),
     );
     let request = AgentRequest {
         prompt: prompt.into(),
@@ -190,6 +198,20 @@ pub(crate) async fn run_prompt_with_inputs(
         cancellation,
     )
     .await;
+    // P2d: drain the persisted-proposals log and emit one `KnowledgeProposed`
+    // per recorded claim. The log holds only claims the store accepted (the
+    // `Stored` arm), so this names what was *written*, never what was merely
+    // *asked for*. Drained and emitted regardless of whether the turn succeeded:
+    // a proposal persisted at iteration 3 is still a write the user should see
+    // even if the turn fails at iteration 5 (spec P2d §3 — emitting never rolls
+    // back a successful write, and never fails the turn; emission is outside the
+    // loop, so it cannot). `sink.emit` is infallible; a missing log (no store)
+    // drains nothing.
+    if let Some(log) = proposed_claims_log.as_ref() {
+        for claim in log.drain() {
+            sink.emit(AgentEvent::knowledge_proposed(claim)).await;
+        }
+    }
     // `suggest` reports what the turn would have proposed after the loop is
     // done; nothing is stored. See `emit_suggest_report` for the gate (only a
     // completed `suggest` turn reports) and the report's shape.

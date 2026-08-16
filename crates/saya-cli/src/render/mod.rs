@@ -1,3 +1,4 @@
+use saya_agent::{KnowledgeOutcome, SuppliedContractDto};
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
@@ -8,11 +9,15 @@ mod render_contract;
 mod render_delta;
 mod render_io;
 mod render_json;
+mod render_memory;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
 pub use io_view::{ContractExportView, ContractImportClaimView, ContractImportView};
 pub use preferences_view::PreferenceView;
+/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeSupplied`] in
+/// `apply_event` and shares this shaper so the wording lives in one place.
+pub(crate) use render_memory::knowledge_supplied_text;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,
@@ -55,6 +60,15 @@ pub enum TerminalEvent {
     ToolDenied {
         name: String,
         reason: String,
+    },
+    /// What memory **supplied** to the turn, emitted once before the provider
+    /// call (spec P1c). Carries the outcome, the supplied contracts (claim DTOs,
+    /// no opaque identity), and the count the bounds dropped. Text is shaped in
+    /// [`render_memory`]; JSON/NDJSON fall out of the serde derive.
+    KnowledgeSupplied {
+        outcome: KnowledgeOutcome,
+        contracts: Vec<SuppliedContractDto>,
+        dropped_by_bounds: usize,
     },
     Complete,
     Result {
@@ -144,6 +158,14 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::ToolDenied { name, reason } => Rendered {
             stdout: format!("Approval denied for {name}: {reason}\n"),
+            stderr: String::new(),
+        },
+        TerminalEvent::KnowledgeSupplied {
+            outcome,
+            contracts,
+            dropped_by_bounds,
+        } => Rendered {
+            stdout: render_memory::knowledge_supplied_text(*outcome, contracts, *dropped_by_bounds),
             stderr: String::new(),
         },
         TerminalEvent::Complete => Rendered {
