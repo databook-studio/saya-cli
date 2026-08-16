@@ -16,12 +16,13 @@
 
 mod budget;
 mod dispute;
+mod receipt;
 mod render;
 
 use crate::connection::ConnectionRegistry;
 use crate::contracts::{
-    PromptTerms, RecallBounds, RecallMode, RecallRequest, RetrievalPolicy, SchemaAvailability,
-    recall, terms,
+    PromptTerms, RecallBounds, RecallMode, RecallOutcomeKind, RecallReceipt, RecallRequest,
+    RetrievalPolicy, SchemaAvailability, recall, terms,
 };
 use saya_agent::ContextBlock;
 use saya_store::{SchemaStore, SqliteStateStore};
@@ -30,12 +31,16 @@ use saya_types::{DatabaseObjectRef, ProfileIdentity};
 /// Label every produced block carries. Stable and machine-ish, never localised.
 pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 
-/// Builds the context blocks for a prompt from recalled contracts.
+/// Builds the context blocks for a prompt from recalled contracts, and a
+/// [`RecallReceipt`] naming exactly which claims reached the block (spec P1a).
 ///
 /// `allow_database_context == false` skips recall entirely — the store is not
-/// queried (§3.1: not querying is both cheaper and a stronger guarantee). Zero
-/// contracts → no block at all (§3.5). Store failure → no block and no error
-/// (§4). `truncated` is true if recall truncated at any bound (§3.4).
+/// queried (§3.1: not querying is both cheaper and a stronger guarantee) and the
+/// receipt's [`RecallOutcomeKind`] is `Skipped`. Zero contracts → no block at
+/// all (§3.5) and an empty `Ran` receipt. Store failure → no block and no error
+/// (§4) and an empty `Ran { store_unavailable: true }` receipt. `truncated` is
+/// true if recall truncated at any bound (§3.4); the receipt's `dropped_by_bounds`
+/// counts the claims the bounds dropped so a subset never reads as the whole.
 ///
 /// `recall_mode` selects which claim statuses reach the block: `Confirmed`
 /// (today's behaviour) or `IncludeCandidates` (candidates admitted and
@@ -59,21 +64,22 @@ pub(crate) async fn recall_context_blocks(
     bounds: RecallBounds,
     registry: &ConnectionRegistry,
     state_db: Option<&SqliteStateStore>,
-) -> Vec<ContextBlock> {
+) -> (Vec<ContextBlock>, RecallReceipt) {
     // §3.1: skip recall entirely when database context is off. Not querying is
-    // both cheaper and a stronger guarantee than querying and discarding.
+    // both cheaper and a stronger guarantee than querying and discarding. The
+    // receipt marks this as Skipped (policy), distinct from Ran-and-found-nothing.
     if !allow_database_context {
-        return Vec::new();
+        return (Vec::new(), RecallReceipt::skipped());
     }
     let Some(store) = state_db else {
-        return Vec::new();
+        return (Vec::new(), RecallReceipt::ran_empty(false));
     };
     // §4: recall must not run when there is nothing to recall against.
     let Some((identities, schemas)) = resolve_profiles(registry, store).await else {
-        return Vec::new();
+        return (Vec::new(), RecallReceipt::ran_empty(false));
     };
     if identities.is_empty() || prompt.trim().is_empty() {
-        return Vec::new();
+        return (Vec::new(), RecallReceipt::ran_empty(false));
     }
 
     let PromptTerms { explicit, terms } = terms::extract(prompt);
@@ -81,7 +87,7 @@ pub(crate) async fn recall_context_blocks(
     // §4: no explicit refs and no terms → selection matches nothing. Don't
     // ask the store to confirm that.
     if explicit_refs.is_empty() && terms.is_empty() {
-        return Vec::new();
+        return (Vec::new(), RecallReceipt::ran_empty(false));
     }
 
     let request = RecallRequest {
@@ -99,9 +105,14 @@ pub(crate) async fn recall_context_blocks(
         policy: RetrievalPolicy::ForModel,
     };
     let outcome = recall(store, request).await;
-    // §4: store failure or nothing selected → no block, no error.
-    if outcome.diagnostics.store_unavailable || outcome.contracts.is_empty() {
-        return Vec::new();
+    // §4: store failure → no block, no error; the receipt records the failure
+    // (Ran, store unavailable) so a later phase can name it without an error.
+    if outcome.diagnostics.store_unavailable {
+        return (Vec::new(), RecallReceipt::ran_empty(true));
+    }
+    // §4: nothing selected → no block, no error; an empty Ran receipt.
+    if outcome.contracts.is_empty() {
+        return (Vec::new(), RecallReceipt::ran_empty(false));
     }
 
     let name_of = render::name_by_identity(registry);
@@ -109,30 +120,53 @@ pub(crate) async fn recall_context_blocks(
     // a contract short — the byte bound below sets its own flag when it drops
     // contracts to fit the rendered budget.
     let count_truncated = outcome.contracts.iter().any(|c| c.truncated);
-    let (body, byte_truncated) = budget::bound_body(
+    let (body, byte_truncated, kept) = budget::bound_body(
         &outcome.contracts,
         &name_of,
         system_prompt,
         prompt,
         bounds.max_bytes,
     );
+    // Claims the bounds dropped: the count-bound drops `recall` already counted
+    // in `excluded_by_count_bounds`, plus the whole contracts the byte bound
+    // dropped from the end (the tail beyond `kept`).
+    let byte_dropped_claims: usize = outcome.contracts[kept..]
+        .iter()
+        .map(|c| c.claims.len())
+        .sum();
+    let dropped_by_bounds = outcome.diagnostics.excluded_by_count_bounds + byte_dropped_claims;
+    let receipt = RecallReceipt {
+        kind: RecallOutcomeKind::Ran {
+            store_unavailable: false,
+        },
+        supplied: receipt::supplied_contracts(&outcome.contracts[..kept], &name_of),
+        dropped_by_bounds,
+    };
     // `bound_body` returns an empty body only when even the first contract's
     // rendered stanza does not fit the budget — the oversized-first-claim case the
     // old code let through. Omit every claim but still surface a truncated block
     // so the model learns recall happened and the context was too large to
     // include, rather than reading silence as "nothing was remembered".
     if body.is_empty() {
-        return vec![ContextBlock {
+        return (
+            vec![ContextBlock {
+                label: BLOCK_LABEL.to_string(),
+                body,
+                truncated: true,
+            }],
+            // The byte bound dropped every selected claim: `kept == 0`, so
+            // `supplied` is empty and `dropped_by_bounds` counts them all.
+            receipt,
+        );
+    }
+    (
+        vec![ContextBlock {
             label: BLOCK_LABEL.to_string(),
             body,
-            truncated: true,
-        }];
-    }
-    vec![ContextBlock {
-        label: BLOCK_LABEL.to_string(),
-        body,
-        truncated: count_truncated || byte_truncated,
-    }]
+            truncated: count_truncated || byte_truncated,
+        }],
+        receipt,
+    )
 }
 
 /// Resolves the connected profiles to identities plus their schema

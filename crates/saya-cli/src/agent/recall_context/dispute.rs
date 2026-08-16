@@ -16,9 +16,10 @@ use std::collections::HashSet;
 use std::fmt::Write;
 
 /// The fixed, in-band prefix that marks a claim as party to a conflict. Empty
-/// for every undisputed claim, so a contract with no conflict renders
-/// byte-identically to before this slice. Mirrors the candidate marker in
-/// `render`: a reader scanning claim lines cannot miss it.
+/// for every undisputed claim. Mirrors the authority markers in `render`: a
+/// reader scanning claim lines cannot miss it. `claim_line` gives a disputed
+/// claim this marker *instead of* `[confirmed] `, so a disagreement never reads
+/// as a settled instruction (spec P2a §3, 5e §1).
 pub(super) const DISPUTE_MARKER: &str = "[disputed] ";
 
 /// The ids of every claim that participates in any conflict on this contract.
@@ -28,13 +29,6 @@ pub(super) fn disputed_ids(conflicts: &[ContractConflict]) -> HashSet<String> {
         .iter()
         .flat_map(|c| c.claim_ids.iter().map(ClaimId::as_str).map(str::to_owned))
         .collect()
-}
-
-/// The in-band prefix for a claim, or empty. `is_disputed` is precomputed by the
-/// caller so this stays a trivial branch the renderer can compose with the
-/// candidate marker.
-pub(super) fn dispute_marker(is_disputed: bool) -> &'static str {
-    if is_disputed { DISPUTE_MARKER } else { "" }
 }
 
 /// One summary line per conflict plus a single instruction, all appended to

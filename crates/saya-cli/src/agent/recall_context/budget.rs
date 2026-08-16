@@ -31,29 +31,32 @@ use super::BLOCK_LABEL;
 /// or not it ends up truncated. Contracts are dropped from the end — least-relevant
 /// first, since `recall` ranks them — until the block fits.
 ///
-/// Returns `(body, truncated)`: the rendered body of the fitting prefix, and
-/// whether the byte bound dropped any contract. If even the first contract does
-/// not fit, the body is empty and `truncated` is true — the caller surfaces that
-/// as a truncated empty block rather than silence, so the model learns recall
-/// happened and the context was too large to include.
+/// Returns `(body, truncated, kept)`: the rendered body of the fitting prefix,
+/// whether the byte bound dropped any contract, and how many contracts the
+/// body holds. If even the first contract does not fit, the body is empty,
+/// `truncated` is true, and `kept` is 0 — the caller surfaces that as a
+/// truncated empty block rather than silence, so the model learns recall
+/// happened and the context was too large to include. `kept` lets the caller
+/// count the contracts (and so the claims) the byte bound dropped, for the P1a
+/// receipt's `dropped_by_bounds`.
 pub(super) fn bound_body(
     contracts: &[RetrievedContract],
     name_of: &HashMap<String, String>,
     system_prompt: Option<&str>,
     prompt: &str,
     max_body_bytes: usize,
-) -> (String, bool) {
+) -> (String, bool, usize) {
     // Find the largest prefix k whose rendered block fits both the configured
     // body cap and the agent message budget. Both constraints are monotonic in k
     // (a longer body only grows), so the largest fitting k is well-defined.
     for k in (1..=contracts.len()).rev() {
         let body = super::render::render_body(&contracts[..k], name_of);
         if body.len() <= max_body_bytes && fits_message_budget(system_prompt, &body, prompt) {
-            return (body, k < contracts.len());
+            return (body, k < contracts.len(), k);
         }
     }
     // Even the first contract does not fit: omit every claim, mark truncation.
-    (String::new(), true)
+    (String::new(), true, 0)
 }
 
 /// Whether a block with this body, alongside the system prompt and the user's

@@ -42,14 +42,19 @@ pub(crate) fn assemble(
         if out.len() >= bounds.max_objects {
             // Object-bound truncation: further matches were dropped. Flag the
             // boundary contract so the caller never mistakes a partial result
-            // for a complete one.
+            // for a complete one, and count the dropped objects' claims as a
+            // *bound* drop (not a schema-policy drop — those are unrelated and
+            // counted in `excluded_by_schema`). Each dropped object's claim
+            // count is its actual selection count, not the per-object cap.
             if let Some(last) = out.last_mut() {
                 last.truncated = true;
             }
-            diag.excluded_by_schema += candidates.len().saturating_sub(out.len());
+            for dropped in &candidates[out.len()..] {
+                diag.excluded_by_count_bounds += dropped.claims.len();
+            }
             break;
         }
-        out.push(build_contract(candidate, schemas, bounds, freshness));
+        out.push(build_contract(candidate, schemas, bounds, freshness, diag));
     }
     out
 }
@@ -59,10 +64,15 @@ fn build_contract(
     schemas: &[(ProfileIdentity, SchemaAvailability)],
     bounds: super::RecallBounds,
     freshness: SchemaFreshness,
+    diag: &mut RecallDiagnostics,
 ) -> RetrievedContract {
     let mut claims: Vec<StoredClaim> = candidate.claims.clone();
     let mut truncated = false;
     if claims.len() > bounds.max_claims_per_object {
+        // Per-object claim bound: the tail is dropped, not gone silently. Count
+        // the dropped claims as a bound drop so the receipt's `dropped_by_bounds`
+        // can say the contract is a subset.
+        diag.excluded_by_count_bounds += claims.len() - bounds.max_claims_per_object;
         claims.truncate(bounds.max_claims_per_object);
         truncated = true;
     }

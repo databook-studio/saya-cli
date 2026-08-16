@@ -67,6 +67,17 @@ pub(crate) struct RecallDiagnostics {
     pub selected: usize,
     pub excluded_by_privacy: usize,
     pub excluded_by_status: usize,
+    /// Claims a schema-staleness *policy* dropped (a contract that aggregates
+    /// to `Stale` on the model path). A policy decision, not a bound — kept
+    /// distinct from [`Self::excluded_by_count_bounds`] so the two cannot be
+    /// read as each other. Surfaced to the model by `contract_search` to pick
+    /// "matched but stale" apart from "matched nothing".
     pub excluded_by_schema: usize,
+    /// Claims dropped by a count bound — objects beyond `max_objects` (all
+    /// their claims) and claims beyond `max_claims_per_object` within a kept
+    /// contract. A bound, not a policy decision, so it lives apart from
+    /// [`Self::excluded_by_schema`]. The P1a recall receipt reads this to make
+    /// truncation visible (`dropped_by_bounds`).
+    pub excluded_by_count_bounds: usize,
     pub store_unavailable: bool,
 }

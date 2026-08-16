@@ -117,7 +117,10 @@ pub(crate) async fn run_prompt_with_sink(
     let recall_mode = super::learning::recall_mode_for(memory.recall);
     let context_blocks = match recall_mode {
         Some(mode) if allow_query_data => {
-            super::recall_context::recall_context_blocks(
+            // P1a: `recall_context_blocks` now returns a `RecallReceipt` beside
+            // the blocks naming exactly which claims were supplied. Nothing
+            // consumes it yet (P1b renders it); discarded here on purpose.
+            let (blocks, _recall_receipt) = super::recall_context::recall_context_blocks(
                 prompt,
                 system_prompt.as_deref(),
                 allow_query_data,
@@ -126,7 +129,8 @@ pub(crate) async fn run_prompt_with_sink(
                 &registry,
                 state_db.as_ref(),
             )
-            .await
+            .await;
+            blocks
         }
         // `Off`, or any mode under a closed privacy gate → no block. The gate
         // wins: with sharing disabled no contract content reaches a provider

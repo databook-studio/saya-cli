@@ -13,6 +13,7 @@ pub(crate) mod discover;
 pub(crate) mod io;
 mod queue;
 mod recall;
+mod receipt;
 mod reconcile;
 mod retrieval;
 mod review;
@@ -20,6 +21,10 @@ mod selection;
 pub(crate) mod terms;
 mod validity;
 mod view;
+// P2b-1: the override detector. A pure function nobody calls yet — P2b-2 will
+// run it against the SQL the model generated and the [`RecallReceipt`] recall
+// supplied. Mirrors the `PromptTerms` re-export pattern below.
+mod override_det;
 
 #[cfg(test)]
 mod tests;
@@ -54,7 +59,17 @@ pub(crate) use validity::schema_state_for;
 pub(crate) use view::{
     ContractConflict, ContractSchemaState, RecallDiagnostics, RecallOutcome, RetrievedContract,
 };
+// P1a: the typed recall receipt. The agent layer (`recall_context`) builds it
+// beside the context blocks; nothing consumes it yet (P1b). Re-exported here
+// alongside the other contract operations the adapter slices will consume.
+#[allow(unused_imports)]
+pub(crate) use receipt::{RecallOutcomeKind, RecallReceipt, SuppliedClaim, SuppliedContract};
 // `PromptTerms` is the prompt-recall signal the agent runtime (2b-3b) consumes
 // alongside the recall request types above.
 #[allow(unused_imports)]
 pub(crate) use terms::PromptTerms;
+// P2b-1: the override detector — pure, uncalled this slice. P2b-2 runs it
+// against generated SQL; until then the re-export reads as unused, like the
+// others above.
+#[allow(unused_imports)]
+pub(crate) use override_det::{OverrideFinding, detect_overrides};
