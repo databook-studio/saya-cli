@@ -80,6 +80,12 @@ impl DatabaseTools {
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
                     .ok_or(ToolError::InvalidQueryArguments)?;
+                // A1: detect a confirmed claim this statement contradicts, from
+                // the statement itself — independent of whether the query then
+                // succeeds (the override is about the statement the model wrote).
+                // Best-effort: a missing receipt/log or a fail-closed detector
+                // records nothing; the turn is never failed by detection.
+                self.detect_and_record_overrides(sql, entry.dialect);
                 let result = crate::agent::state_tools::query(
                     entry.connector.as_ref(),
                     sql,

@@ -14,9 +14,11 @@ pub(crate) use database_tools::DatabaseTools;
 // agent runtime's learning wiring and tests can reach the observation types.
 // `ToolObservation` is consumed only by tests; the others by `agent::learning`.
 // `ProposedClaimsLog` is drained by the runtime to emit `KnowledgeProposed`.
+// `OverrideLog` is drained by the runtime to emit `KnowledgeOverridden` (A1).
 #[allow(unused_imports)]
 pub(crate) use database_tools::{
-    DrainedObservations, ObservationLog, ObservationOutcome, ProposedClaimsLog, ToolObservation,
+    DrainedObservations, ObservationLog, ObservationOutcome, OverrideLog, ProposedClaimsLog,
+    ToolObservation,
 };
 #[allow(unused_imports)]
 pub(crate) use sql_format::format_sql;

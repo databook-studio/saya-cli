@@ -20,8 +20,8 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    KnowledgeOutcome, ProposedClaimDto, ProviderError, SuppliedClaimDto, SuppliedContractDto,
-    ToolCall,
+    KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, ProviderError, SuppliedClaimDto,
+    SuppliedContractDto, ToolCall,
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryLearning, MemoryRecall, OutputFormat, ResolvedAi,
@@ -1159,4 +1159,408 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
         })
         .expect("KnowledgeSupplied present");
     assert_eq!(outcome, KnowledgeOutcome::Skipped);
+}
+
+// ===========================================================================
+// Spec A1: surfacing an override from the SQL, not the model's confession.
+//
+// `detect_overrides` exists and is tested against the real generated SQL; this
+// slice wires it into the turn and emits `KnowledgeOverridden`. These tests
+// drive a turn through `run_prompt_with_inputs` with a provider that issues one
+// `bounded_sql_query` call, so detection runs against the statement the model
+// actually generated and the receipt recall supplied — not a unit oracle.
+//
+// The harness mirrors test 1 above: a confirmed `default_time_column` claim of
+// `return_date` seeded under a matching cached `orders` schema (columns
+// `id` + `created_at`), so recall supplies the claim as `Current`. The claim
+// names `return_date` as the time column; the model's SQL references a
+// *different* time-named column (`rental_date`) on the same object — the live
+// override case the detector exists to catch.
+// ===========================================================================
+
+/// `recall = Confirmed, learning = off` — the default. Detection is independent
+/// of the learning mode, so the default config is the one to prove against.
+fn a1_memory() -> ResolvedMemory {
+    ResolvedMemory {
+        recall: MemoryRecall::Confirmed,
+        learning: MemoryLearning::Off,
+        max_contracts: 5,
+        max_claims_per_contract: 12,
+        max_context_bytes: 16384,
+    }
+}
+
+/// `recall = IncludeCandidates` so a *candidate* claim is supplied (test 4).
+fn a1_include_candidates_memory() -> ResolvedMemory {
+    ResolvedMemory {
+        recall: MemoryRecall::IncludeCandidates,
+        learning: MemoryLearning::Off,
+        max_contracts: 5,
+        max_claims_per_contract: 12,
+        max_context_bytes: 16384,
+    }
+}
+
+/// A provider that issues one `bounded_sql_query` call with `sql` on the first
+/// request and a text answer on every subsequent one — a one-query turn that
+/// completes, so the runtime drains the override log and emits after the loop.
+struct QueryProvider {
+    sql: &'static str,
+    calls: Mutex<usize>,
+}
+
+#[async_trait]
+impl ChatProvider for QueryProvider {
+    fn name(&self) -> &str {
+        "query-once"
+    }
+    async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        let mut calls = self.calls.lock().unwrap();
+        if *calls == 0 {
+            *calls = 1;
+            Ok(ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({ "sql": self.sql }),
+                    }],
+                    tool_call_id: None,
+                },
+            })
+        } else {
+            Ok(ChatResponse {
+                message: ChatMessage::text("assistant", "done"),
+            })
+        }
+    }
+}
+
+/// The live override statement: a different time-named column referenced on the
+/// claimed object, the claimed column absent.
+const OVERRIDE_SQL: &str = "SELECT rental_date FROM orders WHERE rental_date > '2024-01-01'";
+
+/// Seeds a confirmed `default_time_column` claim of `return_date` on
+/// `catalog.public.orders` under a matching cached schema, returning the temp
+/// root, the claim id, and the open store. Mirrors the test-1 harness.
+async fn a1_turn_setup(
+    status: ClaimStatus,
+    origin: ClaimOrigin,
+) -> (PathBuf, ClaimId, SqliteStateStore) {
+    let root = temp_root("a1");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let obj = object(&identity, "orders");
+    let tree = orders_schema(&identity);
+    store
+        .upsert_schema(identity.as_str(), &tree.1)
+        .await
+        .unwrap();
+    let fp = live_fingerprint(&orders_table());
+    let claim_id =
+        remember_default_time_column(&store, &obj, &fp, "return_date", status, origin).await;
+    (root, claim_id, store)
+}
+
+/// The single `KnowledgeOverridden` event in `captured`, if any. Detection
+/// emits at most one event per turn carrying every finding.
+fn one_overridden(captured: &[AgentEvent]) -> Option<&[OverrideFindingDto]> {
+    captured.iter().find_map(|event| match event {
+        AgentEvent::KnowledgeOverridden { findings } => Some(findings.as_slice()),
+        _ => None,
+    })
+}
+
+// Test 1: a turn whose SQL contradicts a supplied confirmed claim emits one
+// `KnowledgeOverridden` naming it.
+#[tokio::test]
+async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden() {
+    let (root, claim_id, store) =
+        a1_turn_setup(ClaimStatus::Confirmed, ClaimOrigin::UserExplicit).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(QueryProvider {
+            sql: OVERRIDE_SQL,
+            calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity_for("analytics")),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(a1_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        // The store must be present so recall supplies the claim.
+        Some(store),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    let captured = events.lock().unwrap();
+    let findings = one_overridden(&captured).expect("one KnowledgeOverridden");
+    assert_eq!(
+        findings.len(),
+        1,
+        "exactly one finding, naming the contradicted claim: {captured:?}"
+    );
+    let f = &findings[0];
+    assert_eq!(f.claim_id, claim_id, "names the supplied confirmed claim");
+    assert_eq!(f.kind, "default_time_column");
+    assert_eq!(f.claimed_value, "return_date", "where you specified Y");
+    assert!(
+        f.observed_columns.contains(&"rental_date".to_string()),
+        "names the column actually referenced: {f:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+// Test 2: a turn whose SQL honours the claim emits nothing.
+#[tokio::test]
+async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
+    let (root, _claim_id, store) =
+        a1_turn_setup(ClaimStatus::Confirmed, ClaimOrigin::UserExplicit).await;
+    // The claimed column `return_date` is referenced → the claim is honoured.
+    let honoring_sql = "SELECT return_date FROM orders WHERE return_date > '2024-01-01'";
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(QueryProvider {
+            sql: honoring_sql,
+            calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity_for("analytics")),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(a1_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    let captured = events.lock().unwrap();
+    assert!(
+        one_overridden(&captured).is_none(),
+        "honouring the claim must emit no override event: {captured:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+// Test 3: unparseable SQL emits nothing.
+#[tokio::test]
+async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
+    let (root, _claim_id, store) =
+        a1_turn_setup(ClaimStatus::Confirmed, ClaimOrigin::UserExplicit).await;
+    // `sql_references` returns `None` for this; the detector fails closed.
+    let unparseable_sql = "SELECT FROM WHERE";
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(QueryProvider {
+            sql: unparseable_sql,
+            calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity_for("analytics")),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(a1_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    let captured = events.lock().unwrap();
+    assert!(
+        one_overridden(&captured).is_none(),
+        "unparseable SQL must emit no override event: {captured:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+// Test 4: a candidate claim contradicted emits nothing (only confirmed claims
+// can be overridden). `recall = IncludeCandidates` so the candidate IS supplied
+// to the model — the detector's status guard is what suppresses the finding,
+// not recall's filter.
+#[tokio::test]
+async fn a_candidate_claim_contradicted_emits_nothing() {
+    let (root, _claim_id, store) =
+        a1_turn_setup(ClaimStatus::Candidate, ClaimOrigin::UserExplicit).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(QueryProvider {
+            sql: OVERRIDE_SQL,
+            calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity_for("analytics")),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(a1_include_candidates_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    let captured = events.lock().unwrap();
+    // The candidate IS supplied (IncludeCandidates), so KnowledgeSupplied is
+    // present — but no KnowledgeOverridden fires: only a confirmed claim binds.
+    assert!(
+        captured
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeSupplied { .. })),
+        "the candidate was supplied: {captured:?}"
+    );
+    assert!(
+        one_overridden(&captured).is_none(),
+        "a candidate claim is not overridable: {captured:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+// Test 6: no opaque profile identity leaks into the serialized event. The DTO
+// has no identity field by construction; this asserts the event stream inherits
+// that guarantee (mirrors the P2d identity-leak test).
+#[tokio::test]
+async fn no_identity_leaks_into_the_knowledge_overridden_event() {
+    let (root, _claim_id, store) =
+        a1_turn_setup(ClaimStatus::Confirmed, ClaimOrigin::UserExplicit).await;
+    let identity_str = identity_for("analytics").as_str().to_string();
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(QueryProvider {
+            sql: OVERRIDE_SQL,
+            calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity_for("analytics")),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(a1_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    let captured = events.lock().unwrap();
+    let stream_json = serde_json::to_string(captured.as_slice()).unwrap_or_default();
+    assert!(
+        !stream_json.contains(&identity_str),
+        "opaque identity leaked into the event stream: {stream_json}"
+    );
+    let _ = fs::remove_dir_all(root);
 }

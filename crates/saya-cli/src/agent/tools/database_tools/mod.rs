@@ -5,6 +5,7 @@ use std::time::Duration;
 use saya_store::SqliteStateStore;
 
 use crate::connection::ConnectionRegistry;
+use crate::contracts::RecallReceipt;
 
 mod chart_tool;
 mod definitions;
@@ -14,6 +15,9 @@ mod observations;
 // `pub(super)` so the sibling `definitions` module can reach the tool definition.
 pub(super) mod propose;
 mod recorder;
+// A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
+// runtime drains it after the loop to emit one `KnowledgeOverridden` event.
+mod override_log;
 
 // `ObservationLog` types the `observations` field; the observation records and
 // the drained log are re-exported so the agent runtime's learning wiring
@@ -26,6 +30,9 @@ pub(crate) use observations::{
 // way so the agent runtime can drain it after the turn to emit one
 // `KnowledgeProposed` event per persisted claim (spec P2d).
 pub(crate) use propose::ProposedClaimsLog;
+// `OverrideLog` types the `override_log` field; re-exported so the runtime can
+// drain it to emit one `KnowledgeOverridden` event (spec A1).
+pub(crate) use override_log::OverrideLog;
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
@@ -62,6 +69,16 @@ pub(crate) struct DatabaseTools {
     /// evidence kind even if a query touched it this turn: the query was caused
     /// by the supplied claim and is not independent confirmation.
     pub(super) supplied_objects: Vec<String>,
+    /// The turn's recall receipt, shared with the override detector. `None` in
+    /// tests that drive the executor without a receipt; an absent receipt means
+    /// no detection — never a guess (spec A1 §3). An `Arc` so the runtime and the
+    /// tools share one reference.
+    pub(super) recall_receipt: Option<Arc<RecallReceipt>>,
+    /// Request-scoped log of override findings, drained by the runtime to emit
+    /// one `KnowledgeOverridden` event (spec A1). `None` in tests; an absent log
+    /// means no event, never a side effect. An `Arc` so the runtime can drain
+    /// after the tools consume their clone.
+    pub(super) override_log: Option<Arc<OverrideLog>>,
 }
 
 impl DatabaseTools {
@@ -100,6 +117,8 @@ impl DatabaseTools {
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims: None,
             supplied_objects: Vec::new(),
+            recall_receipt: None,
+            override_log: None,
         }
     }
 
@@ -124,6 +143,8 @@ impl DatabaseTools {
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims: None,
             supplied_objects: Vec::new(),
+            recall_receipt: None,
+            override_log: None,
         }
     }
 
@@ -156,6 +177,8 @@ impl DatabaseTools {
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims,
             supplied_objects: Vec::new(),
+            recall_receipt: None,
+            override_log: None,
         }
     }
 
@@ -184,6 +207,8 @@ impl DatabaseTools {
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims: None,
             supplied_objects: Vec::new(),
+            recall_receipt: None,
+            override_log: None,
         }
     }
 
@@ -212,6 +237,8 @@ impl DatabaseTools {
             candidate_proposals: AtomicUsize::new(0),
             proposed_claims,
             supplied_objects: Vec::new(),
+            recall_receipt: None,
+            override_log: None,
         }
     }
 }

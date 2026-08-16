@@ -79,6 +79,9 @@ pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
             contracts,
             dropped_by_bounds,
         },
+        AgentEvent::KnowledgeOverridden { findings } => {
+            TerminalEvent::KnowledgeOverridden { findings }
+        }
         AgentEvent::Complete => TerminalEvent::Complete,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
@@ -93,7 +96,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
 mod tests {
     use super::*;
     use crate::render::{RenderFormat, render_event};
-    use saya_agent::{KnowledgeOutcome, SuppliedClaimDto, SuppliedContractDto};
+    use saya_agent::{KnowledgeOutcome, OverrideFindingDto, SuppliedClaimDto, SuppliedContractDto};
     use saya_types::{ClaimId, ClaimStatus};
 
     fn dto_claim(id: &str, kind: &str, value: &str, status: ClaimStatus) -> SuppliedClaimDto {
@@ -302,6 +305,62 @@ mod tests {
         assert_eq!(
             render_agent(AgentEvent::complete(), RenderFormat::Text, &mut open).stdout,
             "\n"
+        );
+    }
+
+    /// KnowledgeOverridden maps to a real TerminalEvent variant (not
+    /// NotImplemented) and renders through the text adapter (spec A1 §3).
+    #[test]
+    fn knowledge_overridden_renders_through_the_text_adapter() {
+        let event = AgentEvent::knowledge_overridden(vec![OverrideFindingDto {
+            claim_id: ClaimId::parse("c-rental-time").unwrap(),
+            kind: "default_time_column".into(),
+            claimed_value: "return_date".into(),
+            observed_columns: vec!["rental_date".into()],
+        }]);
+        let rendered = render_agent(event, RenderFormat::Text, &mut false);
+        assert!(
+            rendered.stdout.contains("memory overridden · 1 finding"),
+            "{:?}",
+            rendered.stdout
+        );
+        assert!(
+            rendered.stdout.contains("referenced rental_date"),
+            "{:?}",
+            rendered.stdout
+        );
+        // The wording constraint: no causal "used" about the time column.
+        assert!(
+            !rendered.stdout.contains("used"),
+            "the text adapter must not assert a causal 'used': {:?}",
+            rendered.stdout
+        );
+        assert_eq!(rendered.stderr, "");
+    }
+
+    /// The JSON/NDJSON adapter carries KnowledgeOverridden under its type tag
+    /// rather than the NotImplemented fallback (spec §2: every adapter).
+    #[test]
+    fn json_adapter_carries_the_overridden_event_under_its_type_tag() {
+        let event = AgentEvent::knowledge_overridden(vec![OverrideFindingDto {
+            claim_id: ClaimId::parse("c-rental-time").unwrap(),
+            kind: "default_time_column".into(),
+            claimed_value: "return_date".into(),
+            observed_columns: vec!["rental_date".into()],
+        }]);
+        let te = terminal_event(event);
+        let rendered = render_event(&te, RenderFormat::Json);
+        assert!(
+            rendered
+                .stdout
+                .contains(r#""event":"knowledge_overridden""#),
+            "{:?}",
+            rendered.stdout
+        );
+        assert!(
+            !rendered.stdout.contains("not_implemented"),
+            "{:?}",
+            rendered.stdout
         );
     }
 }

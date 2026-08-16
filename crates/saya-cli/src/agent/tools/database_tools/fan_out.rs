@@ -12,6 +12,12 @@ impl DatabaseTools {
         if entries.is_empty() {
             return Err(ToolError::NoConnectionSelected);
         }
+        // A1: detect a contradiction once for the statement, before fanning it
+        // out — the same SQL runs against every connection, so per-connection
+        // detection would repeat the same finding. The first entry's dialect
+        // parses it; if that dialect cannot, the detector fails closed (no
+        // finding), consistent with its single-statement behaviour.
+        self.detect_and_record_overrides(sql, entries[0].1.dialect);
         let mut entries = entries.into_iter().enumerate();
         let mut pending = FuturesUnordered::new();
         for _ in 0..self.max_concurrent_fan_out_queries {

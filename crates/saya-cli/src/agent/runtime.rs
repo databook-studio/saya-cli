@@ -130,6 +130,11 @@ pub(crate) async fn run_prompt_with_inputs(
     // not run). Emitting must never fail the turn — `sink.emit` is infallible
     // and the mapping is pure, so the prompt still runs regardless (spec §3).
     sink.emit(knowledge_supplied_event(&receipt)).await;
+    // A1: the receipt is shared with the override detector, which matches a
+    // statement's references against the confirmed claims recall supplied. An
+    // `Arc` so the tools hold one reference for per-statement detection while
+    // `with_supplied_objects` reads the supplied object names here.
+    let receipt = Arc::new(receipt);
     // Learning mode → write permission + observation-log attachment (spec 4b
     // §2). `Off` attaches nothing; `suggest`/`auto-candidate` attach a log the
     // runtime drains after the turn. The runtime keeps its own `Arc` handle so
@@ -146,6 +151,14 @@ pub(crate) async fn run_prompt_with_inputs(
     // clone — the same shared-handle pattern `observation_log` uses.
     let proposed_claims_log =
         has_state_store.then(|| std::sync::Arc::new(tools::ProposedClaimsLog::new()));
+    // A1: a request-scoped log the query tools record override findings into as
+    // each statement runs. Always attached — detection is independent of the
+    // learning mode (a confirmed claim being contradicted is a fact about the
+    // turn whether or not learning collects evidence), so the log is not gated
+    // on `learning.observations`. The runtime keeps its own `Arc` handle so it
+    // can drain after `tools` consumes its clone — the same shared-handle
+    // pattern `proposed_claims_log` uses.
+    let override_log = Arc::new(tools::OverrideLog::new());
     let tools = tools::DatabaseTools::with_learning(
         registry,
         runtime.resolved.max_rows,
@@ -154,7 +167,8 @@ pub(crate) async fn run_prompt_with_inputs(
         learning.observations,
         proposed_claims_log.clone(),
     )
-    .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect());
+    .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect())
+    .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()));
     let request = AgentRequest {
         prompt: prompt.into(),
         profile_names,
@@ -207,6 +221,21 @@ pub(crate) async fn run_prompt_with_inputs(
         for claim in log.drain() {
             sink.emit(AgentEvent::knowledge_proposed(claim)).await;
         }
+    }
+    // A1: drain the override log and emit one `KnowledgeOverridden` for the
+    // turn if the detector raised any findings. Detection ran per statement
+    // inside the loop; this is the single emit. "If it returns nothing, say
+    // nothing" (spec A1 §3): an empty drain emits nothing, so a turn that
+    // honoured every claim — or whose statements the detector had to fail
+    // closed on — stays silent. Emitted regardless of whether the turn
+    // succeeded: a contradiction at iteration 3 is still a signal the user
+    // should see even if the turn later errors (the event reports; it never
+    // blocks, and never fails the turn — `sink.emit` is infallible and this is
+    // outside the loop).
+    let overridden = override_log.drain();
+    if !overridden.is_empty() {
+        sink.emit(AgentEvent::knowledge_overridden(overridden))
+            .await;
     }
     // `suggest` reports what the turn would have proposed after the loop is
     // done; nothing is stored. See `emit_suggest_report` for the gate (only a

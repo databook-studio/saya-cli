@@ -178,6 +178,26 @@ pub struct ProposedClaimDto {
     pub status: ClaimStatus,
 }
 
+/// One confirmed claim the turn's SQL contradicted, in the DTO shape that
+/// crosses the crate boundary into [`AgentEvent::KnowledgeOverridden`] (spec
+/// A1). Mirrors nothing about a claim being *used* — the finding says the claim
+/// was contradicted and names the time-named columns the SQL **referenced**
+/// instead, which is all the extractor can prove from names. `claimed_value`
+/// is the value the claim specifies (the claimed time column), carried so a
+/// render can say "where you specified Y". No opaque identity, no raw SQL.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OverrideFindingDto {
+    pub claim_id: ClaimId,
+    /// The claim kind token. Only `default_time_column` is ever produced.
+    pub kind: String,
+    /// The value the claim specifies — for `default_time_column`, the claimed
+    /// time column. "Where you specified Y" in the render.
+    pub claimed_value: String,
+    /// Time-named columns the SQL referenced instead, as written, sorted for
+    /// determinism. Observed references, not an asserted "used" column.
+    pub observed_columns: Vec<String>,
+}
+
 // `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
 // `PartialEq` only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -228,6 +248,20 @@ pub enum AgentEvent {
     KnowledgeProposed {
         claim: ProposedClaimDto,
     },
+    /// A confirmed claim the turn's SQL **contradicted** — spec A1. Emitted at
+    /// most once per turn, after the loop, carrying every finding the detector
+    /// raised across the turn's statements. Silent when there is nothing to say
+    /// (the detector fails closed on unparseable SQL, partial column lists, joins,
+    /// and ambiguous objects); no event is emitted for an empty finding set.
+    ///
+    /// The finding says the claim was contradicted and names the time-named
+    /// columns the SQL **referenced** — observed references, not "the time column
+    /// SAYA used": from names alone the role of a column (predicate vs projection)
+    /// is unknowable, so the finding stops at "these were referenced where the
+    /// claim named a different column." No opaque identity, no raw SQL.
+    KnowledgeOverridden {
+        findings: Vec<OverrideFindingDto>,
+    },
     Complete,
 }
 
@@ -261,6 +295,15 @@ impl AgentEvent {
     /// candidate claim. The caller is the propose tool, at the `Stored` arm.
     pub fn knowledge_proposed(claim: ProposedClaimDto) -> Self {
         Self::KnowledgeProposed { claim }
+    }
+
+    /// Builds the per-turn `KnowledgeOverridden` event carrying every finding
+    /// the detector raised across the turn's statements. The caller is the
+    /// runtime, after the loop drains the override log; an empty `findings`
+    /// means the caller emits nothing (spec A1: "if it returns nothing, say
+    /// nothing").
+    pub fn knowledge_overridden(findings: Vec<OverrideFindingDto>) -> Self {
+        Self::KnowledgeOverridden { findings }
     }
 
     pub fn complete() -> Self {
@@ -415,5 +458,35 @@ mod tests {
             let back: LocalStateEffect = serde_json::from_str(&text).expect("deserializes back");
             assert_eq!(back, variant, "{variant:?}");
         }
+    }
+
+    /// `KnowledgeOverridden` serializes under its `knowledge_overridden` type tag
+    /// (spec A1) and carries the finding's fields, with no opaque identity — the
+    /// DTO has no such field, by construction.
+    #[test]
+    fn knowledge_overridden_serializes_with_type_tag_and_findings() {
+        use super::{AgentEvent, OverrideFindingDto};
+        use saya_types::ClaimId;
+        let event = AgentEvent::knowledge_overridden(vec![OverrideFindingDto {
+            claim_id: ClaimId::parse("c-rental-time").unwrap(),
+            kind: "default_time_column".into(),
+            claimed_value: "return_date".into(),
+            observed_columns: vec!["rental_date".into()],
+        }]);
+        let json = serde_json::to_string(&event).expect("serializes");
+        assert!(json.contains(r#""type":"knowledge_overridden""#), "{json}");
+        assert!(
+            json.contains("return_date"),
+            "carries the claimed value: {json}"
+        );
+        assert!(
+            json.contains("rental_date"),
+            "carries the observed column: {json}"
+        );
+        // No opaque identity field exists on the DTO; a fabricated one must not
+        // appear in the serialized event.
+        let fake_identity =
+            "sha256:9f2a8c7b1e4d0a6f3c5b8e2d7a9f1c4b6e8a0d2f4c6b8e0a2d4f6c8b0e2d4f6";
+        assert!(!json.contains(fake_identity), "identity leaked: {json}");
     }
 }
