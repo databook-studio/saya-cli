@@ -1,8 +1,8 @@
-//! TUI adapters for the contract and preference slash commands.
+//! TUI adapters for the contract slash commands.
 //!
 //! The TUI runs under the alternate screen, so the shared headless
-//! `run_contracts`/`run_preferences` dispatchers — which `emit` to a thread-local
-//! seam — are wrapped here: the session's active profile is stamped onto the
+//! `run_contracts` dispatcher — which `emit`s to a thread-local
+//! seam — is wrapped here: the session's active profile is stamped onto the
 //! command (the same field the headless `--profile` flag sets, not a second
 //! resolution or a second privacy decision), the dispatcher runs, and its
 //! captured output is pushed into the transcript as a system or error block.
@@ -12,10 +12,9 @@
 //! tests.
 
 use super::transcript::{BlockKind, Transcript};
-use crate::cli::{ContractsCommand, PreferencesCommand};
+use crate::cli::ContractsCommand;
 use crate::commands::{
     capture_output_start, capture_output_take, run_contracts as run_contracts_command,
-    run_preferences as run_preferences_command,
 };
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_resume::block_on;
@@ -118,70 +117,6 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
         ContractsCommand::Forget { claim_id, reason } => ContractsCommand::Forget {
             claim_id: claim_id.clone(),
             reason: *reason,
-        },
-        // `Import`/`Export` carry a `profile` field. They are headless-only today
-        // (no slash command produces them), but should they ever route through
-        // the TUI they take the active profile like every other profiled variant.
-        ContractsCommand::Import { path, dry_run, .. } => ContractsCommand::Import {
-            path: path.clone(),
-            dry_run: *dry_run,
-            profile,
-        },
-        ContractsCommand::Export {
-            destination, force, ..
-        } => ContractsCommand::Export {
-            destination: destination.clone(),
-            profile,
-            force: *force,
-        },
-    }
-}
-
-/// Runs a preferences slash command through the shared `run_preferences`
-/// dispatcher and pushes its rendered output into the transcript. Mirrors
-/// `run_contracts`: the session's selected profile maps to the headless
-/// `--profile` field, and a non-zero exit surfaces as an error block.
-pub(super) fn run_preferences(
-    transcript: &mut Transcript,
-    state: &SessionState,
-    runtime: &RuntimeConfig,
-    state_db: &saya_store::SqliteStateStore,
-    format: RenderFormat,
-    command: &PreferencesCommand,
-) {
-    let command = with_pref_profile(command, state.profile.as_deref());
-    capture_output_start();
-    let code = match block_on(run_preferences_command(command, runtime, format, state_db)) {
-        Ok(code) => code,
-        Err(error) => {
-            capture_output_take();
-            transcript.push(BlockKind::Error, error.to_string());
-            return;
-        }
-    };
-    let (out, err) = capture_output_take();
-    let body = if out.trim().is_empty() { err } else { out };
-    if code == 0 {
-        transcript.push(BlockKind::System, body.trim_end().to_string());
-    } else {
-        transcript.push(BlockKind::Error, body.trim_end().to_string());
-    }
-}
-
-/// Sets the `profile` field on a `PreferencesCommand` to the session's active
-/// profile — the same field the headless `--profile` flag sets.
-fn with_pref_profile(command: &PreferencesCommand, profile: Option<&str>) -> PreferencesCommand {
-    let profile = profile.map(str::to_string);
-    match command {
-        PreferencesCommand::List { .. } => PreferencesCommand::List { profile },
-        PreferencesCommand::Set { kind, value, .. } => PreferencesCommand::Set {
-            kind: *kind,
-            value: value.clone(),
-            profile,
-        },
-        PreferencesCommand::Unset { kind, .. } => PreferencesCommand::Unset {
-            kind: *kind,
-            profile,
         },
     }
 }
@@ -290,48 +225,6 @@ mod tests {
             ContractsCommand::Queue {
                 profile: None,
                 limit: None,
-            }
-        );
-    }
-
-    /// The preferences adapter must stamp the active profile on every variant
-    /// it can carry — `List`, `Set`, `Unset` all bear a `profile` field.
-    #[test]
-    fn with_pref_profile_stamps_active_profile_on_every_variant() {
-        use crate::cli::PreferenceKindArg as Kind;
-
-        assert_eq!(
-            with_pref_profile(&PreferencesCommand::List { profile: None }, Some(ACTIVE)),
-            PreferencesCommand::List {
-                profile: Some(ACTIVE.into()),
-            }
-        );
-        assert_eq!(
-            with_pref_profile(
-                &PreferencesCommand::Set {
-                    kind: Kind::Timezone,
-                    value: "UTC".into(),
-                    profile: None,
-                },
-                Some(ACTIVE),
-            ),
-            PreferencesCommand::Set {
-                kind: Kind::Timezone,
-                value: "UTC".into(),
-                profile: Some(ACTIVE.into()),
-            }
-        );
-        assert_eq!(
-            with_pref_profile(
-                &PreferencesCommand::Unset {
-                    kind: Kind::Timezone,
-                    profile: None,
-                },
-                Some(ACTIVE),
-            ),
-            PreferencesCommand::Unset {
-                kind: Kind::Timezone,
-                profile: Some(ACTIVE.into()),
             }
         );
     }

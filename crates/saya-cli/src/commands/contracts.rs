@@ -12,7 +12,6 @@
 //! in `contracts_write.rs`, and view→DTO mapping in `contracts_map.rs`.
 
 mod contracts_decide;
-mod contracts_io;
 mod contracts_map;
 mod contracts_profile;
 mod contracts_read;
@@ -101,26 +100,6 @@ pub async fn run_contracts(
         },
         ContractsCommand::Forget { claim_id, reason } => {
             contracts_write::forget_claim(store, format, &claim_id, reason).await
-        }
-        ContractsCommand::Import {
-            path,
-            dry_run,
-            profile,
-        } => contracts_io::import(store, runtime, format, &path, dry_run, profile.as_deref()).await,
-        ContractsCommand::Export {
-            destination,
-            profile,
-            force,
-        } => {
-            contracts_io::export(
-                store,
-                runtime,
-                format,
-                &destination,
-                force,
-                profile.as_deref(),
-            )
-            .await
         }
     }
 }

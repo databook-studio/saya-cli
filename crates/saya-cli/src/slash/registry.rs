@@ -29,7 +29,6 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "queue",
     "confirm",
     "reject",
-    "preferences",
     "help",
     "exit",
     "quit",

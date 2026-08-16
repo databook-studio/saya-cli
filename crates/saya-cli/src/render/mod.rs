@@ -1,10 +1,9 @@
-use saya_agent::{KnowledgeOutcome, SuppliedContractDto};
+use saya_agent::{KnowledgeOutcome, OverrideFindingDto, SuppliedContractDto};
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
 mod contract_view;
 mod io_view;
-mod preferences_view;
 mod render_contract;
 mod render_delta;
 mod render_io;
@@ -14,7 +13,9 @@ pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
 pub use io_view::{ContractExportView, ContractImportClaimView, ContractImportView};
-pub use preferences_view::PreferenceView;
+/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeOverridden`] in
+/// `apply_event` and shares this shaper so the wording lives in one place (A1).
+pub(crate) use render_memory::knowledge_overridden_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeSupplied`] in
 /// `apply_event` and shares this shaper so the wording lives in one place.
 pub(crate) use render_memory::knowledge_supplied_text;
@@ -70,6 +71,14 @@ pub enum TerminalEvent {
         contracts: Vec<SuppliedContractDto>,
         dropped_by_bounds: usize,
     },
+    /// A confirmed claim the turn's SQL **contradicted** (spec A1). Emitted at
+    /// most once per turn, after the loop, carrying every finding the detector
+    /// raised. The finding says the SQL **referenced** columns, never that it
+    /// **used** them — the extractor cannot prove role. Text is shaped in
+    /// [`render_memory`]; JSON/NDJSON fall out of the serde derive.
+    KnowledgeOverridden {
+        findings: Vec<OverrideFindingDto>,
+    },
     Complete,
     Result {
         message: String,
@@ -108,9 +117,6 @@ pub enum TerminalEvent {
     },
     ContractExport {
         report: ContractExportView,
-    },
-    PreferenceList {
-        preferences: Vec<PreferenceView>,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +174,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: render_memory::knowledge_supplied_text(*outcome, contracts, *dropped_by_bounds),
             stderr: String::new(),
         },
+        TerminalEvent::KnowledgeOverridden { findings } => Rendered {
+            stdout: render_memory::knowledge_overridden_text(findings),
+            stderr: String::new(),
+        },
         TerminalEvent::Complete => Rendered {
             stdout: "\n".into(),
             stderr: String::new(),
@@ -198,7 +208,6 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         TerminalEvent::ContractQueue { items } => render_contract::queue(items),
         TerminalEvent::ContractImport { report } => render_io::import(report),
         TerminalEvent::ContractExport { report } => render_io::export(report),
-        TerminalEvent::PreferenceList { preferences } => render_contract::preferences(preferences),
     };
     Rendered {
         stdout: sanitize_terminal(&rendered.stdout),

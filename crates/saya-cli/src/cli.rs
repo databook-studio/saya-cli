@@ -72,10 +72,6 @@ pub enum Command {
         #[command(subcommand)]
         command: ContractsCommand,
     },
-    Preferences {
-        #[command(subcommand)]
-        command: PreferencesCommand,
-    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -162,28 +158,6 @@ pub enum ContractsCommand {
         #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
         reason: ForgetReasonArg,
     },
-    /// Import team contract files from `.saya/contracts/` into the store.
-    Import {
-        /// Project root to discover `.saya/contracts/` under. Defaults to the
-        /// current directory.
-        #[arg(default_value = ".")]
-        path: std::path::PathBuf,
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    /// Export this profile's confirmed claims to discovered-shape files.
-    Export {
-        /// Destination directory. One `.toml` per object is written here.
-        destination: std::path::PathBuf,
-        #[arg(long)]
-        profile: Option<String>,
-        /// Overwrite an existing destination file. Without this flag an existing
-        /// file is a typed error, not a silent overwrite.
-        #[arg(long)]
-        force: bool,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -214,35 +188,4 @@ pub enum ReviewDecisionArg {
     Confirm,
     Reject,
     UseOnce,
-}
-
-/// `saya preferences` — the four kinds a preference value can be. The value's
-/// own `required_scope` decides the scope; this enum carries only the kind, so
-/// `set`/`unset` share one vocabulary with the slash path and no second one
-/// exists. Kebab-case to match `saya preferences set <kind>` in the spec.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum PreferenceKindArg {
-    Timezone,
-    DateGrain,
-    OutputStyle,
-    DefaultProfile,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
-pub enum PreferencesCommand {
-    List {
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    Set {
-        kind: PreferenceKindArg,
-        value: String,
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    Unset {
-        kind: PreferenceKindArg,
-        #[arg(long)]
-        profile: Option<String>,
-    },
 }

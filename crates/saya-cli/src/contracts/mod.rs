@@ -10,8 +10,6 @@ mod assemble;
 mod availability;
 mod conflict;
 mod decide;
-pub(crate) mod discover;
-pub(crate) mod io;
 mod name_match;
 mod op_error;
 mod queue;
@@ -38,6 +36,10 @@ mod tests;
 // crate references it yet outside tests, so the re-exports read as unused in a
 // lib build — they are not dead code, they are the boundary this slice exposes.
 #[allow(unused_imports)]
+pub(crate) use availability::{
+    MODEL_SCHEMA_MAX_AGE_MS, SchemaAvailability, SchemaFreshness, now_unix_ms,
+};
+#[allow(unused_imports)]
 pub(crate) use decide::resolve_prefix;
 #[allow(unused_imports)]
 pub(crate) use op_error::ContractOpError;
@@ -52,16 +54,6 @@ pub(crate) use retrieval::RetrievalPolicy;
 pub(crate) use review::{confirm, forget, propose, reject, show};
 #[allow(unused_imports)]
 pub(crate) use use_once::use_candidate_once;
-// 6b import/export: the typed operations the `contracts import`/`export`
-// adapter renders. Nothing outside this module references them yet in a
-// non-test build, so the re-exports read as unused — they are the boundary this
-// slice exposes, like the others above.
-#[allow(unused_imports)]
-pub(crate) use availability::{
-    MODEL_SCHEMA_MAX_AGE_MS, SchemaAvailability, SchemaFreshness, now_unix_ms,
-};
-#[allow(unused_imports)]
-pub(crate) use io::{ExportOutcome, ImportReport, export_contracts, import_contracts};
 #[allow(unused_imports)]
 pub(crate) use validity::schema_state_for;
 #[allow(unused_imports)]

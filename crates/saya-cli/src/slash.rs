@@ -1,10 +1,9 @@
-use crate::cli::{ContractsCommand, PreferencesCommand};
+use crate::cli::ContractsCommand;
 use saya_agent::ApprovalPolicy;
 use std::{fmt, str::FromStr};
 
 mod contracts;
 mod help;
-mod preferences;
 mod registry;
 
 // Re-exported so the session command layer's `crate::slash::help_for` path
@@ -39,11 +38,6 @@ pub enum SlashCommand {
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
     /// hands it to the shared `run_contracts` dispatcher — no second parsing.
     Contracts(ContractsCommand),
-    /// A preferences slash command (`/preferences`), already translated to the
-    /// same `PreferencesCommand` the headless `saya preferences list` parser
-    /// produces. The 5c-2 adapter hands it to the shared `run_preferences`
-    /// dispatcher — no second parsing or DTO mapping.
-    Preferences(PreferencesCommand),
     Help(Option<String>),
     Exit,
 }
@@ -110,11 +104,6 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // `confirm`/`reject` (spec D) translate to `ContractsCommand::Decide`.
             return contracts::parse_contract_command(name, &arg)
                 .map(|maybe| maybe.map(SlashCommand::Contracts));
-        }
-        "preferences" => {
-            // The preferences slash adapter: `/preferences` mirrors `list` only.
-            return preferences::parse_preferences_command(name, &arg)
-                .map(|maybe| maybe.map(SlashCommand::Preferences));
         }
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "exit" | "quit" => SlashCommand::Exit,

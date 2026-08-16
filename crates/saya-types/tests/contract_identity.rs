@@ -332,8 +332,6 @@ fn test_10_origin_may_confirm_directly() {
     // ADR 0002 §4: a reviewed team file enters confirmed within its declared
     // scope, so TeamFile is confirmable without a per-claim review step.
     assert!(TeamFile.may_confirm_directly());
-    assert!(!SchemaObserved.may_confirm_directly());
-    assert!(!QueryObserved.may_confirm_directly());
     assert!(!AssistantInferred.may_confirm_directly());
 }
 
@@ -344,7 +342,6 @@ fn test_10_status_is_recallable() {
     assert!(!Candidate.is_recallable());
     assert!(!Rejected.is_recallable());
     assert!(!Stale.is_recallable());
-    assert!(!Contradicted.is_recallable());
     assert!(!Forgotten.is_recallable());
 }
 

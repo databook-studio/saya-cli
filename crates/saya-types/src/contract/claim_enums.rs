@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 pub enum ClaimOrigin {
     UserExplicit,
     TeamFile,
-    SchemaObserved,
-    QueryObserved,
     AssistantInferred,
 }
 
@@ -16,8 +14,6 @@ impl ClaimOrigin {
         match self {
             Self::UserExplicit => "user_explicit",
             Self::TeamFile => "team_file",
-            Self::SchemaObserved => "schema_observed",
-            Self::QueryObserved => "query_observed",
             Self::AssistantInferred => "assistant_inferred",
         }
     }
@@ -26,8 +22,6 @@ impl ClaimOrigin {
         match value {
             "user_explicit" => Some(Self::UserExplicit),
             "team_file" => Some(Self::TeamFile),
-            "schema_observed" => Some(Self::SchemaObserved),
-            "query_observed" => Some(Self::QueryObserved),
             "assistant_inferred" => Some(Self::AssistantInferred),
             _ => None,
         }
@@ -44,7 +38,7 @@ impl ClaimOrigin {
     ///   recorded decision, and conflicts with local claims surface per ADR
     ///   decision 3 rather than being silently dropped.
     ///
-    /// Everything else (`SchemaObserved`, `QueryObserved`, `AssistantInferred`)
+    /// Everything else (`AssistantInferred`)
     /// still enters the queue as a `Candidate`. This is the only place a
     /// non-human origin can create a confirmed claim; widening it further is a
     /// trust-model change that needs its own ADR entry.
@@ -61,6 +55,10 @@ pub enum ClaimStatus {
     Confirmed,
     Rejected,
     Stale,
+    /// Two confirmed claims disagree about a single-valued property. Nothing
+    /// constructs this today, but `saya-store`'s confirm and revise rules accept
+    /// it as a legal *input* state, so removing it changes which transitions are
+    /// legal. Phase D retires it properly, together with the state collapse.
     Contradicted,
     Forgotten,
 }
@@ -171,8 +169,6 @@ mod tests {
         // ADR 0002 §4: a reviewed team file enters confirmed within its declared
         // scope, so TeamFile is confirmable without a per-claim review step.
         assert!(TeamFile.may_confirm_directly());
-        assert!(!SchemaObserved.may_confirm_directly());
-        assert!(!QueryObserved.may_confirm_directly());
         assert!(!AssistantInferred.may_confirm_directly());
     }
 
@@ -183,7 +179,6 @@ mod tests {
         assert!(!Candidate.is_recallable());
         assert!(!Rejected.is_recallable());
         assert!(!Stale.is_recallable());
-        assert!(!Contradicted.is_recallable());
         assert!(!Forgotten.is_recallable());
     }
 
@@ -192,8 +187,6 @@ mod tests {
         for origin in &[
             ClaimOrigin::UserExplicit,
             ClaimOrigin::TeamFile,
-            ClaimOrigin::SchemaObserved,
-            ClaimOrigin::QueryObserved,
             ClaimOrigin::AssistantInferred,
         ] {
             let s = origin.as_str();
@@ -206,7 +199,6 @@ mod tests {
             ClaimStatus::Confirmed,
             ClaimStatus::Rejected,
             ClaimStatus::Stale,
-            ClaimStatus::Contradicted,
             ClaimStatus::Forgotten,
         ] {
             let s = status.as_str();
@@ -241,8 +233,6 @@ mod tests {
         for origin in &[
             ClaimOrigin::UserExplicit,
             ClaimOrigin::TeamFile,
-            ClaimOrigin::SchemaObserved,
-            ClaimOrigin::QueryObserved,
             ClaimOrigin::AssistantInferred,
         ] {
             let json = serde_json::to_string(origin).unwrap();

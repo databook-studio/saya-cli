@@ -21,7 +21,6 @@ pub(crate) fn emit_action(
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)
         | SessionAction::Contracts(_)
-        | SessionAction::Preferences(_)
         | SessionAction::Resume(_)
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(

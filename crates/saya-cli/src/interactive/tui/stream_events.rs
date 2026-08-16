@@ -70,6 +70,18 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
                 transcript.push(BlockKind::System, text.trim_end_matches('\n'));
             }
         }
+        // A confirmed claim the turn's SQL contradicted (spec A1). Trails the
+        // answer — emitted after the loop — so a System block pushed here lands
+        // below the assistant text, where a "the SQL contradicted a confirmed
+        // claim" notice belongs. The shared shaper centralizes the wording; an
+        // empty finding set is silence (the runtime emits nothing, but this
+        // guards a directly-constructed event too).
+        AgentEvent::KnowledgeOverridden { findings } => {
+            let text = crate::render::knowledge_overridden_text(&findings);
+            if !text.is_empty() {
+                transcript.push(BlockKind::System, text.trim_end_matches('\n'));
+            }
+        }
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
         }
@@ -80,7 +92,7 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use saya_agent::{KnowledgeOutcome, SuppliedClaimDto, SuppliedContractDto};
+    use saya_agent::{KnowledgeOutcome, OverrideFindingDto, SuppliedClaimDto, SuppliedContractDto};
     use saya_types::{ClaimId, ClaimStatus};
 
     fn dto_claim(id: &str, kind: &str, value: &str, status: ClaimStatus) -> SuppliedClaimDto {
@@ -229,5 +241,53 @@ mod tests {
         let block = last_block_text(&t).expect("a block was pushed");
         assert!(block.contains("analytics"), "profile name appears: {block}");
         assert!(!block.contains(fake_identity), "identity leaked: {block}");
+    }
+
+    /// KnowledgeOverridden pushes a System block whose text names the referenced
+    /// column and the specified value (spec A1 §3). Trails the answer — the
+    /// block lands below the assistant text in the transcript.
+    #[test]
+    fn knowledge_overridden_pushes_a_system_block_naming_the_finding() {
+        let mut t = Transcript::new();
+        apply_event(
+            &mut t,
+            AgentEvent::knowledge_overridden(vec![OverrideFindingDto {
+                claim_id: ClaimId::parse("c-rental-time").unwrap(),
+                kind: "default_time_column".into(),
+                claimed_value: "return_date".into(),
+                observed_columns: vec!["rental_date".into()],
+            }]),
+        );
+        let block = last_block_text(&t).expect("a block was pushed");
+        assert!(
+            block.contains("memory overridden · 1 finding"),
+            "header: {block}"
+        );
+        assert!(
+            block.contains("referenced rental_date"),
+            "names the referenced column: {block}"
+        );
+        assert!(
+            block.contains("where you specified return_date"),
+            "names the specified value: {block}"
+        );
+        // The wording constraint: no causal "used" about the time column.
+        assert!(
+            !block.contains("used"),
+            "the TUI block must not assert a causal 'used': {block}"
+        );
+        assert_eq!(t.blocks().last().unwrap().kind, BlockKind::System);
+    }
+
+    /// An empty finding set pushes nothing — silence (spec A1 §3).
+    #[test]
+    fn an_empty_knowledge_overridden_event_pushes_nothing() {
+        let mut t = Transcript::new();
+        apply_event(&mut t, AgentEvent::knowledge_overridden(Vec::new()));
+        assert!(
+            t.blocks().is_empty(),
+            "no findings → no block: {:?}",
+            t.blocks()
+        );
     }
 }
