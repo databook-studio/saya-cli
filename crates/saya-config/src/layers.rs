@@ -17,8 +17,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(run.query_timeout_seconds);
     apply!(output.format);
     apply!(output.color);
-    apply!(memory.recall);
-    apply!(memory.learning);
+    apply!(memory.mode);
     apply!(memory.max_contracts);
     apply!(memory.max_claims_per_contract);
     apply!(memory.max_context_bytes);

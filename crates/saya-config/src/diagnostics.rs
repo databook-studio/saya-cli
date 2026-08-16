@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::{ColorChoice, ConfigFile, MemoryLearning, MemoryRecall, OutputFormat, ResolvedConfig};
+use crate::{ColorChoice, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig};
 
 /// A display-safe view of configuration; references are retained, values are not.
 #[derive(Debug, Clone, Serialize)]
@@ -18,8 +18,7 @@ pub struct RedactedDiagnostics {
     pub query_timeout_seconds: Option<u64>,
     pub output_format: Option<OutputFormat>,
     pub output_color: Option<ColorChoice>,
-    pub memory_recall: Option<MemoryRecall>,
-    pub memory_learning: Option<MemoryLearning>,
+    pub memory_mode: Option<MemoryMode>,
     pub memory_max_contracts: Option<u32>,
     pub memory_max_claims_per_contract: Option<u32>,
     pub memory_max_context_bytes: Option<u32>,
@@ -42,8 +41,7 @@ pub struct ResolvedDiagnostics {
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
-    pub memory_recall: MemoryRecall,
-    pub memory_learning: MemoryLearning,
+    pub memory_mode: MemoryMode,
     pub memory_max_contracts: u32,
     pub memory_max_claims_per_contract: u32,
     pub memory_max_context_bytes: u32,
@@ -65,8 +63,7 @@ impl RedactedDiagnostics {
             query_timeout_seconds: file.run.query_timeout_seconds,
             output_format: file.output.format,
             output_color: file.output.color,
-            memory_recall: file.memory.recall,
-            memory_learning: file.memory.learning,
+            memory_mode: file.memory.mode,
             memory_max_contracts: file.memory.max_contracts,
             memory_max_claims_per_contract: file.memory.max_claims_per_contract,
             memory_max_context_bytes: file.memory.max_context_bytes,
@@ -94,8 +91,7 @@ impl ResolvedConfig {
             query_timeout_seconds: self.query_timeout_seconds,
             output_format: self.output_format,
             output_color: self.output_color,
-            memory_recall: self.memory.recall,
-            memory_learning: self.memory.learning,
+            memory_mode: self.memory.mode,
             memory_max_contracts: self.memory.max_contracts,
             memory_max_claims_per_contract: self.memory.max_claims_per_contract,
             memory_max_context_bytes: self.memory.max_context_bytes,

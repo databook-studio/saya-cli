@@ -60,40 +60,35 @@ pub enum ColorChoice {
     Never,
 }
 
-/// How learned context reaches the prompt. Defaults to `Confirmed` so an upgrade
-/// changes nothing until the user opts in (ADR 0002, plan §10).
+/// Memory operational mode.
+///
+/// - `Off`: memory is completely disabled — no store queries, no proposals, no observation logging.
+/// - `Assisted`: explicit user statements are active knowledge, assistant inferences are pending,
+///   active knowledge is supplied in recall, and pending knowledge is labelled unconfirmed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[non_exhaustive]
 #[serde(rename_all = "kebab-case")]
-pub enum MemoryRecall {
-    /// Never inject learned context.
-    Off,
-    /// Inject only confirmed claims.
+pub enum MemoryMode {
+    /// Memory is disabled.
     #[default]
-    Confirmed,
-    /// Confirmed claims plus unconfirmed candidates, labelled as such.
-    IncludeCandidates,
+    Off,
+    /// Active knowledge is recalled and assistant proposals are persisted as candidates for review.
+    Assisted,
 }
 
-/// Whether SAYA learns from a turn, and what happens to a proposal. Defaults to
-/// `Off` so an upgrade changes nothing until the user opts in (ADR 0002, plan §10).
-///
-/// Plan §17.4 deferred whether `Suggest`/`AutoCandidate` makes a second provider
-/// call to extract candidates or relies on in-band proposals. Decision: in-band.
-/// `contract_propose` is already a tool the model calls during the turn, so
-/// `Suggest` and `AutoCandidate` differ only in what happens to a proposal — shown,
-/// or shown and persisted — not in how it is produced. A second call would add a
-/// per-turn cost and latency the plan's own risk register flags, for a capability
-/// the tool already provides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[non_exhaustive]
-#[serde(rename_all = "kebab-case")]
-pub enum MemoryLearning {
-    /// No learning; nothing is proposed or persisted.
-    #[default]
-    Off,
-    /// Propose candidates for review; do not persist them automatically.
-    Suggest,
-    /// Propose candidates and persist them into the review queue.
-    AutoCandidate,
+impl MemoryMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Assisted => "assisted",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "assisted" => Some(Self::Assisted),
+            _ => None,
+        }
+    }
 }

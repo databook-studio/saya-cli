@@ -24,8 +24,7 @@ use saya_agent::{
     SuppliedContractDto, ToolCall,
 };
 use saya_config::{
-    AiProvider, ColorChoice, MemoryLearning, MemoryRecall, OutputFormat, ResolvedAi,
-    ResolvedConfig, ResolvedMemory,
+    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
 };
 use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -219,20 +218,17 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
 
 fn default_memory() -> ResolvedMemory {
     ResolvedMemory {
-        recall: MemoryRecall::Confirmed,
-        learning: MemoryLearning::Off,
+        mode: MemoryMode::Off,
         max_contracts: 5,
         max_claims_per_contract: 12,
         max_context_bytes: 16384,
     }
 }
 
-/// `auto-candidate` memory: the learning mode that permits candidate writes, so
-/// `contract_propose` is registered and the loop will execute it (spec 4b §2).
-fn auto_candidate_memory() -> ResolvedMemory {
+/// `assisted` memory: permits candidate writes and recalls active + candidate knowledge.
+fn assisted_memory() -> ResolvedMemory {
     ResolvedMemory {
-        recall: MemoryRecall::Off,
-        learning: MemoryLearning::AutoCandidate,
+        mode: MemoryMode::Assisted,
         max_contracts: 5,
         max_claims_per_contract: 12,
         max_context_bytes: 16384,
@@ -330,7 +326,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
         registry: registry_for("analytics", &identity),
         failures: Vec::new(),
     };
-    let runtime = test_runtime(default_memory());
+    let runtime = test_runtime(assisted_memory());
     run_prompt_with_inputs(
         &runtime,
         inputs,
@@ -640,7 +636,7 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
         registry: registry_for("analytics", &identity),
         failures: Vec::new(),
     };
-    let runtime = test_runtime(default_memory());
+    let runtime = test_runtime(assisted_memory());
     let result = run_prompt_with_inputs(
         &runtime,
         inputs,
@@ -851,7 +847,7 @@ async fn a_turn_persisting_a_proposal_emits_one_knowledge_proposed() {
         registry: registry_for("analytics", &identity),
         failures: Vec::new(),
     };
-    let runtime = test_runtime(auto_candidate_memory());
+    let runtime = test_runtime(assisted_memory());
     run_prompt_with_inputs(
         &runtime,
         inputs,
@@ -1001,7 +997,7 @@ async fn a_duplicate_proposal_emits_no_knowledge_proposed() {
         registry: registry_for("analytics", &identity),
         failures: Vec::new(),
     };
-    let runtime = test_runtime(auto_candidate_memory());
+    let runtime = test_runtime(assisted_memory());
     run_prompt_with_inputs(
         &runtime,
         inputs,
@@ -1042,7 +1038,7 @@ async fn a_duplicate_proposal_emits_no_knowledge_proposed() {
 }
 
 // ===========================================================================
-// Test 11: runtime turn with recall = off builds ConfiguredOff receipt and
+// Test 11: runtime turn with mode = off builds ConfiguredOff receipt and
 // emits KnowledgeOutcome::Off.
 // ===========================================================================
 
@@ -1073,7 +1069,7 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
         failures: Vec::new(),
     };
     let mut memory = default_memory();
-    memory.recall = saya_config::MemoryRecall::Off;
+    memory.mode = saya_config::MemoryMode::Off;
     let runtime = test_runtime(memory);
     run_prompt_with_inputs(
         &runtime,
@@ -1133,7 +1129,7 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
         registry: registry_for("analytics", &identity),
         failures: Vec::new(),
     };
-    let runtime = test_runtime(default_memory());
+    let runtime = test_runtime(assisted_memory());
     run_prompt_with_inputs(
         &runtime,
         inputs,
@@ -1178,23 +1174,20 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
 // override case the detector exists to catch.
 // ===========================================================================
 
-/// `recall = Confirmed, learning = off` — the default. Detection is independent
-/// of the learning mode, so the default config is the one to prove against.
+/// `mode = Assisted` supplies confirmed claims for override detection.
 fn a1_memory() -> ResolvedMemory {
     ResolvedMemory {
-        recall: MemoryRecall::Confirmed,
-        learning: MemoryLearning::Off,
+        mode: MemoryMode::Assisted,
         max_contracts: 5,
         max_claims_per_contract: 12,
         max_context_bytes: 16384,
     }
 }
 
-/// `recall = IncludeCandidates` so a *candidate* claim is supplied (test 4).
+/// `mode = Assisted` supplies both confirmed and candidate claims.
 fn a1_include_candidates_memory() -> ResolvedMemory {
     ResolvedMemory {
-        recall: MemoryRecall::IncludeCandidates,
-        learning: MemoryLearning::Off,
+        mode: MemoryMode::Assisted,
         max_contracts: 5,
         max_claims_per_contract: 12,
         max_context_bytes: 16384,

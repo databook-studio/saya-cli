@@ -41,6 +41,11 @@ pub(crate) enum ObservationOutcome {
 
 /// The drained log plus whether the 32-observation cap dropped records.
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Kept for Phase F's bounded turn record, which is the mechanism that stops
+/// learning depending on the model volunteering a `contract_propose` call. Its
+/// previous consumer was the `suggest`-mode report, removed when the two config
+/// axes collapsed to one mode; only tests exercise it until F lands.
+#[allow(dead_code)]
 pub(crate) struct DrainedObservations {
     pub(crate) observations: Vec<ToolObservation>,
     pub(crate) truncated: bool,
@@ -76,6 +81,8 @@ impl ObservationLog {
 
     /// Returns and clears the turn's observations, reporting whether the cap
     /// dropped any. A second call returns nothing — a turn cannot double-count.
+    /// See [`DrainedObservations`] — production consumer arrives with Phase F.
+    #[allow(dead_code)]
     pub(crate) fn drain(&self) -> DrainedObservations {
         let mut guard = self
             .observations

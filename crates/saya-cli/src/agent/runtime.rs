@@ -98,11 +98,11 @@ pub(crate) async fn run_prompt_with_inputs(
     };
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let memory = &runtime.resolved.memory;
-    // Recall mode from `[memory] recall`. `Off` skips recall entirely — no
-    // store query, no block (spec 4b §1). The privacy gate (`allow_query_data`)
+    // Recall mode from `[memory] mode`. `Off` skips recall entirely — no
+    // store query, no block (spec E §1). The privacy gate (`allow_query_data`)
     // is independent and still skips recall when sharing is off regardless of
-    // `recall` (spec 4b §4).
-    let recall_mode = super::learning::recall_mode_for(memory.recall);
+    // `mode` (spec E §4).
+    let recall_mode = super::learning::recall_mode_for(memory.mode);
     let (context_blocks, receipt) = match recall_mode {
         None => (
             Vec::new(),
@@ -135,12 +135,9 @@ pub(crate) async fn run_prompt_with_inputs(
     // `Arc` so the tools hold one reference for per-statement detection while
     // `with_supplied_objects` reads the supplied object names here.
     let receipt = Arc::new(receipt);
-    // Learning mode → write permission + observation-log attachment (spec 4b
-    // §2). `Off` attaches nothing; `suggest`/`auto-candidate` attach a log the
-    // runtime drains after the turn. The runtime keeps its own `Arc` handle so
-    // it can drain after `tools` consumes its clone.
-    let learning = super::learning::LearningSetup::from(memory.learning);
-    let observation_log = learning.observations.clone();
+    // Learning mode → write permission + observation-log attachment (spec E).
+    // `Off` attaches nothing; `assisted` attaches a log for recording observations.
+    let learning = super::learning::LearningSetup::from(memory.mode);
     // Capture before `state_db` moves into the tools; the contract tools are
     // advertised only when a store is present (spec 2b-3a §3).
     let has_state_store = state_db.is_some();
@@ -208,45 +205,18 @@ pub(crate) async fn run_prompt_with_inputs(
         cancellation,
     )
     .await;
-    // P2d: drain the persisted-proposals log and emit one `KnowledgeProposed`
-    // per recorded claim. The log holds only claims the store accepted (the
-    // `Stored` arm), so this names what was *written*, never what was merely
-    // *asked for*. Drained and emitted regardless of whether the turn succeeded:
-    // a proposal persisted at iteration 3 is still a write the user should see
-    // even if the turn fails at iteration 5 (spec P2d §3 — emitting never rolls
-    // back a successful write, and never fails the turn; emission is outside the
-    // loop, so it cannot). `sink.emit` is infallible; a missing log (no store)
-    // drains nothing.
+    // P2d: drain persisted proposals log and emit KnowledgeProposed per recorded claim.
     if let Some(log) = proposed_claims_log.as_ref() {
         for claim in log.drain() {
             sink.emit(AgentEvent::knowledge_proposed(claim)).await;
         }
     }
-    // A1: drain the override log and emit one `KnowledgeOverridden` for the
-    // turn if the detector raised any findings. Detection ran per statement
-    // inside the loop; this is the single emit. "If it returns nothing, say
-    // nothing" (spec A1 §3): an empty drain emits nothing, so a turn that
-    // honoured every claim — or whose statements the detector had to fail
-    // closed on — stays silent. Emitted regardless of whether the turn
-    // succeeded: a contradiction at iteration 3 is still a signal the user
-    // should see even if the turn later errors (the event reports; it never
-    // blocks, and never fails the turn — `sink.emit` is infallible and this is
-    // outside the loop).
+    // A1: drain override log and emit KnowledgeOverridden if detector raised findings.
     let overridden = override_log.drain();
     if !overridden.is_empty() {
         sink.emit(AgentEvent::knowledge_overridden(overridden))
             .await;
     }
-    // `suggest` reports what the turn would have proposed after the loop is
-    // done; nothing is stored. See `emit_suggest_report` for the gate (only a
-    // completed `suggest` turn reports) and the report's shape.
-    super::learning::emit_suggest_report(
-        memory.learning,
-        observation_log.as_ref(),
-        output.is_ok(),
-        sink,
-    )
-    .await;
     output.map_err(|error| match error {
         AgentError::Provider(error) => AgentRuntimeError::Provider(error.to_string()),
         AgentError::Limit(error) => {

@@ -1,12 +1,9 @@
-use crate::{ConfigError, MemoryLearning, MemoryRecall, model::MemoryFile};
+use crate::{ConfigError, MemoryMode, model::MemoryFile};
 
-/// Effective memory settings, resolved from `[memory]` plus the safe defaults.
-/// Nothing reads these yet — Phase 4b wires behaviour. A setting that parses but
-/// changes nothing lets the defaults be proven safe before anything depends on them.
+/// Effective memory settings, resolved from `[memory]` plus safe defaults.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedMemory {
-    pub recall: MemoryRecall,
-    pub learning: MemoryLearning,
+    pub mode: MemoryMode,
     pub max_contracts: u32,
     pub max_claims_per_contract: u32,
     pub max_context_bytes: u32,
@@ -36,8 +33,7 @@ const MAX_CONTEXT_BYTES_CEILING: u32 =
 /// mode strings are already rejected by serde with the accepted values named, so only
 /// the range checks live here.
 pub(crate) fn resolve(file: &MemoryFile) -> Result<ResolvedMemory, ConfigError> {
-    let recall = file.recall.unwrap_or(MemoryRecall::Confirmed);
-    let learning = file.learning.unwrap_or(MemoryLearning::Off);
+    let mode = file.mode.unwrap_or(MemoryMode::Off);
     let max_contracts = file.max_contracts.unwrap_or(DEFAULT_MAX_CONTRACTS);
     let max_claims_per_contract = file
         .max_claims_per_contract
@@ -52,8 +48,7 @@ pub(crate) fn resolve(file: &MemoryFile) -> Result<ResolvedMemory, ConfigError> 
         MAX_CONTEXT_BYTES_CEILING,
     )?;
     Ok(ResolvedMemory {
-        recall,
-        learning,
+        mode,
         max_contracts,
         max_claims_per_contract,
         max_context_bytes,
