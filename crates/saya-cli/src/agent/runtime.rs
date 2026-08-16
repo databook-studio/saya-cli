@@ -1,35 +1,21 @@
-use super::{provider, tools};
+use super::knowledge_event::knowledge_supplied_event;
+use super::tools;
+pub(crate) use super::turn_config::{
+    AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed,
+};
+use super::turn_inputs::{TurnInputs, prepare_turn};
 use crate::{config::runtime::RuntimeConfig, prompt_approval::TerminalApproval};
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, AgentRequest,
     ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, run_agent_with_sink,
 };
-use saya_config::{AiProvider, ResolvedAi};
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub(crate) enum AgentRuntimeError {
-    #[error("{0}")]
-    Provider(String),
-    #[error("{0}")]
-    Database(String),
-    #[error("{0}")]
-    Agent(String),
-    #[error("{0}")]
-    Configuration(String),
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct PromptOverrides {
-    pub(crate) provider: Option<AiProvider>,
-    pub(crate) model: Option<String>,
-    pub(crate) allow_data_sharing: Option<bool>,
-    pub(crate) profile: Option<String>,
-    pub(crate) included_profiles: Vec<String>,
-}
-
+/// The production entry: builds the provider + registry from config (via
+/// [`super::turn_inputs::prepare_turn`]), then runs the turn. Callers are
+/// unchanged (the build stays inside this future, so ctrl-c still covers the
+/// connect).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_prompt_with_sink(
     runtime: &RuntimeConfig,
@@ -44,47 +30,49 @@ pub(crate) async fn run_prompt_with_sink(
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    let ai = effective_ai(&runtime.resolved.ai, &overrides);
-    let provider = provider::build(&ai, &runtime.secret_resolver())
-        .map_err(|error| AgentRuntimeError::Provider(error.to_string()))?;
-    let (profile_name, profile) = super::profile::selected(runtime, overrides.profile.as_ref())?;
+    let inputs = prepare_turn(runtime, &overrides, can_prompt).await?;
+    run_prompt_with_inputs(
+        runtime,
+        inputs,
+        prompt,
+        approval,
+        can_prompt,
+        history,
+        sink,
+        cancellation,
+        state_db,
+        decider,
+        last_sql,
+    )
+    .await
+}
+
+/// The turn body, injectable for tests via [`TurnInputs`]. Emits
+/// [`AgentEvent::KnowledgeSupplied`] on `sink` immediately after recall is
+/// assembled and **before** `run_agent_with_sink` is called (spec P1b §2) —
+/// the moment matters more than the event: by the time the answer exists the
+/// claim has already shaped the SQL, so a receipt that arrives then is a
+/// changelog, not a control.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_prompt_with_inputs(
+    runtime: &RuntimeConfig,
+    inputs: TurnInputs,
+    prompt: &str,
+    approval: ApprovalPolicy,
+    can_prompt: bool,
+    history: Vec<ChatMessage>,
+    sink: &dyn AgentEventSink,
+    cancellation: CancellationToken,
+    state_db: Option<SqliteStateStore>,
+    decider: Option<Arc<dyn ApprovalDecider>>,
+    last_sql: Option<String>,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    let ai = inputs.ai;
+    let provider = inputs.provider;
+    let registry = inputs.registry;
     let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
 
-    let mut secondaries = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for name in &overrides.included_profiles {
-        if name.is_empty() {
-            continue;
-        }
-        if profile_name.as_deref() == Some(name.as_str()) {
-            continue;
-        }
-        if !seen.insert(name) {
-            continue;
-        }
-        if let Ok(sec_profile) = runtime.named_profile(name) {
-            secondaries.push((name.clone(), sec_profile.clone()));
-        }
-    }
-
-    let (registry, failures) = match profile.as_ref() {
-        Some(primary_profile) => {
-            let primary_name = profile_name.as_deref().unwrap_or("");
-            crate::connection::build_registry(
-                &runtime.secret_resolver(),
-                &runtime.cache_scope,
-                runtime.resolved.query_timeout_seconds,
-                can_prompt,
-                primary_name,
-                primary_profile,
-                &secondaries,
-            )
-            .await?
-        }
-        None => (crate::connection::ConnectionRegistry::new(""), Vec::new()),
-    };
-
-    for (name, reason) in failures {
+    for (name, reason) in inputs.failures {
         sink.emit(AgentEvent::assistant_text(format!(
             "skipped database '{name}': {reason}\n"
         )))
@@ -115,12 +103,12 @@ pub(crate) async fn run_prompt_with_sink(
     // is independent and still skips recall when sharing is off regardless of
     // `recall` (spec 4b §4).
     let recall_mode = super::learning::recall_mode_for(memory.recall);
-    let context_blocks = match recall_mode {
+    let (context_blocks, receipt) = match recall_mode {
         Some(mode) if allow_query_data => {
-            // P1a: `recall_context_blocks` now returns a `RecallReceipt` beside
-            // the blocks naming exactly which claims were supplied. Nothing
-            // consumes it yet (P1b renders it); discarded here on purpose.
-            let (blocks, _recall_receipt) = super::recall_context::recall_context_blocks(
+            // P1a: `recall_context_blocks` returns a `RecallReceipt` beside the
+            // blocks naming exactly which claims were supplied. P1b emits it as
+            // a `KnowledgeSupplied` event before the provider call.
+            let (blocks, receipt) = super::recall_context::recall_context_blocks(
                 prompt,
                 system_prompt.as_deref(),
                 allow_query_data,
@@ -130,13 +118,23 @@ pub(crate) async fn run_prompt_with_sink(
                 state_db.as_ref(),
             )
             .await;
-            blocks
+            (blocks, Some(receipt))
         }
-        // `Off`, or any mode under a closed privacy gate → no block. The gate
-        // wins: with sharing disabled no contract content reaches a provider
-        // regardless of `recall` (spec 4b §4, test 10).
-        _ => Vec::new(),
+        // `Off`, or any mode under a closed privacy gate → no block, no
+        // receipt. The gate wins: with sharing disabled no contract content
+        // reaches a provider regardless of `recall` (spec 4b §4, test 10).
+        _ => (Vec::new(), None),
     };
+    // The emit is the point of this slice: one `KnowledgeSupplied` per turn,
+    // before any provider request, naming what recall supplied (or that it did
+    // not run). Emitting must never fail the turn — `sink.emit` is infallible
+    // and the mapping is pure, so the prompt still runs regardless (spec §3).
+    sink.emit(knowledge_supplied_event(
+        recall_mode,
+        allow_query_data,
+        receipt.as_ref(),
+    ))
+    .await;
     // Learning mode → write permission + observation-log attachment (spec 4b
     // §2). `Off` attaches nothing; `suggest`/`auto-candidate` attach a log the
     // runtime drains after the turn. The runtime keeps its own `Arc` handle so
@@ -220,29 +218,6 @@ pub(crate) async fn run_prompt_with_sink(
     })
 }
 
-pub(crate) fn query_data_allowed(provider: AiProvider, allow_data_sharing: bool) -> bool {
-    match provider {
-        AiProvider::Openai
-        | AiProvider::OpenaiCompatible
-        | AiProvider::Anthropic
-        | AiProvider::Gemini => allow_data_sharing,
-        AiProvider::Ollama => true,
-    }
-}
-
-pub(crate) fn effective_ai(base: &ResolvedAi, overrides: &PromptOverrides) -> ResolvedAi {
-    let mut ai = base.clone();
-    if let Some(provider) = overrides.provider {
-        if ai.provider != provider {
-            ai.base_url = None;
-        }
-        ai.provider = provider;
-    }
-    if let Some(model) = overrides.model.as_ref() {
-        ai.model = model.clone();
-    }
-    if let Some(value) = overrides.allow_data_sharing {
-        ai.allow_data_sharing = value;
-    }
-    ai
-}
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

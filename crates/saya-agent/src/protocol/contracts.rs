@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use saya_types::{ClaimId, ClaimStatus};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +79,72 @@ pub struct ChatResponse {
     pub message: ChatMessage,
 }
 
+/// The three distinguishable states of a turn's recall, as
+/// [`AgentEvent::KnowledgeSupplied`] carries them (spec P1b §3). `Off` (recall
+/// disabled by config), `Skipped` (the privacy gate closed — SAYA was not
+/// allowed to look), and `Ran` (recall ran against the store) are three facts a
+/// user reads differently; collapsing them into a single "no event" would hide
+/// the distinction between "SAYA was not allowed to look" and "SAYA looked and
+/// had nothing". `Ran { store_unavailable: true }` records a store failure that
+/// degraded recall to an empty result — the turn still completes (recall is
+/// fail-soft, spec §3).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum KnowledgeOutcome {
+    /// Recall is off by config; SAYA did not look.
+    Off,
+    /// The privacy gate closed; SAYA was not allowed to look. No store query.
+    Skipped,
+    /// Recall ran against the store. `store_unavailable` is true when a store
+    /// failure degraded recall to an empty result.
+    Ran { store_unavailable: bool },
+}
+
+/// One claim as **supplied** to a turn's context block, in the DTO shape that
+/// crosses the crate boundary into [`AgentEvent::KnowledgeSupplied`]. Carries
+/// the claim id (so a later phase can name exactly which saved claims shaped
+/// an answer), its kind, the short rendered value the prompt block shows, a
+/// column when the claim is column-scoped, and its persisted status — so a
+/// `Candidate` reads as `candidate`, distinct from `confirmed` (spec P1b §4.5).
+///
+/// No raw payload, evidence, or SQL. `value` is the same short rendered form
+/// the prompt block already shows (a column name, an alias), not the stored
+/// payload — and it is named **supplied**, never *used*: a confirmed claim
+/// being supplied does not mean the generated SQL honoured it (we have
+/// measured that it frequently does not).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SuppliedClaimDto {
+    pub claim_id: ClaimId,
+    /// The claim kind token (`table_alias`, `default_time_column`, …).
+    pub kind: String,
+    /// The short rendered value the prompt block shows, not the stored payload.
+    pub value: String,
+    /// A column name when the claim is column-scoped; `None` for table-level
+    /// claims. `skip_serializing_if` keeps it off the wire when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
+    pub status: ClaimStatus,
+}
+
+/// One object's claims, as supplied to the turn, in the DTO shape that crosses
+/// the crate boundary into [`AgentEvent::KnowledgeSupplied`]. `profile` is the
+/// human-facing profile **name**, never the opaque [`saya_types::ProfileIdentity`]
+/// — the identity has no field here, by construction (spec P1b §3). `schema_state`
+/// is the contract's aggregated state token (`current` / `needs_review` /
+/// `live_schema_unavailable`); `stale` never appears (a contract aggregating to
+/// `Stale` is dropped by the model-path policy before supply).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SuppliedContractDto {
+    /// The human-facing profile name. Never the opaque identity.
+    pub profile: String,
+    /// The object's qualified name (`catalog.schema.object`).
+    pub object: String,
+    /// The aggregated schema state token; `stale` never appears here.
+    pub schema_state: String,
+    pub claims: Vec<SuppliedClaimDto>,
+}
+
 // `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
 // `PartialEq` only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -102,6 +169,20 @@ pub enum AgentEvent {
         name: String,
         reason: String,
     },
+    /// What recall **supplied** to this turn's context block, emitted once per
+    /// turn *before* any provider request (so a reader can see what shaped the
+    /// SQL before it runs, not after — spec P1b §1/§2). The payload says
+    /// **supplied**, never *used*: a confirmed claim being supplied does not
+    /// mean the generated SQL honoured it. Carries at most what recall supplied
+    /// (already capped: ≤5 objects, ≤12 claims/object); no raw SQL or evidence.
+    KnowledgeSupplied {
+        outcome: KnowledgeOutcome,
+        contracts: Vec<SuppliedContractDto>,
+        /// Claims the byte or count bounds dropped (not the schema policy). A
+        /// non-zero count is the event's way of saying "the list above is a
+        /// subset, not the whole"; zero means the supply path kept everything.
+        dropped_by_bounds: usize,
+    },
     Complete,
 }
 
@@ -114,6 +195,20 @@ impl AgentEvent {
         Self::ToolRequested {
             name: name.into(),
             arguments,
+        }
+    }
+
+    /// Builds the per-turn `KnowledgeSupplied` event from recall's outcome, the
+    /// supplied contracts, and the count the bounds dropped.
+    pub fn knowledge_supplied(
+        outcome: KnowledgeOutcome,
+        contracts: Vec<SuppliedContractDto>,
+        dropped_by_bounds: usize,
+    ) -> Self {
+        Self::KnowledgeSupplied {
+            outcome,
+            contracts,
+            dropped_by_bounds,
         }
     }
 
