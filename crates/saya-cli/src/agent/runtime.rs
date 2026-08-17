@@ -71,23 +71,12 @@ pub(crate) async fn run_prompt_with_inputs(
         .await;
     }
 
-    let system_prompt = {
-        let base = registry.describe_context();
-        match last_sql {
-            Some(sql) if !sql.trim().is_empty() => {
-                let hint = format!(
-                    "For context, the most recent SQL you ran was:\n{sql}\n\nIf the user's request \
-                     refines, filters, sorts, or drills into that previous result, adapt this query \
-                     instead of rediscovering the schema from scratch."
-                );
-                Some(match base {
-                    Some(b) => format!("{b}\n\n{hint}"),
-                    None => hint,
-                })
-            }
-            _ => base,
-        }
-    };
+    let system_prompt = super::system_prompt::assemble_system_prompt(
+        &registry,
+        last_sql.as_deref(),
+        runtime.resolved.memory.mode,
+        super::system_prompt::memory_reachable(state_db.is_some(), allow_query_data),
+    );
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let memory = &runtime.resolved.memory;
     let recall_mode = super::learning::recall_mode_for(memory.mode);

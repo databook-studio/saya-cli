@@ -21,6 +21,7 @@ pub(crate) mod extractor_prompt;
 pub(crate) mod extractor_schema;
 pub(crate) mod gate;
 pub(crate) mod ingest;
+pub(crate) mod profile_catalog;
 pub(crate) mod resolver;
 pub(crate) mod runner;
 pub(crate) mod turn_record;
@@ -42,7 +43,7 @@ pub(crate) use ingest::{
     ingest_proposals,
 };
 #[allow(unused_imports)]
-pub(crate) use resolver::{ResolutionError, ResolvedProposal, resolve_proposal};
+pub(crate) use resolver::{ResolutionError, ResolvedProposal, resolve_proposal, resolve_proposals};
 #[allow(unused_imports)]
 pub(crate) use runner::{ExtractionRunnerError, run_extraction};
 #[allow(unused_imports)]

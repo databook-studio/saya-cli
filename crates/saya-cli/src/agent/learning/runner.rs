@@ -6,7 +6,7 @@ use std::fmt;
 
 use super::{
     ExtractionError, IngestionError, TurnRecord, build_extraction_prompt,
-    filter_anti_self_reinforcement, ingest_proposals, parse_extraction_response, resolve_proposal,
+    filter_anti_self_reinforcement, ingest_proposals, parse_extraction_response, resolve_proposals,
 };
 use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
@@ -69,12 +69,7 @@ pub(crate) async fn run_extraction(
         return Ok(Vec::new());
     }
 
-    let mut resolved = Vec::with_capacity(extracted.len());
-    for prop in extracted {
-        if let Ok(res) = resolve_proposal(prop, &record.object_table, registry) {
-            resolved.push(res);
-        }
-    }
+    let resolved = resolve_proposals(extracted, &record.object_table, registry).await;
 
     let filtered = filter_anti_self_reinforcement(resolved, &receipt.supplied);
     if filtered.is_empty() {
@@ -95,8 +90,8 @@ mod tests {
     use saya_connectors::DatabaseConnector;
     use saya_store::SqliteStateStore;
     use saya_types::{
-        ClaimStatus, ConnectionError, DatabaseProfile, ProfileIdentity, QueryRequest, QueryResult,
-        SchemaTree, SqlDialect,
+        ClaimStatus, Column, ConnectionError, Database, DatabaseProfile, ProfileIdentity,
+        QueryRequest, QueryResult, Schema, SchemaTree, SqlDialect, Table,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -114,7 +109,7 @@ mod tests {
     #[async_trait]
     impl ChatProvider for StaticExtractionProvider {
         fn name(&self) -> &str {
-            "static-extractor"
+            "static-provider"
         }
         async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
             let mut calls = self.calls.lock().unwrap();
@@ -148,7 +143,22 @@ mod tests {
             Ok(())
         }
         async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
-            Ok(SchemaTree::default())
+            Ok(SchemaTree {
+                databases: vec![Database {
+                    name: "analytics".into(),
+                    schemas: vec![Schema {
+                        name: "raw".into(),
+                        tables: vec![Table {
+                            name: "orders".into(),
+                            columns: vec![Column {
+                                name: "status".into(),
+                                data_type: "text".into(),
+                                nullable: true,
+                            }],
+                        }],
+                    }],
+                }],
+            })
         }
         async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
             Ok(QueryResult::empty(req.sql))
@@ -276,7 +286,7 @@ mod tests {
         assert_eq!(res[0].profile, "analytics");
         // Object identity is fully qualified: a bare `raw.orders` would be
         // ambiguous across catalogs.
-        assert_eq!(res[0].object, "default.raw.orders");
+        assert_eq!(res[0].object, "analytics.raw.orders");
         assert_eq!(res[0].column.as_deref(), Some("status"));
         assert_eq!(res[0].status, ClaimStatus::Candidate);
 

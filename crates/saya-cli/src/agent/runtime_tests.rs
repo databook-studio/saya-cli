@@ -60,7 +60,15 @@ impl saya_connectors::DatabaseConnector for IdleConnector {
         Ok(())
     }
     async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
-        Ok(SchemaTree::default())
+        Ok(SchemaTree {
+            databases: vec![Database {
+                name: "catalog".into(),
+                schemas: vec![Schema {
+                    name: "public".into(),
+                    tables: vec![orders_table()],
+                }],
+            }],
+        })
     }
     async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
         Ok(QueryResult::empty(req.sql))
