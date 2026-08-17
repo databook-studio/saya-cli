@@ -13,8 +13,9 @@ use saya_connectors::DatabaseConnector;
 use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, ConnectionError, Database,
-    DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, ProfileIdentity, QueryRequest,
-    QueryResult, Schema, SchemaFingerprint, SchemaTree, SqlDialect, Table,
+    DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, KnowledgeSlot, KnowledgeState,
+    ProfileIdentity, QueryRequest, QueryResult, Schema, SchemaFingerprint, SchemaTree, SqlDialect,
+    Table,
 };
 use std::{
     fs,
@@ -152,24 +153,54 @@ async fn remember_confirmed(
     }
 }
 
-async fn remember_candidate(
+/// Seeds a knowledge item into the D-3 `knowledge_items` table the recall path
+/// (`contract_search`) reads. The `contract_read` tool still reads the legacy
+/// `contract_claims` table (a later chunk migrates it), so tests that exercise
+/// `contract_read` keep the `remember_*` helpers above; only the
+/// `contract_search` tests use this one. The slot and `SchemaBinding` are
+/// derived from the payload the way the ingest path derives them. The cached
+/// schema (`seed_current`) names the object's table so a `Table` binding reads
+/// `current`; a `Column` binding needs its column present too.
+async fn put_knowledge_item(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
     payload: ClaimPayload,
-) -> ClaimId {
-    let fingerprint = seed_current(store, object).await;
-    let request = ProposeClaim {
+    state: KnowledgeState,
+) {
+    use saya_store::{KnowledgeItemRequest, KnowledgeItemStore};
+    use saya_types::SchemaBinding;
+    let _ = seed_current(store, object).await;
+    let slot = slot_for(&payload);
+    let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
+    let request = KnowledgeItemRequest {
         object: object.clone(),
-        fingerprint,
-        payload,
-        origin: ClaimOrigin::AssistantInferred,
-        initial_status: ClaimStatus::Candidate,
-        evidence: None,
-        referenced_columns: Vec::new(),
+        slot,
+        value: payload,
+        source: if state == KnowledgeState::Active {
+            ClaimOrigin::UserExplicit
+        } else {
+            ClaimOrigin::AssistantInferred
+        },
+        state,
+        schema_binding_json: serde_json::to_string(&binding).unwrap(),
+        fingerprint: crate::commands::unobserved_fingerprint(),
     };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
+    store.put_knowledge_item(request).await.unwrap();
+}
+
+fn slot_for(payload: &ClaimPayload) -> KnowledgeSlot {
+    match payload {
+        ClaimPayload::TableDescription { .. } => KnowledgeSlot::TableDescription,
+        ClaimPayload::TableAlias { .. } => KnowledgeSlot::TableAlias,
+        ClaimPayload::TableGrain { .. } => KnowledgeSlot::TableGrain,
+        ClaimPayload::DefaultTimeColumn { .. } => KnowledgeSlot::TableDefaultTime,
+        ClaimPayload::ColumnDescription { column, .. } => KnowledgeSlot::ColumnDescription {
+            column: column.clone(),
+        },
+        ClaimPayload::ColumnRole { column, .. } => KnowledgeSlot::ColumnRole {
+            column: column.clone(),
+        },
+        _ => panic!("no slot for payload {:?}", payload),
     }
 }
 
@@ -193,12 +224,18 @@ async fn contract_search_returns_confirmed_and_hides_candidates() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "orders");
-    let _confirmed =
-        remember_confirmed(&store, &obj, ClaimPayload::table_alias("orders").unwrap()).await;
-    let _candidate = remember_candidate(
+    put_knowledge_item(
+        &store,
+        &obj,
+        ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
+    put_knowledge_item(
         &store,
         &obj,
         ClaimPayload::table_alias("secret_candidate").unwrap(),
+        KnowledgeState::Pending,
     )
     .await;
 
@@ -358,7 +395,17 @@ async fn no_opaque_profile_identity_in_any_tool_result() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "orders");
+    // `contract_read` reads the legacy `contract_claims` table (a later chunk
+    // migrates it); `contract_search` reads `knowledge_items`. Seed both so
+    // each tool sees the alias and the identity-leak assertion covers both.
     let _id = remember_confirmed(&store, &obj, ClaimPayload::table_alias("orders").unwrap()).await;
+    put_knowledge_item(
+        &store,
+        &obj,
+        ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
 
     let tools = DatabaseTools::with_registry(
         registry_with_primary("primary", &identity),
@@ -711,7 +758,39 @@ async fn contract_search_drops_a_stale_claim_and_says_so() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "orders");
-    remember_confirmed_stale(&store, &obj).await;
+    // A confirmed `default_time_column` item on `created_at`, filed against a
+    // cached schema that has since dropped `created_at`. The D-4 binding
+    // (`Column { created_at, Time }`) is no longer satisfied, so the contract
+    // aggregates to `Invalid` (→ `Stale`) and the model-facing `contract_search`
+    // drops it and says why. (`remember_confirmed_stale` seeds the legacy table
+    // the `contract_read` companion uses; `contract_search` reads knowledge_items.)
+    let drifted = SchemaTree {
+        databases: vec![Database {
+            name: obj.catalog().to_string(),
+            schemas: vec![Schema {
+                name: obj.schema().to_string(),
+                tables: vec![Table {
+                    name: obj.object().to_string(),
+                    columns: vec![Column {
+                        name: "id".into(),
+                        data_type: "bigint".into(),
+                        nullable: false,
+                    }],
+                }],
+            }],
+        }],
+    };
+    store
+        .upsert_schema(obj.profile().as_str(), &drifted)
+        .await
+        .unwrap();
+    put_knowledge_item(
+        &store,
+        &obj,
+        ClaimPayload::default_time_column("created_at").unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
 
     let tools = DatabaseTools::with_registry(
         registry_with_primary("primary", &identity),

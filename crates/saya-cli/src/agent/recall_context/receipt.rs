@@ -32,16 +32,15 @@ pub(super) fn supplied_contracts(
                 claims: contract
                     .claims
                     .iter()
-                    .filter_map(|claim| {
-                        let payload = claim.payload.as_ref()?;
-                        let (column, value) = super::render::claim_value(payload);
-                        Some(SuppliedClaim {
+                    .map(|claim| {
+                        let (column, value) = super::render::claim_value(&claim.value);
+                        SuppliedClaim {
                             claim_id: claim.id.clone(),
-                            kind: payload.kind(),
+                            kind: claim.value.kind(),
                             value,
                             column,
                             status: claim.status,
-                        })
+                        }
                     })
                     .collect(),
             }

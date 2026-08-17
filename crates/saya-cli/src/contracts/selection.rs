@@ -12,18 +12,32 @@
 //!
 //! No cross-profile fallback: a term that matches nothing in the active profiles
 //! matches nothing. Ambiguity returns every match.
+//!
+//! Reads the D-3 `knowledge_items` table via [`KnowledgeItemStore`] — the same
+//! rows the harness-owned learning path writes — so what the harness learns is
+//! what recall supplies. Two store round trips per profile, not one per object:
+//! [`KnowledgeItemStore::knowledge_for_profile`] fetches every item of a
+//! profile, and [`KnowledgeItemStore::objects_for_profile`] the distinct
+//! objects. Items are grouped by object and filtered by recall mode in Rust —
+//! `best_tier` scores from the decoded payload text, so selection cannot
+//! filter before decoding, and the `excluded_by_status` count depends on the
+//! full item set (an object whose items are all non-admitted reads the same as
+//! one with none).
 
 use super::name_match::name_matches;
 use crate::contracts::availability::SchemaAvailability;
-use saya_store::{ContractStore, SqliteStateStore, StoredClaim, StoredObject};
-use saya_types::{ClaimPayload, ClaimStatus, DatabaseObjectRef, ProfileIdentity};
+use saya_store::{KnowledgeItem, KnowledgeItemStore, SqliteStateStore};
+use saya_types::{ClaimPayload, DatabaseObjectRef, KnowledgeState, ProfileIdentity};
 use std::collections::HashMap;
 
-/// One object's recallable claims plus the live schema for its profile and the
-/// `last_seen` stamp used only as a tie-breaker.
+/// One object's recallable items plus the live schema for its profile and the
+/// `last_seen` stamp used only as a tie-breaker. Carries the raw
+/// [`KnowledgeItem`]s so assembly can compute validity from each item's
+/// `schema_binding_json` + `fingerprint_version` before projecting to the
+/// render carrier.
 pub(crate) struct Candidate {
     pub object: DatabaseObjectRef,
-    pub claims: Vec<StoredClaim>,
+    pub items: Vec<KnowledgeItem>,
     pub last_seen_unix_ms: i64,
     pub tier: u8,
 }
@@ -36,49 +50,48 @@ pub(crate) struct Selection {
 
 /// Builds the ranked candidate list for `request` against `store`. Returns the
 /// selection untouched by bounds or privacy — the caller applies those.
-///
-/// Two store round trips per profile, not one per object: a single
-/// [`ContractStore::list_claims_for_profile`] fetches every claim of a profile,
-/// and the objects come from [`ContractStore::list_objects`]. Claims are grouped
-/// by object and filtered by recall mode in Rust — `best_tier` scores from the
-/// decoded payload text, so selection cannot filter before decoding, and the
-/// `excluded_by_status` count depends on the full claim set (an object whose
-/// claims are all non-admitted reads the same as one with none).
 pub(crate) async fn select(
     store: &SqliteStateStore,
     request: &super::RecallRequest<'_>,
     live_schemas: &[(ProfileIdentity, SchemaAvailability)],
-) -> Result<Selection, saya_store::StoreError> {
-    let active: Vec<StoredObject> = collect_objects(store, request.profiles).await?;
+) -> Result<Selection, saya_store::KnowledgeStoreError> {
+    let active: Vec<DatabaseObjectRef> = collect_objects(store, request.profiles).await?;
     let considered = active.len();
-    let claims_by_object = collect_claims(store, request.profiles).await?;
+    let items_by_object = collect_items(store, request.profiles).await?;
 
     let mut by_object: Vec<Candidate> = Vec::new();
     let mut excluded_by_status = 0usize;
     for obj in &active {
-        let all = claims_by_object.get(&obj.object);
-        let recallable: Vec<StoredClaim> = match all {
-            Some(claims) => claims
+        let all = items_by_object.get(obj);
+        let recallable: Vec<KnowledgeItem> = match all {
+            Some(items) => items
                 .iter()
-                .filter(|c| request.recall_mode.admits(c.status) || admissible_once(c, request))
+                .filter(|it| {
+                    request.recall_mode.admits_state(it.state) || admissible_once(it, request)
+                })
                 .cloned()
                 .collect(),
             None => Vec::new(),
         };
         if recallable.is_empty() {
-            // The object has claims but none are admitted by this mode — under
-            // `Confirmed` every one was a candidate/rejected/stale/contradicted/
-            // forgotten; under `IncludeCandidates` it had none of confirmed or
-            // candidate. An object with no claims at all lands here too: the
-            // count matches the per-object loop it replaces.
+            // The object has items but none are admitted by this mode — under
+            // `Confirmed` every one was pending/dismissed; under
+            // `IncludeCandidates` it had no active or pending. An object with
+            // no items at all lands here too: the count matches the per-object
+            // loop it replaces.
             excluded_by_status += 1;
             continue;
         }
-        let tier = best_tier(&obj.object, &recallable, request);
+        // `last_seen` is not a column on `knowledge_items`; the tie-breaker
+        // uses the most recent write among the object's admitted items.
+        let last_seen_unix_ms = all
+            .map(|items| items.iter().map(|i| i.updated_unix_ms).max().unwrap_or(0))
+            .unwrap_or(0);
+        let tier = best_tier(obj, &recallable, request);
         by_object.push(Candidate {
-            object: obj.object.clone(),
-            claims: recallable,
-            last_seen_unix_ms: obj.last_seen_unix_ms,
+            object: obj.clone(),
+            items: recallable,
+            last_seen_unix_ms,
             tier,
         });
     }
@@ -109,41 +122,41 @@ pub(crate) async fn select(
     })
 }
 
-/// Whether `claim` is the single candidate `use_candidate_once` admitted to
-/// this recall — the per-claim exception alongside `recall_mode.admits`.
-/// Honoured only for a live `Candidate`: a non-candidate id in the request is a
+/// Whether `item` is the single candidate `use_candidate_once` admitted to
+/// this recall — the per-item exception alongside `recall_mode.admits_state`.
+/// Honoured only for a live `Pending` item: a non-pending id in the request is a
 /// no-op, because `use_candidate_once` refuses to mint one for anything else.
-fn admissible_once(claim: &StoredClaim, request: &super::RecallRequest<'_>) -> bool {
-    request.admit_candidate.as_ref() == Some(&claim.id) && claim.status == ClaimStatus::Candidate
+fn admissible_once(item: &saya_store::KnowledgeItem, request: &super::RecallRequest<'_>) -> bool {
+    request.admit_candidate.as_ref().map(|id| id.as_str()) == Some(&item.id)
+        && item.state == KnowledgeState::Pending
 }
 
 async fn collect_objects(
     store: &SqliteStateStore,
     profiles: &[ProfileIdentity],
-) -> Result<Vec<StoredObject>, saya_store::StoreError> {
+) -> Result<Vec<DatabaseObjectRef>, saya_store::KnowledgeStoreError> {
     let mut out = Vec::new();
     for profile in profiles {
-        out.extend(store.list_objects(profile).await?);
+        out.extend(store.objects_for_profile(profile).await?);
     }
     Ok(out)
 }
 
-/// Every claim of every active profile, grouped by object — one
-/// `list_claims_for_profile` per profile rather than one `list_claims` per
-/// object. The grouping key is the decoded [`DatabaseObjectRef`], the same value
-/// `StoredObject.object` carries, so the object loop looks up its claims without
-/// re-deriving the store's object id.
-async fn collect_claims(
+/// Every knowledge item of every active profile, grouped by object — one
+/// `knowledge_for_profile` per profile rather than one read per object. The
+/// grouping key is the inlined [`DatabaseObjectRef`] the row carries, so the
+/// object loop looks up its items without re-deriving an id.
+async fn collect_items(
     store: &SqliteStateStore,
     profiles: &[ProfileIdentity],
-) -> Result<HashMap<DatabaseObjectRef, Vec<StoredClaim>>, saya_store::StoreError> {
-    let mut by_object: HashMap<DatabaseObjectRef, Vec<StoredClaim>> = HashMap::new();
+) -> Result<
+    HashMap<DatabaseObjectRef, Vec<saya_store::KnowledgeItem>>,
+    saya_store::KnowledgeStoreError,
+> {
+    let mut by_object: HashMap<DatabaseObjectRef, Vec<saya_store::KnowledgeItem>> = HashMap::new();
     for profile in profiles {
-        for claim in store.list_claims_for_profile(profile).await? {
-            by_object
-                .entry(claim.object.clone())
-                .or_default()
-                .push(claim);
+        for item in store.knowledge_for_profile(profile).await? {
+            by_object.entry(item.object.clone()).or_default().push(item);
         }
     }
     Ok(by_object)
@@ -151,15 +164,15 @@ async fn collect_claims(
 
 fn best_tier(
     object: &DatabaseObjectRef,
-    claims: &[StoredClaim],
+    items: &[KnowledgeItem],
     request: &super::RecallRequest<'_>,
 ) -> u8 {
     if request.explicit_refs.iter().any(|r| r == object) {
         return 1;
     }
-    let aliases: Vec<String> = claims
+    let aliases: Vec<String> = items
         .iter()
-        .filter_map(|c| match c.payload.as_ref()? {
+        .filter_map(|it| match &it.value {
             ClaimPayload::TableAlias { alias, .. } => Some(alias.trim().to_lowercase()),
             _ => None,
         })
@@ -181,9 +194,9 @@ fn best_tier(
     // numbered object it prefixes (`orders` → `orders0`); it is now bounded to
     // the object name, never the catalog/schema segments.
     let name_segment = object.object().to_lowercase();
-    let desc_text: Vec<String> = claims
+    let desc_text: Vec<String> = items
         .iter()
-        .filter_map(|c| match c.payload.as_ref()? {
+        .filter_map(|it| match &it.value {
             ClaimPayload::TableDescription { text, .. } => Some(text.to_lowercase()),
             ClaimPayload::TableGrain { description, .. } => Some(description.to_lowercase()),
             ClaimPayload::ColumnDescription { text, .. } => Some(text.to_lowercase()),

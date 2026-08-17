@@ -22,10 +22,13 @@ use saya_cli::{
     capture_output_start, capture_output_take, load_with_sources, parse_slash_command,
     profile_identity, run_contracts,
 };
-use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
+use saya_store::{
+    ContractStore, KnowledgeItemRequest, KnowledgeItemStore, ProposeClaim, ProposeOutcome,
+    SchemaStore, SqliteStateStore,
+};
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef,
-    ProfileIdentity, SchemaFingerprint, SchemaTree,
+    KnowledgeSlot, KnowledgeState, ProfileIdentity, SchemaBinding, SchemaFingerprint, SchemaTree,
 };
 use std::{
     collections::BTreeMap, fs, path::Path, path::PathBuf, time::SystemTime, time::UNIX_EPOCH,
@@ -138,6 +141,14 @@ fn unobserved_fingerprint() -> SchemaFingerprint {
 
 /// Propose a candidate claim directly through the store, so `Decide` has a
 /// not-yet-confirmed claim to act on. `remember` only stores confirmed claims.
+///
+/// Also seeds a `Pending` D-3 knowledge item for the same slot, so the recall
+/// path (`contracts list`) — which reads `knowledge_items`, not the legacy
+/// `contract_claims` the decide/queue paths still read — sees the object. The
+/// `Decide::Confirm` step promotes the *legacy* claim; a test that then asserts
+/// `list` shows the confirmed claim also promotes the knowledge item to
+/// `Active` (mirroring what the later decide-chunk's confirm will do once it
+/// migrates to `knowledge_items`).
 async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table: &str) -> ClaimId {
     let identity = identity_for(runtime, "local");
     let profile = ProfileIdentity::parse(&identity).unwrap();
@@ -149,19 +160,65 @@ async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table
         DatabaseObjectKind::Table,
     )
     .unwrap();
+    let payload = ClaimPayload::table_alias(table).unwrap();
     let request = ProposeClaim {
         object: object.clone(),
         fingerprint: unobserved_fingerprint(),
-        payload: ClaimPayload::table_alias(table).unwrap(),
+        payload: payload.clone(),
         origin: ClaimOrigin::AssistantInferred,
         initial_status: ClaimStatus::Candidate,
         evidence: None,
         referenced_columns: Vec::new(),
     };
-    match store.propose_claim(request).await.unwrap() {
+    let id = match store.propose_claim(request).await.unwrap() {
         ProposeOutcome::Stored(id) => id,
         other => panic!("expected Stored, got {other:?}"),
-    }
+    };
+    let slot = KnowledgeSlot::TableAlias;
+    let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
+    store
+        .put_knowledge_item(KnowledgeItemRequest {
+            object: object.clone(),
+            slot,
+            value: payload,
+            source: ClaimOrigin::AssistantInferred,
+            state: KnowledgeState::Pending,
+            schema_binding_json: serde_json::to_string(&binding).unwrap(),
+            fingerprint: unobserved_fingerprint(),
+        })
+        .await
+        .unwrap();
+    id
+}
+
+/// Promotes the `table.alias` knowledge item for `table` to `Active`, mirroring
+/// what the later decide-chunk's `confirm` will do once it migrates to
+/// `knowledge_items`. The legacy `Decide::Confirm` this test also runs still
+/// promotes the legacy claim (so `/queue` and `/contract` show the confirmed
+/// state); this keeps `/contracts` (list → recall) in step until that chunk.
+async fn confirm_knowledge_item(store: &SqliteStateStore, runtime: &RuntimeConfig, table: &str) {
+    let identity = identity_for(runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        table,
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let item_id = store
+        .knowledge_for_object(&object)
+        .await
+        .expect("knowledge items listed")
+        .into_iter()
+        .find(|i| i.slot == KnowledgeSlot::TableAlias)
+        .expect("alias item stored")
+        .id;
+    store
+        .update_knowledge_item_state(&item_id, KnowledgeState::Active)
+        .await
+        .expect("item promoted");
 }
 
 /// The short reference the user types: the stored claim-id prefix
@@ -513,6 +570,10 @@ async fn queue_and_existing_subcommands_unchanged() {
         RenderFormat::Text,
     )
     .await;
+    // The legacy `Decide::Confirm` promotes the legacy claim (so `/queue` and
+    // `/contract` show it). `contracts list` reads `knowledge_items` via
+    // recall, so mirror the confirm there too until the decide chunk migrates.
+    confirm_knowledge_item(&store, &runtime, "orders").await;
     let (_ccmd2, _ccode2, cout2, cerr2) =
         run_slash("/contracts", &runtime, &store, RenderFormat::Text).await;
     assert!(

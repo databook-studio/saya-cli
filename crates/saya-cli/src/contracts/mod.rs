@@ -53,6 +53,11 @@ pub(crate) use reconcile::{ReconcileOutcome, reconcile};
 #[allow(unused_imports)]
 pub(crate) use retrieval::RetrievalPolicy;
 pub(crate) use review::{confirm, forget, propose, reject, show};
+// `conflicts_for` is `pub(crate)` in `conflict` but the module is private; the
+// contracts tests exercise it directly, so re-export it alongside the other
+// operations. Unused in a lib build (tests only), like the re-exports above.
+#[allow(unused_imports)]
+pub(crate) use conflict::conflicts_for;
 #[allow(unused_imports)]
 pub(crate) use use_once::use_candidate_once;
 #[allow(unused_imports)]
@@ -67,7 +72,8 @@ pub(crate) use knowledge_validity::{
 };
 #[allow(unused_imports)]
 pub(crate) use view::{
-    ContractConflict, ContractSchemaState, RecallDiagnostics, RecallOutcome, RetrievedContract,
+    ContractClaim, ContractConflict, ContractSchemaState, RecallDiagnostics, RecallOutcome,
+    RetrievedContract, status_from_state,
 };
 // P1a: the typed recall receipt. The agent layer (`recall_context`) builds it
 // beside the context blocks; nothing consumes it yet (P1b). Re-exported here

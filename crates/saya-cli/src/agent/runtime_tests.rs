@@ -26,9 +26,7 @@ use saya_agent::{
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
 };
-use saya_store::{
-    ContractStore, KnowledgeItemStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
-};
+use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, ConnectionError, Database,
     DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, KnowledgeSlot, KnowledgeState,
@@ -165,25 +163,43 @@ fn orders_schema(identity: &ProfileIdentity) -> (ProfileIdentity, SchemaTree) {
 async fn remember_default_time_column(
     store: &SqliteStateStore,
     obj: &DatabaseObjectRef,
-    fingerprint: &saya_types::SchemaFingerprint,
+    _fingerprint: &saya_types::SchemaFingerprint,
     column: &str,
     status: ClaimStatus,
     origin: ClaimOrigin,
 ) -> ClaimId {
+    use saya_types::{KnowledgeSlot, SchemaBinding};
     let payload = ClaimPayload::default_time_column(column).unwrap();
-    let request = ProposeClaim {
-        object: obj.clone(),
-        fingerprint: fingerprint.clone(),
-        referenced_columns: payload.referenced_column_name_snapshots(),
-        payload,
-        origin,
-        initial_status: status,
-        evidence: None,
+    let state = match status {
+        ClaimStatus::Confirmed => KnowledgeState::Active,
+        ClaimStatus::Candidate => KnowledgeState::Pending,
+        _ => KnowledgeState::Dismissed,
     };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    }
+    let slot = KnowledgeSlot::TableDefaultTime;
+    let binding = SchemaBinding::derive(&slot, &payload).expect("default_time slot/payload agree");
+    let request = KnowledgeItemRequest {
+        object: obj.clone(),
+        slot,
+        value: payload,
+        source: origin,
+        state,
+        schema_binding_json: serde_json::to_string(&binding).unwrap(),
+        fingerprint: crate::commands::unobserved_fingerprint(),
+    };
+    store.put_knowledge_item(request).await.unwrap();
+    // Read the store-assigned `ki-` id back so the event-naming assertion
+    // compares against exactly what recall supplied.
+    ClaimId::parse(
+        &store
+            .knowledge_for_object(obj)
+            .await
+            .expect("knowledge items listed")
+            .into_iter()
+            .find(|i| i.slot == KnowledgeSlot::TableDefaultTime)
+            .expect("default_time item stored")
+            .id,
+    )
+    .expect("ki id")
 }
 
 /// A minimal `RuntimeConfig` carrying only what `run_prompt_with_inputs` reads
@@ -1439,6 +1455,13 @@ const OVERRIDE_SQL: &str = "SELECT rental_date FROM orders WHERE rental_date > '
 /// Seeds a confirmed `default_time_column` claim of `return_date` on
 /// `catalog.public.orders` under a matching cached schema, returning the temp
 /// root, the claim id, and the open store. Mirrors the test-1 harness.
+///
+/// D-4 NOTE: the claim's binding is `Column { return_date, Time }`, so the
+/// cached schema must carry `return_date` as a temporal column for the item to
+/// read `current` (and so reach the model, where override detection sees it).
+/// The old whole-table fingerprint model classified the claim `Current` from
+/// the fingerprint match alone; D-4 classifies from the binding, so the schema
+/// must name the bound column.
 async fn a1_turn_setup(
     status: ClaimStatus,
     origin: ClaimOrigin,
@@ -1448,11 +1471,30 @@ async fn a1_turn_setup(
     let identity = identity_for("analytics");
     let store = store_at(&db, &identity).await;
     let obj = object(&identity, "orders");
-    let tree = orders_schema(&identity);
-    store
-        .upsert_schema(identity.as_str(), &tree.1)
-        .await
-        .unwrap();
+    let tree = SchemaTree {
+        databases: vec![Database {
+            name: "catalog".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![Table {
+                    name: "orders".into(),
+                    columns: vec![
+                        Column {
+                            name: "id".into(),
+                            data_type: "bigint".into(),
+                            nullable: false,
+                        },
+                        Column {
+                            name: "return_date".into(),
+                            data_type: "timestamp".into(),
+                            nullable: false,
+                        },
+                    ],
+                }],
+            }],
+        }],
+    };
+    store.upsert_schema(identity.as_str(), &tree).await.unwrap();
     let fp = live_fingerprint(&orders_table());
     let claim_id =
         remember_default_time_column(&store, &obj, &fp, "return_date", status, origin).await;

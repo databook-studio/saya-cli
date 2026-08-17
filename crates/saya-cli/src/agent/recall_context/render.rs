@@ -18,8 +18,7 @@
 //! never reads as a settled instruction.
 
 use crate::connection::ConnectionRegistry;
-use crate::contracts::{ContractSchemaState, RetrievedContract};
-use saya_store::StoredClaim;
+use crate::contracts::{ContractClaim, ContractSchemaState, RetrievedContract};
 use saya_types::ClaimPayload;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -111,10 +110,8 @@ pub(super) const CONFIRMED_DIRECTIVE: &str = "Confirmed claims below bind: use t
 /// (spec 5e §1, P2a §3, Deliverable 2). Only `Confirmed` claims can be disputed
 /// (`is_recallable` is `Confirmed`-only), so the precedence suppresses the
 /// confirmed marker exactly where it must.
-fn claim_line(claim: &StoredClaim, is_disputed: bool) -> String {
-    let Some(payload) = claim.payload.as_ref() else {
-        return String::new();
-    };
+fn claim_line(claim: &ContractClaim, is_disputed: bool) -> String {
+    let payload = &claim.value;
     let marker = authority_marker(claim.status, is_disputed);
     // `claim_value` is the single source of the value/column a claim shows; the
     // prompt body and the P1a receipt both read it. `authority_marker` already

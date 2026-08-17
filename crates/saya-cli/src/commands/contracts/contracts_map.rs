@@ -6,9 +6,10 @@
 //! identity is dropped here and must never appear in any field — the DTO has no
 //! field for it, and the only name we render is the one the caller resolved.
 
-use crate::contracts::{ContractConflict, ContractSchemaState, QueuedCandidate, RetrievedContract};
+use crate::contracts::{
+    ContractClaim, ContractConflict, ContractSchemaState, QueuedCandidate, RetrievedContract,
+};
 use crate::render::{ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView};
-use saya_store::StoredClaim;
 use saya_types::ClaimPayload;
 
 /// Maps one retrieved contract to its render DTO. `profile_name` is the name the
@@ -37,18 +38,15 @@ fn schema_state_str(state: ContractSchemaState) -> String {
     .into()
 }
 
-fn claim_view(claim: &StoredClaim) -> ContractClaimView {
+fn claim_view(claim: &ContractClaim) -> ContractClaimView {
     // A recallable claim always has a payload; a forgotten tombstone does not,
     // and recall/show filter to recallable claims, so `None` is a defensive
     // fallback rather than a path that should render.
-    let (kind, value, column) = match claim.payload.as_ref() {
-        Some(payload) => render_payload(payload),
-        None => (String::new(), String::new(), None),
-    };
+    let (kind, value, column) = render_payload(&claim.value);
     ContractClaimView {
         claim_id: claim.id.as_str().to_string(),
         kind,
-        origin: claim.origin.as_str().to_string(),
+        origin: claim.source.as_str().to_string(),
         status: claim.status.as_str().to_string(),
         value,
         column,

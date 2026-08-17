@@ -41,16 +41,18 @@ impl RecallBounds {
     }
 }
 
-/// Which claim statuses a recall admits. `Off` never reaches here — the caller
-/// skips recall entirely when there is nothing to recall — so this enum models
-/// only the two modes the pipeline distinguishes. Kept in the contracts layer
-/// (not `saya_config::MemoryRecall`) so the typed operations stay free of the
-/// config crate; the agent runtime maps the config enum onto this.
+/// Which knowledge states a recall admits. `Off` never reaches here — the
+/// caller skips recall entirely when there is nothing to recall — so this
+/// enum models only the two modes the pipeline distinguishes. Kept in the
+/// contracts layer (not `saya_config::MemoryRecall`) so the typed operations
+/// stay free of the config crate; the agent runtime maps the config enum
+/// onto this.
 ///
-/// `Confirmed` is today's behaviour: only confirmed claims are recallable.
-/// `IncludeCandidates` admits `Candidate` claims too, so the render layer can
-/// show them plainly labelled as unconfirmed (ADR 0002 §4: inference is not
-/// confirmation; including a candidate is the user opting to see it anyway).
+/// `Confirmed` admits only `Active` items (the D-3 state for a confirmed
+/// fact). `IncludeCandidates` admits `Pending` items too, so the render
+/// layer can show them plainly labelled as unconfirmed (ADR 0002 §4:
+/// inference is not confirmation; including a candidate is the user opting
+/// to see it anyway). `Dismissed` is never admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum RecallMode {
     #[default]
@@ -59,16 +61,21 @@ pub(crate) enum RecallMode {
 }
 
 impl RecallMode {
-    /// Whether `status` is admitted by this mode. `Confirmed` keeps today's
-    /// `is_recallable` filter; `IncludeCandidates` widens it to candidates.
-    pub(crate) fn admits(self, status: saya_types::ClaimStatus) -> bool {
-        use saya_types::ClaimStatus;
+    /// Whether a persisted [`KnowledgeState`] is admitted by this mode.
+    ///
+    /// `Confirmed` admits only `Active` (a binding fact); `IncludeCandidates`
+    /// widens to `Pending` so the render layer can show an unconfirmed
+    /// inference plainly labelled. `Dismissed` is never admitted — it is the
+    /// withdrawn state (rejected/forgotten/contradicted) and recall never
+    /// supplies it. This is the D-3 translation of the old
+    /// `admits(ClaimStatus)` filter: `Active ↔ Confirmed`, `Pending ↔
+    /// Candidate`, `Dismissed ↔ every non-recallable status`.
+    pub(crate) fn admits_state(self, state: saya_types::KnowledgeState) -> bool {
+        use saya_types::KnowledgeState;
         match self {
-            Self::Confirmed => status.is_recallable(),
-            // A candidate joins confirmed claims; every other non-confirmed
-            // status (rejected, stale, contradicted, forgotten) stays excluded.
+            Self::Confirmed => matches!(state, KnowledgeState::Active),
             Self::IncludeCandidates => {
-                matches!(status, ClaimStatus::Confirmed | ClaimStatus::Candidate)
+                matches!(state, KnowledgeState::Active | KnowledgeState::Pending)
             }
         }
     }
@@ -99,17 +106,17 @@ pub(crate) struct RecallRequest<'a> {
     /// One candidate [`use_candidate_once`](super::use_once::use_candidate_once)
     /// admitted to *this* recall despite `recall_mode`. `None` is today's
     /// behaviour: the mode alone decides. `Some(id)` lets exactly that one
-    /// `Candidate` claim through selection under `Confirmed`, without
-    /// promoting it — the claim keeps its status, so the render layer still
-    /// marks it `[candidate — unconfirmed]`.
+    /// `Pending` item through selection under `Confirmed`, without promoting
+    /// it — the item keeps its state, so the render layer still marks it
+    /// `[candidate — unconfirmed]`.
     ///
     /// Request-scoped by construction: the field lives on the request, which
     /// is built and consumed once per recall and then dropped, so an admission
     /// cannot survive the turn it was made for (spec C §4 — one turn,
-    /// in-memory). Selection honours the exception only for a live `Candidate`
-    /// — a non-candidate id here is a no-op, because
+    /// in-memory). Selection honours the exception only for a live `Pending`
+    /// item — a non-pending id here is a no-op, because
     /// [`use_candidate_once`] refuses to mint an admission for anything but a
-    /// live candidate, so a stale or rejected id never reaches a request.
+    /// live candidate, so a dismissed or active id never reaches a request.
     pub admit_candidate: Option<saya_types::ClaimId>,
     /// Who the result is for. `ForModel` (the default) drops a contract whose
     /// computed schema state is `Stale` and counts it in `excluded_by_schema`;
@@ -122,6 +129,10 @@ pub(crate) struct RecallRequest<'a> {
 
 /// Runs a recall against `store`. Store failure returns an empty outcome with
 /// `store_unavailable: true` — recall degrades answer quality, never the query path.
+///
+/// Reads the D-3 `knowledge_items` table; a store error from that read
+/// (`KnowledgeStoreError`) degrades to an empty `Ran { store_unavailable }`
+/// outcome, the same fail-soft the legacy `contract_claims` read had.
 pub(crate) async fn recall(store: &SqliteStateStore, request: RecallRequest<'_>) -> RecallOutcome {
     let selection = match select(store, &request, request.schemas).await {
         Ok(s) => s,

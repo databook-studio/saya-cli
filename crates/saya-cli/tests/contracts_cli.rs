@@ -11,10 +11,14 @@ use saya_cli::{
     ClaimKindArg, ContractsCommand, ForgetReasonArg, RenderFormat, RuntimeConfig,
     capture_output_start, capture_output_take, load_with_sources, profile_identity, run_contracts,
 };
-use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
+use saya_store::{
+    ContractStore, KnowledgeItemRequest, KnowledgeItemStore, ProposeClaim, ProposeOutcome,
+    SchemaStore, SqliteStateStore,
+};
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, Database, DatabaseObjectKind,
-    DatabaseObjectRef, ProfileIdentity, Schema, SchemaFingerprint, SchemaTree, Table,
+    DatabaseObjectRef, FINGERPRINT_VERSION, KnowledgeSlot, KnowledgeState, ProfileIdentity, Schema,
+    SchemaBinding, SchemaFingerprint, SchemaTree, Table,
 };
 use std::{
     collections::BTreeMap,
@@ -880,10 +884,16 @@ async fn seed_current_claim(store: &SqliteStateStore, runtime: &RuntimeConfig) {
     )
     .unwrap();
     let fingerprint = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &orders_table());
+    let payload = ClaimPayload::table_alias("orders").unwrap();
+    // The legacy claim populates `contract_objects` so `contracts list`'s
+    // `list_objects` (still legacy until the CLI chunk migrates it) returns the
+    // object as an explicit ref. The D-3 knowledge item is what `recall` — which
+    // `list` calls — now reads, so seed both: the legacy row for the object
+    // list, the knowledge item for the contract recall supplies.
     let request = ProposeClaim {
         object: object.clone(),
         fingerprint,
-        payload: ClaimPayload::table_alias("orders").unwrap(),
+        payload: payload.clone(),
         origin: ClaimOrigin::UserExplicit,
         initial_status: ClaimStatus::Confirmed,
         evidence: None,
@@ -893,6 +903,21 @@ async fn seed_current_claim(store: &SqliteStateStore, runtime: &RuntimeConfig) {
         ProposeOutcome::Stored(_) => {}
         other => panic!("expected Stored, got {other:?}"),
     }
+    let slot = KnowledgeSlot::TableAlias;
+    let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
+    store
+        .put_knowledge_item(KnowledgeItemRequest {
+            object: object.clone(),
+            slot,
+            value: payload,
+            source: ClaimOrigin::UserExplicit,
+            state: KnowledgeState::Active,
+            schema_binding_json: serde_json::to_string(&binding).unwrap(),
+            fingerprint: SchemaFingerprint::from_parts(FINGERPRINT_VERSION, &"0".repeat(64))
+                .unwrap(),
+        })
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::conflict::conflicts_for;
 use crate::contracts::retrieval::RetrievalPolicy;
 use crate::contracts::validity::schema_state_for;
-use crate::contracts::view::{ContractSchemaState, RetrievedContract};
+use crate::contracts::view::{ContractClaim, ContractSchemaState, RetrievedContract};
 use saya_store::{
     ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
     StoredClaim,
@@ -172,7 +172,15 @@ pub(crate) async fn show(
         .iter()
         .map(|c| schema_state_for(c, schema, freshness))
         .fold(ContractSchemaState::Current, |acc, s| acc.aggregate(s));
-    let conflicts = conflicts_for(&recallable);
+    // Project the legacy claims to the shared render carrier. The review path
+    // still reads `contract_claims` and classifies with `schema_state_for`
+    // (the whole-table model) until its own later chunk; this projection only
+    // adapts the claim to the carrier `render`/`receipt`/`conflicts_for` read.
+    let claims: Vec<ContractClaim> = recallable
+        .iter()
+        .filter_map(ContractClaim::from_stored_claim)
+        .collect();
+    let conflicts = conflicts_for(&claims);
     // The same policy `recall` applies: a model-facing caller does not receive a
     // stale contract's claims. Unlike `recall` (which drops the contract and
     // counts it) `show` returns the object with `Stale` and an empty claim list,
@@ -182,7 +190,7 @@ pub(crate) async fn show(
         if policy == RetrievalPolicy::ForModel && schema_state == ContractSchemaState::Stale {
             (Vec::new(), Vec::new())
         } else {
-            (recallable, conflicts)
+            (claims, conflicts)
         };
     Ok(Some(RetrievedContract {
         object: object.clone(),
