@@ -587,3 +587,295 @@ async fn relationship_payload_matches_no_slot() {
     assert_eq!(error, KnowledgeStoreError::CardinalityMismatch);
     let _ = fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn test_get_knowledge_item_by_id_returns_exact_item() {
+    let root = temp_root("get-by-id");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&profile('a'), "orders");
+    let (fingerprint, schema_binding_json) = binding(3);
+    let value = ClaimPayload::table_grain("one row per order").unwrap();
+    let req = KnowledgeItemRequest {
+        object: obj.clone(),
+        slot: KnowledgeSlot::TableGrain,
+        value: value.clone(),
+        source: ClaimOrigin::UserExplicit,
+        state: KnowledgeState::Active,
+        schema_binding_json: schema_binding_json.clone(),
+        fingerprint,
+    };
+    store.put_knowledge_item(req).await.unwrap();
+
+    let items = store.knowledge_for_object(&obj).await.unwrap();
+    assert_eq!(items.len(), 1);
+    let id = &items[0].id;
+
+    let fetched = store.get_knowledge_item(id).await.unwrap();
+    assert!(fetched.is_some());
+    let item = fetched.unwrap();
+    assert_eq!(item.id, *id);
+    assert_eq!(item.object, obj);
+    assert_eq!(item.slot, KnowledgeSlot::TableGrain);
+    assert_eq!(item.value, value);
+    assert_eq!(item.source, ClaimOrigin::UserExplicit);
+    assert_eq!(item.state, KnowledgeState::Active);
+    assert_eq!(item.schema_binding_json, schema_binding_json);
+    assert_eq!(item.fingerprint_version, 3);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_get_knowledge_item_returns_none_for_missing_id() {
+    let root = temp_root("get-none");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let fetched = store.get_knowledge_item("ki-nonexistent-id").await.unwrap();
+    assert_eq!(fetched, None);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_update_knowledge_item_state_transitions() {
+    let root = temp_root("update-state");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&profile('a'), "orders");
+    let req = request(
+        &obj,
+        KnowledgeSlot::TableGrain,
+        ClaimPayload::table_grain("grain").unwrap(),
+        ClaimOrigin::AssistantInferred,
+        KnowledgeState::Pending,
+        1,
+    );
+    store.put_knowledge_item(req).await.unwrap();
+    let items = store.knowledge_for_object(&obj).await.unwrap();
+    let id = &items[0].id;
+    assert_eq!(items[0].state, KnowledgeState::Pending);
+
+    // Transition to Active
+    store
+        .update_knowledge_item_state(id, KnowledgeState::Active)
+        .await
+        .unwrap();
+    let item = store.get_knowledge_item(id).await.unwrap().unwrap();
+    assert_eq!(item.state, KnowledgeState::Active);
+    assert!(item.updated_unix_ms >= item.created_unix_ms);
+
+    // Transition to Dismissed
+    store
+        .update_knowledge_item_state(id, KnowledgeState::Dismissed)
+        .await
+        .unwrap();
+    let item = store.get_knowledge_item(id).await.unwrap().unwrap();
+    assert_eq!(item.state, KnowledgeState::Dismissed);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_revalidate_knowledge_item_updates_binding_and_activates() {
+    let root = temp_root("revalidate");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&profile('a'), "orders");
+    let req = request(
+        &obj,
+        KnowledgeSlot::TableGrain,
+        ClaimPayload::table_grain("grain").unwrap(),
+        ClaimOrigin::AssistantInferred,
+        KnowledgeState::Pending,
+        1,
+    );
+    store.put_knowledge_item(req).await.unwrap();
+    let items = store.knowledge_for_object(&obj).await.unwrap();
+    let id = &items[0].id;
+    assert_eq!(items[0].state, KnowledgeState::Pending);
+    assert_eq!(items[0].fingerprint_version, 1);
+
+    let (new_fp, new_binding) = binding(5);
+    store
+        .revalidate_knowledge_item(id, new_fp, new_binding.clone())
+        .await
+        .unwrap();
+
+    let item = store.get_knowledge_item(id).await.unwrap().unwrap();
+    assert_eq!(item.state, KnowledgeState::Active);
+    assert_eq!(item.fingerprint_version, 5);
+    assert_eq!(item.schema_binding_json, new_binding);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_delete_knowledge_item_removes_row() {
+    let root = temp_root("delete");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&profile('a'), "orders");
+    let req = request(
+        &obj,
+        KnowledgeSlot::TableGrain,
+        ClaimPayload::table_grain("grain").unwrap(),
+        ClaimOrigin::UserExplicit,
+        KnowledgeState::Active,
+        1,
+    );
+    store.put_knowledge_item(req).await.unwrap();
+    let items = store.knowledge_for_object(&obj).await.unwrap();
+    assert_eq!(items.len(), 1);
+    let id = &items[0].id;
+
+    store.delete_knowledge_item(id).await.unwrap();
+    let fetched = store.get_knowledge_item(id).await.unwrap();
+    assert_eq!(fetched, None);
+    assert!(store.knowledge_for_object(&obj).await.unwrap().is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_objects_for_profile_returns_distinct_profile_objects() {
+    let root = temp_root("objects-distinct");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let prof = profile('a');
+    let orders = object(&prof, "orders");
+    let line_items = object(&prof, "line_items");
+
+    // Multiple items for orders
+    store
+        .put_knowledge_item(request(
+            &orders,
+            KnowledgeSlot::TableGrain,
+            ClaimPayload::table_grain("one row per order").unwrap(),
+            ClaimOrigin::UserExplicit,
+            KnowledgeState::Active,
+            1,
+        ))
+        .await
+        .unwrap();
+    store
+        .put_knowledge_item(request(
+            &orders,
+            KnowledgeSlot::TableDescription,
+            ClaimPayload::table_description("orders table").unwrap(),
+            ClaimOrigin::UserExplicit,
+            KnowledgeState::Active,
+            1,
+        ))
+        .await
+        .unwrap();
+
+    // One item for line_items
+    store
+        .put_knowledge_item(request(
+            &line_items,
+            KnowledgeSlot::TableGrain,
+            ClaimPayload::table_grain("one row per line item").unwrap(),
+            ClaimOrigin::UserExplicit,
+            KnowledgeState::Active,
+            1,
+        ))
+        .await
+        .unwrap();
+
+    let objects = store.objects_for_profile(&prof).await.unwrap();
+    assert_eq!(
+        objects.len(),
+        2,
+        "must return deduplicated database objects"
+    );
+    let names: Vec<&str> = objects.iter().map(|o| o.object()).collect();
+    assert_eq!(names, vec!["line_items", "orders"]);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_knowledge_items_profile_scoping() {
+    let root = temp_root("profile-scoping");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let prof_a = profile('a');
+    let prof_b = profile('b');
+    let orders_a = object(&prof_a, "orders");
+    let orders_b = object(&prof_b, "orders");
+
+    store
+        .put_knowledge_item(request(
+            &orders_a,
+            KnowledgeSlot::TableGrain,
+            ClaimPayload::table_grain("profile a grain").unwrap(),
+            ClaimOrigin::UserExplicit,
+            KnowledgeState::Active,
+            1,
+        ))
+        .await
+        .unwrap();
+    store
+        .put_knowledge_item(request(
+            &orders_b,
+            KnowledgeSlot::TableGrain,
+            ClaimPayload::table_grain("profile b grain").unwrap(),
+            ClaimOrigin::UserExplicit,
+            KnowledgeState::Active,
+            1,
+        ))
+        .await
+        .unwrap();
+
+    let objs_a = store.objects_for_profile(&prof_a).await.unwrap();
+    assert_eq!(objs_a.len(), 1);
+    assert_eq!(objs_a[0].profile(), &prof_a);
+
+    let objs_b = store.objects_for_profile(&prof_b).await.unwrap();
+    assert_eq!(objs_b.len(), 1);
+    assert_eq!(objs_b[0].profile(), &prof_b);
+
+    let items_a = store.knowledge_for_profile(&prof_a).await.unwrap();
+    assert_eq!(items_a.len(), 1);
+    assert_eq!(items_a[0].object.profile(), &prof_a);
+
+    let items_b = store.knowledge_for_profile(&prof_b).await.unwrap();
+    assert_eq!(items_b.len(), 1);
+    assert_eq!(items_b[0].object.profile(), &prof_b);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_single_valued_slot_db_constraint() {
+    let root = temp_root("single-constraint");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&profile('a'), "customers");
+
+    store
+        .put_knowledge_item(request(
+            &obj,
+            KnowledgeSlot::TableGrain,
+            ClaimPayload::table_grain("first grain").unwrap(),
+            ClaimOrigin::UserExplicit,
+            KnowledgeState::Active,
+            1,
+        ))
+        .await
+        .unwrap();
+
+    // Direct insert attempting to insert a second single-valued slot row for the same object+slot
+    let pool = read_pool(&db).await;
+    let collision = sqlx::query(
+        "INSERT INTO knowledge_items(id, profile_id, catalog, schema, object, object_kind, slot, cardinality, value_json, source, state, schema_binding_json, fingerprint_version, created_unix_ms, updated_unix_ms) VALUES ('ki-direct-collision', ?, ?, ?, ?, ?, 'table.grain', 'single', '{}', 'user_explicit', 'active', '{}', 1, 1, 1)",
+    )
+    .bind(obj.profile().as_str())
+    .bind(obj.catalog())
+    .bind(obj.schema())
+    .bind(obj.object())
+    .bind(obj.kind().as_str())
+    .execute(&pool)
+    .await;
+
+    assert!(
+        collision.is_err(),
+        "partial unique index knowledge_items_single must reject direct second row for single-valued slot"
+    );
+    pool.close().await;
+    let _ = fs::remove_dir_all(root);
+}

@@ -17,7 +17,7 @@ use crate::knowledge_items::binding::slot_matches_payload;
 use crate::knowledge_items::keys::{knowledge_item_id, knowledge_item_id_value};
 use crate::knowledge_items::records::MAX_KNOWLEDGE_ITEM_BYTES;
 use crate::{SqliteStateStore, StoreError, redact};
-use saya_types::MAX_MULTI_SLOT_VALUES;
+use saya_types::{KnowledgeState, MAX_MULTI_SLOT_VALUES, SchemaFingerprint};
 
 /// Insert or replace one knowledge item. A single-valued slot replaces the one
 /// row it admits; a multi-valued slot appends a distinct value, refused past
@@ -113,6 +113,68 @@ pub(crate) async fn insert_or_replace(
         .await
         .map_err(|_| StoreError::Unavailable)?;
     tx.commit().await.map_err(|_| StoreError::Unavailable)?;
+    store.secure_files()?;
+    Ok(())
+}
+
+/// Update the state of an existing knowledge item.
+pub(crate) async fn update_state(
+    store: &SqliteStateStore,
+    id: &str,
+    state: KnowledgeState,
+) -> Result<(), KnowledgeStoreError> {
+    let stamp = now();
+    let pool = store.pool().await.map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("UPDATE knowledge_items SET state=?, updated_unix_ms=? WHERE id=?")
+        .bind(state.as_str())
+        .bind(stamp)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    store.secure_files()?;
+    Ok(())
+}
+
+/// Revalidate an item, updating its schema binding JSON, fingerprint version,
+/// and transitioning its state to `Active`.
+pub(crate) async fn revalidate_item(
+    store: &SqliteStateStore,
+    id: &str,
+    fingerprint: SchemaFingerprint,
+    schema_binding_json: String,
+) -> Result<(), KnowledgeStoreError> {
+    if redact(&schema_binding_json) != schema_binding_json {
+        return Err(StoreError::Invalid.into());
+    }
+    admission::check(&schema_binding_json)?;
+    let stamp = now();
+    let pool = store.pool().await.map_err(|_| StoreError::Unavailable)?;
+    sqlx::query(
+        "UPDATE knowledge_items SET state='active', schema_binding_json=?, fingerprint_version=?, updated_unix_ms=? WHERE id=?",
+    )
+    .bind(&schema_binding_json)
+    .bind(fingerprint.version() as i64)
+    .bind(stamp)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|_| StoreError::Unavailable)?;
+    store.secure_files()?;
+    Ok(())
+}
+
+/// Delete a knowledge item by its unique ID.
+pub(crate) async fn delete_item(
+    store: &SqliteStateStore,
+    id: &str,
+) -> Result<(), KnowledgeStoreError> {
+    let pool = store.pool().await.map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("DELETE FROM knowledge_items WHERE id=?")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
     store.secure_files()?;
     Ok(())
 }

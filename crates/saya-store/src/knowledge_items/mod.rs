@@ -23,7 +23,7 @@ pub use error::KnowledgeStoreError;
 pub use records::{KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES};
 
 use crate::SqliteStateStore;
-use saya_types::{DatabaseObjectRef, ProfileIdentity};
+use saya_types::{DatabaseObjectRef, KnowledgeState, ProfileIdentity, SchemaFingerprint};
 
 /// The repository over the `knowledge_items` table. Insert/replace enforces
 /// the slot's cardinality and the payload discipline; the two reads are each
@@ -39,6 +39,27 @@ pub trait KnowledgeItemStore: Send + Sync {
         &self,
         request: KnowledgeItemRequest,
     ) -> Result<(), KnowledgeStoreError>;
+    /// Retrieve a single knowledge item by its unique ID.
+    async fn get_knowledge_item(
+        &self,
+        id: &str,
+    ) -> Result<Option<KnowledgeItem>, KnowledgeStoreError>;
+    /// Update the state of an existing knowledge item.
+    async fn update_knowledge_item_state(
+        &self,
+        id: &str,
+        state: KnowledgeState,
+    ) -> Result<(), KnowledgeStoreError>;
+    /// Revalidate an item, updating its schema binding JSON, fingerprint version,
+    /// and transitioning its state to `Active`.
+    async fn revalidate_knowledge_item(
+        &self,
+        id: &str,
+        fingerprint: SchemaFingerprint,
+        schema_binding_json: String,
+    ) -> Result<(), KnowledgeStoreError>;
+    /// Delete a knowledge item by its unique ID.
+    async fn delete_knowledge_item(&self, id: &str) -> Result<(), KnowledgeStoreError>;
     /// Every knowledge item for `profile` in one query.
     async fn knowledge_for_profile(
         &self,
@@ -49,6 +70,11 @@ pub trait KnowledgeItemStore: Send + Sync {
         &self,
         object: &DatabaseObjectRef,
     ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError>;
+    /// All distinct objects that have knowledge items for `profile`.
+    async fn objects_for_profile(
+        &self,
+        profile: &ProfileIdentity,
+    ) -> Result<Vec<DatabaseObjectRef>, KnowledgeStoreError>;
 }
 
 #[async_trait]
@@ -58,6 +84,30 @@ impl KnowledgeItemStore for SqliteStateStore {
         request: KnowledgeItemRequest,
     ) -> Result<(), KnowledgeStoreError> {
         writes::insert_or_replace(self, &request).await
+    }
+    async fn get_knowledge_item(
+        &self,
+        id: &str,
+    ) -> Result<Option<KnowledgeItem>, KnowledgeStoreError> {
+        reads::read_by_id(self, id).await
+    }
+    async fn update_knowledge_item_state(
+        &self,
+        id: &str,
+        state: KnowledgeState,
+    ) -> Result<(), KnowledgeStoreError> {
+        writes::update_state(self, id, state).await
+    }
+    async fn revalidate_knowledge_item(
+        &self,
+        id: &str,
+        fingerprint: SchemaFingerprint,
+        schema_binding_json: String,
+    ) -> Result<(), KnowledgeStoreError> {
+        writes::revalidate_item(self, id, fingerprint, schema_binding_json).await
+    }
+    async fn delete_knowledge_item(&self, id: &str) -> Result<(), KnowledgeStoreError> {
+        writes::delete_item(self, id).await
     }
     async fn knowledge_for_profile(
         &self,
@@ -70,5 +120,11 @@ impl KnowledgeItemStore for SqliteStateStore {
         object: &DatabaseObjectRef,
     ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError> {
         reads::read_for_object(self, object).await
+    }
+    async fn objects_for_profile(
+        &self,
+        profile: &ProfileIdentity,
+    ) -> Result<Vec<DatabaseObjectRef>, KnowledgeStoreError> {
+        reads::read_objects_for_profile(self, profile).await
     }
 }

@@ -116,3 +116,38 @@ pub(crate) async fn read_for_object(
         .map_err(|_| StoreError::Unavailable)?;
     rows.into_iter().map(decode_item).collect()
 }
+
+/// Retrieve a single knowledge item by its unique ID.
+pub(crate) async fn read_by_id(
+    store: &SqliteStateStore,
+    id: &str,
+) -> Result<Option<KnowledgeItem>, KnowledgeStoreError> {
+    let sql = format!("{SELECT} WHERE id=?");
+    let row = sqlx::query_as::<_, ItemRow>(&sql)
+        .bind(id)
+        .fetch_optional(store.pool().await.map_err(|_| StoreError::Unavailable)?)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    row.map(decode_item).transpose()
+}
+
+/// Retrieve all distinct database objects that have knowledge items for `profile`.
+pub(crate) async fn read_objects_for_profile(
+    store: &SqliteStateStore,
+    profile: &ProfileIdentity,
+) -> Result<Vec<DatabaseObjectRef>, KnowledgeStoreError> {
+    let sql = "SELECT DISTINCT catalog, schema, object, object_kind FROM knowledge_items WHERE profile_id=? ORDER BY catalog ASC, schema ASC, object ASC";
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(sql)
+        .bind(profile.as_str())
+        .fetch_all(store.pool().await.map_err(|_| StoreError::Unavailable)?)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    let mut objects = Vec::with_capacity(rows.len());
+    for (catalog, schema, object, object_kind) in rows {
+        let kind = DatabaseObjectKind::parse(&object_kind).ok_or(StoreError::Invalid)?;
+        let object_ref = DatabaseObjectRef::new(profile.clone(), &catalog, &schema, &object, kind)
+            .map_err(|_| StoreError::Invalid)?;
+        objects.push(object_ref);
+    }
+    Ok(objects)
+}
