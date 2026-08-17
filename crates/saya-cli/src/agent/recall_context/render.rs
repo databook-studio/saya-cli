@@ -78,6 +78,16 @@ pub(super) fn render_body(
             if !line.is_empty() {
                 let _ = writeln!(out, "  {line}");
             }
+            // A directive claim's reason renders on its own line beneath the
+            // claim, indented further and labelled so it reads as the
+            // justification for the claim above it (spec: claim-reasons). The
+            // reason strengthens a confirmed directive; it does not reword the
+            // claim line or the stanza directive. Empty for a claim with no
+            // reason — the common case, and the state of every directive claim
+            // written before the field existed.
+            if let Some(reason) = claim_reason(&claim.value) {
+                let _ = writeln!(out, "      because: {reason}");
+            }
         }
         // 5e: one summary line per conflict plus the do-not-choose instruction.
         // Appended after the claim lines so a reader scanning the stanza sees every
@@ -124,6 +134,20 @@ fn claim_line(claim: &ContractClaim, is_disputed: bool) -> String {
         (Some(_), true) => format!("{marker}{}", payload.kind()),
         (None, false) => format!("{marker}{}  {value}", payload.kind()),
         (None, true) => format!("{marker}{}", payload.kind()),
+    }
+}
+
+/// The reason a directive claim carries, when it has one. Only the directive
+/// variants (`DefaultTimeColumn`, `TableGrain`, `ColumnRole`) carry a reason;
+/// every other variant (and a directive with no reason) returns `None`. This
+/// is the single source the prompt body reads for the reason, so a future
+/// consumer cannot render a reason the prompt did not.
+pub(crate) fn claim_reason(payload: &ClaimPayload) -> Option<&str> {
+    match payload {
+        ClaimPayload::DefaultTimeColumn { reason, .. } => reason.as_deref(),
+        ClaimPayload::TableGrain { reason, .. } => reason.as_deref(),
+        ClaimPayload::ColumnRole { reason, .. } => reason.as_deref(),
+        _ => None,
     }
 }
 

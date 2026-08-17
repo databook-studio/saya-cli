@@ -91,6 +91,12 @@ pub struct RawProposalJson {
     pub object_id: String,
     pub slot: String,
     pub value: String,
+    /// An optional reason a directive claim carries, so a model that would
+    /// argue with the claim reads its justification. Forwarded to the directive
+    /// constructors only; `#[serde(default)]` so a model that omits it (or an
+    /// old extraction response) decodes as no reason.
+    #[serde(default)]
+    pub reason: Option<String>,
     #[serde(default = "default_origin")]
     pub origin: String,
     #[serde(default = "default_confidence")]
@@ -132,11 +138,17 @@ pub fn is_sensitive_or_credential_value(val: &str) -> bool {
     patterns.iter().any(|&p| lower.contains(p))
 }
 
-/// Parses slot and value into a validated `ClaimPayload`.
+/// Parses slot and value (with an optional reason) into a validated
+/// `ClaimPayload`. The reason is forwarded to the directive constructors only
+/// — a reason on a description or alias is dropped, since those constructors
+/// accept none. A reason that fails `validate_text` (too long, control chars)
+/// fails the whole payload rather than being silently dropped: a model that
+/// emits an oversized reason should not have it stored truncated.
 #[allow(dead_code)]
 pub fn build_claim_payload(
     slot: &KnowledgeSlot,
     raw_value: &str,
+    reason: Option<&str>,
 ) -> Result<ClaimPayload, ExtractionError> {
     let clean = raw_value.trim();
     if clean.is_empty() {
@@ -153,9 +165,9 @@ pub fn build_claim_payload(
             .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
         KnowledgeSlot::TableAlias => ClaimPayload::table_alias(clean)
             .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
-        KnowledgeSlot::TableGrain => ClaimPayload::table_grain(clean)
+        KnowledgeSlot::TableGrain => ClaimPayload::table_grain(clean, reason)
             .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
-        KnowledgeSlot::TableDefaultTime => ClaimPayload::default_time_column(clean)
+        KnowledgeSlot::TableDefaultTime => ClaimPayload::default_time_column(clean, reason)
             .map_err(|e| ExtractionError::InvalidPayload(e.to_string())),
         KnowledgeSlot::ColumnDescription { column } => {
             ClaimPayload::column_description(column, clean)
@@ -165,7 +177,7 @@ pub fn build_claim_payload(
             let role = ColumnRole::parse(clean.to_lowercase().as_str()).ok_or_else(|| {
                 ExtractionError::InvalidPayload(format!("unknown column role '{clean}'"))
             })?;
-            ClaimPayload::column_role(column, role)
+            ClaimPayload::column_role(column, role, reason)
                 .map_err(|e| ExtractionError::InvalidPayload(e.to_string()))
         }
         _ => Err(ExtractionError::InvalidPayload(format!(

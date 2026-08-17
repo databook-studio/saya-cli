@@ -63,12 +63,19 @@ pub(crate) fn build_payload(
     kind: ClaimKindArg,
     value: &str,
     column: Option<&str>,
+    reason: Option<&str>,
 ) -> Result<ClaimPayload, ArgError> {
     use ClaimKindArg as K;
     // A `ContractError` from a fallible `saya_types` constructor is mapped to
     // `InvalidValue` *without* carrying the offending value — see `ArgError`.
     // We use `.map_err(|_| ArgError::InvalidValue)` rather than `?` so the error
     // never becomes a `ContractError`-carrying variant, and the value stays out.
+    //
+    // `reason` is forwarded to the directive constructors (`Grain`, `TimeColumn`,
+    // `ColumnRole`) only — a reason on a description or alias is not applicable,
+    // and the non-directive constructors do not accept one. An empty/whitespace
+    // reason collapses to `None` inside the constructor, so a `--reason ""` is
+    // the same as no `--reason`.
     match kind {
         K::Description => {
             reject_column(column)?;
@@ -80,11 +87,11 @@ pub(crate) fn build_payload(
         }
         K::Grain => {
             reject_column(column)?;
-            ClaimPayload::table_grain(value).map_err(|_| ArgError::InvalidValue)
+            ClaimPayload::table_grain(value, reason).map_err(|_| ArgError::InvalidValue)
         }
         K::TimeColumn => {
             reject_column(column)?;
-            ClaimPayload::default_time_column(value).map_err(|_| ArgError::InvalidValue)
+            ClaimPayload::default_time_column(value, reason).map_err(|_| ArgError::InvalidValue)
         }
         K::ColumnDescription => {
             let column = require_column(column)?;
@@ -93,7 +100,7 @@ pub(crate) fn build_payload(
         K::ColumnRole => {
             let column = require_column(column)?;
             let role = ColumnRole::parse(value).ok_or(ArgError::UnknownColumnRole)?;
-            ClaimPayload::column_role(column, role).map_err(|_| ArgError::InvalidValue)
+            ClaimPayload::column_role(column, role, reason).map_err(|_| ArgError::InvalidValue)
         }
     }
 }
@@ -244,48 +251,83 @@ mod tests {
 
     #[test]
     fn build_payload_description() {
-        let p = build_payload(K::Description, "orders fact table", None).unwrap();
+        let p = build_payload(K::Description, "orders fact table", None, None).unwrap();
         assert!(matches!(p, ClaimPayload::TableDescription { .. }));
     }
 
     #[test]
     fn build_payload_alias() {
-        let p = build_payload(K::Alias, "orders", None).unwrap();
+        let p = build_payload(K::Alias, "orders", None, None).unwrap();
         assert!(matches!(p, ClaimPayload::TableAlias { .. }));
     }
 
     #[test]
     fn build_payload_grain() {
-        let p = build_payload(K::Grain, "one row per order", None).unwrap();
+        let p = build_payload(K::Grain, "one row per order", None, None).unwrap();
         assert!(matches!(p, ClaimPayload::TableGrain { .. }));
     }
 
+    /// A `--reason` on a directive kind is carried onto the payload (the point
+    /// of `claim-reasons`: the explicit-remember path can state *why*). A reason
+    /// on a non-directive kind (description/alias) is ignored — only the
+    /// directive constructors accept one.
     #[test]
-    fn build_payload_time_column() {
-        let p = build_payload(K::TimeColumn, "created_at", None).unwrap();
-        assert!(matches!(p, ClaimPayload::DefaultTimeColumn { .. }));
+    fn build_payload_carries_reason_on_directive_kinds() {
+        let grain = build_payload(
+            K::Grain,
+            "one row per order",
+            None,
+            Some("orders ship separately"),
+        )
+        .unwrap();
+        assert!(matches!(
+            grain,
+            ClaimPayload::TableGrain { reason: Some(r), .. } if r == "orders ship separately"
+        ));
+        let time = build_payload(
+            K::TimeColumn,
+            "return_date",
+            None,
+            Some("a rental only counts once it comes back"),
+        )
+        .unwrap();
+        assert!(matches!(
+            time,
+            ClaimPayload::DefaultTimeColumn { reason: Some(r), .. }
+            if r == "a rental only counts once it comes back"
+        ));
+        let role =
+            build_payload(K::ColumnRole, "measure", Some("amount"), Some("money paid")).unwrap();
+        assert!(matches!(
+            role,
+            ClaimPayload::ColumnRole { reason: Some(r), .. } if r == "money paid"
+        ));
+        // A reason on a non-directive kind is not forwarded (the description
+        // constructor takes none); it does not error, it is simply not carried.
+        let desc = build_payload(K::Description, "a table", None, Some("ignored")).unwrap();
+        assert!(matches!(desc, ClaimPayload::TableDescription { .. }));
     }
 
     #[test]
     fn build_payload_column_description() {
-        let p = build_payload(K::ColumnDescription, "order total", Some("amount")).unwrap();
+        let p = build_payload(K::ColumnDescription, "order total", Some("amount"), None).unwrap();
         assert!(matches!(p, ClaimPayload::ColumnDescription { .. }));
     }
 
     #[test]
     fn build_payload_column_role() {
-        let p = build_payload(K::ColumnRole, "measure", Some("amount")).unwrap();
+        let p = build_payload(K::ColumnRole, "measure", Some("amount"), None).unwrap();
         assert!(matches!(p, ClaimPayload::ColumnRole { .. }));
     }
 
     #[test]
     fn column_kinds_require_column() {
         assert_eq!(
-            build_payload(K::ColumnDescription, "x", None).unwrap_err(),
+            build_payload(K::ColumnDescription, "x", None, None).unwrap_err(),
             ArgError::ColumnRequired
         );
         assert_eq!(
-            build_payload(K::ColumnRole, "measure", None).unwrap_err(),
+            build_payload(K::ColumnRole, "measure", None, None).unwrap_err(),
             ArgError::ColumnRequired
         );
     }
@@ -294,7 +336,7 @@ mod tests {
     fn table_kinds_reject_column() {
         for kind in [K::Description, K::Alias, K::Grain, K::TimeColumn] {
             assert_eq!(
-                build_payload(kind, "x", Some("amount")).unwrap_err(),
+                build_payload(kind, "x", Some("amount"), None).unwrap_err(),
                 ArgError::ColumnNotApplicable
             );
         }
@@ -303,22 +345,27 @@ mod tests {
     #[test]
     fn unknown_column_role() {
         assert_eq!(
-            build_payload(K::ColumnRole, "not-a-role", Some("amount")).unwrap_err(),
+            build_payload(K::ColumnRole, "not-a-role", Some("amount"), None).unwrap_err(),
             ArgError::UnknownColumnRole
         );
     }
 
     #[test]
     fn invalid_value_control_character() {
-        let err =
-            build_payload(K::Description, &format!("hello{SENTINEL}\nworld"), None).unwrap_err();
+        let err = build_payload(
+            K::Description,
+            &format!("hello{SENTINEL}\nworld"),
+            None,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(err, ArgError::InvalidValue);
     }
 
     #[test]
     fn invalid_value_too_long() {
         let long = format!("{SENTINEL}{}", "x".repeat(2000));
-        let err = build_payload(K::Description, &long, None).unwrap_err();
+        let err = build_payload(K::Description, &long, None, None).unwrap_err();
         assert_eq!(err, ArgError::InvalidValue);
     }
 
@@ -326,19 +373,20 @@ mod tests {
     fn arg_error_display_never_echoes_value() {
         // Each reachable ArgError is built from input containing SENTINEL and
         // must omit it from its rendered message.
-        let invalid = build_payload(K::Description, &format!("{SENTINEL}\n"), None).unwrap_err();
+        let invalid =
+            build_payload(K::Description, &format!("{SENTINEL}\n"), None, None).unwrap_err();
         assert_eq!(invalid, ArgError::InvalidValue);
         assert!(!format!("{invalid}").contains(SENTINEL));
 
-        let not_applicable = build_payload(K::Description, "ok", Some(SENTINEL)).unwrap_err();
+        let not_applicable = build_payload(K::Description, "ok", Some(SENTINEL), None).unwrap_err();
         assert_eq!(not_applicable, ArgError::ColumnNotApplicable);
         assert!(!format!("{not_applicable}").contains(SENTINEL));
 
-        let required = build_payload(K::ColumnRole, SENTINEL, None).unwrap_err();
+        let required = build_payload(K::ColumnRole, SENTINEL, None, None).unwrap_err();
         assert_eq!(required, ArgError::ColumnRequired);
         assert!(!format!("{required}").contains(SENTINEL));
 
-        let unknown = build_payload(K::ColumnRole, SENTINEL, Some("amount")).unwrap_err();
+        let unknown = build_payload(K::ColumnRole, SENTINEL, Some("amount"), None).unwrap_err();
         assert_eq!(unknown, ArgError::UnknownColumnRole);
         assert!(!format!("{unknown}").contains(SENTINEL));
 

@@ -206,7 +206,7 @@ async fn test_resulting_item_is_not_stale_on_arrival() {
     let extracted = ExtractedProposal {
         object_id: id,
         slot: KnowledgeSlot::TableDefaultTime,
-        value: ClaimPayload::default_time_column("created_at").unwrap(),
+        value: ClaimPayload::default_time_column("created_at", None).unwrap(),
         origin: ProposalOrigin::AssistantInferred,
         confidence: 0.9,
     };
@@ -300,7 +300,7 @@ async fn test_resolve_proposal_derives_schema_binding() {
     let extracted = ExtractedProposal {
         object_id: id,
         slot: KnowledgeSlot::TableDefaultTime,
-        value: ClaimPayload::default_time_column("created_at").unwrap(),
+        value: ClaimPayload::default_time_column("created_at", None).unwrap(),
         origin: ProposalOrigin::AssistantInferred,
         confidence: 0.95,
     };

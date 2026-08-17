@@ -85,12 +85,14 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
             kind,
             value,
             column,
+            reason,
             ..
         } => ContractsCommand::Remember {
             table: table.clone(),
             kind: *kind,
             value: value.clone(),
             column: column.clone(),
+            reason: reason.clone(),
             profile,
         },
         ContractsCommand::Review {
@@ -179,6 +181,7 @@ mod tests {
                     kind: crate::cli::ClaimKindArg::Alias,
                     value: "v".into(),
                     column: None,
+                    reason: None,
                     profile: None,
                 },
                 Some(ACTIVE),
@@ -188,6 +191,7 @@ mod tests {
                 kind: crate::cli::ClaimKindArg::Alias,
                 value: "v".into(),
                 column: None,
+                reason: None,
                 profile: Some(ACTIVE.into()),
             }
         );

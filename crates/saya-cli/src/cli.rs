@@ -128,6 +128,13 @@ pub enum ContractsCommand {
         value: String,
         #[arg(long)]
         column: Option<String>,
+        /// Why the directive claim holds — a sentence the model reads alongside
+        /// the value so a claim that contradicts a plausible schema reading
+        /// (use `return_date`, not `rental_date`) loses less often. Forwarded to
+        /// the directive kinds only (grain, time-column, column-role); ignored
+        /// for description/alias. Optional: a claim with no reason is the default.
+        #[arg(long)]
+        reason: Option<String>,
         #[arg(long)]
         profile: Option<String>,
     },

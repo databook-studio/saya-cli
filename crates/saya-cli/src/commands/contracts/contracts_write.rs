@@ -20,14 +20,16 @@ use saya_types::{
     ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, KnowledgeState, ProfileIdentity,
 };
 
-/// What the user asked to remember: the qualified object, the kind, and the
-/// claim value (with its optional column). Borrows the parsed strings so a
-/// `remember` call allocates nothing it does not have to.
+/// What the user asked to remember: the qualified object, the kind, the
+/// claim value (with its optional column), and an optional `reason` a directive
+/// claim carries so the model reads *why* alongside *what*. Borrows the parsed
+/// strings so a `remember` call allocates nothing it does not have to.
 pub(super) struct RememberRequest<'a> {
     pub table: &'a str,
     pub kind: ClaimKindArg,
     pub value: &'a str,
     pub column: Option<&'a str>,
+    pub reason: Option<&'a str>,
 }
 
 /// Where it is being remembered: the store, the render format, and the
@@ -50,6 +52,7 @@ pub(super) async fn remember(
         kind,
         value,
         column,
+        reason,
     } = request;
     let RememberContext {
         store,
@@ -61,7 +64,7 @@ pub(super) async fn remember(
         Ok(q) => q,
         Err(_) => return arg_failure(ArgMessage::MalformedTable, format),
     };
-    let payload = match build_payload(kind, value, column) {
+    let payload = match build_payload(kind, value, column, reason) {
         Ok(payload) => payload,
         Err(_) => return arg_failure(ArgMessage::BadValue, format),
     };

@@ -262,7 +262,7 @@ mod tests {
             object: obj.clone(),
             profile_name: "primary".to_string(),
             slot: KnowledgeSlot::TableDefaultTime,
-            value: ClaimPayload::default_time_column("created_at").unwrap(),
+            value: ClaimPayload::default_time_column("created_at", None).unwrap(),
             source: ClaimOrigin::AssistantInferred,
             state: KnowledgeState::Pending,
             schema_binding: SchemaBinding::Column {
@@ -296,7 +296,7 @@ mod tests {
             object: obj.clone(),
             profile_name: "primary".to_string(),
             slot: KnowledgeSlot::TableDefaultTime,
-            value: ClaimPayload::default_time_column("updated_at").unwrap(),
+            value: ClaimPayload::default_time_column("updated_at", None).unwrap(),
             source: ClaimOrigin::UserExplicit,
             state: KnowledgeState::Active,
             schema_binding: SchemaBinding::Column {
@@ -331,7 +331,7 @@ mod tests {
             object: obj.clone(),
             profile_name: "primary".to_string(),
             slot: KnowledgeSlot::TableDefaultTime,
-            value: ClaimPayload::default_time_column("shipped_at").unwrap(),
+            value: ClaimPayload::default_time_column("shipped_at", None).unwrap(),
             source: ClaimOrigin::AssistantInferred,
             state: KnowledgeState::Pending,
             schema_binding: SchemaBinding::Column {
@@ -380,7 +380,7 @@ mod tests {
             object: other_obj,
             profile_name: "primary".to_string(),
             slot: KnowledgeSlot::TableDefaultTime,
-            value: ClaimPayload::default_time_column("created_at").unwrap(),
+            value: ClaimPayload::default_time_column("created_at", None).unwrap(),
             source: ClaimOrigin::AssistantInferred,
             state: KnowledgeState::Pending,
             schema_binding: SchemaBinding::Column {
@@ -405,7 +405,7 @@ mod tests {
             object: obj.clone(),
             profile_name: "primary".to_string(),
             slot: KnowledgeSlot::TableGrain,
-            value: ClaimPayload::table_grain("one row per order").unwrap(),
+            value: ClaimPayload::table_grain("one row per order", None).unwrap(),
             source: ClaimOrigin::AssistantInferred,
             state: KnowledgeState::Pending,
             schema_binding: SchemaBinding::Table,
@@ -484,7 +484,7 @@ mod tests {
             object: obj.clone(),
             profile_name: "primary".to_string(),
             slot: KnowledgeSlot::TableDefaultTime,
-            value: ClaimPayload::default_time_column("created_at").unwrap(),
+            value: ClaimPayload::default_time_column("created_at", None).unwrap(),
             source: ClaimOrigin::AssistantInferred,
             state: KnowledgeState::Pending,
             schema_binding: SchemaBinding::Column {

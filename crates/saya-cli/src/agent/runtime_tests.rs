@@ -177,7 +177,7 @@ async fn remember_default_time_column(
     origin: ClaimOrigin,
 ) -> ClaimId {
     use saya_types::{KnowledgeSlot, SchemaBinding};
-    let payload = ClaimPayload::default_time_column(column).unwrap();
+    let payload = ClaimPayload::default_time_column(column, None).unwrap();
     let state = match status {
         ClaimStatus::Confirmed => KnowledgeState::Active,
         ClaimStatus::Candidate => KnowledgeState::Pending,

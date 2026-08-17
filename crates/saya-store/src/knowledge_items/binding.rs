@@ -49,11 +49,11 @@ mod tests {
         ));
         assert!(slot_matches_payload(
             &KnowledgeSlot::TableGrain,
-            &ClaimPayload::table_grain("g").unwrap(),
+            &ClaimPayload::table_grain("g", None).unwrap(),
         ));
         assert!(slot_matches_payload(
             &KnowledgeSlot::TableDefaultTime,
-            &ClaimPayload::default_time_column("c").unwrap(),
+            &ClaimPayload::default_time_column("c", None).unwrap(),
         ));
         assert!(slot_matches_payload(
             &KnowledgeSlot::ColumnDescription {
@@ -65,7 +65,7 @@ mod tests {
             &KnowledgeSlot::ColumnRole {
                 column: "created_at".into()
             },
-            &ClaimPayload::column_role("created_at", ColumnRole::Timestamp).unwrap(),
+            &ClaimPayload::column_role("created_at", ColumnRole::Timestamp, None).unwrap(),
         ));
     }
 
@@ -95,7 +95,7 @@ mod tests {
             &KnowledgeSlot::ColumnRole {
                 column: "created_at".into()
             },
-            &ClaimPayload::column_role("updated_at", ColumnRole::Timestamp).unwrap(),
+            &ClaimPayload::column_role("updated_at", ColumnRole::Timestamp, None).unwrap(),
         ));
     }
 

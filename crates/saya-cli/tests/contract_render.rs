@@ -23,6 +23,7 @@ fn orders_view(schema_state: &str, truncated: bool) -> ContractView {
                 status: "confirmed".into(),
                 value: "created_at".into(),
                 column: Some("created_at".into()),
+                reason: None,
             },
             ContractClaimView {
                 claim_id: "c-3c4d5e6f7a8b".into(),
@@ -31,11 +32,52 @@ fn orders_view(schema_state: &str, truncated: bool) -> ContractView {
                 status: "confirmed".into(),
                 value: "customers".into(),
                 column: None,
+                reason: None,
             },
         ],
         conflicts: Vec::new(),
         truncated,
     }
+}
+
+/// `contracts show` renders a directive claim's reason beneath the claim line,
+/// so a user auditing a claim sees why it exists (spec: claim-reasons). `list`
+/// does not — it is a one-line-per-claim inventory and a reason is a sentence.
+#[test]
+fn text_contract_show_renders_a_reason_under_the_claim() {
+    let mut contract = orders_view("current", false);
+    contract.claims[0].reason = Some("an order only completes when it ships".into());
+    let event = TerminalEvent::ContractShow { contract };
+    let stdout = render_event(&event, RenderFormat::Text).stdout;
+    // The claim line is intact.
+    assert!(
+        stdout.contains("default_time_column  confirmed  user_explicit  created_at"),
+        "claim line intact: {stdout}"
+    );
+    // The reason follows, indented under the claim.
+    assert!(
+        stdout.contains("    because: an order only completes when it ships"),
+        "show renders the reason: {stdout}"
+    );
+}
+
+/// `contracts list` does not render the reason — it is a one-line inventory.
+#[test]
+fn text_contract_list_does_not_render_a_reason() {
+    let mut contract = orders_view("current", false);
+    contract.claims[0].reason = Some("an order only completes when it ships".into());
+    let event = TerminalEvent::ContractList {
+        contracts: vec![contract],
+    };
+    let stdout = render_event(&event, RenderFormat::Text).stdout;
+    assert!(
+        stdout.contains("default_time_column  confirmed  user_explicit  created_at"),
+        "claim line present: {stdout}"
+    );
+    assert!(
+        !stdout.contains("because:"),
+        "list must not render the reason: {stdout}"
+    );
 }
 
 #[test]
@@ -54,6 +96,7 @@ fn text_contract_list_with_current_and_stale() {
                     status: "stale".into(),
                     value: "identifier".into(),
                     column: Some("return_id".into()),
+                    reason: None,
                 }],
                 conflicts: Vec::new(),
                 truncated: false,
@@ -193,7 +236,8 @@ fn empty_contract_list_is_one_plain_line_not_an_error() {
 #[test]
 fn contract_view_serialized_keys_exclude_opaque_profile_identity() {
     // A fully-populated view so no `skip_serializing_if` field is elided:
-    // `truncated: true`, a conflict present, and a claim with `column` present.
+    // `truncated: true`, a conflict present, and a claim with `column` and
+    // `reason` present (the two optional fields, both `Some`).
     let view = ContractView {
         profile: "warehouse".into(),
         object: "analytics.public.orders".into(),
@@ -205,6 +249,7 @@ fn contract_view_serialized_keys_exclude_opaque_profile_identity() {
             status: "confirmed".into(),
             value: "identifier".into(),
             column: Some("id".into()),
+            reason: Some("the row's stable identity".into()),
         }],
         conflicts: vec![ContractConflictView {
             kind: "table_grain".into(),
@@ -242,7 +287,9 @@ fn contract_view_serialized_keys_exclude_opaque_profile_identity() {
     claim_keys.sort();
     assert_eq!(
         claim_keys,
-        ["claim_id", "column", "kind", "origin", "status", "value"],
+        [
+            "claim_id", "column", "kind", "origin", "reason", "status", "value"
+        ],
         "ContractClaimView must carry no identity-shaped field"
     );
 

@@ -63,7 +63,7 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "contract <catalog.schema.object> — show one object's contract. Example: /contract analytics.public.orders",
         ),
         "remember" => Some(
-            "remember <catalog.schema.object> <kind> <value…> — store a confirmed claim. Kinds: description, alias, grain, time-column, column-description <column> <value…>, column-role <column> <role>. Example: /remember analytics.public.orders alias customers",
+            "remember <catalog.schema.object> <kind> <value…> [because <reason…>] — store a confirmed claim. Kinds: description, alias, grain, time-column, column-description <column> <value…>, column-role <column> <role>. The optional `because <reason…>` (directive kinds only) records why the claim holds. Example: /remember analytics.public.orders time-column created_at because orders complete on return",
         ),
         "forget" => Some(
             "forget <claim-id> — tombstone a claim so recall excludes it. Example: /forget abc-123",

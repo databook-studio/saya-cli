@@ -90,7 +90,7 @@ async fn insert_and_read_back_round_trips_every_field() {
     let store = SqliteStateStore::new(&db);
     let obj = object(&profile('a'), "orders");
     let (fingerprint, schema_binding_json) = binding(7);
-    let value = ClaimPayload::table_grain("one row per shipped order").unwrap();
+    let value = ClaimPayload::table_grain("one row per shipped order", None).unwrap();
     store
         .put_knowledge_item(KnowledgeItemRequest {
             object: obj.clone(),
@@ -132,8 +132,8 @@ async fn second_value_to_single_slot_replaces_at_the_database() {
     let store = SqliteStateStore::new(&db);
     let obj = object(&profile('a'), "orders");
 
-    let first = ClaimPayload::table_grain("one row per order").unwrap();
-    let second = ClaimPayload::table_grain("one row per shipment").unwrap();
+    let first = ClaimPayload::table_grain("one row per order", None).unwrap();
+    let second = ClaimPayload::table_grain("one row per shipment", None).unwrap();
     store
         .put_knowledge_item(request(
             &obj,
@@ -295,7 +295,7 @@ async fn column_scoped_slots_for_different_columns_coexist() {
             KnowledgeSlot::ColumnRole {
                 column: "created_at".into(),
             },
-            ClaimPayload::column_role("created_at", ColumnRole::Timestamp).unwrap(),
+            ClaimPayload::column_role("created_at", ColumnRole::Timestamp, None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -308,7 +308,7 @@ async fn column_scoped_slots_for_different_columns_coexist() {
             KnowledgeSlot::ColumnRole {
                 column: "updated_at".into(),
             },
-            ClaimPayload::column_role("updated_at", ColumnRole::Timestamp).unwrap(),
+            ClaimPayload::column_role("updated_at", ColumnRole::Timestamp, None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -338,7 +338,7 @@ async fn read_for_one_profile_never_returns_anothers_rows() {
         .put_knowledge_item(request(
             &obj_a,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("profile a grain").unwrap(),
+            ClaimPayload::table_grain("profile a grain", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -349,7 +349,7 @@ async fn read_for_one_profile_never_returns_anothers_rows() {
         .put_knowledge_item(request(
             &obj_b,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("profile b grain").unwrap(),
+            ClaimPayload::table_grain("profile b grain", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -402,7 +402,7 @@ async fn one_query_returns_everything_known_for_a_profile() {
         .put_knowledge_item(request(
             &obj_orders,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("one row per order").unwrap(),
+            ClaimPayload::table_grain("one row per order", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -415,7 +415,7 @@ async fn one_query_returns_everything_known_for_a_profile() {
             KnowledgeSlot::ColumnRole {
                 column: "occurred_at".into(),
             },
-            ClaimPayload::column_role("occurred_at", ColumnRole::Timestamp).unwrap(),
+            ClaimPayload::column_role("occurred_at", ColumnRole::Timestamp, None).unwrap(),
             ClaimOrigin::TeamFile,
             KnowledgeState::Active,
             1,
@@ -449,7 +449,7 @@ async fn legacy_contract_tables_are_dropped_and_knowledge_stands_alone() {
         .put_knowledge_item(request_knowledge(
             &obj,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("one row per order").unwrap(),
+            ClaimPayload::table_grain("one row per order", None).unwrap(),
         ))
         .await
         .unwrap();
@@ -529,7 +529,7 @@ async fn secret_shaped_value_is_refused_not_stored() {
             &obj,
             KnowledgeSlot::TableGrain,
             // A description whose text contains a credential header shape.
-            ClaimPayload::table_grain("x-api-key: SUPERSECRETVALUE").unwrap(),
+            ClaimPayload::table_grain("x-api-key: SUPERSECRETVALUE", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -583,7 +583,7 @@ async fn test_get_knowledge_item_by_id_returns_exact_item() {
     let store = SqliteStateStore::new(&db);
     let obj = object(&profile('a'), "orders");
     let (fingerprint, schema_binding_json) = binding(3);
-    let value = ClaimPayload::table_grain("one row per order").unwrap();
+    let value = ClaimPayload::table_grain("one row per order", None).unwrap();
     let req = KnowledgeItemRequest {
         object: obj.clone(),
         slot: KnowledgeSlot::TableGrain,
@@ -632,7 +632,7 @@ async fn test_update_knowledge_item_state_transitions() {
     let req = request(
         &obj,
         KnowledgeSlot::TableGrain,
-        ClaimPayload::table_grain("grain").unwrap(),
+        ClaimPayload::table_grain("grain", None).unwrap(),
         ClaimOrigin::AssistantInferred,
         KnowledgeState::Pending,
         1,
@@ -670,7 +670,7 @@ async fn test_revalidate_knowledge_item_updates_binding_and_activates() {
     let req = request(
         &obj,
         KnowledgeSlot::TableGrain,
-        ClaimPayload::table_grain("grain").unwrap(),
+        ClaimPayload::table_grain("grain", None).unwrap(),
         ClaimOrigin::AssistantInferred,
         KnowledgeState::Pending,
         1,
@@ -703,7 +703,7 @@ async fn test_delete_knowledge_item_removes_row() {
     let req = request(
         &obj,
         KnowledgeSlot::TableGrain,
-        ClaimPayload::table_grain("grain").unwrap(),
+        ClaimPayload::table_grain("grain", None).unwrap(),
         ClaimOrigin::UserExplicit,
         KnowledgeState::Active,
         1,
@@ -734,7 +734,7 @@ async fn test_objects_for_profile_returns_distinct_profile_objects() {
         .put_knowledge_item(request(
             &orders,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("one row per order").unwrap(),
+            ClaimPayload::table_grain("one row per order", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -758,7 +758,7 @@ async fn test_objects_for_profile_returns_distinct_profile_objects() {
         .put_knowledge_item(request(
             &line_items,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("one row per line item").unwrap(),
+            ClaimPayload::table_grain("one row per line item", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -791,7 +791,7 @@ async fn test_knowledge_items_profile_scoping() {
         .put_knowledge_item(request(
             &orders_a,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("profile a grain").unwrap(),
+            ClaimPayload::table_grain("profile a grain", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -802,7 +802,7 @@ async fn test_knowledge_items_profile_scoping() {
         .put_knowledge_item(request(
             &orders_b,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("profile b grain").unwrap(),
+            ClaimPayload::table_grain("profile b grain", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,
@@ -839,7 +839,7 @@ async fn test_single_valued_slot_db_constraint() {
         .put_knowledge_item(request(
             &obj,
             KnowledgeSlot::TableGrain,
-            ClaimPayload::table_grain("first grain").unwrap(),
+            ClaimPayload::table_grain("first grain", None).unwrap(),
             ClaimOrigin::UserExplicit,
             KnowledgeState::Active,
             1,

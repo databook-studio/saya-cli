@@ -14,7 +14,13 @@ pub const MAX_REFERENCED_COLUMNS: usize = 32;
 /// was written under, so a future reader knows whether to expect snapshots
 /// or names. Old version-1 rows still decode: the store upgrades a bare
 /// name to a name-only snapshot flagged unknown.
-pub const CLAIM_PAYLOAD_VERSION: u32 = 2;
+///
+/// Version 3 (claim-reasons) adds an optional `reason` to the directive
+/// variants (`TableGrain`, `ColumnRole`, `DefaultTimeColumn`). The field is
+/// `#[serde(default)]`, so a row written under version 2 decodes with
+/// `reason: None` — the state of every directive claim made before the field
+/// existed. No migration is owed: the read path tolerates the missing field.
+pub const CLAIM_PAYLOAD_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String")]

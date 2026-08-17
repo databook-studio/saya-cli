@@ -272,7 +272,7 @@ fn test_8_orders_fingerprint_differs_across_backends() {
 #[test]
 fn test_9_claim_payload_rejects_empty_text() {
     assert!(ClaimPayload::table_description("").is_err());
-    assert!(ClaimPayload::table_grain("").is_err());
+    assert!(ClaimPayload::table_grain("", None).is_err());
     assert!(ClaimPayload::column_description("col", "").is_err());
 }
 
@@ -280,14 +280,14 @@ fn test_9_claim_payload_rejects_empty_text() {
 fn test_9_claim_payload_rejects_long_text() {
     let long = "x".repeat(1025);
     assert!(ClaimPayload::table_description(&long).is_err());
-    assert!(ClaimPayload::table_grain(&long).is_err());
+    assert!(ClaimPayload::table_grain(&long, None).is_err());
     assert!(ClaimPayload::column_description("col", &long).is_err());
 }
 
 #[test]
 fn test_9_claim_payload_rejects_text_with_newline() {
     assert!(ClaimPayload::table_description("hello\nworld").is_err());
-    assert!(ClaimPayload::table_grain("hello\nworld").is_err());
+    assert!(ClaimPayload::table_grain("hello\nworld", None).is_err());
     assert!(ClaimPayload::column_description("col", "hello\nworld").is_err());
 }
 

@@ -154,7 +154,7 @@ async fn remember_confirmed_default_time_column(
     put_item(
         store,
         obj,
-        ClaimPayload::default_time_column(column).unwrap(),
+        ClaimPayload::default_time_column(column, None).unwrap(),
         KnowledgeState::Active,
     )
     .await;
@@ -169,7 +169,7 @@ async fn remember_candidate_default_time_column(
     put_item(
         store,
         obj,
-        ClaimPayload::default_time_column(column).unwrap(),
+        ClaimPayload::default_time_column(column, None).unwrap(),
         KnowledgeState::Pending,
     )
     .await;
@@ -292,7 +292,7 @@ async fn seed_orders_with_created_at(
     put_item(
         store,
         &obj,
-        ClaimPayload::default_time_column("created_at").unwrap(),
+        ClaimPayload::default_time_column("created_at", None).unwrap(),
         KnowledgeState::Active,
     )
     .await;
@@ -744,7 +744,7 @@ async fn needs_review_claim_still_reaches_the_model_labelled() {
     put_item(
         &store,
         &obj,
-        ClaimPayload::default_time_column("created_at").unwrap(),
+        ClaimPayload::default_time_column("created_at", None).unwrap(),
         KnowledgeState::Active,
     )
     .await;
@@ -822,7 +822,7 @@ async fn needs_review_from_a_non_current_fingerprint_still_reaches_the_model_lab
     put_item_with_binding(
         &store,
         &obj,
-        ClaimPayload::default_time_column("created_at").unwrap(),
+        ClaimPayload::default_time_column("created_at", None).unwrap(),
         KnowledgeState::Active,
         binding,
         saya_types::FINGERPRINT_VERSION + 1,
@@ -1298,14 +1298,14 @@ async fn conflicting_grains_both_appear_marked_and_kind_named() {
     let grain_a = ContractClaim {
         id: ClaimId::parse("c-grain0001").unwrap(),
         object: obj.clone(),
-        value: ClaimPayload::table_grain("one row per order").unwrap(),
+        value: ClaimPayload::table_grain("one row per order", None).unwrap(),
         source: ClaimOrigin::UserExplicit,
         status: ClaimStatus::Confirmed,
     };
     let grain_b = ContractClaim {
         id: ClaimId::parse("c-grain0002").unwrap(),
         object: obj.clone(),
-        value: ClaimPayload::table_grain("one row per order line").unwrap(),
+        value: ClaimPayload::table_grain("one row per order line", None).unwrap(),
         source: ClaimOrigin::UserExplicit,
         status: ClaimStatus::Confirmed,
     };
@@ -1365,14 +1365,14 @@ async fn conflict_block_instructs_not_to_choose_silently() {
             ContractClaim {
                 id: ClaimId::parse("c-grain0001").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order").unwrap(),
+                value: ClaimPayload::table_grain("one row per order", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
             ContractClaim {
                 id: ClaimId::parse("c-grain0002").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order line").unwrap(),
+                value: ClaimPayload::table_grain("one row per order line", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
@@ -1427,7 +1427,7 @@ async fn no_conflict_renders_no_dispute_artifacts_and_pinned_shape() {
     let claim = ContractClaim {
         id: ClaimId::parse("c-aaa111222333").unwrap(),
         object: obj.clone(),
-        value: ClaimPayload::table_grain("one row per order").unwrap(),
+        value: ClaimPayload::table_grain("one row per order", None).unwrap(),
         source: ClaimOrigin::UserExplicit,
         status: ClaimStatus::Confirmed,
     };
@@ -1455,6 +1455,88 @@ async fn no_conflict_renders_no_dispute_artifacts_and_pinned_shape() {
     assert!(!body.contains("do not choose"), "no instruction when clean");
 }
 
+/// A directive claim that carries a reason renders it on the line beneath
+/// the claim, plainly attached to the claim it justifies (spec:
+/// claim-reasons). The `[confirmed]` marker and the claim line are unchanged;
+/// the reason is an addition, not a rewording, and the `CONFIRMED_DIRECTIVE`
+/// stanza is not weakened. A claim with no reason renders exactly as before —
+/// no extra line.
+#[tokio::test]
+async fn a_directive_claim_renders_its_reason_under_the_claim_line() {
+    use crate::contracts::{ContractClaim, ContractConflict, RetrievedContract};
+
+    let identity = identity_for("analytics");
+    let obj = object(&identity, "rental");
+    let contract = RetrievedContract {
+        object: obj.clone(),
+        schema_state: crate::contracts::ContractSchemaState::Current,
+        claims: vec![ContractClaim {
+            id: ClaimId::parse("c-rental-time").unwrap(),
+            object: obj.clone(),
+            value: ClaimPayload::default_time_column(
+                "return_date",
+                Some("a rental only counts once it comes back"),
+            )
+            .unwrap(),
+            source: ClaimOrigin::UserExplicit,
+            status: ClaimStatus::Confirmed,
+        }],
+        conflicts: Vec::<ContractConflict>::new(),
+        truncated: false,
+    };
+    let name_of =
+        std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
+    let body = super::render::render_body(std::slice::from_ref(&contract), &name_of);
+
+    // The claim line is intact and reads as the binding directive it is.
+    assert!(
+        body.contains("[confirmed] default_time_column  return_date\n"),
+        "the claim line is unchanged: {body}"
+    );
+    // The reason follows, on its own line, indented under the claim and
+    // labelled so it reads as the justification for the claim above it.
+    assert!(
+        body.contains("      because: a rental only counts once it comes back\n"),
+        "the reason renders under the claim, attached: {body}"
+    );
+    // The directive stanza is untouched.
+    assert!(body.contains(super::render::CONFIRMED_DIRECTIVE));
+}
+
+/// A claim with no reason renders no extra line — the common case, and the
+/// state of every directive claim written before the field existed.
+#[tokio::test]
+async fn a_directive_claim_with_no_reason_renders_no_reason_line() {
+    use crate::contracts::{ContractClaim, ContractConflict, RetrievedContract};
+
+    let identity = identity_for("analytics");
+    let obj = object(&identity, "rental");
+    let contract = RetrievedContract {
+        object: obj.clone(),
+        schema_state: crate::contracts::ContractSchemaState::Current,
+        claims: vec![ContractClaim {
+            id: ClaimId::parse("c-rental-time").unwrap(),
+            object: obj.clone(),
+            value: ClaimPayload::default_time_column("return_date", None).unwrap(),
+            source: ClaimOrigin::UserExplicit,
+            status: ClaimStatus::Confirmed,
+        }],
+        conflicts: Vec::<ContractConflict>::new(),
+        truncated: false,
+    };
+    let name_of =
+        std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
+    let body = super::render::render_body(std::slice::from_ref(&contract), &name_of);
+    assert!(
+        body.contains("[confirmed] default_time_column  return_date\n"),
+        "the claim line renders: {body}"
+    );
+    assert!(
+        !body.contains("because:"),
+        "no reason line when there is no reason: {body}"
+    );
+}
+
 /// A conflict does not suppress the object's other, non-disputed claims: a
 /// confirmed alias on the same object as two conflicting grains still appears
 /// and carries no dispute marker (spec 5e §3 test 4).
@@ -1474,14 +1556,14 @@ async fn conflict_does_not_suppress_non_disputed_claims() {
             ContractClaim {
                 id: ClaimId::parse("c-grain0001").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order").unwrap(),
+                value: ClaimPayload::table_grain("one row per order", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
             ContractClaim {
                 id: ClaimId::parse("c-grain0002").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order line").unwrap(),
+                value: ClaimPayload::table_grain("one row per order line", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
@@ -1540,21 +1622,21 @@ async fn conflict_and_candidate_markers_compose_in_one_block() {
             ContractClaim {
                 id: ClaimId::parse("c-grain0001").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order").unwrap(),
+                value: ClaimPayload::table_grain("one row per order", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
             ContractClaim {
                 id: ClaimId::parse("c-grain0002").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order line").unwrap(),
+                value: ClaimPayload::table_grain("one row per order line", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
             ContractClaim {
                 id: ClaimId::parse("c-time0001").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::default_time_column("created_at").unwrap(),
+                value: ClaimPayload::default_time_column("created_at", None).unwrap(),
                 source: ClaimOrigin::AssistantInferred,
                 status: ClaimStatus::Candidate,
             },
@@ -1605,14 +1687,14 @@ async fn opaque_identity_appears_nowhere_in_conflict_block() {
             ContractClaim {
                 id: ClaimId::parse("c-grain0001").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order").unwrap(),
+                value: ClaimPayload::table_grain("one row per order", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
             ContractClaim {
                 id: ClaimId::parse("c-grain0002").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order line").unwrap(),
+                value: ClaimPayload::table_grain("one row per order line", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
@@ -1802,14 +1884,14 @@ async fn disputed_confirmed_claim_does_not_read_as_binding() {
             ContractClaim {
                 id: ClaimId::parse("c-grain0001").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order").unwrap(),
+                value: ClaimPayload::table_grain("one row per order", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
             ContractClaim {
                 id: ClaimId::parse("c-grain0002").unwrap(),
                 object: obj.clone(),
-                value: ClaimPayload::table_grain("one row per order line").unwrap(),
+                value: ClaimPayload::table_grain("one row per order line", None).unwrap(),
                 source: ClaimOrigin::UserExplicit,
                 status: ClaimStatus::Confirmed,
             },
@@ -2449,7 +2531,7 @@ async fn seed_two_confirmed_claims(
     put_item(
         store,
         &obj,
-        ClaimPayload::default_time_column("created_at").unwrap(),
+        ClaimPayload::default_time_column("created_at", None).unwrap(),
         KnowledgeState::Active,
     )
     .await;
@@ -2649,7 +2731,7 @@ async fn claims_dropped_by_the_per_object_bound_are_counted() {
         put_item(
             &store,
             &obj,
-            ClaimPayload::column_role(&col, role).unwrap(),
+            ClaimPayload::column_role(&col, role, None).unwrap(),
             KnowledgeState::Active,
         )
         .await;

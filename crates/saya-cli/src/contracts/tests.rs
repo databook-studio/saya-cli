@@ -245,7 +245,7 @@ async fn seed_active_time_item(
     put_item(
         store,
         object,
-        ClaimPayload::default_time_column(column).unwrap(),
+        ClaimPayload::default_time_column(column, None).unwrap(),
         KnowledgeState::Active,
     )
     .await;
@@ -664,14 +664,14 @@ fn two_table_grain_claims_conflict_but_both_returned() {
         ContractClaim {
             id: id1.clone(),
             object: obj.clone(),
-            value: ClaimPayload::table_grain("one row per order").unwrap(),
+            value: ClaimPayload::table_grain("one row per order", None).unwrap(),
             source: ClaimOrigin::UserExplicit,
             status: ClaimStatus::Confirmed,
         },
         ContractClaim {
             id: id2.clone(),
             object: obj.clone(),
-            value: ClaimPayload::table_grain("one row per order line").unwrap(),
+            value: ClaimPayload::table_grain("one row per order line", None).unwrap(),
             source: ClaimOrigin::UserExplicit,
             status: ClaimStatus::Confirmed,
         },
@@ -1507,7 +1507,7 @@ async fn recall_for_model_counts_a_stale_exclusion() {
     put_item(
         &store,
         &obj,
-        ClaimPayload::default_time_column("created_at").unwrap(),
+        ClaimPayload::default_time_column("created_at", None).unwrap(),
         KnowledgeState::Active,
     )
     .await;
@@ -1644,7 +1644,7 @@ async fn seed_current_time_column(
     put_item(
         store,
         obj,
-        ClaimPayload::default_time_column(column).unwrap(),
+        ClaimPayload::default_time_column(column, None).unwrap(),
         KnowledgeState::Active,
     )
     .await;

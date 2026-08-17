@@ -42,7 +42,7 @@ fn claim_view(claim: &ContractClaim) -> ContractClaimView {
     // A recallable claim always has a payload; a forgotten tombstone does not,
     // and recall/show filter to recallable claims, so `None` is a defensive
     // fallback rather than a path that should render.
-    let (kind, value, column) = render_payload(&claim.value);
+    let (kind, value, column, reason) = render_payload(&claim.value);
     ContractClaimView {
         claim_id: claim.id.as_str().to_string(),
         kind,
@@ -50,34 +50,63 @@ fn claim_view(claim: &ContractClaim) -> ContractClaimView {
         status: claim.status.as_str().to_string(),
         value,
         column,
+        reason,
     }
 }
 
 /// The short rendered form of a payload: the alias, the text, the role, or the
-/// column — matching the render snapshots in `tests/contract_render.rs`.
-pub(crate) fn render_payload(payload: &ClaimPayload) -> (String, String, Option<String>) {
+/// column — matching the render snapshots in `tests/contract_render.rs`. Also
+/// returns the optional `reason` a directive claim carries, so `contracts
+/// show` can render it; `None` for a non-directive kind or a claim with no
+/// reason.
+pub(crate) fn render_payload(
+    payload: &ClaimPayload,
+) -> (String, String, Option<String>, Option<String>) {
     match payload {
-        ClaimPayload::TableDescription { text, .. } => (payload.kind().into(), text.clone(), None),
-        ClaimPayload::TableAlias { alias, .. } => (payload.kind().into(), alias.clone(), None),
-        ClaimPayload::TableGrain { description, .. } => {
-            (payload.kind().into(), description.clone(), None)
+        ClaimPayload::TableDescription { text, .. } => {
+            (payload.kind().into(), text.clone(), None, None)
         }
-        ClaimPayload::ColumnDescription { column, text, .. } => {
-            (payload.kind().into(), text.clone(), Some(column.clone()))
+        ClaimPayload::TableAlias { alias, .. } => {
+            (payload.kind().into(), alias.clone(), None, None)
         }
-        ClaimPayload::ColumnRole { column, role, .. } => (
+        ClaimPayload::TableGrain {
+            description,
+            reason,
+            ..
+        } => (
+            payload.kind().into(),
+            description.clone(),
+            None,
+            reason.clone(),
+        ),
+        ClaimPayload::ColumnDescription { column, text, .. } => (
+            payload.kind().into(),
+            text.clone(),
+            Some(column.clone()),
+            None,
+        ),
+        ClaimPayload::ColumnRole {
+            column,
+            role,
+            reason,
+            ..
+        } => (
             payload.kind().into(),
             role.as_str().into(),
             Some(column.clone()),
+            reason.clone(),
         ),
-        ClaimPayload::DefaultTimeColumn { column, .. } => {
-            (payload.kind().into(), column.clone(), Some(column.clone()))
-        }
+        ClaimPayload::DefaultTimeColumn { column, reason, .. } => (
+            payload.kind().into(),
+            column.clone(),
+            Some(column.clone()),
+            reason.clone(),
+        ),
         // `ClaimPayload` is `#[non_exhaustive]`; `Relationship` is not exposed on
         // the CLI in this slice and any future variant is handled here too. Both
         // render a stable kind with no value, leaking neither the target object
         // nor any payload field.
-        _ => (payload.kind().into(), String::new(), None),
+        _ => (payload.kind().into(), String::new(), None, None),
     }
 }
 
@@ -104,12 +133,12 @@ pub(crate) fn queue_item_view(
     candidate: &QueuedCandidate,
     profile_name: &str,
 ) -> ContractQueueItemView {
-    let (kind, value, column) = candidate
+    let (kind, value, column, _reason) = candidate
         .claim
         .payload
         .as_ref()
         .map(render_payload)
-        .unwrap_or_else(|| (String::new(), String::new(), None));
+        .unwrap_or_else(|| (String::new(), String::new(), None, None));
     ContractQueueItemView {
         profile: profile_name.to_string(),
         claim_id: candidate.claim.id.as_str().to_string(),

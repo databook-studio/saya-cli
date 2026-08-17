@@ -231,6 +231,7 @@ async fn remember_then_show_round_trips_claim_fields() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -266,6 +267,7 @@ async fn remember_twice_reports_duplicate_with_same_id() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code1, out1, err1) = run(remember.clone(), &runtime, &store, RenderFormat::Text).await;
@@ -312,6 +314,120 @@ async fn remember_twice_reports_duplicate_with_same_id() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. re-remembering a directive claim with a NEW reason revises it: the
+// value is unchanged (so the single-valued slot does not move), but the
+// reason the user just stated is written — a user who explained themselves
+// must not be ignored. A genuinely identical re-remember (same value AND
+// same reason) is still a no-op duplicate. (Open Question 2.)
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn remember_again_with_a_new_reason_revises_the_reason() {
+    let root = temp_root("reason_revision");
+    let (runtime, _c, _n) = runtime_at(&root);
+    let store = store_at(&root).await;
+
+    // First remember: a time-column with a reason.
+    let first = ContractsCommand::Remember {
+        table: qualified().into(),
+        kind: ClaimKindArg::TimeColumn,
+        value: "return_date".into(),
+        column: None,
+        reason: Some("a rental only counts once it comes back".into()),
+        profile: None,
+    };
+    let (code1, out1, err1) = run(first, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code1, 0, "stderr: {err1}");
+    assert!(out1.contains("remembered"), "first remember: {out1}");
+
+    // Second remember: same value, a NEW reason. This is a revision, not a
+    // duplicate — the reason is written.
+    let second = ContractsCommand::Remember {
+        table: qualified().into(),
+        kind: ClaimKindArg::TimeColumn,
+        value: "return_date".into(),
+        column: None,
+        reason: Some("rentals are counted on return for billing".into()),
+        profile: None,
+    };
+    let (code2, out2, err2) = run(second, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code2, 0, "stderr: {err2}");
+    assert!(
+        out2.contains("remembered"),
+        "a new reason revises the claim, not a duplicate: {out2}"
+    );
+    assert!(
+        !out2.contains("duplicate"),
+        "a new reason must not read as a duplicate: {out2}"
+    );
+
+    // Exactly one row, and it carries the NEW reason.
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    assert_eq!(items.len(), 1, "revision wrote no new row: {items:?}");
+    assert!(
+        matches!(
+            &items[0].value,
+            saya_types::ClaimPayload::DefaultTimeColumn { column, reason, .. }
+            if column == "return_date"
+            && reason.as_deref() == Some("rentals are counted on return for billing")
+        ),
+        "the stored reason is the new one: {:?}",
+        items[0].value
+    );
+
+    // A third remember with the SAME value and SAME reason is a no-op duplicate.
+    let third = ContractsCommand::Remember {
+        table: qualified().into(),
+        kind: ClaimKindArg::TimeColumn,
+        value: "return_date".into(),
+        column: None,
+        reason: Some("rentals are counted on return for billing".into()),
+        profile: None,
+    };
+    let (code3, out3, err3) = run(third, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code3, 0, "stderr: {err3}");
+    assert!(
+        out3.contains("duplicate"),
+        "identical re-remember is a duplicate: {out3}"
+    );
+
+    // A fourth remember with the SAME value and NO reason does NOT erase the
+    // stored reason — silence is not "drop the reason," only a *new* reason
+    // revises. It reports a duplicate, and the row keeps its reason.
+    let fourth = ContractsCommand::Remember {
+        table: qualified().into(),
+        kind: ClaimKindArg::TimeColumn,
+        value: "return_date".into(),
+        column: None,
+        reason: None,
+        profile: None,
+    };
+    let (code4, out4, err4) = run(fourth, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code4, 0, "stderr: {err4}");
+    assert!(
+        out4.contains("duplicate"),
+        "re-stating without a reason is a duplicate, not an erase: {out4}"
+    );
+    let items_again = store.knowledge_for_object(&object).await.unwrap();
+    assert!(matches!(
+        &items_again[0].value,
+        saya_types::ClaimPayload::DefaultTimeColumn { reason, .. }
+        if reason.as_deref() == Some("rentals are counted on return for billing")
+    ));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
 // 3. forget then show no longer lists the claim
 // ---------------------------------------------------------------------------
 #[tokio::test]
@@ -325,6 +441,7 @@ async fn forget_then_show_no_longer_lists_the_claim() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -384,6 +501,7 @@ async fn remember_after_forget_reports_duplicate_forgotten_not_success() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember.clone(), &runtime, &store, RenderFormat::Text).await;
@@ -627,6 +745,7 @@ async fn opaque_profile_identity_never_reaches_rendered_output() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, _out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -690,6 +809,7 @@ async fn unopenable_store_reads_and_writes_both_exit_nonzero() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, _out, _err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -715,6 +835,7 @@ async fn json_and_ndjson_carry_same_claim_ids_as_text() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     // The text `remember` line confirms the fact in words without raw id.
@@ -1182,6 +1303,7 @@ async fn remember_against_cached_schema_reads_current_not_needs_review() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -1275,6 +1397,7 @@ async fn remember_column_claim_against_cached_schema_snapshots_real_type() {
         kind: ClaimKindArg::ColumnRole,
         value: "identifier".into(),
         column: Some("id".into()),
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -1343,6 +1466,7 @@ async fn remember_unknown_object_against_cached_schema_refuses_and_stores_nothin
         kind: ClaimKindArg::Alias,
         value: "nope".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -1409,6 +1533,7 @@ async fn remember_with_no_cached_schema_keeps_sentinel_and_succeeds() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -1464,6 +1589,7 @@ async fn remember_against_empty_cached_schema_keeps_sentinel_and_succeeds() {
         kind: ClaimKindArg::Alias,
         value: "customers".into(),
         column: None,
+        reason: None,
         profile: None,
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
@@ -1568,7 +1694,7 @@ async fn seed_drifted_active_claim(
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let payload = ClaimPayload::default_time_column("created_at").unwrap();
+    let payload = ClaimPayload::default_time_column("created_at", None).unwrap();
     let slot = KnowledgeSlot::TableDefaultTime;
     let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
     store

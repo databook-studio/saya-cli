@@ -28,6 +28,9 @@ pub(crate) struct RememberSpec {
     pub kind: ClaimKindArg,
     pub value: String,
     pub column: Option<String>,
+    /// An optional reason a directive claim carries, stated as a `because …`
+    /// suffix. `None` when the user stated no reason — the common case.
+    pub reason: Option<String>,
 }
 
 /// Kinds whose value binds to a column; the column is the positional after the
@@ -43,6 +46,16 @@ fn is_column_kind(kind: ClaimKindArg) -> bool {
 /// Parses a `/remember` argument tail (everything after `/remember `) into a
 /// `RememberSpec`. The kind word is the delimiter that splits the tail; an
 /// unknown kind is a usage error carrying no untrusted input.
+///
+/// A reason may be stated as a trailing `because <reason…>` clause: the first
+/// standalone `because` token splits the value from the reason, so a user
+/// writes `/remember pagila.public.rental time-column return_date because a
+/// rental only counts once it comes back`. A value with no `because` carries
+/// no reason. The clause is only forwarded to directive kinds (grain,
+/// time-column, column-role); for description/alias it is left on the value,
+/// matching the headless `--reason` which is ignored there too — though a user
+/// who meant a literal "because" in a description should use `--value` to keep
+/// it unambiguous.
 pub(crate) fn parse_remember(arg: &str) -> Result<RememberSpec, SlashParseError> {
     let mut parts = arg.split_whitespace();
     let table = parts
@@ -61,13 +74,15 @@ pub(crate) fn parse_remember(arg: &str) -> Result<RememberSpec, SlashParseError>
     } else {
         (None, rest_after(parts))
     };
-    let value = value.ok_or_else(|| SlashParseError(usage_remember()))?;
+    let raw_value = value.ok_or_else(|| SlashParseError(usage_remember()))?;
+    let (value, reason) = split_reason(&raw_value, kind);
 
     Ok(RememberSpec {
         table: table.to_string(),
         kind,
         value,
         column,
+        reason,
     })
 }
 
@@ -84,11 +99,72 @@ fn rest_after<'a, I: Iterator<Item = &'a str>>(mut parts: I) -> Option<String> {
     Some(value)
 }
 
+/// Splits a trailing `because <reason…>` clause off the value for a directive
+/// kind. The first standalone `because` token (case-insensitive) is the
+/// separator: the text before it is the value, the text after is the reason.
+/// For a non-directive kind (description/alias) the value is returned whole
+/// and no reason is split — a description legitimately contains "because", and
+/// the directive constructors are the only ones that accept a reason. `None`
+/// reason when there is no `because` token.
+fn split_reason(value: &str, kind: ClaimKindArg) -> (String, Option<String>) {
+    if !is_directive_kind(kind) {
+        return (value.to_string(), None);
+    }
+    // Find the first standalone `because` token, case-insensitive. A token is
+    // standalone when it is bounded by whitespace or the string ends — so
+    // "because" mid-word (e.g. "probecause") is not a split. The value is
+    // already whitespace-collapsed by `rest_after`, so a space on both sides (or
+    // a leading "because ") is the delimiter.
+    let lower = value.to_ascii_lowercase();
+    let Some(idx) = find_standalone(&lower, "because") else {
+        return (value.to_string(), None);
+    };
+    let reason = value[idx + "because".len()..].trim();
+    let value_part = value[..idx].trim_end();
+    if reason.is_empty() || value_part.is_empty() {
+        // An empty reason or an empty value after the split means the `because`
+        // was not a real clause — treat the whole thing as the value.
+        return (value.to_string(), None);
+    }
+    (value_part.to_string(), Some(reason.to_string()))
+}
+
+/// True for the directive kinds that carry a reason: grain, time-column, and
+/// column-role. Matches the constructors `build_payload` forwards `reason`
+/// to. Description and alias are prose, not directives, and take no reason.
+fn is_directive_kind(kind: ClaimKindArg) -> bool {
+    matches!(
+        kind,
+        ClaimKindArg::Grain | ClaimKindArg::TimeColumn | ClaimKindArg::ColumnRole
+    )
+}
+
+/// Finds the byte offset of the first standalone occurrence of `needle` in
+/// `haystack` (already case-folded), where "standalone" means preceded by the
+/// start of the string or a space, and followed by the end or a space. Returns
+/// `None` when `needle` appears only as a substring of a larger word.
+fn find_standalone(haystack: &str, needle: &str) -> Option<usize> {
+    let mut start = 0;
+    while let Some(idx) = haystack[start..].find(needle) {
+        let abs = start + idx;
+        let before_ok = abs == 0 || haystack.as_bytes().get(abs - 1) == Some(&b' ');
+        let after = abs + needle.len();
+        let after_ok = after >= haystack.len() || haystack.as_bytes().get(after) == Some(&b' ');
+        if before_ok && after_ok {
+            return Some(abs);
+        }
+        start = abs + needle.len();
+    }
+    None
+}
+
 /// Payload-free usage for `/remember`. Never echoes the untrusted tail.
 fn usage_remember() -> String {
-    "/remember <catalog.schema.object> <kind> <value…>\n\
+    "/remember <catalog.schema.object> <kind> <value…> [because <reason…>]\n\
      kinds: description, alias, grain, time-column, column-description <column> <value…>, \
-     column-role <column> <role>"
+     column-role <column> <role>\n\
+     `because <reason…>` is optional, and only the directive kinds (grain, time-column, \
+     column-role) carry it"
         .into()
 }
 
@@ -175,6 +251,7 @@ pub(crate) fn parse_contract_command(
                 kind: spec.kind,
                 value: spec.value,
                 column: spec.column,
+                reason: spec.reason,
                 profile: None,
             }))
         }
@@ -258,6 +335,65 @@ mod tests {
         assert_eq!(spec.kind, ClaimKindArg::Alias);
         assert_eq!(spec.value, "customers");
         assert_eq!(spec.column, None);
+        assert_eq!(spec.reason, None);
+    }
+
+    #[test]
+    fn parse_remember_directive_kind_carries_a_because_reason() {
+        // The motivating case: a time-column claim with the reason a user would
+        // state in one breath.
+        let spec = parse_remember(
+            "pagila.public.rental time-column return_date because a rental only counts once it comes back",
+        )
+        .unwrap();
+        assert_eq!(spec.kind, ClaimKindArg::TimeColumn);
+        assert_eq!(spec.value, "return_date");
+        assert_eq!(
+            spec.reason.as_deref(),
+            Some("a rental only counts once it comes back")
+        );
+        // A grain with a reason.
+        let grain =
+            parse_remember("a.b.c grain one row per order because orders ship separately").unwrap();
+        assert_eq!(grain.value, "one row per order");
+        assert_eq!(grain.reason.as_deref(), Some("orders ship separately"));
+        // A column-role with a reason.
+        let role =
+            parse_remember("a.b.c column-role amount measure because money the customer paid")
+                .unwrap();
+        assert_eq!(role.value, "measure");
+        assert_eq!(role.reason.as_deref(), Some("money the customer paid"));
+    }
+
+    #[test]
+    fn parse_remember_because_is_not_split_for_non_directive_kinds() {
+        // A description legitimately contains "because"; the directive
+        // constructors are the only ones that accept a reason, so for a
+        // description the whole tail stays the value and no reason is split.
+        let spec =
+            parse_remember("a.b.c description returns because the warehouse closes").unwrap();
+        assert_eq!(spec.kind, ClaimKindArg::Description);
+        assert_eq!(spec.value, "returns because the warehouse closes");
+        assert_eq!(spec.reason, None);
+    }
+
+    #[test]
+    fn parse_remember_because_substring_is_not_a_split() {
+        // "because" as a substring of a larger word is not a delimiter.
+        let spec = parse_remember("a.b.c time-column created_at probecause_marker").unwrap();
+        assert_eq!(spec.value, "created_at probecause_marker");
+        assert_eq!(spec.reason, None);
+        // A trailing `because` with no reason clause is not a split either.
+        let bare = parse_remember("a.b.c time-column created_at because").unwrap();
+        assert_eq!(bare.value, "created_at because");
+        assert_eq!(bare.reason, None);
+    }
+
+    #[test]
+    fn parse_remember_directive_without_because_has_no_reason() {
+        let spec = parse_remember("a.b.c time-column created_at").unwrap();
+        assert_eq!(spec.value, "created_at");
+        assert_eq!(spec.reason, None);
     }
 
     #[test]

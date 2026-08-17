@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 
 /// One claim of a contract, in renderable form. `value` is a short rendered form
 /// of the claim payload (e.g. a column name for `default_time_column`, an alias
-/// for `table_alias`).
+/// for `table_alias`). `reason` is the optional justification a directive claim
+/// carries; `contracts show` renders it, `contracts list` does not.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractClaimView {
     pub claim_id: String,
@@ -24,6 +25,12 @@ pub struct ContractClaimView {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column: Option<String>,
+    /// Why a directive claim holds, when one was stated. `None` for a claim with
+    /// no reason and for every non-directive kind (description/alias). Skipped
+    /// from the wire form when `None` so a no-reason claim serializes the same
+    /// as before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// A disagreement between confirmed claims of an exclusive kind on one object.

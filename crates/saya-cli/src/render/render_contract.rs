@@ -27,7 +27,7 @@ pub(super) fn list(contracts: &[ContractView]) -> Rendered {
     }
     let mut stdout = String::new();
     for contract in contracts {
-        stdout.push_str(&stanza(contract));
+        stdout.push_str(&stanza(contract, false));
     }
     Rendered {
         stdout,
@@ -36,7 +36,10 @@ pub(super) fn list(contracts: &[ContractView]) -> Rendered {
 }
 
 pub(super) fn show(contract: &ContractView) -> Rendered {
-    let mut stdout = stanza(contract);
+    // `show` renders a directive claim's reason beneath the claim line, so a
+    // user auditing a claim sees why it exists (spec: claim-reasons). `list`
+    // does not — it is a one-line-per-claim inventory and a reason is a sentence.
+    let mut stdout = stanza(contract, true);
     for conflict in &contract.conflicts {
         stdout.push_str(&conflict_line(conflict));
     }
@@ -145,8 +148,12 @@ fn column_suffix(column: Option<&str>) -> String {
     }
 }
 
-/// One contract stanza: a header line followed by one line per claim.
-fn stanza(contract: &ContractView) -> String {
+/// One contract stanza: a header line followed by one line per claim. When
+/// `with_reason` is true (the `show` path), a directive claim's `reason` renders
+/// on its own line beneath the claim, indented and labelled so a reviewer sees
+/// the justification; `list` passes `false` to keep the one-line-per-claim
+/// inventory.
+fn stanza(contract: &ContractView, with_reason: bool) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "{object}  [{state}]{profile}{state_note}\n",
@@ -164,6 +171,9 @@ fn stanza(contract: &ContractView) -> String {
             origin = claim.origin,
             value = claim.value,
         ));
+        if with_reason && let Some(reason) = claim.reason.as_deref().filter(|r| !r.is_empty()) {
+            out.push_str(&format!("    because: {reason}\n"));
+        }
     }
     out
 }

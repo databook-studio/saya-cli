@@ -62,6 +62,7 @@ pub async fn run_contracts(
             kind,
             value,
             column,
+            reason,
             profile,
         } => match resolve_profile(runtime, profile.as_deref()) {
             Ok((name, identity)) => {
@@ -71,6 +72,7 @@ pub async fn run_contracts(
                         kind,
                         value: &value,
                         column: column.as_deref(),
+                        reason: reason.as_deref(),
                     },
                     contracts_write::RememberContext {
                         store,

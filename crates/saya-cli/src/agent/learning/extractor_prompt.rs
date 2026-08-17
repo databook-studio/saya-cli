@@ -44,7 +44,14 @@ Analyze the user conversation, executed actions, and assistant response to extra
    - "table.default_time": The column name to use as default time dimension.
    - "column:<column_name>.description": Purpose or business definition of a specific column.
    - "column:<column_name>.role": One of ["identifier", "dimension", "measure", "timestamp", "sensitive"].
-5. NEVER include passwords, API keys, tokens, or private credentials in extracted values.
+5. A directive claim ("table.grain", "table.default_time", "column:<column_name>.role")
+   may carry a `reason`: the one-sentence justification a user gave for it, or that the
+   schema suggests — *why* the claim holds, not *what* it says. Capture it when the user
+   stated one (e.g. "use return_date — a rental only counts once it comes back" → the
+   reason is "a rental only counts once it comes back"). Omit `reason` for description and
+   alias slots, and when no reason was stated. Keep it to one sentence and never put
+   passwords, SQL, or credentials in it.
+6. NEVER include passwords, API keys, tokens, or private credentials in extracted values.
 
 ### REGISTERED OBJECTS:
 {table_desc}
@@ -56,6 +63,7 @@ Analyze the user conversation, executed actions, and assistant response to extra
       "object_id": "T0",
       "slot": "table.grain",
       "value": "one row per completed order",
+      "reason": "an order only completes when it ships, not when it is placed",
       "origin": "user_explicit",
       "confidence": 1.0
     }}

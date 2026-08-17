@@ -741,7 +741,7 @@ async fn contract_search_drops_a_stale_claim_and_says_so() {
     put_knowledge_item(
         &store,
         &obj,
-        ClaimPayload::default_time_column("created_at").unwrap(),
+        ClaimPayload::default_time_column("created_at", None).unwrap(),
         KnowledgeState::Active,
     )
     .await;
@@ -805,7 +805,7 @@ async fn contract_read_on_a_stale_object_reports_stale_with_no_claims() {
     put_knowledge_item(
         &store,
         &obj,
-        ClaimPayload::default_time_column("created_at").unwrap(),
+        ClaimPayload::default_time_column("created_at", None).unwrap(),
         KnowledgeState::Active,
     )
     .await;

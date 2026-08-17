@@ -47,7 +47,7 @@ fn convert_raw_proposal(
     table.get_by_id(&object_id)?;
 
     let slot = KnowledgeSlot::parse(&raw.slot)?;
-    let value = build_claim_payload(&slot, &raw.value).ok()?;
+    let value = build_claim_payload(&slot, &raw.value, raw.reason.as_deref()).ok()?;
 
     let origin = ProposalOrigin::parse(&raw.origin).unwrap_or(ProposalOrigin::AssistantInferred);
     let confidence = raw.confidence.unwrap_or(0.8).clamp(0.0, 1.0);
@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(res[0].slot, KnowledgeSlot::TableGrain);
         assert_eq!(
             res[0].value,
-            ClaimPayload::table_grain("one row per completed customer order").unwrap()
+            ClaimPayload::table_grain("one row per completed customer order", None).unwrap()
         );
         assert_eq!(res[0].origin, ProposalOrigin::UserExplicit);
         assert_eq!(res[0].confidence, 1.0);
@@ -143,7 +143,7 @@ mod tests {
         assert_eq!(res[1].slot, KnowledgeSlot::TableDefaultTime);
         assert_eq!(
             res[1].value,
-            ClaimPayload::default_time_column("created_at").unwrap()
+            ClaimPayload::default_time_column("created_at", None).unwrap()
         );
 
         assert_eq!(res[2].object_id, TurnObjectId::new(1));
@@ -155,8 +155,67 @@ mod tests {
         );
         assert_eq!(
             res[2].value,
-            ClaimPayload::column_role("user_id", ColumnRole::Identifier).unwrap()
+            ClaimPayload::column_role("user_id", ColumnRole::Identifier, None).unwrap()
         );
+    }
+
+    #[test]
+    fn test_parse_carries_reason_onto_a_directive_payload() {
+        // A user who states "use return_date — a rental only counts once it
+        // comes back" states one fact with one reason; both halves must land on
+        // one claim. The model emits the reason as a `reason` field; the parser
+        // forwards it to the directive constructor.
+        let table = setup_test_table();
+        let json = r#"{
+            "proposals": [
+                {
+                    "object_id": "T0",
+                    "slot": "table.default_time",
+                    "value": "created_at",
+                    "reason": "a rental only counts once it comes back",
+                    "origin": "user_explicit",
+                    "confidence": 1.0
+                }
+            ]
+        }"#;
+        let res = parse_extraction_response(json, &table).unwrap();
+        assert_eq!(res.len(), 1);
+        // `DefaultTimeColumn` is `#[non_exhaustive]`, so the match uses `..`;
+        // `claim_value` is the single source of the rendered value, so reading
+        // the column through it avoids moving the payload out of the vec.
+        let (column, value) = crate::agent::recall_context::claim_value(&res[0].value);
+        assert_eq!(column, None);
+        assert_eq!(value, "created_at");
+        // The reason is on the payload, not on the rendered value.
+        assert!(matches!(
+            &res[0].value,
+            ClaimPayload::DefaultTimeColumn { reason, .. }
+            if reason.as_deref() == Some("a rental only counts once it comes back")
+        ));
+    }
+
+    #[test]
+    fn test_parse_drops_reason_for_a_non_directive_slot() {
+        // A reason on a description is not applicable (the description
+        // constructor takes none); the payload is still built, without a reason.
+        let table = setup_test_table();
+        let json = r#"{
+            "proposals": [
+                {
+                    "object_id": "T0",
+                    "slot": "table.description",
+                    "value": "the orders table",
+                    "reason": "ignored here",
+                    "origin": "assistant_inferred"
+                }
+            ]
+        }"#;
+        let res = parse_extraction_response(json, &table).unwrap();
+        assert_eq!(res.len(), 1);
+        assert!(matches!(
+            &res[0].value,
+            ClaimPayload::TableDescription { text, .. } if text == "the orders table"
+        ));
     }
 
     #[test]

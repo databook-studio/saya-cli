@@ -50,6 +50,18 @@ pub(crate) enum RememberOutcome {
 /// with the same id. A genuinely new fact is `put_knowledge_item`'d as `Active`
 /// (`UserExplicit`) and its `ki-…` id returned (`Stored`).
 ///
+/// **One exception (Open Question 2):** a directive claim re-stated with the
+/// same value but a *new* reason is a **revision**, not a duplicate. The
+/// single-valued slot's value is unchanged (the dedup key does not move), but
+/// the reason is the one field this write path can refine, and a user who just
+/// explained themselves must not see nothing happen. So when the existing
+/// item is not a forgotten tombstone and the new payload differs from it only
+/// in `reason`, the row is rewritten with the new reason and the outcome is
+/// `Stored` (a revision wrote). A genuinely identical re-remember — same
+/// value *and* same reason, or no reason on either side — is still a no-op
+/// `Duplicate`. A forgotten tombstone is still never resurrected: a re-remember
+/// of a dismissed item reports `Duplicate { Dismissed }` even with a reason.
+///
 /// The lookup keys on the **row id** the put would land on, not on the decoded
 /// value. `forget` blanks a tombstone's value (the deletion promise), so a
 /// value comparison would miss a forgotten multi-valued item and the re-remember
@@ -66,8 +78,34 @@ pub(crate) async fn remember(
     // A duplicate is an existing item at the id the put would land on. Looking
     // up by id before the write (rather than upserting and reading back) keeps
     // the no-write semantics: a forgotten tombstone stays forgotten, an active
-    // claim is not overwritten.
+    // claim is not overwritten — unless the new payload revises the reason
+    // (see the module / outcome docs).
     if let Some(existing) = find_existing(store, object, &slot, payload).await? {
+        // A forgotten tombstone is never resurrected: report the dismissed
+        // duplicate even if a reason is now supplied.
+        if existing.state != KnowledgeState::Dismissed
+            && is_reason_revision(payload, &existing.value)
+        {
+            // Same value, new reason: revise the row in place. The value is
+            // unchanged so the binding and fingerprint derivation are too; only
+            // the payload (carrying the reason) is rewritten.
+            let binding = SchemaBinding::derive(&slot, payload).ok_or(ContractOpError::Invalid)?;
+            let binding_json =
+                serde_json::to_string(&binding).map_err(|_| ContractOpError::Unavailable)?;
+            store
+                .put_knowledge_item(saya_store::KnowledgeItemRequest {
+                    object: object.clone(),
+                    slot: slot.clone(),
+                    value: payload.clone(),
+                    source: ClaimOrigin::UserExplicit,
+                    state: KnowledgeState::Active,
+                    schema_binding_json: binding_json,
+                    fingerprint,
+                })
+                .await?;
+            let id = item_id_for(object, &slot, payload)?;
+            return Ok(RememberOutcome::Stored { id });
+        }
         let id = ClaimId::parse(&existing.id).map_err(|_| ContractOpError::Invalid)?;
         return Ok(RememberOutcome::Duplicate {
             id,
@@ -89,6 +127,66 @@ pub(crate) async fn remember(
         .await?;
     let id = item_id_for(object, &slot, payload)?;
     Ok(RememberOutcome::Stored { id })
+}
+
+/// True when `new` carries the same directive value as `old` but a *new,
+/// explicitly-stated* reason — the one case `remember` revises instead of
+/// dedups. The comparison is on the value-defining fields (column, role,
+/// description) plus the reason: a difference in anything but the reason is a
+/// genuine value change (which cannot land on the same single-valued row
+/// anyway, and is a new fact for a multi-valued slot), and a difference in the
+/// reason alone is a revision. Only a *present* new reason revises: re-stating
+/// the same value with no reason does not erase an existing one — silence is
+/// not "drop the reason," and the spec's case is a user who states a *new*
+/// reason. Non-directive kinds never carry a reason, so they never revise —
+/// an identical re-remember of a description is a plain duplicate. The `old`
+/// payload is the stored one (possibly blanked for a tombstone, but a tombstone
+/// is excluded by the caller's `Dismissed` guard).
+fn is_reason_revision(new: &ClaimPayload, old: &ClaimPayload) -> bool {
+    use saya_types::ClaimPayload as P;
+    match (new, old) {
+        (
+            P::DefaultTimeColumn {
+                column: c1,
+                reason: r1,
+                ..
+            },
+            P::DefaultTimeColumn {
+                column: c2,
+                reason: r2,
+                ..
+            },
+        ) => c1 == c2 && r1.is_some() && r1 != r2,
+        (
+            P::TableGrain {
+                description: d1,
+                reason: r1,
+                ..
+            },
+            P::TableGrain {
+                description: d2,
+                reason: r2,
+                ..
+            },
+        ) => d1 == d2 && r1.is_some() && r1 != r2,
+        (
+            P::ColumnRole {
+                column: c1,
+                role: rl1,
+                reason: rr1,
+                ..
+            },
+            P::ColumnRole {
+                column: c2,
+                role: rl2,
+                reason: rr2,
+                ..
+            },
+        ) => c1 == c2 && rl1 == rl2 && rr1.is_some() && rr1 != rr2,
+        // Different kinds, or a non-directive kind, never carry a reason to
+        // revise — not a revision.
+        _ => false,
+    }
 }
 
 /// The existing item at the id a put of `payload` under `slot` on `object` would

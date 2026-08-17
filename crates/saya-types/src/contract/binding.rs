@@ -90,7 +90,7 @@ impl SchemaBinding {
             (KnowledgeSlot::TableDescription, ClaimPayload::TableDescription { .. })
             | (KnowledgeSlot::TableAlias, ClaimPayload::TableAlias { .. })
             | (KnowledgeSlot::TableGrain, ClaimPayload::TableGrain { .. }) => Some(Self::Table),
-            (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { column }) => {
+            (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { column, .. }) => {
                 Some(Self::Column {
                     column: column.clone(),
                     requirement: ColumnRequirement::Time,
@@ -105,7 +105,7 @@ impl SchemaBinding {
             }),
             (
                 KnowledgeSlot::ColumnRole { column: slot_col },
-                ClaimPayload::ColumnRole { column, role },
+                ClaimPayload::ColumnRole { column, role, .. },
             ) if slot_col == column => {
                 let requirement = match role {
                     ColumnRole::Timestamp => ColumnRequirement::Time,
@@ -524,7 +524,7 @@ mod tests {
         );
 
         let grain_slot = KnowledgeSlot::TableGrain;
-        let grain_payload = ClaimPayload::table_grain("one row per rental event").unwrap();
+        let grain_payload = ClaimPayload::table_grain("one row per rental event", None).unwrap();
         assert_eq!(
             SchemaBinding::derive(&grain_slot, &grain_payload),
             Some(SchemaBinding::Table)
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn test_derive_default_time() {
         let slot = KnowledgeSlot::TableDefaultTime;
-        let payload = ClaimPayload::default_time_column("return_date").unwrap();
+        let payload = ClaimPayload::default_time_column("return_date", None).unwrap();
         assert_eq!(
             SchemaBinding::derive(&slot, &payload),
             Some(SchemaBinding::Column {
@@ -568,7 +568,8 @@ mod tests {
         let ts_slot = KnowledgeSlot::ColumnRole {
             column: "created_at".to_string(),
         };
-        let ts_payload = ClaimPayload::column_role("created_at", ColumnRole::Timestamp).unwrap();
+        let ts_payload =
+            ClaimPayload::column_role("created_at", ColumnRole::Timestamp, None).unwrap();
         assert_eq!(
             SchemaBinding::derive(&ts_slot, &ts_payload),
             Some(SchemaBinding::Column {
@@ -581,7 +582,8 @@ mod tests {
         let measure_slot = KnowledgeSlot::ColumnRole {
             column: "amount".to_string(),
         };
-        let measure_payload = ClaimPayload::column_role("amount", ColumnRole::Measure).unwrap();
+        let measure_payload =
+            ClaimPayload::column_role("amount", ColumnRole::Measure, None).unwrap();
         assert_eq!(
             SchemaBinding::derive(&measure_slot, &measure_payload),
             Some(SchemaBinding::Column {
@@ -599,7 +601,7 @@ mod tests {
             let role_slot = KnowledgeSlot::ColumnRole {
                 column: col.to_string(),
             };
-            let role_payload = ClaimPayload::column_role(col, role).unwrap();
+            let role_payload = ClaimPayload::column_role(col, role, None).unwrap();
             assert_eq!(
                 SchemaBinding::derive(&role_slot, &role_payload),
                 Some(SchemaBinding::Column {
@@ -619,7 +621,7 @@ mod tests {
         assert_eq!(SchemaBinding::derive(&grain_slot, &alias_payload), None);
 
         let desc_slot = KnowledgeSlot::TableDescription;
-        let default_time_payload = ClaimPayload::default_time_column("created_at").unwrap();
+        let default_time_payload = ClaimPayload::default_time_column("created_at", None).unwrap();
         assert_eq!(
             SchemaBinding::derive(&desc_slot, &default_time_payload),
             None
@@ -628,7 +630,8 @@ mod tests {
         let col_desc_slot = KnowledgeSlot::ColumnDescription {
             column: "tier".to_string(),
         };
-        let col_role_payload = ClaimPayload::column_role("tier", ColumnRole::Identifier).unwrap();
+        let col_role_payload =
+            ClaimPayload::column_role("tier", ColumnRole::Identifier, None).unwrap();
         assert_eq!(
             SchemaBinding::derive(&col_desc_slot, &col_role_payload),
             None
@@ -641,7 +644,8 @@ mod tests {
         let role_slot = KnowledgeSlot::ColumnRole {
             column: "column_a".to_string(),
         };
-        let role_payload = ClaimPayload::column_role("column_b", ColumnRole::Timestamp).unwrap();
+        let role_payload =
+            ClaimPayload::column_role("column_b", ColumnRole::Timestamp, None).unwrap();
         assert_eq!(SchemaBinding::derive(&role_slot, &role_payload), None);
 
         let desc_slot = KnowledgeSlot::ColumnDescription {
@@ -690,14 +694,14 @@ mod tests {
     fn test_derived_binding_end_to_end_validation() {
         // 1. TableGrain -> derive -> validate
         let grain_slot = KnowledgeSlot::TableGrain;
-        let grain_payload = ClaimPayload::table_grain("one row per event").unwrap();
+        let grain_payload = ClaimPayload::table_grain("one row per event", None).unwrap();
         let grain_binding = SchemaBinding::derive(&grain_slot, &grain_payload).unwrap();
         let table = make_table("events", &[("id", "int")]);
         assert_eq!(grain_binding.validate(&table), BindingValidity::Valid);
 
         // 2. DefaultTimeColumn -> derive -> validate
         let time_slot = KnowledgeSlot::TableDefaultTime;
-        let time_payload = ClaimPayload::default_time_column("event_time").unwrap();
+        let time_payload = ClaimPayload::default_time_column("event_time", None).unwrap();
         let time_binding = SchemaBinding::derive(&time_slot, &time_payload).unwrap();
 
         let valid_time_table = make_table("events", &[("event_time", "timestamptz")]);
@@ -722,7 +726,8 @@ mod tests {
         let measure_slot = KnowledgeSlot::ColumnRole {
             column: "revenue".to_string(),
         };
-        let measure_payload = ClaimPayload::column_role("revenue", ColumnRole::Measure).unwrap();
+        let measure_payload =
+            ClaimPayload::column_role("revenue", ColumnRole::Measure, None).unwrap();
         let measure_binding = SchemaBinding::derive(&measure_slot, &measure_payload).unwrap();
 
         let valid_measure_table = make_table("sales", &[("revenue", "numeric(12,2)")]);
