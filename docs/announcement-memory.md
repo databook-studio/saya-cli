@@ -47,8 +47,8 @@ later, when you've forgotten you typed it.
 marked stale. An unreachable database isn't evidence that anything changed, and marking claims stale
 because a VPN dropped would destroy work you spent months accumulating.
 
-**And it's off by default.** Recall of facts you confirmed is on; learning is off. Upgrading changes
-nothing until you decide otherwise.
+**And it's off by default.** Memory reads nothing and writes nothing until you turn it on.
+Upgrading changes nothing until you decide otherwise.
 
 ---
 
@@ -78,25 +78,29 @@ diff, different severity.
 
 ---
 
-## Your team's knowledge, in version control
+## It shows you what it assumed
 
-Facts can leave one machine and land on another:
+Every turn names what memory put in front of the model, before the model is called:
 
-```bash
-saya contracts export .saya/contracts    # write yours out
-git add .saya/contracts && git commit    # review them like code
-saya contracts import --dry-run          # a teammate sees what would change
-saya contracts import                    # applied
+```
+memory supplied · 2 claims (1 unconfirmed)
+  pagila.public.rental  [current]  (profile: docker_postgres)
+    ki-a86a…  default_time_column  return_date  active
+    ki-4f21…  table_grain  one row per rental  pending  (unconfirmed)
 ```
 
-A contract file is TOML, reviewable in a pull request, and imported facts arrive **confirmed** —
-because a file merged into your repository has already been reviewed by whoever approved it. That
-makes `.saya/contracts/` a trusted input: treat write access to it the way you treat write access to
-your code.
+It says **supplied**, not *used*. Recall puts a fact in context; whether the SQL honoured it is a
+different question, and one SAYA doesn't measure. Saying "applied" would claim more than it knows.
 
-Exported files carry the qualified table name and nothing that identifies the machine that wrote
-them — no connection identity, no session ids, no local paths. The dry run reports what would be
-added, what already exists, what conflicts, and what refers to columns your database no longer has.
+And when the SQL contradicts something you established, it says so:
+
+```
+memory overridden · 1 finding
+  ki-a86a…  referenced rental_date where you specified return_date
+```
+
+That notice exists because the honest version of this feature admits its own limit: a remembered
+fact is strong context, not an instruction the model must obey.
 
 ---
 
@@ -144,10 +148,9 @@ removes everything.
 ## Getting started
 
 ```toml
-# .saya/config.toml — defaults shown; you don't need this file to use recall
+# .saya/config.toml — memory is off until you turn it on
 [memory]
-recall = "confirmed"     # off | confirmed | include-candidates
-learning = "off"         # off | suggest | auto-candidate
+mode = "assisted"        # off | assisted
 ```
 
 ```bash

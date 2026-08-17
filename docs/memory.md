@@ -1,29 +1,34 @@
-# Memory and data contracts
+# Memory
 
 SAYA can remember what you tell it about your databases — that `orders.created_at` is the reporting
 time column, that "customers" means `analytics.public.accounts`, that a table has one row per shipped
-order — and use that context when building later queries.
+order — and use that when building later queries.
 
-**Nothing is remembered unless you ask.** Recall of confirmed facts is on by default; learning is
-off. Upgrading SAYA changes nothing until you change a setting.
+**Memory is off by default.** Turning it on is one setting. Nothing accumulates until you do.
 
-## What a claim is
+## What SAYA remembers
 
-A **claim** is one short, typed statement about one fully qualified database object, bound to the
-connection profile it was made under and to the shape that object had at the time.
+A **knowledge item** is one short, typed statement about one fully qualified database object, bound
+to the connection profile it was made under.
 
-| Kind | Example |
-| --- | --- |
-| `description` | one row per shipped order |
-| `alias` | customers |
-| `grain` | one row per customer per month |
-| `column-description` | the account's billing tier |
-| `column-role` | `identifier`, `dimension`, `measure`, `timestamp`, `sensitive` |
-| `time-column` | `created_at` |
+Each item occupies a **slot** — the position it fills for that object:
 
-A claim is **not** free text, and it is not a note. It cannot contain SQL, credentials, file paths,
-or instructions — those shapes are refused at storage rather than filtered, and the payload types
-have no variant capable of holding them.
+| Slot | Example | How many |
+| --- | --- | --- |
+| `table.description` | one row per shipped order | several |
+| `table.alias` | customers | several |
+| `table.grain` | one row per customer per month | **one** |
+| `table.default_time` | `created_at` | **one** |
+| `column:<name>.description` | the account's billing tier | several |
+| `column:<name>.role` | `identifier`, `dimension`, `measure`, `timestamp`, `sensitive` | **one** |
+
+Single-valued slots hold exactly one value. Telling SAYA a new grain for a table replaces the old
+one; it does not accumulate a second opinion for something to arbitrate later. The database enforces
+this, not a convention in the code.
+
+An item is **not** free text and not a note. It cannot contain SQL, credentials, file paths, or
+instructions — those shapes are refused at storage rather than filtered, and the payload types have
+no variant capable of holding them.
 
 ## Getting started
 
@@ -39,180 +44,165 @@ saya contracts show analytics.public.orders
 saya ask "orders by month"
 
 # Change your mind
-saya contracts forget c-1a2b3c…
+saya contracts forget ki-1a2b3c…
 ```
 
 In the REPL and TUI the same operations are `/contracts`, `/contract <table>`, `/remember`,
-`/forget` and `/queue`. They call the same code as the commands above, so they cannot disagree.
+`/forget`, `/queue`, `/confirm` and `/reject`. They call the same code as the commands above, so
+they cannot disagree.
 
 ## Configuration
 
 ```toml
 [memory]
-recall = "confirmed"           # off | confirmed | include-candidates
-learning = "off"               # off | suggest | auto-candidate
+mode = "off"                   # off | assisted
 max_contracts = 5
 max_claims_per_contract = 12
 max_context_bytes = 16384
 ```
 
-**`recall`** — what reaches the model when you ask a question.
+**`off`** — nothing is read and nothing is written. No store access at all.
 
-- `off` — nothing. The store is not even queried.
-- `confirmed` *(default)* — facts you or your team confirmed.
-- `include-candidates` — also unreviewed suggestions, each marked `[candidate — unconfirmed]` in the
-  context so the model cannot read one as established.
+**`assisted`** — what you state explicitly becomes active knowledge and is supplied to the model on
+later turns. What SAYA infers from a conversation becomes a pending proposal, labelled unconfirmed
+wherever it appears, until you keep or dismiss it.
 
-**`learning`** — whether SAYA proposes new claims.
+The three numbers bound what reaches the model on any one turn: at most five objects, twelve items
+per object, and 16 KiB in total. Truncation is explicit — when items are dropped for space, the turn
+says so rather than presenting a subset as the whole.
 
-- `off` *(default)* — it never writes anything on its own.
-- `suggest` — after a turn it reports what it *would* have proposed, and stores nothing.
-- `auto-candidate` — it may store **candidates**, which are inert until you confirm them.
+## What every turn tells you
 
-No setting makes SAYA confirm a claim on its own. Confirmation is a human action, with one
-exception: a claim imported from a reviewed team file (see below).
+Before the model is called, SAYA prints what memory supplied:
 
-## Reviewing what it proposes
-
-```bash
-saya contracts queue                 # candidates and stale claims awaiting a decision
-saya contracts review c-1a2b… --confirm
-saya contracts review c-1a2b… --reject
+```
+memory supplied · 2 claims (1 unconfirmed)
+  pagila.public.rental  [current]  (profile: docker_postgres)
+    ki-a86a…  default_time_column  return_date  active
+    ki-4f21…  table_grain  one row per rental  pending  (unconfirmed)
 ```
 
-The queue orders by evidence, then age, then id — stable between runs, so you can work through it.
-Each entry shows the claim, the object, the schema state and how many observations support it.
+It says **supplied**, not *used*. Recall places items in the model's context; whether the generated
+SQL honours them is a separate question, and one SAYA does not currently measure. Anything stronger
+would overstate what is known.
 
-Only confirmed claims influence query building. A candidate never does, no matter how often it has
-been observed: repetition is not confirmation.
+The short id (`ki-a86a…`) is the reference you type:
+
+```
+/confirm ki-a86a      keep a pending item — it becomes active
+/reject  ki-4f21      dismiss it
+```
+
+An ambiguous or unrecognised prefix is refused and changes nothing. Ids are immutable, so a prefix
+you read a minute ago still names the same item.
+
+## When SAYA disagrees with you
+
+If the SQL SAYA generated contradicts an active item, the turn says so:
+
+```
+memory overridden · 1 finding
+  ki-a86a…  referenced rental_date where you specified return_date
+```
+
+It says **referenced**, not *used as the time column*. The check reads the statement's object and
+column names; it cannot tell a filter from a projection, so it reports what it can prove.
+
+This reports; it does not block. The answer still returns. **An active item does not compel the
+model** — it is strong context, not an enforcement mechanism, and the override notice exists because
+that distinction is real.
+
+## Learning
+
+Under `assisted`, SAYA extracts proposals after a turn from a bounded record of what happened: what
+you asserted, which objects the tools inspected, which the SQL touched, and the answer.
+
+The extractor is offered only the objects the turn actually involved, identified by turn-scoped
+references rather than free-text names, so it cannot propose a fact about a table that was never
+there. SAYA — not the model — assigns the profile, the qualified object, the schema binding, and the
+initial state.
+
+A proposal duplicating something already supplied that turn is dropped. Otherwise a fact could
+strengthen itself simply by being recalled.
+
+Extraction is best-effort and isolated: if it fails, times out, or returns nothing usable, your query
+and your answer are unaffected.
 
 ## What SAYA stores, and what it never stores
 
-Stored, in a private SQLite database under your state directory (`0600`, in a `0700` directory):
+Stored: the object's qualified name, the profile identity, the slot, a typed value, who said it
+(you, or SAYA's inference), its state, and the schema dependency the fact rests on.
 
-- the claim's typed value, its origin, its status and timestamps
-- the fully qualified object and an opaque, one-way profile identity
-- a digest of the object's shape, plus the name, type and nullability of the columns the claim
-  depends on
-- bounded evidence references: which session and turn observed something, and when
+Never stored: SQL text, result rows, credentials, connection strings, file paths, or free-form
+prose. Structurally recognisable secrets — PEM blocks, credential headers, absolute paths, URLs with
+inline credentials — are refused at admission, and a byte scan of the database file and its
+write-ahead sidecars asserts they never reach disk.
 
-**Never stored**: your SQL, result rows or cell values, prompts, provider payloads, credentials,
-connection strings, or absolute file paths. Tests scan the database file and its write-ahead log for
-planted examples of each after a full lifecycle.
-
-Two classes cannot be detected by inspection and are kept out by construction instead: an opaque
-token and a single copied result cell look exactly like a legitimate product code or status name.
-Nothing puts result rows in front of the extractor, and the payload types cannot hold arbitrary text.
+**What that cannot catch:** a bare token like `hunter2` has no structure distinguishing it from a
+legitimate business term like `SHIPPED`. A check that rejected one would reject both. Do not put a
+secret in a description and expect it to be caught.
 
 ## Privacy
 
-Contract content is **database-derived** and follows your existing data-sharing setting. With a cloud
-provider and sharing disabled, no contract content is sent — the store is not queried at all, and the
-contract tools are not offered to the model. Local providers follow the usual local-provider rules.
+Memory is local. Items are stored in SAYA's own SQLite database with `0600` permissions inside a
+`0700` directory.
 
-This is re-decided on every request, so changing provider or privacy setting takes effect on the next
-question rather than the next session.
+When `allow_data_sharing = false`, no database-derived knowledge reaches a cloud provider,
+regardless of memory mode. The privacy gate is independent of the memory setting and wins over it —
+a mode is a preference, sharing is a boundary.
 
-## Deletion — read this carefully
+## Deletion
 
-`saya contracts forget <id>` stops a claim influencing anything immediately: it disappears from
-recall, from listings, and from the model's view on the next turn. Its content is erased — the
-payload and the referenced columns are cleared, and its evidence rows are deleted — in the same
-transaction that records the deletion.
+`saya contracts forget <id>` stops an item influencing anything immediately: it leaves recall,
+listings, and the model's view on the next turn.
 
-**The row itself remains, carrying no content**: its id, its object, its status and its timestamps.
-This is deliberate. It keeps "why did SAYA stop using that?" answerable, and it means re-proposing
-the same fact reports *previously forgotten* rather than silently resurrecting it.
+Its content is erased. The value and the schema dependency are blanked in the same transaction that
+records the deletion, the freed space is overwritten rather than left in the page, and the
+write-ahead log is folded back so the original text does not survive in a sidecar. A byte scan
+asserts this — an API that returns nothing while the text remains readable on disk is not deletion.
 
-If you need the row gone rather than emptied, that is not yet implemented. Deleting the state
-database removes everything.
+**The row itself remains**, carrying no content: its id, its object, its slot, its state and its
+timestamps. That keeps "why did SAYA stop using that?" answerable, and means re-remembering the same
+fact reports it was *previously forgotten* rather than silently resurrecting it.
+
+If you need the row gone rather than emptied, that is not implemented. Deleting the state database
+removes everything.
 
 ## When your schema changes
 
-A claim records the shape of the object it describes. On an explicit schema refresh, SAYA compares
-that against the live database:
+An item depends only on what it actually uses:
 
-| What changed | What happens |
+| Slot | Depends on |
 | --- | --- |
-| nothing | the claim stays current |
-| an unrelated column elsewhere | the claim is flagged for review, not invalidated |
-| a column the claim depends on was removed or renamed | the claim is marked **stale** |
-| a column it depends on changed type | marked **stale** |
-| a column it depends on became nullable | marked **stale** — nulls change what a claim means |
-| a column it depends on stopped being nullable | flagged for review |
-| the database could not be reached | **nothing is marked** |
+| description, alias, grain | the object existing |
+| default time column | that column existing, and still being a time column |
+| column description, column role | that column existing |
 
-That last row matters: an unreachable database is not evidence that anything changed, and marking
-claims stale over a network blip would destroy knowledge you spent time building.
+So a colleague adding an unrelated column does **not** disturb a fact that never referred to it. That
+matters more than it sounds: a memory feature that flags everything after every migration gets
+ignored, and then it is worth nothing.
 
-Stale claims stop reaching the model. They still appear in `contracts list` and `contracts show`
-so you can see what changed, and once reconciliation has marked one it surfaces in `contracts
-queue` for you to confirm, edit or forget.
+If the column a fact names disappears, or stops being the kind of column the fact assumed, the item
+is invalid and stops reaching the model. It stays visible in `contracts list` and `contracts show` so
+you can see what changed, and in `contracts queue` to keep, correct or forget.
+
+**If the database cannot be reached, nothing is marked.** An unreadable schema is not evidence a
+column is gone, and treating it as such would destroy knowledge over a network blip.
 
 ## Contradictions
 
-If two confirmed claims disagree — two different grains for one table — SAYA shows both, marks them
-`[disputed]`, and tells the model not to choose between them silently. It does not rank them, prefer
-the newer one, or hide one. Resolving the disagreement is your decision; `contracts show` displays it
-and `review` acts on it.
+Two conflicting values for a single-valued slot cannot both exist — the newer replaces the older when
+you state it. There is no queue of disagreements to arbitrate, because the shape of the data prevents
+the disagreement from being stored.
 
-## Team contracts
-
-Contracts can be committed to a repository as TOML under `.saya/contracts/`:
-
-```toml
-version = 1
-object = "analytics.public.orders"
-
-[[claims]]
-kind = "description"
-value = "one row per shipped order"
-
-[[claims]]
-kind = "time-column"
-value = "created_at"
-```
-
-```bash
-saya contracts import --dry-run     # report what would change
-saya contracts import               # apply it
-saya contracts export ./contracts   # write your confirmed claims out
-```
-
-Imported claims are **confirmed**, because a file in version control has already been reviewed by
-whoever merged it. That makes `.saya/contracts/` a trusted input: treat write access to it the way
-you treat write access to the code.
-
-Discovery is bounded — 32 files, 64 KiB each, 1 MiB total — and refuses anything that is not a
-regular `.toml` file inside the directory. A symlink pointing outside it is rejected rather than
-followed. Unknown fields are errors, so a contract cannot appear to be in force while being ignored.
-
-Exported files carry the qualified object name and nothing identifying your machine: no profile
-identity, no evidence, no session ids, no absolute paths. Relationship claims are skipped, and the
-count is reported, because the file format has no word for them yet.
-
-## Preferences
-
-Separate from claims, because they describe you rather than a database object:
-
-```bash
-saya preferences set timezone Europe/London
-saya preferences set output-style compact
-saya preferences list
-```
-
-`timezone` and `date-grain` are per profile; `output-style` and `default-profile` are global. A
-preference cannot contain SQL, secrets or instructions — the type has no variant that could.
-
-Nothing consumes preferences yet; they are stored and shown.
+For multi-valued slots, several descriptions or aliases coexist by design; they are alternatives, not
+rivals.
 
 ## If something goes wrong
 
-**Memory never breaks the ordinary path.** If the store is unavailable, questions and queries work
-exactly as they would without it, with a diagnostic. A remembered claim can never introduce a table
-or column that does not exist, and can never authorise SQL: every statement still passes the same
-read-only safety layer.
+`saya contracts list` shows every item SAYA holds for the active profile with its state and whether
+its dependency still holds. `saya contracts queue` shows what is pending review.
 
-Recalled context reaches the model as quoted, delimited data marked untrusted and possibly stale —
-never as instruction. A claim containing text that looks like an instruction stays inside its
-wrapper; it cannot enable a tool, change an approval mode, or alter what SAYA is willing to run.
+If the memory store is unavailable, queries and answers still work — memory degrades answer quality,
+never availability. The turn says the store could not be read rather than pretending memory was
+empty.

@@ -189,7 +189,8 @@ measured so the numbers are comparable across phases.
 | Stale-memory use | turns where a claim whose fingerprint no longer matches influenced the query | **must be zero** |
 | Privacy violations | requests where a database-derived claim reached a cloud provider with sharing disabled | **must be zero** |
 | Query validity | generated SQL accepted by the safety layer and executed without error | must not regress against the no-memory baseline |
-| Candidate precision | candidates confirmed ÷ candidates reviewed | measured from Phase 3; gates `learning = "auto-candidate"` |
+| Candidate precision | proposals kept ÷ proposals reviewed | still unmeasured; gates `mode = "assisted"` as the default (amendment A6) |
+| Supplied-and-overridden | turns where the generated SQL contradicted an active item | **not yet defined** — measured at 3 of 3 in one live sample; see "Still open" |
 | Context overhead | added prompt bytes per request, p50 and p99 | within the configured 16 KiB cap at p99 |
 
 The four "must be zero" rows are release blockers at every phase. The rest are
@@ -225,3 +226,98 @@ comparative and are reported against the Phase 0 baseline.
 - *A new workspace crate for memory.* The existing boundaries hold: contracts in
   `saya-types`, persistence in `saya-store`, composition and presentation in
   `saya-cli`. A new crate is revisited only if that stops being true.
+
+---
+
+## Amendments — 2026-08-17, after the knowledge-v1 rework
+
+The decisions above were made before the system was built. Building it changed several of
+them. What follows is what is true now, and why each original decision moved. Nothing had
+shipped, so no migration was owed and none was performed.
+
+### A1 amends decision 4 — learning is harness-owned, not model-volunteered
+
+Decision 4 assumed the model would call `contract_propose` when it noticed something durable.
+It made a core product behaviour provider-dependent: swap the model or reword the system
+prompt and learning silently stops, with no signal a user can read.
+
+The harness now assembles a bounded record of the turn — what the user asserted, which objects
+the tools inspected, which the SQL touched, the answer, and the knowledge supplied — and runs a
+structured extraction against it. The extractor sees only turn-scoped object references, never
+free-text names, so it cannot propose a fact about an object that was not there. SAYA assigns
+profile, qualified object, schema binding, source and state; the model proposes meaning only.
+
+`contract_propose` is retired. Two paths to one write made the model choose between them.
+
+The provenance rule survives intact: an explicit user statement becomes active in one
+interaction, an inference becomes pending, and repetition never promotes an inference.
+
+### A2 amends decision 3 — cardinality replaces conflict arbitration
+
+Decision 3 returned disagreeing claims as a typed conflict for a human to resolve. That was the
+right call for an unordered set of claims. Knowledge is now stored in typed **slots** with
+declared cardinality: `grain`, `default_time` and `column role` hold exactly one value, enforced
+by a unique index rather than by convention.
+
+A correction replaces the value. The disagreement cannot be stored, so there is nothing to
+arbitrate. `ClaimStatus::Contradicted` is retired with the machinery that produced it.
+
+Multi-valued slots — descriptions, aliases — still hold several values, but those are
+alternatives rather than rivals and were never the conflict case.
+
+### A3 — staleness is computed, never persisted
+
+`Stale` was both a persisted status and a computed schema state. Two homes for one fact can
+disagree. Validity is now computed at read time from the item's **schema binding**: the object
+for a table-level fact, one named column plus a semantic requirement for a column-scoped one.
+
+This also fixes a defect the whole-table fingerprint caused. An unrelated column added anywhere
+in a table marked every fact about it for review. A memory feature that cries wolf after every
+migration gets ignored, and then it is worth nothing. A fact is now disturbed only by a change
+to what it actually depends on.
+
+### A4 amends the confidence-laundering defence
+
+The threat-model row cited an evidence count capped at 32. There is no evidence table: a
+successful query is not evidence a business definition is true, and a bounded counter carries
+the same implication in weaker form.
+
+The defence is structural instead. A proposal duplicating an item supplied to the model that
+same turn is dropped, so a fact cannot strengthen itself by being recalled. Trust comes from
+state and provenance, not from a tally.
+
+### A5 amends decision 5's threat table — deletion is proven in the bytes
+
+The stale-schema and secret-persistence rows stand, with one correction learned the hard way.
+
+`forget` blanks an item's value and binding in the same transaction as the state change, failing
+closed if it cannot decode what it is about to blank. That alone is not erasure: the freed cell
+must be overwritten rather than left in the page, and the write-ahead log folded back, or the
+original text stays readable on disk while the API honestly reports it gone.
+
+A byte scan of the database and both sidecars asserts this. An API-level check passes at every
+stage of that failure and proves nothing.
+
+### A6 — one public mode, and the default stays off
+
+The `recall` and `learning` axes produced nine combinations, several incoherent — accumulating
+knowledge that could never be recalled. They are replaced by `mode = "off" | "assisted"`.
+
+The default is `off`, and that is a hold rather than a preference. The acceptance rubric below
+gates `assisted` on candidate precision, which has not been measured. Defaulting to it today
+would let a user enable memory, work all day, and receive nothing — with no way to tell a quiet
+day from a broken provider.
+
+### A7 — team contracts and preferences are out of v1
+
+Reviewed organisational policy and user configuration are separate products from conversational
+memory. They shared a lifecycle model with it for no reason other than proximity. Both are
+removed from the shipped surface; neither had a user.
+
+### Still open
+
+An **active** item does not compel the model. Measured against a live provider, a confirmed fact
+was contradicted by the generated SQL in three runs of three, with the model explaining its
+reasoning each time. The override is now detected from the statement itself and surfaced, so the
+user sees it — but detection is not enforcement, and the rubric below has no metric for
+*supplied-and-overridden*. It needs one.
