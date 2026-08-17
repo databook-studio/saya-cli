@@ -45,12 +45,16 @@ Analyze the user conversation, executed actions, and assistant response to extra
    - "column:<column_name>.description": Purpose or business definition of a specific column.
    - "column:<column_name>.role": One of ["identifier", "dimension", "measure", "timestamp", "sensitive"].
 5. A directive claim ("table.grain", "table.default_time", "column:<column_name>.role")
-   may carry a `reason`: the one-sentence justification a user gave for it, or that the
-   schema suggests — *why* the claim holds, not *what* it says. Capture it when the user
-   stated one (e.g. "use return_date — a rental only counts once it comes back" → the
-   reason is "a rental only counts once it comes back"). Omit `reason` for description and
-   alias slots, and when no reason was stated. Keep it to one sentence and never put
-   passwords, SQL, or credentials in it.
+   carries a `reason`: the one-sentence justification a user gave for it — *why* the
+   claim holds, not *what* it says. When the user states a justification for a
+   directive in the same statement ("use return_date — a rental only counts once it
+   comes back"), you MUST attach that justification as the proposal's `reason` (here,
+   "a rental only counts once it comes back") and you MUST NOT also emit it as a
+   separate `column:<col>.description` or `table.description` claim — one statement,
+   one claim. A description claim remains correct when the user describes a column or
+   table for its own sake, with no directive attached. Omit `reason` for description
+   and alias slots, and when no justification was stated. Keep `reason` to one sentence
+   and never put passwords, SQL, or credentials in it.
 6. NEVER include passwords, API keys, tokens, or private credentials in extracted values.
 
 ### REGISTERED OBJECTS:
@@ -167,5 +171,48 @@ mod tests {
         assert!(user.contains("orders are daily"));
         assert!(user.contains("OBSERVED OVERRIDES"));
         assert!(user.contains("customer purchase"));
+    }
+
+    /// Text assertion (not a behavioural test): the rendered prompt must tell the
+    /// model that a justification for a directive slot is attached as `reason` and
+    /// must NOT be re-emitted as a separate description claim. Model behaviour is
+    /// verified manually against the store dump — see the packet.
+    #[test]
+    fn test_extraction_prompt_directs_reason_attachment_and_forbids_duplicate_description() {
+        let table = TurnObjectTable::new();
+        let record = TurnRecord {
+            prompt: "Use return_date as the default time column for pagila.public.rental \
+                     — a rental only counts once it comes back. How many rentals in 2022?"
+                .into(),
+            assistant_answer: String::new(),
+            object_table: table,
+            user_corrections: Vec::new(),
+            override_findings: Vec::new(),
+            supplied_claims: Vec::new(),
+        };
+
+        let req = build_extraction_prompt(&record, "deepseek-v4-flash");
+        let system = &req.messages[0].content;
+
+        // Directive, not permissive: the reason MUST be attached.
+        assert!(
+            system.contains("you MUST attach that justification as the proposal's `reason`"),
+            "prompt must direct the model to attach the reason"
+        );
+        // One statement, one claim: no separate description claim for the same
+        // justification. The text wraps across lines in the source, so assert the
+        // two halves separately rather than as one contiguous substring.
+        assert!(
+            system.contains("MUST NOT also emit it as a"),
+            "prompt must forbid a duplicate description claim"
+        );
+        assert!(
+            system.contains("description` claim — one statement,"),
+            "prompt must state one statement, one claim"
+        );
+        // The directive slots are named so the model knows which slots carry a reason.
+        assert!(system.contains("table.default_time"));
+        // The credential prohibition on the reason survives.
+        assert!(system.contains("never put passwords, SQL, or credentials in it"));
     }
 }
