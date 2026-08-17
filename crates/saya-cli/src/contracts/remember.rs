@@ -43,12 +43,19 @@ pub(crate) enum RememberOutcome {
 /// Dedup mirrors the legacy `propose_claim` `Duplicate` outcome: before
 /// writing, the item the `(object, slot[, value])` would land on is looked
 /// up — a single-valued slot keys on `(object, slot)`, a multi-valued one on
-/// `(object, slot, value)`. If it exists, **nothing is written** and the
+/// `(object, slot, value). If it exists, **nothing is written** and the
 /// existing item's state is returned (`Duplicate`). So re-remembering a
 /// forgotten fact reports `Duplicate { Dismissed }` rather than silently
 /// reviving it, and re-remembering an active fact reports `Duplicate { Active }`
 /// with the same id. A genuinely new fact is `put_knowledge_item`'d as `Active`
 /// (`UserExplicit`) and its `ki-…` id returned (`Stored`).
+///
+/// The lookup keys on the **row id** the put would land on, not on the decoded
+/// value. `forget` blanks a tombstone's value (the deletion promise), so a
+/// value comparison would miss a forgotten multi-valued item and the re-remember
+/// would silently resurrect it; the tombstone keeps its id, so an id lookup
+/// still finds it. This is the half of the deletion guarantee that makes erasure
+/// safe: the row is content-free *and* still recognised as the same fact.
 pub(crate) async fn remember(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
@@ -56,10 +63,10 @@ pub(crate) async fn remember(
     fingerprint: SchemaFingerprint,
 ) -> Result<RememberOutcome, ContractOpError> {
     let slot = slot_for_payload(payload).ok_or(ContractOpError::Invalid)?;
-    // A duplicate is an existing item at the (object, slot) — and for a
-    // multi-valued slot, the same value. Looking up before the write (rather
-    // than upserting and reading back) keeps the no-write semantics: a
-    // forgotten tombstone stays forgotten, an active claim is not overwritten.
+    // A duplicate is an existing item at the id the put would land on. Looking
+    // up by id before the write (rather than upserting and reading back) keeps
+    // the no-write semantics: a forgotten tombstone stays forgotten, an active
+    // claim is not overwritten.
     if let Some(existing) = find_existing(store, object, &slot, payload).await? {
         let id = ClaimId::parse(&existing.id).map_err(|_| ContractOpError::Invalid)?;
         return Ok(RememberOutcome::Duplicate {
@@ -80,45 +87,39 @@ pub(crate) async fn remember(
             fingerprint,
         })
         .await?;
-    let id = item_id_for(store, object, &slot, payload).await?;
+    let id = item_id_for(object, &slot, payload)?;
     Ok(RememberOutcome::Stored { id })
 }
 
-/// The existing item at `(object, slot[, value])`, if any. A single-valued slot
-/// keys on `(object, slot)` alone (the value does not take part in the id), so
-/// any existing item for the slot is a duplicate; a multi-valued slot keys on
-/// the value too, so only the same value is a duplicate — a second alias for the
-/// same object is a new row, not a duplicate of the first.
+/// The existing item at the id a put of `payload` under `slot` on `object` would
+/// land on, if any. The id is value-independent for a single-valued slot
+/// (`(object, slot)`) and takes the value into account for a multi-valued one
+/// (`(object, slot, value)`), so this is the same dedup key the store's
+/// `ON CONFLICT(id)` uses. Keying on the id (not the decoded value) is what
+/// makes a forgotten tombstone — whose value `forget` has blanked — still
+/// recognised as the duplicate of a re-proposed same-value fact.
 async fn find_existing(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
     slot: &KnowledgeSlot,
     payload: &ClaimPayload,
 ) -> Result<Option<KnowledgeItem>, ContractOpError> {
-    let items = store.knowledge_for_object(object).await?;
-    Ok(items.into_iter().find(|item| {
-        &item.slot == slot && (slot.cardinality().is_single() || item.value == *payload)
-    }))
+    let serialized = serde_json::to_string(payload).map_err(|_| ContractOpError::Unavailable)?;
+    let id = saya_store::knowledge_item_id_for(object, slot, &serialized);
+    Ok(store.get_knowledge_item(&id).await?)
 }
 
-/// The `ki-…` id of the item at `(object, slot[, value])` after a put. The store
-/// derives the id from `(object, slot)` for a single-valued slot and
-/// `(object, slot, value)` for a multi-valued one, so there is exactly one
-/// match; a `None` here means the put did not land, which is a store fault the
-/// caller surfaces as `Unavailable`.
-async fn item_id_for(
-    store: &SqliteStateStore,
+/// The `ki-…` id of the item a put of `payload` under `slot` on `object` lands
+/// on — the same id [`find_existing`] looked up, derived the same way the store
+/// derives it on write. Called after a successful `put_knowledge_item`, so the
+/// row exists at exactly this id; the id is derived, not read back, because the
+/// store just wrote it under this id and a read would only echo it.
+fn item_id_for(
     object: &DatabaseObjectRef,
     slot: &KnowledgeSlot,
     payload: &ClaimPayload,
 ) -> Result<ClaimId, ContractOpError> {
-    let item = store
-        .knowledge_for_object(object)
-        .await?
-        .into_iter()
-        .find(|item| {
-            &item.slot == slot && (slot.cardinality().is_single() || item.value == *payload)
-        })
-        .ok_or(ContractOpError::Unavailable)?;
-    ClaimId::parse(&item.id).map_err(|_| ContractOpError::Invalid)
+    let serialized = serde_json::to_string(payload).map_err(|_| ContractOpError::Unavailable)?;
+    let id = saya_store::knowledge_item_id_for(object, slot, &serialized);
+    ClaimId::parse(&id).map_err(|_| ContractOpError::Invalid)
 }

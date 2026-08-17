@@ -72,10 +72,10 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             Some("queue [limit] — list candidate claims awaiting review. Example: /queue 20")
         }
         "confirm" => Some(
-            "confirm <claim-id-prefix> — confirm the claim named by its short id prefix (the c-xxxx form /contracts shows). Example: /confirm c-a86a3f",
+            "confirm <claim-id-prefix> — confirm the claim named by its short id prefix (the ki-xxxx form /contracts shows). Example: /confirm ki-a86a3f",
         ),
         "reject" => Some(
-            "reject <claim-id-prefix> — reject the claim named by its short id prefix. Example: /reject c-a86a3f",
+            "reject <claim-id-prefix> — reject the claim named by its short id prefix. Example: /reject ki-a86a3f",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",

@@ -20,6 +20,7 @@ mod writes;
 
 use async_trait::async_trait;
 pub use error::KnowledgeStoreError;
+pub use keys::knowledge_item_id_for;
 pub use records::{KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES};
 
 use crate::SqliteStateStore;
@@ -50,6 +51,9 @@ pub trait KnowledgeItemStore: Send + Sync {
         id: &str,
         state: KnowledgeState,
     ) -> Result<(), KnowledgeStoreError>;
+    /// Forget an item: erase its value and schema binding and mark it
+    /// `Dismissed`, in one transaction, keeping the row as a tombstone.
+    async fn forget_knowledge_item(&self, id: &str) -> Result<(), KnowledgeStoreError>;
     /// Revalidate an item, updating its schema binding JSON, fingerprint version,
     /// and transitioning its state to `Active`.
     async fn revalidate_knowledge_item(
@@ -97,6 +101,9 @@ impl KnowledgeItemStore for SqliteStateStore {
         state: KnowledgeState,
     ) -> Result<(), KnowledgeStoreError> {
         writes::update_state(self, id, state).await
+    }
+    async fn forget_knowledge_item(&self, id: &str) -> Result<(), KnowledgeStoreError> {
+        writes::forget_item(self, id).await
     }
     async fn revalidate_knowledge_item(
         &self,

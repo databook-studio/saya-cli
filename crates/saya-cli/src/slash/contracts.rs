@@ -108,7 +108,7 @@ fn usage_queue() -> String {
 }
 
 /// Payload-free usage for the spec-D decide commands. One token: a stored
-/// claim-id prefix (the `c-xxxx` form `contracts list` abbreviates to). Never
+/// claim-id prefix (the `ki-xxxx` form `contracts list` abbreviates to). Never
 /// echoes the untrusted prefix.
 fn usage_decide() -> String {
     "/confirm|/reject|/use <claim-id-prefix>".into()

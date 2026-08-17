@@ -139,7 +139,7 @@ pub enum ContractsCommand {
         reject: bool,
     },
     /// Act on a claim from the turn that just showed it, by a short stored
-    /// claim-id prefix (the `c-xxxx` `contracts list` abbreviates to), not a
+    /// claim-id prefix (the `ki-xxxx` `contracts list` abbreviates to), not a
     /// 64-character id. Spec D. The `prefix` is resolved against the resolved
     /// profile's claims to exactly one claim, or refused; the decision then
     /// reaches the existing `confirm`/`reject`/`use_candidate_once` operations

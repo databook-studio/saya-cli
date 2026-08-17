@@ -81,6 +81,59 @@ impl ClaimPayload {
         }
     }
 
+    /// The same variant with its user-derived free text emptied — the payload a
+    /// forgotten fact's row is reduced to when `forget` erases its content.
+    ///
+    /// The deletion promise (`docs/memory.md` §Deletion) is that a forgotten fact's
+    /// payload is cleared while the row stays. The secret-bearing channels on a
+    /// payload are the free-text fields — `text`, `description`, `alias` — where a
+    /// user or the model could paste a credential or a query. Emptying them removes
+    /// any user-derived content the row carried. What survives is structural
+    /// identity the row needs to stay a meaningful tombstone: the column name on a
+    /// column-scoped payload (it is the slot's column, already in the `slot` column
+    /// and the row's object identity) and the closed-enum `role` of a `ColumnRole`
+    /// (a classification, not free text — and one of a fixed five values, so it
+    /// carries nothing a user supplied). A `Relationship` matches no slot and is
+    /// never stored, so it cannot reach `forget`; it is returned unchanged as a
+    /// total-function defence, not a case the store exercises.
+    ///
+    /// The result is the same variant, so `slot_matches_payload` still holds and
+    /// a read that decodes a dismissed row does not fail. Constructing it here
+    /// directly (rather than via the validating constructors) is correct: the
+    /// constructors *reject* empty text, and the point of a blanked payload is
+    /// exactly to carry none.
+    pub fn blanked(&self) -> Self {
+        match self {
+            Self::TableDescription { .. } => Self::TableDescription {
+                text: String::new(),
+            },
+            Self::TableAlias { .. } => Self::TableAlias {
+                alias: String::new(),
+            },
+            Self::TableGrain { .. } => Self::TableGrain {
+                description: String::new(),
+            },
+            Self::ColumnDescription { column, .. } => Self::ColumnDescription {
+                column: column.clone(),
+                text: String::new(),
+            },
+            // `role` is a closed enum, not user free text; `column` is the slot's
+            // structural column. Neither is a secret-bearing channel, so both stay.
+            Self::ColumnRole { column, role } => Self::ColumnRole {
+                column: column.clone(),
+                role: *role,
+            },
+            Self::DefaultTimeColumn { column } => Self::DefaultTimeColumn {
+                column: column.clone(),
+            },
+            // Unreachable via the store (no slot names a relationship), so this
+            // arm only keeps `blanked` total. Returning it unchanged preserves
+            // the constructor-validated invariants rather than fabricating a
+            // malformed relationship.
+            Self::Relationship { .. } => self.clone(),
+        }
+    }
+
     /// Snapshots of this claim's referenced columns, resolved against `table`.
     /// A referenced column absent from `table` is skipped — a claim cannot
     /// snapshot what does not exist, and the caller decides what that means.
@@ -423,6 +476,81 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let deserialized: ClaimPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(payload, deserialized);
+    }
+
+    #[test]
+    fn blanked_empties_free_text_but_keeps_structural_identity() {
+        // The secret-bearing free-text fields are cleared to empty.
+        let desc = ClaimPayload::table_description("a customers table").unwrap();
+        assert_eq!(
+            desc.blanked(),
+            ClaimPayload::TableDescription {
+                text: String::new()
+            }
+        );
+        let alias = ClaimPayload::table_alias("customers").unwrap();
+        assert_eq!(
+            alias.blanked(),
+            ClaimPayload::TableAlias {
+                alias: String::new()
+            }
+        );
+        let grain = ClaimPayload::table_grain("one row per order").unwrap();
+        assert_eq!(
+            grain.blanked(),
+            ClaimPayload::TableGrain {
+                description: String::new()
+            }
+        );
+        // A column-scoped description keeps its column (the slot's structural
+        // column, not free text) but drops the descriptive text.
+        let col_desc =
+            ClaimPayload::column_description("created_at", "when the row was made").unwrap();
+        assert_eq!(
+            col_desc.blanked(),
+            ClaimPayload::ColumnDescription {
+                column: "created_at".into(),
+                text: String::new(),
+            }
+        );
+        // A column role keeps the column and the closed-enum role — neither is
+        // user free text, and both are reconstructable from the slot.
+        let col_role = ClaimPayload::column_role("created_at", ColumnRole::Timestamp).unwrap();
+        assert_eq!(
+            col_role.blanked(),
+            ClaimPayload::ColumnRole {
+                column: "created_at".into(),
+                role: ColumnRole::Timestamp,
+            }
+        );
+        let default_time = ClaimPayload::default_time_column("created_at").unwrap();
+        assert_eq!(
+            default_time.blanked(),
+            ClaimPayload::DefaultTimeColumn {
+                column: "created_at".into()
+            }
+        );
+    }
+
+    #[test]
+    fn blanked_is_the_same_variant_and_serializes_so_reads_do_not_break() {
+        // A forgotten row's `value_json` must still decode as a `ClaimPayload` or
+        // every read of its object fails. `blanked` keeps the variant, so the
+        // serialised form round-trips through serde.
+        for payload in [
+            ClaimPayload::table_description("d").unwrap(),
+            ClaimPayload::table_alias("a").unwrap(),
+            ClaimPayload::table_grain("g").unwrap(),
+            ClaimPayload::column_description("c", "d").unwrap(),
+            ClaimPayload::column_role("c", ColumnRole::Measure).unwrap(),
+            ClaimPayload::default_time_column("c").unwrap(),
+        ] {
+            let blanked = payload.blanked();
+            assert_eq!(blanked.kind(), payload.kind(), "blanked keeps the variant");
+            let json = serde_json::to_string(&blanked).unwrap();
+            let back: ClaimPayload = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, blanked, "blanked payload round-trips through serde");
+        }
     }
 
     fn table_with(cols: &[(&str, &str, bool)]) -> crate::Table {

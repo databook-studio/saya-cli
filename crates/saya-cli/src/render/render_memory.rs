@@ -106,7 +106,7 @@ fn contract_header(contract: &SuppliedContractDto) -> String {
     )
 }
 
-/// One claim line: the short claim-id prefix (the `c-xxxx` the user types into
+/// One claim line: the short claim-id prefix (the `ki-xxxx` the user types into
 /// `/confirm`/`/reject`/`/use`), kind, value, an optional column, and the status
 /// word — with an explicit `unconfirmed` mark when the status is not `Confirmed`
 /// (spec §4: unconfirmed claims are marked wherever claims are shown). The id

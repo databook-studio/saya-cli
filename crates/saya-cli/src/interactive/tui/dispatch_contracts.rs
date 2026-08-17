@@ -104,7 +104,7 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
         },
         // `Decide` (spec D) carries a `profile` field like the other profiled
         // reads/writes: the TUI stamps the session's active profile so a
-        // `/confirm c-xxxx` resolves against the database the user /connect-ed
+        // `/confirm ki-xxxx` resolves against the database the user /connect-ed
         // to, not the configured default (cross-profile isolation, the same
         // invariant `/queue`'s stamp upholds).
         ContractsCommand::Decide {

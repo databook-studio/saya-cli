@@ -131,20 +131,30 @@ pub(crate) async fn reject(
     ContractClaim::from_knowledge_item(&item).ok_or(ContractOpError::Unavailable)
 }
 
-/// Forgets `id`: withdrawn to `Dismissed` (a tombstone, kept for history like
-/// the legacy `Forgotten` row). The row is not deleted — a later re-learn of the
-/// same fact lands on the same single-valued row and re-activates it, rather
-/// than a delete-and-re-insert losing the audit trail. `reason` is accepted for
-/// the command layer's signature; the new store has no per-forget event, so it
-/// is not echoed anywhere (fail-closed: never surface untrusted input).
+/// Forgets `id`: withdrawn to `Dismissed` and its content erased in the same
+/// transaction, keeping the row as a tombstone. The deletion promise
+/// (`docs/memory.md` §Deletion) is that a forgotten fact's payload and
+/// referenced columns are cleared while the row itself remains — so "why did
+/// SAYA stop using that?" stays answerable and a re-remember of the same fact
+/// reports *previously forgotten* rather than silently resurrecting it.
+///
+/// Erasing the value is coupled to `remember`'s dedup: the tombstone's value is
+/// blanked, so dedup cannot key on the decoded value (a multi-valued slot keys
+/// on value). `remember` dedups by the row id the put would land on, which is
+/// value-independent for a single-valued slot and which the tombstone keeps for
+/// a multi-valued one, so a re-remember still hits the tombstone. Erasing
+/// without that change would silently resurrect a forgotten multi-valued fact;
+/// the two move together.
+///
+/// `reason` is accepted for the command layer's signature; the new store has no
+/// per-forget event, so it is not echoed anywhere (fail-closed: never surface
+/// untrusted input). An unknown id is `NotFound`, matching the legacy refusal.
 pub(crate) async fn forget(
     store: &SqliteStateStore,
     id: &ClaimId,
     _reason: saya_store::ForgetReason,
 ) -> Result<(), ContractOpError> {
-    store
-        .update_knowledge_item_state(id.as_str(), KnowledgeState::Dismissed)
-        .await?;
+    store.forget_knowledge_item(id.as_str()).await?;
     Ok(())
 }
 

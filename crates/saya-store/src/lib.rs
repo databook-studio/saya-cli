@@ -21,7 +21,7 @@ pub use error::StoreError;
 pub use filesystem::FsSessionStore;
 pub use knowledge_items::{
     KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
-    MAX_KNOWLEDGE_ITEM_BYTES,
+    MAX_KNOWLEDGE_ITEM_BYTES, knowledge_item_id_for,
 };
 pub use redaction::redact;
 pub use sqlite::SqliteStateStore;
