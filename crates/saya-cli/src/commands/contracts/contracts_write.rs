@@ -99,14 +99,22 @@ pub(super) async fn remember(
     // A duplicate is not an error: pass the existing item's real status through
     // so a duplicate of a forgotten claim reads as forgotten, not as success.
     // The `ki-…` id is the same in either arm — the stored row, or the
-    // pre-existing one a duplicate names — so text/JSON/NDJSON agree on it.
+    // pre-existing one a duplicate names — and it stays on the event for JSON
+    // and NDJSON consumers even though the text confirmation no longer shows it.
     let (claim_id, action, status) = match outcome {
         RememberOutcome::Stored { id } => (id, "remembered", ClaimStatus::Confirmed),
         RememberOutcome::Duplicate { id, state } => (id, "duplicate", status_from_state(state)),
     };
     emit(
-        TerminalEvent::ContractChanged {
+        TerminalEvent::ContractRemembered {
             claim_id: claim_id.as_str().to_string(),
+            object: format!(
+                "{}.{}.{}",
+                qualified.catalog, qualified.schema, qualified.object
+            ),
+            kind: kind.as_str().to_string(),
+            value: value.to_string(),
+            column: column.map(str::to_string),
             action: action.into(),
             status: status.as_str().into(),
         },

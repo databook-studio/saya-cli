@@ -268,10 +268,14 @@ async fn remember_slash_and_headless_produce_same_claim_id() {
     )
     .await;
     assert_eq!(scode, 0, "/remember stderr: {serr}");
-    let slash_id = sout
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("slash /remember names the id: {sout}");
+    assert!(
+        sout.contains("remembered alias customers for analytics.public.orders"),
+        "slash /remember names fact and object: {sout}"
+    );
+    assert!(
+        !sout.contains("ki-"),
+        "slash /remember contains no raw id: {sout}"
+    );
 
     // The translated command must be structurally equal to the headless one —
     // same operation, same payload constructors, same deterministic identity.
@@ -303,14 +307,23 @@ async fn remember_slash_and_headless_produce_same_claim_id() {
     )
     .await;
     assert_eq!(_hcode, 0, "headless stderr: {herr}");
-    let headless_id = hout
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("headless remember names the id: {hout}");
+    assert_eq!(sout, hout, "slash and headless text output agree");
 
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let slash_items = slash_store.knowledge_for_object(&object).await.unwrap();
+    let headless_items = headless_store.knowledge_for_object(&object).await.unwrap();
     assert_eq!(
-        slash_id, headless_id,
-        "slash and headless /remember produced different claim ids — they are not the same operation"
+        slash_items[0].id, headless_items[0].id,
+        "slash and headless /remember produced different claim ids in store"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -332,10 +345,21 @@ async fn forget_slash_and_headless_tombstone_and_exclude_identically() {
         RenderFormat::Text,
     )
     .await;
-    let id = out
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("id present: {out}");
+    assert!(out.contains("remembered alias customers for analytics.public.orders"));
+    assert!(!out.contains("ki-"));
+
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    let id = items[0].id.as_str();
 
     // Slash /forget tombstones.
     let (_cmd, fcode, fout, ferr) = run_slash(
@@ -375,7 +399,7 @@ async fn forget_slash_and_headless_tombstone_and_exclude_identically() {
     let root2 = temp_root("forget_parity_headless");
     let (runtime2, _n) = runtime_at(&root2);
     let store2 = store_at(&root2).await;
-    let (_, hout, _) = run_headless(
+    let (_, _, _) = run_headless(
         ContractsCommand::Remember {
             table: qualified().into(),
             kind: ClaimKindArg::Alias,
@@ -388,10 +412,18 @@ async fn forget_slash_and_headless_tombstone_and_exclude_identically() {
         RenderFormat::Text,
     )
     .await;
-    let id2 = hout
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap();
+    let identity2 = identity_for(&runtime2, "local");
+    let profile2 = ProfileIdentity::parse(&identity2).unwrap();
+    let object2 = DatabaseObjectRef::new(
+        profile2,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items2 = store2.knowledge_for_object(&object2).await.unwrap();
+    let id2 = items2[0].id.as_str();
     run_headless(
         ContractsCommand::Forget {
             claim_id: id2.to_string(),
@@ -513,10 +545,19 @@ async fn forget_then_contract_no_longer_lists() {
         RenderFormat::Text,
     )
     .await;
-    let id = rout
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap();
+    assert!(rout.contains("remembered"));
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    let id = items[0].id.as_str();
 
     let (_, _, fout, ferr) = run_slash(
         &format!("/forget {id}"),
@@ -662,10 +703,19 @@ async fn unopenable_store_slash_matches_headless_failure_modes() {
         RenderFormat::Text,
     )
     .await;
-    let id = gout
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap();
+    assert!(gout.contains("remembered"));
+    let identity = identity_for(&good_runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = good_store.knowledge_for_object(&object).await.unwrap();
+    let id = items[0].id.as_str();
     let (_, fcode, _fout, _ferr) = run_slash(
         &format!("/forget {id}"),
         &runtime,

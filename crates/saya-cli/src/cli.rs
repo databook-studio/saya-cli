@@ -170,6 +170,20 @@ pub enum ClaimKindArg {
     TimeColumn,
 }
 
+impl ClaimKindArg {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Description => "description",
+            Self::Alias => "alias",
+            Self::Grain => "grain",
+            Self::ColumnDescription => "column-description",
+            Self::ColumnRole => "column-role",
+            Self::TimeColumn => "time-column",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ForgetReasonArg {
     UserRequest,

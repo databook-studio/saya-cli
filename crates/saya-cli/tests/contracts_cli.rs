@@ -253,7 +253,7 @@ async fn remember_then_show_round_trips_claim_fields() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. remember twice -> duplicate with the same id, no second claim
+// 2. remember twice -> duplicate with the same fact, no second claim
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn remember_twice_reports_duplicate_with_same_id() {
@@ -270,20 +270,23 @@ async fn remember_twice_reports_duplicate_with_same_id() {
     };
     let (code1, out1, err1) = run(remember.clone(), &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code1, 0, "stderr: {err1}");
-    let first_id = out1
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("first line names the id: {out1}");
+    assert!(
+        out1.contains("remembered alias customers for analytics.public.orders (confirmed)"),
+        "confirmation names fact and object in words: {out1}"
+    );
+    assert!(!out1.contains("ki-"), "must contain no raw id: {out1}");
 
     let (code2, out2, err2) = run(remember, &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code2, 0, "stderr: {err2}");
     assert!(
-        out2.contains("duplicate"),
-        "second must be duplicate: {out2}"
+        out2.contains(
+            "duplicate of alias customers for analytics.public.orders — already exists (confirmed)"
+        ),
+        "second must report duplicate naming fact and object: {out2}"
     );
     assert!(
-        out2.contains(first_id),
-        "duplicate must echo the same id {first_id}: {out2}"
+        !out2.contains("ki-"),
+        "duplicate must contain no raw id: {out2}"
     );
 
     // Exactly one knowledge item exists for the object — the duplicate wrote
@@ -326,10 +329,24 @@ async fn forget_then_show_no_longer_lists_the_claim() {
     };
     let (code, out, err) = run(remember, &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "stderr: {err}");
-    let id = out
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("id present: {out}");
+    assert!(
+        out.contains("remembered alias customers for analytics.public.orders (confirmed)"),
+        "names fact and object: {out}"
+    );
+    assert!(!out.contains("ki-"), "no raw id in remember output: {out}");
+
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    let id = items[0].id.as_str();
 
     let forget = ContractsCommand::Forget {
         claim_id: id.into(),
@@ -371,10 +388,21 @@ async fn remember_after_forget_reports_duplicate_forgotten_not_success() {
     };
     let (code, out, err) = run(remember.clone(), &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "stderr: {err}");
-    let id = out
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("id present: {out}");
+    assert!(out.contains("remembered"), "out: {out}");
+    assert!(!out.contains("ki-"), "no raw id: {out}");
+
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    let id = items[0].id.as_str();
 
     let forget = ContractsCommand::Forget {
         claim_id: id.into(),
@@ -389,9 +417,14 @@ async fn remember_after_forget_reports_duplicate_forgotten_not_success() {
     assert_eq!(code, 0, "stderr: {err}");
     assert!(out.contains("duplicate"), "out: {out}");
     assert!(
-        out.contains("forgotten"),
-        "duplicate of a forgotten claim must say forgotten: {out}"
+        out.contains("previously forgotten"),
+        "duplicate of a forgotten claim must say previously forgotten: {out}"
     );
+    assert!(
+        out.contains("alias customers for analytics.public.orders"),
+        "names fact and object: {out}"
+    );
+    assert!(!out.contains("ki-"), "no raw id: {out}");
     assert!(
         !out.starts_with("remembered"),
         "must not read as success: {out}"
@@ -684,40 +717,72 @@ async fn json_and_ndjson_carry_same_claim_ids_as_text() {
         column: None,
         profile: None,
     };
-    // The text `remember` line carries the full claim id the user pastes.
+    // The text `remember` line confirms the fact in words without raw id.
     let (code, text_out, err) = run(remember.clone(), &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "stderr: {err}");
-    let text_id = text_out
-        .strip_prefix("remembered ")
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("text form names the id: {text_out}");
+    assert!(
+        text_out.contains("remembered alias customers for analytics.public.orders"),
+        "text form names the fact and object: {text_out}"
+    );
+    assert!(
+        !text_out.contains("ki-"),
+        "text form drops raw id: {text_out}"
+    );
 
-    // The duplicate event (same value remembered again) carries the same id in
-    // JSON and NDJSON; it parses and agrees with the text id.
+    let identity = identity_for(&runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    let stored_id = items[0].id.as_str();
+
+    // The duplicate event (same value remembered again) in JSON and NDJSON
+    // carries `contract_remembered`.
     for format in [RenderFormat::Json, RenderFormat::Ndjson] {
         let (code, out, err) = run(remember.clone(), &runtime, &store, format).await;
         assert_eq!(code, 0, "{format:?} stderr: {err}");
         let events = json_events(&out);
-        let changed = events
+        let remembered_evt = events
             .iter()
-            .find(|v| v["event"] == "contract_changed")
-            .expect("a contract_changed event was emitted");
-        assert_eq!(changed["action"], "duplicate");
+            .find(|v| v["event"] == "contract_remembered")
+            .expect("a contract_remembered event was emitted");
+        assert_eq!(remembered_evt["action"], "duplicate");
         assert_eq!(
-            changed["status"], "confirmed",
+            remembered_evt["status"], "confirmed",
             "duplicate of a confirmed claim carries its status"
         );
-        let id = changed["claim_id"].as_str().expect("claim_id is a string");
-        assert_eq!(id, text_id, "{format:?} duplicate id disagrees with text");
+        assert_eq!(remembered_evt["object"], "analytics.public.orders");
+        assert_eq!(remembered_evt["kind"], "alias");
+        assert_eq!(remembered_evt["value"], "customers");
+        // The id left the text confirmation but not the machine surface: a
+        // script that remembers then forgets still has a handle.
+        assert_eq!(
+            remembered_evt["claim_id"], stored_id,
+            "{format:?} remember id disagrees with stored id"
+        );
     }
 
-    // `show` carries the same claim id in every format, including text.
+    // …and the same command rendered as text names the fact instead of the id.
+    let (code, remember_text, err) =
+        run(remember.clone(), &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(
+        !remember_text.contains(stored_id),
+        "text confirmation must not print the raw id: {remember_text}"
+    );
+
+    // `show` carries the claim id in every structured format (JSON/NDJSON),
+    // which matches the store's id.
     let show = ContractsCommand::Show {
         table: qualified().into(),
         profile: None,
     };
-    // The text show renders the abbreviated id; the full id still appears in the
-    // JSON/NDJSON contract_show event, so compare against those.
     for format in [RenderFormat::Json, RenderFormat::Ndjson] {
         let (code, out, err) = run(show.clone(), &runtime, &store, format).await;
         assert_eq!(code, 0, "{format:?} stderr: {err}");
@@ -729,7 +794,10 @@ async fn json_and_ndjson_carry_same_claim_ids_as_text() {
         let claim_id = shown["contract"]["claims"][0]["claim_id"]
             .as_str()
             .expect("claim id present");
-        assert_eq!(claim_id, text_id, "{format:?} show id disagrees with text");
+        assert_eq!(
+            claim_id, stored_id,
+            "{format:?} show id disagrees with stored id"
+        );
     }
 
     // The text `show` line contains the value, so the round-trip is real.

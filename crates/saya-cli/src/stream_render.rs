@@ -82,6 +82,10 @@ pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
         AgentEvent::KnowledgeOverridden { findings } => {
             TerminalEvent::KnowledgeOverridden { findings }
         }
+        // Learning used to fall through to the catch-all below and print
+        // `unrecognized agent event` — an error string at the exact moment the
+        // product did the thing it is for.
+        AgentEvent::KnowledgeProposed { claim } => TerminalEvent::KnowledgeLearned { claim },
         AgentEvent::Complete => TerminalEvent::Complete,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface

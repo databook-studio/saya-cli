@@ -1,4 +1,4 @@
-use saya_agent::{KnowledgeOutcome, OverrideFindingDto, SuppliedContractDto};
+use saya_agent::{KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedContractDto};
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
@@ -8,11 +8,15 @@ mod render_contract;
 mod render_delta;
 mod render_io;
 mod render_json;
+mod render_learned;
 mod render_memory;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
 pub use io_view::{ContractExportView, ContractImportClaimView, ContractImportView};
+/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeProposed`] in
+/// `apply_event` and shares this shaper so the wording lives in one place.
+pub(crate) use render_learned::knowledge_learned_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeOverridden`] in
 /// `apply_event` and shares this shaper so the wording lives in one place (A1).
 pub(crate) use render_memory::knowledge_overridden_text;
@@ -71,6 +75,14 @@ pub enum TerminalEvent {
         contracts: Vec<SuppliedContractDto>,
         dropped_by_bounds: usize,
     },
+    /// One fact SAYA came away from the turn knowing (`AgentEvent::KnowledgeProposed`).
+    /// Emitted once per learned claim, after the answer. Text is shaped in
+    /// [`render_learned`] and carries no claim id — learning is not something the
+    /// user asked for, so it must not hand them a hash to manage. JSON/NDJSON keep
+    /// the DTO whole, id included, for machine consumers.
+    KnowledgeLearned {
+        claim: ProposedClaimDto,
+    },
     /// A confirmed claim the turn's SQL **contradicted** (spec A1). Emitted at
     /// most once per turn, after the loop, carrying every finding the detector
     /// raised. The finding says the SQL **referenced** columns, never that it
@@ -106,6 +118,19 @@ pub enum TerminalEvent {
     },
     ContractChanged {
         claim_id: String,
+        action: String,
+        status: String,
+    },
+    ContractRemembered {
+        /// Carried for machine consumers only. The text renderer never prints
+        /// it: a 64-character hash is the system's business, and a script that
+        /// remembers then forgets still needs a handle without a second call.
+        claim_id: String,
+        object: String,
+        kind: String,
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        column: Option<String>,
         action: String,
         status: String,
     },
@@ -174,6 +199,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: render_memory::knowledge_supplied_text(*outcome, contracts, *dropped_by_bounds),
             stderr: String::new(),
         },
+        TerminalEvent::KnowledgeLearned { claim } => Rendered {
+            stdout: render_learned::knowledge_learned_text(claim),
+            stderr: String::new(),
+        },
         TerminalEvent::KnowledgeOverridden { findings } => Rendered {
             stdout: render_memory::knowledge_overridden_text(findings),
             stderr: String::new(),
@@ -205,6 +234,15 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             action,
             status,
         } => render_contract::changed(claim_id, action, status),
+        TerminalEvent::ContractRemembered {
+            claim_id: _,
+            object,
+            kind,
+            value,
+            column,
+            action,
+            status,
+        } => render_contract::remembered(object, kind, value, column.as_deref(), action, status),
         TerminalEvent::ContractQueue { items } => render_contract::queue(items),
         TerminalEvent::ContractImport { report } => render_io::import(report),
         TerminalEvent::ContractExport { report } => render_io::export(report),

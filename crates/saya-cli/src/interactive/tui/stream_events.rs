@@ -82,6 +82,16 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
                 transcript.push(BlockKind::System, text.trim_end_matches('\n'));
             }
         }
+        // One fact learned this turn. Trails the answer — the runtime emits it
+        // after the loop — so it lands below the assistant text, where "and I
+        // kept this" belongs. Shares the shaper with the headless path; an
+        // undescribable claim is silence, never a raw token.
+        AgentEvent::KnowledgeProposed { claim } => {
+            let text = crate::render::knowledge_learned_text(&claim);
+            if !text.is_empty() {
+                transcript.push(BlockKind::System, text.trim_end_matches('\n'));
+            }
+        }
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
         }

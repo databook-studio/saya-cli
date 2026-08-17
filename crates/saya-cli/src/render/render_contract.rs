@@ -65,6 +65,42 @@ pub(super) fn changed(claim_id: &str, action: &str, status: &str) -> Rendered {
     }
 }
 
+/// Shapes the confirmation for a remembered claim (spec Chunk 3).
+///
+/// Dropping the 64-character raw id keeps hashes out of the user interface:
+/// the confirmation names the fact in words (kind, value, optional column)
+/// and the object it was recorded for.
+pub(super) fn remembered(
+    object: &str,
+    kind: &str,
+    value: &str,
+    column: Option<&str>,
+    action: &str,
+    status: &str,
+) -> Rendered {
+    let col = match column {
+        Some(col) => format!(" (col: {col})"),
+        None => String::new(),
+    };
+    let line = match action {
+        "duplicate" => match status {
+            "forgotten" => {
+                format!("duplicate of {kind} {value} for {object}{col} — previously forgotten\n")
+            }
+            other => {
+                format!(
+                    "duplicate of {kind} {value} for {object}{col} — already exists ({other})\n"
+                )
+            }
+        },
+        _ => format!("remembered {kind} {value} for {object}{col} ({status})\n"),
+    };
+    Rendered {
+        stdout: line,
+        stderr: String::new(),
+    }
+}
+
 /// The review queue: one line per waiting claim with the fields a reviewer
 /// needs to decide — the full claim id (pasted into `contracts review`), the
 /// status word, kind, value, object, schema state, and evidence count. The
