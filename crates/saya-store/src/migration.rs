@@ -19,6 +19,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step3(&mut connection).await?;
             step4(&mut connection).await?;
             step5(&mut connection).await?;
+            step6(&mut connection).await?;
             true
         }
         1 => {
@@ -26,24 +27,32 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step3(&mut connection).await?;
             step4(&mut connection).await?;
             step5(&mut connection).await?;
+            step6(&mut connection).await?;
             true
         }
         2 => {
             step3(&mut connection).await?;
             step4(&mut connection).await?;
             step5(&mut connection).await?;
+            step6(&mut connection).await?;
             true
         }
         3 => {
             step4(&mut connection).await?;
             step5(&mut connection).await?;
+            step6(&mut connection).await?;
             true
         }
         4 => {
             step5(&mut connection).await?;
+            step6(&mut connection).await?;
             true
         }
-        5 => false,
+        5 => {
+            step6(&mut connection).await?;
+            true
+        }
+        6 => false,
         _ => {
             sqlx::query("ROLLBACK").execute(&mut *connection).await.ok();
             return Err(StoreError::VersionUnsupported);
@@ -195,6 +204,44 @@ async fn step5(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError
         .await
         .map_err(|_| StoreError::Unavailable)?;
     sqlx::query("PRAGMA user_version = 5")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}
+
+/// Step 6 (Spec G, Chunk 5): drop the legacy `contract_*` tables. Phases D and
+/// F moved every read and write to `knowledge_items`, so the four legacy tables
+/// are dead weight. Nothing has shipped, so there is no data to preserve and no
+/// compatibility window: drop. `user_preferences`, `schema_cache`, `audit_log`,
+/// and `knowledge_items` are untouched (the knowledge path is the product now).
+///
+/// A new step, not an amendment: `user_version = 5` is a real state a
+/// developer's unreleased database may hold, and a `CREATE TABLE IF NOT EXISTS`
+/// step cannot remove a table in place. `IF EXISTS` makes the drop safe on every
+/// path, including a fresh database that never created the tables.
+async fn step6(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    // Drop order: leaves before roots, so a foreign-key-enabled connection never
+    // dangles a reference mid-drop. `contract_evidence` and `contract_events`
+    // both reference `contract_claims`; `contract_claims` references
+    // `contract_objects`.
+    sqlx::query("DROP TABLE IF EXISTS contract_evidence")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("DROP TABLE IF EXISTS contract_events")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("DROP TABLE IF EXISTS contract_claims")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("DROP TABLE IF EXISTS contract_objects")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 6")
         .execute(&mut **connection)
         .await
         .map_err(|_| StoreError::Unavailable)?;

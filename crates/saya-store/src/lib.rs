@@ -16,13 +16,7 @@ mod sqlite;
 mod sqlite_support;
 mod state_contracts;
 
-pub use contracts::{
-    ClaimEvidence, ContractEvent, ContractEventKind, ContractObjectId, ContractStore,
-    DeduplicationKey, EvidenceKind, ForgetReason, MAX_CLAIM_PAYLOAD_BYTES, MAX_CLAIMS_PER_OBJECT,
-    MAX_EVIDENCE_PER_CLAIM, MAX_LISTED_OBJECTS, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore,
-    ProposeClaim, ProposeOutcome, StoredClaim, StoredObject, claim_id, deduplication_key,
-    object_id,
-};
+pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
 pub use error::StoreError;
 pub use filesystem::FsSessionStore;
 pub use knowledge_items::{

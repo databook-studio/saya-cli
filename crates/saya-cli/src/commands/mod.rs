@@ -2,7 +2,6 @@ mod config;
 pub(crate) mod connection;
 pub(crate) mod connection_schema;
 mod connection_schema_cache;
-mod connection_schema_reconcile;
 mod contracts;
 mod output;
 mod query;

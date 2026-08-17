@@ -6,19 +6,15 @@ use saya_types::{
 };
 
 /// The render carrier a `RetrievedContract` carries per claim — the fields
-/// render, the receipt, and conflict detection read. Both stores project to
-/// it: the recall path from a `KnowledgeItem` (D-3), the review path from a
-/// `StoredClaim` (legacy, until its later chunk). Keeping one carrier means
-/// `render_body`, `supplied_contracts`, and `conflicts_for` do not branch on
-/// which store a contract came from.
+/// render, the receipt, and conflict detection read. The recall and review
+/// paths both project to it from a [`saya_store::KnowledgeItem`]. Keeping one
+/// carrier means `render_body`, `supplied_contracts`, and `conflicts_for` do
+/// not branch on which operation a contract came from.
 ///
-/// `id` is the row id wrapped in a [`ClaimId`] (a `ki-…` knowledge id parses,
-/// as does a legacy `c-…` claim id) so the dispute marker match and the
-/// receipt keep using [`ClaimId::as_str`]. `value` is the payload (never
-/// `None` — a `StoredClaim` whose payload did not decode is dropped at
-/// projection, not carried as a blank line). `status` is the rendered
-/// vocabulary (`Confirmed`/`Candidate`) the in-band marker and the receipt
-/// carry.
+/// `id` is the row id wrapped in a [`ClaimId`] (its `ki-…` form parses) so the
+/// dispute marker match and the receipt keep using [`ClaimId::as_str`].
+/// `value` is the payload. `status` is the rendered vocabulary
+/// (`Confirmed`/`Candidate`) the in-band marker and the receipt carry.
 #[derive(Debug)]
 pub(crate) struct ContractClaim {
     pub id: ClaimId,
@@ -44,21 +40,6 @@ impl ContractClaim {
             value: item.value.clone(),
             source: item.source,
             status: status_from_state(item.state),
-        })
-    }
-
-    /// Projects a legacy [`StoredClaim`] into the render carrier for the
-    /// review path (`show`), which still reads `contract_claims` until its
-    /// later chunk. A claim whose payload did not decode (`None`) is dropped:
-    /// the render layer never drew a line for one anyway.
-    pub(crate) fn from_stored_claim(claim: &saya_store::StoredClaim) -> Option<Self> {
-        let value = claim.payload.clone()?;
-        Some(Self {
-            id: claim.id.clone(),
-            object: claim.object.clone(),
-            value,
-            source: claim.origin,
-            status: claim.status,
         })
     }
 }

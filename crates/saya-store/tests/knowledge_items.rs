@@ -1,10 +1,9 @@
 use saya_store::{
-    ContractStore, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError, ProposeClaim,
-    ProposeOutcome, SqliteStateStore, StoreError,
+    KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError, SqliteStateStore, StoreError,
 };
 use saya_types::{
-    ClaimOrigin, ClaimPayload, ClaimStatus, ColumnRole, DatabaseObjectKind, DatabaseObjectRef,
-    KnowledgeSlot, KnowledgeState, ProfileIdentity, SchemaFingerprint,
+    ClaimOrigin, ClaimPayload, ColumnRole, DatabaseObjectKind, DatabaseObjectRef, KnowledgeSlot,
+    KnowledgeState, ProfileIdentity, SchemaFingerprint,
 };
 use sqlx::{
     SqlitePool,
@@ -432,35 +431,20 @@ async fn one_query_returns_everything_known_for_a_profile() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Spec test 7: the existing `contract_*` tables and their behaviour are
-/// unaffected. A claim round-trips through the unchanged store path on a
-/// database migrated to the new version, and the knowledge table coexists.
+/// Spec test 7 (rewritten for Chunk 5): the legacy `contract_*` tables are
+/// *gone* after the step-6 migration, and `knowledge_items` is the sole store.
+/// The original test asserted the legacy claim path coexisted with the new
+/// knowledge table; Chunk 5 dropped that path and those tables, so the
+/// equivalent guarantee now is that a migrated database has no `contract_*`
+/// tables and a knowledge write still round-trips on its own — the knowledge
+/// path stands alone, not alongside a legacy one.
 #[tokio::test]
-async fn existing_contract_tables_are_unaffected() {
+async fn legacy_contract_tables_are_dropped_and_knowledge_stands_alone() {
     let root = temp_root("t7");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     let obj = object(&profile('a'), "orders");
-    // The unchanged claim path still works on a v5 database.
-    let payload = ClaimPayload::table_description("the orders table").unwrap();
-    let request = ProposeClaim {
-        object: obj.clone(),
-        fingerprint: SchemaFingerprint::from_parts(1, &"a".repeat(64)).unwrap(),
-        payload: payload.clone(),
-        origin: ClaimOrigin::UserExplicit,
-        initial_status: ClaimStatus::Confirmed,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    let id = match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    };
-    let stored = store.get_claim(&id).await.unwrap().unwrap();
-    assert_eq!(stored.payload, Some(payload));
-
-    // The knowledge table coexists alongside the contract tables, and a
-    // knowledge write does not disturb the claim.
+    // The knowledge write is the only path now; it round-trips on its own.
     store
         .put_knowledge_item(request_knowledge(
             &obj,
@@ -469,16 +453,20 @@ async fn existing_contract_tables_are_unaffected() {
         ))
         .await
         .unwrap();
-    assert!(store.knowledge_for_object(&obj).await.unwrap().len() == 1);
-    assert!(
-        store
-            .list_claims(&obj, &[ClaimStatus::Confirmed])
-            .await
-            .unwrap()
-            .len()
-            == 1,
-        "the claim survives the knowledge write"
-    );
+    assert_eq!(store.knowledge_for_object(&obj).await.unwrap().len(), 1);
+
+    // Step 6 dropped every `contract_*` table. A migrated database has none,
+    // so querying one is an error — the legacy store is not merely unused,
+    // it is gone.
+    let pool = read_pool(&db).await;
+    let legacy: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'contract_%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+    assert_eq!(legacy, 0, "step 6 must drop every contract_* table");
     let _ = fs::remove_dir_all(root);
 }
 

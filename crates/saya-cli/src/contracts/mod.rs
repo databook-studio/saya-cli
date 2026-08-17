@@ -1,9 +1,10 @@
 //! Shared contract-application operations: the typed layer every adapter renders.
 //!
 //! This slice computes and selects; it writes nothing to the store on the recall
-//! path and adds no policy of its own on the review path beyond what
-//! [`ContractStore`] already enforces. Presentation (rendering, clap, slash, agent
-//! tools) is a later slice — these modules return typed data only.
+//! path and adds no policy of its own on the review path beyond what the
+//! knowledge-items store already enforces (cardinality at the storage boundary).
+//! Presentation (rendering, clap, slash, agent tools) is a later slice — these
+//! modules return typed data only.
 
 pub(crate) mod args;
 mod assemble;
@@ -16,7 +17,6 @@ mod op_error;
 mod queue;
 mod recall;
 mod receipt;
-mod reconcile;
 mod remember;
 mod retrieval;
 mod review;
@@ -24,7 +24,6 @@ mod selection;
 mod show;
 pub(crate) mod terms;
 mod use_once;
-mod validity;
 mod view;
 // P2b-1: the override detector. A pure function nobody calls yet — P2b-2 will
 // run it against the SQL the model generated and the [`RecallReceipt`] recall
@@ -50,8 +49,6 @@ pub(crate) use op_error::ContractOpError;
 pub(crate) use queue::{QUEUE_DEFAULT_LIMIT, QueuedCandidate, review_queue};
 #[allow(unused_imports)]
 pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
-#[allow(unused_imports)]
-pub(crate) use reconcile::{ReconcileOutcome, reconcile};
 pub(crate) use remember::{RememberOutcome, remember};
 #[allow(unused_imports)]
 pub(crate) use retrieval::RetrievalPolicy;
@@ -64,16 +61,12 @@ pub(crate) use show::show;
 pub(crate) use conflict::conflicts_for;
 #[allow(unused_imports)]
 pub(crate) use use_once::use_candidate_once;
-#[allow(unused_imports)]
-pub(crate) use validity::schema_state_for;
 // D-2: the computed validity vocabulary over KnowledgeState. Pure, uncalled
 // this slice — the adopting slice will switch to it. Re-exported here
 // alongside the other contract operations, reading unused like the others
 // until something consumes it.
 #[allow(unused_imports)]
-pub(crate) use knowledge_validity::{
-    KnowledgeValidity, knowledge_state_from_status, knowledge_validity_for,
-};
+pub(crate) use knowledge_validity::KnowledgeValidity;
 #[allow(unused_imports)]
 pub(crate) use view::{
     ContractClaim, ContractConflict, ContractSchemaState, RecallDiagnostics, RecallOutcome,

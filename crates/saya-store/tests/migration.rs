@@ -11,12 +11,6 @@ use std::{
 
 const STEP1_SCHEMA_CACHE: &str = "CREATE TABLE IF NOT EXISTS schema_cache(profile_id TEXT PRIMARY KEY, schema_json TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, version INTEGER NOT NULL)";
 const STEP1_AUDIT_LOG: &str = "CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, created_unix_ms INTEGER NOT NULL, session_id TEXT, profile_id TEXT NOT NULL, operation TEXT NOT NULL, status TEXT NOT NULL, duration_ms INTEGER NOT NULL, row_count INTEGER, truncated INTEGER)";
-const CONTRACT_TABLES: [&str; 4] = [
-    "contract_objects",
-    "contract_claims",
-    "contract_evidence",
-    "contract_events",
-];
 type AuditRow = (
     i64,
     Option<String>,
@@ -29,20 +23,15 @@ type AuditRow = (
 );
 
 #[tokio::test]
-async fn fresh_database_reaches_version_five() {
+async fn fresh_database_reaches_version_six() {
     let root = temp_root("fresh");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 5);
-    let tables = contract_tables(&db).await;
-    for expected in CONTRACT_TABLES {
-        assert!(
-            tables.iter().any(|name| name == expected),
-            "missing {expected}"
-        );
-    }
+    assert_eq!(user_version(&db).await, 6);
+    // Step 6 dropped the legacy `contract_*` tables; a fresh database has none.
+    assert_eq!(contract_tables(&db).await.len(), 0);
     assert!(
         table_exists(&db, "user_preferences").await,
         "missing user_preferences"
@@ -63,14 +52,9 @@ async fn upgrade_from_version_one_preserves_data() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 5);
-    let tables = contract_tables(&db).await;
-    for expected in CONTRACT_TABLES {
-        assert!(
-            tables.iter().any(|name| name == expected),
-            "missing {expected}"
-        );
-    }
+    assert_eq!(user_version(&db).await, 6);
+    // Step 6 drops the legacy tables even on a v1 upgrade path.
+    assert_eq!(contract_tables(&db).await.len(), 0);
     let pool = read_pool(&db).await;
     let (json, updated, version): (String, i64, i64) = sqlx::query_as(
         "SELECT schema_json, updated_unix_ms, version FROM schema_cache WHERE profile_id='p-test'",
@@ -98,120 +82,74 @@ async fn upgrade_from_version_one_preserves_data() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A `user_version = 2` database — one a developer may already have, since the
-/// migration is unreleased — upgrades to 3 and keeps every existing claim,
-/// object, evidence and event row (spec test 7). Step 3 adds a *new* table; it
-/// must not touch the rows the ladder exists to preserve. Asserts the counts of
-/// all four contract tables and the full contents of one object row.
+/// A `user_version = 2` database upgrades to 6. Step 6 drops the legacy
+/// `contract_*` tables, so the claim/object/evidence/event rows a v2 database
+/// held do not survive — they were never going to: nothing has shipped, and
+/// `knowledge_items` is the sole store. The original test asserted every
+/// contract row survived byte-for-byte; Chunk 5 made that intent obsolete, so
+/// the rewritten test asserts what the ladder *does* preserve across the
+/// upgrade: the `schema_cache`, `audit_log`, `user_preferences`, and
+/// `knowledge_items` tables all exist on the migrated database, and every
+/// `contract_*` table is gone.
 #[tokio::test]
-async fn upgrade_from_version_two_preserves_every_contract_row() {
+async fn upgrade_from_version_two_drops_contract_tables_keeps_survivors() {
     let root = temp_root("upgrade-v2");
     let db = root.join("state.sqlite3");
     build_version_two_database(&db).await;
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 5);
+    assert_eq!(user_version(&db).await, 6);
+    assert!(
+        table_exists(&db, "schema_cache").await,
+        "schema_cache dropped"
+    );
+    assert!(table_exists(&db, "audit_log").await, "audit_log dropped");
     assert!(
         table_exists(&db, "user_preferences").await,
         "upgrade did not add user_preferences"
     );
-    // Step 5 adds knowledge_items; an upgraded v2 database reaches it too.
     assert!(
         table_exists(&db, "knowledge_items").await,
         "upgrade did not add knowledge_items"
     );
-    // Step 4 added the claim's own fingerprint-version column to the legacy
-    // v2 table (step 2's CREATE is a no-op on an existing table, so the ALTER
-    // is what upgrades an installed database). A claim written under version A
-    // must decode under A even after the object row drifts — see contract_store.
-    assert!(
-        claim_has_fingerprint_version_column(&db).await,
-        "upgrade did not add contract_claims.fingerprint_version"
-    );
-
-    let pool = read_pool(&db).await;
-    // One object, one claim, two evidence rows, one event — all survive.
-    let objects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_objects")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(objects, 1);
-    let claims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_claims")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(claims, 1);
-    let evidence: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_evidence")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(evidence, 2);
-    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_events")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(events, 1);
-
-    // The one object row survives byte-for-byte: identity, kind, fingerprint.
-    let row: (String, String, String, String, String, String, String, i64, i64, i64) =
-        sqlx::query_as("SELECT id, profile_id, catalog_name, schema_name, object_name, object_kind, schema_fingerprint, fingerprint_version, first_seen_unix_ms, last_seen_unix_ms FROM contract_objects ORDER BY id LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    let (id, profile_id, catalog, schema, object, kind, fp, fpv, first, last) = row;
-    assert_eq!(id, "o-survives");
-    assert_eq!(profile_id, "p-test");
-    assert_eq!(catalog, "cat");
-    assert_eq!(schema, "sch");
-    assert_eq!(object, "orders");
-    assert_eq!(kind, "table");
-    assert_eq!(fp, "ff");
-    assert_eq!(fpv, 1);
-    assert_eq!(first, 11111);
-    assert_eq!(last, 22222);
-    pool.close().await;
+    // Step 6 dropped the four legacy tables the v2 database built.
+    assert_eq!(contract_tables(&db).await.len(), 0);
     let _ = fs::remove_dir_all(root);
 }
 
-/// A `user_version = 4` database — the latest before step 5 — upgrades to 5 and
-/// gains `knowledge_items` without losing the contract row it already holds.
-/// Step 5 adds a new table; like step 3, it must not touch the rows the ladder
-/// exists to preserve.
+/// A `user_version = 4` database — the latest before step 5 — upgrades to 6 and
+/// gains `knowledge_items`. Step 6 then drops the legacy `contract_*` tables,
+/// so the claim a v4 database held is gone too; the surviving guarantee is the
+/// knowledge table arriving and the legacy ones leaving.
 #[tokio::test]
-async fn upgrade_from_version_four_adds_knowledge_items() {
+async fn upgrade_from_version_four_adds_knowledge_items_and_drops_contract_tables() {
     let root = temp_root("upgrade-v4");
     let db = root.join("state.sqlite3");
     build_version_four_database(&db).await;
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 5);
+    assert_eq!(user_version(&db).await, 6);
     assert!(
         table_exists(&db, "knowledge_items").await,
         "upgrade did not add knowledge_items"
     );
-    // The claim written under v4 survives the v5 upgrade untouched.
-    let pool = read_pool(&db).await;
-    let claims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contract_claims")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(claims, 1);
-    pool.close().await;
+    // Step 6 dropped the legacy tables the v4 database held.
+    assert_eq!(contract_tables(&db).await.len(), 0);
     let _ = fs::remove_dir_all(root);
 }
 
 /// A version ahead of the highest step the migration knows about fails closed.
-/// Step 5 makes `user_version = 5` supported, so the future-version sentinel is
-/// now 6 — anything the running build cannot migrate *to* must be refused, not
+/// Step 6 makes `user_version = 6` supported, so the future-version sentinel is
+/// now 7 — anything the running build cannot migrate *to* must be refused, not
 /// silently rewritten under.
 #[tokio::test]
 async fn unknown_future_version_fails_closed() {
     let root = temp_root("future");
     let db = root.join("state.sqlite3");
     let pool = create_pool(&db).await;
-    sqlx::query("PRAGMA user_version = 6")
+    sqlx::query("PRAGMA user_version = 7")
         .execute(&pool)
         .await
         .unwrap();
@@ -232,11 +170,11 @@ async fn migration_is_idempotent() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 5);
+    assert_eq!(user_version(&db).await, 6);
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 5);
+    assert_eq!(user_version(&db).await, 6);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -418,20 +356,6 @@ async fn table_exists(db: &Path, table: &str) -> bool {
     count > 0
 }
 
-/// True if `contract_claims` carries the `fingerprint_version` column Step 4
-/// adds. Asserted on upgrade so a missing ALTER is caught here, not silently
-/// when a claim decodes under the wrong version later.
-async fn claim_has_fingerprint_version_column(db: &Path) -> bool {
-    let pool = read_pool(db).await;
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('contract_claims') WHERE name='fingerprint_version'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    pool.close().await;
-    count > 0
-}
-
 async fn journal_mode(db: &Path) -> String {
     let pool = read_pool(db).await;
     let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
@@ -453,139 +377,4 @@ fn temp_root(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&root).unwrap();
     root
-}
-
-// --- Review addition: the tests above prove the contract tables EXIST, which would
-// --- still pass if a UNIQUE constraint were missing. Deduplication, contradiction
-// --- detection, and evidence bounding are all enforced by those constraints rather
-// --- than by application code, so their absence must fail here and not silently in
-// --- a later phase.
-
-async fn contract_pool(db: &Path) -> SqlitePool {
-    SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(SqliteConnectOptions::new().filename(db).foreign_keys(true))
-        .await
-        .unwrap()
-}
-
-async fn migrated_database(label: &str) -> (PathBuf, PathBuf) {
-    let root = temp_root(label);
-    let db = root.join("state.sqlite3");
-    let store = SqliteStateStore::new(&db);
-    store.list_schema_metadata().await.unwrap();
-    store.close().await;
-    (root, db)
-}
-
-const INSERT_OBJECT: &str = "INSERT INTO contract_objects(id, profile_id, catalog_name, schema_name, object_name, object_kind, schema_fingerprint, fingerprint_version, first_seen_unix_ms, last_seen_unix_ms) VALUES (?, 'p-a', 'cat', 'sch', 'orders', 'table', 'ff', 1, 1, 1)";
-const INSERT_CLAIM: &str = "INSERT INTO contract_claims(id, object_id, claim_kind, payload_json, payload_version, origin, status, schema_fingerprint, referenced_columns_json, created_unix_ms, updated_unix_ms, deduplication_key) VALUES (?, 'o-1', 'table_alias', '{}', 1, 'user_explicit', 'confirmed', 'ff', '[]', 1, 1, ?)";
-
-#[tokio::test]
-async fn one_object_identity_cannot_be_stored_twice() {
-    let (root, db) = migrated_database("uniq-object").await;
-    let pool = contract_pool(&db).await;
-    sqlx::query(INSERT_OBJECT)
-        .bind("o-1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    // Same qualified identity under a different surrogate id must still collide.
-    let second = sqlx::query(INSERT_OBJECT).bind("o-2").execute(&pool).await;
-    assert!(
-        second.is_err(),
-        "contract_objects is missing its identity UNIQUE constraint"
-    );
-    pool.close().await;
-    let _ = fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn one_deduplication_key_cannot_be_stored_twice_per_object() {
-    let (root, db) = migrated_database("uniq-claim").await;
-    let pool = contract_pool(&db).await;
-    sqlx::query(INSERT_OBJECT)
-        .bind("o-1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(INSERT_CLAIM)
-        .bind("c-1")
-        .bind("d-same")
-        .execute(&pool)
-        .await
-        .unwrap();
-    let duplicate = sqlx::query(INSERT_CLAIM)
-        .bind("c-2")
-        .bind("d-same")
-        .execute(&pool)
-        .await;
-    assert!(
-        duplicate.is_err(),
-        "contract_claims is missing its deduplication UNIQUE constraint"
-    );
-    // A different key on the same object is a distinct claim, not a collision.
-    sqlx::query(INSERT_CLAIM)
-        .bind("c-3")
-        .bind("d-other")
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
-    let _ = fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn repeated_evidence_with_null_columns_cannot_inflate_a_claim() {
-    let (root, db) = migrated_database("uniq-evidence").await;
-    let pool = contract_pool(&db).await;
-    sqlx::query(INSERT_OBJECT)
-        .bind("o-1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(INSERT_CLAIM)
-        .bind("c-1")
-        .bind("d-1")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let insert = "INSERT INTO contract_evidence(claim_id, evidence_kind, session_id, turn_ordinal, observed_unix_ms) VALUES ('c-1', 'explicit_user_statement', ?, ?, 1)";
-    let null: Option<String> = None;
-    let no_turn: Option<i64> = None;
-    sqlx::query(insert)
-        .bind(&null)
-        .bind(no_turn)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    // SQLite treats NULLs as distinct in a UNIQUE index, so without the IFNULL
-    // wrapper this identical row would insert again and inflate apparent support.
-    let repeat = sqlx::query(insert)
-        .bind(&null)
-        .bind(no_turn)
-        .execute(&pool)
-        .await;
-    assert!(
-        repeat.is_err(),
-        "contract_evidence unique index does not collapse NULL columns"
-    );
-
-    // Evidence differing only in turn ordinal is genuinely new.
-    sqlx::query(insert)
-        .bind(&null)
-        .bind(Some(2_i64))
-        .execute(&pool)
-        .await
-        .unwrap();
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM contract_evidence WHERE claim_id='c-1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(count, 2);
-    pool.close().await;
-    let _ = fs::remove_dir_all(root);
 }

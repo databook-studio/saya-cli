@@ -14,7 +14,7 @@
 use crate::SqliteStateStore;
 use crate::StoreError;
 use crate::contracts::admission;
-use crate::contracts::store::now;
+use crate::contracts::now;
 use async_trait::async_trait;
 use saya_types::{PreferenceScope, PreferenceValue};
 

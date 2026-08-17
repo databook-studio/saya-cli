@@ -11,7 +11,7 @@
 //! bound is checked before a new row is added.
 
 use crate::contracts::admission;
-use crate::contracts::store::now;
+use crate::contracts::now;
 use crate::knowledge_items::KnowledgeStoreError;
 use crate::knowledge_items::binding::slot_matches_payload;
 use crate::knowledge_items::keys::{knowledge_item_id, knowledge_item_id_value};

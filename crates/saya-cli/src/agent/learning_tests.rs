@@ -17,7 +17,7 @@ use saya_agent::{
 use saya_config::{
     ConfigFile, ConnectionsFile, MemoryMode, ResolutionInput, ResolvedMemory, resolve,
 };
-use saya_store::{ContractStore, SchemaStore, SqliteStateStore};
+use saya_store::{KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
     ConnectionError, DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, ProfileIdentity,
     QueryRequest, QueryResult, SchemaTree, SqlDialect,
@@ -209,7 +209,7 @@ async fn run_one_turn(mode: MemoryMode) -> (SqliteStateStore, ProfileIdentity, P
 }
 
 async fn claim_count(store: &SqliteStateStore, object: &DatabaseObjectRef) -> usize {
-    store.list_claims(object, &[]).await.unwrap().len()
+    store.knowledge_for_object(object).await.unwrap().len()
 }
 
 // ---------------------------------------------------------------------------
@@ -227,10 +227,7 @@ async fn mode_off_performs_no_store_read_and_no_store_write_across_turn() {
         "mode = off stores no claims"
     );
 
-    let mut any_claims = 0;
-    for o in store.list_objects(&identity).await.unwrap() {
-        any_claims += store.list_claims(&o.object, &[]).await.unwrap().len();
-    }
+    let any_claims = store.knowledge_for_profile(&identity).await.unwrap().len();
     assert_eq!(any_claims, 0, "no claims written anywhere under mode = off");
 
     // 2. Store read check: recall mode is None, so store is never read.
