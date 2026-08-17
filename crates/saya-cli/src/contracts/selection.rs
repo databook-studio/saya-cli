@@ -3,8 +3,9 @@
 //! Order (plan §11.1), lower tier wins, ties broken by most-recently-seen then
 //! object name for determinism:
 //!  1. an exact `explicit_ref`;
-//!  2. an exact confirmed `TableAlias` match (lowercased, trimmed) within the
-//!     active profiles;
+//!  2. a confirmed `TableAlias` whose every word appears among the prompt's
+//!     terms, within the active profiles — an alias is a phrase and the terms
+//!     are single tokens, so this is a word-set match, not string equality;
 //!  3. a bounded lexical match on the qualified name or confirmed description
 //!     text;
 //!  4. most-recently-seen in the active profiles — tie-breaker only, never the
@@ -24,7 +25,7 @@
 //! full item set (an object whose items are all non-admitted reads the same as
 //! one with none).
 
-use super::name_match::name_matches;
+use super::name_match::{alias_matches, name_matches};
 use crate::contracts::availability::SchemaAvailability;
 use saya_store::{KnowledgeItem, KnowledgeItemStore, SqliteStateStore};
 use saya_types::{ClaimPayload, DatabaseObjectRef, KnowledgeState, ProfileIdentity};
@@ -182,7 +183,7 @@ fn best_tier(
         .iter()
         .map(|t| t.trim().to_lowercase())
         .collect();
-    if term_lc.iter().any(|t| aliases.iter().any(|a| a == t)) {
+    if aliases.iter().any(|a| alias_matches(a, &term_lc)) {
         return 2;
     }
     // Tier 3 matches the term against the object's NAME SEGMENT (not the whole
