@@ -104,9 +104,14 @@ pub(super) async fn remember(
     // The `ki-…` id is the same in either arm — the stored row, or the
     // pre-existing one a duplicate names — and it stays on the event for JSON
     // and NDJSON consumers even though the text confirmation no longer shows it.
-    let (claim_id, action, status) = match outcome {
-        RememberOutcome::Stored { id } => (id, "remembered", ClaimStatus::Confirmed),
-        RememberOutcome::Duplicate { id, state } => (id, "duplicate", status_from_state(state)),
+    let (claim_id, action, status, previous) = match outcome {
+        RememberOutcome::Stored { id } => (id, "remembered", ClaimStatus::Confirmed, None),
+        RememberOutcome::Duplicate { id, state } => {
+            (id, "duplicate", status_from_state(state), None)
+        }
+        RememberOutcome::Replaced { id, previous } => {
+            (id, "replaced", ClaimStatus::Confirmed, Some(previous))
+        }
     };
     emit(
         TerminalEvent::ContractRemembered {
@@ -118,6 +123,7 @@ pub(super) async fn remember(
             kind: kind.as_str().to_string(),
             value: value.to_string(),
             column: column.map(str::to_string),
+            previous,
             action: action.into(),
             status: status.as_str().into(),
         },

@@ -78,6 +78,7 @@ pub(super) fn remembered(
     kind: &str,
     value: &str,
     column: Option<&str>,
+    previous: Option<&str>,
     action: &str,
     status: &str,
 ) -> Rendered {
@@ -86,6 +87,10 @@ pub(super) fn remembered(
         None => String::new(),
     };
     let line = match action {
+        "replaced" => {
+            let prev = previous.unwrap_or("");
+            format!("replaced {kind} for {object}{col}: \"{prev}\" -> \"{value}\"\n")
+        }
         "duplicate" => match status {
             "forgotten" => {
                 format!("duplicate of {kind} {value} for {object}{col} — previously forgotten\n")

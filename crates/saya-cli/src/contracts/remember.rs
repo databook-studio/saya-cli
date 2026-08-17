@@ -31,10 +31,11 @@ use saya_types::{
 /// `id` is the `ki-…` id of the row in either arm — the stored row for
 /// `Stored`, the pre-existing row for `Duplicate` — so the command layer
 /// renders one id consistently across text, JSON and NDJSON.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum RememberOutcome {
     Stored { id: ClaimId },
     Duplicate { id: ClaimId, state: KnowledgeState },
+    Replaced { id: ClaimId, previous: String },
 }
 
 /// Remembers a fact: writes a `knowledge_items` row. See the module docs for
@@ -50,17 +51,18 @@ pub(crate) enum RememberOutcome {
 /// with the same id. A genuinely new fact is `put_knowledge_item`'d as `Active`
 /// (`UserExplicit`) and its `ki-…` id returned (`Stored`).
 ///
-/// **One exception (Open Question 2):** a directive claim re-stated with the
-/// same value but a *new* reason is a **revision**, not a duplicate. The
-/// single-valued slot's value is unchanged (the dedup key does not move), but
-/// the reason is the one field this write path can refine, and a user who just
-/// explained themselves must not see nothing happen. So when the existing
-/// item is not a forgotten tombstone and the new payload differs from it only
-/// in `reason`, the row is rewritten with the new reason and the outcome is
-/// `Stored` (a revision wrote). A genuinely identical re-remember — same
-/// value *and* same reason, or no reason on either side — is still a no-op
-/// `Duplicate`. A forgotten tombstone is still never resurrected: a re-remember
-/// of a dismissed item reports `Duplicate { Dismissed }` even with a reason.
+/// **Two exceptions:**
+/// 1. A directive claim re-stated with the same value but a *new* reason is a
+///    **revision**, not a duplicate. The row is rewritten with the new reason
+///    and the outcome is `Stored` (a revision wrote).
+/// 2. A single-valued slot re-stated with a *different* value is a
+///    **replacement**. The row is overwritten in the store with the new value
+///    and the outcome is `Replaced { id, previous }` naming what was displaced.
+///
+/// A genuinely identical re-remember — same value *and* same reason, or no
+/// reason on either side — is still a no-op `Duplicate`. A forgotten tombstone
+/// is still never resurrected: a re-remember of a dismissed item reports
+/// `Duplicate { Dismissed }` even with a new value or reason.
 ///
 /// The lookup keys on the **row id** the put would land on, not on the decoded
 /// value. `forget` blanks a tombstone's value (the deletion promise), so a
@@ -75,36 +77,21 @@ pub(crate) async fn remember(
     fingerprint: SchemaFingerprint,
 ) -> Result<RememberOutcome, ContractOpError> {
     let slot = slot_for_payload(payload).ok_or(ContractOpError::Invalid)?;
-    // A duplicate is an existing item at the id the put would land on. Looking
-    // up by id before the write (rather than upserting and reading back) keeps
-    // the no-write semantics: a forgotten tombstone stays forgotten, an active
-    // claim is not overwritten — unless the new payload revises the reason
-    // (see the module / outcome docs).
     if let Some(existing) = find_existing(store, object, &slot, payload).await? {
-        // A forgotten tombstone is never resurrected: report the dismissed
-        // duplicate even if a reason is now supplied.
-        if existing.state != KnowledgeState::Dismissed
-            && is_reason_revision(payload, &existing.value)
-        {
-            // Same value, new reason: revise the row in place. The value is
-            // unchanged so the binding and fingerprint derivation are too; only
-            // the payload (carrying the reason) is rewritten.
-            let binding = SchemaBinding::derive(&slot, payload).ok_or(ContractOpError::Invalid)?;
-            let binding_json =
-                serde_json::to_string(&binding).map_err(|_| ContractOpError::Unavailable)?;
-            store
-                .put_knowledge_item(saya_store::KnowledgeItemRequest {
-                    object: object.clone(),
-                    slot: slot.clone(),
-                    value: payload.clone(),
-                    source: ClaimOrigin::UserExplicit,
-                    state: KnowledgeState::Active,
-                    schema_binding_json: binding_json,
-                    fingerprint,
-                })
-                .await?;
-            let id = item_id_for(object, &slot, payload)?;
-            return Ok(RememberOutcome::Stored { id });
+        if existing.state != KnowledgeState::Dismissed {
+            if is_reason_revision(payload, &existing.value) {
+                let id = store_active_item(store, object, &slot, payload, fingerprint).await?;
+                return Ok(RememberOutcome::Stored { id });
+            }
+            if slot.cardinality().is_single() {
+                let (_old_col, previous) =
+                    crate::agent::recall_context::claim_value(&existing.value);
+                let (_new_col, new_val) = crate::agent::recall_context::claim_value(payload);
+                if previous != new_val {
+                    let id = store_active_item(store, object, &slot, payload, fingerprint).await?;
+                    return Ok(RememberOutcome::Replaced { id, previous });
+                }
+            }
         }
         let id = ClaimId::parse(&existing.id).map_err(|_| ContractOpError::Invalid)?;
         return Ok(RememberOutcome::Duplicate {
@@ -112,7 +99,18 @@ pub(crate) async fn remember(
             state: existing.state,
         });
     }
-    let binding = SchemaBinding::derive(&slot, payload).ok_or(ContractOpError::Invalid)?;
+    let id = store_active_item(store, object, &slot, payload, fingerprint).await?;
+    Ok(RememberOutcome::Stored { id })
+}
+
+async fn store_active_item(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    slot: &KnowledgeSlot,
+    payload: &ClaimPayload,
+    fingerprint: SchemaFingerprint,
+) -> Result<ClaimId, ContractOpError> {
+    let binding = SchemaBinding::derive(slot, payload).ok_or(ContractOpError::Invalid)?;
     let binding_json = serde_json::to_string(&binding).map_err(|_| ContractOpError::Unavailable)?;
     store
         .put_knowledge_item(saya_store::KnowledgeItemRequest {
@@ -125,8 +123,7 @@ pub(crate) async fn remember(
             fingerprint,
         })
         .await?;
-    let id = item_id_for(object, &slot, payload)?;
-    Ok(RememberOutcome::Stored { id })
+    item_id_for(object, slot, payload)
 }
 
 /// True when `new` carries the same directive value as `old` but a *new,

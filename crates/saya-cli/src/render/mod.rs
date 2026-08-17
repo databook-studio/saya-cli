@@ -131,6 +131,8 @@ pub enum TerminalEvent {
         value: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         column: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        previous: Option<String>,
         action: String,
         status: String,
     },
@@ -240,9 +242,18 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             kind,
             value,
             column,
+            previous,
             action,
             status,
-        } => render_contract::remembered(object, kind, value, column.as_deref(), action, status),
+        } => render_contract::remembered(
+            object,
+            kind,
+            value,
+            column.as_deref(),
+            previous.as_deref(),
+            action,
+            status,
+        ),
         TerminalEvent::ContractQueue { items } => render_contract::queue(items),
         TerminalEvent::ContractImport { report } => render_io::import(report),
         TerminalEvent::ContractExport { report } => render_io::export(report),
@@ -359,5 +370,40 @@ mod tests {
 
         let json_rendered = render_event(&event, RenderFormat::Json);
         assert!(json_rendered.stdout.contains("\\u001b"));
+    }
+
+    #[test]
+    fn test_contract_remembered_replaced_render() {
+        let event = TerminalEvent::ContractRemembered {
+            claim_id: "ki-123".to_string(),
+            object: "pagila.public.rental".to_string(),
+            kind: "grain".to_string(),
+            value: "one row per rental per day".to_string(),
+            column: None,
+            previous: Some("one row per rental".to_string()),
+            action: "replaced".to_string(),
+            status: "confirmed".to_string(),
+        };
+        let text_rendered = render_event(&event, RenderFormat::Text);
+        assert_eq!(
+            text_rendered.stdout,
+            "replaced grain for pagila.public.rental: \"one row per rental\" -> \"one row per rental per day\"\n"
+        );
+
+        let event_col = TerminalEvent::ContractRemembered {
+            claim_id: "ki-456".to_string(),
+            object: "pagila.public.rental".to_string(),
+            kind: "column-role".to_string(),
+            value: "event_time".to_string(),
+            column: Some("rental_date".to_string()),
+            previous: Some("timestamp".to_string()),
+            action: "replaced".to_string(),
+            status: "confirmed".to_string(),
+        };
+        let text_rendered_col = render_event(&event_col, RenderFormat::Text);
+        assert_eq!(
+            text_rendered_col.stdout,
+            "replaced column-role for pagila.public.rental (col: rental_date): \"timestamp\" -> \"event_time\"\n"
+        );
     }
 }
