@@ -1,64 +1,157 @@
-//! Review operations: thin typed wrappers over [`ContractStore`]. No policy
-//! beyond what the store already enforces. A confirm-on-propose shortcut is
-//! deliberately absent (ADR 0002 §4): this layer passes the caller's
-//! `initial_status` through and lets the store refuse anything but
-//! `UserExplicit` storing confirmed.
+//! Review operations: thin typed wrappers over [`KnowledgeItemStore`]. No
+//! policy of their own beyond revalidating a confirm against the live schema —
+//! the store enforces cardinality; this layer enforces "a confirm must not
+//! revive a fact whose dependency is gone".
+//!
+//! Chunk 3 moved these onto `knowledge_items`: confirm/reject/forget mutate an
+//! item's [`KnowledgeState`], show reads `knowledge_for_object`. The receipt
+//! and list/show stanzas print `ki-…` ids, so the decision ops and the prefix
+//! resolver all key on those (see [`super::decide`]).
+//!
+//! `confirm`/`reject` return the shared render carrier [`ContractClaim`] (built
+//! from the post-mutation item) so the command layer that reads `claim.id` and
+//! `claim.status` keeps compiling without reaching into `knowledge_items`
+//! itself — the CLI presentation migration is a later chunk. The carrier carries
+//! no fingerprint or columns, so returning it leaks nothing the store does not.
 
 use super::op_error::ContractOpError;
+use super::view::ContractClaim;
 
 use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
-use crate::contracts::conflict::conflicts_for;
-use crate::contracts::retrieval::RetrievalPolicy;
-use crate::contracts::validity::schema_state_for;
-use crate::contracts::view::{ContractClaim, ContractSchemaState, RetrievedContract};
-use saya_store::{
-    ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore,
-    StoredClaim,
+use saya_store::{KnowledgeItem, KnowledgeItemStore, SchemaStore, SqliteStateStore};
+use saya_types::{
+    BindingValidity, ClaimId, DatabaseObjectRef, KnowledgeState, SchemaBinding, SchemaFingerprint,
+    Table,
 };
-use saya_types::{ClaimId, ClaimPayload, ClaimStatus, DatabaseObjectRef, Table};
 
-/// Adapter-facing review errors. Payload-free, mapping [`StoreError`] so a store
-pub(crate) async fn propose(
-    store: &SqliteStateStore,
-    request: ProposeClaim,
-) -> Result<ProposeOutcome, ContractOpError> {
-    Ok(store.propose_claim(request).await?)
-}
-
+/// Confirms `id`: a `Pending` candidate becomes `Active`, and an `Active` fact
+/// is re-verified against the cached schema. Both paths revalidate when a
+/// schema is known — confirming must never set `Active` on a fact whose
+/// structural dependency is gone, because read-time validity is computed from
+/// the binding, so a gone column would read `Invalid` the moment the confirm
+/// landed (the revival bug). The refusal names the obstacle:
+/// [`ContractOpError::ColumnGone`] when a bound column is gone, [`ObjectGone`]
+/// when the table is, [`SchemaUnavailable`] when an existing `Active` fact
+/// cannot be re-verified because no schema is cached.
+///
+/// A `Pending` candidate with no cached schema is confirmed without one: it is
+/// the user *introducing* a fact (the user is the source), and it reads
+/// `SchemaUnavailable` — honest, not a false `Current`. An `Active` fact with
+/// no schema is *refused*: re-confirming an existing belief is a re-verification,
+/// and there is nothing to verify against. That asymmetry is the D-3
+/// translation of the legacy `Candidate`-vs-`Stale` distinction (a status-only
+/// flip needed no schema; a stale claim had to be revalidated) — both preserved
+/// by their tests.
+///
+/// A `Dismissed` item is withdrawn and not revivable; confirm refuses with
+/// [`ContractOpError::Conflict`], matching the legacy legal-transition refusal.
 pub(crate) async fn confirm(
     store: &SqliteStateStore,
     id: &ClaimId,
-) -> Result<StoredClaim, ContractOpError> {
-    // A Stale claim cannot be confirmed by a status-only flip: the stored
-    // fingerprint would stay untouched, so the next read would recompute the
-    // digest, find it still differs, and return Stale again — a silent no-op.
-    // Revalidate it against the live schema: rewrite the fingerprint and
-    // snapshots in the same transaction as the status flip. The schema comes
-    // from the claim's own profile (a confirm carries no --profile flag), read
-    // from the same cache `remember`/`show` use. With no schema there is
-    // nothing to revalidate against — refuse, do not guess.
-    let claim = store
-        .get_claim(id)
+) -> Result<ContractClaim, ContractOpError> {
+    let item = store
+        .get_knowledge_item(id.as_str())
         .await?
         .ok_or(ContractOpError::NotFound)?;
-    if claim.status != ClaimStatus::Stale {
-        return Ok(store.confirm_claim(id).await?);
+    if matches!(item.state, KnowledgeState::Dismissed) {
+        return Err(ContractOpError::Conflict);
     }
-    let availability = schema_availability_for(store, claim.object.profile().as_str()).await;
-    let live_table = live_table_for(&claim, &availability)?.ok_or(ContractOpError::ObjectGone)?;
-    // Name the actual obstacle before the store refuses generically. The store
-    // still checks independently; this exists so the message tells a reviewer
-    // which of the two repairs — edit or forget — applies to them.
-    if first_missing_column(&claim, live_table).is_some() {
-        return Err(ContractOpError::ColumnGone);
+    let availability = schema_availability_for(store, item.object.profile().as_str()).await;
+    // An empty cached tree (no `databases` — the no-op sentinel a fresh store
+    // writes) carries no real schema information, so it is "no usable schema",
+    // not "every object is gone". Reading it as `ObjectGone` is the same class
+    // of bug as review item #29: an empty cache is absence of evidence, not
+    // evidence the object is gone. `usable_table_schema` returns `None` for
+    // `Missing`, `Unavailable`, *and* an empty `Available` tree, so all three
+    // route to the no-schema arm; a populated tree that lacks the object's
+    // table still reaches the `Some` arm and reads `ObjectGone` there.
+    match usable_table_schema(&availability) {
+        None => match item.state {
+            // A candidate is the user asserting a new fact; no schema is fine —
+            // it reads `SchemaUnavailable`, never a false `Current`.
+            KnowledgeState::Pending => {
+                store
+                    .update_knowledge_item_state(id.as_str(), KnowledgeState::Active)
+                    .await?;
+            }
+            // An Active fact is a re-verification; refuse without a schema to
+            // check it against rather than rubber-stamp a belief we cannot vet.
+            _ => return Err(ContractOpError::SchemaUnavailable),
+        },
+        Some(schema) => {
+            let live_table = find_table(&item.object, schema).cloned();
+            let live_table = live_table.ok_or(ContractOpError::ObjectGone)?;
+            let binding = binding_to_validate(&item)?;
+            // Name the actual obstacle before refusing generically. A `Table`
+            // binding validates whenever the table exists, so `Invalid` here is
+            // a `Column` binding whose column is gone or lost its semantic type.
+            if binding.validate(&live_table) == BindingValidity::Invalid {
+                return Err(ContractOpError::ColumnGone);
+            }
+            let fresh_binding =
+                serde_json::to_string(&binding).map_err(|_| ContractOpError::Unavailable)?;
+            let fingerprint = SchemaFingerprint::of_table(item.object.kind(), &live_table);
+            store
+                .revalidate_knowledge_item(id.as_str(), fingerprint, fresh_binding)
+                .await?;
+        }
     }
-    Ok(store.revalidate_claim(id, live_table).await?)
+    // Re-read so the carrier reflects the post-mutation state the store now
+    // holds — `revalidate`/`update_state` set `Active`, and the carrier's
+    // `status` is derived from `state`.
+    let item = store
+        .get_knowledge_item(id.as_str())
+        .await?
+        .ok_or(ContractOpError::NotFound)?;
+    ContractClaim::from_knowledge_item(&item).ok_or(ContractOpError::Unavailable)
+}
+
+/// Rejects `id`: a `Pending` candidate is moved to `Dismissed`. An `Active` or
+/// `Dismissed` item refuses with [`ContractOpError::Conflict`] — rejecting a
+/// confirmed fact is not the undo path (forget is), and a dismissed item is
+/// already withdrawn. Matches the legacy `Candidate`-only legal set.
+pub(crate) async fn reject(
+    store: &SqliteStateStore,
+    id: &ClaimId,
+) -> Result<ContractClaim, ContractOpError> {
+    let item = store
+        .get_knowledge_item(id.as_str())
+        .await?
+        .ok_or(ContractOpError::NotFound)?;
+    if item.state != KnowledgeState::Pending {
+        return Err(ContractOpError::Conflict);
+    }
+    store
+        .update_knowledge_item_state(id.as_str(), KnowledgeState::Dismissed)
+        .await?;
+    let item = store
+        .get_knowledge_item(id.as_str())
+        .await?
+        .ok_or(ContractOpError::NotFound)?;
+    ContractClaim::from_knowledge_item(&item).ok_or(ContractOpError::Unavailable)
+}
+
+/// Forgets `id`: withdrawn to `Dismissed` (a tombstone, kept for history like
+/// the legacy `Forgotten` row). The row is not deleted — a later re-learn of the
+/// same fact lands on the same single-valued row and re-activates it, rather
+/// than a delete-and-re-insert losing the audit trail. `reason` is accepted for
+/// the command layer's signature; the new store has no per-forget event, so it
+/// is not echoed anywhere (fail-closed: never surface untrusted input).
+pub(crate) async fn forget(
+    store: &SqliteStateStore,
+    id: &ClaimId,
+    _reason: saya_store::ForgetReason,
+) -> Result<(), ContractOpError> {
+    store
+        .update_knowledge_item_state(id.as_str(), KnowledgeState::Dismissed)
+        .await?;
+    Ok(())
 }
 
 /// The schema known for `profile_id` as a three-state [`SchemaAvailability`]:
 /// the cached tree, `Missing` (no cache entry), or `Unavailable` (store error).
 /// The same construction `commands::cached_schema_availability` uses, kept here
-/// so the operations layer can resolve a claim's schema without reaching up
+/// so the operations layer can resolve an item's schema without reaching up
 /// into the presentation layer (`commands` depends on `contracts`, not the
 /// reverse).
 async fn schema_availability_for(store: &SqliteStateStore, profile_id: &str) -> SchemaAvailability {
@@ -69,134 +162,38 @@ async fn schema_availability_for(store: &SqliteStateStore, profile_id: &str) -> 
     }
 }
 
-/// The live table the claim's object resolves to in `availability`, or `None`
-/// when no schema is available at all. A human is confirming, so the freshness
-/// gate is unbounded — a reviewer is not asked to trust a query built on their
-/// own contracts, and a confirm must work against whatever the cache knows.
-fn live_table_for<'a>(
-    claim: &StoredClaim,
-    availability: &'a SchemaAvailability,
-) -> Result<Option<&'a Table>, ContractOpError> {
-    let Some(schema) = availability.live_table_schema(SchemaFreshness::Unbounded) else {
-        // No schema to revalidate against. `Missing` and `Unavailable` both
-        // land here; the caller refuses with `SchemaUnavailable` rather than
-        // reviving a claim it cannot check.
-        return Err(ContractOpError::SchemaUnavailable);
-    };
-    Ok(schema.find_table(
-        claim.object.catalog(),
-        claim.object.schema(),
-        claim.object.object(),
-    ))
-}
-
-/// The first referenced column absent from `live`, if any. Compared
-/// case-insensitively, matching how validity classifies drift.
-fn first_missing_column<'a>(claim: &'a StoredClaim, live: &Table) -> Option<&'a str> {
-    claim.referenced_columns.iter().find_map(|col| {
-        (!live
-            .columns
-            .iter()
-            .any(|c| c.name.eq_ignore_ascii_case(&col.name)))
-        .then_some(col.name.as_str())
-    })
-}
-
-pub(crate) async fn edit(
-    store: &SqliteStateStore,
-    id: &ClaimId,
-    payload: ClaimPayload,
-) -> Result<StoredClaim, ContractOpError> {
-    Ok(store.edit_claim(id, payload).await?)
-}
-
-pub(crate) async fn reject(
-    store: &SqliteStateStore,
-    id: &ClaimId,
-) -> Result<StoredClaim, ContractOpError> {
-    Ok(store.reject_claim(id).await?)
-}
-
-pub(crate) async fn forget(
-    store: &SqliteStateStore,
-    id: &ClaimId,
-    reason: ForgetReason,
-) -> Result<(), ContractOpError> {
-    store.forget_claim(id, reason).await?;
-    Ok(())
-}
-
-/// Assembles one object's contract for display: its recallable claims, their
-/// conflicts, and a schema state. Returns `None` when no recallable claim
-/// remains.
-///
-/// `schema` is the schema known for the object's profile — a
-/// [`SchemaAvailability`], so a missing or unreadable cache classifies
-/// `LiveSchemaUnavailable` rather than collapsing to an empty tree that would
-/// read `Stale`. The state is the worst verdict across the kept claims — the
-/// same aggregation `recall` uses (`ContractSchemaState::aggregate`). A cached
-/// tree is compared against each claim's stored fingerprint, so `show` reports
-/// `current` / `needs_review` / `stale` like the agent recall path, not a
-/// constant `LiveSchemaUnavailable`.
-///
-/// `policy` is the shared retrieval policy (see [`super::retrieval`]) and also
-/// selects the freshness gate: [`RetrievalPolicy::ForModel`] — used by
-/// `contract_read` — bounds cached-schema age against `now_unix_ms`, so a
-/// stale-by-age cache cannot vouch for currency; [`RetrievalPolicy::ForHumanReview`]
-/// — used by `contracts show` — is unbounded, so a reviewer sees what the cache
-/// knows regardless of age. `ForModel` also does not hand the model a stale
-/// contract's claim *payloads*: when the aggregated state is `Stale` it returns
-/// a contract that still names the object and reports `schema_state: Stale` but
-/// carries **no claims**, so the model learns the object is stale without
-/// reading a gone-column claim as a current fact.
-pub(crate) async fn show(
-    store: &SqliteStateStore,
-    object: &DatabaseObjectRef,
-    schema: &SchemaAvailability,
-    policy: RetrievalPolicy,
-    now_unix_ms: i64,
-) -> Result<Option<RetrievedContract>, ContractOpError> {
-    let claims = store.list_claims(object, &[]).await?;
-    let recallable: Vec<StoredClaim> = claims
-        .into_iter()
-        .filter(|c| c.status.is_recallable())
-        .collect();
-    if recallable.is_empty() {
-        return Ok(None);
+/// The cached schema to revalidate against, but only when it carries real
+/// schema information. `Missing`, `Unavailable`, and an `Available` tree with
+/// no `databases` (the no-op sentinel a fresh store writes) all return `None`:
+/// an empty cache is absence of evidence, not evidence the object is gone, so
+/// it routes to the no-schema arm of [`confirm`] rather than reading
+/// `ObjectGone`. Mirrors `contracts_remember_schema::resolved_against`, which
+/// treats an empty `databases` list as `NoSchema` for the same reason.
+fn usable_table_schema(availability: &SchemaAvailability) -> Option<&saya_types::SchemaTree> {
+    match availability.live_table_schema(SchemaFreshness::Unbounded) {
+        Some(schema) if !schema.databases.is_empty() => Some(schema),
+        _ => None,
     }
-    let freshness = match policy {
-        RetrievalPolicy::ForModel => SchemaFreshness::for_model(now_unix_ms),
-        RetrievalPolicy::ForHumanReview => SchemaFreshness::Unbounded,
-    };
-    let schema_state = recallable
-        .iter()
-        .map(|c| schema_state_for(c, schema, freshness))
-        .fold(ContractSchemaState::Current, |acc, s| acc.aggregate(s));
-    // Project the legacy claims to the shared render carrier. The review path
-    // still reads `contract_claims` and classifies with `schema_state_for`
-    // (the whole-table model) until its own later chunk; this projection only
-    // adapts the claim to the carrier `render`/`receipt`/`conflicts_for` read.
-    let claims: Vec<ContractClaim> = recallable
-        .iter()
-        .filter_map(ContractClaim::from_stored_claim)
-        .collect();
-    let conflicts = conflicts_for(&claims);
-    // The same policy `recall` applies: a model-facing caller does not receive a
-    // stale contract's claims. Unlike `recall` (which drops the contract and
-    // counts it) `show` returns the object with `Stale` and an empty claim list,
-    // so `contract_read` can tell the model *why* there is nothing to act on
-    // rather than silently returning an empty result.
-    let (claims, conflicts) =
-        if policy == RetrievalPolicy::ForModel && schema_state == ContractSchemaState::Stale {
-            (Vec::new(), Vec::new())
-        } else {
-            (claims, conflicts)
-        };
-    Ok(Some(RetrievedContract {
-        object: object.clone(),
-        schema_state,
-        claims,
-        conflicts,
-        truncated: false,
-    }))
+}
+
+/// The live table for `object` in `schema`, if present.
+fn find_table<'s>(
+    object: &DatabaseObjectRef,
+    schema: &'s saya_types::SchemaTree,
+) -> Option<&'s Table> {
+    schema.find_table(object.catalog(), object.schema(), object.object())
+}
+
+/// The structural dependency to validate `item` against. The stored
+/// `schema_binding_json` is the record the item was written with; re-deriving
+/// from `(slot, value)` refreshes it to the current binding format (the payload
+/// and slot have not changed) so a confirm also repairs an item whose stored
+/// binding this build could no longer deserialize. If the slot and payload
+/// disagree — only possible for a corrupt row the store's own gate refuses —
+/// fail closed rather than confirm an item we cannot interpret.
+fn binding_to_validate(item: &KnowledgeItem) -> Result<SchemaBinding, ContractOpError> {
+    if let Ok(binding) = serde_json::from_str::<SchemaBinding>(&item.schema_binding_json) {
+        return Ok(binding);
+    }
+    SchemaBinding::derive(&item.slot, &item.value).ok_or(ContractOpError::Invalid)
 }

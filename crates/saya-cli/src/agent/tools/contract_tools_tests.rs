@@ -10,12 +10,11 @@ use super::*;
 use async_trait::async_trait;
 use saya_agent::{ToolError, ToolExecutor};
 use saya_connectors::DatabaseConnector;
-use saya_store::{ContractStore, ProposeClaim, ProposeOutcome, SchemaStore, SqliteStateStore};
+use saya_store::{SchemaStore, SqliteStateStore};
 use saya_types::{
-    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, ConnectionError, Database,
-    DatabaseObjectKind, DatabaseObjectRef, DatabaseProfile, KnowledgeSlot, KnowledgeState,
-    ProfileIdentity, QueryRequest, QueryResult, Schema, SchemaFingerprint, SchemaTree, SqlDialect,
-    Table,
+    ClaimOrigin, ClaimPayload, Column, ConnectionError, Database, DatabaseObjectKind,
+    DatabaseObjectRef, DatabaseProfile, KnowledgeSlot, KnowledgeState, ProfileIdentity,
+    QueryRequest, QueryResult, Schema, SchemaFingerprint, SchemaTree, SqlDialect, Table,
 };
 use std::{
     fs,
@@ -132,35 +131,14 @@ async fn seed_current(store: &SqliteStateStore, object: &DatabaseObjectRef) -> S
     SchemaFingerprint::of_table(DatabaseObjectKind::Table, &table)
 }
 
-async fn remember_confirmed(
-    store: &SqliteStateStore,
-    object: &DatabaseObjectRef,
-    payload: ClaimPayload,
-) -> ClaimId {
-    let fingerprint = seed_current(store, object).await;
-    let request = ProposeClaim {
-        object: object.clone(),
-        fingerprint,
-        payload,
-        origin: ClaimOrigin::UserExplicit,
-        initial_status: ClaimStatus::Confirmed,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    }
-}
-
-/// Seeds a knowledge item into the D-3 `knowledge_items` table the recall path
-/// (`contract_search`) reads. The `contract_read` tool still reads the legacy
-/// `contract_claims` table (a later chunk migrates it), so tests that exercise
-/// `contract_read` keep the `remember_*` helpers above; only the
-/// `contract_search` tests use this one. The slot and `SchemaBinding` are
-/// derived from the payload the way the ingest path derives them. The cached
-/// schema (`seed_current`) names the object's table so a `Table` binding reads
-/// `current`; a `Column` binding needs its column present too.
+/// Seeds a knowledge item into the D-3 `knowledge_items` table both contract
+/// tools read: `contract_search` via `recall`, `contract_read` via `show`
+/// (Chunk 3 migrated `show` onto `knowledge_items`). The slot and
+/// `SchemaBinding` are derived from the payload the way the ingest path derives
+/// them. The cached schema (`seed_current`) names the object's table with an
+/// `id` column so a `Table` binding reads `current`; a `Column` binding needs
+/// its column present too (a test that needs a richer schema upserts its own
+/// after seeding).
 async fn put_knowledge_item(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,
@@ -279,10 +257,14 @@ async fn contract_read_returns_one_contract_and_rejects_malformed_table() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "orders");
-    let _id = remember_confirmed(
+    // `contract_read` calls `show`, which Chunk 3 migrated to `knowledge_items`
+    // — so seed an Active item there (a `Table` binding is valid against the
+    // `id`-only schema `put_knowledge_item` caches).
+    put_knowledge_item(
         &store,
         &obj,
         ClaimPayload::table_description("sales fact table").unwrap(),
+        KnowledgeState::Active,
     )
     .await;
 
@@ -395,10 +377,9 @@ async fn no_opaque_profile_identity_in_any_tool_result() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "orders");
-    // `contract_read` reads the legacy `contract_claims` table (a later chunk
-    // migrates it); `contract_search` reads `knowledge_items`. Seed both so
-    // each tool sees the alias and the identity-leak assertion covers both.
-    let _id = remember_confirmed(&store, &obj, ClaimPayload::table_alias("orders").unwrap()).await;
+    // Both `contract_read` (via `show`) and `contract_search` (via `recall`)
+    // read `knowledge_items` now; seed one Active alias so each tool sees it
+    // and the identity-leak assertion covers both.
     put_knowledge_item(
         &store,
         &obj,
@@ -455,10 +436,11 @@ async fn privacy_gate_closed_returns_empty_without_claims() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "orders");
-    let _id = remember_confirmed(
+    put_knowledge_item(
         &store,
         &obj,
         ClaimPayload::table_alias("secret_alias").unwrap(),
+        KnowledgeState::Active,
     )
     .await;
 
@@ -619,15 +601,45 @@ async fn contract_read_truncates_claims_past_the_bound_and_says_so() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "wide");
-    // More confirmed claims than the 12-per-object default bound.
-    for i in 0..20 {
-        let _ = remember_confirmed(
-            &store,
-            &obj,
-            ClaimPayload::table_alias(format!("a{i}")).unwrap(),
-        )
-        .await;
+    // More claims than the 12-per-object `read_payload` bound. D-4 caps a
+    // multi-valued slot at 4 values, so seed `column_description` items across
+    // five columns (4 each = 20): each is a distinct `Column { colN, Exists }`
+    // slot, so cardinality admits four per column. `put_knowledge_item` caches
+    // an `id`-only schema per call; upsert a five-column schema once at the end
+    // so every binding reads `Valid` (Current) and `show` returns all 20.
+    for col in 0..5 {
+        for n in 0..4 {
+            put_knowledge_item(
+                &store,
+                &obj,
+                ClaimPayload::column_description(format!("c{col}"), format!("desc {n}")).unwrap(),
+                KnowledgeState::Active,
+            )
+            .await;
+        }
     }
+    let wide = SchemaTree {
+        databases: vec![Database {
+            name: obj.catalog().to_string(),
+            schemas: vec![Schema {
+                name: obj.schema().to_string(),
+                tables: vec![Table {
+                    name: obj.object().to_string(),
+                    columns: (0..5)
+                        .map(|col| Column {
+                            name: format!("c{col}"),
+                            data_type: "text".into(),
+                            nullable: true,
+                        })
+                        .collect(),
+                }],
+            }],
+        }],
+    };
+    store
+        .upsert_schema(obj.profile().as_str(), &wide)
+        .await
+        .unwrap();
 
     let tools = DatabaseTools::with_registry(
         registry_with_primary("primary", &identity),
@@ -693,64 +705,6 @@ async fn contract_read_on_unknown_object_returns_empty_with_reason() {
 // Test 10: a confirmed claim computed `stale` is dropped from contract_search,
 // and the result says so rather than silently returning an empty list.
 // ---------------------------------------------------------------------------
-
-/// Seeds a confirmed `default_time_column` claim on `object` whose referenced
-/// column (`created_at`) is then dropped from the live schema, so the contract
-/// aggregates to `stale`. Mirrors the recall-context stale fixture: the claim
-/// is *computed* stale (status still Confirmed), not persisted stale.
-async fn remember_confirmed_stale(store: &SqliteStateStore, object: &DatabaseObjectRef) {
-    let full = Table {
-        name: object.object().to_string(),
-        columns: vec![
-            Column {
-                name: "id".into(),
-                data_type: "bigint".into(),
-                nullable: false,
-            },
-            Column {
-                name: "created_at".into(),
-                data_type: "timestamp".into(),
-                nullable: false,
-            },
-        ],
-    };
-    let fp = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &full);
-    let payload = ClaimPayload::default_time_column("created_at").unwrap();
-    let request = ProposeClaim {
-        object: object.clone(),
-        fingerprint: fp,
-        referenced_columns: payload.referenced_column_name_snapshots(),
-        payload,
-        origin: ClaimOrigin::UserExplicit,
-        initial_status: ClaimStatus::Confirmed,
-        evidence: None,
-    };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(_) => {}
-        other => panic!("expected Stored, got {other:?}"),
-    }
-    // Live schema drops `created_at`; the claim's referenced column is gone.
-    let drifted = SchemaTree {
-        databases: vec![Database {
-            name: object.catalog().to_string(),
-            schemas: vec![Schema {
-                name: object.schema().to_string(),
-                tables: vec![Table {
-                    name: object.object().to_string(),
-                    columns: vec![Column {
-                        name: "id".into(),
-                        data_type: "bigint".into(),
-                        nullable: false,
-                    }],
-                }],
-            }],
-        }],
-    };
-    store
-        .upsert_schema(object.profile().as_str(), &drifted)
-        .await
-        .unwrap();
-}
 
 #[tokio::test]
 async fn contract_search_drops_a_stale_claim_and_says_so() {
@@ -842,7 +796,19 @@ async fn contract_read_on_a_stale_object_reports_stale_with_no_claims() {
     let store = store_at(&root.join("state.sqlite3")).await;
     let identity = profile_identity("primary");
     let obj = object_ref(&identity, "orders");
-    remember_confirmed_stale(&store, &obj).await;
+    // An Active `default_time_column` on `created_at`. `put_knowledge_item`
+    // caches an `id`-only schema (no `created_at`), so the item's
+    // `Column { created_at, Time }` binding reads `Invalid` → the contract
+    // aggregates to `Stale`, and the model-facing `contract_read` (`show` with
+    // `ForModel`) reports the object stale with no claims — the gone-column
+    // fact is not handed to the model as current.
+    put_knowledge_item(
+        &store,
+        &obj,
+        ClaimPayload::default_time_column("created_at").unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
 
     let tools = DatabaseTools::with_registry(
         registry_with_primary("primary", &identity),

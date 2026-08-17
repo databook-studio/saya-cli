@@ -10,7 +10,7 @@
 use thiserror::Error;
 
 use crate::cli::ClaimKindArg;
-use saya_types::{ClaimPayload, ColumnRole};
+use saya_types::{ClaimPayload, ColumnRole, KnowledgeSlot};
 
 /// A three-part qualified name `catalog.schema.object`. Never guessed: a one-
 /// or two-part name binds the claim to an object the user did not name, and the
@@ -95,6 +95,34 @@ pub(crate) fn build_payload(
             let role = ColumnRole::parse(value).ok_or(ArgError::UnknownColumnRole)?;
             ClaimPayload::column_role(column, role).map_err(|_| ArgError::InvalidValue)
         }
+    }
+}
+
+/// The [`KnowledgeSlot`] a `build_payload` payload files under — the one
+/// pairing the ingest path and the `remember` write path both use, so a
+/// remembered fact lands on the same row `show`/`queue`/recall read (no split
+/// brain). Returns `None` for a payload `build_payload` cannot produce (e.g. a
+/// `Relationship`), so a caller fails closed rather than guessing a slot.
+/// `build_payload` and `slot_for_payload` are the only place the kind→slot
+/// pairing lives; the in-crate `contracts/tests.rs` and the integration suites
+/// reach for it through here instead of carrying a second copy that could
+/// drift.
+pub(crate) fn slot_for_payload(payload: &ClaimPayload) -> Option<KnowledgeSlot> {
+    match payload {
+        ClaimPayload::TableDescription { .. } => Some(KnowledgeSlot::TableDescription),
+        ClaimPayload::TableAlias { .. } => Some(KnowledgeSlot::TableAlias),
+        ClaimPayload::TableGrain { .. } => Some(KnowledgeSlot::TableGrain),
+        ClaimPayload::DefaultTimeColumn { .. } => Some(KnowledgeSlot::TableDefaultTime),
+        ClaimPayload::ColumnDescription { column, .. } => Some(KnowledgeSlot::ColumnDescription {
+            column: column.clone(),
+        }),
+        ClaimPayload::ColumnRole { column, .. } => Some(KnowledgeSlot::ColumnRole {
+            column: column.clone(),
+        }),
+        // `Relationship` and any future variant are not slot-bound on the
+        // `remember` path; `build_payload` never produces them, so a caller that
+        // reaches one has a payload it cannot file.
+        _ => None,
     }
 }
 

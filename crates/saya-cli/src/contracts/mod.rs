@@ -17,9 +17,11 @@ mod queue;
 mod recall;
 mod receipt;
 mod reconcile;
+mod remember;
 mod retrieval;
 mod review;
 mod selection;
+mod show;
 pub(crate) mod terms;
 mod use_once;
 mod validity;
@@ -50,9 +52,11 @@ pub(crate) use queue::{QUEUE_DEFAULT_LIMIT, QueuedCandidate, review_queue};
 pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
 #[allow(unused_imports)]
 pub(crate) use reconcile::{ReconcileOutcome, reconcile};
+pub(crate) use remember::{RememberOutcome, remember};
 #[allow(unused_imports)]
 pub(crate) use retrieval::RetrievalPolicy;
-pub(crate) use review::{confirm, forget, propose, reject, show};
+pub(crate) use review::{confirm, forget, reject};
+pub(crate) use show::show;
 // `conflicts_for` is `pub(crate)` in `conflict` but the module is private; the
 // contracts tests exercise it directly, so re-export it alongside the other
 // operations. Unused in a lib build (tests only), like the re-exports above.

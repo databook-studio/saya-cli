@@ -19,10 +19,10 @@ use saya_cli::{
     capture_output_start, capture_output_take, load_with_sources, parse_slash_command,
     profile_identity, run_contracts,
 };
-use saya_store::{ContractStore, ProposeClaim, SchemaStore, SqliteStateStore};
+use saya_store::{KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
-    ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity,
-    SchemaFingerprint, SchemaTree,
+    ClaimOrigin, ClaimPayload, DatabaseObjectKind, DatabaseObjectRef, KnowledgeSlot,
+    KnowledgeState, ProfileIdentity, SchemaBinding, SchemaFingerprint, SchemaTree,
 };
 use std::{
     collections::BTreeMap,
@@ -770,11 +770,14 @@ async fn queue_slash_and_headless_agree_on_claim_ids_and_order() {
     let (runtime, _name) = runtime_at(&root);
     let store = store_at(&root).await;
 
-    // Seed three candidates with distinct evidence counts so the queue order
-    // is observable, directly through the store (slash `remember` only confirms).
+    // Seed three `Pending` knowledge items on distinct objects, directly
+    // through the store (slash `remember` only confirms; the queue is the
+    // candidate worklist). The queue reads `knowledge_items`, so a legacy
+    // `propose_claim` row (which writes `contract_claims`, not `knowledge_items`)
+    // would be invisible to it.
     let identity = identity_for(&runtime, "local");
     let profile = ProfileIdentity::parse(&identity).unwrap();
-    for (table, turns) in [("a", 3u32), ("b", 2), ("c", 1)] {
+    for table in ["a", "b", "c"] {
         let object = DatabaseObjectRef::new(
             profile.clone(),
             "analytics",
@@ -783,23 +786,21 @@ async fn queue_slash_and_headless_agree_on_claim_ids_and_order() {
             DatabaseObjectKind::Table,
         )
         .unwrap();
-        for turn in 0..turns {
-            let request = ProposeClaim {
-                object: object.clone(),
+        let payload = ClaimPayload::table_alias(table).unwrap();
+        let slot = KnowledgeSlot::TableAlias;
+        let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
+        store
+            .put_knowledge_item(saya_store::KnowledgeItemRequest {
+                object,
+                slot,
+                value: payload,
+                source: ClaimOrigin::AssistantInferred,
+                state: KnowledgeState::Pending,
+                schema_binding_json: serde_json::to_string(&binding).unwrap(),
                 fingerprint: unobserved_fingerprint(),
-                payload: ClaimPayload::table_alias(table).unwrap(),
-                origin: ClaimOrigin::AssistantInferred,
-                initial_status: ClaimStatus::Candidate,
-                evidence: Some(saya_store::ClaimEvidence {
-                    kind: saya_store::EvidenceKind::RepeatedObservation,
-                    session_id: Some("s1".into()),
-                    turn_ordinal: Some(turn),
-                    observed_unix_ms: 10_000 + turn as i64,
-                }),
-                referenced_columns: Vec::new(),
-            };
-            store.propose_claim(request).await.unwrap();
-        }
+            })
+            .await
+            .unwrap();
     }
 
     let headless = run_headless(
@@ -828,18 +829,19 @@ async fn queue_slash_and_headless_agree_on_claim_ids_and_order() {
     assert_eq!(out, headless.1, "slash /queue diverged from headless queue");
     assert_eq!(err, headless.2);
 
-    // The order is most-evidence-first: a (3) before b (2) before c (1). Assert
-    // it on the slash path so a drift in either adapter is caught.
+    // The queue lists three `ki-…` candidates, in the same order on both paths.
+    // (The queue orders oldest-first, then slot, then id — not by evidence,
+    // which the legacy `contract_evidence` table carried; that table is gone.)
     let slash_ids: Vec<&str> = out
         .lines()
-        .filter(|l| l.starts_with("c-"))
+        .filter(|l| l.starts_with("ki-"))
         .map(|l| l.split_whitespace().next().unwrap_or(""))
         .collect();
     assert_eq!(slash_ids.len(), 3, "/queue output: {out}");
     let headless_ids: Vec<&str> = headless
         .1
         .lines()
-        .filter(|l| l.starts_with("c-"))
+        .filter(|l| l.starts_with("ki-"))
         .map(|l| l.split_whitespace().next().unwrap_or(""))
         .collect();
     assert_eq!(slash_ids, headless_ids, "order diverged");
@@ -902,7 +904,9 @@ async fn tui_queue_routes_at_active_profile_not_configured_default() {
         .await
         .unwrap();
 
-    // Seed one candidate under `staging` only, directly through the store.
+    // Seed one `Pending` knowledge item under `staging` only, directly through the
+    // store. The queue reads `knowledge_items`, so a legacy `propose_claim` row
+    // (which writes `contract_claims`) would be invisible to it.
     let staging_profile = ProfileIdentity::parse(&staging_identity).unwrap();
     let object = DatabaseObjectRef::new(
         staging_profile.clone(),
@@ -912,20 +916,18 @@ async fn tui_queue_routes_at_active_profile_not_configured_default() {
         DatabaseObjectKind::Table,
     )
     .unwrap();
+    let payload = ClaimPayload::table_alias("orders").unwrap();
+    let slot = KnowledgeSlot::TableAlias;
+    let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
     store
-        .propose_claim(ProposeClaim {
+        .put_knowledge_item(saya_store::KnowledgeItemRequest {
             object: object.clone(),
+            slot,
+            value: payload,
+            source: ClaimOrigin::AssistantInferred,
+            state: KnowledgeState::Pending,
+            schema_binding_json: serde_json::to_string(&binding).unwrap(),
             fingerprint: unobserved_fingerprint(),
-            payload: ClaimPayload::table_alias("orders").unwrap(),
-            origin: ClaimOrigin::AssistantInferred,
-            initial_status: ClaimStatus::Candidate,
-            evidence: Some(saya_store::ClaimEvidence {
-                kind: saya_store::EvidenceKind::RepeatedObservation,
-                session_id: Some("s1".into()),
-                turn_ordinal: Some(0),
-                observed_unix_ms: 10_000,
-            }),
-            referenced_columns: Vec::new(),
         })
         .await
         .unwrap();
@@ -944,7 +946,7 @@ async fn tui_queue_routes_at_active_profile_not_configured_default() {
     .await;
     assert_eq!(active_code, 0, "active queue stderr: {active_err}");
     assert!(
-        active_out.contains("c-"),
+        active_out.contains("ki-"),
         "active (staging) queue should list the seeded candidate: {active_out}"
     );
 
@@ -963,7 +965,7 @@ async fn tui_queue_routes_at_active_profile_not_configured_default() {
     .await;
     assert_eq!(default_code, 0, "default queue stderr: {default_err}");
     assert!(
-        !default_out.contains("c-"),
+        !default_out.contains("ki-"),
         "un-stamped queue resolved the default (local) and must not show staging's \
          candidate — the bug the adapter's stamp prevents: {default_out}"
     );
@@ -981,7 +983,7 @@ async fn tui_queue_routes_at_active_profile_not_configured_default() {
     .await;
     assert_eq!(local_code, 0, "local queue stderr: {local_err}");
     assert!(
-        !local_out.contains("c-"),
+        !local_out.contains("ki-"),
         "local queue should be empty: {local_out}"
     );
 

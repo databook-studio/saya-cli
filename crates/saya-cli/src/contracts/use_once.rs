@@ -1,19 +1,19 @@
 //! `use_candidate_once`: admit one candidate to a single recall without
 //! confirming it. Split from [`super::review`] by concern — this is the one
 //! review operation that writes nothing to the store, so it stands apart from
-//! the confirm/reject/edit/forget wrappers that mutate a claim.
+//! the confirm/reject/forget wrappers that mutate an item.
 
 use super::op_error::ContractOpError;
-use saya_store::{ContractStore, SqliteStateStore};
-use saya_types::{ClaimId, ClaimStatus};
+use saya_store::{KnowledgeItemStore, SqliteStateStore};
+use saya_types::{ClaimId, KnowledgeState};
 
-/// Admits one candidate claim to a single recall, without confirming it.
+/// Admits one candidate item to a single recall, without confirming it.
 ///
-/// Reads the claim and refuses unless it is a live `Candidate` — rejected,
-/// forgotten, stale, contradicted, and confirmed claims all return
+/// Reads the item and refuses unless it is a live `Pending` candidate — an
+/// `Active` (already admissible by the mode) or `Dismissed` item returns
 /// [`ContractOpError::NotACandidate`]. The operation writes **nothing** to the
-/// store: no status flip, no fingerprint change, no audit event, no evidence.
-/// The claim keeps its `Candidate` status and `AssistantInferred` origin, so a
+/// store: no state flip, no binding change, no fingerprint change, no audit.
+/// The item keeps its `Pending` state and `AssistantInferred` origin, so a
 /// user who uses one and never returns finds it exactly as it was (spec C §3).
 ///
 /// The admission itself is not a persisted thing; it is request-scoped. The
@@ -21,7 +21,7 @@ use saya_types::{ClaimId, ClaimStatus};
 /// `admit_candidate`, which [`selection`](super::selection) honours for that
 /// one recall only — the request is built and dropped per turn, so an admission
 /// cannot outlive the turn it was made for (spec C §4 — one turn, in-memory).
-/// Because the claim stays `Candidate`, the render layer still marks it
+/// Because the item stays `Pending`, the render layer still marks it
 /// `[candidate — unconfirmed]` when supplied: being chosen for one turn confers
 /// no authority (spec C §3, ADR 0002 §4).
 ///
@@ -31,11 +31,11 @@ pub(crate) async fn use_candidate_once(
     store: &SqliteStateStore,
     id: &ClaimId,
 ) -> Result<(), ContractOpError> {
-    let claim = store
-        .get_claim(id)
+    let item = store
+        .get_knowledge_item(id.as_str())
         .await?
         .ok_or(ContractOpError::NotFound)?;
-    if claim.status != ClaimStatus::Candidate {
+    if item.state != KnowledgeState::Pending {
         return Err(ContractOpError::NotACandidate);
     }
     Ok(())

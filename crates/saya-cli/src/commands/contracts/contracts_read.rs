@@ -13,7 +13,7 @@ use crate::contracts::{
     show as show_contract,
 };
 use crate::render::{RenderFormat, TerminalEvent};
-use saya_store::{ContractStore, SqliteStateStore};
+use saya_store::{KnowledgeItemStore, SqliteStateStore};
 use saya_types::{DatabaseObjectKind, DatabaseObjectRef};
 
 // An unreadable store is not an empty store. `list` exits non-zero so "you have
@@ -36,13 +36,15 @@ pub(super) async fn list(
     // `list` shows every contract for the profile. Recall selects by query, so
     // seed the query with the profile's own objects as explicit refs — the
     // selection, bounds, privacy and validity rules still all run inside recall.
-    let objects = match store.list_objects(&identity).await {
+    // The object list comes from `knowledge_items` (the same table `show`/`queue`
+    // read), so a `remember`-written fact is listable the same turn — no split
+    // brain with the legacy `contract_objects` table the old `list_objects` read.
+    let explicit_refs: Vec<DatabaseObjectRef> = match store.objects_for_profile(&identity).await {
         Ok(objects) => objects,
         Err(_) => {
             return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);
         }
     };
-    let explicit_refs: Vec<DatabaseObjectRef> = objects.iter().map(|o| o.object.clone()).collect();
     // The cached schema classifies each claim — what `connection schema
     // --refresh` wrote. `Missing` and `Unavailable` stay distinct (not collapsed
     // to an empty tree) so the honest `live_schema_unavailable` is preserved.

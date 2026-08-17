@@ -9,14 +9,11 @@
 use super::{
     ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
     RecallRequest, RetrievalPolicy, SchemaAvailability, SchemaFreshness, confirm, conflicts_for,
-    forget, propose, recall, reject, schema_state_for, show, use_candidate_once,
+    forget, recall, reject, resolve_prefix, schema_state_for, show, use_candidate_once,
 };
-// `edit` has only test callers, so it is reached through its own module
-// rather than a `contracts` re-export the library itself never uses.
-use super::review::edit;
 use saya_store::{
-    ContractEventKind, ContractStore, ForgetReason, ProposeClaim, ProposeOutcome, SchemaStore,
-    SqliteStateStore, StoredClaim,
+    ContractEventKind, ContractStore, ForgetReason, KnowledgeItemStore, ProposeClaim,
+    ProposeOutcome, SchemaStore, SqliteStateStore, StoredClaim,
 };
 use saya_types::{
     ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, Database, DatabaseObjectKind,
@@ -230,6 +227,59 @@ fn slot_for(payload: &ClaimPayload) -> KnowledgeSlot {
         },
         _ => panic!("no slot for payload {:?}", payload),
     }
+}
+
+/// The `ki-…` id of the one knowledge item for `object` under `slot`, parsed as
+/// a [`ClaimId`]. The store derives the id from `(object, slot)` for a
+/// single-valued slot, so there is exactly one; a multi-valued slot would need
+/// the value too. Used by the decision-op tests to reach the id the receipt
+/// prints and `resolve_prefix` matches.
+async fn item_id_for(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    slot: &KnowledgeSlot,
+) -> ClaimId {
+    let item = store
+        .knowledge_for_object(object)
+        .await
+        .expect("knowledge items listed")
+        .into_iter()
+        .find(|i| &i.slot == slot)
+        .unwrap_or_else(|| panic!("no item for slot {slot:?} on {}", object.object()));
+    ClaimId::parse(&item.id).expect("ki id parses")
+}
+
+/// The persisted [`KnowledgeState`] of item `id` — the lever the decision-op
+/// tests pull to assert a confirm/reject moved (or did not move) the state.
+async fn item_state(store: &SqliteStateStore, id: &ClaimId) -> KnowledgeState {
+    store
+        .get_knowledge_item(id.as_str())
+        .await
+        .expect("store read")
+        .expect("item present")
+        .state
+}
+
+/// Seeds an `Active` `default_time_column` item on `column` for `object` — the
+/// "confirmed fact whose schema then drifted" shape the confirm-revalidation
+/// tests need. Under D-4 a drifted fact is `Active` (state) reading `Invalid`
+/// (computed), the analog of the legacy persisted-`Stale` claim; the item's
+/// `Column { column, Time }` binding reads `Valid` against a schema that has
+/// `column` as a temporal type and `Invalid` against one that dropped or retyped
+/// it. Returns the item's `ki-…` id.
+async fn seed_active_time_item(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    column: &str,
+) -> ClaimId {
+    put_item(
+        store,
+        object,
+        ClaimPayload::default_time_column(column).unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
+    item_id_for(store, object, &KnowledgeSlot::TableDefaultTime).await
 }
 
 async fn confirm_candidate(
@@ -1264,38 +1314,33 @@ async fn queue_lists_candidates_not_confirmed_or_forgotten() {
     let store = store_at(&db).await;
 
     let p = profile_a();
-    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
     let obj = object_ref(&p, "orders");
     let live = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
 
-    // A confirmed claim and a forgotten one must not appear; a candidate must.
-    let _confirmed = confirm_candidate(
+    // An Active item (confirmed) and a Dismissed one (rejected/forgotten) must
+    // not appear; a Pending candidate must. The queue lists `Pending` only.
+    put_item(
         &store,
         &obj,
-        &fp,
         ClaimPayload::table_alias("confirmed_alias").unwrap(),
+        KnowledgeState::Active,
     )
     .await;
-    let cand_id = propose_candidate(
+    put_item(
         &store,
         &obj,
-        &fp,
         ClaimPayload::table_alias("cand_alias").unwrap(),
-        &[1],
+        KnowledgeState::Pending,
     )
     .await;
-    let forgotten = propose_candidate(
+    let cand_id = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
+    put_item(
         &store,
         &obj,
-        &fp,
-        ClaimPayload::table_alias("forgotten_alias").unwrap(),
-        &[1],
+        ClaimPayload::table_description("forgotten").unwrap(),
+        KnowledgeState::Dismissed,
     )
     .await;
-    store
-        .forget_claim(&forgotten, ForgetReason::Obsolete)
-        .await
-        .unwrap();
 
     let queued = review_queue(
         &store,
@@ -1308,68 +1353,53 @@ async fn queue_lists_candidates_not_confirmed_or_forgotten() {
 
     let ids: Vec<ClaimId> = queued.iter().map(|q| q.claim.id.clone()).collect();
     assert!(ids.contains(&cand_id), "candidate missing from queue");
-    // Every queued claim is a candidate — neither confirmed nor forgotten
-    // leaks in. Reading each back lets the assertion stay sync inside `any`.
+    // Every queued item is Pending — neither Active nor Dismissed leaks in.
     for id in &ids {
-        let claim = store.get_claim(id).await.unwrap().unwrap();
         assert_eq!(
-            claim.status,
-            ClaimStatus::Candidate,
-            "non-candidate claim appeared in the queue"
+            item_state(&store, id).await,
+            KnowledgeState::Pending,
+            "non-pending item appeared in the queue"
         );
     }
-    assert!(
-        !ids.contains(&forgotten),
-        "a forgotten claim appeared in the queue"
-    );
-    // The queue carries one entry per candidate, not per claim-status.
+    // The queue carries one entry per Pending candidate.
     assert_eq!(queued.len(), 1);
 
     let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
-async fn queue_orders_most_evidence_then_oldest_then_id() {
+async fn queue_orders_oldest_then_slot_then_id() {
     let root = temp_root("queue_order");
     let db = root.join("state.sqlite3");
     let store = store_at(&db).await;
 
     let p = profile_a();
-    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
-    // Three distinct objects so three candidates with distinct claim ids.
     let live = schema_tree_for(&[
-        ("a", table(&[("id", "bigint", false)])),
-        ("b", table(&[("id", "bigint", false)])),
-        ("c", table(&[("id", "bigint", false)])),
+        ("old", table(&[("id", "bigint", false)])),
+        ("new", table(&[("id", "bigint", false)])),
+        ("both", table(&[("id", "bigint", false)])),
     ]);
 
-    // most: 3 evidence, middle: 2, least: 1.
-    let _most = propose_candidate(
+    // Oldest first: two candidates on distinct objects, created in sequence,
+    // must come back oldest-first. A short sleep makes the millisecond stamps
+    // differ so the primary key (created_unix_ms) decides.
+    put_item(
         &store,
-        &object_ref(&p, "a"),
-        &fp,
-        ClaimPayload::table_alias("a").unwrap(),
-        &[1, 2, 3],
+        &object_ref(&p, "old"),
+        ClaimPayload::table_alias("old").unwrap(),
+        KnowledgeState::Pending,
     )
     .await;
-    let _middle = propose_candidate(
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    put_item(
         &store,
-        &object_ref(&p, "b"),
-        &fp,
-        ClaimPayload::table_alias("b").unwrap(),
-        &[1, 2],
-    )
-    .await;
-    let _least = propose_candidate(
-        &store,
-        &object_ref(&p, "c"),
-        &fp,
-        ClaimPayload::table_alias("c").unwrap(),
-        &[1],
+        &object_ref(&p, "new"),
+        ClaimPayload::table_alias("new").unwrap(),
+        KnowledgeState::Pending,
     )
     .await;
 
-    let first = review_queue(
+    let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
         &[(p.clone(), avail(live.clone()))],
@@ -1377,53 +1407,6 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
     )
     .await
     .unwrap();
-    assert_eq!(first.len(), 3);
-    // Most evidence first: a (3) before b (2) before c (1).
-    let by_object: Vec<&str> = first.iter().map(|q| q.claim.object.object()).collect();
-    assert_eq!(
-        by_object,
-        vec!["a", "b", "c"],
-        "evidence order broken: {by_object:?}"
-    );
-
-    // Tie-break by oldest: two claims with equal evidence (1) on different
-    // objects, created in sequence, must come back oldest-first. A short sleep
-    // makes the millisecond timestamps differ so the secondary key is what
-    // decides — without it both land in the same ms and the test would only
-    // exercise the tertiary (id) key.
-    let live_tb = schema_tree_for(&[
-        ("old", table(&[("id", "bigint", false)])),
-        ("new", table(&[("id", "bigint", false)])),
-    ]);
-    let _old = propose_candidate(
-        &store,
-        &object_ref(&p, "old"),
-        &fp,
-        ClaimPayload::table_alias("old").unwrap(),
-        &[1],
-    )
-    .await;
-    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    let _new = propose_candidate(
-        &store,
-        &object_ref(&p, "new"),
-        &fp,
-        ClaimPayload::table_alias("new").unwrap(),
-        &[1],
-    )
-    .await;
-
-    let queued = review_queue(
-        &store,
-        std::slice::from_ref(&p),
-        &[(p.clone(), avail(live_tb))],
-        200,
-    )
-    .await
-    .unwrap();
-    // The store now holds a/b/c (evidence 3/2/1) plus old/new (evidence 1 each).
-    // The equal-evidence pair sorts oldest-first; assert the relative order of
-    // the two rather than the whole list, since a/b/c interleave by evidence.
     let ordered: Vec<&str> = queued.iter().map(|q| q.claim.object.object()).collect();
     let old_pos = ordered
         .iter()
@@ -1433,25 +1416,68 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
         .iter()
         .position(|o| *o == "new")
         .expect("new candidate missing");
+    assert!(old_pos < new_pos, "oldest-first order broken: {ordered:?}");
+
+    // Slot tie-break: two candidates on the same object, created back-to-back
+    // (same ms), fall back to the slot's canonical string. `table.alias` sorts
+    // before `table.description`, so the alias comes first.
+    let both = object_ref(&p, "both");
+    put_item(
+        &store,
+        &both,
+        ClaimPayload::table_alias("both_alias").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    put_item(
+        &store,
+        &both,
+        ClaimPayload::table_description("both description").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let queued = review_queue(
+        &store,
+        std::slice::from_ref(&p),
+        &[(p.clone(), avail(live.clone()))],
+        200,
+    )
+    .await
+    .unwrap();
+    let both_rows: Vec<&str> = queued
+        .iter()
+        .filter(|q| q.claim.object.object() == "both")
+        .map(|q| q.claim.id.as_str())
+        .collect();
+    let alias_id = item_id_for(&store, &both, &KnowledgeSlot::TableAlias)
+        .await
+        .as_str()
+        .to_string();
+    let desc_id = item_id_for(&store, &both, &KnowledgeSlot::TableDescription)
+        .await
+        .as_str()
+        .to_string();
+    // `table.alias` < `table.description` lexically, so the alias precedes the
+    // description when their created stamps coincide.
+    let alias_pos = both_rows
+        .iter()
+        .position(|id| *id == alias_id)
+        .expect("alias in queue");
+    let desc_pos = both_rows
+        .iter()
+        .position(|id| *id == desc_id)
+        .expect("description in queue");
     assert!(
-        old_pos < new_pos,
-        "oldest-first tie-break broken: {ordered:?}"
+        alias_pos < desc_pos,
+        "slot tie-break broken (alias should precede description): {both_rows:?}"
     );
 
     // The full queue order must be identical on a second run — a queue whose
-    // order shifts between runs is one a user cannot work through. Both runs
-    // see the same five candidates now that the store holds a/b/c and old/new.
-    let live_all = schema_tree_for(&[
-        ("a", table(&[("id", "bigint", false)])),
-        ("b", table(&[("id", "bigint", false)])),
-        ("c", table(&[("id", "bigint", false)])),
-        ("old", table(&[("id", "bigint", false)])),
-        ("new", table(&[("id", "bigint", false)])),
-    ]);
+    // order shifts between runs is one a user cannot work through.
     let run_a = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), avail(live_all.clone()))],
+        &[(p.clone(), avail(live.clone()))],
         200,
     )
     .await
@@ -1459,7 +1485,7 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
     let run_b = review_queue(
         &store,
         std::slice::from_ref(&p),
-        &[(p.clone(), avail(live_all))],
+        &[(p.clone(), avail(live))],
         200,
     )
     .await
@@ -1467,8 +1493,6 @@ async fn queue_orders_most_evidence_then_oldest_then_id() {
     let ids_a: Vec<ClaimId> = run_a.iter().map(|q| q.claim.id.clone()).collect();
     let ids_b: Vec<ClaimId> = run_b.iter().map(|q| q.claim.id.clone()).collect();
     assert_eq!(ids_a, ids_b, "queue order was not stable across runs");
-    // And it still begins with the most-evidence candidate.
-    assert_eq!(run_a[0].claim.object.object(), "a");
 
     let _ = fs::remove_dir_all(root);
 }
@@ -1480,17 +1504,14 @@ async fn queue_limit_is_respected_and_clamped_at_200() {
     let store = store_at(&db).await;
 
     let p = profile_a();
-    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
     let live = schema_tree_for(&[]);
-    // Five candidates, equal evidence so the id tie-break orders them.
+    // Five Pending candidates on distinct objects.
     for i in 0..5 {
-        let obj = object_ref(&p, &format!("t{i}"));
-        let _ = propose_candidate(
+        put_item(
             &store,
-            &obj,
-            &fp,
+            &object_ref(&p, &format!("t{i}")),
             ClaimPayload::table_alias(format!("t{i}")).unwrap(),
-            &[1],
+            KnowledgeState::Pending,
         )
         .await;
     }
@@ -1541,17 +1562,14 @@ async fn queue_reports_schema_state_for_a_changed_object() {
     let store = store_at(&db).await;
 
     let p = profile_a();
-    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
-    let fp = fingerprint_for(&base);
     let obj = object_ref(&p, "orders");
-    // Candidate proposed against the base schema, then the live schema drops a
-    // referenced column — the queue must flag it stale, not current.
-    let _id = propose_candidate(
+    // A Pending candidate whose `Column { amount, Exists }` binding is dropped
+    // by the live schema — the queue must flag it stale, not current.
+    put_item(
         &store,
         &obj,
-        &fp,
         ClaimPayload::column_description("amount", "how much").unwrap(),
-        &[1],
+        KnowledgeState::Pending,
     )
     .await;
     let live_dropped = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
@@ -1571,7 +1589,10 @@ async fn queue_reports_schema_state_for_a_changed_object() {
     );
 
     // Same candidate against the unchanged live schema reads current.
-    let live_current = schema_tree_for(&[("orders", base.clone())]);
+    let live_current = schema_tree_for(&[(
+        "orders",
+        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+    )]);
     let queued = review_queue(
         &store,
         std::slice::from_ref(&p),
@@ -1595,23 +1616,20 @@ async fn queue_reports_schema_state_for_a_changed_object() {
 }
 
 #[tokio::test]
-async fn queue_evidence_count_reflects_attached_evidence() {
+async fn queue_evidence_count_is_zero_without_an_evidence_table() {
     let root = temp_root("queue_evidence_count");
     let db = root.join("state.sqlite3");
     let store = store_at(&db).await;
 
     let p = profile_a();
-    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
     let obj = object_ref(&p, "orders");
     let live = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
 
-    // Three distinct evidence rows (distinct turn ordinals) -> count 3.
-    let _id = propose_candidate(
+    put_item(
         &store,
         &obj,
-        &fp,
         ClaimPayload::table_alias("orders").unwrap(),
-        &[1, 2, 3],
+        KnowledgeState::Pending,
     )
     .await;
     let queued = review_queue(
@@ -1623,12 +1641,12 @@ async fn queue_evidence_count_reflects_attached_evidence() {
     .await
     .unwrap();
     assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].evidence_count, 3);
-
-    // The count the queue carries must match the store's own count read.
+    // `contract_evidence` is gone by design: a successful query is not evidence
+    // a business definition is true. The carried count is always zero — kept
+    // on the carrier only until the presentation layer drops the field.
     assert_eq!(
-        queued[0].evidence_count,
-        store.evidence_count(&queued[0].claim.id).await.unwrap()
+        queued[0].evidence_count, 0,
+        "no evidence is attached to a knowledge item"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -1654,6 +1672,84 @@ async fn queue_unopenable_store_errors_unavailable() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+// ---------------------------------------------------------------------------
+// Spec D / Chunk 3: `resolve_prefix` matches `ki-…` knowledge-item ids. The
+// receipt/list/show stanzas print `ki-` ids, so a resolver that only matched
+// the legacy `c-` ids would silently stop resolving anything a user can see —
+// the defect this chunk closes.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn resolve_prefix_matches_a_unique_ki_id_prefix() {
+    let root = temp_root("resolve_prefix_unique");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let id = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
+    // The full id resolves, as does a short unique prefix of it.
+    assert_eq!(resolve_prefix(&store, &p, id.as_str()).await.unwrap(), id);
+    let short: String = id.as_str().chars().take(6).collect();
+    assert_eq!(
+        resolve_prefix(&store, &p, &short).await.unwrap(),
+        id,
+        "a short unique `ki-` prefix resolves to the item"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn resolve_prefix_refuses_ambiguous_and_missing() {
+    let root = temp_root("resolve_prefix_refuse");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    // Two Pending items on distinct objects; their `ki-` ids share the `ki-`
+    // marker, so a bare "ki-" prefix is ambiguous.
+    put_item(
+        &store,
+        &object_ref(&p, "orders"),
+        ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    put_item(
+        &store,
+        &object_ref(&p, "returns"),
+        ClaimPayload::table_alias("returns").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let err = resolve_prefix(&store, &p, "ki-").await.unwrap_err();
+    assert_eq!(
+        err,
+        ContractOpError::Conflict,
+        "a prefix matching more than one item is ambiguous, not a guess"
+    );
+    // A prefix that matches nothing is NotFound, not a panic.
+    let err = resolve_prefix(&store, &p, "ki-deadbeef").await.unwrap_err();
+    assert_eq!(err, ContractOpError::NotFound);
+    // A legacy `c-` prefix matches no `ki-` id — the receipt no longer prints
+    // `c-` ids, so a stale `c-` reference refuses rather than silently writing
+    // the wrong item.
+    let err = resolve_prefix(&store, &p, "c-").await.unwrap_err();
+    assert_eq!(
+        err,
+        ContractOpError::NotFound,
+        "a legacy `c-` prefix matches no knowledge item"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn review_wrappers_pass_through_and_map_errors() {
     let root = temp_root("review_wrappers");
@@ -1661,24 +1757,21 @@ async fn review_wrappers_pass_through_and_map_errors() {
     let store = store_at(&db).await;
 
     let p = profile_a();
-    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
     let obj = object_ref(&p, "orders");
 
-    let req = ProposeClaim {
-        object: obj.clone(),
-        fingerprint: fp.clone(),
-        payload: ClaimPayload::table_alias("orders").unwrap(),
-        origin: ClaimOrigin::UserExplicit,
-        initial_status: ClaimStatus::Confirmed,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    let id = match propose(&store, req).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    };
+    // A Pending candidate the decision ops act on, seeded on `knowledge_items`
+    // (the table confirm/reject/forget now read).
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let id = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
 
-    // confirm on an unknown id maps to NotFound
+    // confirm on an unknown id maps to NotFound. Twiddle the last hex char so
+    // the id parses but matches no row.
     let mut chars: Vec<char> = id.as_str().chars().collect();
     if let Some(last) = chars.last_mut() {
         *last = match *last {
@@ -1692,33 +1785,26 @@ async fn review_wrappers_pass_through_and_map_errors() {
     let err = confirm(&store, &fake).await.unwrap_err();
     assert_eq!(err, ContractOpError::NotFound);
 
-    // edit on the real claim succeeds
-    let edited = edit(&store, &id, ClaimPayload::table_alias("orders2").unwrap())
-        .await
-        .unwrap();
-    assert_eq!(edited.status, ClaimStatus::Confirmed);
-
-    // propose a candidate, then reject it -> Rejected, and no longer recallable.
-    let cand = ProposeClaim {
-        object: obj.clone(),
-        fingerprint: fp.clone(),
-        payload: ClaimPayload::table_alias("cand").unwrap(),
-        origin: ClaimOrigin::AssistantInferred,
-        initial_status: ClaimStatus::Candidate,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    let cand_id = match propose(&store, cand).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    };
-    let rejected = reject(&store, &cand_id).await.unwrap();
+    // Rejecting the candidate moves it to Dismissed (rendered Rejected), and
+    // it no longer renders as a candidate.
+    let rejected = reject(&store, &id).await.unwrap();
     assert_eq!(rejected.status, ClaimStatus::Rejected);
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Dismissed);
 
-    // forget then show: nothing recallable remains
-    forget(&store, &id, ForgetReason::UserRequest)
+    // Forgetting a second item on the same object dismisses it; show against a
+    // missing schema then finds nothing recallable (every item is Dismissed).
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_description("the orders table").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let second = item_id_for(&store, &obj, &KnowledgeSlot::TableDescription).await;
+    forget(&store, &second, ForgetReason::UserRequest)
         .await
         .unwrap();
+    assert_eq!(item_state(&store, &second).await, KnowledgeState::Dismissed);
     let shown = show(
         &store,
         &obj,
@@ -1728,7 +1814,7 @@ async fn review_wrappers_pass_through_and_map_errors() {
     )
     .await
     .unwrap();
-    assert!(shown.is_none(), "forgotten-only contract should show None");
+    assert!(shown.is_none(), "a dismissed-only contract shows None");
 
     let _ = fs::remove_dir_all(root);
 }
@@ -1746,22 +1832,22 @@ async fn review_wrappers_pass_through_and_map_errors() {
 /// two-column table whose live schema then drops `created_at`, so the contract
 /// aggregates to `Stale` (computed, not persisted). The claim's status stays
 /// `Confirmed`; only the schema drifted.
-async fn seed_computed_stale(store: &SqliteStateStore, object: &DatabaseObjectRef) -> StoredClaim {
-    let full = table(&[("id", "bigint", false), ("created_at", "timestamp", false)]);
-    let claim = known_claim(
-        store,
-        object,
-        &full,
-        ClaimPayload::default_time_column("created_at").unwrap(),
-    )
-    .await;
-    // Live schema drops `created_at`; the claim's referenced column is gone.
+/// Seeds an `Active` `default_time_column` item on `created_at` for `object`
+/// against a *drifted* schema that dropped `created_at`, so the item reads
+/// `Invalid` (the D-4 "stale" analog: `Active` state, `Invalid` computed
+/// validity). Returns the item's `ki-…` id. The schema is cached in the store
+/// so `show` classifies against it.
+async fn seed_active_time_item_drifted(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+) -> ClaimId {
+    let id = seed_active_time_item(store, object, "created_at").await;
     let drifted = schema_tree_for(&[(object.object(), table(&[("id", "bigint", false)]))]);
     store
         .upsert_schema(object.profile().as_str(), &drifted)
         .await
         .unwrap();
-    claim
+    id
 }
 
 #[tokio::test]
@@ -1771,7 +1857,7 @@ async fn show_keeps_a_stale_contract_with_state_and_claims_for_a_human() {
     let store = store_at(&db).await;
     let p = profile_a();
     let obj = object_ref(&p, "orders");
-    let claim = seed_computed_stale(&store, &obj).await;
+    let id = seed_active_time_item_drifted(&store, &obj).await;
 
     // The human-review path: `show` keeps the stale contract, its `Stale`
     // state, and the claim itself so a reviewer can act on it. The model path
@@ -1796,8 +1882,8 @@ async fn show_keeps_a_stale_contract_with_state_and_claims_for_a_human() {
     );
     let ids: Vec<ClaimId> = shown.claims.iter().map(|c| c.id.clone()).collect();
     assert!(
-        ids.contains(&claim.id),
-        "the stale claim is kept for a human reviewer, got {ids:?}"
+        ids.contains(&id),
+        "the stale item is kept for a human reviewer, got {ids:?}"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -1810,7 +1896,7 @@ async fn show_for_model_drops_a_stale_contracts_claims_but_names_the_object() {
     let store = store_at(&db).await;
     let p = profile_a();
     let obj = object_ref(&p, "orders");
-    seed_computed_stale(&store, &obj).await;
+    seed_active_time_item_drifted(&store, &obj).await;
 
     // The model-facing path: `contract_read` uses `ForModel`. The object is
     // still named and reported `Stale`, but the gone-column claim is not handed
@@ -2263,58 +2349,15 @@ async fn reconcile_does_not_examine_rejected_forgotten_or_already_stale_claims()
     let _ = fs::remove_dir_all(root);
 }
 
-#[tokio::test]
-async fn a_stale_marked_claim_leaves_recall_and_enters_the_review_queue() {
-    let root = temp_root("reconcile_recall_queue");
-    let db = root.join("state.sqlite3");
-    let store = store_at(&db).await;
-
-    let p = profile_a();
-    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
-    let obj = object_ref(&p, "orders");
-    let claim = known_claim(
-        &store,
-        &obj,
-        &base,
-        ClaimPayload::column_description("amount", "how much").unwrap(),
-    )
-    .await;
-
-    // Before reconcile the confirmed claim is recallable. The recall-half of
-    // this scenario (a confirmed claim reads `current` against a matching
-    // schema; a gone bound column drops it for the model and counts it) is
-    // covered on the D-3 knowledge_items path by
-    // `recall_for_model_counts_a_stale_exclusion`. This test keeps the half
-    // that is unique to the reconcile/queue path (a later chunk): a stale
-    // claim marked by `reconcile` surfaces in the review queue.
-    let live_drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
-    let outcome = reconcile(
-        &store,
-        std::slice::from_ref(&p),
-        &[(p.clone(), live_drifted.clone())],
-    )
-    .await
-    .unwrap();
-    assert_eq!(outcome.marked_stale, 1);
-
-    // And it surfaces in the review queue — a stale claim is waiting for a
-    // human to decide its fate, which is the point of persisting Stale.
-    let queued = review_queue(
-        &store,
-        std::slice::from_ref(&p),
-        &[(p.clone(), avail(live_drifted))],
-        200,
-    )
-    .await
-    .unwrap();
-    let ids: Vec<ClaimId> = queued.iter().map(|q| q.claim.id.clone()).collect();
-    assert!(
-        ids.contains(&claim.id),
-        "a stale-marked claim should appear in the review queue, got {ids:?}"
-    );
-
-    let _ = fs::remove_dir_all(root);
-}
+// Removed: `a_stale_marked_claim_leaves_recall_and_enters_the_review_queue`.
+// It asserted that a legacy `Stale` claim (marked by `reconcile`) surfaces in
+// `review_queue`. Under D-4 the queue lists `Pending` knowledge items only
+// (this chunk's deliverable), and a "stale" fact is `Active` reading `Invalid`
+// — not `Pending`, so it is not queued. `reconcile` itself is obsolete and is
+// deleted in Chunk 5. The recall-half of the scenario (a gone bound column
+// drops the contract for the model and counts it) is already covered on the
+// D-3 path by `recall_for_model_counts_a_stale_exclusion`; the queue-half
+// (a Pending candidate is queued) is covered by `queue_lists_candidates...`.
 
 #[tokio::test]
 async fn reconcile_binds_at_1000_claims_and_reports_truncation() {
@@ -2678,32 +2721,6 @@ fn recall_request_with_freshness<'a>(
 // store-layer behaviour these exercise through the `confirm` wrapper.
 // ---------------------------------------------------------------------------
 
-/// Propose a confirmed claim against `base`, then reconcile against a live
-/// schema that drops a referenced column so the claim is persisted Stale — the
-/// state the bug left a user in. Returns the now-Stale stored claim.
-async fn seed_persisted_stale(store: &SqliteStateStore, object: &DatabaseObjectRef) -> StoredClaim {
-    let base = table(&[("id", "bigint", false), ("amount", "numeric", false)]);
-    let claim = known_claim(
-        store,
-        object,
-        &base,
-        ClaimPayload::column_description("amount", "how much").unwrap(),
-    )
-    .await;
-    // Reconcile against a live schema that dropped `amount` -> Stale, persisted.
-    let drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
-    let p = object.profile().clone();
-    let outcome = reconcile(store, std::slice::from_ref(&p), &[(p.clone(), drifted)])
-        .await
-        .unwrap();
-    assert_eq!(outcome.marked_stale, 1, "the claim should be marked stale");
-    store
-        .get_claim(&claim.id)
-        .await
-        .unwrap()
-        .expect("the stale claim is still stored")
-}
-
 #[tokio::test]
 async fn confirm_revalidates_a_stale_claim_against_the_cached_schema() {
     let root = temp_root("confirm_revalidates");
@@ -2711,35 +2728,28 @@ async fn confirm_revalidates_a_stale_claim_against_the_cached_schema() {
     let store = store_at(&db).await;
     let p = profile_a();
     let obj = object_ref(&p, "orders");
-    let stale = seed_persisted_stale(&store, &obj).await;
-    assert_eq!(stale.status, ClaimStatus::Stale);
-
-    // Cache the schema the claim was originally made against — `amount` is
-    // present — so the confirm path has a live table to revalidate against.
+    // Under D-4 a "stale" fact is `Active` (state) reading `Invalid` (computed)
+    // against a drifted schema. Seed an Active `default_time_column` on
+    // `created_at`, then cache a schema that has it — so the binding reads
+    // `Valid` and confirm has a live table to revalidate against.
+    let id = seed_active_time_item(&store, &obj, "created_at").await;
     let base = schema_tree_for(&[(
         "orders",
-        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
+        table(&[("id", "bigint", false), ("created_at", "timestamp", false)]),
     )]);
     store.upsert_schema(p.as_str(), &base).await.unwrap();
 
-    // Confirming revalidates: it rewrites the fingerprint to the live digest and
-    // flips the status to Confirmed, so the next read is Current. Before the fix
-    // this was a silent no-op that left the claim Stale.
-    let confirmed = confirm(&store, &stale.id).await.unwrap();
+    // Confirming revalidates: it refreshes the binding/fingerprint version and
+    // keeps the item `Active` against the live schema, so the next read is
+    // `Current` (Valid). The item was already Active — the point is that
+    // confirm re-checks against the cached schema rather than trusting a stored
+    // verdict, and a valid binding reads Valid after.
+    let confirmed = confirm(&store, &id).await.unwrap();
     assert_eq!(confirmed.status, ClaimStatus::Confirmed);
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Active);
 
-    let stored = store.get_claim(&stale.id).await.unwrap().unwrap();
-    assert_eq!(stored.status, ClaimStatus::Confirmed);
-    assert_eq!(
-        stored.schema_fingerprint,
-        fingerprint_for(&table(&[
-            ("id", "bigint", false),
-            ("amount", "numeric", false)
-        ])),
-        "the stored fingerprint is now the live table's digest"
-    );
-
-    // The next read classifies it Current: the fingerprint matches the cache.
+    // The next read classifies it Current: the binding validates against the
+    // cached schema.
     let shown = show(
         &store,
         &obj,
@@ -2753,7 +2763,7 @@ async fn confirm_revalidates_a_stale_claim_against_the_cached_schema() {
     assert_eq!(
         shown.schema_state,
         ContractSchemaState::Current,
-        "a revalidated claim reads Current, not Stale"
+        "a revalidated item reads Current, not Stale"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -2766,23 +2776,20 @@ async fn confirm_refuses_a_stale_claim_with_no_cached_schema() {
     let store = store_at(&db).await;
     let p = profile_a();
     let obj = object_ref(&p, "orders");
-    let stale = seed_persisted_stale(&store, &obj).await;
-
-    // `store_at` left an empty/default cached schema; drop it so there is no
-    // cache entry for the profile — nothing to revalidate against.
+    // An Active fact (the "stale"-analog) with no cached schema: confirm is a
+    // re-verification, and there is nothing to verify against — refuse, do not
+    // rubber-stamp a belief we cannot check.
+    let id = seed_active_time_item(&store, &obj, "created_at").await;
     store.invalidate_schema(p.as_str()).await.unwrap();
 
-    let err = confirm(&store, &stale.id).await.unwrap_err();
+    let err = confirm(&store, &id).await.unwrap_err();
     assert_eq!(
         err,
         ContractOpError::SchemaUnavailable,
-        "a stale claim cannot be revalidated without a schema"
+        "an existing fact cannot be reconfirmed without a schema"
     );
-    // The claim is unchanged.
-    assert_eq!(
-        store.get_claim(&stale.id).await.unwrap().unwrap().status,
-        ClaimStatus::Stale
-    );
+    // The item is unchanged — still Active, nothing written.
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Active);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -2794,25 +2801,22 @@ async fn confirm_refuses_a_stale_claim_whose_referenced_column_is_gone() {
     let store = store_at(&db).await;
     let p = profile_a();
     let obj = object_ref(&p, "orders");
-    let stale = seed_persisted_stale(&store, &obj).await;
+    let id = seed_active_time_item(&store, &obj, "created_at").await;
 
-    // Cache the drifted schema — `orders` still exists, but `amount` is gone.
+    // Cache the drifted schema — `orders` still exists, but `created_at` is
+    // gone. The item's `Column { created_at, Time }` binding reads `Invalid`,
+    // so confirm must refuse rather than revive a fact whose dependency died.
     let drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
     store.upsert_schema(p.as_str(), &drifted).await.unwrap();
 
-    let err = confirm(&store, &stale.id).await.unwrap_err();
-    // The refusal itself is the invariant and is unchanged; the error is now
-    // specific rather than the generic conflict, so a reviewer is told which
-    // repair applies instead of being told a claim conflicts with nothing.
+    let err = confirm(&store, &id).await.unwrap_err();
     assert_eq!(
         err,
         ContractOpError::ColumnGone,
-        "do not revive a claim whose referenced column is gone"
+        "do not revive a fact whose referenced column is gone"
     );
-    assert_eq!(
-        store.get_claim(&stale.id).await.unwrap().unwrap().status,
-        ClaimStatus::Stale
-    );
+    // The item is unchanged — still Active, nothing written.
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Active);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -2825,44 +2829,137 @@ async fn confirm_a_candidate_is_status_only_and_needs_no_schema() {
     let p = profile_a();
     let obj = object_ref(&p, "orders");
 
-    // A candidate proposed with no live schema (the unobserved fingerprint) and
-    // no cached schema for the profile. Confirming it is a user assertion — it
-    // does not need a schema, and must not require one.
+    // A `Pending` candidate with no cached schema. Confirming it is a user
+    // assertion — the user is the source, so it does not need a schema, and
+    // must not require one. The item will read `SchemaUnavailable` post-confirm
+    // (honest), never a false `Current`.
     store.invalidate_schema(p.as_str()).await.unwrap();
-    let req = ProposeClaim {
-        object: obj.clone(),
-        fingerprint: SchemaFingerprint::from_parts(1, &"0".repeat(64)).unwrap(),
-        payload: ClaimPayload::table_description("the orders table").unwrap(),
-        origin: ClaimOrigin::UserExplicit,
-        initial_status: ClaimStatus::Candidate,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    let id = match store.propose_claim(req).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    };
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_description("the orders table").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let id = item_id_for(&store, &obj, &KnowledgeSlot::TableDescription).await;
 
     let confirmed = confirm(&store, &id).await.unwrap();
     assert_eq!(confirmed.status, ClaimStatus::Confirmed);
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Active);
 
     let _ = fs::remove_dir_all(root);
 }
 
-// --- Confirming a stale claim refuses with a message naming the obstacle and
-// --- the repair, rather than reporting a conflict with a claim that does not
-// --- exist. Found by running the binary: both refusals rendered identically.
+// --- Absence is not evidence of absence. An empty cached schema (the no-op
+// --- sentinel a fresh store writes — `databases` empty) carries no real schema
+// --- information, so it is "no usable schema", not "the table is gone". This
+// --- is the same class as review item #29: the old `confirm` ran `find_table`
+// --- against the empty tree, got `None`, and returned `ObjectGone` — reading an
+// --- empty cache as proof the object no longer exists. `store_at` caches
+// --- exactly this empty default, so this is the state `/confirm` lands in
+// --- before any `connection schema --refresh`.
+#[tokio::test]
+async fn confirm_candidate_against_an_empty_cached_schema_succeeds_not_object_gone() {
+    let root = temp_root("confirm_empty_schema_candidate");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    // `store_at` cached `SchemaTree::default()` (empty `databases`) — leave it.
+    // An empty tree is "no schema", not "every object is gone".
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_description("the orders table").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let id = item_id_for(&store, &obj, &KnowledgeSlot::TableDescription).await;
+
+    let confirmed = confirm(&store, &id).await.unwrap();
+    assert_eq!(confirmed.status, ClaimStatus::Confirmed);
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Active);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// --- The same empty cache against an `Active` fact (a re-verification) refuses
+// --- `SchemaUnavailable`, not `ObjectGone`: there is nothing to verify
+// --- against, and an empty cache is not proof the table is gone. The asymmetry
+// --- the D-3 translation preserves — a candidate needs no schema; a
+// --- re-verification does — holds for an empty cache just as it does for a
+// --- missing one.
+#[tokio::test]
+async fn confirm_active_against_an_empty_cached_schema_is_schema_unavailable_not_object_gone() {
+    let root = temp_root("confirm_empty_schema_active");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let id = seed_active_time_item(&store, &obj, "created_at").await;
+    // Cache an *empty* tree (not `invalidate_schema` → `Missing`): an empty
+    // `Available` tree is the case that used to read `ObjectGone`.
+    store
+        .upsert_schema(p.as_str(), &SchemaTree::default())
+        .await
+        .unwrap();
+
+    let err = confirm(&store, &id).await.unwrap_err();
+    assert_eq!(
+        err,
+        ContractOpError::SchemaUnavailable,
+        "an empty cache is no schema to verify against, not proof the table is gone"
+    );
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Active);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// --- A *populated* schema that lacks the object's table is genuine evidence
+// --- the table is gone: `ObjectGone` for either state. This is the case that
+// --- stays `ObjectGone` after the empty-cache fix — the cache actually says
+// --- something, and what it says is "no such table".
+#[tokio::test]
+async fn confirm_against_a_populated_schema_lacking_the_table_is_object_gone() {
+    let root = temp_root("confirm_populated_no_table");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let id = seed_active_time_item(&store, &obj, "created_at").await;
+    // A schema with a *different* table present — populated, but `orders` is
+    // absent. The cache genuinely says `orders` is gone.
+    let populated = schema_tree_for(&[("shipments", table(&[("id", "bigint", false)]))]);
+    store.upsert_schema(p.as_str(), &populated).await.unwrap();
+
+    let err = confirm(&store, &id).await.unwrap_err();
+    assert_eq!(
+        err,
+        ContractOpError::ObjectGone,
+        "a populated schema that lacks the table is evidence the table is gone"
+    );
+    assert_eq!(item_state(&store, &id).await, KnowledgeState::Active);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// --- Confirming a fact whose dependency is gone refuses with a message naming
+// --- the obstacle and the repair, rather than reporting a conflict with a
+// --- claim that does not exist. Found by running the binary: both refusals
+// --- rendered identically under the legacy store; the D-4 refusal keeps the
+// --- same message.
 #[tokio::test]
 async fn confirming_a_stale_claim_names_the_missing_column_and_the_repair() {
     let root = temp_root("confirm-colgone");
     let db = root.join("state.sqlite3");
-    let store = SqliteStateStore::new(&db);
-    let object = object_ref(&profile_a(), "orders");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let id = seed_active_time_item(&store, &obj, "created_at").await;
+    let drifted = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    store.upsert_schema(p.as_str(), &drifted).await.unwrap();
 
-    let claim = seed_computed_stale(&store, &object).await;
-    store.mark_stale(&claim.id).await.unwrap();
-
-    let error = confirm(&store, &claim.id).await.unwrap_err();
+    let error = confirm(&store, &id).await.unwrap_err();
     assert_eq!(error, ContractOpError::ColumnGone);
     let rendered = error.to_string();
     assert!(
@@ -3188,28 +3285,6 @@ async fn same_prompt_selects_the_same_objects_in_the_same_order() {
 /// Proposes a candidate claim with `AssistantInferred` origin and no evidence,
 /// returning its id. Mirrors how `contract_propose` stores a candidate: the
 /// model inferred it, no human confirmed it, no observation supports it yet.
-async fn propose_inferred_candidate(
-    store: &SqliteStateStore,
-    object: &DatabaseObjectRef,
-    fingerprint: &SchemaFingerprint,
-    payload: ClaimPayload,
-) -> ClaimId {
-    let referenced_columns = payload.referenced_column_name_snapshots();
-    let request = ProposeClaim {
-        object: object.clone(),
-        fingerprint: fingerprint.clone(),
-        referenced_columns,
-        payload,
-        origin: ClaimOrigin::AssistantInferred,
-        initial_status: ClaimStatus::Candidate,
-        evidence: None,
-    };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    }
-}
-
 /// A recall request under `Confirmed` mode that admits one named candidate via
 /// `use_candidate_once`. Everything else is the `recall_request` default: the
 /// model-facing policy, fresh schemas, no explicit refs.
@@ -3233,41 +3308,11 @@ fn recall_admitting_one<'a>(
     }
 }
 
-/// The candidate the operation admits, once, for the recall that follows. A
-/// fresh schema names the table so the candidate reads `Current`, not `Stale`
-/// — staleness is not what these tests exercise, and a stale match would be
-/// dropped by the model-facing policy before the admission could be observed.
-async fn seed_one_candidate(
-    store: &SqliteStateStore,
-) -> (ProfileIdentity, DatabaseObjectRef, ClaimId) {
-    let p = profile_a();
-    let obj = object_ref(&p, "orders");
-    let tree = schema_tree_for(&[(
-        "orders",
-        table(&[("id", "bigint", false), ("amount", "numeric", false)]),
-    )]);
-    store.upsert_schema(p.as_str(), &tree).await.unwrap();
-    let fp = fingerprint_for(&table(&[
-        ("id", "bigint", false),
-        ("amount", "numeric", false),
-    ]));
-    let id = propose_inferred_candidate(
-        store,
-        &obj,
-        &fp,
-        ClaimPayload::column_description("amount", "how much").unwrap(),
-    )
-    .await;
-    (p, obj, id)
-}
-
 /// Seeds a `Pending` knowledge item (a candidate) the recall path reads, and
-/// returns its store-assigned `ki-` id. Used by the recall-admission tests:
-/// `use_candidate_once` itself is a review op that still reads the legacy
-/// `contract_claims` table (a later chunk migrates it), so the recall-admission
-/// behaviour is tested here against the D-3 item the recall path actually
-/// admits, not the legacy row. The schema names the table and `amount` so the
-/// item's binding (`Column { amount, Exists }`) classifies `current`.
+/// returns its store-assigned `ki-` id. Used by the recall-admission tests
+/// (and by `use_candidate_once`, which now reads the same `knowledge_items`
+/// table). The schema names the table and `amount` so the item's binding
+/// (`Column { amount, Exists }`) classifies `current`.
 async fn seed_one_pending_item(
     store: &SqliteStateStore,
 ) -> (ProfileIdentity, DatabaseObjectRef, ClaimId) {
@@ -3313,28 +3358,53 @@ async fn use_candidate_once_leaves_status_and_origin_unchanged() {
     let root = temp_root("use_once_unchanged");
     let db = root.join("state.sqlite3");
     let store = store_at(&db).await;
-    let (_p, _obj, id) = seed_one_candidate(&store).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    // A live `Pending` candidate the operation admits, seeded on the
+    // `knowledge_items` table `use_candidate_once` now reads.
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let id = item_id_for(
+        &store,
+        &obj,
+        &KnowledgeSlot::ColumnDescription {
+            column: "amount".into(),
+        },
+    )
+    .await;
 
-    let before = store.get_claim(&id).await.unwrap().unwrap();
-    assert_eq!(before.status, ClaimStatus::Candidate);
-    assert_eq!(before.origin, ClaimOrigin::AssistantInferred);
+    let before = store
+        .get_knowledge_item(id.as_str())
+        .await
+        .unwrap()
+        .expect("item present");
+    assert_eq!(before.state, KnowledgeState::Pending);
+    assert_eq!(before.source, ClaimOrigin::AssistantInferred);
 
     use_candidate_once(&store, &id).await.unwrap();
 
-    let after = store.get_claim(&id).await.unwrap().unwrap();
+    let after = store
+        .get_knowledge_item(id.as_str())
+        .await
+        .unwrap()
+        .expect("item still present");
     assert_eq!(
-        after.status,
-        ClaimStatus::Candidate,
+        after.state,
+        KnowledgeState::Pending,
         "using a candidate must not confirm it"
     );
     assert_eq!(
-        after.origin,
+        after.source,
         ClaimOrigin::AssistantInferred,
         "using a candidate must not change its origin"
     );
-    // Nothing durable moved: the fingerprint, timestamps, and audit are the
-    // stored claim's own — the operation touched no row.
-    assert_eq!(after.schema_fingerprint, before.schema_fingerprint);
+    // Nothing durable moved: the operation touched no row, so the timestamp
+    // the store updates on every write is the item's own.
     assert_eq!(after.updated_unix_ms, before.updated_unix_ms);
 
     let _ = fs::remove_dir_all(root);
@@ -3343,11 +3413,10 @@ async fn use_candidate_once_leaves_status_and_origin_unchanged() {
 /// 2. The admitted candidate becomes recallable within the scope, under
 /// `recall = "confirmed"`, where it would otherwise be excluded.
 ///
-/// `use_candidate_once` itself is a review op that still reads the legacy
-/// `contract_claims` table (a later chunk migrates it); the recall-admission
-/// behaviour is what this test exercises, so it seeds a `Pending` D-3 item and
-/// admits that item's id directly. The `use_candidate_once` op's own
-/// refuse-non-candidate behaviour is covered by the review-op tests below.
+/// This exercises the recall-admission behaviour: it seeds a `Pending` item and
+/// admits that item's id directly via the request's `admit_candidate`. The
+/// `use_candidate_once` op's own refuse-non-candidate behaviour is covered by
+/// the review-op tests below; both now read `knowledge_items`.
 #[tokio::test]
 async fn use_candidate_once_admits_it_within_the_scope() {
     let root = temp_root("use_once_admits");
@@ -3463,8 +3532,11 @@ async fn use_candidate_once_does_not_persist_across_recalls() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// 4. A rejected / forgotten / stale claim is refused with a typed error. The
-/// operation admits a live candidate only; the rest are not silently no-op'd.
+/// 4. A rejected / forgotten / confirmed claim is refused with a typed error.
+/// The operation admits a live `Pending` candidate only; the rest are not
+/// silently no-op'd. Under D-4 a "stale" fact is `Active` (state) reading
+/// `Invalid` (computed), so it is refused as a non-candidate alongside an
+/// explicit `Active` (confirmed) and a `Dismissed` (rejected/forgotten).
 #[tokio::test]
 async fn use_candidate_once_refuses_non_candidate_claims() {
     let root = temp_root("use_once_refuses");
@@ -3472,52 +3544,47 @@ async fn use_candidate_once_refuses_non_candidate_claims() {
     let store = store_at(&db).await;
     let p = profile_a();
     let obj = object_ref(&p, "orders");
-    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
 
-    // Rejected: propose a candidate, then reject it.
-    let rejected_id = propose_inferred_candidate(
+    // Dismissed (rejected/forgotten): refused, unchanged.
+    put_item(
         &store,
         &obj,
-        &fp,
-        ClaimPayload::table_alias("orders").unwrap(),
+        ClaimPayload::table_alias("rejected").unwrap(),
+        KnowledgeState::Dismissed,
     )
     .await;
-    reject(&store, &rejected_id).await.unwrap();
+    let rejected_id = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
     let err = use_candidate_once(&store, &rejected_id).await.unwrap_err();
-    assert_eq!(err, ContractOpError::NotACandidate, "rejected is refused");
+    assert_eq!(err, ContractOpError::NotACandidate, "dismissed is refused");
     assert_eq!(
-        store.get_claim(&rejected_id).await.unwrap().unwrap().status,
-        ClaimStatus::Rejected,
+        item_state(&store, &rejected_id).await,
+        KnowledgeState::Dismissed,
         "the refusal changed nothing"
     );
 
-    // Forgotten: propose another, then forget it.
-    let forgotten_id = propose_inferred_candidate(
+    // Active (confirmed / the D-4 "stale" analog): refused, unchanged. An
+    // Active item is already admissible by the mode, so use-once is a category
+    // error, not a silent success.
+    put_item(
         &store,
         &obj,
-        &fp,
-        ClaimPayload::table_alias("orders2").unwrap(),
+        ClaimPayload::table_description("active fact").unwrap(),
+        KnowledgeState::Active,
     )
     .await;
-    forget(&store, &forgotten_id, ForgetReason::UserRequest)
-        .await
-        .unwrap();
-    let err = use_candidate_once(&store, &forgotten_id).await.unwrap_err();
-    assert_eq!(err, ContractOpError::NotACandidate, "forgotten is refused");
-
-    // Stale: seed a persisted-stale claim (a column it referenced is gone).
-    let stale = seed_persisted_stale(&store, &obj).await;
-    let err = use_candidate_once(&store, &stale.id).await.unwrap_err();
-    assert_eq!(err, ContractOpError::NotACandidate, "stale is refused");
+    let active_id = item_id_for(&store, &obj, &KnowledgeSlot::TableDescription).await;
+    let err = use_candidate_once(&store, &active_id).await.unwrap_err();
+    assert_eq!(err, ContractOpError::NotACandidate, "active is refused");
 
     let _ = fs::remove_dir_all(root);
 }
 
-/// 5. A confirmed claim is refused, not a no-op. The operation's contract is
-/// "admit an unconfirmed candidate"; a confirmed claim is already admissible by
-/// the mode, so using it once is a category error. Refusing (rather than
-/// silently succeeding) keeps the caller from believing it did something it did
-/// not — the same fail-closed posture as the other non-candidate refusals.
+/// 5. An Active (confirmed) item is refused, not a no-op. The operation's
+/// contract is "admit an unconfirmed candidate"; a confirmed item is already
+/// admissible by the mode, so using it once is a category error. Refusing
+/// (rather than silently succeeding) keeps the caller from believing it did
+/// something it did not — the same fail-closed posture as the other
+/// non-candidate refusals.
 #[tokio::test]
 async fn use_candidate_once_refuses_a_confirmed_claim() {
     let root = temp_root("use_once_confirmed");
@@ -3525,30 +3592,25 @@ async fn use_candidate_once_refuses_a_confirmed_claim() {
     let store = store_at(&db).await;
     let p = profile_a();
     let obj = object_ref(&p, "orders");
-    let fp = fingerprint_for(&table(&[("id", "bigint", false)]));
-    let confirmed_id = propose_confirmed(
+    put_item(
         &store,
         &obj,
-        &fp,
         ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Active,
     )
     .await;
+    let confirmed_id = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
 
     let err = use_candidate_once(&store, &confirmed_id).await.unwrap_err();
     assert_eq!(
         err,
         ContractOpError::NotACandidate,
-        "a confirmed claim is refused, not a silent no-op"
+        "a confirmed item is refused, not a silent no-op"
     );
-    // And the claim is untouched.
+    // And the item is untouched.
     assert_eq!(
-        store
-            .get_claim(&confirmed_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .status,
-        ClaimStatus::Confirmed
+        item_state(&store, &confirmed_id).await,
+        KnowledgeState::Active
     );
 
     let _ = fs::remove_dir_all(root);
@@ -3626,26 +3688,50 @@ async fn use_candidate_once_admits_only_the_named_claim() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// 7. Using a candidate produces no evidence record. Using is not an
-/// observation about the database; the operation writes nothing to the store,
-/// so no evidence row can appear.
+/// 7. Using a candidate writes nothing to the store. Using is not an
+/// observation about the database; the operation touches no row, so the item's
+/// state and write timestamp are its own afterwards. (`contract_evidence` is
+/// gone, so "no evidence" is now structural — there is no table to write.)
 #[tokio::test]
 async fn use_candidate_once_creates_no_evidence() {
     let root = temp_root("use_once_no_evidence");
     let db = root.join("state.sqlite3");
     let store = store_at(&db).await;
-    let (_p, _obj, id) = seed_one_candidate(&store).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::column_description("amount", "how much").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let id = item_id_for(
+        &store,
+        &obj,
+        &KnowledgeSlot::ColumnDescription {
+            column: "amount".into(),
+        },
+    )
+    .await;
 
-    // The candidate starts with no evidence (proposed with evidence: None).
-    assert_eq!(store.evidence_count(&id).await.unwrap(), 0);
+    let before = store
+        .get_knowledge_item(id.as_str())
+        .await
+        .unwrap()
+        .expect("item present");
 
     use_candidate_once(&store, &id).await.unwrap();
 
-    // And using it attached none.
+    let after = store
+        .get_knowledge_item(id.as_str())
+        .await
+        .unwrap()
+        .expect("item still present");
+    assert_eq!(after.state, KnowledgeState::Pending);
     assert_eq!(
-        store.evidence_count(&id).await.unwrap(),
-        0,
-        "using a candidate is not an observation; no evidence is created"
+        after.updated_unix_ms, before.updated_unix_ms,
+        "using a candidate writes nothing; the timestamp is unchanged"
     );
 
     let _ = fs::remove_dir_all(root);

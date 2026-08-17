@@ -19,6 +19,7 @@ use saya_types::{
 /// projection, not carried as a blank line). `status` is the rendered
 /// vocabulary (`Confirmed`/`Candidate`) the in-band marker and the receipt
 /// carry.
+#[derive(Debug)]
 pub(crate) struct ContractClaim {
     pub id: ClaimId,
     #[allow(dead_code)]

@@ -13,11 +13,11 @@ use super::{
 use crate::cli::{ClaimKindArg, ForgetReasonArg};
 use crate::commands::output::{emit, failure_message};
 use crate::contracts::args::{ReviewDecision, build_payload, parse_qualified, review_decision};
-use crate::contracts::{confirm, forget, propose, reject};
+use crate::contracts::{RememberOutcome, confirm, forget, reject, remember as remember_op};
 use crate::render::{RenderFormat, TerminalEvent};
-use saya_store::{ForgetReason, ProposeClaim, ProposeOutcome, SqliteStateStore};
+use saya_store::{ForgetReason, SqliteStateStore};
 use saya_types::{
-    ClaimOrigin, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity,
+    ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, KnowledgeState, ProfileIdentity,
 };
 
 /// What the user asked to remember: the qualified object, the kind, and the
@@ -82,41 +82,27 @@ pub(super) async fn remember(
     // marked stale only at the next refresh. No cache, or an empty cached tree
     // (no real schema information), keeps the original behaviour: the
     // unobserved sentinel and no validation. The check lives in
-    // `contracts_remember_schema`; this is the call site.
+    // `contracts_remember_schema`; this is the call site. The structural
+    // dependency a later drift checks is the `SchemaBinding` the `remember` op
+    // derives from `(slot, payload)`, so the column snapshots the legacy
+    // `ProposeClaim` carried are no longer computed here.
     let cached = cached_schema(store, identity).await;
-    let (fingerprint, referenced_columns) = match resolved_against(&cached, &object) {
-        SchemaCheck::Found(table) => (
-            fingerprint_of(table),
-            payload.referenced_column_snapshots(table),
-        ),
+    let fingerprint = match resolved_against(&cached, &object) {
+        SchemaCheck::Found(table) => fingerprint_of(table),
         SchemaCheck::Absent => return refuse_unknown(&object, profile_name, format),
-        SchemaCheck::NoSchema => (
-            unobserved_fingerprint(),
-            payload.referenced_column_name_snapshots(),
-        ),
+        SchemaCheck::NoSchema => unobserved_fingerprint(),
     };
-    let request = ProposeClaim {
-        object,
-        fingerprint,
-        // With a real cached table the columns carry the resolved type and
-        // nullability; with no schema they carry the names only (empty type),
-        // which the reconciler treats as unknown — a later live schema still
-        // reads a removed referenced column as Stale.
-        referenced_columns,
-        payload,
-        origin: ClaimOrigin::UserExplicit,
-        initial_status: ClaimStatus::Confirmed,
-        evidence: None,
-    };
-    let outcome = match propose(store, request).await {
+    let outcome = match remember_op(store, &object, &payload, fingerprint).await {
         Ok(outcome) => outcome,
         Err(error) => return op_failure(error, format),
     };
-    // A duplicate is not an error: pass the existing claim's real status through
+    // A duplicate is not an error: pass the existing item's real status through
     // so a duplicate of a forgotten claim reads as forgotten, not as success.
+    // The `ki-…` id is the same in either arm — the stored row, or the
+    // pre-existing one a duplicate names — so text/JSON/NDJSON agree on it.
     let (claim_id, action, status) = match outcome {
-        ProposeOutcome::Stored(id) => (id, "remembered", ClaimStatus::Confirmed),
-        ProposeOutcome::Duplicate { id, status } => (id, "duplicate", status),
+        RememberOutcome::Stored { id } => (id, "remembered", ClaimStatus::Confirmed),
+        RememberOutcome::Duplicate { id, state } => (id, "duplicate", status_from_state(state)),
     };
     emit(
         TerminalEvent::ContractChanged {
@@ -127,6 +113,28 @@ pub(super) async fn remember(
         format,
     );
     Ok(0)
+}
+
+/// The rendered status word for a duplicate's persisted [`KnowledgeState`]: an
+/// active duplicate is `confirmed`, a pending one `candidate`, a dismissed one
+/// `forgotten` (the case `remember-after-forget` names — a re-remember of a
+/// forgotten tombstone reports `forgotten`, not success). Mirrors
+/// `contracts::view::status_from_state`'s mapping but returns the
+/// `ClaimStatus` the `ContractChanged` event carries; kept here because the
+/// write path is the only consumer of the `Duplicate` arm's state.
+fn status_from_state(state: KnowledgeState) -> ClaimStatus {
+    match state {
+        KnowledgeState::Active => ClaimStatus::Confirmed,
+        KnowledgeState::Pending => ClaimStatus::Candidate,
+        // A dismissed duplicate is a forgotten/rejected value; "forgotten"
+        // matches the `duplicate of {id} — previously forgotten` render the
+        // `changed` shaper emits for a forgotten duplicate.
+        KnowledgeState::Dismissed => ClaimStatus::Forgotten,
+        // `KnowledgeState` is `#[non_exhaustive]`; a future variant the render
+        // layer does not know about fails closed to a non-success word rather
+        // than guess an authority it does not have.
+        _ => ClaimStatus::Forgotten,
+    }
 }
 
 pub(super) async fn review(

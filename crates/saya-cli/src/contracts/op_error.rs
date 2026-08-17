@@ -4,7 +4,7 @@
 //! Each variant names a refusal a caller must be able to act on — a silent
 //! no-op would let a caller believe it changed something it did not.
 
-use saya_store::StoreError;
+use saya_store::{KnowledgeStoreError, StoreError};
 use thiserror::Error;
 
 /// variant added later does not silently become an unhandled case in an adapter.
@@ -59,6 +59,24 @@ impl From<StoreError> for ContractOpError {
             // StoreError is #[non_exhaustive]; a future variant is a store
             // problem the adapter cannot route around, so it degrades to
             // Unavailable rather than becoming an unhandled case.
+            _ => Self::Unavailable,
+        }
+    }
+}
+
+impl From<KnowledgeStoreError> for ContractOpError {
+    fn from(error: KnowledgeStoreError) -> Self {
+        match error {
+            // A row the store cannot reconstruct (a slot/payload this build
+            // cannot read) is invalid data, not a missing row — `Invalid`, not
+            // `NotFound`, so a caller can tell a corrupt item from an absent one.
+            KnowledgeStoreError::CardinalityMismatch | KnowledgeStoreError::MalformedSlot => {
+                Self::Invalid
+            }
+            KnowledgeStoreError::BoundExceeded => Self::Limit,
+            KnowledgeStoreError::Store(store_error) => Self::from(store_error),
+            // KnowledgeStoreError is #[non_exhaustive]; a future variant is a
+            // store problem the adapter cannot route around.
             _ => Self::Unavailable,
         }
     }

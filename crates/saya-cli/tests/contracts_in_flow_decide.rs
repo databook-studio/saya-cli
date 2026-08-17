@@ -22,13 +22,10 @@ use saya_cli::{
     capture_output_start, capture_output_take, load_with_sources, parse_slash_command,
     profile_identity, run_contracts,
 };
-use saya_store::{
-    ContractStore, KnowledgeItemRequest, KnowledgeItemStore, ProposeClaim, ProposeOutcome,
-    SchemaStore, SqliteStateStore,
-};
+use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
-    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, DatabaseObjectKind, DatabaseObjectRef,
-    KnowledgeSlot, KnowledgeState, ProfileIdentity, SchemaBinding, SchemaFingerprint, SchemaTree,
+    ClaimId, ClaimOrigin, ClaimPayload, DatabaseObjectKind, DatabaseObjectRef, KnowledgeSlot,
+    KnowledgeState, ProfileIdentity, SchemaBinding, SchemaFingerprint, SchemaTree,
 };
 use std::{
     collections::BTreeMap, fs, path::Path, path::PathBuf, time::SystemTime, time::UNIX_EPOCH,
@@ -142,13 +139,10 @@ fn unobserved_fingerprint() -> SchemaFingerprint {
 /// Propose a candidate claim directly through the store, so `Decide` has a
 /// not-yet-confirmed claim to act on. `remember` only stores confirmed claims.
 ///
-/// Also seeds a `Pending` D-3 knowledge item for the same slot, so the recall
-/// path (`contracts list`) — which reads `knowledge_items`, not the legacy
-/// `contract_claims` the decide/queue paths still read — sees the object. The
-/// `Decide::Confirm` step promotes the *legacy* claim; a test that then asserts
-/// `list` shows the confirmed claim also promotes the knowledge item to
-/// `Active` (mirroring what the later decide-chunk's confirm will do once it
-/// migrates to `knowledge_items`).
+/// Seeds a `Pending` knowledge item — the row the `Decide` resolve step, the
+/// queue, and `show` all read — and returns its `ki-…` id, the id those
+/// commands render and `Decide` resolves by prefix. The write path is
+/// `knowledge_items` only now, so there is no legacy `c-` id to return.
 async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table: &str) -> ClaimId {
     let identity = identity_for(runtime, "local");
     let profile = ProfileIdentity::parse(&identity).unwrap();
@@ -161,19 +155,6 @@ async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table
     )
     .unwrap();
     let payload = ClaimPayload::table_alias(table).unwrap();
-    let request = ProposeClaim {
-        object: object.clone(),
-        fingerprint: unobserved_fingerprint(),
-        payload: payload.clone(),
-        origin: ClaimOrigin::AssistantInferred,
-        initial_status: ClaimStatus::Candidate,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    let id = match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    };
     let slot = KnowledgeSlot::TableAlias;
     let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
     store
@@ -188,26 +169,7 @@ async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table
         })
         .await
         .unwrap();
-    id
-}
-
-/// Promotes the `table.alias` knowledge item for `table` to `Active`, mirroring
-/// what the later decide-chunk's `confirm` will do once it migrates to
-/// `knowledge_items`. The legacy `Decide::Confirm` this test also runs still
-/// promotes the legacy claim (so `/queue` and `/contract` show the confirmed
-/// state); this keeps `/contracts` (list → recall) in step until that chunk.
-async fn confirm_knowledge_item(store: &SqliteStateStore, runtime: &RuntimeConfig, table: &str) {
-    let identity = identity_for(runtime, "local");
-    let profile = ProfileIdentity::parse(&identity).unwrap();
-    let object = DatabaseObjectRef::new(
-        profile,
-        "analytics",
-        "public",
-        table,
-        DatabaseObjectKind::Table,
-    )
-    .unwrap();
-    let item_id = store
+    let id = store
         .knowledge_for_object(&object)
         .await
         .expect("knowledge items listed")
@@ -215,20 +177,18 @@ async fn confirm_knowledge_item(store: &SqliteStateStore, runtime: &RuntimeConfi
         .find(|i| i.slot == KnowledgeSlot::TableAlias)
         .expect("alias item stored")
         .id;
-    store
-        .update_knowledge_item_state(&item_id, KnowledgeState::Active)
-        .await
-        .expect("item promoted");
+    ClaimId::parse(&id).expect("ki id parses")
 }
 
 /// The short reference the user types: the stored claim-id prefix
-/// (`c-` + first 5 hex chars), matching `render_contract::abbreviate_id`'s
-/// 6-char display prefix (which keeps `c-` + 5 hex).
+/// (`ki-` + first 3 hex chars), matching `render_contract::abbreviate_id`'s
+/// 6-char display prefix (which keeps `ki-` + 3 hex of a `ki-` id).
 fn short_prefix(id: &ClaimId) -> String {
     // `abbreviate_id` keeps the first CLAIM_ID_PREFIX (6) chars when the id is
-    // longer than 7. A ClaimId is `c-` + 64 hex (67 chars), so the on-screen
-    // reference is the first 6 chars. The user may type more to disambiguate;
-    // the resolution matches by prefix, so the displayed 6 chars always work.
+    // longer than 7. A knowledge-item id is `ki-` + 64 hex (67 chars), so the
+    // on-screen reference is the first 6 chars. The user may type more to
+    // disambiguate; the resolution matches by prefix, so the displayed 6 chars
+    // always work.
     id.as_str().chars().take(6).collect()
 }
 
@@ -332,14 +292,14 @@ async fn ambiguous_or_unresolvable_prefix_refuses_and_changes_nothing() {
     let (runtime, _name) = runtime_at(&root);
     let store = store_at(&root).await;
 
-    // Seed two candidates whose ids share the `c-` marker; a bare "c-" prefix
-    // matches both → ambiguous. (Both ids start with "c-" by construction.)
+    // Seed two candidates whose ids share the `ki-` marker; a bare "ki-" prefix
+    // matches both → ambiguous. (Both ids start with "ki-" by construction.)
     let id_a = seed_candidate(&store, &runtime, "orders").await;
     let id_b = seed_candidate(&store, &runtime, "returns").await;
     assert_ne!(id_a, id_b);
 
-    // The shared prefix both ids start with is "c-": ambiguous.
-    let ambiguous = "c-";
+    // The shared prefix both ids start with is "ki-": ambiguous.
+    let ambiguous = "ki-";
     let (acode, aout, aerr) = run_headless(
         ContractsCommand::Decide {
             prefix: ambiguous.into(),
@@ -364,20 +324,24 @@ async fn ambiguous_or_unresolvable_prefix_refuses_and_changes_nothing() {
         !combined.contains(ambiguous),
         "refusal echoed the prefix: {combined}"
     );
-    // Neither claim was changed: both still Candidate.
+    // Neither item was changed: both still Pending.
     for id in [&id_a, &id_b] {
-        let claim = store.get_claim(id).await.unwrap().expect("claim present");
+        let item = store
+            .get_knowledge_item(id.as_str())
+            .await
+            .unwrap()
+            .expect("item present");
         assert_eq!(
-            claim.status,
-            ClaimStatus::Candidate,
+            item.state,
+            KnowledgeState::Pending,
             "ambiguous changed {id}"
         );
     }
 
-    // An unresolvable prefix (no claim starts with it) refuses too.
+    // An unresolvable prefix (no item starts with it) refuses too.
     let (ncode, nout, nerr) = run_headless(
         ContractsCommand::Decide {
-            prefix: "c-zzzzz".into(),
+            prefix: "ki-zzzzz".into(),
             decision: saya_cli::ReviewDecisionArg::Confirm,
             profile: None,
         },
@@ -396,7 +360,7 @@ async fn ambiguous_or_unresolvable_prefix_refuses_and_changes_nothing() {
         "unresolvable refusal must name why: {ncombined}"
     );
     assert!(
-        !ncombined.contains("c-zzzzz"),
+        !ncombined.contains("ki-zzzzz"),
         "unresolvable refusal echoed the prefix: {ncombined}"
     );
 
@@ -422,14 +386,14 @@ async fn stale_prefix_refuses_rather_than_write_the_wrong_claim() {
     let store = store_at(&root).await;
 
     // Seed two candidates; the user saw the first receipt and remembers only
-    // "c-" (the shortest thing that could be on screen). Another claim now
+    // "ki-" (the shortest thing that could be on screen). Another claim now
     // shares that prefix. A per-turn index would silently confirm the WRONG
     // one; the prefix refuses because it is ambiguous.
     let _id_a = seed_candidate(&store, &runtime, "orders").await;
     let id_b = seed_candidate(&store, &runtime, "returns").await;
     let (code, out, err) = run_headless(
         ContractsCommand::Decide {
-            prefix: "c-".into(),
+            prefix: "ki-".into(),
             decision: saya_cli::ReviewDecisionArg::Confirm,
             profile: None,
         },
@@ -439,16 +403,20 @@ async fn stale_prefix_refuses_rather_than_write_the_wrong_claim() {
     )
     .await;
     assert_ne!(code, 0, "ambiguous stale prefix must refuse: {out}{err}");
-    // Both still candidates — nothing written to durable memory.
+    // Both still Pending — nothing written to durable memory.
     for id in [&_id_a, &id_b] {
-        let claim = store.get_claim(id).await.unwrap().expect("claim present");
-        assert_eq!(claim.status, ClaimStatus::Candidate);
+        let item = store
+            .get_knowledge_item(id.as_str())
+            .await
+            .unwrap()
+            .expect("item present");
+        assert_eq!(item.state, KnowledgeState::Pending);
     }
 
-    // (b) The prefix matched a claim that has since been forgotten: the id is
-    // gone (its payload cleared, status Forgotten), so the prefix no longer
-    // resolves to a live claim → NotFound, nothing changes. Forget id_b, then
-    // try to confirm it by its full prefix.
+    // (b) The prefix matched an item that has since been forgotten: the row is
+    // still present (Dismissed), so the prefix still resolves, but `confirm`
+    // refuses a dismissed item as a conflict — nothing is promoted. Forget
+    // id_b, then try to confirm it by its full prefix.
     run_headless(
         ContractsCommand::Forget {
             claim_id: id_b.as_str().into(),
@@ -472,17 +440,17 @@ async fn stale_prefix_refuses_rather_than_write_the_wrong_claim() {
     .await;
     assert_ne!(
         fcode, 0,
-        "forgotten claim's prefix must not confirm: {fout}{ferr}"
+        "forgotten item's prefix must not confirm: {fout}{ferr}"
     );
-    // A forgotten claim is not promoted to Confirmed by this path.
-    let claim = store
-        .get_claim(&id_b)
+    // A forgotten item is not promoted to Active by this path.
+    let item = store
+        .get_knowledge_item(id_b.as_str())
         .await
         .unwrap()
         .expect("tombstone present");
     assert_ne!(
-        claim.status,
-        ClaimStatus::Confirmed,
+        item.state,
+        KnowledgeState::Active,
         "forgotten was confirmed"
     );
 
@@ -570,10 +538,9 @@ async fn queue_and_existing_subcommands_unchanged() {
         RenderFormat::Text,
     )
     .await;
-    // The legacy `Decide::Confirm` promotes the legacy claim (so `/queue` and
-    // `/contract` show it). `contracts list` reads `knowledge_items` via
-    // recall, so mirror the confirm there too until the decide chunk migrates.
-    confirm_knowledge_item(&store, &runtime, "orders").await;
+    // `Decide::Confirm` resolves the prefix to the knowledge item and promotes
+    // it to `Active` (the confirm op writes `knowledge_items` now), so `/contracts`
+    // (list → recall over `knowledge_items`) shows the confirmed claim.
     let (_ccmd2, _ccode2, cout2, cerr2) =
         run_slash("/contracts", &runtime, &store, RenderFormat::Text).await;
     assert!(

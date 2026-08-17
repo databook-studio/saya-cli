@@ -11,12 +11,9 @@ use saya_cli::{
     ClaimKindArg, ContractsCommand, ForgetReasonArg, RenderFormat, RuntimeConfig,
     capture_output_start, capture_output_take, load_with_sources, profile_identity, run_contracts,
 };
-use saya_store::{
-    ContractStore, KnowledgeItemRequest, KnowledgeItemStore, ProposeClaim, ProposeOutcome,
-    SchemaStore, SqliteStateStore,
-};
+use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
-    ClaimId, ClaimOrigin, ClaimPayload, ClaimStatus, Column, Database, DatabaseObjectKind,
+    ClaimId, ClaimOrigin, ClaimPayload, Column, ColumnRequirement, Database, DatabaseObjectKind,
     DatabaseObjectRef, FINGERPRINT_VERSION, KnowledgeSlot, KnowledgeState, ProfileIdentity, Schema,
     SchemaBinding, SchemaFingerprint, SchemaTree, Table,
 };
@@ -140,9 +137,14 @@ fn alias_payload() -> ClaimPayload {
     ClaimPayload::table_alias("customers").unwrap()
 }
 
-/// Propose a candidate claim directly through the store, so `review --confirm`
-/// has something that is *not* already confirmed to act on. `remember` only
-/// stores confirmed claims, so candidates must be seeded out-of-band.
+/// Propose a candidate directly through the store, so `review --confirm` has
+/// something that is *not* already confirmed to act on. `remember` only stores
+/// confirmed claims, so candidates must be seeded out-of-band.
+///
+/// Seeds a `Pending` knowledge item — the row the migrated `queue`/`review`/
+/// `show`/`list` all read — and returns its `ki-…` id, the id those commands
+/// render and `review`/`decide` resolve. The write path is `knowledge_items`
+/// only now, so there is no legacy `contract_claims` row to seed alongside it.
 async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table: &str) -> ClaimId {
     let identity = identity_for(runtime, "local");
     let profile = ProfileIdentity::parse(&identity).unwrap();
@@ -154,20 +156,8 @@ async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let fingerprint = unobserved_fingerprint();
-    let request = ProposeClaim {
-        object: object.clone(),
-        fingerprint,
-        payload: alias_payload(),
-        origin: ClaimOrigin::AssistantInferred,
-        initial_status: ClaimStatus::Candidate,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    }
+    let payload = alias_payload();
+    seed_pending_item(store, &object, &payload, ClaimOrigin::AssistantInferred).await
 }
 
 /// The "no schema observed" fingerprint the headless adapter stores: current
@@ -175,6 +165,56 @@ async fn seed_candidate(store: &SqliteStateStore, runtime: &RuntimeConfig, table
 /// a later live schema never reads the claim as `current`.
 fn unobserved_fingerprint() -> SchemaFingerprint {
     SchemaFingerprint::from_parts(saya_types::FINGERPRINT_VERSION, &"0".repeat(64)).unwrap()
+}
+
+/// The slot a table-alias payload files under — the only kind the candidate
+/// seeds below produce. Mirrors the `slot_for` pairing in the in-crate
+/// `contracts/tests.rs`, trimmed to what these seeds use.
+fn slot_for(payload: &ClaimPayload) -> KnowledgeSlot {
+    match payload {
+        ClaimPayload::TableAlias { .. } => KnowledgeSlot::TableAlias,
+        _ => panic!("candidate seed only handles TableAlias, got {payload:?}"),
+    }
+}
+
+/// Seeds a `Pending` knowledge item for `object` under the slot `payload` files
+/// into, with the unobserved fingerprint (current version) and a `Table`
+/// binding derived from the payload, and returns its `ki-…` id.
+///
+/// The migrated `queue`/`review`/`show` commands read `knowledge_items`, not the
+/// legacy `contract_claims` the seeds used to write alone — so a seed that only
+/// wrote the legacy row was invisible to them (the split brain this file's
+/// `queue_*` tests hit). This mirrors the `put_item` helper in the in-crate
+/// `contracts/tests.rs` and the knowledge half of `seed_current_claim` below.
+async fn seed_pending_item(
+    store: &SqliteStateStore,
+    object: &DatabaseObjectRef,
+    payload: &ClaimPayload,
+    source: ClaimOrigin,
+) -> ClaimId {
+    let slot = slot_for(payload);
+    let binding = SchemaBinding::derive(&slot, payload).expect("slot/payload agree");
+    store
+        .put_knowledge_item(KnowledgeItemRequest {
+            object: object.clone(),
+            slot: slot.clone(),
+            value: payload.clone(),
+            source,
+            state: KnowledgeState::Pending,
+            schema_binding_json: serde_json::to_string(&binding).unwrap(),
+            fingerprint: unobserved_fingerprint(),
+        })
+        .await
+        .unwrap();
+    let id = store
+        .knowledge_for_object(object)
+        .await
+        .expect("knowledge items listed")
+        .into_iter()
+        .find(|i| i.slot == slot)
+        .expect("seeded item present")
+        .id;
+    ClaimId::parse(&id).expect("ki id parses")
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +286,8 @@ async fn remember_twice_reports_duplicate_with_same_id() {
         "duplicate must echo the same id {first_id}: {out2}"
     );
 
-    // Exactly one claim exists for the object.
+    // Exactly one knowledge item exists for the object — the duplicate wrote
+    // nothing, so the row count did not grow.
     let identity = identity_for(&runtime, "local");
     let profile = ProfileIdentity::parse(&identity).unwrap();
     let object = DatabaseObjectRef::new(
@@ -257,11 +298,11 @@ async fn remember_twice_reports_duplicate_with_same_id() {
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let claims = store.list_claims(&object, &[]).await.unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
     assert_eq!(
-        claims.len(),
+        items.len(),
         1,
-        "duplicate created a second claim: {claims:?}"
+        "duplicate created a second knowledge item: {items:?}"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -366,27 +407,48 @@ async fn remember_after_forget_reports_duplicate_forgotten_not_success() {
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let claims = store.list_claims(&object, &[]).await.unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
     assert_eq!(
-        claims.len(),
+        items.len(),
         1,
-        "re-remember created a new claim: {claims:?}"
+        "re-remember created a new knowledge item: {items:?}"
+    );
+    // The duplicate wrote nothing, so the tombstone stayed dismissed — a
+    // re-remember of a forgotten fact does not silently revive it.
+    assert_eq!(
+        items[0].state,
+        KnowledgeState::Dismissed,
+        "the forgotten tombstone must stay dismissed: {items:?}"
     );
 
     let _ = fs::remove_dir_all(root);
 }
 
 // ---------------------------------------------------------------------------
-// 5. review --confirm: candidate -> confirmed; already-confirmed -> typed conflict
+// 5. review --confirm: a `Pending` candidate becomes `Active` (confirmed);
+//    re-confirming the now-`Active` item against a valid cached schema
+//    *revalidates* and stays `Active` (confirm is idempotent — re-confirming is
+//    how a user asks "is this still true?"); confirming a `Dismissed` item is a
+//    typed conflict (a withdrawn fact is not revivable by revalidation).
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn review_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
     let root = temp_root("review");
     let (runtime, _c, _n) = runtime_at(&root);
     let store = store_at(&root).await;
+    // Cache a schema that names `orders` so a re-confirm of the now-`Active`
+    // alias has a live table to revalidate against (the alias's `Table`
+    // binding is valid whenever the table exists). `store_at` cached an empty
+    // default; overwrite it for this profile.
+    let identity = identity_for(&runtime, "local");
+    store
+        .upsert_schema(&identity, &orders_schema())
+        .await
+        .unwrap();
 
     let candidate_id = seed_candidate(&store, &runtime, "orders").await;
 
+    // 1. Pending → Active: the candidate is confirmed.
     let confirm = ContractsCommand::Review {
         claim_id: candidate_id.as_str().into(),
         confirm: true,
@@ -396,7 +458,10 @@ async fn review_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
     assert_eq!(code, 0, "stderr: {err}");
     assert!(out.contains("confirmed"), "candidate -> confirmed: {out}");
 
-    // Confirming an already-confirmed claim is a typed conflict, not success.
+    // 2. Re-confirming the now-Active item against the valid cached schema
+    //    revalidates and stays Active — confirm is idempotent, not a conflict.
+    //    A re-confirm is how a user asks "is this still true?", and refusing
+    //    would leave them no way to re-check a fact they suspect has drifted.
     let (code, out, err) = run(
         ContractsCommand::Review {
             claim_id: candidate_id.as_str().into(),
@@ -408,11 +473,45 @@ async fn review_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
         RenderFormat::Text,
     )
     .await;
-    assert_ne!(code, 0, "already-confirmed must not succeed: {out}{err}");
+    assert_eq!(code, 0, "re-confirm must succeed, not conflict: {out}{err}");
+    assert!(
+        out.contains("confirmed"),
+        "re-confirmed item stays Active/confirmed: {out}"
+    );
+
+    // 3. Confirming a `Dismissed` item is a typed conflict — a withdrawn fact
+    //    is not revivable by revalidation, so confirm refuses rather than
+    //    silently reviving it.
+    let dismissed_id = seed_candidate(&store, &runtime, "shipments").await;
+    let _ = run(
+        ContractsCommand::Forget {
+            claim_id: dismissed_id.as_str().into(),
+            reason: ForgetReasonArg::Incorrect,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    let (code, out, err) = run(
+        ContractsCommand::Review {
+            claim_id: dismissed_id.as_str().into(),
+            confirm: true,
+            reject: false,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_ne!(
+        code, 0,
+        "confirming a dismissed item must not succeed: {out}{err}"
+    );
     let combined = format!("{out}{err}");
     assert!(
         combined.contains("conflict"),
-        "expected a typed conflict, got: {combined}"
+        "expected a typed conflict for a dismissed item, got: {combined}"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -867,11 +966,11 @@ fn orders_schema() -> SchemaTree {
     }
 }
 
-/// Seeds a confirmed claim whose stored fingerprint *equals* the cached
-/// table's, so a matching cache classifies it `current`. `remember` would
-/// store the unobserved all-zeros sentinel, which never equals a real digest
-/// and so could only ever read `needs_review` against a live table — not
-/// enough to prove the bug is fixed.
+/// Seeds a confirmed (Active) knowledge item for `orders` whose
+/// `SchemaBinding` the cached `orders` table satisfies, so a matching cache
+/// classifies it `current`. The item is written under the current fingerprint
+/// version with a `Table` binding (a table-alias depends only on the table
+/// existing), which is the shape a `remember`-written alias takes.
 async fn seed_current_claim(store: &SqliteStateStore, runtime: &RuntimeConfig) {
     let identity = identity_for(runtime, "local");
     let profile = ProfileIdentity::parse(&identity).unwrap();
@@ -883,26 +982,7 @@ async fn seed_current_claim(store: &SqliteStateStore, runtime: &RuntimeConfig) {
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let fingerprint = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &orders_table());
     let payload = ClaimPayload::table_alias("orders").unwrap();
-    // The legacy claim populates `contract_objects` so `contracts list`'s
-    // `list_objects` (still legacy until the CLI chunk migrates it) returns the
-    // object as an explicit ref. The D-3 knowledge item is what `recall` — which
-    // `list` calls — now reads, so seed both: the legacy row for the object
-    // list, the knowledge item for the contract recall supplies.
-    let request = ProposeClaim {
-        object: object.clone(),
-        fingerprint,
-        payload: payload.clone(),
-        origin: ClaimOrigin::UserExplicit,
-        initial_status: ClaimStatus::Confirmed,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(_) => {}
-        other => panic!("expected Stored, got {other:?}"),
-    }
     let slot = KnowledgeSlot::TableAlias;
     let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
     store
@@ -913,6 +993,9 @@ async fn seed_current_claim(store: &SqliteStateStore, runtime: &RuntimeConfig) {
             source: ClaimOrigin::UserExplicit,
             state: KnowledgeState::Active,
             schema_binding_json: serde_json::to_string(&binding).unwrap(),
+            // Current version; the digest is not persisted on the row (only the
+            // version is), so the all-zero sentinel stands in — `item_validity_for`
+            // classifies via the binding + version, not a stored digest.
             fingerprint: SchemaFingerprint::from_parts(FINGERPRINT_VERSION, &"0".repeat(64))
                 .unwrap(),
         })
@@ -1037,9 +1120,12 @@ async fn remember_against_cached_schema_reads_current_not_needs_review() {
     assert_eq!(code, 0, "remember stderr: {err}");
     assert!(out.contains("remembered"), "out: {out}");
 
-    // The stored claim's fingerprint equals the cached table's real digest,
-    // not the all-zeros sentinel. This is the load-bearing assertion: it is
-    // what makes the claim read `current` instead of `needs_review`.
+    // The stored item carries the current fingerprint version and a `Table`
+    // binding derived from the alias slot. This is the load-bearing assertion
+    // under the binding model: `item_validity_for` classifies via the binding +
+    // version (not a stored digest — `knowledge_items` persists only the version),
+    // so a current version + a `Table` binding the cached `orders` table satisfies
+    // is what makes the claim read `current` instead of `needs_review`.
     let profile = ProfileIdentity::parse(&identity).unwrap();
     let object = DatabaseObjectRef::new(
         profile,
@@ -1049,13 +1135,19 @@ async fn remember_against_cached_schema_reads_current_not_needs_review() {
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let claims = store.list_claims(&object, &[]).await.unwrap();
-    assert_eq!(claims.len(), 1, "expected one claim: {claims:?}");
-    let real = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &orders_table());
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    assert_eq!(items.len(), 1, "expected one item: {items:?}");
     assert_eq!(
-        claims[0].schema_fingerprint, real,
-        "remember stored the unobserved sentinel, not the cached table's real digest"
+        items[0].fingerprint_version, FINGERPRINT_VERSION,
+        "remember must store the item under the current fingerprint version"
     );
+    let binding: SchemaBinding =
+        serde_json::from_str(&items[0].schema_binding_json).expect("binding deserializes");
+    assert!(
+        matches!(binding, SchemaBinding::Table),
+        "a table-alias stores a Table binding, got {binding:?}"
+    );
+    assert_eq!(items[0].state, KnowledgeState::Active);
 
     // `show` classifies the claim against the same cached schema and must read
     // `current` — the user-facing symptom.
@@ -1077,17 +1169,21 @@ async fn remember_against_cached_schema_reads_current_not_needs_review() {
     let _ = fs::remove_dir_all(root);
 }
 
-// A column-level claim remembered against a cached schema must store a TYPED
-// column snapshot (resolved type + nullability), so a later schema change can
-// tell a retyped referenced column from an unrelated one. Before the fix the
-// name-only snapshot (empty type) made every column claim read needs_review.
+// A column-level claim remembered against a cached schema stores a
+// `SchemaBinding::Column` naming the column and its semantic requirement, so
+// the claim reads `current` against a cache that has the column. The binding
+// model replaces the legacy typed column snapshot: a fact depends on a
+// column *existing* (or being temporal/numeric for the role-bearing kinds), not
+// on the connector's exact type string — so a harmless widening no longer
+// reads `needs_review`. The guarantee kept: a column claim right after a
+// refresh reads `current`, not `needs_review`.
 #[tokio::test]
 async fn remember_column_claim_against_cached_schema_snapshots_real_type() {
     let root = temp_root("remember_column_snapshot_real_type");
     let (runtime, _c, _n) = runtime_at(&root);
     let store = store_at(&root).await;
     let identity = identity_for(&runtime, "local");
-    // orders table with a typed `id` column the claim references.
+    // orders table with the `id` column the claim references.
     let schema = SchemaTree {
         databases: vec![Database {
             name: "analytics".into(),
@@ -1126,18 +1222,22 @@ async fn remember_column_claim_against_cached_schema_snapshots_real_type() {
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let claims = store.list_claims(&object, &[]).await.unwrap();
-    assert_eq!(claims.len(), 1, "{claims:?}");
-    // The snapshot carries the resolved type, not the empty type of the
-    // name-only sentinel path.
-    assert_eq!(claims[0].referenced_columns.len(), 1, "{claims:?}");
-    assert_eq!(claims[0].referenced_columns[0].name, "id");
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    assert_eq!(items.len(), 1, "{items:?}");
+    // The binding names the column and its semantic requirement. An
+    // `identifier` role requires the column to exist (`Exists`), so a cache
+    // that has `id` reads `current`.
+    let binding: SchemaBinding =
+        serde_json::from_str(&items[0].schema_binding_json).expect("binding deserializes");
     assert_eq!(
-        claims[0].referenced_columns[0].data_type, "bigint",
-        "column snapshot must carry the cached type, not be empty: {:?}",
-        claims[0].referenced_columns
+        binding,
+        SchemaBinding::Column {
+            column: "id".into(),
+            requirement: ColumnRequirement::Exists,
+        },
+        "a column-role claim stores a Column binding naming the column: {binding:?}"
     );
-    assert!(!claims[0].referenced_columns[0].nullable);
+    assert_eq!(items[0].state, KnowledgeState::Active);
 
     let show = ContractsCommand::Show {
         table: qualified().into(),
@@ -1208,10 +1308,10 @@ async fn remember_unknown_object_against_cached_schema_refuses_and_stores_nothin
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let claims = store.list_claims(&ghost, &[]).await.unwrap();
+    let items = store.knowledge_for_object(&ghost).await.unwrap();
     assert!(
-        claims.is_empty(),
-        "refuse must store nothing for the unknown object: {claims:?}"
+        items.is_empty(),
+        "refuse must store nothing for the unknown object: {items:?}"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -1219,9 +1319,12 @@ async fn remember_unknown_object_against_cached_schema_refuses_and_stores_nothin
 
 // ---------------------------------------------------------------------------
 // 15. No-cache guard: with NO cached schema `remember` keeps today's behaviour
-//     — it succeeds and stores the unobserved sentinel, and `show` reads
-//     `live_schema_unavailable`. Refusing would make remember unusable before a
-//     first refresh, so the fix must not touch this path.
+//     — it succeeds, and `show` reads `live_schema_unavailable`. Refusing would
+//     make remember unusable before a first refresh, so the fix must not touch
+//     this path. The binding model does not persist a digest on the row (only
+//     the fingerprint *version*), so the "unobserved sentinel" the legacy row
+//     carried is replaced by "current version + a `Table` binding + no schema
+//     to classify against" — which reads `live_schema_unavailable` honestly.
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn remember_with_no_cached_schema_keeps_sentinel_and_succeeds() {
@@ -1253,13 +1356,14 @@ async fn remember_with_no_cached_schema_keeps_sentinel_and_succeeds() {
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let claims = store.list_claims(&object, &[]).await.unwrap();
-    assert_eq!(claims.len(), 1, "{claims:?}");
-    assert_eq!(
-        claims[0].schema_fingerprint,
-        unobserved_fingerprint(),
-        "no-cache remember must store the unobserved sentinel, not a real digest"
-    );
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    assert_eq!(items.len(), 1, "{items:?}");
+    // The item is stored under the current fingerprint version with a `Table`
+    // binding — the no-cache shape that reads `live_schema_unavailable` until a
+    // schema is cached. (The digest is not persisted on the row; the version is
+    // what `item_validity_for` gates on, alongside the binding.)
+    assert_eq!(items[0].fingerprint_version, FINGERPRINT_VERSION);
+    assert_eq!(items[0].state, KnowledgeState::Active);
 
     let show = ContractsCommand::Show {
         table: qualified().into(),
@@ -1330,20 +1434,8 @@ async fn seed_current_candidate(store: &SqliteStateStore, runtime: &RuntimeConfi
         DatabaseObjectKind::Table,
     )
     .unwrap();
-    let fingerprint = SchemaFingerprint::of_table(DatabaseObjectKind::Table, &orders_table());
-    let request = ProposeClaim {
-        object: object.clone(),
-        fingerprint,
-        payload: ClaimPayload::table_alias("orders").unwrap(),
-        origin: ClaimOrigin::AssistantInferred,
-        initial_status: ClaimStatus::Candidate,
-        evidence: None,
-        referenced_columns: Vec::new(),
-    };
-    match store.propose_claim(request).await.unwrap() {
-        ProposeOutcome::Stored(id) => id,
-        other => panic!("expected Stored, got {other:?}"),
-    }
+    let payload = ClaimPayload::table_alias("orders").unwrap();
+    seed_pending_item(store, &object, &payload, ClaimOrigin::AssistantInferred).await
 }
 
 #[tokio::test]
@@ -1379,24 +1471,79 @@ async fn queue_reports_current_against_a_cached_schema() {
 }
 
 // ---------------------------------------------------------------------------
-// 17. ITEM 2 regression: the queue lists both `Candidate` and persisted
-//     `Stale` claims (since 5d), and a reviewer cannot tell which decision is
-//     being asked unless the status is rendered. Both appear, and each line
-//     carries its own status word — `candidate` for a fresh claim to confirm
-//     or reject, `stale` for a confirmed claim reconciliation marked because
-//     the schema drifted. The two are distinguishable in the output.
+// 17. The queue must not present an unreviewed proposal and a fact whose
+//     dependency broke as the same thing. Under the new model staleness is
+//     computed, not persisted: a "stale" fact is `Active` (state) whose
+//     `SchemaBinding` reads `Invalid` against the cached schema. The queue
+//     lists `Pending` candidates only, so the broken confirmed fact is not in
+//     the queue — it is a different kind of thing, surfaced by `show` as
+//     `stale`. The two are distinguishable: the candidate is queued (status
+//     `candidate`), the broken fact is not queued and `show` reports it stale.
 // ---------------------------------------------------------------------------
-async fn seed_stale_claim(
+/// Seeds an `Active` `default_time_column` fact on `created_at` for `table`,
+/// then caches a schema for the profile that has `table` but dropped
+/// `created_at` — so the item's `Column { created_at, Time }` binding computes
+/// `Invalid` against the cache. This is the new-model "stale" shape: a
+/// confirmed fact whose dependency broke. Returns the item's `ki-…` id.
+async fn seed_drifted_active_claim(
     store: &SqliteStateStore,
     runtime: &RuntimeConfig,
     table: &str,
 ) -> ClaimId {
-    // A claim reaches `Stale` through `mark_stale` (reconcile), never through
-    // `propose_claim`, which only admits `Candidate`/`Confirmed`. Seed a
-    // candidate and transition it.
-    let id = seed_candidate(store, runtime, table).await;
-    store.mark_stale(&id).await.expect("candidate -> stale");
-    id
+    let identity = identity_for(runtime, "local");
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        table,
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let payload = ClaimPayload::default_time_column("created_at").unwrap();
+    let slot = KnowledgeSlot::TableDefaultTime;
+    let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
+    store
+        .put_knowledge_item(KnowledgeItemRequest {
+            object: object.clone(),
+            slot,
+            value: payload,
+            source: ClaimOrigin::UserExplicit,
+            state: KnowledgeState::Active,
+            schema_binding_json: serde_json::to_string(&binding).unwrap(),
+            fingerprint: SchemaFingerprint::from_parts(FINGERPRINT_VERSION, &"0".repeat(64))
+                .unwrap(),
+        })
+        .await
+        .unwrap();
+    // Cache a schema that has `table` but dropped `created_at`, so the item's
+    // `Column { created_at, Time }` binding reads `Invalid` (→ `stale`).
+    let drifted = SchemaTree {
+        databases: vec![Database {
+            name: "analytics".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![Table {
+                    name: table.into(),
+                    columns: vec![Column {
+                        name: "id".into(),
+                        data_type: "bigint".into(),
+                        nullable: false,
+                    }],
+                }],
+            }],
+        }],
+    };
+    store.upsert_schema(&identity, &drifted).await.unwrap();
+    let id = store
+        .knowledge_for_object(&object)
+        .await
+        .expect("knowledge items listed")
+        .into_iter()
+        .find(|i| i.slot == KnowledgeSlot::TableDefaultTime)
+        .expect("drifted item stored")
+        .id;
+    ClaimId::parse(&id).expect("ki id parses")
 }
 
 #[tokio::test]
@@ -1404,16 +1551,13 @@ async fn queue_distinguishes_candidate_from_stale_in_output() {
     let root = temp_root("queue_candidate_vs_stale");
     let (runtime, _c, _n) = runtime_at(&root);
     let store = store_at(&root).await;
-    // Drop `store_at`'s empty default cache so neither claim has a cached
-    // schema and both read `live_schema_unavailable`. That keeps the only
-    // `candidate`/`stale` words on each line the status tokens themselves —
-    // the distinction under test — rather than also a `[stale]` schema state.
-    let identity = identity_for(&runtime, "local");
-    store.invalidate_schema(&identity).await.unwrap();
-
+    // A `Pending` candidate (an unreviewed proposal) and an `Active` fact whose
+    // binding computes `Invalid` (a confirmed fact whose dependency broke). The
+    // queue is the candidate worklist: the candidate is queued; the broken
+    // confirmed fact is not — it is surfaced by `show` as `stale`, not conflated
+    // with a candidate.
     let cand_id = seed_candidate(&store, &runtime, "orders").await;
-    // A second object so the stale claim does not dedup against the candidate.
-    let stale_id = seed_stale_claim(&store, &runtime, "shipments").await;
+    let stale_id = seed_drifted_active_claim(&store, &runtime, "shipments").await;
 
     let queue = ContractsCommand::Queue {
         profile: None,
@@ -1422,49 +1566,49 @@ async fn queue_distinguishes_candidate_from_stale_in_output() {
     let (code, out, err) = run(queue.clone(), &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "queue stderr: {err}");
 
-    // Both claims appear, each on its own line.
+    // The candidate is queued; the broken confirmed fact is not. The queue
+    // does not present them as the same thing — one is a candidate to decide
+    // on, the other is a drifted fact that is not pending review.
     assert!(
         out.contains(cand_id.as_str()),
-        "candidate id missing: {out}"
+        "candidate id missing from queue: {out}"
     );
-    assert!(out.contains(stale_id.as_str()), "stale id missing: {out}");
-
-    // The two status words are distinct and both render.
+    assert!(
+        !out.contains(stale_id.as_str()),
+        "a broken confirmed fact must not appear in the candidate queue: {out}"
+    );
     assert!(
         out.contains("candidate"),
-        "queue must show candidate: {out}"
-    );
-    assert!(out.contains("stale"), "queue must show stale: {out}");
-
-    // Each line carries its own status word as its second whitespace-delimited
-    // token (right after the claim id), distinct from the `[stale]` schema
-    // state that may appear later on the same line. Assert on the token so the
-    // status and the schema state — which can both be `stale` — are not
-    // conflated.
-    fn status_token(line: &str) -> &str {
-        line.split_whitespace().nth(1).unwrap_or("")
-    }
-    let cand_line = out
-        .lines()
-        .find(|line| line.contains(cand_id.as_str()))
-        .expect("candidate line present");
-    assert_eq!(
-        status_token(cand_line),
-        "candidate",
-        "candidate line's status token must be candidate: {cand_line}"
-    );
-    let stale_line = out
-        .lines()
-        .find(|line| line.contains(stale_id.as_str()))
-        .expect("stale line present");
-    assert_eq!(
-        status_token(stale_line),
-        "stale",
-        "stale line's status token must be stale: {stale_line}"
+        "queue must show the candidate's status: {out}"
     );
 
-    // The JSON form carries the status field too, so machine readers distinguish
-    // the two the same way.
+    // `show` surfaces the broken fact as `stale` — the dependency-broke verdict
+    // a reviewer acts on — so the two are told apart across the two views: the
+    // queue has the candidate, `show` has the broken fact as stale. The show
+    // stanza abbreviates the claim id (`ki-f35…`), so assert on the value the
+    // broken fact carries and its stale state rather than the full id.
+    let (code, out, err) = run(
+        ContractsCommand::Show {
+            table: "analytics.public.shipments".into(),
+            profile: None,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_eq!(code, 0, "show stderr: {err}");
+    assert!(
+        out.contains("created_at"),
+        "the broken fact is shown to a reviewer: {out}"
+    );
+    assert!(
+        out.contains("[stale]"),
+        "show reports the broken fact as stale, not current: {out}"
+    );
+
+    // The JSON queue carries the candidate's status so a machine reader sees
+    // the same distinction.
     let (code, out, err) = run(queue, &runtime, &store, RenderFormat::Json).await;
     assert_eq!(code, 0, "queue json stderr: {err}");
     let events = json_events(&out);
@@ -1481,13 +1625,9 @@ async fn queue_distinguishes_candidate_from_stale_in_output() {
         cand_item["status"], "candidate",
         "JSON candidate status: {cand_item}"
     );
-    let stale_item = items
-        .iter()
-        .find(|v| v["claim_id"] == stale_id.as_str())
-        .expect("stale item present in JSON");
-    assert_eq!(
-        stale_item["status"], "stale",
-        "JSON stale status: {stale_item}"
+    assert!(
+        !items.iter().any(|v| v["claim_id"] == stale_id.as_str()),
+        "the broken confirmed fact must not be a queue item: {items:?}"
     );
 
     let _ = fs::remove_dir_all(root);
