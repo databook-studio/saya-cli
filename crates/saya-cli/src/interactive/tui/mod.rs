@@ -29,6 +29,8 @@ mod terminal;
 mod transcript;
 mod types;
 mod ui;
+#[cfg(test)]
+mod ui_snapshot_tests;
 
 use super::session_state::SessionState;
 use crate::config::runtime::RuntimeConfig;
