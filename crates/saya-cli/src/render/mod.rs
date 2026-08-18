@@ -1,4 +1,6 @@
-use saya_agent::{KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedContractDto};
+use saya_agent::{
+    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto, SuppliedContractDto,
+};
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
@@ -23,6 +25,10 @@ pub(crate) use render_memory::knowledge_overridden_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeSupplied`] in
 /// `apply_event` and shares this shaper so the wording lives in one place.
 pub(crate) use render_memory::knowledge_supplied_text;
+/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningSkipped`]
+/// in `apply_event` and shares this shaper so the wording lives in one place
+/// (packet-54).
+pub(crate) use render_memory::learning_skipped_text;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,
@@ -90,6 +96,13 @@ pub enum TerminalEvent {
     /// [`render_memory`]; JSON/NDJSON fall out of the serde derive.
     KnowledgeOverridden {
         findings: Vec<OverrideFindingDto>,
+    },
+    /// Post-turn extraction was skipped after the turn succeeded — no memory
+    /// was recorded, and the line says so (spec packet-54). Trails the answer.
+    /// Text is shaped in [`render_memory`]; JSON/NDJSON fall out of the serde
+    /// derive.
+    KnowledgeLearningSkipped {
+        reason: LearningSkipReason,
     },
     Complete,
     Result {
@@ -207,6 +220,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::KnowledgeOverridden { findings } => Rendered {
             stdout: render_memory::knowledge_overridden_text(findings),
+            stderr: String::new(),
+        },
+        TerminalEvent::KnowledgeLearningSkipped { reason } => Rendered {
+            stdout: render_memory::learning_skipped_text(*reason),
             stderr: String::new(),
         },
         TerminalEvent::Complete => Rendered {

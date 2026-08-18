@@ -12,7 +12,9 @@
 //! `apply_event`) so the wording lives in one place. Both adapters lead — the
 //! line renders when the event arrives, before the answer streams (spec §6).
 
-use saya_agent::{KnowledgeOutcome, OverrideFindingDto, SuppliedClaimDto, SuppliedContractDto};
+use saya_agent::{
+    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, SuppliedClaimDto, SuppliedContractDto,
+};
 use saya_types::ClaimStatus;
 
 /// Shapes the full text block for one `KnowledgeSupplied` event, for any
@@ -186,6 +188,35 @@ fn finding_line(finding: &OverrideFindingDto) -> String {
         claimed = finding.claimed_value,
         kind = finding.kind,
     )
+}
+
+/// Shapes the text line for one [`AgentEvent::KnowledgeLearningSkipped`]
+/// event (spec packet-54), for any adapter that prints it. Trails the answer —
+/// the runtime emits it after the loop — so it lands below the assistant text,
+/// where "and I did not learn from this turn" belongs.
+///
+/// Wording mirrors the recall precedent (`memory off · recall disabled`,
+/// `memory skipped · not permitted…`): the line says plainly that nothing was
+/// recorded and why, and that *this turn* was not learned from — not that
+/// memory is broken. A timeout and a failure read differently so a user (and a
+/// review) can tell them apart without re-deriving the outcome. The two
+/// strings are fixed by the spec; this shaper exists so the headless path and
+/// the TUI cannot disagree, the same arrangement `knowledge_supplied_text`
+/// uses. `LearningSkipReason` is `#[non_exhaustive]`: a future variant this
+/// shaper does not know about renders a generic line rather than panic.
+pub(crate) fn learning_skipped_text(reason: LearningSkipReason) -> String {
+    match reason {
+        LearningSkipReason::TimedOut => {
+            "memory not recorded · extraction timed out; this turn was not learned from\n".into()
+        }
+        LearningSkipReason::Failed => {
+            "memory not recorded · extraction failed; this turn was not learned from\n".into()
+        }
+        // A future skip reason this shaper does not yet know about: name it as a
+        // skip without guessing the cause. The turn still completes (rendering
+        // never fails it).
+        _ => "memory not recorded · this turn was not learned from\n".into(),
+    }
 }
 
 #[cfg(test)]
@@ -559,5 +590,30 @@ mod tests {
             !json.contains(fake_identity),
             "opaque identity leaked into the event: {json}"
         );
+    }
+
+    // --- Spec packet-54: the KnowledgeLearningSkipped shaper. ---
+
+    /// The two reasons render the exact spec strings and read differently — a
+    /// timeout and a failure must not collapse (packet-54 decision 3).
+    #[test]
+    fn the_two_skip_reasons_render_the_spec_strings_and_differ() {
+        use saya_agent::LearningSkipReason;
+        let timed_out = learning_skipped_text(LearningSkipReason::TimedOut);
+        let failed = learning_skipped_text(LearningSkipReason::Failed);
+        assert_eq!(
+            timed_out,
+            "memory not recorded · extraction timed out; this turn was not learned from\n",
+        );
+        assert_eq!(
+            failed,
+            "memory not recorded · extraction failed; this turn was not learned from\n",
+        );
+        assert_ne!(timed_out, failed);
+        // Both name what happened plainly, without claiming memory is broken.
+        assert!(timed_out.contains("memory not recorded"));
+        assert!(failed.contains("memory not recorded"));
+        assert!(timed_out.contains("not learned from"));
+        assert!(failed.contains("not learned from"));
     }
 }

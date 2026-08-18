@@ -1,3 +1,4 @@
+pub(crate) mod extraction_trace;
 pub(crate) mod knowledge_event;
 pub(crate) mod learning;
 pub(crate) mod profile;

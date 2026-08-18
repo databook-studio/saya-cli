@@ -27,6 +27,17 @@ pub(crate) mod runner;
 pub(crate) mod turn_record;
 pub(crate) mod turn_table;
 
+/// The wall-clock budget for one post-turn extraction call (spec packet-54
+/// decision 5). The user already has their answer when extraction runs — it
+/// trails the loop, after the assistant text — so this bounds the wait *before
+/// the prompt returns*, not the work that produced the answer. 15s is generous
+/// for a multi-object extraction prompt through a shared gateway (the 5s it
+/// replaces was tight enough to drop ~2/100 facts in isolation and ~half under
+/// concurrent load) and still bounded: a long hang after the answer is a worse
+/// defect than a missed fact, so this is never unbounded. The runtime emits
+/// `KnowledgeLearningSkipped { TimedOut }` when it fires.
+pub(crate) const EXTRACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 #[allow(unused_imports)]
 pub(crate) use extractor::parse_extraction_response;
 #[allow(unused_imports)]

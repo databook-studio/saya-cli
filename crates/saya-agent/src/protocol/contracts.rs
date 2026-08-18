@@ -262,7 +262,36 @@ pub enum AgentEvent {
     KnowledgeOverridden {
         findings: Vec<OverrideFindingDto>,
     },
+    /// Post-turn extraction was **skipped after the turn already succeeded** —
+    /// the turn's answer is unaffected, but no memory was recorded for it. Emitted
+    /// at most once per turn, after the loop, only when extraction was *expected*
+    /// to run (the gate admitted it) and then failed unexpectedly: it timed out
+    /// or the provider/parse/ingest step errored. A gate that *declines* emits
+    /// nothing — declining is the common case on ordinary turns and a line every
+    /// turn would be noise; only an unexpected failure surfaces. Carries the
+    /// reason so a render can distinguish "timed out" from "failed" without
+    /// re-deriving it. No raw response, no payload (spec packet-54 decision 1/2).
+    KnowledgeLearningSkipped {
+        reason: LearningSkipReason,
+    },
     Complete,
+}
+
+/// Why post-turn extraction was skipped after the gate admitted it
+/// (`AgentEvent::KnowledgeLearningSkipped`, spec packet-54 decision 1). Two
+/// unexpected outcomes — a timeout and an error — each surface; a gate decline
+/// is silent and has no variant here. `#[non_exhaustive]` so a future cause
+/// (e.g. a bounded-cancel) can be added without breaking serialization.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LearningSkipReason {
+    /// Extraction exceeded the post-turn timeout. The turn's answer is already
+    /// in hand; learning is bounded so a long hang never gates the prompt.
+    TimedOut,
+    /// The provider, parse, or ingest step errored. Distinct from a timeout so a
+    /// render can name the right thing without re-deriving the outcome.
+    Failed,
 }
 
 impl AgentEvent {
@@ -304,6 +333,15 @@ impl AgentEvent {
     /// nothing").
     pub fn knowledge_overridden(findings: Vec<OverrideFindingDto>) -> Self {
         Self::KnowledgeOverridden { findings }
+    }
+
+    /// Builds the per-turn `KnowledgeLearningSkipped` event the runtime emits
+    /// when the gate admitted extraction but it then timed out or errored (spec
+    /// packet-54). The caller is the runtime, after the loop; a gate decline
+    /// never calls this — declining is silent, and only an unexpected failure
+    /// surfaces.
+    pub fn knowledge_learning_skipped(reason: LearningSkipReason) -> Self {
+        Self::KnowledgeLearningSkipped { reason }
     }
 
     pub fn complete() -> Self {
@@ -488,5 +526,30 @@ mod tests {
         let fake_identity =
             "sha256:9f2a8c7b1e4d0a6f3c5b8e2d7a9f1c4b6e8a0d2f4c6b8e0a2d4f6c8b0e2d4f6";
         assert!(!json.contains(fake_identity), "identity leaked: {json}");
+    }
+
+    /// `KnowledgeLearningSkipped` serializes under its `knowledge_learning_skipped`
+    /// type tag and carries the reason; both reasons round-trip (spec packet-54
+    /// decision 1 — `#[non_exhaustive]` enum with the same derive set as siblings).
+    #[test]
+    fn knowledge_learning_skipped_serializes_with_type_tag_and_reason() {
+        use super::{AgentEvent, LearningSkipReason};
+        for (reason, token) in [
+            (LearningSkipReason::TimedOut, "timed_out"),
+            (LearningSkipReason::Failed, "failed"),
+        ] {
+            let event = AgentEvent::knowledge_learning_skipped(reason);
+            let json = serde_json::to_string(&event).expect("serializes");
+            assert!(
+                json.contains(r#""type":"knowledge_learning_skipped""#),
+                "type tag for {reason:?}: {json}"
+            );
+            assert!(
+                json.contains(&format!(r#""reason":"{token}""#)),
+                "reason token for {reason:?}: {json}"
+            );
+            let back: AgentEvent = serde_json::from_str(&json).expect("deserializes back");
+            assert_eq!(back, event, "round-trips for {reason:?}");
+        }
     }
 }

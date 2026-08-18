@@ -20,8 +20,8 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, ProviderError, SuppliedClaimDto,
-    SuppliedContractDto, ToolCall,
+    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto, ProviderError,
+    SuppliedClaimDto, SuppliedContractDto, ToolCall,
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
@@ -1806,5 +1806,348 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
         !stream_json.contains(&identity_str),
         "opaque identity leaked into the event stream: {stream_json}"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+// ===========================================================================
+// Spec packet-54: a turn whose post-turn extraction times out or errors must
+// say so (KnowledgeLearningSkipped). Today it is silent — the red tests below
+// assert the event fires AND the turn still completes. The gate-declined case
+// emits nothing (decision 2).
+//
+// The timeout test sleeps *past* the production `EXTRACTION_TIMEOUT` constant
+// (15s) — the spec mandates a documented, bounded constant and a test that
+// sleeps past it, so this is one ~15s test by design, not a parameterized
+// shortcut. The extraction call is distinguished from the turn call by the
+// `precision schema knowledge extractor` system-prompt marker, the same stable
+// marker `TurnAndExtractionProvider` relies on above.
+// ===========================================================================
+
+/// A provider that answers the turn normally but sleeps past the extraction
+/// timeout when called for extraction, so the runtime's `tokio::time::timeout`
+/// fires. Reuses the turn-steps + extraction-marker shape of
+/// `TurnAndExtractionProvider`.
+struct SleepingExtractionProvider {
+    turn_step: Mutex<usize>,
+    turn_steps: Vec<ChatResponse>,
+    extraction_calls: Mutex<usize>,
+}
+
+#[async_trait]
+impl ChatProvider for SleepingExtractionProvider {
+    fn name(&self) -> &str {
+        "sleeping-extraction-provider"
+    }
+    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        let is_extraction = request
+            .messages
+            .first()
+            .map(|m| m.content.contains("precision schema knowledge extractor"))
+            .unwrap_or(false);
+        if is_extraction {
+            {
+                let mut calls = self.extraction_calls.lock().unwrap();
+                *calls += 1;
+            }
+            // Sleep past the production timeout so `tokio::time::timeout` fires.
+            tokio::time::sleep(
+                super::super::learning::EXTRACTION_TIMEOUT + std::time::Duration::from_secs(1),
+            )
+            .await;
+            Ok(ChatResponse {
+                message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
+            })
+        } else {
+            let mut step = self.turn_step.lock().unwrap();
+            let idx = *step;
+            *step += 1;
+            if idx < self.turn_steps.len() {
+                Ok(self.turn_steps[idx].clone())
+            } else {
+                Ok(ChatResponse {
+                    message: ChatMessage::text("assistant", "done"),
+                })
+            }
+        }
+    }
+}
+
+/// One turn that issues a `bounded_sql_query` (object activity + non-trivial
+/// answer) so the gate admits extraction, then the extraction call sleeps past
+/// the timeout. Asserts `KnowledgeLearningSkipped { TimedOut }` is emitted and
+/// the turn still completes with its answer (Safety Property 1: fail-soft).
+#[tokio::test]
+async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes() {
+    let root = temp_root("p54_timeout");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(SleepingExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: vec![
+                ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: "call-1".into(),
+                            name: "bounded_sql_query".into(),
+                            arguments: serde_json::json!({
+                                "connection": "analytics",
+                                "sql": "SELECT id, status FROM catalog.public.orders",
+                            }),
+                        }],
+                        tool_call_id: None,
+                    },
+                },
+                ChatResponse {
+                    message: ChatMessage::text(
+                        "assistant",
+                        "The orders table contains customer orders.",
+                    ),
+                },
+            ],
+            extraction_calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(assisted_memory());
+    let out = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "table orders has alias orders",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store.clone()),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes despite extraction timeout (fail-soft)");
+
+    // The turn's answer is unaffected — extraction failure is not answer failure.
+    assert_eq!(out.answer, "The orders table contains customer orders.");
+
+    let captured = events.lock().unwrap();
+    let skipped = captured.iter().find_map(|event| match event {
+        AgentEvent::KnowledgeLearningSkipped { reason } => Some(*reason),
+        _ => None,
+    });
+    assert_eq!(
+        skipped,
+        Some(LearningSkipReason::TimedOut),
+        "timeout must emit KnowledgeLearningSkipped{{TimedOut}}: {captured:?}"
+    );
+    // No proposal was emitted — the timeout aborted extraction before ingest.
+    let proposed_count = captured
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::KnowledgeProposed { .. }))
+        .count();
+    assert_eq!(
+        proposed_count, 0,
+        "no proposals after timeout: {captured:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A gate-declined turn emits **nothing** for learning (decision 2: a gate skip
+/// stays silent). Uses an `Off` memory mode so `permit_candidate_writes` is
+/// false and the extraction block is never entered — the same path a gate
+/// decline would take when the runtime skips it. Asserts no
+/// `KnowledgeLearningSkipped` and no `KnowledgeProposed` appears.
+#[tokio::test]
+async fn a_gate_declined_turn_emits_no_learning_event() {
+    let root = temp_root("p54_gate_decline");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let provider = Arc::new(SleepingExtractionProvider {
+        turn_step: Mutex::new(0),
+        // A trivial turn with no tool call and a short answer: the gate would
+        // decline (no object activity, <15-char answer). Memory is Off, so the
+        // extraction block is never entered regardless — proving the silent path.
+        turn_steps: vec![ChatResponse {
+            message: ChatMessage::text("assistant", "ok"),
+        }],
+        extraction_calls: Mutex::new(0),
+    });
+    struct SharedProvider(Arc<SleepingExtractionProvider>);
+    #[async_trait]
+    impl ChatProvider for SharedProvider {
+        fn name(&self) -> &str {
+            "shared-sleeping"
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            self.0.complete(req).await
+        }
+    }
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(SharedProvider(provider.clone())),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let mut mem = assisted_memory();
+    mem.mode = saya_config::MemoryMode::Off;
+    let runtime = test_runtime(mem);
+    let out = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "hi",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes");
+
+    assert_eq!(out.answer, "ok");
+    let captured = events.lock().unwrap();
+    assert!(
+        !captured
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningSkipped { .. })),
+        "a gate decline must stay silent: {captured:?}"
+    );
+    assert!(
+        !captured
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeProposed { .. })),
+        "no proposals on a gate-declined turn: {captured:?}"
+    );
+    // Extraction was never called — the gate/permit guard held.
+    assert_eq!(
+        *provider.extraction_calls.lock().unwrap(),
+        0,
+        "extraction never ran"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A turn whose extraction *errors* (provider failure) emits
+/// `KnowledgeLearningSkipped { Failed }` — the non-timeout arm — and still
+/// completes. Reuses `TurnAndExtractionProvider` with an `Err` extraction
+/// response, the same harness `test_runtime_extraction_failure_never_fails_turn`
+/// uses, but asserts the new event (the older test predates it and only
+/// asserts no proposals).
+#[tokio::test]
+async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_completes() {
+    let root = temp_root("p54_failed");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+        },
+        provider: Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: vec![
+                ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: "call-1".into(),
+                            name: "bounded_sql_query".into(),
+                            arguments: serde_json::json!({
+                                "connection": "analytics",
+                                "sql": "SELECT id, status FROM catalog.public.orders",
+                            }),
+                        }],
+                        tool_call_id: None,
+                    },
+                },
+                ChatResponse {
+                    message: ChatMessage::text(
+                        "assistant",
+                        "The orders table was inspected successfully.",
+                    ),
+                },
+            ],
+            extraction_response: Err(ProviderError::configuration("http 500 error")),
+            extraction_calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(assisted_memory());
+    let out = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "table orders has alias orders",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+    )
+    .await
+    .expect("turn completes despite extraction error (fail-soft)");
+
+    assert_eq!(out.answer, "The orders table was inspected successfully.");
+
+    let captured = events.lock().unwrap();
+    let skipped = captured.iter().find_map(|event| match event {
+        AgentEvent::KnowledgeLearningSkipped { reason } => Some(*reason),
+        _ => None,
+    });
+    assert_eq!(
+        skipped,
+        Some(LearningSkipReason::Failed),
+        "error must emit KnowledgeLearningSkipped{{Failed}}, not TimedOut: {captured:?}"
+    );
+    let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(root);
 }

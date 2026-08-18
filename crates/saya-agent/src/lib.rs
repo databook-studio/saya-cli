@@ -13,9 +13,9 @@ pub use loop_runner::{AgentError, AgentLimits, AgentOutput, run_agent_with_sink}
 pub use protocol::approval::{ApprovalPolicy, ApprovalPolicyParseError};
 pub use protocol::contracts::{
     AgentEvent, AgentRequest, AllowReadOnlyApproval, ApprovalDecider, ChatMessage, ChatRequest,
-    ChatResponse, ContextBlock, KnowledgeOutcome, LocalStateEffect, OverrideFindingDto,
-    ProposedClaimDto, ProviderError, SuppliedClaimDto, SuppliedContractDto, ToolCall,
-    ToolDefinition, ToolEffect, ToolError, ToolExecutor, ToolMetadata,
+    ChatResponse, ContextBlock, KnowledgeOutcome, LearningSkipReason, LocalStateEffect,
+    OverrideFindingDto, ProposedClaimDto, ProviderError, SuppliedClaimDto, SuppliedContractDto,
+    ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor, ToolMetadata,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::streaming::{CancellationToken, ChatProvider, ProviderEvent, ProviderStream};

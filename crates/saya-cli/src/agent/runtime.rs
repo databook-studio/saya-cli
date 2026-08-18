@@ -1,3 +1,4 @@
+use super::extraction_trace::trace_extraction;
 use super::knowledge_event::knowledge_supplied_event;
 use super::tools;
 pub(crate) use super::turn_config::{
@@ -156,7 +157,6 @@ pub(crate) async fn run_prompt_with_inputs(
         sink.emit(AgentEvent::knowledge_overridden(overridden.clone()))
             .await;
     }
-
     // Post-turn structured extraction (Safety Property 1: fail-soft isolation).
     if learning.permit_candidate_writes
         && let Some(store) = tools.state_db()
@@ -174,16 +174,15 @@ pub(crate) async fn run_prompt_with_inputs(
             Some(&receipt),
             &overridden,
         );
-
-        if super::learning::ProposalGating::evaluate(
+        let gate = super::learning::ProposalGating::evaluate(
             &turn_record,
             &drained_obs,
             !overridden.is_empty(),
-        )
-        .is_run()
-        {
+        );
+        if gate.is_run() {
+            let object_count = turn_record.object_table.len();
             let extraction_res = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
+                super::learning::EXTRACTION_TIMEOUT,
                 super::learning::run_extraction(
                     &*provider,
                     &ai.model,
@@ -195,11 +194,36 @@ pub(crate) async fn run_prompt_with_inputs(
             )
             .await;
 
-            if let Ok(Ok(dtos)) = extraction_res {
-                for dto in dtos {
-                    sink.emit(AgentEvent::knowledge_proposed(dto)).await;
+            match extraction_res {
+                // Happy path: emit one proposal event per persisted claim.
+                Ok(Ok(dtos)) => {
+                    trace_extraction("ok", object_count, Some(dtos.len()), None);
+                    for dto in dtos {
+                        sink.emit(AgentEvent::knowledge_proposed(dto)).await;
+                    }
+                }
+                // Extraction errored (provider/parse/ingest). Surface the skip;
+                // never propagate (Safety Property 1: fail-soft isolation).
+                Ok(Err(error)) => {
+                    trace_extraction("failed", object_count, Some(0), Some(&error.to_string()));
+                    sink.emit(AgentEvent::knowledge_learning_skipped(
+                        saya_agent::LearningSkipReason::Failed,
+                    ))
+                    .await;
+                }
+                // Timeout fired before extraction returned; same fail-soft rule.
+                Err(_) => {
+                    trace_extraction("timed_out", object_count, Some(0), None);
+                    sink.emit(AgentEvent::knowledge_learning_skipped(
+                        saya_agent::LearningSkipReason::TimedOut,
+                    ))
+                    .await;
                 }
             }
+        } else {
+            // Gate decline stays silent on screen (decision 2); trace it for
+            // observability when debugging the boundary.
+            trace_extraction("gate_declined", turn_record.object_table.len(), None, None);
         }
     }
 

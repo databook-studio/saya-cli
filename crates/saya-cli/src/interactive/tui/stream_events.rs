@@ -82,6 +82,18 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
                 transcript.push(BlockKind::System, text.trim_end_matches('\n'));
             }
         }
+        // Extraction timed out or errored after the turn succeeded (spec
+        // packet-54). Trails the answer — emitted after the loop — so a System
+        // block pushed here lands below the assistant text, where "and I did
+        // not learn from this turn" belongs. Shares the shaper with the
+        // headless path so the wording lives in one place; the line is never
+        // empty for a known reason, so the block always pushes.
+        AgentEvent::KnowledgeLearningSkipped { reason } => {
+            let text = crate::render::learning_skipped_text(reason);
+            if !text.is_empty() {
+                transcript.push(BlockKind::System, text.trim_end_matches('\n'));
+            }
+        }
         // One fact learned this turn. Trails the answer — the runtime emits it
         // after the loop — so it lands below the assistant text, where "and I
         // kept this" belongs. Shares the shaper with the headless path; an
@@ -102,7 +114,10 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use saya_agent::{KnowledgeOutcome, OverrideFindingDto, SuppliedClaimDto, SuppliedContractDto};
+    use saya_agent::{
+        KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, SuppliedClaimDto,
+        SuppliedContractDto,
+    };
     use saya_types::{ClaimId, ClaimStatus};
 
     fn dto_claim(id: &str, kind: &str, value: &str, status: ClaimStatus) -> SuppliedClaimDto {
@@ -298,6 +313,35 @@ mod tests {
             t.blocks().is_empty(),
             "no findings → no block: {:?}",
             t.blocks()
+        );
+    }
+
+    /// KnowledgeLearningSkipped pushes a System block whose text names the skip
+    /// reason (packet-54 decision 4 — the TUI renders it, it does not fall
+    /// through to the catch-all that would drop it). Trails the answer.
+    #[test]
+    fn knowledge_learning_skipped_pushes_a_system_block_naming_the_reason() {
+        let mut t = Transcript::new();
+        apply_event(
+            &mut t,
+            AgentEvent::knowledge_learning_skipped(LearningSkipReason::TimedOut),
+        );
+        let block = last_block_text(&t).expect("a block was pushed");
+        assert!(
+            block.contains("memory not recorded · extraction timed out"),
+            "TUI block names the timeout: {block}"
+        );
+        assert_eq!(t.blocks().last().unwrap().kind, BlockKind::System);
+
+        let mut t = Transcript::new();
+        apply_event(
+            &mut t,
+            AgentEvent::knowledge_learning_skipped(LearningSkipReason::Failed),
+        );
+        let block = last_block_text(&t).expect("a block was pushed");
+        assert!(
+            block.contains("memory not recorded · extraction failed"),
+            "TUI block names the failure: {block}"
         );
     }
 }
