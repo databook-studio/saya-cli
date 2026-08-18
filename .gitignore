@@ -21,3 +21,6 @@
 /.cursor/
 /.claude/
 /docs/standards/
+
+# insta writes these beside a failing snapshot; they are review artefacts, never committed
+*.snap.new
