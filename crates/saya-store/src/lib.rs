@@ -24,7 +24,7 @@ pub use knowledge_items::{
     MAX_KNOWLEDGE_ITEM_BYTES, knowledge_item_id_for,
 };
 pub use redaction::redact;
-pub use sqlite::SqliteStateStore;
+pub use sqlite::{OPEN_BUSY_CEILING, SqliteStateStore};
 pub use sqlite_support::state_sidecar_path;
 pub use state_contracts::{
     AuditEntry, AuditOperation, AuditRecord, AuditStatus, AuditStore, CachedSchema, SCHEMA_VERSION,
