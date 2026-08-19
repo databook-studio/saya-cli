@@ -128,6 +128,15 @@ strengthen itself simply by being recalled.
 Extraction is best-effort and isolated: if it fails, times out, or returns nothing usable, your query
 and your answer are unaffected.
 
+It is not silent about it, though. A turn whose extraction failed or timed out prints
+`memory not recorded · …` beneath the answer, so a fact you stated and expected to stick is never
+quietly dropped. A turn the gate declined — most ordinary turns, where there was nothing durable to
+learn — says nothing, because a line on every turn would train you to ignore the line that matters.
+
+If you want to see the boundary itself, `--verbose` (or `SAYA_EXTRACTION_TRACE=1`) reports the gate
+decision, how many objects the turn involved, the outcome, and how many facts were recorded. It is
+off by default and never prints the model's raw response, which can carry your data.
+
 ## What SAYA stores, and what it never stores
 
 Stored: the object's qualified name, the profile identity, the slot, a typed value, who said it
