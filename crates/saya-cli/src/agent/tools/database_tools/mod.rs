@@ -210,6 +210,10 @@ impl DatabaseTools {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the `cfg(unix)` permissions test drives the executor surface, so the
+    // import has to carry the same gate: on Windows that test disappears and an
+    // ungated import becomes an unused-import error under `-D warnings`.
+    #[cfg(unix)]
     use saya_agent::ToolExecutor;
 
     #[test]
