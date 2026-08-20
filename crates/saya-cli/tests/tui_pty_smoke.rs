@@ -311,7 +311,15 @@ fn paint_with_config(
                 screen_text(parser.screen())
             );
         }
-        if last_change.elapsed() >= SETTLE {
+        // An EMPTY screen is not a settled screen. The stability clock alone
+        // treats "nothing has been written yet" as stable, so a slow start — a
+        // loaded machine, a cold page cache — used to settle on a blank screen
+        // and fail the assertion with an empty capture. That is what made this
+        // test look like a Windows/ConPTY limitation when it was really a race
+        // present on every platform. Require content first; a process that
+        // never paints is caught by HARD_DEADLINE instead, which reports the
+        // same empty capture but says truthfully that it never settled.
+        if !screen_text(parser.screen()).trim().is_empty() && last_change.elapsed() >= SETTLE {
             // The screen content has been stable long enough; return it.
             return Ok(parser.screen().clone());
         }
