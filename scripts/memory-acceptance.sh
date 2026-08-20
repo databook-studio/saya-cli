@@ -23,7 +23,7 @@ RUNS="${1:-3}"
 BIN="${SAYA_BIN:-target/debug/saya}"
 OBJECT="pagila.public.rental"
 CLAIMED="return_date"      # the business rule the user established
-GUESS="rental_date"        # what the model picks unaided — see docs/implementation-plan-assisted-memory.md
+GUESS="rental_date"        # what the model picks unaided, without the contract
 
 [ -x "$BIN" ] || { echo "✗ $BIN not built (cargo build -p saya-cli)" >&2; exit 2; }
 [ -s .env.saya ] || { echo "✗ .env.saya missing or empty" >&2; exit 2; }

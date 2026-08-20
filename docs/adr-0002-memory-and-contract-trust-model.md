@@ -3,9 +3,7 @@
 - Status: accepted
 - Date: 2026-08-12
 - Supersedes: nothing. Complements [ADR 0001](adr-0001-release-architecture.md).
-- Implements the decisions required by
-  [the memory and data contracts implementation plan](implementation-plan-memory-data-contracts.md),
-  section 17.
+- Records the trust-model decisions behind SAYA's memory and data contracts.
 
 ## Context
 
