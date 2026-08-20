@@ -7,16 +7,31 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
-- **Memory and data contracts** — SAYA can remember typed facts about your tables
-  (a reporting time column, an alias, a grain, a column's role) and use them when
-  building later queries. Confirm a fact with `saya contracts remember`, see what
-  it knows with `contracts list` / `contracts show`, and reverse it with
-  `contracts forget` — the change takes effect on the next question.
+- **Memory and data contracts** — SAYA remembers typed facts about your tables (a
+  reporting time column, an alias, a grain, a column's role) and uses them when
+  building later queries.
 
-  **Nothing is remembered unless you ask.** `[memory] recall` defaults to
-  `confirmed` and `learning` to `off`, so upgrading changes nothing. Turning
-  learning on lets SAYA *propose* candidates, which stay inert until a human
-  confirms them in `contracts queue`; repetition never promotes a candidate.
+  **It learns from conversation, not commands.** Say "we count a rental by
+  `return_date`, not `rental_date`, because a rental only counts once it comes
+  back" while asking an ordinary question, and SAYA answers *and* records the
+  fact — including the reason. A later session, in a new process, recalls it and
+  says so. `saya contracts remember` still exists for stating a fact directly,
+  and `contracts list` / `show` / `forget` / `queue` inspect and reverse what is
+  known.
+
+  **Nothing is remembered unless you turn it on.** `[memory] mode` defaults to
+  `off`, so upgrading changes nothing; `assisted` enables recall and post-turn
+  learning. A fact you state yourself is recorded as confirmed; anything SAYA
+  merely infers is a candidate, inert until a human confirms it in
+  `contracts queue`. Repetition never promotes a candidate.
+
+  **What reached the model is always visible.** Every turn that used memory
+  prints a `memory supplied` receipt naming each claim, so recall is inspectable
+  rather than asserted. When SAYA departs from a confirmed claim it says so in
+  the answer and prints `memory overridden`. When a turn's learning fails or
+  times out it prints `memory not recorded` — a fact you stated is never dropped
+  in silence. `--verbose` reports the learning boundary itself: the gate
+  decision, the objects involved, the outcome, and how many facts were kept.
 
   Claims are typed and bounded, not free text: they cannot hold SQL, credentials,
   file paths or instructions, and the store refuses those shapes rather than
@@ -28,18 +43,27 @@ All notable changes to SAYA CLI are recorded here. This project follows
   claim stale when a column it depends on is removed, renamed, retyped or becomes
   nullable — and marks nothing at all when the database simply could not be
   reached. Two confirmed claims that contradict each other are both shown and
-  marked disputed rather than silently resolved.
-
-  Contracts can be shared: commit them as TOML under `.saya/contracts/` and use
-  `contracts import --dry-run` / `contracts export`. Discovery is bounded and
-  refuses symlinks escaping the directory; exports carry no profile identity,
-  evidence, session ids or absolute paths.
+  marked disputed rather than silently resolved. Forgetting a claim erases its
+  value *and* its reason from the database file, not merely from the API's view.
 
   Also adds scoped preferences (`saya preferences`) for timezone, date grain,
   output style and default profile.
 
-  See [docs/memory.md](docs/memory.md) for the full behaviour, including what is
-  and is not stored, and what `forget` does and does not erase.
+### Changed
+
+- `[memory]` is configured by a single `mode` (`off` | `assisted`). The earlier
+  `recall` and `learning` keys are gone.
+- A single-valued claim (a grain, a default time column, a column's role) can now
+  be corrected: re-stating it with a different value replaces the old one and
+  names what it displaced, instead of reporting a duplicate and silently keeping
+  the first value.
+- `contracts remember` confirms in words rather than echoing a 64-character id.
+  Machine-readable output still carries the id.
+
+### Removed
+
+- `contracts import` / `contracts export`. Sharing contract files as TOML is a
+  separate concern from conversational memory and was cut from this release.
 
 ## 0.3.0 — 2026-08-10
 
