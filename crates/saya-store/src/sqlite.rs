@@ -6,15 +6,20 @@ use sqlx::{
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::OnceCell;
 
-/// The longest an opener will wait for a store held busy by a sibling process
-/// before reporting it unavailable.
+/// The longest an opener will spend before reporting the store unavailable.
+///
+/// Sized for the slowest *legitimate* open, not the fastest. Creating and
+/// migrating a new database is quick on a warm local disk and much slower on a
+/// cold or contended one — twenty tests creating databases in parallel while a
+/// virus scanner reads each new file, or a network share. A six-second budget
+/// cancelled those legitimate opens and reported a healthy store as gone.
 ///
 /// A separate `saya` process finishing a WAL checkpoint holds the SQLite write
 /// lock briefly; the next opener (the REPL, at startup) used to fail hard on
 /// the first busy attempt and report the store as gone. The opener now waits
 /// for it within this bound and fails honestly past it — a stuck lock is not a
 /// missing store, but an indefinite hang is worse than a typed failure.
-pub const OPEN_BUSY_CEILING: Duration = Duration::from_secs(6);
+pub const OPEN_BUSY_CEILING: Duration = Duration::from_secs(30);
 
 /// Backoff between open attempts while the store is busy. Small enough that a
 /// brief sibling checkpoint is noticed promptly, and never a busy-loop: every
@@ -50,6 +55,26 @@ impl SqliteStateStore {
                 // `Unavailable`) is retried up to the ceiling and then fails
                 // honestly; see the report's Gap note for why busy and corrupt
                 // are not distinguished here.
+                // Two failures are possible here and they need opposite
+                // treatment. A *refused* open — a sibling process finishing a
+                // WAL checkpoint holds the write lock — should be waited out
+                // and retried. A *slow* open — creating and migrating a new
+                // database on a cold or contended filesystem — must be left
+                // alone to finish.
+                //
+                // An earlier version budgeted 6s and cancelled the attempt at
+                // that point, which killed the second case: on Windows CI,
+                // twenty store tests creating databases in parallel with a
+                // virus scanner reading each new file, a legitimate open takes
+                // longer than six seconds, so it was cancelled, retried,
+                // cancelled again and reported as `Unavailable`. Removing the
+                // cancellation instead lost the bound altogether: against a
+                // held lock, `migrate` waits on sqlx's busy timeout per
+                // statement and an open can cost minutes.
+                //
+                // So the budget is sized for the slowest *legitimate* open, not
+                // the fastest. Nothing healthy takes thirty seconds; anything
+                // that does is stuck, and failing then is kinder than waiting.
                 let deadline = tokio::time::Instant::now() + OPEN_BUSY_CEILING;
                 loop {
                     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -59,15 +84,14 @@ impl SqliteStateStore {
                     match tokio::time::timeout(remaining, self.open_once()).await {
                         Ok(Ok(pool)) => return Ok(pool),
                         Ok(Err(StoreError::Unavailable)) => {
-                            // Still busy: back off a little and try again until
-                            // the ceiling. The sleep is what keeps this off a
-                            // busy-loop; the deadline is what keeps it bounded.
+                            // Refused rather than slow: back off and try again
+                            // while budget remains. The sleep keeps this off a
+                            // busy-loop; the deadline keeps it bounded.
                             tokio::time::sleep(OPEN_BUSY_BACKOFF).await;
                             continue;
                         }
                         Ok(Err(other)) => return Err(other),
-                        // The attempt ran into the ceiling (a held lock longer
-                        // than the budget) instead of failing fast — honest.
+                        // Out of budget mid-attempt: stuck, not slow.
                         Err(_elapsed) => return Err(StoreError::Unavailable),
                     }
                 }

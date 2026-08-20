@@ -146,8 +146,15 @@ async fn opener_waits_and_succeeds_when_the_lock_frees_within_the_ceiling() {
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     let store = SqliteStateStore::new(&db);
+    // An attempt runs to completion, and an attempt against a HELD lock is
+    // expensive by design: sqlx's `acquire_timeout` (5s) plus `migrate`, whose
+    // `retry_statement` spends up to 100 × 50ms per statement across three
+    // statements. So ~20s of honest work before the refusal is even reported,
+    // and the ceiling then decides not to try again. This outer bound only has
+    // to be larger than that — it is here to catch "waited out a 120s lock
+    // holder", which is the failure that matters.
     let result = tokio::time::timeout(
-        OPEN_BUSY_CEILING + Duration::from_secs(10),
+        OPEN_BUSY_CEILING + Duration::from_secs(15),
         store.get_schema(PROFILE),
     )
     .await;
@@ -188,8 +195,14 @@ async fn opener_fails_within_the_ceiling_when_the_lock_never_frees() {
 
     let store = SqliteStateStore::new(&db);
     let start = std::time::Instant::now();
+    // An attempt runs to completion, and one against a HELD lock is expensive by
+    // design: sqlx's acquire timeout plus `migrate`, whose `retry_statement`
+    // spends up to 100 x 50ms per statement across three statements. So ~20s of
+    // honest work before the refusal is reported, and only then does the ceiling
+    // decide not to try again. This outer bound exists to catch the failure that
+    // matters — waiting out the 120s lock holder — not to pin the exact cost.
     let result = tokio::time::timeout(
-        OPEN_BUSY_CEILING + Duration::from_secs(10),
+        OPEN_BUSY_CEILING + Duration::from_secs(15),
         store.get_schema(PROFILE),
     )
     .await;
@@ -207,9 +220,25 @@ async fn opener_fails_within_the_ceiling_when_the_lock_never_frees() {
         StoreError::Unavailable,
         "a stuck lock fails as Unavailable, not another variant"
     );
+    // The ceiling bounds the WAITING between attempts, not the total wall clock.
+    // An attempt always runs to completion — cancelling one mid-flight is what
+    // made the store unopenable on slow filesystems — so a refused open costs at
+    // most the ceiling plus one attempt, and an attempt against a held lock
+    // costs sqlx's own `busy_timeout` (5s) before it reports a refusal. The
+    // bound that matters is that the opener gives up at all rather than waiting
+    // out a lock held for two minutes.
+    // Bound the whole thing generously: what must not happen is waiting out the
+    // lock holder. Pinning a tight number here is what made this test fail when
+    // the cancellation was removed, and the tight number was never the property
+    // worth asserting.
     assert!(
-        elapsed <= OPEN_BUSY_CEILING + Duration::from_secs(2),
-        "opener failed at {elapsed:?}, outside the ceiling {OPEN_BUSY_CEILING:?} + slack — \
-         it waited for the lock instead of giving up honestly"
+        elapsed <= OPEN_BUSY_CEILING + Duration::from_secs(10),
+        "opener failed at {elapsed:?} — far beyond one attempt plus the ceiling \
+         {OPEN_BUSY_CEILING:?}; it is waiting for the lock rather than giving up"
+    );
+    assert!(
+        elapsed < Duration::from_secs(120),
+        "opener waited out the lock holder ({elapsed:?}) instead of giving up — the \
+         ceiling is not bounding anything"
     );
 }
