@@ -5,6 +5,11 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.3.0 — 2026-08-20 — conversational memory
+
+SAYA learns your data vocabulary from ordinary conversation and carries it
+between sessions. Everything else in this release is secondary to that.
+
 ### Added
 
 - **Memory and data contracts** — SAYA remembers typed facts about your tables (a
@@ -49,6 +54,10 @@ All notable changes to SAYA CLI are recorded here. This project follows
   Also adds scoped preferences (`saya preferences`) for timezone, date grain,
   output style and default profile.
 
+- **SQLite** — connect to SQLite database files with `type = "sqlite"` (`path`,
+  optional `read_only` defaulting to true). Read-only by default and through the
+  bounded SQL safety layer; `:memory:` is not supported.
+
 ### Changed
 
 - `[memory]` is configured by a single `mode` (`off` | `assisted`). The earlier
@@ -64,12 +73,6 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 - `contracts import` / `contracts export`. Sharing contract files as TOML is a
   separate concern from conversational memory and was cut from this release.
-
-## 0.3.0 — 2026-08-10
-
-### Added
-
-- **SQLite** — connect to SQLite database files with `type = "sqlite"` (`path`, optional `read_only` defaulting to true). Read-only by default and through the bounded SQL safety layer; `:memory:` is not supported.
 
 ### Fixed
 
