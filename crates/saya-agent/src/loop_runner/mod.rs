@@ -22,6 +22,7 @@ pub async fn run_agent_with_sink(
 ) -> Result<AgentOutput, AgentError> {
     let mut messages = crate::history::build_messages(
         request.system_prompt.as_deref(),
+        &request.context_blocks,
         &request.prompt,
         &request.history,
     )?;
@@ -72,21 +73,36 @@ pub async fn run_agent_with_sink(
                 .iter()
                 .find(|tool| tool.name == call.name)
                 .expect("validated");
-            let approved = !definition.requires_approval
+            let approved = !definition.effect.requires_approval
                 || approval.approve(definition, &call.arguments).await;
-            let (result, summary) = if approved {
+            // Fail closed: a tool that may write a candidate claim is refused
+            // unless the runner was constructed with candidate writes
+            // permitted. The default is not permitted, so registering a
+            // `WriteCandidate` tool in a later slice cannot silently start
+            // writing. This denies rather than executes, so the turn
+            // continues and the model sees a `ToolDenied` event with a reason.
+            let candidate_denied = definition.effect.local_state
+                == crate::LocalStateEffect::WriteCandidate
+                && !limits.permit_candidate_writes;
+            let executed = approved && !candidate_denied;
+            let (result, summary) = if executed {
                 check_cancelled(&cancellation)?;
-                if call.name == "bounded_sql_query" {
+                // Indicates a database-row-producing query tool ran.
+                if definition.effect.database_data {
                     used_bounded_sql_query = true;
                 }
-                tools::execute(tools, &call.name, call.arguments).await
+                tools::execute(tools, &call.name, call.arguments, definition.read_only).await
             } else {
                 emit(
                     &mut events,
                     sink,
                     AgentEvent::ToolDenied {
                         name: call.name.clone(),
-                        reason: "approval was not granted".into(),
+                        reason: if candidate_denied {
+                            "candidate writes are not permitted".into()
+                        } else {
+                            "approval was not granted".into()
+                        },
                     },
                 )
                 .await;
@@ -97,7 +113,7 @@ pub async fn run_agent_with_sink(
             };
             tool_metadata.push(crate::ToolMetadata {
                 name: call.name.clone(),
-                status: if approved {
+                status: if executed {
                     if summary.contains("failed") {
                         "failed"
                     } else {
@@ -109,7 +125,7 @@ pub async fn run_agent_with_sink(
                 .into(),
             });
             messages.push(tools::tool_message(call.id, result));
-            if approved {
+            if executed {
                 check_cancelled(&cancellation)?;
                 emit(
                     &mut events,

@@ -1,0 +1,52 @@
+{
+  "databases": [
+    {
+      "name": "ANALYTICS",
+      "schemas": [
+        {
+          "name": "PUBLIC",
+          "tables": [
+            {
+              "name": "ORDERS",
+              "columns": [
+                { "name": "ID", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "CUSTOMER_ID", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "CREATED_AT", "data_type": "TIMESTAMP_NTZ", "nullable": false },
+                { "name": "ORDERED_AT", "data_type": "TIMESTAMP_NTZ", "nullable": true },
+                { "name": "STATUS", "data_type": "VARCHAR(16777216)", "nullable": false },
+                { "name": "TOTAL_AMOUNT", "data_type": "NUMBER(12,2)", "nullable": false }
+              ]
+            },
+            {
+              "name": "ORDER_ITEMS",
+              "columns": [
+                { "name": "ID", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "ORDER_ID", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "PRODUCT_ID", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "QUANTITY", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "UNIT_PRICE", "data_type": "NUMBER(12,2)", "nullable": false }
+              ]
+            },
+            {
+              "name": "CUSTOMERS",
+              "columns": [
+                { "name": "ID", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "EMAIL", "data_type": "VARCHAR(16777216)", "nullable": true },
+                { "name": "CREATED_AT", "data_type": "TIMESTAMP_NTZ", "nullable": false }
+              ]
+            },
+            {
+              "name": "ACCOUNTS",
+              "columns": [
+                { "name": "ID", "data_type": "NUMBER(38,0)", "nullable": false },
+                { "name": "NAME", "data_type": "VARCHAR(16777216)", "nullable": false },
+                { "name": "TIER_CODE", "data_type": "VARCHAR(16777216)", "nullable": true },
+                { "name": "CREATED_AT", "data_type": "TIMESTAMP_NTZ", "nullable": false }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

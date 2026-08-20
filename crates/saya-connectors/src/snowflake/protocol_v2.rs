@@ -11,6 +11,7 @@ pub(crate) async fn execute(
     connector: &SnowflakeConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
+    let _in_flight = connector.in_flight.lock().await;
     let sql = crate::prepare_snowflake_sql(&request.sql, request.max_rows)?;
     let token = auth::jwt(
         &connector.account,

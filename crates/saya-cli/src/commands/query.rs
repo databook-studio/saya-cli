@@ -73,7 +73,7 @@ pub(super) async fn run(
     let Some(profile) = runtime.resolved.profile.as_ref() else {
         return failure(
             4,
-            ConnectionError::InvalidConfiguration("query requires a selected profile".into()),
+            ConnectionError::invalid_configuration("query requires a selected profile"),
             format,
         );
     };

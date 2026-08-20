@@ -2,19 +2,29 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 mod audit_store;
+mod contracts;
+mod error;
 mod filesystem;
 mod history;
+mod knowledge_items;
+mod migration;
 mod redaction;
 mod schema_store;
 mod sqlite;
 mod sqlite_support;
 mod state_contracts;
 
+pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
+pub use error::StoreError;
 pub use filesystem::FsSessionStore;
-pub use sqlite::SqliteStateStore;
+pub use knowledge_items::{
+    KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
+    MAX_KNOWLEDGE_ITEM_BYTES, knowledge_item_id_for,
+};
+pub use redaction::redact;
+pub use sqlite::{OPEN_BUSY_CEILING, SqliteStateStore};
 pub use sqlite_support::state_sidecar_path;
 pub use state_contracts::{
     AuditEntry, AuditOperation, AuditRecord, AuditStatus, AuditStore, CachedSchema, SCHEMA_VERSION,
@@ -97,18 +107,6 @@ pub struct RedactedMessage {
 pub struct SessionSummary {
     pub id: String,
     pub modified_unix_ms: u128,
-}
-
-#[derive(Debug, Error)]
-pub enum StoreError {
-    #[error("local state store is unavailable")]
-    Unavailable,
-}
-
-impl StoreError {
-    pub fn unavailable() -> Self {
-        Self::Unavailable
-    }
 }
 
 #[async_trait]

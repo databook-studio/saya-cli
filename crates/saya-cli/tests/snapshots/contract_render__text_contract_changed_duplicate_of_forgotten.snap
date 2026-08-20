@@ -1,0 +1,6 @@
+---
+source: crates/saya-cli/tests/contract_render.rs
+assertion_line: 126
+expression: "render_event(&event, RenderFormat::Text).stdout"
+---
+duplicate of c-1a2b3c4d5e6 — previously forgotten

@@ -29,6 +29,13 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     ) {
         return commands::run_config_init(cli.options.format.into());
     }
+    // `--verbose` seeds the extraction-boundary trace before any turn runs.
+    // Until now the flag was declared and read nowhere, so passing it did
+    // nothing and said nothing — a small dishonesty in the one surface a user
+    // reaches for when memory "didn't record".
+    if cli.options.verbose {
+        crate::agent::extraction_trace::enable();
+    }
     let options = command_options(&cli.options, &command);
     let runtime = config::runtime::load(&options, Path::new("."))?;
     let approval = config::runtime::approval_mode(&options)?;

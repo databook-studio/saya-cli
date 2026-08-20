@@ -3,17 +3,17 @@ use sqlx::Error;
 
 pub(crate) fn connection(error: Error) -> ConnectionError {
     if authentication(&error) {
-        ConnectionError::AuthenticationFailed("PostgreSQL authentication failed".into())
+        ConnectionError::authentication_failed("PostgreSQL authentication failed")
     } else {
-        ConnectionError::ConnectionFailed("PostgreSQL connection failed".into())
+        ConnectionError::connection_failed("PostgreSQL connection failed")
     }
 }
 
 pub(crate) fn query(error: Error) -> ConnectionError {
     if authentication(&error) {
-        ConnectionError::AuthenticationFailed("PostgreSQL authentication failed".into())
+        ConnectionError::authentication_failed("PostgreSQL authentication failed")
     } else {
-        ConnectionError::QueryFailed("PostgreSQL query failed".into())
+        ConnectionError::query_failed("PostgreSQL query failed")
     }
 }
 
@@ -22,9 +22,9 @@ fn authentication(error: &Error) -> bool {
 }
 
 pub(crate) fn schema(_: Error) -> ConnectionError {
-    ConnectionError::SchemaFailed("PostgreSQL schema discovery failed".into())
+    ConnectionError::schema_failed("PostgreSQL schema discovery failed")
 }
 
 pub(crate) fn row(_: Error) -> ConnectionError {
-    ConnectionError::SchemaFailed("PostgreSQL schema result was invalid".into())
+    ConnectionError::schema_failed("PostgreSQL schema result was invalid")
 }

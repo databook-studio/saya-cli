@@ -55,6 +55,25 @@ may omit it. `SAYA_DB_READ_ONLY` controls DuckDB file access mode and is
 distinct from global `SAYA_READ_ONLY`, which controls the SQL/query policy.
 Only the exact strings `true` and `false` are accepted for this setting.
 
+Environment-only SQLite uses `SAYA_DB_TYPE=sqlite` and `SAYA_DB_PATH`, with optional
+`SAYA_DB_READ_ONLY` (defaults to `true`). `:memory:` is unsupported. SAYA
+enforces bounded read-only SQL regardless of the setting.
+
+The `[run]` table sets execution limits and the query policy:
+
+```toml
+[run]
+read_only = true            # SAYA_READ_ONLY overrides this
+max_rows = 1000
+max_iterations = 12
+query_timeout_seconds = 60
+```
+
+`read_only` (overridable by `SAYA_READ_ONLY`) is the global SQL/query policy and
+also drives session-level read-only on connectors that support it. This is
+distinct from a profile's own `SAYA_DB_READ_ONLY`, which sets a file engine's
+(DuckDB/SQLite) access mode.
+
 `config doctor` reports paths and selection. `config show --resolved
 --redacted` emits only display-safe references and settings. It never resolves
 or prints secret values.
@@ -72,7 +91,7 @@ typed audit log. It never stores credentials, secret references, connection
 URLs, SQL, prompts, result rows, provider payloads, headers, driver errors, or
 source file paths. Session JSON behavior and `SAYA_SESSION_DIR` are unchanged.
 
-SAYA connects to PostgreSQL, MySQL, DuckDB, and Snowflake. Environment and file secret
+SAYA connects to PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake. Environment and file secret
 references are resolved at runtime without serializing or logging their values;
 keyring references return an explicit unavailable error. Provider settings may
 use either the established `SAYA_AI_PROVIDER`, `SAYA_AI_MODEL`, and

@@ -1,0 +1,52 @@
+{
+  "databases": [
+    {
+      "name": "main",
+      "schemas": [
+        {
+          "name": "main",
+          "tables": [
+            {
+              "name": "orders",
+              "columns": [
+                { "name": "id", "data_type": "INTEGER", "nullable": false },
+                { "name": "customer_id", "data_type": "INTEGER", "nullable": false },
+                { "name": "created_at", "data_type": "TEXT", "nullable": false },
+                { "name": "ordered_at", "data_type": "TEXT", "nullable": true },
+                { "name": "status", "data_type": "TEXT", "nullable": false },
+                { "name": "total_amount", "data_type": "REAL", "nullable": false }
+              ]
+            },
+            {
+              "name": "order_items",
+              "columns": [
+                { "name": "id", "data_type": "INTEGER", "nullable": false },
+                { "name": "order_id", "data_type": "INTEGER", "nullable": false },
+                { "name": "product_id", "data_type": "INTEGER", "nullable": false },
+                { "name": "quantity", "data_type": "INTEGER", "nullable": false },
+                { "name": "unit_price", "data_type": "REAL", "nullable": false }
+              ]
+            },
+            {
+              "name": "customers",
+              "columns": [
+                { "name": "id", "data_type": "INTEGER", "nullable": false },
+                { "name": "email", "data_type": "TEXT", "nullable": true },
+                { "name": "created_at", "data_type": "TEXT", "nullable": false }
+              ]
+            },
+            {
+              "name": "accounts",
+              "columns": [
+                { "name": "id", "data_type": "INTEGER", "nullable": false },
+                { "name": "name", "data_type": "TEXT", "nullable": false },
+                { "name": "tier_code", "data_type": "TEXT", "nullable": true },
+                { "name": "created_at", "data_type": "TEXT", "nullable": false }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

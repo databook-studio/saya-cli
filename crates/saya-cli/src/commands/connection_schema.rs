@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     config::runtime::RuntimeConfig,
+    profile_identity::profile_identity,
     render::{RenderFormat, TerminalEvent},
 };
 use saya_connectors::DatabaseConnector;
@@ -24,20 +25,24 @@ pub(crate) async fn run(
         Err(error) => {
             return failure(
                 3,
-                saya_types::ConnectionError::InvalidConfiguration(error.to_string()),
+                saya_types::ConnectionError::invalid_configuration(error.to_string()),
                 format,
             );
         }
     };
-    let identity = state::identity(name, profile, &runtime.cache_scope);
-    let mut persistence_failed = refresh && store.invalidate_schema(&identity).await.is_err();
+    // The identity is derived once as a `ProfileIdentity` so the reconciliation
+    // pass (which keys claims to schema by profile) gets the same value the
+    // store keys schema by, without re-parsing the string form.
+    let identity = profile_identity(name, profile, &runtime.cache_scope);
+    let identity_str = identity.as_str();
+    let mut persistence_failed = refresh && store.invalidate_schema(identity_str).await.is_err();
     let started = Instant::now();
     let connector = match connection::build(profile, runtime, can_prompt).await {
         Ok(connector) => connector,
         Err(error) if !refresh => {
             return connection_schema_cache::fallback(
                 store,
-                &identity,
+                identity_str,
                 started,
                 error,
                 format,
@@ -48,7 +53,7 @@ pub(crate) async fn run(
         Err(error) => {
             persistence_failed |= state::audit_silent(
                 store,
-                &identity,
+                identity_str,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Failure,
                 started.elapsed(),
@@ -63,10 +68,10 @@ pub(crate) async fn run(
     };
     match live_schema(&*connector).await {
         Ok(schema) => {
-            persistence_failed |= store.upsert_schema(&identity, &schema).await.is_err();
+            persistence_failed |= store.upsert_schema(identity_str, &schema).await.is_err();
             persistence_failed |= state::audit_silent(
                 store,
-                &identity,
+                identity_str,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Success,
                 started.elapsed(),
@@ -76,13 +81,18 @@ pub(crate) async fn run(
             .await
             .is_err();
             warn(persistence_failed, format);
-            emit(TerminalEvent::Schema { schema }, format);
+            emit(
+                TerminalEvent::Schema {
+                    schema: schema.clone(),
+                },
+                format,
+            );
             Ok(0)
         }
         Err(error) if !refresh => {
             connection_schema_cache::fallback(
                 store,
-                &identity,
+                identity_str,
                 started,
                 error,
                 format,
@@ -93,7 +103,7 @@ pub(crate) async fn run(
         Err(error) => {
             persistence_failed |= state::audit_silent(
                 store,
-                &identity,
+                identity_str,
                 AuditOperation::SchemaRefresh,
                 AuditStatus::Failure,
                 started.elapsed(),

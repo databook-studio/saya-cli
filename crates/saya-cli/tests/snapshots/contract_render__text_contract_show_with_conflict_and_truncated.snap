@@ -1,0 +1,10 @@
+---
+source: crates/saya-cli/tests/contract_render.rs
+assertion_line: 74
+expression: "render_event(&event, RenderFormat::Text).stdout"
+---
+analytics.public.orders  [needs_review]  (profile: warehouse)  — the schema changed since the claim was made
+  c-1a2b…  default_time_column  confirmed  user_explicit  created_at
+  c-3c4d…  table_alias  confirmed  user_explicit  customers
+  conflict: table_grain claimed by c-3c4d…, c-5e6f…
+  [partial contract — some claims were omitted]

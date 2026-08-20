@@ -106,13 +106,11 @@ impl DatabaseConnector for FailingConnector {
     }
 
     async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
-        Err(ConnectionError::SchemaFailed("nope".into()))
+        Err(ConnectionError::schema_failed("nope"))
     }
 
     async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
-        Err(ConnectionError::QueryFailed(
-            "syntax error near FROM".into(),
-        ))
+        Err(ConnectionError::query_failed("syntax error near FROM"))
     }
 }
 
@@ -336,7 +334,10 @@ async fn bounded_sql_query_all_is_blocked_when_data_sharing_is_disabled() {
         )
         .await
         .expect_err("fan-out must respect the data-sharing guard");
-    assert!(err.contains("data sharing is disabled"), "got: {err}");
+    assert!(
+        err.to_string().contains("data sharing is disabled"),
+        "got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -354,19 +355,22 @@ async fn tool_execution_rejects_arguments_outside_its_schema() {
             .execute(name, arguments)
             .await
             .expect_err("invalid tool arguments must not reach a connector");
-        assert!(error.contains("invalid tool arguments"), "got: {error}");
+        assert!(
+            error.to_string().contains("invalid tool arguments"),
+            "got: {error}"
+        );
     }
 }
 
 #[test]
 fn definitions_include_fan_out_only_when_query_data_allowed() {
-    let with_data: Vec<String> = DatabaseTools::definitions(true)
+    let with_data: Vec<String> = DatabaseTools::definitions(true, false, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
     assert!(with_data.iter().any(|name| name == "bounded_sql_query_all"));
 
-    let without_data: Vec<String> = DatabaseTools::definitions(false)
+    let without_data: Vec<String> = DatabaseTools::definitions(false, false, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
@@ -380,28 +384,81 @@ fn definitions_include_fan_out_only_when_query_data_allowed() {
 
 #[test]
 fn definitions_preserve_the_read_only_and_approval_contract() {
-    let tools = DatabaseTools::definitions(true);
+    let tools = DatabaseTools::definitions(true, false, false);
     let tool = |name: &str| tools.iter().find(|tool| tool.name == name).unwrap();
 
     let schema = tool("schema_discovery");
     assert!(schema.read_only);
-    assert!(!schema.requires_approval);
+    assert!(!schema.effect.requires_approval);
     assert!(schema.parameters["properties"]["connection"].is_object());
     assert!(schema.parameters.get("required").is_none());
 
     let single = tool("bounded_sql_query");
     assert!(single.read_only);
-    assert!(single.requires_approval);
+    assert!(single.effect.requires_approval);
     assert_eq!(single.parameters["required"], serde_json::json!(["sql"]));
     assert!(single.parameters["properties"]["connection"].is_object());
     assert!(single.parameters["properties"]["sql"].is_object());
 
     let all = tool("bounded_sql_query_all");
     assert!(all.read_only);
-    assert!(all.requires_approval);
+    assert!(all.effect.requires_approval);
     assert_eq!(all.parameters["required"], serde_json::json!(["sql"]));
     assert!(all.parameters["properties"]["sql"].is_object());
     assert!(all.parameters["properties"].get("connection").is_none());
+}
+
+/// Spec 3a §2 / 3c: every existing tool declares the expected `local_state`.
+/// This is the test that fails when someone adds a tool without saying what
+/// local state it touches. With query data and a state store but candidate
+/// writes off, the six pre-3c tools are present and none writes local state.
+#[test]
+fn every_tool_declares_its_local_state_effect() {
+    use saya_agent::LocalStateEffect;
+
+    let tools = DatabaseTools::definitions(true, true, false);
+    let expected = [
+        ("schema_discovery", LocalStateEffect::None),
+        ("bounded_sql_query", LocalStateEffect::None),
+        ("bounded_sql_query_all", LocalStateEffect::None),
+        ("render_chart", LocalStateEffect::None),
+        ("contract_search", LocalStateEffect::Read),
+        ("contract_read", LocalStateEffect::Read),
+    ];
+    for (name, want) in expected {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap_or_else(|| panic!("{name} must be registered"));
+        assert_eq!(
+            tool.effect.local_state, want,
+            "{name} must declare local_state == {want:?}"
+        );
+    }
+    // With writes off, contract_propose is hidden, so none writes local state.
+    assert!(
+        !tools
+            .iter()
+            .any(|tool| tool.effect.local_state == LocalStateEffect::WriteCandidate),
+        "no tool may declare WriteCandidate when writes are not permitted"
+    );
+
+    // No agent tool writes local state any more. Phase F retired
+    // `contract_propose`: the harness extracts proposals post-turn from a bounded
+    // turn record, so learning no longer depends on the model volunteering a call.
+    // Asserting the tool is *absent* is the point — if it reappears, two paths to
+    // the same write exist again and the model has to choose between them.
+    let tools = DatabaseTools::definitions(true, true, true);
+    assert!(
+        !tools.iter().any(|tool| tool.name == "contract_propose"),
+        "contract_propose is retired; the harness owns proposals"
+    );
+    assert!(
+        !tools
+            .iter()
+            .any(|tool| tool.effect.local_state == LocalStateEffect::WriteCandidate),
+        "no agent tool writes local state once the harness owns extraction"
+    );
 }
 
 #[test]
@@ -491,8 +548,9 @@ async fn test_database_tools_multi_connection_routing() {
         )
         .await
         .expect_err("unknown connection should return error");
+    let err_str = err.to_string();
     assert!(
-        err.contains("primary") && err.contains("warehouse"),
-        "error message should list available connections, got: {err}"
+        err_str.contains("primary") && err_str.contains("warehouse"),
+        "error message should list available connections, got: {err_str}"
     );
 }

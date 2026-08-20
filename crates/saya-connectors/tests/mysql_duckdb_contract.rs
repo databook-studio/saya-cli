@@ -43,6 +43,7 @@ async fn mysql_secret_sentinels_are_not_exposed_by_factory_errors() {
         ConnectorOptions {
             query_timeout_seconds: 1,
             max_connections: 1,
+            ..Default::default()
         },
     )
     .await
@@ -166,6 +167,7 @@ async fn duckdb_read_only_file_and_interrupt_are_enforced() {
             ConnectorOptions {
                 query_timeout_seconds: 5,
                 max_connections: 1,
+                ..Default::default()
             },
         )
         .await

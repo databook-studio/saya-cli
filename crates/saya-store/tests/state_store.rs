@@ -150,6 +150,19 @@ async fn adversarial_labels_are_rejected_and_never_written() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[tokio::test]
+async fn malformed_profile_id_is_rejected_as_invalid() {
+    let root = temp_root("bad-profile-id");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let error = store
+        .upsert_schema("not-a-profile-id", &schema("events"))
+        .await
+        .unwrap_err();
+    assert_eq!(error, StoreError::Invalid);
+    let _ = fs::remove_dir_all(root);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn unix_parent_database_and_sidecars_are_private() {

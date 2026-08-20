@@ -68,6 +68,10 @@ pub enum Command {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
+    Contracts {
+        #[command(subcommand)]
+        command: ContractsCommand,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -95,4 +99,114 @@ pub enum ConnectionCommand {
         #[arg(long)]
         refresh: bool,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum ContractsCommand {
+    List {
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Show {
+        table: String,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Queue {
+        #[arg(long)]
+        profile: Option<String>,
+        /// Maximum candidates to list. Clamped to 200; a queue is a worklist,
+        /// not an archive.
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    Remember {
+        table: String,
+        #[arg(long, value_enum)]
+        kind: ClaimKindArg,
+        #[arg(long)]
+        value: String,
+        #[arg(long)]
+        column: Option<String>,
+        /// Why the directive claim holds — a sentence the model reads alongside
+        /// the value so a claim that contradicts a plausible schema reading
+        /// (use `return_date`, not `rental_date`) loses less often. Forwarded to
+        /// the directive kinds only (grain, time-column, column-role); ignored
+        /// for description/alias. Optional: a claim with no reason is the default.
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Review {
+        claim_id: String,
+        #[arg(long)]
+        confirm: bool,
+        #[arg(long)]
+        reject: bool,
+    },
+    /// Act on a claim from the turn that just showed it, by a short stored
+    /// claim-id prefix (the `ki-xxxx` `contracts list` abbreviates to), not a
+    /// 64-character id. Spec D. The `prefix` is resolved against the resolved
+    /// profile's claims to exactly one claim, or refused; the decision then
+    /// reaches the existing `confirm`/`reject`/`use_candidate_once` operations
+    /// — it is not a second implementation of them.
+    Decide {
+        /// A leading prefix of a stored claim id. Unambiguous-or-refused: zero
+        /// matches or more than one is a typed error that changes nothing.
+        prefix: String,
+        #[arg(long, value_enum)]
+        decision: ReviewDecisionArg,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Forget {
+        claim_id: String,
+        #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
+        reason: ForgetReasonArg,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ClaimKindArg {
+    Description,
+    Alias,
+    Grain,
+    ColumnDescription,
+    ColumnRole,
+    TimeColumn,
+}
+
+impl ClaimKindArg {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Description => "description",
+            Self::Alias => "alias",
+            Self::Grain => "grain",
+            Self::ColumnDescription => "column-description",
+            Self::ColumnRole => "column-role",
+            Self::TimeColumn => "time-column",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ForgetReasonArg {
+    UserRequest,
+    Incorrect,
+    Obsolete,
+    Privacy,
+}
+
+/// The decision a `/confirm`, `/reject`, or `/use` short-reference command
+/// carries, resolved by `run_contracts` against the stored claim the prefix
+/// names. Spec D. `Confirm` and `Reject` reach the existing mutating ops; `UseOnce`
+/// reaches `use_candidate_once`, which validates and admits for one recall
+/// without promoting — a candidate stays a candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ReviewDecisionArg {
+    Confirm,
+    Reject,
+    UseOnce,
 }

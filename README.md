@@ -2,7 +2,7 @@
 
 SAYA CLI is an open-source, terminal-native shell for a database-aware AI agent.
 Ask questions about your data in plain language and it discovers schema and runs
-**bounded, read-only** SQL against PostgreSQL, MySQL, DuckDB, or Snowflake.
+**bounded, read-only** SQL against PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
 
 An interactive terminal (TTY) launches a **full-screen TUI** — a scrolling
 transcript, a bottom-pinned input box, a slash-command popup that opens on `/`,
@@ -22,7 +22,13 @@ connected databases at once.
 - 🛡️ **Safe by default** — every query is bounded and read-only, and the
   **exact SQL is shown** in the approval prompt (and echoed to the transcript)
   before it runs; sessions are redacted before being persisted.
-- 🔌 **Databases** — PostgreSQL, MySQL, DuckDB, Snowflake; query several
+- 🧠 **Memory** — tell it what your tables mean once (`saya contracts remember
+  orders --kind time-column --value created_at`) and later questions carry that
+  context. Facts are typed, bound to a table and its schema shape, and go stale
+  when a column they depend on changes. It never confirms anything by itself,
+  never picks between contradictions, and is **off by default**. Shareable via
+  `.saya/contracts/` in your repo. → [docs/memory.md](docs/memory.md)
+- 🔌 **Databases** — PostgreSQL, MySQL, SQLite, DuckDB, Snowflake; query several
   connected databases at once, or run **one query across every connected
   database** and get per-database results side by side.
 - 🤖 **Providers** — Ollama, OpenAI, OpenAI-compatible gateways, Anthropic,
@@ -239,6 +245,17 @@ path = "./data/warehouse.duckdb"
 read_only = true
 ```
 
+A file-backed SQLite profile follows the same shape; `read_only` defaults to
+true and opens the file with `PRAGMA query_only = ON` (an in-memory `:memory:`
+path is rejected — point it at a file):
+
+```toml
+[profiles.sqlite_local]
+type = "sqlite"
+path = "./data/warehouse.sqlite3"
+read_only = true
+```
+
 Run `saya --env-file .env.saya --connections .saya/connections.toml
 --approval-mode read-only ask "show revenue"`. The newer provider env names
 (`SAYA_PROVIDER`, `SAYA_MODEL`, `SAYA_PROVIDER_BASE_URL`, `SAYA_API_KEY`) have
@@ -277,9 +294,11 @@ not for `externalbrowser`, which requires an interactive TTY.
 ## Privacy and limitations
 
 The intended MVP policy is read-only, bounded queries with cloud row sharing
-disabled. PostgreSQL, MySQL, DuckDB, and Snowflake reject parse failures, writes, DDL, transaction/control
-statements, and multi-statements before execution. It observes one extra row to
-mark truncated results. Schema discovery is auto-allowed; bounded SQL is
+disabled. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake reject parse failures, writes, DDL, transaction/control
+statements, and multi-statements before execution. Results are bounded by both a
+row cap (one extra row is observed to mark truncation) and byte budgets — a 1 MiB
+per-cell cap and a 16 MiB total-result cap — and `truncated` is set when either
+limit is reached. Schema discovery is auto-allowed; bounded SQL is
 auto-approved only with `read-only`, denied with `never`, and explicitly
 confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
 OpenAI, OpenAI-compatible, Anthropic, and Gemini providers are treated as
@@ -289,11 +308,16 @@ or row data. Ollama is treated as local for this MVP. `/privacy`, `/model`,
 (and `--include-profile`) connect additional read-only databases, and the agent
 navigates between all connected databases by passing an optional `connection`
 argument to its schema and query tools; the primary database is the default.
-Fully offline agent use and release signing are not implemented; provider
-execution is Ollama / OpenAI-compatible only.
-The database role must itself be read-only, and DuckDB file paths must have
-least-privilege filesystem permissions: SQL AST checks cannot prove that an
-arbitrary database function is free of side effects.
+Fully offline agent use and release signing are not implemented. Provider
+execution covers Ollama, OpenAI, OpenAI-compatible endpoints, Anthropic, and
+Gemini.
+saya also enforces read-only at the **database session level** (PostgreSQL
+`default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
+`query_only`, and a read-only DuckDB open) on top of the AST checks. Because AST
+checks cannot prove that an arbitrary database function is side-effect free — and
+Snowflake has no equivalent session switch — connect with a least-privilege,
+read-only database role and give DuckDB/SQLite file paths least-privilege
+filesystem permissions.
 Resolved config secrets, provider headers, and raw query rows are structurally
 excluded from session files. Known credential-shaped text is redacted, but
 redaction cannot identify every arbitrary secret—never paste credentials into

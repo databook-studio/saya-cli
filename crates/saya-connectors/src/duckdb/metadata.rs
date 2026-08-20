@@ -55,5 +55,5 @@ pub(crate) async fn schema(connector: &DuckDbConnector) -> Result<SchemaTree, Co
 }
 
 fn error(_: duckdb::Error) -> ConnectionError {
-    ConnectionError::SchemaFailed("DuckDB schema discovery failed".into())
+    ConnectionError::schema_failed("DuckDB schema discovery failed")
 }

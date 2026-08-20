@@ -132,7 +132,7 @@ impl App {
                     &self.runtime.cache_scope,
                 );
                 if let Ok(Some(cached)) = crate::interactive::session_resume::block_on(
-                    self.state_db.get_schema(&identity),
+                    self.state_db.get_schema(identity.as_str()),
                 ) {
                     refs.extend(atref::schema_refs(&cached.schema));
                 }

@@ -99,7 +99,7 @@ pub(super) fn build_body(request: ChatRequest) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChatMessage, ToolCall, ToolDefinition};
+    use crate::{ChatMessage, LocalStateEffect, ToolCall, ToolDefinition, ToolEffect};
 
     #[test]
     fn test_gemini_request_mapping_and_tool_resolution() {
@@ -129,7 +129,12 @@ mod tests {
                 description: "Search the web".into(),
                 read_only: true,
                 parameters: json!({"type": "object"}),
-                requires_approval: false,
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::None,
+                },
             }],
         };
 

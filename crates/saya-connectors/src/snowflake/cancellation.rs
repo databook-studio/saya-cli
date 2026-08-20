@@ -11,12 +11,12 @@ pub(crate) async fn cancel(connector: &SnowflakeConnector) -> Result<(), Connect
         .await
         .clone()
         .filter(|item| uuid::Uuid::parse_str(item).is_ok())
-        .ok_or(ConnectionError::Unsupported(
-            "no active Snowflake statement".into(),
+        .ok_or(ConnectionError::unsupported(
+            "no active Snowflake statement",
         ))?;
     let auth::Auth::Keypair(key) = &connector.auth else {
-        return Err(ConnectionError::Unsupported(
-            "Snowflake cancellation is unavailable for this auth flow".into(),
+        return Err(ConnectionError::unsupported(
+            "Snowflake cancellation is unavailable for this auth flow",
         ));
     };
     let token = auth::jwt(&connector.account, &connector.user, key).map_err(|_| errors::auth())?;

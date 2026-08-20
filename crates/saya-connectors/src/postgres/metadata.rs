@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use futures_util::TryStreamExt;
 use saya_types::{Column, ConnectionError, Database, Schema, SchemaTree, Table};
 use sqlx::Row;
 use tokio::time::timeout;
@@ -12,34 +13,34 @@ pub(crate) async fn schema(connector: &PostgresConnector) -> Result<SchemaTree, 
         sqlx::query_scalar::<_, String>("SELECT current_database()").fetch_one(&connector.pool),
     )
     .await
-    .map_err(|_| ConnectionError::SchemaFailed("PostgreSQL schema discovery timed out".into()))?
+    .map_err(|_| ConnectionError::schema_failed("PostgreSQL schema discovery timed out"))?
     .map_err(errors::schema)?;
-    let rows = timeout(
-        connector.query_timeout,
-        sqlx::query(SCHEMA_SQL).fetch_all(&connector.pool),
-    )
-    .await
-    .map_err(|_| ConnectionError::SchemaFailed("PostgreSQL schema discovery timed out".into()))?
-    .map_err(errors::schema)?;
-    let mut schemas = BTreeMap::<String, BTreeMap<String, Vec<Column>>>::new();
-    for row in rows {
-        let schema = row.try_get("table_schema").map_err(errors::row)?;
-        let table = row.try_get("table_name").map_err(errors::row)?;
-        let column = Column {
-            name: row.try_get("column_name").map_err(errors::row)?,
-            data_type: row.try_get("data_type").map_err(errors::row)?,
-            nullable: row
-                .try_get::<String, _>("is_nullable")
-                .map_err(errors::row)?
-                == "YES",
-        };
-        schemas
-            .entry(schema)
-            .or_default()
-            .entry(table)
-            .or_default()
-            .push(column);
-    }
+    let work = async {
+        let mut stream = sqlx::query(SCHEMA_SQL).fetch(&connector.pool);
+        let mut schemas = BTreeMap::<String, BTreeMap<String, Vec<Column>>>::new();
+        while let Some(row) = stream.try_next().await.map_err(errors::schema)? {
+            let schema = row.try_get("table_schema").map_err(errors::row)?;
+            let table = row.try_get("table_name").map_err(errors::row)?;
+            let column = Column {
+                name: row.try_get("column_name").map_err(errors::row)?,
+                data_type: row.try_get("data_type").map_err(errors::row)?,
+                nullable: row
+                    .try_get::<String, _>("is_nullable")
+                    .map_err(errors::row)?
+                    == "YES",
+            };
+            schemas
+                .entry(schema)
+                .or_default()
+                .entry(table)
+                .or_default()
+                .push(column);
+        }
+        Ok(schemas)
+    };
+    let schemas = timeout(connector.query_timeout, work)
+        .await
+        .map_err(|_| ConnectionError::schema_failed("PostgreSQL schema discovery timed out"))??;
     let schemas = schemas
         .into_iter()
         .map(|(name, tables)| Schema {

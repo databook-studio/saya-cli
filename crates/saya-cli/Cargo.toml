@@ -1,11 +1,11 @@
 [package]
 name = "saya-cli"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Database-aware AI agent for the terminal: full-screen TUI, schema discovery, and bounded read-only SQL over PostgreSQL, MySQL, DuckDB, and Snowflake."
+description = "Database-aware AI agent for the terminal: full-screen TUI, schema discovery, and bounded read-only SQL over PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake."
 readme = "../../README.md"
 homepage = "https://github.com/databook-studio/saya-cli"
 keywords = ["database", "sql", "ai", "agent", "tui"]
@@ -29,14 +29,15 @@ pkg-fmt = "zip"
 async-trait.workspace = true
 clap.workspace = true
 futures-util.workspace = true
-saya-agent = { path = "../saya-agent", version = "0.2.0" }
-saya-config = { path = "../saya-config", version = "0.2.0" }
-saya-connectors = { path = "../saya-connectors", version = "0.2.0" }
-saya-store = { path = "../saya-store", version = "0.2.0" }
-saya-types = { path = "../saya-types", version = "0.2.0" }
+saya-agent = { path = "../saya-agent", version = "0.3.0" }
+saya-config = { path = "../saya-config", version = "0.3.0" }
+saya-connectors = { path = "../saya-connectors", version = "0.3.0" }
+saya-store = { path = "../saya-store", version = "0.3.0" }
+saya-types = { path = "../saya-types", version = "0.3.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 tokio.workspace = true
 sha2.workspace = true
 ratatui.workspace = true
@@ -45,3 +46,13 @@ base64.workspace = true
 [dev-dependencies]
 duckdb.workspace = true
 libc = "0.2"
+insta.workspace = true
+proptest.workspace = true
+sqlx.workspace = true
+# Pty + screen parser for the TUI paint smoke test (tests/tui_pty_smoke.rs).
+# Dev-only: nothing here is a runtime dependency. portable-pty allocates a
+# pseudo-terminal so the real `saya` binary drives its crossterm/ratatui TUI
+# against a real TTY (not the headless pipe path); vt100 parses the resulting
+# byte stream into a grid we can read as text and assert against.
+portable-pty = "0.9"
+vt100 = "0.16"

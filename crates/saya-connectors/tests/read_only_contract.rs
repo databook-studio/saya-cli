@@ -1,4 +1,4 @@
-use saya_connectors::prepare_postgres_sql;
+use saya_connectors::{prepare_duckdb_sql, prepare_postgres_sql};
 
 #[test]
 fn safety_rejects_zero_caps_writes_and_duckdb_administration() {
@@ -37,13 +37,16 @@ fn safety_does_not_scan_literals_or_identifiers_as_keywords() {
 
 #[test]
 fn safety_rejects_mutating_and_external_functions_from_the_ast() {
+    for sql in ["SELECT nextval('id_seq')", "SELECT setval('id_seq', 9)"] {
+        assert!(prepare_postgres_sql(sql, 1).is_err(), "must reject {sql}");
+    }
+
     for sql in [
-        "SELECT nextval('id_seq')",
-        "SELECT setval('id_seq', 9)",
         "SELECT * FROM read_csv('input.csv')",
         "SELECT * FROM read_json('input.json')",
         "SELECT * FROM sqlite_scan('other.db', 'events')",
     ] {
-        assert!(prepare_postgres_sql(sql, 1).is_err(), "must reject {sql}");
+        assert!(prepare_duckdb_sql(sql, 1).is_err(), "must reject {sql}");
+        assert!(prepare_postgres_sql(sql, 1).is_ok(), "must accept {sql}");
     }
 }

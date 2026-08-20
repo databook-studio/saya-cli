@@ -25,7 +25,7 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
-SAYA supports `postgresql`, `mysql`, `duckdb`, and `snowflake`.
+SAYA supports `postgresql`, `mysql`, `sqlite`, `duckdb`, and `snowflake`.
 PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-full`; MySQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-identity`.
@@ -58,6 +58,20 @@ grant SAYA access only to the intended file and its parent directory.
 [profiles.local]
 type = "duckdb"
 path = "./warehouse.duckdb"
+read_only = true
+```
+
+SQLite needs no network credential. Connect to SQLite database files using
+`type = "sqlite"` with `path` and optional `read_only` (which defaults to `true`,
+unlike DuckDB which requires it explicitly). `:memory:` is unsupported; use a
+file path. SAYA enforces read-only SQL regardless of the flag. For
+environment-only configurations, set `SAYA_DB_TYPE=sqlite` and `SAYA_DB_PATH=...`,
+with optional `SAYA_DB_READ_ONLY`.
+
+```toml
+[profiles.local_sqlite]
+type = "sqlite"
+path = "./data/warehouse.sqlite3"
 read_only = true
 ```
 
@@ -148,6 +162,11 @@ saya --profile snowflake_browser --approval-mode read-only ask \
 for `externalbrowser`; non-interactive or piped input fails before the browser,
 localhost callback, or Snowflake network request is started.
 
+Snowflake schema discovery pages through `INFORMATION_SCHEMA` rather than
+truncating silently, and enforces a hard cap on total columns; a schema larger
+than the cap fails with an explicit "too large to enumerate" error asking you to
+narrow the database/schema, instead of returning a partial schema.
+
 A primary execution profile is selected for a command with `--profile`.
 `--include-profile` (and interactive `/include`) connect additional read-only
 databases, and the agent navigates between all connected databases by passing an
@@ -155,10 +174,15 @@ optional `connection` argument to its schema and query tools; the primary is the
 default. Fully offline agent use is unavailable even when the database connector
 is local.
 
-All four live engines use the same command surface. `query` permits one parsed
-read-only statement, caps returned rows, and reports truncation.
-Never put
+All five live engines use the same command surface. `query` permits one parsed
+read-only statement, caps returned rows, and reports truncation. Read-only is
+enforced in two layers: the AST safety parser, and — governed by `[run].read_only`
+/ `SAYA_READ_ONLY` — the database session itself (PostgreSQL
+`default_transaction_read_only`, MySQL `SESSION transaction_read_only = 1`,
+SQLite `PRAGMA query_only = ON`, DuckDB read-only open). Results are additionally
+bounded by byte budgets — a 1 MiB per-cell cap and a 16 MiB total-result cap —
+and marked `truncated` when a row or byte limit is reached. Never put
 a raw password, private key, API key, or connection URL with embedded
 credentials in a committed file. Grant SAYA a database role that is itself
 read-only: AST validation cannot establish whether an arbitrary database
-function has side effects.
+function has side effects, and Snowflake has no equivalent session switch.

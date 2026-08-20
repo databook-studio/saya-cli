@@ -16,7 +16,11 @@ impl ProviderSettings {
             model: model.into(),
             base_url,
             timeout: Duration::from_secs(60),
-            retry_delays: vec![Duration::from_millis(10), Duration::from_millis(20)],
+            retry_delays: vec![
+                Duration::from_millis(250),
+                Duration::from_millis(500),
+                Duration::from_millis(1000),
+            ],
             temperature: 0.1,
         }
     }

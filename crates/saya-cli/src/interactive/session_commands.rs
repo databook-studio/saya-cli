@@ -1,5 +1,6 @@
 use super::session_state::SessionState;
 use crate::agent::runtime::PromptOverrides;
+use crate::cli::ContractsCommand;
 use crate::slash::SlashCommand;
 use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;
@@ -20,6 +21,10 @@ pub enum SessionAction {
     Export(String),
     Chart(String),
     Explain(String),
+    /// A contract slash command, translated to the same `ContractsCommand` the
+    /// headless `saya contracts` parser produces. The loops hand it to the
+    /// shared `run_contracts` dispatcher — no second parsing or DTO mapping.
+    Contracts(ContractsCommand),
     Exit,
 }
 
@@ -124,6 +129,7 @@ impl SessionState {
             SlashCommand::Help(topic) => {
                 SessionAction::Message(crate::slash::help_for(topic.as_deref()))
             }
+            SlashCommand::Contracts(command) => SessionAction::Contracts(command),
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

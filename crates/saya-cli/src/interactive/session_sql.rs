@@ -38,6 +38,7 @@ pub(crate) async fn run(
 
     let settings = ConnectorOptions {
         query_timeout_seconds: runtime.resolved.query_timeout_seconds,
+        read_only: runtime.resolved.read_only,
         ..Default::default()
     };
 

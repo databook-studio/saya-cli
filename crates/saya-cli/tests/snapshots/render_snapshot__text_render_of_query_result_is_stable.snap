@@ -1,0 +1,8 @@
+---
+source: crates/saya-cli/tests/render_snapshot.rs
+expression: "render_event(&event, RenderFormat::Text).stdout"
+---
+id	name
+1	alpha
+2	beta
+[truncated]

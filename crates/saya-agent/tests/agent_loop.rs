@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
     ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolExecutor, run_agent,
-    run_agent_with_sink,
+    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
+    run_agent, run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
@@ -61,20 +61,55 @@ impl ApprovalDecider for DenyApproval {
 
 #[async_trait]
 impl ToolExecutor for MockTools {
-    async fn execute(&self, name: &str, _: serde_json::Value) -> Result<serde_json::Value, String> {
+    async fn execute(
+        &self,
+        name: &str,
+        _: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
         self.calls.lock().unwrap().push(name.into());
         Ok(serde_json::json!({"rows": 1}))
     }
 }
 
 fn definitions() -> Vec<ToolDefinition> {
-    vec![ToolDefinition {
-        name: "bounded_sql_query".into(),
-        description: "read-only query".into(),
-        read_only: true,
-        parameters: serde_json::json!({"type":"object"}),
-        requires_approval: true,
-    }]
+    vec![
+        ToolDefinition {
+            name: "bounded_sql_query".into(),
+            description: "read-only query".into(),
+            read_only: true,
+            parameters: serde_json::json!({"type":"object"}),
+            effect: ToolEffect {
+                database_data: true,
+                external_side_effect: false,
+                requires_approval: true,
+                local_state: saya_agent::LocalStateEffect::None,
+            },
+        },
+        ToolDefinition {
+            name: "bounded_sql_query_all".into(),
+            description: "fan-out read-only query".into(),
+            read_only: true,
+            parameters: serde_json::json!({"type":"object"}),
+            effect: ToolEffect {
+                database_data: true,
+                external_side_effect: false,
+                requires_approval: true,
+                local_state: saya_agent::LocalStateEffect::None,
+            },
+        },
+        ToolDefinition {
+            name: "schema_discovery".into(),
+            description: "schema discovery".into(),
+            read_only: true,
+            parameters: serde_json::json!({"type":"object"}),
+            effect: ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: saya_agent::LocalStateEffect::None,
+            },
+        },
+    ]
 }
 
 fn request() -> AgentRequest {
@@ -84,6 +119,7 @@ fn request() -> AgentRequest {
         model: "mock-model".into(),
         system_prompt: None,
         history: Vec::new(),
+        context_blocks: Vec::new(),
     }
 }
 
@@ -184,6 +220,7 @@ async fn tool_call_limits_stop_run_before_unbounded_execution() {
         AgentLimits {
             max_turns: 1,
             max_tool_calls: 0,
+            permit_candidate_writes: false,
         },
         &AllowReadOnlyApproval,
     )
@@ -368,4 +405,79 @@ async fn cancellation_blocks_tool_execution_and_terminal_events() {
         event,
         AgentEvent::ToolCompleted { .. } | AgentEvent::Complete
     )));
+}
+
+#[tokio::test]
+async fn bounded_sql_query_all_sets_flag_and_schema_discovery_does_not() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query_all".into(),
+                        arguments: serde_json::json!({"sql":"select 1"}),
+                    }],
+                    tool_call_id: None,
+                },
+            },
+            ChatResponse {
+                message: ChatMessage::text("assistant", "Results across databases."),
+            },
+        ]),
+    };
+    let output = run_agent(
+        &provider,
+        &MockTools {
+            calls: calls.clone(),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "Results across databases.");
+    assert_eq!(&*calls.lock().unwrap(), &["bounded_sql_query_all"]);
+    assert!(output.used_bounded_sql_query);
+
+    let calls_schema = Arc::new(Mutex::new(Vec::new()));
+    let provider_schema = MockProvider {
+        responses: Mutex::new(vec![
+            ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-2".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    tool_call_id: None,
+                },
+            },
+            ChatResponse {
+                message: ChatMessage::text("assistant", "Discovered schema."),
+            },
+        ]),
+    };
+    let output_schema = run_agent(
+        &provider_schema,
+        &MockTools {
+            calls: calls_schema.clone(),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap();
+    assert_eq!(output_schema.answer, "Discovered schema.");
+    assert_eq!(&*calls_schema.lock().unwrap(), &["schema_discovery"]);
+    assert!(!output_schema.used_bounded_sql_query);
 }

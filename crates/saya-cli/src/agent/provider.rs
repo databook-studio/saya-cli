@@ -18,7 +18,7 @@ pub(crate) fn build(
                 .as_ref()
                 .map(|reference| resolver.resolve(reference))
                 .transpose()
-                .map_err(|_| ProviderError::Configuration("API key unavailable".into()))?;
+                .map_err(|_| ProviderError::configuration("API key unavailable"))?;
             Ok(Box::new(OpenAiCompatibleProvider::new(
                 settings,
                 key.as_ref().map(|value| value.expose()),
@@ -30,7 +30,7 @@ pub(crate) fn build(
                 .as_ref()
                 .map(|reference| resolver.resolve(reference))
                 .transpose()
-                .map_err(|_| ProviderError::Configuration("API key unavailable".into()))?;
+                .map_err(|_| ProviderError::configuration("API key unavailable"))?;
             Ok(Box::new(AnthropicProvider::new(
                 settings,
                 key.as_ref().map(|value| value.expose()),
@@ -42,7 +42,7 @@ pub(crate) fn build(
                 .as_ref()
                 .map(|reference| resolver.resolve(reference))
                 .transpose()
-                .map_err(|_| ProviderError::Configuration("API key unavailable".into()))?;
+                .map_err(|_| ProviderError::configuration("API key unavailable"))?;
             Ok(Box::new(GeminiProvider::new(
                 settings,
                 key.as_ref().map(|value| value.expose()),

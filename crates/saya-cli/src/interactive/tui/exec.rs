@@ -30,6 +30,7 @@ pub(crate) async fn run_sql(
     };
     let settings = ConnectorOptions {
         query_timeout_seconds: runtime.resolved.query_timeout_seconds,
+        read_only: runtime.resolved.read_only,
         ..Default::default()
     };
     let connector =

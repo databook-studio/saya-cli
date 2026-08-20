@@ -27,13 +27,19 @@ maintainers listed by the `databook-studio` organization with reproduction
 steps, affected version, and impact. Do not include live credentials or raw
 customer data.
 
-PostgreSQL, MySQL, DuckDB, and Snowflake are supported database paths;
-Snowflake live validation remains opt-in. Provider execution
-exists through the supported Ollama/OpenAI-compatible interfaces only;
-Anthropic, Gemini, and fully offline agent use are unavailable. Release
-archives are checksummed, but signing is an external credential and release
-plan gate and is not fabricated by CI or local packaging. The SQL
-policy is deliberately fail-closed, but it cannot prove arbitrary database
-functions are side-effect free. Use least-privilege, read-only database
-credentials and restrictive filesystem permissions for DuckDB paths; do not
-bypass those boundaries by adding write credentials to examples.
+PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake are supported database paths;
+Snowflake live validation remains opt-in. Provider execution is available
+through Ollama, OpenAI, OpenAI-compatible gateways, Anthropic, and Gemini; fully
+offline agent use is not implemented. Release archives are checksummed, but
+signing is an external credential and release-plan gate and is not fabricated by
+CI or local packaging.
+
+saya enforces read-only at the **database session level** — PostgreSQL
+`default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
+`query_only`, and a read-only DuckDB open — in addition to fail-closed,
+statement-class SQL/AST filtering. Statement filtering alone cannot prove that
+an arbitrary database function is side-effect free, and Snowflake has no
+equivalent session switch, so you must still connect with a **least-privilege,
+read-only database role**. Use restrictive filesystem permissions for
+DuckDB/SQLite file paths; do not bypass these boundaries by adding write
+credentials to examples.

@@ -23,10 +23,20 @@ impl MySqlConnector {
         settings: ConnectorOptions,
     ) -> Self {
         let query_timeout = Duration::from_secs(settings.query_timeout_seconds.max(1));
-        let pool = MySqlPoolOptions::new()
+        let mut pool_options = MySqlPoolOptions::new()
             .max_connections(settings.max_connections.max(1))
-            .acquire_timeout(query_timeout)
-            .connect_lazy_with(options);
+            .acquire_timeout(query_timeout);
+        if settings.read_only {
+            pool_options = pool_options.after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query("SET SESSION transaction_read_only = 1")
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = pool_options.connect_lazy_with(options);
         Self {
             pool,
             database: database.into(),
@@ -47,7 +57,7 @@ impl DatabaseConnector for MySqlConnector {
             sqlx::query("SELECT 1").execute(&self.pool),
         )
         .await
-        .map_err(|_| ConnectionError::ConnectionFailed("MySQL connection timed out".into()))?
+        .map_err(|_| ConnectionError::connection_failed("MySQL connection timed out"))?
         .map_err(super::errors::connection)?;
         Ok(())
     }
@@ -61,8 +71,8 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     async fn cancel(&self) -> Result<(), ConnectionError> {
-        Err(ConnectionError::Unsupported(
-            "MySQL cancellation is not safely available".into(),
+        Err(ConnectionError::unsupported(
+            "MySQL cancellation is not safely available",
         ))
     }
 }

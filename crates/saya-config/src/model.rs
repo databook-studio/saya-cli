@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use saya_types::{DatabaseProfile, SecretRef};
 use serde::Deserialize;
 
-use crate::{AiProvider, ColorChoice, ConfigError, OutputFormat, RedactedDiagnostics};
+use crate::{AiProvider, ColorChoice, ConfigError, MemoryMode, OutputFormat, RedactedDiagnostics};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ConfigFile {
@@ -14,6 +14,8 @@ pub struct ConfigFile {
     pub run: RunFile,
     #[serde(default)]
     pub output: OutputFile,
+    #[serde(default)]
+    pub memory: MemoryFile,
 }
 
 impl ConfigFile {
@@ -60,4 +62,18 @@ pub struct RunFile {
 pub struct OutputFile {
     pub format: Option<OutputFormat>,
     pub color: Option<ColorChoice>,
+}
+
+/// The `[memory]` section.
+///
+/// Uses `#[serde(deny_unknown_fields)]` so obsolete multi-axis configurations
+/// (such as `recall` or `learning`) fail loudly at parse time instead of silently
+/// falling back to defaults.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryFile {
+    pub mode: Option<MemoryMode>,
+    pub max_contracts: Option<u32>,
+    pub max_claims_per_contract: Option<u32>,
+    pub max_context_bytes: Option<u32>,
 }
