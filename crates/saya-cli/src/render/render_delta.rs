@@ -1,8 +1,8 @@
-use super::Rendered;
+use super::{Rendered, sanitize_terminal};
 
 pub(super) fn text(text: &str) -> Rendered {
     Rendered {
-        stdout: text.into(),
+        stdout: sanitize_terminal(text),
         stderr: String::new(),
     }
 }

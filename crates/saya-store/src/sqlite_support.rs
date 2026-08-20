@@ -39,15 +39,17 @@ pub fn state_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     value.into()
 }
 
+// Values also arrive from disk and from callers outside this workspace, so the
+// boundary check stays even though saya_types::ProfileIdentity now owns the rule.
+//
+// This is fractionally stricter than the check it replaces: the old one used
+// is_ascii_hexdigit and so accepted uppercase, while ProfileIdentity admits only
+// lowercase. Nothing stored is affected — the deriver has always emitted `{:02x}`
+// — and one canonical spelling is what makes the identity usable as a key.
 pub(crate) fn validate_profile_id(value: &str) -> Result<(), StoreError> {
-    if value.len() == 66
-        && value.starts_with("p-")
-        && value[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        Ok(())
-    } else {
-        Err(StoreError::Unavailable)
-    }
+    saya_types::ProfileIdentity::parse(value)
+        .map(|_| ())
+        .map_err(|_| StoreError::Invalid)
 }
 pub(crate) fn validate_session_id(value: &str) -> Result<(), StoreError> {
     if !value.is_empty()

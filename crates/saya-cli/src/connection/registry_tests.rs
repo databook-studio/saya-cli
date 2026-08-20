@@ -18,11 +18,11 @@ impl DatabaseConnector for DummyConnector {
     }
 
     async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
-        Err(ConnectionError::SchemaFailed("dummy".into()))
+        Err(ConnectionError::schema_failed("dummy"))
     }
 
     async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
-        Err(ConnectionError::QueryFailed("dummy".into()))
+        Err(ConnectionError::query_failed("dummy"))
     }
 }
 
@@ -40,15 +40,15 @@ fn test_resolve_behavior() {
 
     // Empty registry resolves to Err("no database profile is selected")
     assert_eq!(
-        reg.resolve(None).unwrap_err(),
+        reg.resolve(None).unwrap_err().to_string(),
         "no database profile is selected"
     );
     assert_eq!(
-        reg.resolve(Some("")).unwrap_err(),
+        reg.resolve(Some("")).unwrap_err().to_string(),
         "no database profile is selected"
     );
     assert_eq!(
-        reg.resolve(Some("any")).unwrap_err(),
+        reg.resolve(Some("any")).unwrap_err().to_string(),
         "no database profile is selected"
     );
 
@@ -72,7 +72,7 @@ fn test_resolve_behavior() {
     // resolve(Some(unknown)) returns Err listing available connections
     let err = reg.resolve(Some("unknown_db")).unwrap_err();
     assert_eq!(
-        err,
+        err.to_string(),
         "unknown connection \"unknown_db\"; available connections: primary_db, secondary_db"
     );
 }

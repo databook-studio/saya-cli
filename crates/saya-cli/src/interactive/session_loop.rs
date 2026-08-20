@@ -179,6 +179,16 @@ fn handle_line(
         block_on(store.save(state.redacted()))?;
         return Ok(false);
     }
+    if let SessionAction::Contracts(command) = action {
+        // The slash adapter hands the translated `ContractsCommand` to the same
+        // `run_contracts` dispatcher the headless `saya contracts` path uses; the
+        // captured output goes to the terminal through the shared `emit` seam.
+        block_on(crate::commands::run_contracts(
+            command, runtime, format, state_db,
+        ))?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
     if let SessionAction::Resume(id) = action {
         let defaults = super::session_resume::SessionDefaults {
             provider: state.provider.clone(),

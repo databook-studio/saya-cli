@@ -22,6 +22,7 @@ impl SecretRef {
 }
 
 /// Typed database connection profile loaded from `connections.toml`.
+/// Exhaustive matching is intentional so the compiler forces every backend to handle every profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum DatabaseProfile {
@@ -52,6 +53,12 @@ pub enum DatabaseProfile {
         path: String,
         read_only: Option<bool>,
     },
+    #[serde(rename = "sqlite")]
+    Sqlite {
+        path: String,
+        #[serde(default = "default_true")]
+        read_only: bool,
+    },
     #[serde(rename = "snowflake")]
     Snowflake {
         account: String,
@@ -65,6 +72,10 @@ pub enum DatabaseProfile {
         schema: Option<String>,
         role: Option<String>,
     },
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 /// PostgreSQL TLS verification mode. `None` preserves PostgreSQL's `prefer`
@@ -105,6 +116,7 @@ impl DatabaseProfile {
             Self::Postgres { .. } => SqlDialect::Postgres,
             Self::Mysql { .. } => SqlDialect::Mysql,
             Self::DuckDb { .. } => SqlDialect::DuckDb,
+            Self::Sqlite { .. } => SqlDialect::Sqlite,
             Self::Snowflake { .. } => SqlDialect::Snowflake,
         }
     }

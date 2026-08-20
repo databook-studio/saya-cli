@@ -18,6 +18,13 @@ const KNOWN_COMMANDS: &[(&str, &str)] = &[
     ("approvals", "Set approval policy for tool execution"),
     ("schema", "Inspect or refresh database schema"),
     ("sql", "Run a raw SQL query against the active profile"),
+    (
+        "contracts",
+        "List recalled contracts for the active profile",
+    ),
+    ("contract", "Show one object's contract"),
+    ("remember", "Store a confirmed contract claim"),
+    ("forget", "Tombstone a contract claim so recall excludes it"),
     ("clear", "Clear current session context"),
     ("history", "Show saved sessions"),
     ("sessions", "List saved sessions"),
@@ -131,7 +138,7 @@ mod tests {
     fn test_slash_only() {
         let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
         assert_eq!((start, end), (0, 1));
-        assert_eq!(candidates.len(), 17);
+        assert_eq!(candidates.len(), 21);
         assert_eq!(candidates[0].value, "/connect");
         assert_eq!(
             candidates[0].description.as_deref(),
@@ -144,7 +151,12 @@ mod tests {
         let (start, end, candidates) = slash_candidates("/co", &profiles()).unwrap();
         assert_eq!((start, end), (0, 3));
         let values: Vec<_> = candidates.iter().map(|c| c.value.as_str()).collect();
-        assert_eq!(values, vec!["/connect", "/connections"]);
+        // "co" prefixes connect, connections, contracts, contract; all tie on
+        // score, so the stable sort keeps KNOWN_COMMANDS order.
+        assert_eq!(
+            values,
+            vec!["/connect", "/connections", "/contracts", "/contract"]
+        );
     }
 
     #[test]
@@ -152,7 +164,10 @@ mod tests {
         let (start, end, candidates) = slash_candidates("/CO", &profiles()).unwrap();
         assert_eq!((start, end), (0, 3));
         let values: Vec<_> = candidates.iter().map(|c| c.value.as_str()).collect();
-        assert_eq!(values, vec!["/connect", "/connections"]);
+        assert_eq!(
+            values,
+            vec!["/connect", "/connections", "/contracts", "/contract"]
+        );
     }
 
     #[test]

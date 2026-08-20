@@ -26,7 +26,7 @@ impl DuckDbConnector {
         let timeout = Duration::from_secs(settings.query_timeout_seconds.max(1));
         tokio::task::spawn_blocking(move || open_sync(&path, read_only, timeout))
             .await
-            .map_err(|_| ConnectionError::ConnectionFailed("DuckDB open task failed".into()))?
+            .map_err(|_| ConnectionError::connection_failed("DuckDB open task failed"))?
     }
 }
 
@@ -48,11 +48,10 @@ fn open_sync(
         .and_then(|item| item.with("allow_persistent_secrets", "false"))
         .and_then(|item| item.with("lock_configuration", "true"))
         .map_err(|_| {
-            ConnectionError::InvalidConfiguration("DuckDB security configuration failed".into())
+            ConnectionError::invalid_configuration("DuckDB security configuration failed")
         })?;
-    let connection = Connection::open_with_flags(Path::new(path), config).map_err(|_| {
-        ConnectionError::ConnectionFailed("DuckDB database could not be opened".into())
-    })?;
+    let connection = Connection::open_with_flags(Path::new(path), config)
+        .map_err(|_| ConnectionError::connection_failed("DuckDB database could not be opened"))?;
     let interrupt = connection.interrupt_handle();
     Ok(DuckDbConnector {
         connection: Arc::new(Mutex::new(connection)),

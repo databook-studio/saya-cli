@@ -67,7 +67,7 @@ async fn test(
         Err(error) => {
             return failure(
                 3,
-                saya_types::ConnectionError::InvalidConfiguration(error.to_string()),
+                saya_types::ConnectionError::invalid_configuration(error.to_string()),
                 format,
             );
         }
@@ -144,6 +144,7 @@ pub(super) async fn build(
     let resolver = runtime.secret_resolver();
     let settings = ConnectorOptions {
         query_timeout_seconds: runtime.resolved.query_timeout_seconds,
+        read_only: runtime.resolved.read_only,
         ..Default::default()
     };
     build_connector_with_prompt(profile, &resolver, settings, can_prompt).await

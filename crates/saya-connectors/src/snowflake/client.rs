@@ -18,6 +18,8 @@ pub struct SnowflakeConnector {
     pub(crate) auth: Auth,
     pub(crate) context: Context,
     pub(crate) timeout: Duration,
+    /// Serializes executes so the single active-query ID used for cancellation is unambiguous.
+    pub(crate) in_flight: Arc<Mutex<()>>,
     pub(crate) active: Arc<Mutex<Option<String>>>,
     pub(crate) browser_opener: fn(&str) -> Result<(), ()>,
     pub(crate) sso_timeout: Duration,
@@ -41,8 +43,8 @@ impl SnowflakeConnector {
     ) -> Result<Self, ConnectionError> {
         let host_account = account.trim().to_ascii_lowercase();
         if !valid_account(&host_account) {
-            return Err(ConnectionError::InvalidConfiguration(
-                "invalid Snowflake account identifier".into(),
+            return Err(ConnectionError::invalid_configuration(
+                "invalid Snowflake account identifier",
             ));
         }
         let timeout = Duration::from_secs(options.query_timeout_seconds.max(1));
@@ -64,6 +66,7 @@ impl SnowflakeConnector {
             auth,
             context,
             timeout,
+            in_flight: Arc::new(Mutex::new(())),
             active: Arc::new(Mutex::new(None)),
             browser_opener: browser::open,
             sso_timeout: sso::auth_timeout(),
@@ -112,5 +115,50 @@ impl DatabaseConnector for SnowflakeConnector {
     }
     async fn cancel(&self) -> Result<(), ConnectionError> {
         cancellation::cancel(self).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::snowflake::auth;
+
+    #[tokio::test]
+    async fn test_in_flight_mutex_serializes() {
+        let connector = SnowflakeConnector::new(
+            "account".into(),
+            "user".into(),
+            Auth::Userpass(auth::Userpass {
+                password: "pass".into(),
+                token: Arc::new(Mutex::new(None)),
+            }),
+            Context {
+                warehouse: None,
+                database: None,
+                schema: None,
+                role: None,
+            },
+            ConnectorOptions::default(),
+        )
+        .unwrap();
+
+        let guard = connector.in_flight.try_lock();
+        assert!(
+            guard.is_ok(),
+            "in_flight mutex should be initially unlocked"
+        );
+
+        let second_guard = connector.in_flight.try_lock();
+        assert!(
+            second_guard.is_err(),
+            "in_flight mutex should be locked while guard held"
+        );
+
+        drop(guard);
+        let third_guard = connector.in_flight.try_lock();
+        assert!(
+            third_guard.is_ok(),
+            "in_flight mutex should be lockable after drop"
+        );
     }
 }

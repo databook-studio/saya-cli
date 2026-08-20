@@ -14,7 +14,7 @@ pub(crate) async fn cancel(connector: &PostgresConnector) -> Result<(), Connecti
             .execute(&connector.pool),
     )
     .await
-    .map_err(|_| ConnectionError::QueryFailed("PostgreSQL cancellation timed out".into()))?
+    .map_err(|_| ConnectionError::query_failed("PostgreSQL cancellation timed out"))?
     .map_err(errors::query)?;
     Ok(())
 }

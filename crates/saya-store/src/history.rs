@@ -12,11 +12,17 @@ pub(crate) fn list(root: &Path) -> Result<Vec<SessionSummary>, StoreError> {
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
     {
+        // The session id is the file stem (save writes `<id>.json`), so listing
+        // needs neither to read nor to deserialize the whole conversation — only
+        // the name and the modification time. This keeps listing O(sessions),
+        // independent of session size.
         let path = entry.path();
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(session) = serde_json::from_str::<crate::RedactedSession>(&content) else {
+        let Some(id) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .map(str::to_owned)
+        else {
             continue;
         };
         let modified_unix_ms = entry
@@ -27,7 +33,7 @@ pub(crate) fn list(root: &Path) -> Result<Vec<SessionSummary>, StoreError> {
             .map(|duration| duration.as_millis())
             .unwrap_or_default();
         history.push(SessionSummary {
-            id: session.id,
+            id,
             modified_unix_ms,
         });
     }

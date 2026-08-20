@@ -19,3 +19,14 @@ pub(super) fn invalid_port() -> ConfigError {
         reason: "expected an unsigned 16-bit integer".into(),
     }
 }
+
+pub(super) fn parse_bool(name: &'static str, value: &str) -> Result<bool, ConfigError> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(ConfigError::InvalidEnvironment {
+            name: name.into(),
+            reason: "expected true or false".into(),
+        }),
+    }
+}

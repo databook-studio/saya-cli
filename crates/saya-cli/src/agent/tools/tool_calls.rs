@@ -6,7 +6,7 @@ use super::sql_format::{collapse_whitespace, format_sql};
 /// for the fan-out tool), or `None` for tools with nothing worth showing.
 pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Option<String> {
     match name {
-        "bounded_sql_query" | "bounded_sql_query_all" => {
+        "bounded_sql_query" | "bounded_sql_query_all" | "render_chart" => {
             let sql = arguments.get("sql").and_then(serde_json::Value::as_str)?;
             let sql = collapse_whitespace(sql);
             if sql.is_empty() {
@@ -17,6 +17,18 @@ pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Opt
                 .and_then(serde_json::Value::as_str)
                 .filter(|value| !value.is_empty());
             Some(match (name, connection) {
+                ("render_chart", connection) => {
+                    let chart_type = arguments
+                        .get("chart_type")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|v| !v.is_empty());
+                    match (connection, chart_type) {
+                        (Some(conn), Some(ct)) => format!("{sql}  (@{conn}) (chart: {ct})"),
+                        (Some(conn), None) => format!("{sql}  (@{conn})"),
+                        (None, Some(ct)) => format!("{sql}  (chart: {ct})"),
+                        (None, None) => sql,
+                    }
+                }
                 (_, Some(connection)) => format!("{sql}  (@{connection})"),
                 ("bounded_sql_query_all", None) => format!("{sql}  (all connected databases)"),
                 _ => sql,
@@ -37,7 +49,7 @@ pub(crate) struct SqlCall {
 /// or when there is no non-empty `sql` argument.
 pub(crate) fn sql_tool_call(name: &str, arguments: &serde_json::Value) -> Option<SqlCall> {
     match name {
-        "bounded_sql_query" | "bounded_sql_query_all" => {
+        "bounded_sql_query" | "bounded_sql_query_all" | "render_chart" => {
             let raw = arguments.get("sql").and_then(serde_json::Value::as_str)?;
             let sql = format_sql(raw);
             if sql.is_empty() {
@@ -55,5 +67,32 @@ pub(crate) fn sql_tool_call(name: &str, arguments: &serde_json::Value) -> Option
             Some(SqlCall { target, sql })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_chart_tool_call_detail_surfaces_sql() {
+        let detail = tool_call_detail(
+            "render_chart",
+            &serde_json::json!({"sql": "SELECT 1", "chart_type": "bar"}),
+        )
+        .expect("render_chart detail exists");
+        assert!(detail.contains("SELECT 1"));
+        assert!(detail.contains("(chart: bar)"));
+    }
+
+    #[test]
+    fn render_chart_sql_tool_call_surfaces_sql() {
+        let call = sql_tool_call(
+            "render_chart",
+            &serde_json::json!({"sql": "SELECT 1", "chart_type": "bar"}),
+        )
+        .expect("render_chart SqlCall exists");
+        assert_eq!(call.target, None);
+        assert_eq!(call.sql, "SELECT 1");
     }
 }

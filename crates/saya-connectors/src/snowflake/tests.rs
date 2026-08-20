@@ -135,6 +135,7 @@ fn connector(auth: Auth) -> SnowflakeConnector {
         ConnectorOptions {
             query_timeout_seconds: 2,
             max_connections: 1,
+            ..Default::default()
         },
     )
     .unwrap()
@@ -640,6 +641,23 @@ fn failing_browser_opener(_: &str) -> Result<(), ()> {
     Err(())
 }
 
+/// `browser_opener` is a bare `fn` pointer, so tests that want to inspect the
+/// opened URL must capture it through the process-global `OPENED_URL`. Tests
+/// that install `record_browser_opener` therefore share that global and must run
+/// serially; this guard enforces mutual exclusion and resets the captured URL so
+/// one test never observes another's value. An async-aware mutex is used because
+/// the guard is held across the SSO flow's `.await` points.
+static BROWSER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn browser_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    let guard = BROWSER_TEST_LOCK.lock().await;
+    *OPENED_URL
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    guard
+}
+
 fn external_connector() -> SnowflakeConnector {
     connector(Auth::ExternalBrowser(ExternalBrowser {
         enabled: true,
@@ -653,6 +671,7 @@ fn auth_response(url: &str) -> Reply {
 
 #[tokio::test]
 async fn external_browser_rejects_bad_urls_provider_failures_and_opener_failures() {
+    let _serial = browser_test_guard().await;
     for url in [
         "http://idp.example.test/login",
         "https://user:pass@idp.example.test/login",
@@ -696,6 +715,7 @@ async fn external_browser_rejects_bad_urls_provider_failures_and_opener_failures
 
 #[tokio::test]
 async fn external_browser_timeout_is_bounded_and_secret_free() {
+    let _serial = browser_test_guard().await;
     let marker = "callback-secret-marker";
     let (origin, _) = server(vec![auth_response(
         "https://idp.example.test/login?state=secret",
@@ -786,6 +806,7 @@ async fn sso_exchange_failure_server() -> String {
 
 #[tokio::test]
 async fn external_browser_exchanges_fragmented_callback_caches_and_reauthenticates() {
+    let _serial = browser_test_guard().await;
     let (origin, seen) = sso_fixture_server().await;
     let mut item = connector(Auth::ExternalBrowser(ExternalBrowser {
         enabled: true,

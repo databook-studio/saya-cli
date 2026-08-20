@@ -10,7 +10,7 @@ use saya_types::DatabaseProfile;
 use std::time::Duration;
 
 pub(super) fn identity(name: &str, profile: &DatabaseProfile, scope: &std::path::Path) -> String {
-    profile_identity(name, profile, scope)
+    profile_identity(name, profile, scope).as_str().to_owned()
 }
 
 #[allow(clippy::too_many_arguments)]
