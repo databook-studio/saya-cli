@@ -59,3 +59,36 @@ pub enum ColorChoice {
     Always,
     Never,
 }
+
+/// Memory operational mode.
+///
+/// - `Off`: memory is completely disabled — no store queries, no proposals, no observation logging.
+/// - `Assisted`: explicit user statements are active knowledge, assistant inferences are pending,
+///   active knowledge is supplied in recall, and pending knowledge is labelled unconfirmed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
+#[serde(rename_all = "kebab-case")]
+pub enum MemoryMode {
+    /// Memory is disabled.
+    #[default]
+    Off,
+    /// Active knowledge is recalled and assistant proposals are persisted as candidates for review.
+    Assisted,
+}
+
+impl MemoryMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Assisted => "assisted",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "assisted" => Some(Self::Assisted),
+            _ => None,
+        }
+    }
+}

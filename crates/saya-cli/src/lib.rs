@@ -5,6 +5,8 @@ mod cli;
 mod commands;
 mod config;
 mod connection;
+#[allow(dead_code)] // contract ops surface for the adapter slices (2b-2/3/4) not yet wired in
+mod contracts;
 mod interactive;
 mod render;
 mod runtime_profile;
@@ -20,11 +22,19 @@ mod state_path;
 use clap::Parser;
 
 pub use app::run;
-pub use cli::{Cli, Command, ConfigCommand, ConnectionCommand, FormatArg, GlobalOptions};
+pub use cli::{
+    ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
+    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg,
+};
+pub use commands::{capture_output_start, capture_output_take, run_contracts};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
-pub use render::{RenderFormat, TerminalEvent, render_event};
+pub use profile_identity::profile_identity;
+pub use render::{
+    ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView, RenderFormat,
+    TerminalEvent, render_event,
+};
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state_path::resolve_state_db_path;
 

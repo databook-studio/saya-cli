@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 /// Persistent, de-duplicated input history with Up/Down navigation.
@@ -7,55 +8,79 @@ pub(crate) struct History {
     cursor: Option<usize>,
     path: PathBuf,
     limit: usize,
+    disabled: bool,
+}
+
+fn is_disabled_env() -> bool {
+    std::env::var("SAYA_HISTORY").is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "off" | "0" | "false"
+        )
+    })
 }
 
 #[allow(dead_code)]
 impl History {
-    /// Loads history from the default history file path.
     pub(crate) fn load() -> Self {
         let path = crate::interactive::session_paths::default_history_file();
-        let entries = match std::fs::read_to_string(&path) {
-            Ok(contents) => {
-                let mut lines: Vec<String> = contents
-                    .lines()
-                    .map(|l| l.trim().to_string())
-                    .filter(|l| !l.is_empty())
-                    .collect();
-                if lines.len() > 1000 {
-                    lines.drain(..lines.len() - 1000);
-                }
-                lines
-            }
-            Err(_) => Vec::new(),
+        let disabled = is_disabled_env();
+        let entries = if disabled {
+            Vec::new()
+        } else {
+            std::fs::read_to_string(&path)
+                .map(|c| {
+                    let mut l: Vec<_> = c
+                        .lines()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if l.len() > 1000 {
+                        l.drain(..l.len() - 1000);
+                    }
+                    l
+                })
+                .unwrap_or_default()
         };
         Self {
             entries,
             cursor: None,
             path,
             limit: 1000,
+            disabled,
         }
     }
 
-    /// Creates an empty history instance with the given path and limit 1000.
     pub(crate) fn with_path(path: PathBuf) -> Self {
         Self {
             entries: Vec::new(),
             cursor: None,
             path,
             limit: 1000,
+            disabled: false,
         }
     }
 
-    /// Pushes a new entry into history, persisting it to disk if changed.
+    #[cfg(test)]
+    pub(crate) fn with_path_disabled(path: PathBuf) -> Self {
+        Self {
+            entries: Vec::new(),
+            cursor: None,
+            path,
+            limit: 1000,
+            disabled: true,
+        }
+    }
+
     pub(crate) fn push(&mut self, line: &str) {
+        if self.disabled {
+            return;
+        }
         let trimmed = line.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || self.entries.last().map(String::as_str) == Some(trimmed) {
             return;
         }
         self.cursor = None;
-        if self.entries.last().map(String::as_str) == Some(trimmed) {
-            return;
-        }
         self.entries.push(trimmed.to_string());
         if self.entries.len() > self.limit {
             self.entries.drain(..self.entries.len() - self.limit);
@@ -63,45 +88,74 @@ impl History {
         self.save();
     }
 
-    /// Moves toward older entries (Up).
     pub(crate) fn previous(&mut self) -> Option<&str> {
         if self.entries.is_empty() {
             return None;
         }
-        let last_idx = self.entries.len() - 1;
-        let new_idx = match self.cursor {
-            None => last_idx,
-            Some(idx) => idx.saturating_sub(1),
-        };
-        self.cursor = Some(new_idx);
-        Some(&self.entries[new_idx])
+        let idx = self
+            .cursor
+            .map_or(self.entries.len() - 1, |i| i.saturating_sub(1));
+        self.cursor = Some(idx);
+        Some(&self.entries[idx])
     }
 
-    /// Moves toward newer entries (Down).
     pub(crate) fn next(&mut self) -> Option<&str> {
         let idx = self.cursor?;
-        let last_idx = self.entries.len().checked_sub(1)?;
-        if idx >= last_idx {
+        if idx >= self.entries.len().checked_sub(1)? {
             self.cursor = None;
             None
         } else {
-            let new_idx = idx + 1;
-            self.cursor = Some(new_idx);
-            Some(&self.entries[new_idx])
+            self.cursor = Some(idx + 1);
+            Some(&self.entries[idx + 1])
         }
     }
 
-    /// Resets navigation to the live line.
     pub(crate) fn reset(&mut self) {
         self.cursor = None;
     }
 
     fn save(&self) {
-        if let Some(parent) = self.path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if self.disabled {
+            return;
         }
-        let content = self.entries.join("\n");
-        let _ = std::fs::write(&self.path, content);
+        if let Some(p) = self.path.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let pid = std::process::id();
+        let name = self
+            .path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("history");
+        let tmp = self.path.with_file_name(format!("{name}.{pid}.tmp"));
+        let content = self
+            .entries
+            .iter()
+            .map(|e| saya_store::redact(e))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let write_tmp = || -> std::io::Result<()> {
+            #[cfg(unix)]
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            #[cfg(unix)]
+            let mut opts = std::fs::OpenOptions::new();
+            #[cfg(unix)]
+            opts.mode(0o600);
+            #[cfg(not(unix))]
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            let mut f = opts.open(&tmp)?;
+            f.write_all(content.as_bytes())?;
+            f.flush()?;
+            drop(f);
+            #[cfg(unix)]
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            std::fs::rename(&tmp, &self.path)
+        };
+        if write_tmp().is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 }
 
@@ -109,78 +163,87 @@ impl History {
 mod tests {
     use super::*;
 
-    fn temp_file_path(tag: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
+    fn tmp_path(tag: &str) -> PathBuf {
+        let n = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        std::env::temp_dir().join(format!("saya_history_test_{tag}_{nanos}.txt"))
+            .map_or(0, |d| d.as_nanos());
+        std::env::temp_dir().join(format!("saya_hist_{tag}_{n}.txt"))
     }
 
     #[test]
-    fn test_empty_history() {
-        let path = temp_file_path("empty");
-        let mut history = History::with_path(path.clone());
-        assert_eq!(history.previous(), None);
-        assert_eq!(history.next(), None);
-        let _ = std::fs::remove_file(path);
+    fn test_navigation_clamping_and_dedup() {
+        let p = tmp_path("nav");
+        let mut h = History::with_path(p.clone());
+        assert_eq!(h.previous(), None);
+        assert_eq!(h.next(), None);
+        h.push("first");
+        h.push("second");
+        h.push("second");
+        h.push("third");
+        assert_eq!(h.previous(), Some("third"));
+        assert_eq!(h.previous(), Some("second"));
+        assert_eq!(h.previous(), Some("first"));
+        assert_eq!(h.previous(), Some("first"));
+        assert_eq!(h.next(), Some("second"));
+        assert_eq!(h.next(), Some("third"));
+        assert_eq!(h.next(), None);
+        let _ = std::fs::remove_file(p);
     }
 
     #[test]
-    fn test_navigation_and_clamping() {
-        let path = temp_file_path("nav");
-        let mut history = History::with_path(path.clone());
-        history.push("first");
-        history.push("second");
-        history.push("third");
+    fn test_redaction_and_persistence() {
+        let p = tmp_path("redact");
+        let raw = "connect password=hunter2 token=abc";
+        let mut h = History::with_path(p.clone());
+        h.push("one");
+        h.push(raw);
+        assert_eq!(h.previous(), Some(raw));
+        h.reset();
+        assert_eq!(h.cursor, None);
+        let c = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            c.contains("one\n")
+                && c.contains("[redacted]")
+                && !c.contains("hunter2")
+                && !c.contains("abc")
+        );
+        let _ = std::fs::remove_file(p);
+    }
 
-        // Previous walks older then clamps
-        assert_eq!(history.previous(), Some("third"));
-        assert_eq!(history.previous(), Some("second"));
-        assert_eq!(history.previous(), Some("first"));
-        assert_eq!(history.previous(), Some("first"));
-
-        // Next walks newer then returns None at live line
-        assert_eq!(history.next(), Some("second"));
-        assert_eq!(history.next(), Some("third"));
-        assert_eq!(history.next(), None);
-        assert_eq!(history.next(), None);
-
-        let _ = std::fs::remove_file(path);
+    #[cfg(unix)]
+    #[test]
+    fn test_unix_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = tmp_path("perms");
+        let mut h = History::with_path(p.clone());
+        h.push("line");
+        let meta = std::fs::metadata(&p).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_file(p);
     }
 
     #[test]
-    fn test_dedup_consecutive() {
-        let path = temp_file_path("dedup");
-        let mut history = History::with_path(path.clone());
-        history.push("cmd");
-        history.push("cmd");
-        history.push("  cmd  ");
-        history.push("other");
-        history.push("other");
-
-        assert_eq!(history.entries.len(), 2);
-        assert_eq!(history.previous(), Some("other"));
-        assert_eq!(history.previous(), Some("cmd"));
-
-        let _ = std::fs::remove_file(path);
+    fn test_disabled_history() {
+        let p = tmp_path("disabled");
+        let mut h = History::with_path_disabled(p.clone());
+        h.push("secret entry");
+        assert!(!p.exists() && h.previous().is_none());
     }
 
     #[test]
-    fn test_persistence_and_reset() {
-        let path = temp_file_path("persist");
-        {
-            let mut history = History::with_path(path.clone());
-            history.push("one");
-            history.push("two");
-            assert_eq!(history.previous(), Some("two"));
-            history.reset();
-            assert_eq!(history.cursor, None);
-        }
-
-        let contents = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(contents, "one\ntwo");
-
-        let _ = std::fs::remove_file(path);
+    fn test_atomic_and_complete() {
+        let p = tmp_path("atomic");
+        let mut h = History::with_path(p.clone());
+        h.push("line1 password=secret1");
+        h.push("line2 token=secret2");
+        h.push("line3");
+        let c = std::fs::read_to_string(&p).unwrap();
+        let exp = vec![
+            "line1 password=[redacted]",
+            "line2 token=[redacted]",
+            "line3",
+        ];
+        assert_eq!(c.lines().collect::<Vec<_>>(), exp);
+        let _ = std::fs::remove_file(p);
     }
 }

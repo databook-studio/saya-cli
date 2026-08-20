@@ -81,11 +81,11 @@ pub(crate) async fn run<T: Send + 'static>(
 }
 
 fn error(_: duckdb::Error) -> ConnectionError {
-    ConnectionError::QueryFailed("DuckDB query failed".into())
+    ConnectionError::query_failed("DuckDB query failed")
 }
 
 fn connection_error(_: duckdb::Error) -> ConnectionError {
-    ConnectionError::ConnectionFailed("DuckDB connection failed".into())
+    ConnectionError::connection_failed("DuckDB connection failed")
 }
 
 #[derive(Clone, Copy)]
@@ -99,9 +99,9 @@ impl Operation {
     fn failed(self, detail: &str) -> ConnectionError {
         let message = format!("DuckDB {detail}");
         match self {
-            Self::Connection => ConnectionError::ConnectionFailed(message),
-            Self::Schema => ConnectionError::SchemaFailed(message),
-            Self::Query => ConnectionError::QueryFailed(message),
+            Self::Connection => ConnectionError::connection_failed(message),
+            Self::Schema => ConnectionError::schema_failed(message),
+            Self::Query => ConnectionError::query_failed(message),
         }
     }
 }

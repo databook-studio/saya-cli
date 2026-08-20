@@ -1,0 +1,5 @@
+---
+source: crates/saya-cli/tests/render_snapshot.rs
+expression: "render_event(&event, RenderFormat::Json).stdout"
+---
+{"event":"query_result","result":{"columns":["id","name"],"rows":[[1,"alpha"],[2,"beta"]],"row_count":2,"truncated":true,"executed_sql":"SELECT id, name FROM t LIMIT 2"}}

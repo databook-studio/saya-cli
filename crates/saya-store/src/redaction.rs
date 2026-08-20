@@ -1,4 +1,4 @@
-pub(crate) fn redact(value: &str) -> String {
+pub fn redact(value: &str) -> String {
     redact_urls(&redact_markers(value))
 }
 

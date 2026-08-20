@@ -47,8 +47,14 @@ jobs:
         with:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: cargo-nextest
       - run: cargo fmt --check
-      - run: cargo test --workspace --locked
+      # nextest runs the test binaries; a separate --doc pass covers doctests, which
+      # nextest does not execute. Together these match the old `cargo test` coverage.
+      - run: cargo nextest run --workspace --locked --profile ci
+      - run: cargo test --workspace --doc --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   postgres-live:

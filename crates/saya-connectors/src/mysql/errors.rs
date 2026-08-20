@@ -2,22 +2,22 @@ use saya_types::ConnectionError;
 
 pub(crate) fn connection(error: sqlx::Error) -> ConnectionError {
     if authentication(&error) {
-        ConnectionError::AuthenticationFailed("MySQL authentication failed".into())
+        ConnectionError::authentication_failed("MySQL authentication failed")
     } else {
-        ConnectionError::ConnectionFailed("MySQL connection failed".into())
+        ConnectionError::connection_failed("MySQL connection failed")
     }
 }
 
 pub(crate) fn query(error: sqlx::Error) -> ConnectionError {
     if authentication(&error) {
-        ConnectionError::AuthenticationFailed("MySQL authentication failed".into())
+        ConnectionError::authentication_failed("MySQL authentication failed")
     } else {
-        ConnectionError::QueryFailed("MySQL query failed".into())
+        ConnectionError::query_failed("MySQL query failed")
     }
 }
 
 pub(crate) fn schema(_: sqlx::Error) -> ConnectionError {
-    ConnectionError::SchemaFailed("MySQL schema discovery failed".into())
+    ConnectionError::schema_failed("MySQL schema discovery failed")
 }
 
 fn authentication(error: &sqlx::Error) -> bool {

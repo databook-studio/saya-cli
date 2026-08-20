@@ -20,6 +20,7 @@ pub(crate) fn emit_action(
         SessionAction::Agent(_)
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)
+        | SessionAction::Contracts(_)
         | SessionAction::Resume(_)
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(

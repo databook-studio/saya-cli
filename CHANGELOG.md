@@ -5,6 +5,82 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.3.0 — 2026-08-20 — conversational memory
+
+SAYA learns your data vocabulary from ordinary conversation and carries it
+between sessions. Everything else in this release is secondary to that.
+
+### Added
+
+- **Memory and data contracts** — SAYA remembers typed facts about your tables (a
+  reporting time column, an alias, a grain, a column's role) and uses them when
+  building later queries.
+
+  **It learns from conversation, not commands.** Say "we count a rental by
+  `return_date`, not `rental_date`, because a rental only counts once it comes
+  back" while asking an ordinary question, and SAYA answers *and* records the
+  fact — including the reason. A later session, in a new process, recalls it and
+  says so. `saya contracts remember` still exists for stating a fact directly,
+  and `contracts list` / `show` / `forget` / `queue` inspect and reverse what is
+  known.
+
+  **Nothing is remembered unless you turn it on.** `[memory] mode` defaults to
+  `off`, so upgrading changes nothing; `assisted` enables recall and post-turn
+  learning. A fact you state yourself is recorded as confirmed; anything SAYA
+  merely infers is a candidate, inert until a human confirms it in
+  `contracts queue`. Repetition never promotes a candidate.
+
+  **What reached the model is always visible.** Every turn that used memory
+  prints a `memory supplied` receipt naming each claim, so recall is inspectable
+  rather than asserted. When SAYA departs from a confirmed claim it says so in
+  the answer and prints `memory overridden`. When a turn's learning fails or
+  times out it prints `memory not recorded` — a fact you stated is never dropped
+  in silence. `--verbose` reports the learning boundary itself: the gate
+  decision, the objects involved, the outcome, and how many facts were kept.
+
+  Claims are typed and bounded, not free text: they cannot hold SQL, credentials,
+  file paths or instructions, and the store refuses those shapes rather than
+  scrubbing them. Recalled context reaches the model as quoted, delimited data
+  marked untrusted — never as instruction — so a claim can never enable a tool or
+  authorise a query. Every statement still passes the same read-only safety layer.
+
+  Claims know the shape of the object they describe, so a schema refresh marks a
+  claim stale when a column it depends on is removed, renamed, retyped or becomes
+  nullable — and marks nothing at all when the database simply could not be
+  reached. Two confirmed claims that contradict each other are both shown and
+  marked disputed rather than silently resolved. Forgetting a claim erases its
+  value *and* its reason from the database file, not merely from the API's view.
+
+  Also adds scoped preferences (`saya preferences`) for timezone, date grain,
+  output style and default profile.
+
+- **SQLite** — connect to SQLite database files with `type = "sqlite"` (`path`,
+  optional `read_only` defaulting to true). Read-only by default and through the
+  bounded SQL safety layer; `:memory:` is not supported.
+
+### Changed
+
+- `[memory]` is configured by a single `mode` (`off` | `assisted`). The earlier
+  `recall` and `learning` keys are gone.
+- A single-valued claim (a grain, a default time column, a column's role) can now
+  be corrected: re-stating it with a different value replaces the old one and
+  names what it displaced, instead of reporting a duplicate and silently keeping
+  the first value.
+- `contracts remember` confirms in words rather than echoing a 64-character id.
+  Machine-readable output still carries the id.
+
+### Removed
+
+- `contracts import` / `contracts export`. Sharing contract files as TOML is a
+  separate concern from conversational memory and was cut from this release.
+
+### Fixed
+
+- **Charts now plot decimal columns.** `NUMERIC`/`DECIMAL` values (e.g. `SUM`/`AVG`
+  and money columns) decode to JSON strings; `/chart` and `render_chart` treated
+  them as non-numeric and silently dropped them, producing empty bar/line/area/
+  scatter charts. Numeric strings are now recognized and plotted.
+
 ## 0.2.0 — 2026-08-09
 
 ### Added
