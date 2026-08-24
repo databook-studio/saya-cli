@@ -3,6 +3,18 @@
 use super::types::App;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
+/// Decides the answer for a key press aimed at a pending approval modal.
+/// Enter is deliberately *not* an approval: the modal can appear while the
+/// user is typing, and an implicit Enter must never allow SQL to run. Only an
+/// explicit `y` approves; `n`/Esc deny; anything else is left for the modal.
+pub(crate) fn approval_answer(code: KeyCode) -> Option<bool> {
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => Some(true),
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Some(false),
+        _ => None,
+    }
+}
+
 /// Applies one key press to the application state.
 pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     // The help overlay is dismissed by any key.
@@ -42,10 +54,8 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     }
     // A tool-approval modal captures input until answered.
     if app.request.pending_approval.is_some() {
-        match code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => app.answer_approval(true),
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => app.answer_approval(false),
-            _ => {}
+        if let Some(allow) = approval_answer(code) {
+            app.answer_approval(allow);
         }
         return;
     }
@@ -126,4 +136,26 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     // A real edit or cursor move ends history navigation, so the next Up starts fresh.
     app.history.reset();
     app.refresh_menu();
+}
+
+#[cfg(test)]
+mod approval_modal_tests {
+    use super::*;
+
+    #[test]
+    fn enter_never_approves_a_pending_modal() {
+        // The modal can appear while the user is mid-thought; an implicit
+        // Enter (e.g. submitting their next prompt) must never allow SQL.
+        assert_eq!(approval_answer(KeyCode::Enter), None);
+    }
+
+    #[test]
+    fn only_explicit_y_approves_n_and_esc_deny() {
+        assert_eq!(approval_answer(KeyCode::Char('y')), Some(true));
+        assert_eq!(approval_answer(KeyCode::Char('Y')), Some(true));
+        assert_eq!(approval_answer(KeyCode::Char('n')), Some(false));
+        assert_eq!(approval_answer(KeyCode::Char('N')), Some(false));
+        assert_eq!(approval_answer(KeyCode::Esc), Some(false));
+        assert_eq!(approval_answer(KeyCode::Tab), None);
+    }
 }
