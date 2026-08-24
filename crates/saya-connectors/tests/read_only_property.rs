@@ -100,7 +100,7 @@ fn sql_corpus_strategy() -> impl Strategy<Value = (String, TemplateKind)> {
                     TemplateKind::ReadOnly,
                 ),
                 (
-                    format!("EXPLAIN SELECT * FROM {tbl} WHERE {col1} = {n1}"),
+                    format!("EXPLAIN ANALYZE SELECT * FROM {tbl} WHERE {col1} = {n1}"),
                     TemplateKind::ReadOnly,
                 ),
                 ("SHOW TABLES".to_string(), TemplateKind::ReadOnly),
@@ -173,6 +173,26 @@ fn sql_corpus_strategy() -> impl Strategy<Value = (String, TemplateKind)> {
                 (
                     "SELECT setval('seq', 1)".to_string(),
                     TemplateKind::NonReadOnlyBoth,
+                ),
+                (
+                    "SELECT pg_catalog.nextval('seq')".to_string(),
+                    TemplateKind::NonReadOnlyBoth,
+                ),
+                (
+                    format!("SELECT * FROM {tbl} FOR UPDATE"),
+                    TemplateKind::NonReadOnlyBoth,
+                ),
+                (
+                    "SELECT set_config('role', 'admin', false)".to_string(),
+                    TemplateKind::NonReadOnlyPostgres,
+                ),
+                (
+                    "SELECT pg_advisory_lock(42)".to_string(),
+                    TemplateKind::NonReadOnlyPostgres,
+                ),
+                (
+                    "SELECT pg_sleep(10)".to_string(),
+                    TemplateKind::NonReadOnlyPostgres,
                 ),
                 // SQLite specific denied functions
                 (

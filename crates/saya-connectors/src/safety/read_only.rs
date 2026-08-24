@@ -9,6 +9,11 @@ use sqlparser::{
     parser::Parser,
 };
 
+use super::read_only_policy::{
+    BackendPolicy, DUCKDB_POLICY, MYSQL_POLICY, POSTGRES_POLICY, SNOWFLAKE_POLICY, SQLITE_POLICY,
+    denied_function, denied_relation,
+};
+
 /// The single place that maps a [`SqlDialect`] to the `sqlparser` dialect the
 /// safety layer parses with. Shared by the read-only `prepare_*` functions and
 /// by object/column extraction so the two never drift apart.
@@ -25,57 +30,6 @@ pub(super) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
         _ => &PostgreSqlDialect {},
     }
 }
-
-struct BackendPolicy {
-    denied_functions: &'static [&'static str],
-    denied_prefixes: &'static [&'static str],
-}
-
-const COMMON_DENIED_FUNCTIONS: &[&str] = &["nextval", "setval"];
-
-const DUCKDB_DENIED_FUNCTIONS: &[&str] = &[
-    "read_csv",
-    "read_csv_auto",
-    "read_json",
-    "read_json_auto",
-    "read_parquet",
-    "read_text",
-    "sqlite_scan",
-    "glob",
-    "metadata",
-];
-
-const SQLITE_DENIED_FUNCTIONS: &[&str] = &["load_extension", "readfile", "writefile"];
-
-const SNOWFLAKE_DENIED_FUNCTIONS: &[&str] =
-    &["get_presigned_url", "build_scoped_file_url", "directory"];
-
-const SNOWFLAKE_DENIED_PREFIXES: &[&str] = &["@", "system$"];
-
-const POSTGRES_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: &[],
-    denied_prefixes: &[],
-};
-
-const MYSQL_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: &[],
-    denied_prefixes: &[],
-};
-
-const DUCKDB_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: DUCKDB_DENIED_FUNCTIONS,
-    denied_prefixes: &[],
-};
-
-const SQLITE_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: SQLITE_DENIED_FUNCTIONS,
-    denied_prefixes: &[],
-};
-
-const SNOWFLAKE_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: SNOWFLAKE_DENIED_FUNCTIONS,
-    denied_prefixes: SNOWFLAKE_DENIED_PREFIXES,
-};
 
 pub fn prepare_postgres_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
     prepare(
@@ -137,20 +91,44 @@ fn prepare(
     {
         return Err(rejected());
     }
-    if let Statement::Query(query) = &mut statements[0] {
+    if let Some(query) = statement_query(&mut statements[0]) {
         cap(query, max_rows);
     }
     Ok(statements.remove(0).to_string())
 }
 
+/// The query a statement executes, for row-cap injection. `allowed()` has
+/// already narrowed this to `Query` and `Explain(Query)`; capping the inner
+/// query of `EXPLAIN ANALYZE` matters because that form *executes* the plan.
+fn statement_query(statement: &mut Statement) -> Option<&mut Query> {
+    match statement {
+        Statement::Query(query) => Some(query),
+        Statement::Explain { statement, .. } => match statement.as_mut() {
+            Statement::Query(query) => Some(query),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn cap(query: &mut Query, max_rows: usize) {
-    if literal(query.limit.as_ref()).is_some_and(|limit| limit <= max_rows) {
+    let limit = literal(query.limit.as_ref());
+    let fetch = query
+        .fetch
+        .as_ref()
+        .and_then(|fetch| literal(fetch.quantity.as_ref()));
+    // An explicit bound at or under the cap is left exactly as written,
+    // including `FETCH FIRST … ROWS ONLY` (Postgres rejects LIMIT+FETCH).
+    if limit.or(fetch).is_some_and(|bound| bound <= max_rows) {
         return;
     }
     query.limit = Some(sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(
         max_rows.saturating_add(1).to_string(),
         false,
     )));
+    // The injected LIMIT replaces any looser FETCH clause rather than
+    // combining with it.
+    query.fetch = None;
 }
 
 fn literal(limit: Option<&sqlparser::ast::Expr>) -> Option<usize> {
@@ -184,10 +162,13 @@ fn allowed(statement: &Statement) -> bool {
 }
 
 fn query_allowed(query: &Query) -> bool {
-    query
-        .with
-        .as_ref()
-        .is_none_or(|with| with.cte_tables.iter().all(|cte| query_allowed(&cte.query)))
+    // Row-locking clauses (`FOR UPDATE` / `FOR SHARE`) take locks and are not
+    // reads; reject wherever they appear, including CTEs and set operands.
+    query.locks.is_empty()
+        && query
+            .with
+            .as_ref()
+            .is_none_or(|with| with.cte_tables.iter().all(|cte| query_allowed(&cte.query)))
         && set_allowed(&query.body)
 }
 
@@ -213,26 +194,16 @@ impl Visitor for Guard<'_> {
     type Break = ();
 
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
-        matches!(expr, Expr::Function(function) if denied(&function.name, self.policy))
+        matches!(expr, Expr::Function(function) if denied_function(&function.name, self.policy))
             .then_some(())
             .map_or(ControlFlow::Continue(()), ControlFlow::Break)
     }
 
     fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<Self::Break> {
-        denied(relation, self.policy)
+        denied_relation(relation, self.policy)
             .then_some(())
             .map_or(ControlFlow::Continue(()), ControlFlow::Break)
     }
-}
-
-fn denied(name: &ObjectName, policy: &BackendPolicy) -> bool {
-    let name = name.to_string().trim_matches('"').to_ascii_lowercase();
-    COMMON_DENIED_FUNCTIONS.contains(&name.as_str())
-        || policy.denied_functions.contains(&name.as_str())
-        || policy
-            .denied_prefixes
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
 }
 
 #[cfg(test)]
