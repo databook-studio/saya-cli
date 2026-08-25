@@ -47,14 +47,12 @@ fn is_read_only_statement_class(sql: &str, dialect: &dyn Dialect) -> bool {
     }
 }
 
-/// A lowercase SQL identifier safe to interpolate into a statement.
+/// A lowercase SQL identifier safe to interpolate into a statement. The
+/// `i_` prefix guarantees it can never collide with a reserved word (a bare
+/// `[a-z][a-z0-9_]*` draw once produced `all`, which parses as a SELECT
+/// quantifier and made acceptance assertions flaky).
 fn ident() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_]{0,10}".prop_filter("avoid SQL keywords", |s| {
-        !matches!(
-            s.as_str(),
-            "select" | "from" | "where" | "limit" | "table" | "into" | "values" | "set" | "with"
-        )
-    })
+    "[a-z][a-z0-9_]{0,10}".prop_map(|base| format!("i_{base}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
