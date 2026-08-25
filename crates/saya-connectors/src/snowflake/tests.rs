@@ -85,6 +85,53 @@ async fn server(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String>>>) {
     (format!("http://{address}"), seen)
 }
 
+/// A mock whose reply queue can be filled after binding, so a query reply can
+/// embed same-origin chunk URLs that reference the server's own address.
+async fn dynamic_server() -> (
+    String,
+    Arc<Mutex<Vec<Reply>>>,
+    Arc<Mutex<Vec<String>>>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+    let capture = seen.clone();
+    let queue: Arc<Mutex<Vec<Reply>>> = Arc::new(Mutex::new(Vec::new()));
+    let pending = queue.clone();
+    tokio::spawn(async move {
+        loop {
+            // Wait for the test to enqueue work; an empty queue at bind time
+            // is normal, not shutdown.
+            let reply = loop {
+                let mut guard = pending.lock().await;
+                if !guard.is_empty() {
+                    break guard.remove(0);
+                }
+                drop(guard);
+                sleep(Duration::from_millis(5)).await;
+            };
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut socket).await;
+            capture.lock().await.push(request);
+            sleep(reply.delay).await;
+            let mut headers = format!(
+                "HTTP/1.1 {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n",
+                reply.status,
+                reply.body.len()
+            );
+            for (name, value) in reply.headers {
+                headers.push_str(&format!("{name}: {value}\r\n"));
+            }
+            socket
+                .write_all(format!("{headers}\r\n").as_bytes())
+                .await
+                .unwrap();
+            socket.write_all(&reply.body).await.unwrap();
+        }
+    });
+    (format!("http://{address}"), queue, seen)
+}
+
 async fn read_request(socket: &mut tokio::net::TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0; 2048];
@@ -426,15 +473,18 @@ async fn cancellation_uses_uuid_endpoint_and_rejects_invalid_or_timed_out_handle
 async fn legacy_relogs_once_decodes_gzip_chunks_and_forwards_only_ssec_headers() {
     let login = || Reply::json(json!({"success":true,"data":{"token":"session"}}));
     let expired = Reply::json(json!({"success":false,"data":{"code":"390104"}}));
-    let query = Reply::json(
-        json!({"success":true,"data":{"rowtype":[{"name":"N"}],"rowset":[[1]],"chunkHeaders":{"x-amz-server-side-encryption-customer-key":"key","x-amz-server-side-encryption-customer-key-md5":"md5","x-not-forwarded":"nope"},"chunks":[{"url":"REPLACE_1"},{"url":"REPLACE_2"}]}}),
-    );
-    let (chunk_one, one_seen) = server(vec![Reply::gzip("[2],")]).await;
-    let (chunk_two, two_seen) = server(vec![Reply::gzip("[3],")]).await;
-    let query = Reply::json(query_json_with_urls(query.body, &chunk_one, &chunk_two));
-    let (origin, seen) = server(vec![login(), expired, login(), query]).await;
+    let (origin, queue, seen) = dynamic_server().await;
+    // Chunk URLs are same-origin, as they are in production deployments.
+    queue.lock().await.push(login());
+    queue.lock().await.push(expired);
+    queue.lock().await.push(login());
+    queue.lock().await.push(Reply::json(
+        json!({"success":true,"data":{"rowtype":[{"name":"N"}],"rowset":[[1]],"chunkHeaders":{"x-amz-server-side-encryption-customer-key":"key","x-amz-server-side-encryption-customer-key-md5":"md5","x-not-forwarded":"nope"},"chunks":[{"url":format!("{origin}/chunks/1")},{"url":format!("{origin}/chunks/2")}]}}),
+    ));
+    queue.lock().await.push(Reply::gzip("[2],"));
+    queue.lock().await.push(Reply::gzip("[3],"));
     let mut item = connector(userpass());
-    item.origin = origin;
+    item.origin = origin.clone();
     item.context = Context {
         warehouse: Some("WH".into()),
         database: Some("DB".into()),
@@ -461,19 +511,26 @@ async fn legacy_relogs_once_decodes_gzip_chunks_and_forwards_only_ssec_headers()
             .filter(|item| item.contains("/queries/v1/query-request"))
             .all(|item| item.contains("LIMIT 4"))
     );
-    let first = one_seen.lock().await[0].to_ascii_lowercase();
+    let first = requests
+        .iter()
+        .find(|item| item.contains("/chunks/1"))
+        .expect("first chunk fetched")
+        .to_ascii_lowercase();
     assert!(first.contains("x-amz-server-side-encryption-customer-key: key"));
     assert!(first.contains("x-amz-server-side-encryption-customer-key-md5: md5"));
     assert!(!first.contains("x-not-forwarded"));
-    assert_eq!(two_seen.lock().await.len(), 1);
-    let login = &requests[0];
-    let login_json: Value = serde_json::from_str(request_body(login)).unwrap();
+    assert_eq!(
+        requests.iter().filter(|item| item.contains("/chunks/2")).count(),
+        1
+    );
+    let login_request = &requests[0];
+    let login_json: Value = serde_json::from_str(request_body(login_request)).unwrap();
     assert_eq!(login_json["data"]["WAREHOUSE_NAME"], "WH");
     assert!(login_json["data"].get("WAREHOUSE").is_none());
-    assert!(login.contains("warehouse=WH"));
-    assert!(login.contains("databaseName=DB"));
-    assert!(login.contains("schemaName=SCH"));
-    assert!(login.contains("roleName=ROLE"));
+    assert!(login_request.contains("warehouse=WH"));
+    assert!(login_request.contains("databaseName=DB"));
+    assert!(login_request.contains("schemaName=SCH"));
+    assert!(login_request.contains("roleName=ROLE"));
 }
 
 #[tokio::test]
@@ -506,21 +563,37 @@ async fn legacy_401_relogs_once_early_stops_and_redacts_chunk_failures() {
             .count(),
         2
     );
-    let (bad, _) = server(vec![Reply::status(
+    let (origin, queue, seen) = dynamic_server().await;
+    queue.lock().await.push(login());
+    queue.lock().await.push(Reply::json(
+        json!({"success":true,"data":{"rowtype":[{"name":"N"}],"rowset":[[1],[2]],"chunks":[{"url":format!("{origin}/chunks/failing")}]}}),
+    ));
+    queue.lock().await.push(Reply::status(
         "500 Internal Server Error",
         json!({"marker":"chunk-secret"}),
-    )])
-    .await;
-    let (origin, _) = server(vec![login(), response(&bad)]).await;
+    ));
     let mut item = connector(userpass());
-    item.origin = origin;
+    item.origin = origin.clone();
     let error = item
         .execute(saya_types::QueryRequest::new("SELECT 1", 3))
         .await
         .unwrap_err();
     assert!(!error.to_string().contains("chunk-secret"));
-    let (bad, _) = server(vec![Reply::gzip("not-json-secret")]).await;
-    let (origin, _) = server(vec![login(), response(&bad)]).await;
+    // The chunk was genuinely fetched (and failed), not skipped by validation.
+    assert_eq!(
+        seen.lock()
+            .await
+            .iter()
+            .filter(|request| request.contains("/chunks/failing"))
+            .count(),
+        1
+    );
+    let (origin, queue, seen) = dynamic_server().await;
+    queue.lock().await.push(login());
+    queue.lock().await.push(Reply::json(
+        json!({"success":true,"data":{"rowtype":[{"name":"N"}],"rowset":[[1],[2]],"chunks":[{"url":format!("{origin}/chunks/garbage")}]}}),
+    ));
+    queue.lock().await.push(Reply::gzip("not-json-secret"));
     let mut item = connector(userpass());
     item.origin = origin;
     let error = item
@@ -528,20 +601,15 @@ async fn legacy_401_relogs_once_early_stops_and_redacts_chunk_failures() {
         .await
         .unwrap_err();
     assert!(!error.to_string().contains("not-json-secret"));
+    assert_eq!(
+        seen.lock()
+            .await
+            .iter()
+            .filter(|request| request.contains("/chunks/garbage"))
+            .count(),
+        1
+    );
     assert!(item.active.lock().await.is_none());
-}
-
-fn query_json_with_urls(body: Vec<u8>, first: &str, second: &str) -> Value {
-    let mut value: Value = serde_json::from_slice(&body).unwrap();
-    value
-        .pointer_mut("/data/chunks/0/url")
-        .unwrap()
-        .clone_from(&json!(first));
-    value
-        .pointer_mut("/data/chunks/1/url")
-        .unwrap()
-        .clone_from(&json!(second));
-    value
 }
 
 #[tokio::test]
