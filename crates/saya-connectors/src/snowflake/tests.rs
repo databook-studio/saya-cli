@@ -87,11 +87,7 @@ async fn server(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String>>>) {
 
 /// A mock whose reply queue can be filled after binding, so a query reply can
 /// embed same-origin chunk URLs that reference the server's own address.
-async fn dynamic_server() -> (
-    String,
-    Arc<Mutex<Vec<Reply>>>,
-    Arc<Mutex<Vec<String>>>,
-) {
+async fn dynamic_server() -> (String, Arc<Mutex<Vec<Reply>>>, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
@@ -520,7 +516,10 @@ async fn legacy_relogs_once_decodes_gzip_chunks_and_forwards_only_ssec_headers()
     assert!(first.contains("x-amz-server-side-encryption-customer-key-md5: md5"));
     assert!(!first.contains("x-not-forwarded"));
     assert_eq!(
-        requests.iter().filter(|item| item.contains("/chunks/2")).count(),
+        requests
+            .iter()
+            .filter(|item| item.contains("/chunks/2"))
+            .count(),
         1
     );
     let login_request = &requests[0];
