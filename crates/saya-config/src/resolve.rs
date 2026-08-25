@@ -2,7 +2,7 @@ use saya_types::DatabaseProfile;
 
 use crate::{
     AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput,
-    layers::{apply_cli, apply_env, merge},
+    layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
     profile_env::overlay_database_environment,
 };
@@ -21,6 +21,10 @@ pub struct ResolvedConfig {
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
     pub memory: ResolvedMemory,
+    /// Security-critical setting names (`ai.base_url`, `run.read_only`, …)
+    /// that the project layer tried to override and were ignored. Empty when
+    /// the project layer is trusted or set none of them.
+    pub ignored_project_overrides: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,9 +43,15 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     if let Some(user) = input.user.as_ref() {
         merge(&mut file, user);
     }
+    let protected = snapshot_protected(&file);
     if let Some(project) = input.project.as_ref() {
         merge(&mut file, project);
     }
+    let ignored_project_overrides = if input.cli.trust_project_config {
+        Vec::new()
+    } else {
+        revert_untrusted(&mut file, &protected)
+    };
     apply_env(&mut file, &input.env_file)?;
     apply_env(&mut file, &input.process_env)?;
     apply_cli(&mut file, &input.cli);
@@ -89,5 +99,6 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
         memory,
+        ignored_project_overrides,
     })
 }

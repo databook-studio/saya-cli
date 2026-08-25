@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{AiProvider, CliOverrides, ConfigError, ConfigFile, OutputFormat};
+use saya_types::SecretRef;
 
 pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     macro_rules! apply { ($($path:ident).+) => { if layer.$($path).+.is_some() { base.$($path).+ = layer.$($path).+.clone(); } }; }
@@ -87,6 +88,50 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
     if cli.max_rows.is_some() {
         file.run.max_rows = cli.max_rows;
     }
+}
+
+/// The values of security-critical settings captured after the user layer
+/// merges. Project layers may not change them: a repository's
+/// `.saya/config.toml` is untrusted input, and these four settings decide
+/// where the API key is sent, whether rows leave the machine, and whether
+/// engine-level read-only enforcement stays on.
+pub(crate) struct ProtectedSettings {
+    ai_base_url: Option<String>,
+    ai_api_key: Option<SecretRef>,
+    ai_allow_data_sharing: Option<bool>,
+    run_read_only: Option<bool>,
+}
+
+pub(crate) fn snapshot_protected(file: &ConfigFile) -> ProtectedSettings {
+    ProtectedSettings {
+        ai_base_url: file.ai.base_url.clone(),
+        ai_api_key: file.ai.api_key.clone(),
+        ai_allow_data_sharing: file.ai.allow_data_sharing,
+        run_read_only: file.run.read_only,
+    }
+}
+
+/// Restores the protected settings to their pre-project values and returns
+/// the dotted names the project layer tried (and failed) to override.
+pub(crate) fn revert_untrusted(file: &mut ConfigFile, before: &ProtectedSettings) -> Vec<String> {
+    let mut ignored = Vec::new();
+    if file.ai.base_url != before.ai_base_url {
+        file.ai.base_url = before.ai_base_url.clone();
+        ignored.push("ai.base_url".into());
+    }
+    if file.ai.api_key != before.ai_api_key {
+        file.ai.api_key = before.ai_api_key.clone();
+        ignored.push("ai.api_key".into());
+    }
+    if file.ai.allow_data_sharing != before.ai_allow_data_sharing {
+        file.ai.allow_data_sharing = before.ai_allow_data_sharing;
+        ignored.push("ai.allow_data_sharing".into());
+    }
+    if file.run.read_only != before.run_read_only {
+        file.run.read_only = before.run_read_only;
+        ignored.push("run.read_only".into());
+    }
+    ignored
 }
 
 fn apply_string(target: &mut Option<String>, env: &BTreeMap<String, String>, name: &str) {

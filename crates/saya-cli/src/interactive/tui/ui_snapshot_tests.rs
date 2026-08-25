@@ -65,6 +65,7 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 max_claims_per_contract: 12,
                 max_context_bytes: 16384,
             },
+            ignored_project_overrides: Vec::new(),
         },
         connections: ConnectionsFile::default(),
         config_path: None,

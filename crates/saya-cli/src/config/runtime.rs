@@ -33,12 +33,28 @@ pub struct RuntimeConfig {
 }
 
 pub fn load(options: &GlobalOptions, cwd: &Path) -> Result<RuntimeConfig, RuntimeError> {
-    load_with_sources(
+    let runtime = load_with_sources(
         options,
         cwd,
         &super::sources::user_config_dir(),
         super::sources::process_env(),
-    )
+    )?;
+    warn_ignored_project_overrides(&runtime);
+    Ok(runtime)
+}
+
+/// The project layer is untrusted: when it tried to change security-critical
+/// settings, say so instead of silently ignoring the attempt.
+fn warn_ignored_project_overrides(runtime: &RuntimeConfig) {
+    let ignored = &runtime.resolved.ignored_project_overrides;
+    if ignored.is_empty() {
+        return;
+    }
+    eprintln!(
+        "warning: ignored security-critical setting(s) from the project's .saya/config.toml: {}. \
+         Pass --trust-project-config to accept them.",
+        ignored.join(", ")
+    );
 }
 
 pub fn load_with_sources(
@@ -84,6 +100,7 @@ pub fn load_with_sources(
         .with_cli(CliOverrides {
             profile: options.profile.clone(),
             allow_data_sharing: options.allow_data_sharing.then_some(true),
+            trust_project_config: options.trust_project_config,
             ..Default::default()
         });
     let cache_scope = super::scope::resolve(selected_connections, cwd);

@@ -33,6 +33,11 @@ pub struct GlobalOptions {
     pub env_file: Option<std::path::PathBuf>,
     #[arg(long, global = true)]
     pub allow_data_sharing: bool,
+    /// Accept security-critical settings (`ai.base_url`, `ai.api_key`,
+    /// `ai.allow_data_sharing`, `run.read_only`) from the project layer's
+    /// `.saya/config.toml`. Off by default: a cloned repository is untrusted.
+    #[arg(long, global = true, env = "SAYA_TRUST_PROJECT_CONFIG")]
+    pub trust_project_config: bool,
     #[arg(long, global = true)]
     pub no_color: bool,
     #[arg(long, short, global = true)]

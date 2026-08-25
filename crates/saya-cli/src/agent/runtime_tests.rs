@@ -233,6 +233,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
             memory,
+            ignored_project_overrides: Vec::new(),
         },
         connections: Default::default(),
         config_path: None,
