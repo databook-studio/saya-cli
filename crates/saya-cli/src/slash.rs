@@ -4,7 +4,7 @@ use std::{fmt, str::FromStr};
 
 mod contracts;
 mod help;
-mod registry;
+pub(crate) mod registry;
 
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // still resolves after the help text moved to `help.rs`.
