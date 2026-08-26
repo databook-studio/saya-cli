@@ -75,9 +75,9 @@ fn redact_headers_and_keys(value: &str) -> String {
     let mut output = String::new();
     for line in value.split_inclusive('\n') {
         let lower = line.to_ascii_lowercase();
-        if let Some(header) = HEADERS
+        if HEADERS
             .iter()
-            .find(|header| lower.trim_start().starts_with(**header))
+            .any(|header| lower.trim_start().starts_with(*header))
         {
             let trimmed = line.trim_start();
             let Some(colon) = trimmed.find(':') else {
