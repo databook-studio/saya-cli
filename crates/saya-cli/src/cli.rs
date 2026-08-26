@@ -17,6 +17,15 @@ pub struct GlobalOptions {
     pub resume: Option<String>,
     #[arg(long, global = true)]
     pub profile: Option<String>,
+    /// Override the configured AI model for this invocation.
+    #[arg(long, global = true)]
+    pub model: Option<String>,
+    /// Override the configured provider (ollama|openai|openai_compatible|anthropic|gemini).
+    #[arg(long, global = true)]
+    pub provider: Option<String>,
+    /// Override the configured row cap for query results.
+    #[arg(long, value_name = "N", global = true)]
+    pub max_rows: Option<usize>,
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
     #[arg(long, value_name = "MODE", global = true)]

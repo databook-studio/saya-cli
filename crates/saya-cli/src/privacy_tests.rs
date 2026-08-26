@@ -171,6 +171,9 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         api_key: None,
         allow_data_sharing: false,
         temperature: 0.1,
+        timeout_seconds: 60,
+        idle_timeout_seconds: 90,
+        max_output_tokens: 4096,
     };
     let to_openai = crate::agent::runtime::PromptOverrides {
         provider: Some(saya_config::AiProvider::OpenaiCompatible),

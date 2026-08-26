@@ -36,6 +36,12 @@ pub struct ResolvedAi {
     pub allow_data_sharing: bool,
     /// Sampling temperature for the LLM (lower = more concise/deterministic).
     pub temperature: f32,
+    /// Budget for request establishment / non-streaming responses.
+    pub timeout_seconds: u64,
+    /// Maximum silence between stream chunks before the provider is stalled.
+    pub idle_timeout_seconds: u64,
+    /// Per-response output-token ceiling requested from the provider.
+    pub max_output_tokens: u32,
 }
 
 pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
@@ -91,6 +97,9 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
             api_key: file.ai.api_key,
             allow_data_sharing: file.ai.allow_data_sharing.unwrap_or(false),
             temperature: file.ai.temperature.unwrap_or(0.1),
+            timeout_seconds: file.ai.timeout_seconds.unwrap_or(60),
+            idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
+            max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
         },
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),

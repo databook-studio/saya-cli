@@ -46,7 +46,11 @@ impl ChatProvider for AnthropicProvider {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
-        let body = anthropic_request::build_body(request, 4096);
+        let body = anthropic_request::build_body(
+            request,
+            self.settings.max_output_tokens,
+            Some(self.settings.temperature),
+        );
         let url = endpoint(
             self.settings.base_url.as_deref(),
             "https://api.anthropic.com/v1",

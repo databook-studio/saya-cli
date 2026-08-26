@@ -112,6 +112,12 @@ pub struct AiFile {
     pub allow_data_sharing: Option<bool>,
     pub api_key: Option<SecretRef>,
     pub temperature: Option<f32>,
+    /// Total budget for establishing a request or a non-streaming response.
+    pub timeout_seconds: Option<u64>,
+    /// Maximum silence between stream chunks before the provider is stalled.
+    pub idle_timeout_seconds: Option<u64>,
+    /// Per-response output-token ceiling requested from the provider.
+    pub max_output_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

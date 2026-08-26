@@ -106,3 +106,26 @@ fn resolved_diagnostics_masks_base_url_userinfo_and_query_string() {
     assert!(rendered.contains("https://example.test/v1"));
     assert!(rendered.contains("[redacted]"));
 }
+
+#[test]
+fn ai_request_budgets_resolve_from_file_with_defaults() {
+    let config = ConfigFile::from_toml(
+        "[ai]\ntimeout_seconds = 120\nidle_timeout_seconds = 45\nmax_output_tokens = 2048\ntemperature = 0.7\n",
+    )
+    .unwrap();
+    let resolved = saya_config::resolve(
+        saya_config::ResolutionInput::new(ConnectionsFile::default()).with_user(config),
+    )
+    .unwrap();
+    assert_eq!(resolved.ai.timeout_seconds, 120);
+    assert_eq!(resolved.ai.idle_timeout_seconds, 45);
+    assert_eq!(resolved.ai.max_output_tokens, 2048);
+    assert_eq!(resolved.ai.temperature, 0.7);
+
+    let defaults =
+        saya_config::resolve(saya_config::ResolutionInput::new(ConnectionsFile::default()))
+            .unwrap();
+    assert_eq!(defaults.ai.timeout_seconds, 60);
+    assert_eq!(defaults.ai.idle_timeout_seconds, 90);
+    assert_eq!(defaults.ai.max_output_tokens, 4096);
+}

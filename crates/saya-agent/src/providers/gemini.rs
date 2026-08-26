@@ -32,7 +32,11 @@ impl ChatProvider for GeminiProvider {
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let model = request.model.clone();
-        let body = gemini_request::build_body(request);
+        let body = gemini_request::build_body(
+            request,
+            self.settings.max_output_tokens,
+            Some(self.settings.temperature),
+        );
         let root = self
             .settings
             .base_url

@@ -12,8 +12,10 @@ pub struct ProviderSettings {
     /// stalled. This — not a total-duration cap — is what bounds streams.
     pub idle_timeout: Duration,
     pub retry_delays: Vec<Duration>,
-    /// Sampling temperature sent to providers that support it (OpenAI-compatible).
+    /// Sampling temperature sent to every provider that supports it.
     pub temperature: f32,
+    /// Per-response output-token ceiling requested from the provider.
+    pub max_output_tokens: u32,
 }
 
 impl ProviderSettings {
@@ -29,6 +31,7 @@ impl ProviderSettings {
                 Duration::from_millis(1000),
             ],
             temperature: 0.1,
+            max_output_tokens: 4096,
         }
     }
 
@@ -44,6 +47,16 @@ impl ProviderSettings {
 
     pub fn with_temperature(mut self, temperature: f32) -> Self {
         self.temperature = temperature;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_max_output_tokens(mut self, max_output_tokens: u32) -> Self {
+        self.max_output_tokens = max_output_tokens;
         self
     }
 }

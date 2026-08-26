@@ -92,6 +92,14 @@ pub fn load_with_sources(
     };
     let mut secret_values = env_file.clone();
     secret_values.extend(process.clone());
+    let provider = match options.provider.as_deref() {
+        Some(raw) => Some(saya_config::AiProvider::parse(raw).ok_or_else(|| {
+            RuntimeError::Config(saya_config::ConfigError::Parse(format!(
+                "invalid --provider '{raw}' (expected ollama, openai, openai_compatible, anthropic, or gemini)"
+            )))
+        })?),
+        None => None,
+    };
     let input = ResolutionInput::new(connections.clone())
         .with_user(user.unwrap_or_default())
         .with_project(project.unwrap_or_default())
@@ -99,9 +107,11 @@ pub fn load_with_sources(
         .with_process_env(process)
         .with_cli(CliOverrides {
             profile: options.profile.clone(),
+            provider,
+            model: options.model.clone(),
             allow_data_sharing: options.allow_data_sharing.then_some(true),
+            max_rows: options.max_rows,
             trust_project_config: options.trust_project_config,
-            ..Default::default()
         });
     let cache_scope = super::scope::resolve(selected_connections, cwd);
     Ok(RuntimeConfig {
