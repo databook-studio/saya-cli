@@ -1,7 +1,20 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+const AFTER_HELP: &str = "Examples:\n  \
+saya                                   start the interactive REPL\n  \
+saya ask \"count orders per region\"     one-shot question\n  \
+echo \"SELECT 1\" | saya query --sql -   piped SQL works too\n  \
+saya query --sql \"SELECT 1\"            bounded read-only SQL\n  \
+saya config doctor                     diagnose setup problems\n  \
+saya completions --shell zsh > completion.zsh\n\nExit codes: 0 ok · 2 usage · 3 connection/config · 4 safety/query · 5 agent · 130 cancelled";
+
 #[derive(Debug, Clone, Parser)]
-#[command(name = "saya", version, about = "Database-aware AI for the terminal")]
+#[command(
+    name = "saya",
+    version,
+    about = "Database-aware AI for the terminal",
+    after_help = AFTER_HELP
+)]
 pub struct Cli {
     #[command(flatten)]
     pub options: GlobalOptions,
@@ -9,10 +22,14 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
+/// Global options shared by every subcommand and the bare REPL.
+/// Global options shared by every subcommand and the bare REPL.
 #[derive(Debug, Clone, Args, Default)]
 pub struct GlobalOptions {
+    /// Continue the most recent session.
     #[arg(long = "continue", global = true)]
     pub continue_session: bool,
+    /// Resume a saved session by id (see `saya config doctor` / /sessions).
     #[arg(long, global = true)]
     pub resume: Option<String>,
     #[arg(long, global = true)]
@@ -26,18 +43,25 @@ pub struct GlobalOptions {
     /// Override the configured row cap for query results.
     #[arg(long, value_name = "N", global = true)]
     pub max_rows: Option<usize>,
+    /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
+    /// When tool calls need approval: ask | read-only | never.
     #[arg(long, value_name = "MODE", global = true)]
     pub approval_mode: Option<String>,
+    /// Output format for subcommands: text | json | ndjson.
     #[arg(long, value_enum, default_value_t = FormatArg::Text, global = true)]
     pub format: FormatArg,
+    /// Run without any terminal interaction (CI-safe; approvals deny).
     #[arg(long, global = true)]
     pub non_interactive: bool,
+    /// Explicit config.toml path (overrides user/project discovery).
     #[arg(long, global = true)]
     pub config: Option<std::path::PathBuf>,
+    /// Explicit connections.toml path.
     #[arg(long, global = true)]
     pub connections: Option<std::path::PathBuf>,
+    /// Explicit env file with SAYA_* overrides (never implicit .env).
     #[arg(long, global = true)]
     pub env_file: Option<std::path::PathBuf>,
     #[arg(long, global = true)]
@@ -90,12 +114,21 @@ pub enum Command {
         #[command(subcommand)]
         command: ContractsCommand,
     },
+    /// Generate shell completion scripts for `saya`.
+    Completions {
+        /// Shell to generate completions for.
+        #[arg(long, value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum ConfigCommand {
+    /// Write starter .saya/config.toml and connections.toml templates.
     Init,
+    /// Diagnose configuration: secrets resolve? provider reachable?
     Doctor,
+    /// Print the effective (redacted) configuration as JSON.
     Show {
         #[arg(long)]
         resolved: bool,
@@ -106,7 +139,9 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum ConnectionCommand {
+    /// List configured connection profiles.
     List,
+    /// Connect to a profile and report success/latency.
     Test {
         #[arg(value_name = "PROFILE")]
         profile_name: String,
