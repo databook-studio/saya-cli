@@ -89,6 +89,7 @@ fn unused_store() -> SqliteStateStore {
 /// directly so no history file is read (`App::new` calls `History::load`).
 fn empty_app() -> App {
     App {
+        sql_task: None,
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: vec!["analytics".into(), "billing".into()],

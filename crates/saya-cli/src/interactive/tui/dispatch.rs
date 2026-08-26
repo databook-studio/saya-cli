@@ -3,7 +3,7 @@
 //! results that would normally print to stdout are captured via `render_event`
 //! and pushed into the transcript instead.
 
-use super::dispatch_actions::{list_sessions, resume, run_chart, run_explain, run_export, run_sql};
+use super::dispatch_actions::{list_sessions, resume};
 use super::dispatch_contracts::run_contracts;
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
@@ -24,6 +24,9 @@ pub(crate) enum Dispatch {
     Agent(String),
     /// Open the interactive session picker.
     OpenSessionPicker,
+    /// A SQL-backed command runs on a worker thread; the caller stores the
+    /// receiver and applies [`sql_task::complete`] when it finishes.
+    SqlTask(super::sql_task::SqlTask),
 }
 
 /// Dispatches one submitted line, mutating `state` and appending to `transcript`.
@@ -53,17 +56,62 @@ pub(crate) fn dispatch(
             SessionAction::History => list_sessions(transcript, store),
             SessionAction::Resume(id) => resume(transcript, state, store, &id),
             SessionAction::Sql(sql) => {
-                run_sql(transcript, state, runtime, format, &sql, last_query)
+                result = Dispatch::SqlTask(super::sql_task::SqlTask {
+                    profile: state.profile.clone(),
+                    sql,
+                    followup: super::sql_task::Followup::Sql {
+                        connection: state.profile.clone(),
+                    },
+                });
             }
             SessionAction::Contracts(command) => {
                 run_contracts(transcript, state, runtime, state_db, format, &command)
             }
-            SessionAction::Export(path) => {
-                run_export(transcript, runtime, state, last_query, &path)
-            }
-            SessionAction::Chart(args) => run_chart(transcript, runtime, state, last_query, &args),
+            SessionAction::Export(path) => match last_query.as_ref() {
+                Some(lq) => {
+                    result = Dispatch::SqlTask(super::sql_task::SqlTask {
+                        profile: lq.connection.clone().or(state.profile.clone()),
+                        sql: lq.sql.clone(),
+                        followup: super::sql_task::Followup::Export { path },
+                    });
+                }
+                None => transcript.push(
+                    BlockKind::System,
+                    "Nothing to export yet — run a query first.",
+                ),
+            },
+            SessionAction::Chart(args) => match last_query.as_ref() {
+                Some(lq) => {
+                    let (kind, path) = parse_chart_args(&args);
+                    result = Dispatch::SqlTask(super::sql_task::SqlTask {
+                        profile: lq.connection.clone().or(state.profile.clone()),
+                        sql: lq.sql.clone(),
+                        followup: super::sql_task::Followup::Chart { kind, path },
+                    });
+                }
+                None => transcript.push(
+                    BlockKind::System,
+                    "Nothing to chart yet — run a query first.",
+                ),
+            },
             SessionAction::Explain(arg) => {
-                run_explain(transcript, runtime, state, last_query, &arg)
+                let (sql, connection) = if !arg.trim().is_empty() {
+                    (arg.trim().to_string(), None)
+                } else if let Some(lq) = last_query.as_ref() {
+                    (lq.sql.clone(), lq.connection.clone())
+                } else {
+                    transcript.push(
+                        BlockKind::System,
+                        "Nothing to explain — run a query first, or pass SQL: /explain SELECT ...",
+                    );
+                    return result;
+                };
+                let trimmed = sql.trim().trim_end_matches(';').trim();
+                result = Dispatch::SqlTask(super::sql_task::SqlTask {
+                    profile: connection.or_else(|| state.profile.clone()),
+                    sql: format!("EXPLAIN {trimmed}"),
+                    followup: super::sql_task::Followup::Explain,
+                });
             }
             SessionAction::Schema(_) => transcript.push(
                 BlockKind::System,
@@ -79,4 +127,17 @@ pub(crate) fn dispatch(
     }
     transcript.scroll_to_bottom();
     result
+}
+
+/// Parses "/chart [type] [path]": a leading known kind is consumed; anything
+/// left is the output path.
+fn parse_chart_args(args: &str) -> (Option<crate::chart::ChartKind>, Option<String>) {
+    let mut tokens = args.split_whitespace();
+    match tokens.next() {
+        Some(tok) => match crate::chart::ChartKind::parse(tok) {
+            Some(kind) => (Some(kind), tokens.next().map(str::to_string)),
+            None => (None, Some(tok.to_string())),
+        },
+        None => (None, None),
+    }
 }

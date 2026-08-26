@@ -40,6 +40,7 @@ impl App {
             pending_clipboard: None,
             clipboard_copy: None,
             session_save: None,
+            sql_task: None,
             pending_session_save: None,
             last_query: None,
             runtime,

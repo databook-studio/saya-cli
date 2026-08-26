@@ -23,6 +23,7 @@ mod input;
 mod keys;
 mod replay;
 mod session_save;
+mod sql_task;
 mod stream_events;
 mod table;
 mod terminal;
@@ -184,6 +185,25 @@ pub(crate) fn run(
             }
         }
 
+        // Poll the direct-SQL worker (non-blocking): apply its result when ready.
+        if let Some((rx, task)) = app.sql_task.as_ref() {
+            match rx.try_recv() {
+                Ok(event) => {
+                    let task = task.clone();
+                    app.sql_task = None;
+                    sql_task::complete(&task, event, &mut app.transcript, &mut app.last_query);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    app.sql_task = None;
+                    app.transcript.push(
+                        BlockKind::Error,
+                        "SQL command ended without a result.".to_string(),
+                    );
+                }
+            }
+        }
+
         if app.is_busy() {
             app.spinner = app.spinner.wrapping_add(1);
             if app.drain_stream(state) {
@@ -211,6 +231,14 @@ pub(crate) fn run(
                 Dispatch::Handled => app.reload_at_refs(state),
                 Dispatch::Agent(prompt) => app.start_agent(prompt, state),
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
+                Dispatch::SqlTask(task) => {
+                    // One SQL command in flight at a time; a second replaces
+                    // the first (dropping its receiver closes the channel).
+                    app.sql_task = Some((
+                        sql_task::spawn(Arc::new(runtime.clone()), task.clone()),
+                        task,
+                    ));
+                }
             }
             queue_session_save(&mut app, store, state);
         }

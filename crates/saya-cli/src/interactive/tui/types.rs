@@ -104,6 +104,12 @@ pub(crate) struct App {
     pub(crate) pending_clipboard: Option<String>,
     pub(crate) clipboard_copy: Option<ClipboardCopy>,
     pub(crate) session_save: Option<SessionSave>,
+    /// In-flight direct-SQL command (/sql, /export, /chart, /explain) running
+    /// off-thread; polled each loop tick so the UI never blocks on a query.
+    pub(crate) sql_task: Option<(
+        std::sync::mpsc::Receiver<crate::render::TerminalEvent>,
+        super::sql_task::SqlTask,
+    )>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
     pub(crate) runtime: Arc<RuntimeConfig>,
