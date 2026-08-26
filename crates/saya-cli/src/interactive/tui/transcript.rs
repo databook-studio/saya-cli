@@ -104,8 +104,7 @@ impl Transcript {
                 if raw.is_empty() {
                     lines.push((block.kind, String::new()));
                 } else {
-                    let chars: Vec<_> = raw.chars().collect();
-                    lines.extend(chars.chunks(eff).map(|c| (block.kind, c.iter().collect())));
+                    wrap_word_aware(raw, eff, block.kind, &mut lines);
                 }
             }
         }
@@ -311,5 +310,69 @@ mod tests {
             large_3,
             "Newest pushed block must be retained"
         );
+    }
+}
+
+/// Wraps one logical line to `width` chars, preferring the last space inside
+/// the window so words are not split mid-word; over-long single tokens still
+/// split (they have nowhere else to go).
+fn wrap_word_aware(
+    raw: &str,
+    width: usize,
+    kind: BlockKind,
+    out: &mut Vec<(BlockKind, String)>,
+) {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut start = 0;
+    while start < chars.len() {
+        let remaining = chars.len() - start;
+        if remaining <= width {
+            out.push((kind, chars[start..].iter().collect()));
+            break;
+        }
+        let window = &chars[start..start + width];
+        // Last space in the window (never at position 0, or we would loop).
+        let space = window
+            .iter()
+            .rposition(|c: &char| c.is_whitespace())
+            .filter(|&index| index > 0);
+        let (emit_end, next_start) = match space {
+            // Break on the space: it ends this line (trimmed) and is skipped.
+            Some(index) => (index, index + 1),
+            None => (width, width),
+        };
+        out.push((kind, window[..emit_end].iter().collect::<String>()));
+        start += next_start;
+    }
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    fn wrapped_lines(input: &str, width: usize) -> Vec<String> {
+        let mut out = Vec::new();
+        wrap_word_aware(input, width, BlockKind::System, &mut out);
+        out.into_iter().map(|(_, text)| text).collect()
+    }
+
+    #[test]
+    fn wraps_on_word_boundaries_when_possible() {
+        assert_eq!(
+            wrapped_lines("alpha beta gamma", 8),
+            vec!["alpha", "beta", "gamma"]
+        );
+    }
+
+    #[test]
+    fn splits_unbreakable_tokens_but_keeps_the_rest_whole() {
+        let lines = wrapped_lines("abcdefghij klmno", 6);
+        assert_eq!(lines, vec!["abcdef", "ghij", "klmno"]);
+    }
+
+    #[test]
+    fn short_lines_pass_through_and_leading_space_never_loops() {
+        assert_eq!(wrapped_lines("short", 80), vec!["short"]);
+        assert_eq!(wrapped_lines("aaaaaaa bbb", 4), vec!["aaaa", "aaa", "bbb"]);
     }
 }
