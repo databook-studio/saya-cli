@@ -47,8 +47,10 @@ pub(super) async fn execute(
                 "local-state write completed"
             },
         ),
-        Err(_) => (
-            serde_json::json!({"error":"database tool failed"}),
+        // The reason reaches the model so it can adjust (e.g. a
+        // safety-layer rejection naming what is not allowed).
+        Err(error) => (
+            serde_json::json!({"error": error.to_string()}),
             if read_only {
                 "read-only database tool failed"
             } else {

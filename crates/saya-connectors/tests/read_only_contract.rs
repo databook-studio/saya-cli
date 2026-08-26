@@ -180,3 +180,32 @@ fn safety_fetch_first_queries_stay_valid_and_bounded() {
         "Postgres rejects LIMIT together with FETCH; prepared was: {prepared}"
     );
 }
+
+#[test]
+fn safety_rejections_name_the_reason_and_next_step() {
+    let cases = [
+        ("DELETE FROM orders", "DELETE"),
+        ("SELECT 1; SELECT 2", "one statement"),
+        ("SELECT * INTO archive FROM orders", "SELECT INTO"),
+        (
+            "WITH x AS (INSERT INTO t VALUES (1)) SELECT * FROM x",
+            "INSERT",
+        ),
+        ("SELECT nextval('seq')", "nextval"),
+        ("SELECT * FROM orders FOR UPDATE", "row locks"),
+        ("SELECT 1 FROM", "read-only statement"),
+    ];
+    for (sql, expected) in cases {
+        let error = prepare_postgres_sql(sql, 10)
+            .expect_err("must reject")
+            .to_string();
+        assert!(
+            error.contains("rejected") && error.contains(expected),
+            "rejection must explain itself ({expected}): {error}"
+        );
+    }
+    assert!(
+        prepare_postgres_sql("SELECT 1", 0).is_err(),
+        "zero cap still rejected"
+    );
+}

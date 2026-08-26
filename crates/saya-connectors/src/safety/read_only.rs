@@ -13,6 +13,7 @@ use super::read_only_policy::{
     BackendPolicy, DUCKDB_POLICY, MYSQL_POLICY, POSTGRES_POLICY, SNOWFLAKE_POLICY, SQLITE_POLICY,
     denied_function, denied_relation,
 };
+use super::reject::{Rejection, kind, rejected};
 
 /// The single place that maps a [`SqlDialect`] to the `sqlparser` dialect the
 /// safety layer parses with. Shared by the read-only `prepare_*` functions and
@@ -83,14 +84,22 @@ fn prepare(
     policy: &BackendPolicy,
 ) -> Result<String, ConnectionError> {
     if max_rows == 0 {
-        return Err(rejected());
+        return Err(rejected(Rejection::RowCap));
     }
-    let mut statements = Parser::parse_sql(dialect, sql).map_err(|_| rejected())?;
-    let mut guard = Guard { policy };
-    if statements.len() != 1 || statements.visit(&mut guard).is_break() || !allowed(&statements[0])
-    {
-        return Err(rejected());
+    let mut statements = Parser::parse_sql(dialect, sql).map_err(|_| rejected(Rejection::Parse))?;
+    if statements.len() != 1 {
+        return Err(rejected(Rejection::MultipleStatements));
     }
+    let mut guard = Guard {
+        policy,
+        denied: None,
+    };
+    if statements.visit(&mut guard).is_break() {
+        return Err(rejected(Rejection::Denied(
+            guard.denied.unwrap_or_else(|| "this construct".to_string()),
+        )));
+    }
+    allowed(&statements[0]).map_err(rejected)?;
     if let Some(query) = statement_query(&mut statements[0]) {
         cap(query, max_rows);
     }
@@ -140,12 +149,13 @@ fn literal(limit: Option<&sqlparser::ast::Expr>) -> Option<usize> {
     }
 }
 
-fn allowed(statement: &Statement) -> bool {
+fn allowed(statement: &Statement) -> Result<(), Rejection> {
     match statement {
         Statement::Query(query) => query_allowed(query),
-        Statement::Explain { statement, .. } => {
-            matches!(statement.as_ref(), Statement::Query(query) if query_allowed(query))
-        }
+        Statement::Explain { statement, .. } => match statement.as_ref() {
+            Statement::Query(query) => query_allowed(query),
+            other => Err(Rejection::WriteStatement(kind(other))),
+        },
         Statement::ShowVariable { .. }
         | Statement::ShowVariables { .. }
         | Statement::ShowStatus { .. }
@@ -156,53 +166,77 @@ fn allowed(statement: &Statement) -> bool {
         | Statement::ShowTables { .. }
         | Statement::ShowViews { .. }
         | Statement::ShowFunctions { .. }
-        | Statement::ShowCollation { .. } => true,
-        _ => false,
+        | Statement::ShowCollation { .. } => Ok(()),
+        _ => Err(Rejection::WriteStatement(kind(statement))),
     }
 }
 
-fn query_allowed(query: &Query) -> bool {
+fn query_allowed(query: &Query) -> Result<(), Rejection> {
     // Row-locking clauses (`FOR UPDATE` / `FOR SHARE`) take locks and are not
     // reads; reject wherever they appear, including CTEs and set operands.
-    query.locks.is_empty()
-        && query
-            .with
-            .as_ref()
-            .is_none_or(|with| with.cte_tables.iter().all(|cte| query_allowed(&cte.query)))
-        && set_allowed(&query.body)
-}
-
-fn set_allowed(set: &SetExpr) -> bool {
-    match set {
-        SetExpr::Select(select) => select.into.is_none(),
-        SetExpr::Query(query) => query_allowed(query),
-        SetExpr::SetOperation { left, right, .. } => set_allowed(left) && set_allowed(right),
-        SetExpr::Values(_) => true,
-        SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Table(_) => false,
+    if !query.locks.is_empty() {
+        return Err(Rejection::LockingClause);
     }
+    if let Some(with) = &query.with
+        && !with
+            .cte_tables
+            .iter()
+            .all(|cte| query_allowed(&cte.query).is_ok())
+    {
+        // Propagate the *inner* reason: a CTE wrapping an INSERT should say
+        // so, not blame the wrapper.
+        return with
+            .cte_tables
+            .iter()
+            .find_map(|cte| query_allowed(&cte.query).err())
+            .map_or_else(|| Err(Rejection::WriteStatement("CTE")), Err);
+    }
+    set_allowed(&query.body)
 }
 
-fn rejected() -> ConnectionError {
-    ConnectionError::query_failed("query rejected by read-only safety policy")
+fn set_allowed(set: &SetExpr) -> Result<(), Rejection> {
+    match set {
+        SetExpr::Select(select) => select
+            .into
+            .is_none()
+            .then_some(())
+            .ok_or(Rejection::WriteStatement("SELECT INTO")),
+        SetExpr::Query(query) => query_allowed(query),
+        SetExpr::SetOperation { left, right, .. } => {
+            set_allowed(left)?;
+            set_allowed(right)
+        }
+        SetExpr::Values(_) => Ok(()),
+        SetExpr::Insert(_) => Err(Rejection::WriteStatement("INSERT")),
+        SetExpr::Update(_) => Err(Rejection::WriteStatement("UPDATE")),
+        SetExpr::Table(_) => Err(Rejection::WriteStatement("this statement")),
+    }
 }
 
 struct Guard<'a> {
     policy: &'a BackendPolicy,
+    denied: Option<String>,
 }
 
 impl Visitor for Guard<'_> {
     type Break = ();
 
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
-        matches!(expr, Expr::Function(function) if denied_function(&function.name, self.policy))
-            .then_some(())
-            .map_or(ControlFlow::Continue(()), ControlFlow::Break)
+        if let Expr::Function(function) = expr
+            && denied_function(&function.name, self.policy)
+        {
+            self.denied = Some(function.name.to_string());
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
     }
 
     fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<Self::Break> {
-        denied_relation(relation, self.policy)
-            .then_some(())
-            .map_or(ControlFlow::Continue(()), ControlFlow::Break)
+        if denied_relation(relation, self.policy) {
+            self.denied = Some(relation.to_string());
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
     }
 }
 
