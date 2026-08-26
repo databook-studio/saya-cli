@@ -21,7 +21,7 @@ mod fuzzy;
 mod history;
 mod input;
 mod keys;
-mod replay;
+pub(crate) mod replay;
 mod session_save;
 mod sql_task;
 mod stream_events;
