@@ -1,6 +1,6 @@
 //! Transcript and empty-state rendering.
 
-use super::markdown::markdown_spans;
+use super::markdown::markdown_spans_fenced;
 use super::theme::{accent, kind_style, rail_style, secondary, warning};
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
@@ -25,32 +25,33 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let width = text_width as usize;
     let height = area.height as usize;
 
-    let lines: Vec<Line> = app
-        .transcript
-        .view(width, height)
-        .into_iter()
-        .map(|(kind, text)| {
-            if text.is_empty() {
-                return Line::from("");
-            }
-            // Shape differs per role so state survives without colour.
-            let glyph = match kind {
-                BlockKind::User => "❯ ",
-                BlockKind::Assistant => "◆ ",
-                BlockKind::Tool => "▸ ",
-                BlockKind::Error => "✗ ",
-                BlockKind::System => "· ",
-            };
-            let rail = Span::styled(glyph, rail_style(kind));
-            let mut spans = vec![rail];
-            if kind == BlockKind::Assistant {
-                spans.extend(markdown_spans(&text));
-            } else {
-                spans.push(Span::styled(text, kind_style(kind)));
-            }
-            Line::from(spans)
-        })
-        .collect();
+    let mut lines: Vec<Line> = Vec::new();
+    // ``` fence state persists across the consecutive lines of one assistant
+    // block; any other role ends it.
+    let mut fence = false;
+    for (kind, text) in app.transcript.view(width, height) {
+        if text.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+        // Shape differs per role so state survives without colour.
+        let glyph = match kind {
+            BlockKind::User => "❯ ",
+            BlockKind::Assistant => "◆ ",
+            BlockKind::Tool => "▸ ",
+            BlockKind::Error => "✗ ",
+            BlockKind::System => "· ",
+        };
+        let rail = Span::styled(glyph, rail_style(kind));
+        let mut spans = vec![rail];
+        if kind == BlockKind::Assistant {
+            spans.extend(markdown_spans_fenced(&text, &mut fence));
+        } else {
+            fence = false;
+            spans.push(Span::styled(text, kind_style(kind)));
+        }
+        lines.push(Line::from(spans));
+    }
     frame.render_widget(Paragraph::new(Text::from(lines)), area);
 
     let (total, first_visible) = app.transcript.scroll_metrics(width, height);

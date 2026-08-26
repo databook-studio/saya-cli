@@ -1,15 +1,36 @@
 //! Lightweight markdown styling for assistant transcript lines.
 
-use super::theme::{accent, code_color};
+use super::theme::{accent, code_color, secondary};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::Span,
 };
 
 /// Formats a single transcript view line with lightweight markdown styling for assistant output.
-pub(super) fn markdown_spans(line: &str) -> Vec<Span<'static>> {
-    let base = Style::default().fg(Color::White);
+fn base_style() -> Style {
+    Style::default().fg(Color::White)
+}
+
+/// Styles one assistant line, tracking ``` fence state across consecutive
+/// lines of the block (`fence` is owned by the caller's render loop).
+pub(super) fn markdown_spans_fenced(line: &str, fence: &mut bool) -> Vec<Span<'static>> {
+    let base = base_style();
     let trimmed = line.trim_start();
+
+    if trimmed.starts_with("```") {
+        *fence = !*fence;
+        return vec![Span::styled(
+            "···".to_string(),
+            Style::default().fg(secondary()),
+        )];
+    }
+    if *fence {
+        // Literal code: no inline markdown parsing inside fences.
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(code_color()),
+        )];
+    }
 
     if let Some(rest) = trimmed
         .strip_prefix("### ")
@@ -110,11 +131,16 @@ fn inline_spans(text: &str, base: Style) -> Vec<Span<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Modifier;
+
+    fn spans(line: &str) -> Vec<Span<'static>> {
+        let mut fence = false;
+        markdown_spans_fenced(line, &mut fence)
+    }
 
     #[test]
     fn test_bold_text() {
-        let spans = markdown_spans("**bold** text");
+        let mut fence = false;
+        let spans = markdown_spans_fenced("**bold** text", &mut fence);
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].content.as_ref(), "bold");
         assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
@@ -124,7 +150,8 @@ mod tests {
 
     #[test]
     fn test_inline_code() {
-        let spans = markdown_spans("run `SELECT 1` now");
+        let mut fence = false;
+        let spans = markdown_spans_fenced("run `SELECT 1` now", &mut fence);
         assert_eq!(spans.len(), 3);
         assert_eq!(spans[0].content.as_ref(), "run ");
         assert_eq!(spans[1].content.as_ref(), "SELECT 1");
@@ -134,7 +161,8 @@ mod tests {
 
     #[test]
     fn test_heading() {
-        let spans = markdown_spans("# Heading");
+        let mut fence = false;
+        let spans = markdown_spans_fenced("# Heading", &mut fence);
         let combined: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(combined, "Heading");
         assert!(!combined.contains('#'));
@@ -145,7 +173,8 @@ mod tests {
 
     #[test]
     fn test_bullet_item() {
-        let spans = markdown_spans("- item");
+        let mut fence = false;
+        let spans = markdown_spans_fenced("- item", &mut fence);
         assert!(!spans.is_empty());
         assert_eq!(spans[0].content.as_ref(), "• ");
         assert_eq!(spans[0].style.fg, Some(accent()));
@@ -155,14 +184,40 @@ mod tests {
 
     #[test]
     fn test_plain_text() {
-        let spans = markdown_spans("plain text with no markers");
+        let mut fence = false;
+        let spans = markdown_spans_fenced("plain text with no markers", &mut fence);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].content.as_ref(), "plain text with no markers");
     }
 
     #[test]
+    fn fenced_blocks_render_literally_between_markers() {
+        let mut fence = false;
+        assert_eq!(
+            markdown_spans_fenced("```sql", &mut fence)[0]
+                .content
+                .as_ref(),
+            "···"
+        );
+        assert!(fence);
+        let mut fence_body = true;
+        let body = markdown_spans_fenced("SELECT x = '**not bold**'", &mut fence_body);
+        let combined: String = body.iter().map(|span| span.content.as_ref()).collect();
+        assert_eq!(combined, "SELECT x = '**not bold**'", "inside a fence nothing is parsed");
+        assert!(body[0].style.fg == Some(code_color()));
+        assert_eq!(
+            markdown_spans_fenced("```", &mut fence)[0].content.as_ref(),
+            "···"
+        );
+        assert!(!fence);
+        let after = markdown_spans_fenced("plain again", &mut fence);
+        assert_eq!(after[0].content.as_ref(), "plain again");
+    }
+
+    #[test]
     fn test_unclosed_bold() {
-        let spans = markdown_spans("unclosed **bold");
+        let mut fence = false;
+        let spans = markdown_spans_fenced("unclosed **bold", &mut fence);
         let combined: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(combined, "unclosed **bold");
         assert!(combined.contains("**"));
