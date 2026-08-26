@@ -1,5 +1,5 @@
 use super::{framing::whitespace, ollama_chunks::Chunk, tool_assembly::ToolAssembly};
-use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream};
+use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
 use std::{collections::VecDeque, time::Duration};
@@ -80,6 +80,7 @@ where
 #[derive(Default)]
 struct State {
     bytes: Vec<u8>,
+    usage: TokenUsage,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
     content: bool,
@@ -146,6 +147,15 @@ impl State {
         }
         if chunk.done {
             self.done = true;
+            if let Some(input) = chunk.prompt_eval_count {
+                self.usage.input_tokens = input;
+            }
+            if let Some(output) = chunk.eval_count {
+                self.usage.output_tokens = output;
+            }
+            if self.usage != TokenUsage::default() {
+                self.pending.push_back(ProviderEvent::Usage(self.usage));
+            }
             self.complete()?;
         }
         Ok(())

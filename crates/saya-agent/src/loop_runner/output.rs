@@ -30,6 +30,9 @@ pub struct AgentOutput {
     pub events: Vec<AgentEvent>,
     pub used_bounded_sql_query: bool,
     pub tool_metadata: Vec<ToolMetadata>,
+    /// Token counts summed over every provider turn of this run (zero when
+    /// the provider does not report usage).
+    pub usage: crate::TokenUsage,
 }
 #[derive(Debug, Error)]
 pub enum AgentError {

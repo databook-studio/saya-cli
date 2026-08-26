@@ -1,5 +1,7 @@
 use super::framing::whitespace;
-use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, ToolCall};
+use crate::{
+    CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage, ToolCall,
+};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
 use std::{
@@ -91,6 +93,7 @@ struct State {
     bytes: Vec<u8>,
     pending: VecDeque<ProviderEvent>,
     tools: BTreeMap<usize, ToolUseBlock>,
+    usage: TokenUsage,
     done: bool,
 }
 
@@ -190,10 +193,22 @@ impl State {
                     self.done = true;
                     break;
                 }
+                "message_start" => {
+                    if let Some(input) = json["message"]["usage"]["input_tokens"].as_u64() {
+                        self.usage.input_tokens = input;
+                        self.pending.push_back(ProviderEvent::Usage(self.usage));
+                    }
+                }
+                "message_delta" => {
+                    if let Some(output) = json["usage"]["output_tokens"].as_u64() {
+                        self.usage.output_tokens = output;
+                        self.pending.push_back(ProviderEvent::Usage(self.usage));
+                    }
+                }
                 "error" => {
                     return Err(ProviderError::InvalidResponse);
                 }
-                "ping" | "message_start" | "content_block_stop" | "message_delta" => {}
+                "ping" | "content_block_stop" => {}
                 _ => {}
             }
         }

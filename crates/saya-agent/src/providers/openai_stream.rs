@@ -1,5 +1,5 @@
 use super::{framing::whitespace, openai_chunks::Chunk, tool_assembly::ToolAssembly};
-use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream};
+use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
 use std::{collections::VecDeque, time::Duration};
@@ -80,6 +80,7 @@ struct State {
     bytes: Vec<u8>,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
+    usage: TokenUsage,
     content: bool,
     done: bool,
 }
@@ -104,11 +105,22 @@ impl State {
             }
             let chunk: Chunk =
                 serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
-            let choice = chunk
-                .choices
-                .into_iter()
-                .next()
-                .ok_or(ProviderError::InvalidResponse)?;
+            if let Some(usage) = chunk.usage {
+                if let Some(input) = usage.prompt_tokens {
+                    self.usage.input_tokens = input;
+                }
+                if let Some(output) = usage.completion_tokens {
+                    self.usage.output_tokens = output;
+                }
+                self.pending.push_back(ProviderEvent::Usage(self.usage));
+            }
+            let Some(choice) = chunk.choices.into_iter().next() else {
+                // The trailing usage-only chunk carries an empty choices list.
+                if self.usage == TokenUsage::default() {
+                    return Err(ProviderError::InvalidResponse);
+                }
+                continue;
+            };
             if let Some(reason) = choice.finish_reason.as_deref()
                 && !matches!(reason, "stop" | "tool_calls")
             {

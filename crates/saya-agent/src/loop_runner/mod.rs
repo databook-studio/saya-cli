@@ -4,7 +4,7 @@ mod tools;
 
 use crate::{
     AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
-    ToolDefinition, ToolExecutor,
+    TokenUsage, ToolDefinition, ToolExecutor,
 };
 
 pub use output::{AgentError, AgentLimits, AgentOutput};
@@ -30,9 +30,10 @@ pub async fn run_agent_with_sink(
     let mut tool_count = 0;
     let mut used_bounded_sql_query = false;
     let mut tool_metadata = Vec::new();
+    let mut usage = TokenUsage::default();
     for _ in 0..limits.max_turns {
         check_cancelled(&cancellation)?;
-        let assistant = receive::receive(
+        let (assistant, turn_usage) = receive::receive(
             provider,
             &request.model,
             &messages,
@@ -42,6 +43,9 @@ pub async fn run_agent_with_sink(
             &mut events,
         )
         .await?;
+        // Providers report cumulative counts per response; sum across turns.
+        usage.input_tokens += turn_usage.input_tokens;
+        usage.output_tokens += turn_usage.output_tokens;
         messages.push(assistant.clone());
         if assistant.tool_calls.is_empty() {
             check_cancelled(&cancellation)?;
@@ -51,6 +55,7 @@ pub async fn run_agent_with_sink(
                 events,
                 used_bounded_sql_query,
                 tool_metadata,
+                usage,
             });
         }
         // When every call in the message is valid and auto-runnable (no

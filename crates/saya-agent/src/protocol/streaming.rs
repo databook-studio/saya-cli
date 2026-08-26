@@ -10,10 +10,20 @@ use std::{
 };
 use tokio::sync::Notify;
 
+/// Token counts reported by a provider for one response. Providers that do
+/// not report usage simply never emit it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderEvent {
     TextDelta(String),
     ToolCalls(Vec<ToolCall>),
+    /// The provider's cumulative token counts so far for this response.
+    Usage(TokenUsage),
     Done,
 }
 pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<ProviderEvent, ProviderError>> + Send>>;
@@ -81,6 +91,7 @@ pub trait ChatProvider: Send + Sync {
             match event? {
                 ProviderEvent::TextDelta(value) => content.push_str(&value),
                 ProviderEvent::ToolCalls(calls) => tool_calls.extend(calls),
+                ProviderEvent::Usage(_) => {}
                 ProviderEvent::Done => complete = true,
             }
         }

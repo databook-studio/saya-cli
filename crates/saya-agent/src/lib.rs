@@ -18,7 +18,9 @@ pub use protocol::contracts::{
     ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor, ToolMetadata,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
-pub use protocol::streaming::{CancellationToken, ChatProvider, ProviderEvent, ProviderStream};
+pub use protocol::streaming::{
+    CancellationToken, ChatProvider, ProviderEvent, ProviderStream, TokenUsage,
+};
 pub use providers::{
     AnthropicProvider, GeminiProvider, OllamaProvider, OpenAiCompatibleProvider, ProviderSettings,
 };

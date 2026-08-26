@@ -408,3 +408,117 @@ async fn ollama_stream_reports_stall_on_idle_timeout() {
     assert!(started.elapsed() < Duration::from_secs(5));
     handle.join().unwrap();
 }
+
+async fn drain(stream: &mut saya_agent::ProviderStream) -> Vec<saya_agent::ProviderEvent> {
+    let mut seen = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            event @ saya_agent::ProviderEvent::Usage(_) => seen.push(event),
+            saya_agent::ProviderEvent::Done => {
+                seen.push(saya_agent::ProviderEvent::Done);
+                break;
+            }
+            _ => {}
+        }
+    }
+    seen
+}
+
+#[tokio::test]
+async fn anthropic_stream_surfaces_cumulative_token_usage() {
+    use saya_agent::{AnthropicProvider, ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12}}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{},\"usage\":{\"output_tokens\":34}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ],
+    }]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain(&mut stream).await;
+    handle.join().unwrap();
+    let position = events
+        .iter()
+        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage { input_tokens: 12, output_tokens: 34 }))
+        .expect("usage event with both counters must arrive");
+    assert!(
+        matches!(events[position + 1], ProviderEvent::Done),
+        "usage precedes Done"
+    );
+}
+
+#[tokio::test]
+async fn openai_stream_surfaces_usage_and_requests_it() {
+    use saya_agent::{ProviderEvent, TokenUsage};
+    let (base, requests, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n",
+        ],
+    }]);
+    let response = openai(base.clone()).complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    let sent = &requests.lock().unwrap()[0];
+    assert!(
+        sent.contains("\"stream_options\":{\"include_usage\":true}"),
+        "must ask the gateway for usage counts: {sent}"
+    );
+    // Re-run the stream directly to observe the Usage event.
+    let (_base2, _h2) = ((), ());
+    drop(_base2);
+    drop(_h2);
+    let (base2, _, handle2) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n",
+        ],
+    }]);
+    let provider = OpenAiCompatibleProvider::new(
+        ProviderSettings::new("test-model", Some(format!("{base2}/v1"))),
+        Some("k"),
+    )
+    .unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain(&mut stream).await;
+    handle2.join().unwrap();
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
+        input_tokens: 5,
+        output_tokens: 6
+    })));
+}
+
+#[tokio::test]
+async fn ollama_stream_surfaces_eval_counts() {
+    use saya_agent::{ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"content\":\"ok\"},\"done\":false}\n",
+            "{\"done\":true,\"prompt_eval_count\":9,\"eval_count\":11}\n",
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain(&mut stream).await;
+    handle.join().unwrap();
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
+        input_tokens: 9,
+        output_tokens: 11
+    })));
+}
