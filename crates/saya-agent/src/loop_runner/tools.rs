@@ -57,6 +57,29 @@ pub(super) async fn execute(
         ),
     }
 }
+/// Executes already-validated, auto-runnable calls concurrently while
+/// preserving input order in the returned results. Concurrency is bounded
+/// upstream by `max_tool_calls`; actual database fan-out is bounded again by
+/// the connection pool.
+pub(super) async fn execute_batch(
+    tools: &dyn ToolExecutor,
+    calls: &[ToolCall],
+    definitions: &[ToolDefinition],
+) -> Vec<(Value, &'static str)> {
+    use futures_util::{StreamExt, stream::FuturesOrdered};
+    let mut pending = FuturesOrdered::new();
+    for call in calls {
+        let read_only = definitions
+            .iter()
+            .find(|definition| definition.name == call.name)
+            .is_some_and(|definition| definition.read_only);
+        let name = call.name.clone();
+        let arguments = call.arguments.clone();
+        pending.push_back(async move { execute(tools, &name, arguments, read_only).await });
+    }
+    pending.collect().await
+}
+
 pub(super) fn tool_message(id: String, result: Value) -> ChatMessage {
     ChatMessage {
         role: "tool".into(),

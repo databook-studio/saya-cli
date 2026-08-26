@@ -53,6 +53,72 @@ pub async fn run_agent_with_sink(
                 tool_metadata,
             });
         }
+        // When every call in the message is valid and auto-runnable (no
+        // approval gate, no external side effect, no denied candidate write),
+        // they are independent: run them concurrently instead of paying
+        // their latency sequentially.
+        let batch_parallel = assistant.tool_calls.len() > 1
+            && assistant.tool_calls.iter().all(|call| {
+                tools::invalid_reason(call, &definitions).is_none()
+                    && definitions.iter().any(|definition| {
+                        definition.name == call.name
+                            && !definition.effect.requires_approval
+                            && !definition.effect.external_side_effect
+                            && !(definition.effect.local_state
+                                == crate::LocalStateEffect::WriteCandidate
+                                && !limits.permit_candidate_writes)
+                    })
+            });
+        if batch_parallel {
+            tool_count += assistant.tool_calls.len();
+            if tool_count > limits.max_tool_calls {
+                return Err(AgentError::Limit("tool calls"));
+            }
+            check_cancelled(&cancellation)?;
+            for call in &assistant.tool_calls {
+                emit(
+                    &mut events,
+                    sink,
+                    AgentEvent::ToolRequested {
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    },
+                )
+                .await;
+                if definitions
+                    .iter()
+                    .find(|definition| definition.name == call.name)
+                    .is_some_and(|definition| definition.effect.database_data)
+                {
+                    used_bounded_sql_query = true;
+                }
+            }
+            let results =
+                tools::execute_batch(tools, &assistant.tool_calls.clone(), &definitions).await;
+            for (call, (result, summary)) in assistant.tool_calls.iter().zip(results) {
+                tool_metadata.push(crate::ToolMetadata {
+                    name: call.name.clone(),
+                    status: if summary.contains("failed") {
+                        "failed"
+                    } else {
+                        "completed"
+                    }
+                    .into(),
+                });
+                messages.push(tools::tool_message(call.id.clone(), result));
+                check_cancelled(&cancellation)?;
+                emit(
+                    &mut events,
+                    sink,
+                    AgentEvent::ToolCompleted {
+                        name: call.name.clone(),
+                        summary: summary.into(),
+                    },
+                )
+                .await;
+            }
+            continue;
+        }
         for call in assistant.tool_calls {
             if let Some(reason) = tools::invalid_reason(&call, &definitions) {
                 if call.id.trim().is_empty() {
