@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 const AFTER_HELP: &str = "Examples:\n  \
 saya                                   start the interactive REPL\n  \
 saya ask \"count orders per region\"     one-shot question\n  \
-echo \"SELECT 1\" | saya query --sql -   piped SQL works too\n  \
+echo \"SELECT 1\" | saya query           piped SQL works too\n  \
 saya query --sql \"SELECT 1\"            bounded read-only SQL\n  \
 saya config doctor                     diagnose setup problems\n  \
 saya completions --shell zsh > completion.zsh\n\nExit codes: 0 ok · 2 usage · 3 connection/config · 4 safety/query · 5 agent · 130 cancelled";
