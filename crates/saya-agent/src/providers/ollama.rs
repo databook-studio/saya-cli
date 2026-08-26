@@ -54,6 +54,7 @@ impl ChatProvider for OllamaProvider {
             || client.post(&url).json(&body),
             &self.settings.retry_delays,
             &cancellation,
+            &url,
         )
         .await?;
         Ok(ollama_stream::parse(

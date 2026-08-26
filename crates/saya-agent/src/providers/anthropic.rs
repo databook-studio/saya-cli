@@ -70,6 +70,7 @@ impl ChatProvider for AnthropicProvider {
             },
             &self.settings.retry_delays,
             &cancellation,
+            &url,
         )
         .await?;
         Ok(anthropic_stream::parse(

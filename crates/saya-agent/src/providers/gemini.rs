@@ -59,6 +59,7 @@ impl ChatProvider for GeminiProvider {
             },
             &self.settings.retry_delays,
             &cancellation,
+            &url,
         )
         .await?;
 

@@ -62,6 +62,7 @@ impl ChatProvider for OpenAiCompatibleProvider {
             },
             &self.settings.retry_delays,
             &cancellation,
+            &url,
         )
         .await?;
         Ok(openai_stream::parse(

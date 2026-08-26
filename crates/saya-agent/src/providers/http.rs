@@ -8,6 +8,7 @@ pub(super) async fn send_stream(
     mut build: impl FnMut() -> RequestBuilder,
     delays: &[Duration],
     cancellation: &CancellationToken,
+    endpoint: &str,
 ) -> Result<Response, ProviderError> {
     for attempt in 0..=delays.len() {
         let response = tokio::select! {
@@ -29,10 +30,16 @@ pub(super) async fn send_stream(
                 let delay = jitter(delays[attempt]).min(MAX_BACKOFF);
                 wait(delay, cancellation).await?;
             }
-            Err(_) => return Err(ProviderError::Request("network request failed".into())),
+            Err(_) => {
+                return Err(ProviderError::Request(format!(
+                    "could not reach the provider at {endpoint} — check that it is running and the configured base_url is correct"
+                )));
+            }
         }
     }
-    Err(ProviderError::Request("network request failed".into()))
+    Err(ProviderError::Request(format!(
+        "could not reach the provider at {endpoint} — check that it is running and the configured base_url is correct"
+    )))
 }
 
 async fn wait(delay: Duration, cancellation: &CancellationToken) -> Result<(), ProviderError> {
@@ -209,7 +216,7 @@ mod tests {
         let delays = vec![Duration::from_secs(10)];
 
         let start = std::time::Instant::now();
-        let res = send_stream(|| client.get(&url), &delays, &cancellation).await;
+        let res = send_stream(|| client.get(&url), &delays, &cancellation, &url).await;
         let elapsed = start.elapsed();
 
         assert!(res.is_ok());
