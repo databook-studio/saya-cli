@@ -467,15 +467,12 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
     let response = openai(base.clone()).complete(request()).await.unwrap();
     handle.join().unwrap();
     assert_eq!(response.message.content, "ok");
-    let sent = &requests.lock().unwrap()[0];
+    let sent = requests.lock().unwrap()[0].clone();
     assert!(
         sent.contains("\"stream_options\":{\"include_usage\":true}"),
         "must ask the gateway for usage counts: {sent}"
     );
     // Re-run the stream directly to observe the Usage event.
-    let (_base2, _h2) = ((), ());
-    drop(_base2);
-    drop(_h2);
     let (base2, _, handle2) = server(vec![Reply {
         status: 200,
         chunks: vec![
