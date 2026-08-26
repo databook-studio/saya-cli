@@ -33,7 +33,15 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
             if text.is_empty() {
                 return Line::from("");
             }
-            let rail = Span::styled("▎ ", rail_style(kind));
+            // Shape differs per role so state survives without colour.
+            let glyph = match kind {
+                BlockKind::User => "❯ ",
+                BlockKind::Assistant => "◆ ",
+                BlockKind::Tool => "▸ ",
+                BlockKind::Error => "✗ ",
+                BlockKind::System => "· ",
+            };
+            let rail = Span::styled(glyph, rail_style(kind));
             let mut spans = vec![rail];
             if kind == BlockKind::Assistant {
                 spans.extend(markdown_spans(&text));

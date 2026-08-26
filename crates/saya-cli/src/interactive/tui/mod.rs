@@ -191,7 +191,10 @@ pub(crate) fn run(
             }
         }
 
-        if let Some(line) = app.pending.take() {
+        // Queued prompts (submitted while busy) wait until the request ends.
+        if !app.is_busy()
+            && let Some(line) = app.pending.take()
+        {
             match dispatch::dispatch(
                 &line,
                 &mut app.transcript,

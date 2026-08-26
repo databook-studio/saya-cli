@@ -2,10 +2,10 @@
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
 expression: buffer
 ---
-"▎ Done — I've recorded what you told me and flagged the guess.                  "
-"▎ memory learned · the alias "orders" for catalog.public.orders                 "
-"▎ memory noted · created_at as the default time column for catalog.public.orders"
-"▎  — unconfirmed, review with /queue                                            "
+"◆ Done — I've recorded what you told me and flagged the guess.                  "
+"· memory learned · the alias "orders" for catalog.public.orders                 "
+"· memory noted · created_at as the default time column for catalog.public.orders"
+"·  — unconfirmed, review with /queue                                            "
 "                                                                                "
 "                                                                                "
 "                                                                                "

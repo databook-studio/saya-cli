@@ -121,7 +121,12 @@ impl SessionState {
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
-                SessionAction::Message("Conversation context cleared.".into())
+                // The transcript keeps what was said; the model's working
+                // memory does not. Say so, since there is no undo.
+                SessionAction::Message(
+                    "Conversation context cleared — the model will not remember earlier turns.                      This cannot be undone; use /export first if you need a copy."
+                        .into(),
+                )
             }
             SlashCommand::History => SessionAction::History,
             SlashCommand::Sessions => SessionAction::History,
