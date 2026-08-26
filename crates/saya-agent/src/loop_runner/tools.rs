@@ -1,4 +1,3 @@
-use super::AgentError;
 use crate::{ChatMessage, ToolCall, ToolDefinition, ToolExecutor};
 use serde_json::Value;
 
