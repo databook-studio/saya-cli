@@ -109,7 +109,11 @@ pub fn load_with_sources(
             profile: options.profile.clone(),
             provider,
             model: options.model.clone(),
-            allow_data_sharing: options.allow_data_sharing.then_some(true),
+            allow_data_sharing: if options.no_data_sharing {
+                Some(false)
+            } else {
+                options.allow_data_sharing.then_some(true)
+            },
             max_rows: options.max_rows,
             trust_project_config: options.trust_project_config,
         });

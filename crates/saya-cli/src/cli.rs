@@ -42,6 +42,10 @@ pub struct GlobalOptions {
     pub env_file: Option<std::path::PathBuf>,
     #[arg(long, global = true)]
     pub allow_data_sharing: bool,
+    /// Force-disable cloud data sharing for this invocation, overriding any
+    /// config layer that enabled it.
+    #[arg(long = "no-data-sharing", global = true)]
+    pub no_data_sharing: bool,
     /// Accept security-critical settings (`ai.base_url`, `ai.api_key`,
     /// `ai.allow_data_sharing`, `run.read_only`) from the project layer's
     /// `.saya/config.toml`. Off by default: a cloned repository is untrusted.
