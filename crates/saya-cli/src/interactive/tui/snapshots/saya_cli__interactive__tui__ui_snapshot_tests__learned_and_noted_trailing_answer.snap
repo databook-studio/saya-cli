@@ -4,8 +4,8 @@ expression: buffer
 ---
 "◆ Done — I've recorded what you told me and flagged the guess.                  "
 "· memory learned · the alias "orders" for catalog.public.orders                 "
-"· memory noted · created_at as the default time column for catalog.public.orders"
-"·  — unconfirmed, review with /queue                                            "
+"· memory noted · created_at as the default time column for                      "
+"· catalog.public.orders — unconfirmed, review with /queue                       "
 "                                                                                "
 "                                                                                "
 "                                                                                "

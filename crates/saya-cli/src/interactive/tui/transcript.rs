@@ -316,12 +316,7 @@ mod tests {
 /// Wraps one logical line to `width` chars, preferring the last space inside
 /// the window so words are not split mid-word; over-long single tokens still
 /// split (they have nowhere else to go).
-fn wrap_word_aware(
-    raw: &str,
-    width: usize,
-    kind: BlockKind,
-    out: &mut Vec<(BlockKind, String)>,
-) {
+fn wrap_word_aware(raw: &str, width: usize, kind: BlockKind, out: &mut Vec<(BlockKind, String)>) {
     let chars: Vec<char> = raw.chars().collect();
     let mut start = 0;
     while start < chars.len() {
