@@ -2,20 +2,32 @@ use super::framing::whitespace;
 use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, ToolCall};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    time::Duration,
+};
 
-pub(super) fn parse(response: Response, cancellation: CancellationToken) -> ProviderStream {
+pub(super) fn parse(
+    response: Response,
+    cancellation: CancellationToken,
+    idle: Duration,
+) -> ProviderStream {
     Box::pin(stream::unfold(
-        (response.bytes_stream(), State::default(), cancellation),
+        (
+            response.bytes_stream(),
+            State::default(),
+            cancellation,
+            idle,
+        ),
         next,
     ))
 }
 
 async fn next<S>(
-    mut value: (S, State, CancellationToken),
+    mut value: (S, State, CancellationToken, Duration),
 ) -> Option<(
     Result<ProviderEvent, ProviderError>,
-    (S, State, CancellationToken),
+    (S, State, CancellationToken, Duration),
 )>
 where
     S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
@@ -31,9 +43,20 @@ where
         if value.1.done {
             return None;
         }
+        // Streams are bounded per chunk gap, not by a total cap: a healthy
+        // long generation never times out, a stalled one fails fast.
         let item = tokio::select! {
             _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)),
-            item = value.0.next() => item
+            item = tokio::time::timeout(value.3, value.0.next()) => match item {
+                Ok(item) => item,
+                Err(_) => {
+                    value.1.done = true;
+                    return Some((
+                        Err(ProviderError::Request("provider stream stalled".into())),
+                        value,
+                    ));
+                }
+            }
         };
         let Some(chunk) = item else {
             value.1.done = true;

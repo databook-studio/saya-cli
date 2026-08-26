@@ -18,8 +18,9 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     /// Creates a new `AnthropicProvider` with the given settings and optional API key.
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
+        // No client-wide timeout: streaming responses are bounded per chunk
+        // gap (`idle_timeout`) so long healthy generations are never killed.
         let client = reqwest::Client::builder()
-            .timeout(settings.timeout)
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
@@ -67,6 +68,10 @@ impl ChatProvider for AnthropicProvider {
             &cancellation,
         )
         .await?;
-        Ok(anthropic_stream::parse(response, cancellation))
+        Ok(anthropic_stream::parse(
+            response,
+            cancellation,
+            self.settings.idle_timeout,
+        ))
     }
 }

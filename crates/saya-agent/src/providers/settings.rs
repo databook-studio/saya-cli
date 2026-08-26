@@ -4,7 +4,13 @@ use std::time::Duration;
 pub struct ProviderSettings {
     pub model: String,
     pub base_url: Option<String>,
+    /// Deadline for establishing a request or completing a non-streaming
+    /// response. Streaming responses are bounded per chunk instead, so a long
+    /// healthy stream is never killed by a total cap.
     pub timeout: Duration,
+    /// Maximum gap between stream chunks before the provider is considered
+    /// stalled. This — not a total-duration cap — is what bounds streams.
+    pub idle_timeout: Duration,
     pub retry_delays: Vec<Duration>,
     /// Sampling temperature sent to providers that support it (OpenAI-compatible).
     pub temperature: f32,
@@ -16,6 +22,7 @@ impl ProviderSettings {
             model: model.into(),
             base_url,
             timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_secs(90),
             retry_delays: vec![
                 Duration::from_millis(250),
                 Duration::from_millis(500),
@@ -27,6 +34,11 @@ impl ProviderSettings {
 
     pub fn with_retry_delays(mut self, retry_delays: Vec<Duration>) -> Self {
         self.retry_delays = retry_delays;
+        self
+    }
+
+    pub fn with_idle_timeout(mut self, idle_timeout: Duration) -> Self {
+        self.idle_timeout = idle_timeout;
         self
     }
 
