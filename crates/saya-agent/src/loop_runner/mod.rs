@@ -54,7 +54,45 @@ pub async fn run_agent_with_sink(
             });
         }
         for call in assistant.tool_calls {
-            tools::check_call(&call, &definitions)?;
+            if let Some(reason) = tools::invalid_reason(&call, &definitions) {
+                if call.id.trim().is_empty() {
+                    return Err(AgentError::InvalidToolCall);
+                }
+                tool_count += 1;
+                if tool_count > limits.max_tool_calls {
+                    return Err(AgentError::Limit("tool calls"));
+                }
+                check_cancelled(&cancellation)?;
+                emit(
+                    &mut events,
+                    sink,
+                    AgentEvent::ToolRequested {
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    },
+                )
+                .await;
+                // Feed the problem back as the tool result so the model can
+                // retry with a valid call on its next turn.
+                tool_metadata.push(crate::ToolMetadata {
+                    name: call.name.clone(),
+                    status: "failed".into(),
+                });
+                messages.push(tools::tool_message(
+                    call.id,
+                    serde_json::json!({"error": reason}),
+                ));
+                emit(
+                    &mut events,
+                    sink,
+                    AgentEvent::ToolCompleted {
+                        name: call.name,
+                        summary: "tool call failed validation".into(),
+                    },
+                )
+                .await;
+                continue;
+            }
             tool_count += 1;
             if tool_count > limits.max_tool_calls {
                 return Err(AgentError::Limit("tool calls"));

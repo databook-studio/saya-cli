@@ -230,14 +230,98 @@ async fn tool_call_limits_stop_run_before_unbounded_execution() {
 }
 
 #[tokio::test]
-async fn malformed_or_unsupported_tool_calls_fail_closed() {
+async fn unknown_tool_call_feeds_an_error_result_and_the_turn_recovers() {
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "shell".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    tool_call_id: None,
+                },
+            },
+            ChatResponse {
+                message: ChatMessage::text("assistant", "recovered"),
+            },
+        ]),
+    };
+    let tools = MockTools {
+        calls: Arc::new(Mutex::new(Vec::new())),
+    };
+    let output = run_agent(
+        &provider,
+        &tools,
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap();
+    // The hallucinated tool never executed, the model saw an error result,
+    // and it corrected itself instead of the run aborting.
+    assert_eq!(output.answer, "recovered");
+    assert!(tools.calls.lock().unwrap().is_empty());
+    assert!(
+        output
+            .tool_metadata
+            .iter()
+            .any(|item| item.name == "shell" && item.status == "failed")
+    );
+}
+
+#[tokio::test]
+async fn non_object_tool_arguments_are_recovered_not_fatal() {
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!("not-an-object"),
+                    }],
+                    tool_call_id: None,
+                },
+            },
+            ChatResponse {
+                message: ChatMessage::text("assistant", "recovered"),
+            },
+        ]),
+    };
+    let tools = MockTools {
+        calls: Arc::new(Mutex::new(Vec::new())),
+    };
+    let output = run_agent(
+        &provider,
+        &tools,
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "recovered");
+    assert!(tools.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn missing_tool_call_id_remains_fail_closed() {
     let provider = MockProvider {
         responses: Mutex::new(vec![ChatResponse {
             message: ChatMessage {
                 role: "assistant".into(),
                 content: String::new(),
                 tool_calls: vec![ToolCall {
-                    id: "call-1".into(),
+                    id: String::new(),
                     name: "shell".into(),
                     arguments: serde_json::json!({}),
                 }],
@@ -257,6 +341,8 @@ async fn malformed_or_unsupported_tool_calls_fail_closed() {
     )
     .await
     .unwrap_err();
+    // Without a call id there is no way to anchor a well-formed tool result,
+    // so the conversation could not continue validly.
     assert!(matches!(error, AgentError::InvalidToolCall));
 }
 
