@@ -371,3 +371,68 @@ mod wrap_tests {
         assert_eq!(wrapped_lines("aaaaaaa bbb", 4), vec!["aaaa", "aaa", "bbb"]);
     }
 }
+
+impl Transcript {
+    /// Jumps the viewport to the next line at/after the current top that
+    /// contains `needle` (case-insensitive). Returns true when a match was
+    /// found. Searching from the tail when following, so repeated searches
+    /// walk upward through history.
+    pub(crate) fn jump_to_match(&mut self, needle: &str, width: usize, height: usize) -> bool {
+        let total = self.total_lines(width);
+        if total == 0 || height == 0 {
+            return false;
+        }
+        let needle = needle.to_lowercase();
+        let lines = self.lines(width);
+        let current_top = total
+            .saturating_sub(height)
+            .saturating_sub(self.scroll_up.min(total.saturating_sub(height)));
+        // Walk downward from just above the current top; wrap once.
+        for offset in 0..total {
+            let idx = (current_top + offset) % total;
+            if lines[idx].1.to_lowercase().contains(&needle) {
+                let max_scroll = total.saturating_sub(height);
+                self.scroll_up = (total - 1 - idx).min(max_scroll);
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl Transcript {
+    /// Lines containing `needle` (case-insensitive), for the find overlay.
+    pub(crate) fn count_matches(&self, needle: &str, width: usize) -> usize {
+        if needle.is_empty() {
+            return 0;
+        }
+        let needle = needle.to_lowercase();
+        self.lines(width)
+            .iter()
+            .filter(|(_, text)| text.to_lowercase().contains(&needle))
+            .count()
+    }
+}
+
+#[cfg(test)]
+mod find_tests {
+    use super::*;
+
+    fn transcript() -> Transcript {
+        let mut t = Transcript::default();
+        t.push(BlockKind::User, "show me the orders table");
+        t.push(BlockKind::Assistant, "Here is the orders summary.");
+        t.push(BlockKind::Error, "column not found: ordrs");
+        t
+    }
+
+    #[test]
+    fn jump_finds_case_insensitive_and_reports_misses() {
+        let mut t = transcript();
+        assert!(t.jump_to_match("ORDERS", 80, 2));
+        assert!(t.scroll_up > 0, "viewport moved to the match");
+        assert!(!t.jump_to_match("nonexistent-needle", 80, 2));
+        // Following-tail state is untouched by a miss.
+        assert!(t.scroll_up > 0);
+    }
+}

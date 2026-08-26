@@ -55,7 +55,8 @@ pub(super) fn draw_help(frame: &mut Frame<'_>, screen: Rect) {
         "Enter        submit  ·  Alt+Enter  newline",
         "/            command popup  ·  @  table references",
         "Tab / Enter  accept popup suggestion  ·  Esc  dismiss",
-        "↑ / ↓        history (input)  ·  popup navigation",
+        "↑ / ↓        history (input)  ·  overlay navigation",
+        "Ctrl+R       search input history  ·  Ctrl+F  find in transcript",
         "PageUp/Dn    scroll transcript",
         "Ctrl+A/E     start/end of line  ·  Ctrl+W/U  delete word/line",
         "Ctrl+C       cancel request / clear · twice to exit",
@@ -138,4 +139,74 @@ fn menu_row(candidate: &Candidate, selected: bool, width: usize) -> Line<'static
         ));
     }
     Line::from(spans)
+}
+
+/// Draws the Ctrl+R / Ctrl+F search overlay.
+pub(super) fn draw_search(
+    frame: &mut Frame<'_>,
+    app: &crate::interactive::tui::types::App,
+    screen: Rect,
+) {
+    use crate::interactive::tui::types::SearchKind;
+    let Some(search) = &app.overlays.search else {
+        return;
+    };
+    let title = match search.kind {
+        SearchKind::History => "search history — ↑/↓ select · Enter insert · Esc cancel",
+        SearchKind::Transcript => "find in transcript — Enter next match · Esc cancel",
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!("> {}▏", search.query),
+        Style::default().fg(Color::White),
+    )));
+    match search.kind {
+        SearchKind::History => {
+            let matches = app.search_matches(search);
+            if matches.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    " no matches",
+                    Style::default().fg(secondary()),
+                )));
+            }
+            for (i, entry) in matches.iter().take(8).enumerate() {
+                let style = if i == search.selected {
+                    Style::default().bg(accent()).fg(Color::Black)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let one_line: String = entry
+                    .chars()
+                    .map(|c| if c == '\n' { ' ' } else { c })
+                    .collect();
+                lines.push(Line::from(Span::styled(format!(" {one_line}"), style)));
+            }
+        }
+        SearchKind::Transcript => {
+            if !search.query.is_empty() {
+                let count = app
+                    .transcript
+                    .count_matches(&search.query, screen.width.saturating_sub(2) as usize);
+                lines.push(Line::from(Span::styled(
+                    format!(" {count} matching line(s) — Enter to jump"),
+                    Style::default().fg(secondary()),
+                )));
+            }
+        }
+    }
+    let height = (lines.len() as u16 + 2).min(screen.height);
+    let area = centered(screen, screen.width.clamp(40, 90), height);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(accent()))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(accent()),
+        ));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(Text::from(lines)).block(block),
+        area,
+    );
 }

@@ -2,6 +2,7 @@
 
 mod input_actions;
 mod picker;
+mod search;
 mod streaming;
 
 use super::history::History;

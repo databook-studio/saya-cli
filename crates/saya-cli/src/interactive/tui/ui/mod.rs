@@ -12,7 +12,7 @@ use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
 use input_box::draw_input;
-use overlays::{draw_help, draw_menu, draw_picker};
+use overlays::{draw_help, draw_menu, draw_picker, draw_search};
 use panels::{approval_height, draw_approval, draw_empty_state, draw_transcript};
 use ratatui::{
     Frame,
@@ -56,6 +56,9 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     draw_input(frame, app, chunks[3]);
     if let Some(menu) = &app.overlays.menu {
         draw_menu(frame, menu, chunks[3]);
+    }
+    if app.overlays.search.is_some() {
+        draw_search(frame, app, frame.area());
     }
     if let Some(picker) = &app.overlays.picker {
         draw_picker(frame, picker, frame.area());

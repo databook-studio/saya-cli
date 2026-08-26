@@ -132,11 +132,6 @@ fn inline_spans(text: &str, base: Style) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
 
-    fn spans(line: &str) -> Vec<Span<'static>> {
-        let mut fence = false;
-        markdown_spans_fenced(line, &mut fence)
-    }
-
     #[test]
     fn test_bold_text() {
         let mut fence = false;
@@ -203,7 +198,10 @@ mod tests {
         let mut fence_body = true;
         let body = markdown_spans_fenced("SELECT x = '**not bold**'", &mut fence_body);
         let combined: String = body.iter().map(|span| span.content.as_ref()).collect();
-        assert_eq!(combined, "SELECT x = '**not bold**'", "inside a fence nothing is parsed");
+        assert_eq!(
+            combined, "SELECT x = '**not bold**'",
+            "inside a fence nothing is parsed"
+        );
         assert!(body[0].style.fg == Some(code_color()));
         assert_eq!(
             markdown_spans_fenced("```", &mut fence)[0].content.as_ref(),

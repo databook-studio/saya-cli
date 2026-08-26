@@ -1,6 +1,6 @@
 //! Keyboard input handling for the TUI event loop.
 
-use super::types::App;
+use super::types::{App, SearchKind};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 /// Decides the answer for a key press aimed at a pending approval modal.
@@ -36,10 +36,25 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         KeyCode::Char('o') if ctrl_mod => return app.toggle_selection_mode(),
         KeyCode::Char('y') if ctrl_mod => return app.copy_last_answer(),
         KeyCode::Char('b') if ctrl_mod => return app.copy_transcript(),
+        KeyCode::Char('r') if ctrl_mod => return app.open_search(SearchKind::History),
+        KeyCode::Char('f') if ctrl_mod => return app.open_search(SearchKind::Transcript),
         KeyCode::F(2) => return app.toggle_selection_mode(),
         KeyCode::F(3) => return app.copy_last_answer(),
         KeyCode::F(4) => return app.copy_transcript(),
         _ => {}
+    }
+    // A search overlay captures typing until committed or cancelled.
+    if app.overlays.search.is_some() {
+        match code {
+            KeyCode::Esc => app.close_search(),
+            KeyCode::Enter => app.commit_search(),
+            KeyCode::Backspace => app.search_backspace(),
+            KeyCode::Up => app.search_move(-1),
+            KeyCode::Down => app.search_move(1),
+            KeyCode::Char(c) => app.search_char(c),
+            _ => {}
+        }
+        return;
     }
     // The session picker captures navigation until confirmed or cancelled.
     if app.overlays.picker.is_some() {

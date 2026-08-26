@@ -53,6 +53,20 @@ pub(crate) struct RequestState {
 }
 
 /// UI overlays and modal interaction state.
+/// A Ctrl+R (input history) or Ctrl+F (transcript) search overlay.
+pub(crate) struct SearchOverlay {
+    pub(crate) kind: SearchKind,
+    pub(crate) query: String,
+    /// Selected index into the filtered candidate list (history mode).
+    pub(crate) selected: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchKind {
+    History,
+    Transcript,
+}
+
 #[derive(Default)]
 pub(crate) struct OverlayState {
     pub(crate) menu: Option<Menu>,
@@ -61,6 +75,7 @@ pub(crate) struct OverlayState {
     pub(crate) pending_resume: Option<String>,
     pub(crate) show_help: bool,
     pub(crate) selection_mode: bool,
+    pub(crate) search: Option<SearchOverlay>,
 }
 
 /// A native clipboard helper running in the background alongside an OSC 52 write.

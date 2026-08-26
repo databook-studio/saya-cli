@@ -22,6 +22,17 @@ fn is_disabled_env() -> bool {
 
 #[allow(dead_code)]
 impl History {
+    /// Entries matching `needle` (case-insensitive substring), newest first.
+    pub(crate) fn search(&self, needle: &str) -> Vec<String> {
+        let needle = needle.to_lowercase();
+        self.entries
+            .iter()
+            .rev()
+            .filter(|entry| entry.to_lowercase().contains(&needle))
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn load() -> Self {
         let path = crate::interactive::session_paths::default_history_file();
         let disabled = is_disabled_env();
@@ -245,5 +256,38 @@ mod tests {
         ];
         assert_eq!(c.lines().collect::<Vec<_>>(), exp);
         let _ = std::fs::remove_file(p);
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    fn history() -> History {
+        let mut history = History {
+            entries: Vec::new(),
+            cursor: None,
+            path: std::path::PathBuf::from("saya-test-history"),
+            limit: 1000,
+            disabled: false,
+        };
+        history.push("SELECT * FROM orders");
+        history.push("explain select 1");
+        history.push("select count(*) from events");
+        history
+    }
+
+    #[test]
+    fn search_is_case_insensitive_and_newest_first() {
+        let matches = history().search("SELECT");
+        assert_eq!(
+            matches,
+            vec![
+                "select count(*) from events",
+                "explain select 1",
+                "SELECT * FROM orders"
+            ]
+        );
+        assert!(history().search("zzz").is_empty());
     }
 }
