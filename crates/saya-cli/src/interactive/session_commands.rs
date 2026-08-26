@@ -39,7 +39,9 @@ impl SessionState {
                 SessionAction::Message(format!("Selected profile: {name}"))
             }
             SlashCommand::Connections => SessionAction::Message(if available.is_empty() {
-                "No configured connection profiles.".into()
+                "No configured connection profiles. Add one to .saya/connections.toml \
+                 (see `saya config init`) or pass --connections."
+                    .into()
             } else {
                 format!("Profiles: {}", available.join(", "))
             }),

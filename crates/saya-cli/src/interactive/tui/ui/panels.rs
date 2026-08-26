@@ -82,8 +82,23 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
     content.push(Line::from(""));
 
     if app.profiles.is_empty() {
+        // The old text sent new users to /connect, which can only select
+        // already-configured profiles — a dead end. Point at the real path.
         content.push(Line::from(Span::styled(
-            "no database configured — type /connect",
+            "No database is configured yet.",
+            Style::default().fg(warning()).add_modifier(Modifier::BOLD),
+        )));
+        content.push(Line::from(Span::styled(
+            "Run `saya config init`, add a profile to .saya/connections.toml,",
+            Style::default().fg(secondary()),
+        )));
+        content.push(Line::from(Span::styled(
+            "then run `saya connection test <name>` and restart.",
+            Style::default().fg(secondary()),
+        )));
+        content.push(Line::from(""));
+        content.push(Line::from(Span::styled(
+            "Check problems any time with `saya config doctor`.",
             Style::default().fg(secondary()),
         )));
     } else {
