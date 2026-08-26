@@ -11,6 +11,16 @@ pub(crate) async fn query(
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
     let sql = crate::prepare_mysql_sql(&request.sql, request.max_rows)?;
+    // Serialize executes so `active_id` is unambiguous for cancellation.
+    let _in_flight = connector.in_flight.lock().await;
+    let id: u64 = timeout(
+        connector.query_timeout,
+        sqlx::query_scalar("SELECT CONNECTION_ID()").fetch_one(&connector.pool),
+    )
+    .await
+    .map_err(|_| ConnectionError::connection_failed("MySQL connection timed out"))?
+    .map_err(errors::connection)?;
+    *connector.active_id.lock().await = Some(id);
     let work = async {
         let mut stream = sqlx::query(&sql).fetch(&connector.pool);
         let mut columns = Vec::new();
@@ -51,8 +61,13 @@ pub(crate) async fn query(
             executed_sql: request.sql,
         })
     };
-    timeout(connector.query_timeout, work)
-        .await
-        .map_err(|_| ConnectionError::query_failed("MySQL query timed out"))?
-        .map_err(errors::query)
+    let result = timeout(connector.query_timeout, work).await;
+    *connector.active_id.lock().await = None;
+    // A timed-out MySQL query keeps running server-side unless killed; the
+    // client-side wait alone would strand it on the pool connection.
+    if result.is_err() {
+        super::cancellation::cancel(connector).await.ok();
+        return Err(ConnectionError::query_failed("MySQL query timed out"));
+    }
+    result.expect("checked above").map_err(errors::query)
 }

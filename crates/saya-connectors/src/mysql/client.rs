@@ -6,7 +6,7 @@ use sqlx::{
     MySqlPool,
     mysql::{MySqlConnectOptions, MySqlPoolOptions},
 };
-use tokio::time::timeout;
+use tokio::{sync::Mutex, time::timeout};
 
 use crate::{ConnectorOptions, DatabaseConnector};
 
@@ -14,6 +14,10 @@ pub struct MySqlConnector {
     pub(crate) pool: MySqlPool,
     pub(crate) database: String,
     pub(crate) query_timeout: Duration,
+    /// Serializes executes so the single connection ID used for cancellation
+    /// is unambiguous (mirrors the Postgres connector).
+    pub(crate) in_flight: Mutex<()>,
+    pub(crate) active_id: Mutex<Option<u64>>,
 }
 
 impl MySqlConnector {
@@ -41,6 +45,8 @@ impl MySqlConnector {
             pool,
             database: database.into(),
             query_timeout,
+            in_flight: Mutex::new(()),
+            active_id: Mutex::new(None),
         }
     }
 }
@@ -71,8 +77,6 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     async fn cancel(&self) -> Result<(), ConnectionError> {
-        Err(ConnectionError::unsupported(
-            "MySQL cancellation is not safely available",
-        ))
+        super::cancellation::cancel(self).await
     }
 }

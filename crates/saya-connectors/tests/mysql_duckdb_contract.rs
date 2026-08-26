@@ -26,7 +26,9 @@ async fn factory_builds_mysql_without_a_credential_url() {
     .await
     .unwrap();
     assert_eq!(connector.dialect().as_str(), "mysql");
-    assert!(connector.cancel().await.is_err());
+    // Idle cancellation is a no-op, not an unsupported error: MySQL queries
+    // are cancellable via KILL QUERY once one is in flight.
+    assert!(connector.cancel().await.is_ok());
 }
 
 #[tokio::test]
