@@ -21,7 +21,11 @@ pub struct ConfigFile {
 
 impl ConfigFile {
     pub fn from_toml(value: &str) -> Result<Self, ConfigError> {
-        toml::from_str(value).map_err(|error| ConfigError::Parse(error.to_string()))
+        toml::from_str(value).map_err(|error| {
+            inline_secret_hint(value)
+                .map(ConfigError::Parse)
+                .unwrap_or_else(|| ConfigError::Parse(error.to_string()))
+        })
     }
 
     pub fn redacted_diagnostics(&self) -> RedactedDiagnostics {
@@ -38,8 +42,11 @@ pub struct ConnectionsFile {
 
 impl ConnectionsFile {
     pub fn from_toml(value: &str) -> Result<Self, ConfigError> {
-        let file: Self =
-            toml::from_str(value).map_err(|error| ConfigError::Parse(error.to_string()))?;
+        let file: Self = toml::from_str(value).map_err(|error| {
+            inline_secret_hint(value)
+                .map(ConfigError::Parse)
+                .unwrap_or_else(|| ConfigError::Parse(error.to_string()))
+        })?;
         // `deny_unknown_fields` cannot be combined with the internally tagged
         // `DatabaseProfile` enum, so per-profile keys are validated against
         // the raw table here. This is what makes a typo'd `sslmodee` fail at
@@ -101,6 +108,43 @@ fn validate_profile_keys(name: &str, profile: &toml::Value) -> Result<(), Config
         }
     }
     Ok(())
+}
+
+/// Secret-bearing keys that must hold a *reference* (`{ env = ... }`), never
+/// an inline value. A plain string here is the most common config mistake and
+/// serde's untagged-enum error for it is undiagnosable — replace it with the
+/// field, the location, and the fix.
+const SECRET_KEYS: &[&str] = &["password", "ssl_ca", "api_key", "private_key", "passphrase"];
+
+fn inline_secret_hint(raw: &str) -> Option<String> {
+    let value: toml::Value = toml::from_str(raw).ok()?;
+    let mut hits = Vec::new();
+    for (section, item) in value.as_table()?.iter() {
+        let Some(item) = item.as_table() else {
+            continue;
+        };
+        for (name, val) in item {
+            if SECRET_KEYS.contains(&name.as_str()) && val.is_str() {
+                hits.push(format!("{section}.{name}"));
+            }
+            // Nested tables ([profiles.<name>]) hold per-profile secrets.
+            if let Some(nested) = val.as_table() {
+                for (key, val) in nested {
+                    if SECRET_KEYS.contains(&key.as_str()) && val.is_str() {
+                        hits.push(format!("{section} `{name}`: {key}"));
+                    }
+                }
+            }
+        }
+    }
+    if hits.is_empty() {
+        return None;
+    }
+    let locations = hits.join(", ");
+    Some(format!(
+        "secrets are not allowed inline ({locations}): use a reference like \
+         {{ env = \"SAYA_VAR\" }}, {{ file = \"...\" }}, or {{ keyring = \"...\" }}"
+    ))
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
