@@ -31,13 +31,16 @@ pub(crate) struct PendingApproval {
     pub(crate) respond: oneshot::Sender<bool>,
 }
 
-/// A selectable list of saved sessions to resume.
+/// A selectable list of saved sessions to resume, filterable as you type.
 pub(crate) struct Picker {
     pub(crate) entries: Vec<PickerEntry>,
     pub(crate) selected: usize,
+    /// Case-insensitive substring filter over id + label.
+    pub(crate) query: String,
 }
 
 /// One row in the session picker.
+#[derive(Clone)]
 pub(crate) struct PickerEntry {
     pub(crate) id: String,
     pub(crate) label: String,

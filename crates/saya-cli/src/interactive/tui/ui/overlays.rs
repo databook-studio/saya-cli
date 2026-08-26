@@ -2,7 +2,7 @@
 
 use super::theme::{accent, centered, secondary};
 use crate::interactive::tui::complete::Candidate;
-use crate::interactive::tui::types::{Menu, Picker};
+use crate::interactive::tui::types::Menu;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -14,35 +14,53 @@ use ratatui::{
 /// Largest number of rows shown in the slash-command popup.
 const MAX_MENU_ROWS: usize = 8;
 
-/// Draws the session picker overlay.
-pub(super) fn draw_picker(frame: &mut Frame<'_>, picker: &Picker, screen: Rect) {
-    let rows = (picker.entries.len() as u16).min(12);
+/// Draws the session picker overlay (filter-as-you-type over id + label).
+pub(super) fn draw_picker(
+    frame: &mut Frame<'_>,
+    app: &crate::interactive::tui::types::App,
+    screen: Rect,
+) {
+    let Some(picker) = &app.overlays.picker else {
+        return;
+    };
+    let visible = app.picker_visible(picker);
+    if picker.selected >= visible.len().max(1) && !visible.is_empty() {
+        // Selection clamped by move(); nothing to do here.
+    }
+    let mut lines: Vec<Line> = Vec::new();
+    if !picker.query.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("filter: {}▏", picker.query),
+            Style::default().fg(Color::White),
+        )));
+    }
+    if visible.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " no sessions match",
+            Style::default().fg(secondary()),
+        )));
+    }
+    for (i, entry) in visible.iter().take(12).enumerate() {
+        let style = if i == picker.selected {
+            Style::default()
+                .bg(accent())
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(format!(" {}", entry.label), style)));
+    }
+    let rows = (lines.len() as u16).min(13);
     let height = (rows + 2).min(screen.height);
     let width = screen.width.clamp(40, 90);
     let area = centered(screen, width, height);
-    let lines: Vec<Line> = picker
-        .entries
-        .iter()
-        .take(12)
-        .enumerate()
-        .map(|(i, entry)| {
-            let style = if i == picker.selected {
-                Style::default()
-                    .bg(accent())
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            Line::from(Span::styled(format!(" {}", entry.label), style))
-        })
-        .collect();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(accent()))
         .title(Span::styled(
-            " resume session — ↑/↓ select · Enter resume · Esc cancel ",
+            " resume session — type to filter · ↑/↓ · Enter · Esc ",
             Style::default().fg(accent()),
         ));
     frame.render_widget(Clear, area);

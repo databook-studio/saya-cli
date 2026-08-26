@@ -56,13 +56,16 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         return;
     }
-    // The session picker captures navigation until confirmed or cancelled.
+    // The session picker captures navigation and filter typing until
+    // confirmed or cancelled.
     if app.overlays.picker.is_some() {
         match code {
             KeyCode::Up => app.picker_move(-1),
             KeyCode::Down => app.picker_move(1),
             KeyCode::Enter => app.picker_confirm(),
             KeyCode::Esc => app.overlays.picker = None,
+            KeyCode::Backspace => app.picker_backspace(),
+            KeyCode::Char(c) => app.picker_char(c),
             _ => {}
         }
         return;

@@ -60,8 +60,8 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     if app.overlays.search.is_some() {
         draw_search(frame, app, frame.area());
     }
-    if let Some(picker) = &app.overlays.picker {
-        draw_picker(frame, picker, frame.area());
+    if app.overlays.picker.is_some() {
+        draw_picker(frame, app, frame.area());
     }
     if app.overlays.show_help {
         draw_help(frame, frame.area());
