@@ -23,10 +23,7 @@ pub(super) async fn send_stream(
                 wait(delay, cancellation).await?;
             }
             Ok(response) => {
-                return Err(ProviderError::Request(format!(
-                    "HTTP {}",
-                    response.status().as_u16()
-                )));
+                return Err(ProviderError::Request(describe(response.status())));
             }
             Err(_) if attempt < delays.len() => {
                 let delay = jitter(delays[attempt]).min(MAX_BACKOFF);
@@ -47,6 +44,22 @@ async fn wait(delay: Duration, cancellation: &CancellationToken) -> Result<(), P
 
 fn retryable(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// Turns a provider's status code into a redacted but *diagnosable* message:
+/// the code plus the fix a user can act on, never the response body (which
+/// may echo account details).
+fn describe(status: StatusCode) -> String {
+    let code = status.as_u16();
+    let hint = match code {
+        401 | 403 => "authentication failed — check the API key configured for this provider",
+        402 => "the provider requires payment or quota for this request",
+        404 => "endpoint or model not found — check the configured model and base_url",
+        413 => "request too large — shorten the prompt or clear context",
+        400 => "request rejected by the provider — check the model name and parameters",
+        _ => "provider rejected the request",
+    };
+    format!("HTTP {code}: {hint}")
 }
 
 /// Parses the `Retry-After` header as integer delta-seconds.
@@ -145,6 +158,24 @@ mod tests {
         let large_base = Duration::from_secs(200);
         let j = jitter(large_base).min(MAX_BACKOFF);
         assert!(j <= MAX_BACKOFF);
+    }
+
+    #[test]
+    fn status_descriptions_name_the_fix_without_the_body() {
+        let text = describe(StatusCode::UNAUTHORIZED);
+        assert!(text.contains("401") && text.contains("API key"), "{text}");
+        let not_found = describe(StatusCode::NOT_FOUND);
+        assert!(
+            not_found.contains("404") && not_found.contains("model"),
+            "{not_found}"
+        );
+        let payload = describe(StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            payload.contains("413") && payload.contains("too large"),
+            "{payload}"
+        );
+        let other = describe(StatusCode::FAILED_DEPENDENCY);
+        assert!(text.len() > 10 && !other.is_empty());
     }
 
     #[tokio::test]

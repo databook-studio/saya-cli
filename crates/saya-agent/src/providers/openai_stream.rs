@@ -124,6 +124,13 @@ impl State {
             if let Some(reason) = choice.finish_reason.as_deref()
                 && !matches!(reason, "stop" | "tool_calls")
             {
+                // `length` is diagnosable (raise the output cap); anything
+                // else stays a generic protocol failure.
+                if reason == "length" {
+                    return Err(ProviderError::Request(
+                        "output truncated: the model hit its output-token limit".into(),
+                    ));
+                }
                 return Err(ProviderError::InvalidResponse);
             }
             if let Some(text) = choice.delta.content
