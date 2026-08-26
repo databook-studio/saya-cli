@@ -1,7 +1,7 @@
 //! Transcript and empty-state rendering.
 
 use super::markdown::markdown_spans;
-use super::theme::{accent, kind_style, rail_style, secondary};
+use super::theme::{accent, kind_style, rail_style, secondary, warning};
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
 use ratatui::{
