@@ -12,6 +12,11 @@ pub struct AgentLimits {
     /// this on under an explicit config setting; until then nothing can enable
     /// it, which is correct.
     pub permit_candidate_writes: bool,
+    /// Ceiling on the approximate byte size of the conversation the loop has
+    /// assembled (assistant turns plus tool results grow it past the pre-loop
+    /// history budget). Breaching it fails closed instead of sending an ever
+    /// growing payload to the provider.
+    pub context_byte_budget: usize,
 }
 impl Default for AgentLimits {
     fn default() -> Self {
@@ -19,6 +24,7 @@ impl Default for AgentLimits {
             max_turns: 12,
             max_tool_calls: 24,
             permit_candidate_writes: false,
+            context_byte_budget: 256 * 1024,
         }
     }
 }

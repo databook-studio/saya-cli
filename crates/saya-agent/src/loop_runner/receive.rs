@@ -32,6 +32,11 @@ pub(super) async fn receive(
         check_cancelled(cancellation)?;
         match event? {
             ProviderEvent::TextDelta(text) => {
+                if content.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
+                    return Err(AgentError::Provider(ProviderError::Request(
+                        "provider stream exceeded size limit".into(),
+                    )));
+                }
                 content.push_str(&text);
                 emit(events, sink, AgentEvent::AssistantText { text }).await;
             }

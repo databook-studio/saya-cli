@@ -99,6 +99,11 @@ struct State {
 
 impl State {
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
+        if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
+            return Err(ProviderError::Request(
+                "provider stream exceeded size limit".into(),
+            ));
+        }
         self.bytes.extend_from_slice(chunk);
         while let Some((end, skip)) = boundary(&self.bytes) {
             let frame = String::from_utf8(self.bytes[..end].to_vec())

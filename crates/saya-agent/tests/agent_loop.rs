@@ -221,6 +221,7 @@ async fn tool_call_limits_stop_run_before_unbounded_execution() {
             max_turns: 1,
             max_tool_calls: 0,
             permit_candidate_writes: false,
+            ..AgentLimits::default()
         },
         &AllowReadOnlyApproval,
     )
@@ -723,5 +724,48 @@ async fn token_usage_sums_across_turns_into_the_output() {
             input_tokens: 8,
             output_tokens: 16
         }
+    );
+}
+
+#[tokio::test]
+async fn runaway_context_fails_closed_at_the_byte_budget() {
+    let provider = MockProvider {
+        responses: Mutex::new(
+            (0..4)
+                .map(|index| ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: format!("call-{index}"),
+                            name: "schema_discovery".into(),
+                            arguments: serde_json::json!({"padding": "x".repeat(2_048)}),
+                        }],
+                        tool_call_id: None,
+                    },
+                })
+                .collect(),
+        ),
+    };
+    let error = run_agent(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_turns: 8,
+            max_tool_calls: 64,
+            permit_candidate_writes: false,
+            context_byte_budget: 4_096,
+        },
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(error, AgentError::Limit("context bytes")),
+        "{error:?}"
     );
 }

@@ -10,6 +10,10 @@ use std::{
 };
 use tokio::sync::Notify;
 
+/// Ceiling on one provider response's accumulated bytes. A misbehaving or
+/// hostile endpoint must not be able to stream unbounded data into memory.
+pub const MAX_STREAM_BYTES: usize = 2 * 1024 * 1024;
+
 /// Token counts reported by a provider for one response. Providers that do
 /// not report usage simply never emit it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -89,7 +93,14 @@ pub trait ChatProvider: Send + Sync {
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
         while let Some(event) = stream.next().await {
             match event? {
-                ProviderEvent::TextDelta(value) => content.push_str(&value),
+                ProviderEvent::TextDelta(value) => {
+                    if content.len().saturating_add(value.len()) > MAX_STREAM_BYTES {
+                        return Err(ProviderError::Request(
+                            "provider stream exceeded size limit".into(),
+                        ));
+                    }
+                    content.push_str(&value);
+                }
                 ProviderEvent::ToolCalls(calls) => tool_calls.extend(calls),
                 ProviderEvent::Usage(_) => {}
                 ProviderEvent::Done => complete = true,

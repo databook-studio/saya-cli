@@ -247,8 +247,30 @@ pub async fn run_agent_with_sink(
                 .await;
             }
         }
+        // Intra-loop context budget: the pre-loop trim bounds history, but
+        // assistant turns and tool results accumulate here unchecked. Fail
+        // closed rather than sending an ever growing payload upstream.
+        if messages.iter().map(message_size).sum::<usize>() > limits.context_byte_budget {
+            return Err(AgentError::Limit("context bytes"));
+        }
     }
     Err(AgentError::Limit("turns"))
+}
+
+/// Approximate serialized size of a message, including tool-call arguments,
+/// which dominate real growth during multi-turn runs.
+fn message_size(message: &crate::ChatMessage) -> usize {
+    message.content.len()
+        + message.role.len()
+        + message
+            .tool_calls
+            .iter()
+            .map(|call| {
+                call.id.len()
+                    + call.name.len()
+                    + serde_json::to_string(&call.arguments).map_or(0, |text| text.len())
+            })
+            .sum::<usize>()
 }
 
 pub(super) async fn emit(

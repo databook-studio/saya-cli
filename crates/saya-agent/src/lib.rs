@@ -19,7 +19,7 @@ pub use protocol::contracts::{
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::streaming::{
-    CancellationToken, ChatProvider, ProviderEvent, ProviderStream, TokenUsage,
+    CancellationToken, ChatProvider, MAX_STREAM_BYTES, ProviderEvent, ProviderStream, TokenUsage,
 };
 pub use providers::{
     AnthropicProvider, GeminiProvider, OllamaProvider, OpenAiCompatibleProvider, ProviderSettings,
