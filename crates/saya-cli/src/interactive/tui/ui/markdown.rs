@@ -1,6 +1,6 @@
 //! Lightweight markdown styling for assistant transcript lines.
 
-use super::theme::{ACCENT, CODE_COLOR};
+use super::theme::{accent, code_color};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::Span,
@@ -22,7 +22,7 @@ pub(super) fn markdown_spans(line: &str) -> Vec<Span<'static>> {
         .strip_prefix("- ")
         .or_else(|| trimmed.strip_prefix("* "))
     {
-        let mut spans = vec![Span::styled("• ", base.fg(ACCENT))];
+        let mut spans = vec![Span::styled("• ", base.fg(accent()))];
         spans.extend(inline_spans(rest, base));
         spans
     } else {
@@ -82,7 +82,7 @@ fn inline_spans(text: &str, base: Style) -> Vec<Span<'static>> {
                         spans.push(Span::styled(std::mem::take(&mut plain_buf), base));
                     }
                     let mid = &rem[c + 1..c + 1 + close_rel];
-                    spans.push(Span::styled(mid.to_string(), base.fg(CODE_COLOR)));
+                    spans.push(Span::styled(mid.to_string(), base.fg(code_color())));
                     rem = &rem[c + 1 + close_rel + 1..];
                 } else {
                     plain_buf.push_str(&rem[..c + 1]);
@@ -128,7 +128,7 @@ mod tests {
         assert_eq!(spans.len(), 3);
         assert_eq!(spans[0].content.as_ref(), "run ");
         assert_eq!(spans[1].content.as_ref(), "SELECT 1");
-        assert_eq!(spans[1].style.fg, Some(CODE_COLOR));
+        assert_eq!(spans[1].style.fg, Some(code_color()));
         assert_eq!(spans[2].content.as_ref(), " now");
     }
 
@@ -148,7 +148,7 @@ mod tests {
         let spans = markdown_spans("- item");
         assert!(!spans.is_empty());
         assert_eq!(spans[0].content.as_ref(), "• ");
-        assert_eq!(spans[0].style.fg, Some(ACCENT));
+        assert_eq!(spans[0].style.fg, Some(accent()));
         let rest_combined: String = spans[1..].iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(rest_combined, "item");
     }

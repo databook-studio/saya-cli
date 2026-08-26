@@ -6,7 +6,7 @@ mod markdown;
 mod overlays;
 mod panels;
 mod status;
-mod theme;
+pub(crate) mod theme;
 
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::transcript::BlockKind;

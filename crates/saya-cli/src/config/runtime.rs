@@ -113,9 +113,13 @@ pub fn load_with_sources(
             max_rows: options.max_rows,
             trust_project_config: options.trust_project_config,
         });
+    let mut resolved = resolve(input)?;
+    if options.no_color {
+        resolved.output_color = saya_config::ColorChoice::Never;
+    }
     let cache_scope = super::scope::resolve(selected_connections, cwd);
     Ok(RuntimeConfig {
-        resolved: resolve(input)?,
+        resolved,
         connections,
         config_path: selected_config.cloned(),
         connections_path: selected_connections.cloned(),

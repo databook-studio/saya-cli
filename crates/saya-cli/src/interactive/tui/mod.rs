@@ -59,6 +59,13 @@ pub(crate) fn run(
     state: &mut SessionState,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::new()?;
+    let choice = runtime.resolved.output_color;
+    use std::io::IsTerminal as _;
+    ui::theme::set_color_enabled(ui::theme::decide_public(
+        choice,
+        std::io::stdout().is_terminal(),
+        std::env::var_os("NO_COLOR").is_some(),
+    ));
     let profiles = runtime
         .connections
         .profiles

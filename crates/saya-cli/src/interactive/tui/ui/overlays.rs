@@ -1,6 +1,6 @@
 //! Modal overlays: slash-command popup, session picker, and help.
 
-use super::theme::{ACCENT, SECONDARY, centered};
+use super::theme::{accent, centered, secondary};
 use crate::interactive::tui::complete::Candidate;
 use crate::interactive::tui::types::{Menu, Picker};
 use ratatui::{
@@ -28,7 +28,7 @@ pub(super) fn draw_picker(frame: &mut Frame<'_>, picker: &Picker, screen: Rect) 
         .map(|(i, entry)| {
             let style = if i == picker.selected {
                 Style::default()
-                    .bg(ACCENT)
+                    .bg(accent())
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD)
             } else {
@@ -40,10 +40,10 @@ pub(super) fn draw_picker(frame: &mut Frame<'_>, picker: &Picker, screen: Rect) 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT))
+        .border_style(Style::default().fg(accent()))
         .title(Span::styled(
             " resume session — ↑/↓ select · Enter resume · Esc cancel ",
-            Style::default().fg(ACCENT),
+            Style::default().fg(accent()),
         ));
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
@@ -71,10 +71,10 @@ pub(super) fn draw_help(frame: &mut Frame<'_>, screen: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT))
+        .border_style(Style::default().fg(accent()))
         .title(Span::styled(
             " keybindings — any key to close ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         ));
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(Text::from(body)).block(block), area);
@@ -104,8 +104,8 @@ pub(super) fn draw_menu(frame: &mut Frame<'_>, menu: &Menu, input_area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT))
-        .title(Span::styled(" commands ", Style::default().fg(ACCENT)));
+        .border_style(Style::default().fg(accent()))
+        .title(Span::styled(" commands ", Style::default().fg(accent())));
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
 }
@@ -122,7 +122,7 @@ fn menu_row(candidate: &Candidate, selected: bool, width: usize) -> Line<'static
         return Line::from(Span::styled(
             padded,
             Style::default()
-                .bg(ACCENT)
+                .bg(accent())
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         ));
@@ -134,7 +134,7 @@ fn menu_row(candidate: &Candidate, selected: bool, width: usize) -> Line<'static
     if let Some(desc) = &candidate.description {
         spans.push(Span::styled(
             format!("  {desc}"),
-            Style::default().fg(SECONDARY),
+            Style::default().fg(secondary()),
         ));
     }
     Line::from(spans)

@@ -1,7 +1,7 @@
 //! Transcript and empty-state rendering.
 
 use super::markdown::markdown_spans;
-use super::theme::{ACCENT, SECONDARY, kind_style, rail_style};
+use super::theme::{accent, kind_style, rail_style, secondary};
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
 use ratatui::{
@@ -52,7 +52,7 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .thumb_style(Style::default().fg(ACCENT)),
+                .thumb_style(Style::default().fg(accent())),
             area,
             &mut state,
         );
@@ -65,26 +65,32 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     content.push(Line::from(Span::styled(
         "◆ saya",
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        Style::default().fg(accent()).add_modifier(Modifier::BOLD),
     )));
     content.push(Line::from(Span::styled(
         "Ask your databases in plain language.",
-        Style::default().fg(SECONDARY),
+        Style::default().fg(secondary()),
     )));
     content.push(Line::from(""));
 
     if app.profiles.is_empty() {
         content.push(Line::from(Span::styled(
             "no database configured — type /connect",
-            Style::default().fg(SECONDARY),
+            Style::default().fg(secondary()),
         )));
     } else {
-        let mut spans = vec![Span::styled("databases  ", Style::default().fg(SECONDARY))];
+        let mut spans = vec![Span::styled(
+            "databases  ",
+            Style::default().fg(secondary()),
+        )];
         for (i, profile) in app.profiles.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::styled("  ·  ", Style::default().fg(SECONDARY)));
+                spans.push(Span::styled("  ·  ", Style::default().fg(secondary())));
             }
-            spans.push(Span::styled(profile.as_str(), Style::default().fg(ACCENT)));
+            spans.push(Span::styled(
+                profile.as_str(),
+                Style::default().fg(accent()),
+            ));
         }
         content.push(Line::from(spans));
     }
@@ -92,31 +98,31 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     content.push(Line::from(Span::styled(
         "try asking",
-        Style::default().fg(SECONDARY),
+        Style::default().fg(secondary()),
     )));
     content.push(Line::from(Span::styled(
         "  which tables track billing?",
         Style::default()
-            .fg(SECONDARY)
+            .fg(secondary())
             .add_modifier(Modifier::ITALIC),
     )));
     content.push(Line::from(Span::styled(
         "  top 5 customers by revenue",
         Style::default()
-            .fg(SECONDARY)
+            .fg(secondary())
             .add_modifier(Modifier::ITALIC),
     )));
     content.push(Line::from(Span::styled(
         "  compare row counts across the connected databases",
         Style::default()
-            .fg(SECONDARY)
+            .fg(secondary())
             .add_modifier(Modifier::ITALIC),
     )));
     content.push(Line::from(""));
 
     content.push(Line::from(Span::styled(
         "/ commands     @ tables     ? help     Ctrl+C quit",
-        Style::default().fg(SECONDARY),
+        Style::default().fg(secondary()),
     )));
 
     let content_len = content.len();
@@ -160,7 +166,7 @@ pub(super) fn draw_approval(frame: &mut Frame<'_>, tool: &str, detail: Option<&s
         for l in sql.lines() {
             lines.push(Line::from(Span::styled(
                 l.to_string(),
-                Style::default().fg(ACCENT),
+                Style::default().fg(accent()),
             )));
         }
     } else {
@@ -175,11 +181,11 @@ pub(super) fn draw_approval(frame: &mut Frame<'_>, tool: &str, detail: Option<&s
     let block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(super::theme::WARNING))
+        .border_style(Style::default().fg(super::theme::warning()))
         .title(Span::styled(
             " approval required ",
             Style::default()
-                .fg(super::theme::WARNING)
+                .fg(super::theme::warning())
                 .add_modifier(Modifier::BOLD),
         ));
 
