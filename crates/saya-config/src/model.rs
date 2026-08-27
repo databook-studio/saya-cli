@@ -105,6 +105,10 @@ pub struct AiFile {
     pub idle_timeout_seconds: Option<u64>,
     /// Per-response output-token ceiling requested from the provider.
     pub max_output_tokens: Option<u32>,
+    /// Ceiling on the approximate byte size of the conversation the agent loop
+    /// assembles and sends to the provider. The loop trims under it (oldest
+    /// tool results dropped, newest truncated with a marker) rather than abort.
+    pub context_byte_budget: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

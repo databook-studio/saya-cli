@@ -1,5 +1,6 @@
 use saya_config::{
-    AiProvider, ColorChoice, ConfigFile, ConnectionsFile, OutputFormat, ResolutionInput, resolve,
+    AiProvider, ColorChoice, ConfigError, ConfigFile, ConnectionsFile, OutputFormat,
+    ResolutionInput, resolve,
 };
 use saya_types::SecretRef;
 
@@ -128,4 +129,51 @@ fn ai_request_budgets_resolve_from_file_with_defaults() {
     assert_eq!(defaults.ai.timeout_seconds, 60);
     assert_eq!(defaults.ai.idle_timeout_seconds, 90);
     assert_eq!(defaults.ai.max_output_tokens, 4096);
+}
+
+/// `[ai] context_byte_budget` resolves from a config file and, when unset, keeps
+/// the same default the agent loop used before the setting existed (Invariant 1:
+/// a user with no setting gets exactly what they get today). The default is the
+/// crate's 256 KiB conversation budget, not a new number.
+#[test]
+fn ai_context_byte_budget_resolves_from_file_with_unchanged_default() {
+    let config = ConfigFile::from_toml("[ai]\ncontext_byte_budget = 524288\n").unwrap();
+    let resolved = saya_config::resolve(
+        saya_config::ResolutionInput::new(ConnectionsFile::default()).with_user(config),
+    )
+    .unwrap();
+    assert_eq!(resolved.ai.context_byte_budget, 524288);
+
+    let defaults =
+        saya_config::resolve(saya_config::ResolutionInput::new(ConnectionsFile::default()))
+            .unwrap();
+    assert_eq!(defaults.ai.context_byte_budget, 256 * 1024);
+}
+
+/// A budget of 0 would trim the conversation to nothing on every turn, so it is
+/// rejected at resolve time with a typed error naming the field (Invariant 3),
+/// not silently clamped at the point of use. The validation matches the
+/// `[memory]` range-check style already in this crate rather than a third form.
+#[test]
+fn ai_context_byte_budget_below_the_floor_is_a_typed_error() {
+    let config = ConfigFile::from_toml("[ai]\ncontext_byte_budget = 0\n").unwrap();
+    let error = saya_config::resolve(
+        saya_config::ResolutionInput::new(ConnectionsFile::default()).with_user(config),
+    )
+    .unwrap_err();
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("context_byte_budget"),
+        "error must name the field: {rendered}"
+    );
+    assert!(
+        matches!(
+            error,
+            ConfigError::SettingBelowMinimum {
+                field: "context_byte_budget",
+                ..
+            }
+        ),
+        "expected SettingBelowMinimum for a zero budget, got {rendered}"
+    );
 }
