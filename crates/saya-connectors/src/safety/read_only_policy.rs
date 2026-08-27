@@ -1,10 +1,22 @@
 //! Per-backend function denylists for the read-only safety layer, plus the
-//! matcher that decides whether a parsed object/function name is denied.
+//! matchers that decide whether a parsed function or relation name is denied.
 //!
-//! Matching compares *each identifier part* (lowercased, unquoted) so that
-//! schema qualification (`pg_catalog.nextval`) or requoting (`` `nextval` ``)
-//! cannot bypass the guard. Prefix rules apply per part as well, so
-//! `my_schema.system$get_presigned_url` still hits the `system$` rule.
+//! There are two matchers with different jobs:
+//!
+//! - [`denied_function`] compares *each identifier part* (lowercased, unquoted)
+//!   so that schema qualification (`pg_catalog.pg_read_file`) or requoting
+//!   (`` `nextval` ``) cannot bypass the guard. Prefix rules apply per part as
+//!   well, so `my_schema.system$get_presigned_url` still hits the `system$`
+//!   rule. This matcher is applied to every function reference in the tree — a
+//!   scalar function call, a table function in `FROM` (`SELECT * FROM fn(...)`),
+//!   and a `LATERAL fn(...)` table factor — wherever it sits.
+//! - [`denied_relation`] compares the *whole* dotted name and is applied only
+//!   to plain table references (a `FROM` table with no call arguments). It is
+//!   deliberately fail-closed: a table literally named like a denied function
+//!   (e.g. `nextval`) stays blocked. Because it matches the whole name, a
+//!   schema-qualified *plain* table (`public.nextval`) is not caught here — but
+//!   such a name is a table, not a function call, and the function-shaped
+//!   bypasses are closed by [`denied_function`] above.
 
 use sqlparser::ast::ObjectName;
 
@@ -102,9 +114,12 @@ pub(super) const SNOWFLAKE_POLICY: BackendPolicy = BackendPolicy {
 };
 
 /// True when any identifier part of a *function* reference matches a denied
-/// name or prefix. Applied to function expressions only — table references
-/// keep the stricter whole-name check so a table literally named like a
-/// denied function stays blocked.
+/// name or prefix. Applied to scalar function calls, table functions in `FROM`
+/// (a `Table` factor that carries call arguments), and `LATERAL`/function
+/// table factors — so schema qualification (`pg_catalog.pg_read_file`) cannot
+/// hide a denied name. Plain table references (no call arguments) keep the
+/// stricter whole-name [`denied_relation`] check, so a table literally named
+/// like a denied function (e.g. `nextval`) stays blocked.
 pub(super) fn denied_function(name: &ObjectName, policy: &BackendPolicy) -> bool {
     name.0.iter().any(|ident| {
         let part = ident.value.to_ascii_lowercase();

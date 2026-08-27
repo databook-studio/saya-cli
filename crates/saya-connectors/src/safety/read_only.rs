@@ -2,7 +2,7 @@ use saya_types::{ConnectionError, SqlDialect};
 use std::ops::ControlFlow;
 
 use sqlparser::{
-    ast::{Expr, ObjectName, Query, SetExpr, Statement, Visit, Visitor},
+    ast::{Expr, Query, SetExpr, Statement, Visit, Visitor},
     dialect::{
         Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
     },
@@ -95,9 +95,11 @@ fn prepare(
         denied: None,
     };
     if statements.visit(&mut guard).is_break() {
-        return Err(rejected(Rejection::Denied(
-            guard.denied.unwrap_or_else(|| "this construct".to_string()),
-        )));
+        return Err(rejected(
+            guard
+                .denied
+                .unwrap_or(Rejection::Denied("this construct".to_string())),
+        ));
     }
     allowed(&statements[0]).map_err(rejected)?;
     if let Some(query) = statement_query(&mut statements[0]) {
@@ -172,11 +174,10 @@ fn allowed(statement: &Statement) -> Result<(), Rejection> {
 }
 
 fn query_allowed(query: &Query) -> Result<(), Rejection> {
-    // Row-locking clauses (`FOR UPDATE` / `FOR SHARE`) take locks and are not
-    // reads; reject wherever they appear, including CTEs and set operands.
-    if !query.locks.is_empty() {
-        return Err(Rejection::LockingClause);
-    }
+    // Row-locking clauses (`FOR UPDATE` / `FOR SHARE`) are rejected by the
+    // `Guard` visitor's `pre_visit_query`, which fires for *every* `Query` in
+    // the tree — top level, CTEs, set operands, derived tables, and scalar
+    // subqueries alike — so this structural walk does not re-check them.
     if let Some(with) = &query.with
         && !with
             .cte_tables
@@ -215,28 +216,81 @@ fn set_allowed(set: &SetExpr) -> Result<(), Rejection> {
 
 struct Guard<'a> {
     policy: &'a BackendPolicy,
-    denied: Option<String>,
+    /// The rejection to surface, set on the first denying node we reach.
+    denied: Option<Rejection>,
 }
 
 impl Visitor for Guard<'_> {
     type Break = ();
 
-    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
-        if let Expr::Function(function) = expr
-            && denied_function(&function.name, self.policy)
-        {
-            self.denied = Some(function.name.to_string());
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
+        // Row-locking clauses take locks and are not reads. `pre_visit_query`
+        // fires for every `Query` node in the tree, so this reaches locks in
+        // CTEs, set operands, derived tables, and scalar subqueries — not just
+        // the top level.
+        if !query.locks.is_empty() {
+            self.denied = Some(Rejection::LockingClause);
             return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
     }
 
-    fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<Self::Break> {
-        if denied_relation(relation, self.policy) {
-            self.denied = Some(relation.to_string());
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+        if let Expr::Function(function) = expr
+            && denied_function(&function.name, self.policy)
+        {
+            self.denied = Some(Rejection::Denied(function.name.to_string()));
             return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
+    }
+
+    fn pre_visit_table_factor(
+        &mut self,
+        factor: &sqlparser::ast::TableFactor,
+    ) -> ControlFlow<Self::Break> {
+        use sqlparser::ast::TableFactor;
+        match factor {
+            // A table *function* in `FROM` (`SELECT * FROM pg_read_file(...)`)
+            // carries arguments. Per-part matching makes schema qualification
+            // (`pg_catalog.pg_read_file`) no help — invariant 1.
+            TableFactor::Table {
+                name,
+                args: Some(_),
+                ..
+            } => {
+                if denied_function(name, self.policy) {
+                    self.denied = Some(Rejection::Denied(name.to_string()));
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(())
+            }
+            // `LATERAL fn(...)` and similar function-valued table factors carry
+            // their own `name`; apply the same per-part function check.
+            TableFactor::Function { name, .. } => {
+                if denied_function(name, self.policy) {
+                    self.denied = Some(Rejection::Denied(name.to_string()));
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(())
+            }
+            // A plain table reference (`args: None`) keeps the stricter
+            // whole-name check so a table literally named like a denied
+            // function (e.g. `nextval`) stays blocked — fail-closed by design.
+            TableFactor::Table {
+                name, args: None, ..
+            } => {
+                if denied_relation(name, self.policy) {
+                    self.denied = Some(Rejection::Denied(name.to_string()));
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(())
+            }
+            // Derived tables, UNNEST, JSON_TABLE, etc. carry no function name
+            // of their own; the visitor recurses into their subqueries and
+            // expressions, which the checks above cover.
+            _ => ControlFlow::Continue(()),
+        }
     }
 }
 
