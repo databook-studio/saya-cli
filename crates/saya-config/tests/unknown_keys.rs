@@ -127,3 +127,39 @@ fn shipped_connections_docker_example_parses_end_to_end() {
         .expect("examples/connections.docker.toml must parse");
     assert_eq!(file.profiles.len(), 2);
 }
+
+// Invariant: the accepted key set is owned by the type, once. serde's
+// `deny_unknown_fields` enforces it directly, so a rejected key's error names
+// the type's own fields (`expected one of ... <a declared field> ...`).
+// A reintroduced hand-written shadow list would either stop rejecting unknown
+// keys (if it replaced serde) or carry a different message (`unknown key ... in
+// profile ...`) — in either case this assertion, which pins the serde-shaped
+// message and a declared Postgres field, breaks. That breakage is the alarm:
+// it means the key set is no longer defined by the type alone.
+#[test]
+fn rejected_profile_key_error_names_the_types_own_fields() {
+    let toml = r#"
+[profiles.analytics]
+type = "postgresql"
+host = "localhost"
+database = "db"
+user = "u"
+sslmodee = "verify-full"
+"#;
+    let error = ConnectionsFile::from_toml(toml).expect_err("typo'd sslmode must fail");
+    let message = error.to_string();
+    assert!(
+        message.contains("unknown field"),
+        "serde must reject the unknown key: {message}"
+    );
+    assert!(
+        message.contains("expected one of"),
+        "the rejected set must come from the type, not a shadow list: {message}"
+    );
+    // `password` is a declared Postgres field. If it disappears from the
+    // expected list, the type and the error have drifted apart.
+    assert!(
+        message.contains("password"),
+        "the expected list must reflect the type's fields: {message}"
+    );
+}
