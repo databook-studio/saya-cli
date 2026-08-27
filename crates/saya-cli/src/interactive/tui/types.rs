@@ -62,9 +62,14 @@ pub(crate) struct SearchOverlay {
     pub(crate) query: String,
     /// Selected index into the filtered candidate list (history mode).
     pub(crate) selected: usize,
+    /// The wrapped-line index the last Enter jumped to (transcript mode), so
+    /// the next Enter walks to the *following* match instead of re-landing on
+    /// the same one. `None` until the first jump, and reset whenever the query
+    /// changes (so an edit restarts the search from the viewport top).
+    pub(crate) last_match: Option<usize>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SearchKind {
     History,
     Transcript,
@@ -124,9 +129,12 @@ pub(crate) struct App {
     pub(crate) session_save: Option<SessionSave>,
     /// In-flight direct-SQL command (/sql, /export, /chart, /explain) running
     /// off-thread; polled each loop tick so the UI never blocks on a query.
+    /// The `Instant` is when the task was dispatched, so the status bar can
+    /// show elapsed time alongside the spinner while the query runs.
     pub(crate) sql_task: Option<(
         std::sync::mpsc::Receiver<crate::render::TerminalEvent>,
         super::sql_task::SqlTask,
+        std::time::Instant,
     )>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,

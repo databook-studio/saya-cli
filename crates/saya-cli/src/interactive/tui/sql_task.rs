@@ -1,11 +1,32 @@
 //! Background SQL execution for direct commands (/sql, /export, /chart,
-//! /explain). Running them on a worker thread keeps the UI responsive —
-//! spinner, Esc, typing all stay live — instead of freezing the event loop
-//! inside `block_on` for up to the query timeout.
+//! /explain). Each command runs on its own worker thread with its own
+//! current-thread tokio runtime, returning a non-blocking `mpsc` receiver the
+//! event loop polls each tick. The point is narrow and worth stating plainly:
+//! the event loop never blocks on a query. That is what the worker buys.
 //!
-//! Dispatch captures everything the *completion* step needs (follow-up kind,
-//! target path, connection) at command time; the loop polls the channel and
-//! calls [`complete`] when the result lands.
+//! What it does **not** buy, and the older module doc wrongly claimed:
+//!
+//! - **No live spinner by itself.** The status-bar spinner advances only when
+//!   `App::is_busy()` is true, so visibility depends on `is_busy()` covering a
+//!   running SQL task — which it now does. The label and elapsed time reuse
+//!   the agent's `request.started` / `request.activity` fields (a SQL task and
+//!   an agent stream are never concurrent: the queued-prompt gate prevents
+//!   dispatch while either is busy).
+//! - **No real cancellation.** The worker thread is detached and the connector
+//!   has no cancellation token wired here. Esc does not cancel the query — it
+//!   detaches: `App::detach_sql_task` drops the receiver so the UI moves on,
+//!   and tells the user the query may still be running server-side. Its result
+//!   lands on a dropped channel and is discarded.
+//! - **No silent replacement.** A second command submitted while one runs is
+//!   held by the queued-prompt gate until the first finishes (both results
+//!   report). The dispatch handler additionally refuses a `SqlTask` that
+//!   reaches it while one is already running (`App::admit_second_sql`).
+//!
+//! Dispatch shares the existing `Arc<RuntimeConfig>` with the worker rather
+//! than deep-cloning the resolved config (plaintext secrets included) per
+//! command. Dispatch captures everything the *completion* step needs
+//! (follow-up kind, target path, connection) at command time; the loop polls
+//! the channel and calls [`complete`] when the result lands.
 
 use super::exec;
 use super::transcript::{BlockKind, Transcript};

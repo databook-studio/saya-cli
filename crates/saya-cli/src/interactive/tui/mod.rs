@@ -186,16 +186,22 @@ pub(crate) fn run(
         }
 
         // Poll the direct-SQL worker (non-blocking): apply its result when ready.
-        if let Some((rx, task)) = app.sql_task.as_ref() {
+        if let Some((rx, task, _started)) = app.sql_task.as_ref() {
             match rx.try_recv() {
                 Ok(event) => {
                     let task = task.clone();
                     app.sql_task = None;
+                    // The query is done; drop the status fields the bar reused
+                    // for it (no agent stream is concurrent, so they are ours).
+                    app.request.started = None;
+                    app.request.activity = None;
                     sql_task::complete(&task, event, &mut app.transcript, &mut app.last_query);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     app.sql_task = None;
+                    app.request.started = None;
+                    app.request.activity = None;
                     app.transcript.push(
                         BlockKind::Error,
                         "SQL command ended without a result.".to_string(),
@@ -204,9 +210,14 @@ pub(crate) fn run(
             }
         }
 
+        // Advance the spinner while anything is in flight. `is_busy()` covers both an
+        // agent stream and a direct-SQL command, so the status bar shows a
+        // spinner while a query runs too (invariant 1). `drain_stream` is only
+        // meaningful for an agent stream — a SQL task has no channel messages —
+        // so it is gated on the stream itself.
         if app.is_busy() {
             app.spinner = app.spinner.wrapping_add(1);
-            if app.drain_stream(state) {
+            if app.request.stream.is_some() && app.drain_stream(state) {
                 queue_session_save(&mut app, store, state);
             }
         }
@@ -232,12 +243,38 @@ pub(crate) fn run(
                 Dispatch::Agent(prompt) => app.start_agent(prompt, state),
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
                 Dispatch::SqlTask(task) => {
-                    // One SQL command in flight at a time; a second replaces
-                    // the first (dropping its receiver closes the channel).
-                    app.sql_task = Some((
-                        sql_task::spawn(Arc::new(runtime.clone()), task.clone()),
-                        task,
-                    ));
+                    // One SQL command in flight at a time. The queued-prompt
+                    // gate (`!is_busy()`, which now covers SQL tasks) is the
+                    // primary defence: a second command submitted while one
+                    // runs is held until the first finishes. This guard is the
+                    // backstop — should a SqlTask reach the handler while one
+                    // is already running, refuse rather than silently drop the
+                    // first result (invariant 2).
+                    match app.admit_second_sql() {
+                        application::SecondSqlDecision::Start => {
+                            let started = std::time::Instant::now();
+                            // Share the existing `Arc<RuntimeConfig>` instead of
+                            // deep-cloning the whole config (resolved plaintext
+                            // secrets included) onto a detached thread per
+                            // command (invariant 3).
+                            app.sql_task = Some((
+                                sql_task::spawn(Arc::clone(&app.runtime), task.clone()),
+                                task,
+                                started,
+                            ));
+                            // Reuse the agent status fields so the status bar
+                            // (which reads them) shows "running query Ns" with
+                            // a spinner while the query runs (invariant 1). A
+                            // SQL task and an agent stream never run
+                            // concurrently — the gate prevents dispatch while
+                            // either is busy — so these fields are free to reuse.
+                            app.request.started = Some(started);
+                            app.request.activity = Some("query".into());
+                        }
+                        application::SecondSqlDecision::Reject(message) => {
+                            app.transcript.push(BlockKind::System, message)
+                        }
+                    }
                 }
             }
             queue_session_save(&mut app, store, state);
