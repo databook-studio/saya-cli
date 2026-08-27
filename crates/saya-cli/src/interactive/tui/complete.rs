@@ -19,6 +19,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("privacy", "Enable or disable data sharing privacy"),
     ("approvals", "Set approval policy for tool execution"),
     ("schema", "Inspect or refresh database schema"),
+    ("doctor", "Diagnose config: secrets, provider endpoint"),
     ("sql", "Run a raw SQL query against the active profile"),
     ("export", "Export the last query result as CSV or JSON"),
     ("chart", "Render the last query as an HTML chart"),
@@ -175,7 +176,7 @@ mod tests {
     fn test_slash_only() {
         let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
         assert_eq!((start, end), (0, 1));
-        assert_eq!(candidates.len(), 27);
+        assert_eq!(candidates.len(), 28);
         assert_eq!(candidates[0].value, "/connect");
         assert_eq!(
             candidates[0].description.as_deref(),
@@ -197,7 +198,8 @@ mod tests {
                 "/connections",
                 "/contracts",
                 "/contract",
-                "/confirm"
+                "/confirm",
+                "/doctor"
             ]
         );
     }
@@ -214,7 +216,8 @@ mod tests {
                 "/connections",
                 "/contracts",
                 "/contract",
-                "/confirm"
+                "/confirm",
+                "/doctor"
             ]
         );
     }

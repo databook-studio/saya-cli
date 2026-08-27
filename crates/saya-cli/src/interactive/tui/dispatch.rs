@@ -54,6 +54,9 @@ pub(crate) fn dispatch(
             SessionAction::Message(message) => transcript.push(BlockKind::System, message),
             SessionAction::Error(message) => transcript.push(BlockKind::Error, message),
             SessionAction::History => list_sessions(transcript, store),
+            SessionAction::Doctor => {
+                transcript.push(BlockKind::System, crate::config::doctor::summary(runtime))
+            }
             SessionAction::Resume(id) => resume(transcript, state, store, &id),
             SessionAction::Sql(sql) => {
                 result = Dispatch::SqlTask(super::sql_task::SqlTask {

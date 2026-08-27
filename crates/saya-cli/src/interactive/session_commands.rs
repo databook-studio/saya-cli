@@ -15,6 +15,8 @@ pub enum SessionAction {
     NotImplemented(String),
     Error(String),
     History,
+    /// Run `config doctor` and surface its report as a message.
+    Doctor,
     Resume(String),
     Schema(bool),
     Sql(String),
@@ -131,6 +133,7 @@ impl SessionState {
                 )
             }
             SlashCommand::History => SessionAction::History,
+            SlashCommand::Doctor => SessionAction::Doctor,
             SlashCommand::Sessions => SessionAction::History,
             SlashCommand::Resume(id) => SessionAction::Resume(id),
             SlashCommand::Help(topic) => {

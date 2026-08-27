@@ -17,6 +17,9 @@ pub(crate) fn emit_action(
             }
             emit(TerminalEvent::Result { message }, format);
         }
+        // Doctor is intercepted in the session loop (it needs `runtime`) and
+        // never reaches here; the arm keeps the match exhaustive.
+        SessionAction::Doctor => {}
         SessionAction::Agent(_)
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)

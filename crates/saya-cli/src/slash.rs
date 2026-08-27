@@ -38,6 +38,8 @@ pub enum SlashCommand {
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
     /// hands it to the shared `run_contracts` dispatcher — no second parsing.
     Contracts(ContractsCommand),
+    /// Run `config doctor` in-session: secrets resolve? provider endpoint?
+    Doctor,
     Help(Option<String>),
     Exit,
 }
@@ -97,6 +99,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
+        "doctor" => SlashCommand::Doctor,
         "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject" => {
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
@@ -161,6 +164,19 @@ mod tests {
         assert!(help_unknown.contains("No help"));
 
         assert_eq!(help_for(None), help_text().to_string());
+    }
+
+    #[test]
+    fn test_parse_doctor_takes_no_arguments() {
+        assert!(matches!(
+            parse_slash_command("/doctor").unwrap(),
+            Some(SlashCommand::Doctor)
+        ));
+        // Like /clear and /history, a trailing argument is ignored.
+        assert!(matches!(
+            parse_slash_command("/doctor now").unwrap(),
+            Some(SlashCommand::Doctor)
+        ));
     }
 
     #[test]

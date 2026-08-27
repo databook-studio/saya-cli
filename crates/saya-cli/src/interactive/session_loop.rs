@@ -168,6 +168,17 @@ fn handle_line(
         block_on(store.save(state.redacted()))?;
         return Ok(false);
     }
+    if let SessionAction::Doctor = action {
+        // Same report the TUI's /doctor shows; runtime lives here.
+        super::session_emit::emit_action(
+            SessionAction::Message(crate::config::doctor::summary(runtime)),
+            format,
+            state,
+            store,
+        )?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
     if let SessionAction::Sql(sql) = action {
         block_on(super::session_sql::run(
             runtime,

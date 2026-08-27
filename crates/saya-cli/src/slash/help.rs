@@ -8,7 +8,7 @@
 /// The one-line summary printed by `/help` with no argument. One string so the
 /// TUI and headless paths render it identically.
 pub(crate) fn help_text() -> &'static str {
-    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /help  /exit\n/contracts  /contract <table>  /remember <table> <kind> <value…>  /forget <id>  /queue [limit]\n/confirm <prefix>  /reject <prefix> — act on a claim shown this turn by its short id prefix"
+    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /doctor  /help  /exit\n/contracts  /contract <table>  /remember <table> <kind> <value…>  /forget <id>  /queue [limit]\n/confirm <prefix>  /reject <prefix> — act on a claim shown this turn by its short id prefix"
 }
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
@@ -55,6 +55,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "clear" => Some("clear — clear conversation history and context. Example: /clear"),
         "history" => Some("history — display session history. Example: /history"),
         "sessions" => Some("sessions — list available interactive sessions. Example: /sessions"),
+        "doctor" => Some(
+            "doctor — diagnose configuration: secrets resolve? provider endpoint? Example: /doctor",
+        ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
         "contracts" => {
             Some("contracts — list recalled contracts for the active profile. Example: /contracts")
