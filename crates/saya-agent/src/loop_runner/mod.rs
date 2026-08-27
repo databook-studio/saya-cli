@@ -58,21 +58,18 @@ pub async fn run_agent_with_sink(
                 usage,
             });
         }
-        // When every call in the message is valid and auto-runnable (no
-        // approval gate, no external side effect, no denied candidate write),
-        // they are independent: run them concurrently instead of paying
-        // their latency sequentially.
+        // When every call in the message is valid and auto-runnable, the
+        // calls are independent: run them concurrently instead of paying
+        // their latency sequentially. `auto_runnable` is the single policy
+        // for "may this run with no questions asked"; the sequential path
+        // below applies the same gates, so the two cannot drift (S8).
         let batch_parallel = assistant.tool_calls.len() > 1
             && assistant.tool_calls.iter().all(|call| {
                 tools::invalid_reason(call, &definitions).is_none()
-                    && definitions.iter().any(|definition| {
-                        definition.name == call.name
-                            && !definition.effect.requires_approval
-                            && !definition.effect.external_side_effect
-                            && !(definition.effect.local_state
-                                == crate::LocalStateEffect::WriteCandidate
-                                && !limits.permit_candidate_writes)
-                    })
+                    && definitions
+                        .iter()
+                        .find(|definition| definition.name == call.name)
+                        .is_some_and(|definition| tools::auto_runnable(definition, &limits))
             });
         if batch_parallel {
             tool_count += assistant.tool_calls.len();
@@ -188,16 +185,17 @@ pub async fn run_agent_with_sink(
                 .expect("validated");
             let approved = !definition.effect.requires_approval
                 || approval.approve(definition, &call.arguments).await;
-            // Fail closed: a tool that may write a candidate claim is refused
-            // unless the runner was constructed with candidate writes
-            // permitted. The default is not permitted, so registering a
-            // `WriteCandidate` tool in a later slice cannot silently start
-            // writing. This denies rather than executes, so the turn
-            // continues and the model sees a `ToolDenied` event with a reason.
-            let candidate_denied = definition.effect.local_state
-                == crate::LocalStateEffect::WriteCandidate
-                && !limits.permit_candidate_writes;
-            let executed = approved && !candidate_denied;
+            // Apply the same policy the batch path consults (`auto_runnable`),
+            // split into its gates so the denial can name which one refused.
+            // `requires_approval` was already resolved into `approved`, so a
+            // tool that needed approval and got it still runs; the remaining
+            // gates bind whether or not approval was granted. This is the one
+            // place the sequential path decides auto-run — keeping it here in
+            // terms of the shared gates means a gate added to `tools.rs`
+            // cannot apply to the batch path and not this one (S8 invariant 1).
+            let candidate_denied = tools::candidate_denied(definition, &limits);
+            let side_effect_denied = tools::external_side_effect_gated(definition);
+            let executed = approved && !candidate_denied && !side_effect_denied;
             let (result, summary) = if executed {
                 check_cancelled(&cancellation)?;
                 // Indicates a database-row-producing query tool ran.
@@ -211,7 +209,9 @@ pub async fn run_agent_with_sink(
                     sink,
                     AgentEvent::ToolDenied {
                         name: call.name.clone(),
-                        reason: if candidate_denied {
+                        reason: if side_effect_denied {
+                            "external side effect requires approval".into()
+                        } else if candidate_denied {
                             "candidate writes are not permitted".into()
                         } else {
                             "approval was not granted".into()

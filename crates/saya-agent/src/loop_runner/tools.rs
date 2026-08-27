@@ -1,4 +1,4 @@
-use crate::{ChatMessage, ToolCall, ToolDefinition, ToolExecutor};
+use crate::{AgentLimits, ChatMessage, LocalStateEffect, ToolCall, ToolDefinition, ToolExecutor};
 use serde_json::Value;
 
 /// Why a tool call cannot run as requested, or `None` when it is valid.
@@ -25,6 +25,42 @@ pub(super) fn invalid_reason(call: &ToolCall, definitions: &[ToolDefinition]) ->
         call.name
     ))
 }
+
+/// Whether the runner must refuse to run `definition` unattended because it
+/// has an external side effect. A tool that touches the world outside the
+/// agent must go through approval; when it already requires approval this
+/// gate is satisfied by the prompt, so the term only denies a tool that set
+/// `external_side_effect` without also setting `requires_approval` — a
+/// misconfiguration the loop refuses rather than trusting every author to
+/// set both (spec S8 Q1). Both execution paths consult this, so a tool the
+/// policy gates cannot be auto-run by one path and not the other.
+pub(super) fn external_side_effect_gated(definition: &ToolDefinition) -> bool {
+    definition.effect.external_side_effect && !definition.effect.requires_approval
+}
+
+/// Whether the runner must refuse `definition` because it may write a
+/// candidate claim and the run was not constructed with candidate writes
+/// permitted (Phase 3a: fail closed by default).
+pub(super) fn candidate_denied(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
+    definition.effect.local_state == LocalStateEffect::WriteCandidate
+        && !limits.permit_candidate_writes
+}
+
+/// May a call to `definition` run with no questions asked — the single
+/// policy the loop consults to decide auto-run. A call is auto-runnable only
+/// when it needs no approval, the policy does not gate its external side
+/// effect, and it is not a candidate write the runner refused. The batch path
+/// calls this to decide whether the calls in a message are independent enough
+/// to run concurrently; the sequential execution path applies the same gates
+/// (via [`external_side_effect_gated`] and [`candidate_denied`]) after
+/// resolving approval, so adding a gate here cannot apply to one path and not
+/// the other (spec S8 invariant 1).
+pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
+    !definition.effect.requires_approval
+        && !external_side_effect_gated(definition)
+        && !candidate_denied(definition, limits)
+}
+
 /// Runs a tool and returns its result with a completion summary that reflects
 /// the tool's *declared* `read_only`, not its name. A write tool (`read_only:
 /// false`, e.g. one that persists a candidate claim) must not read as a
