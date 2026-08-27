@@ -32,7 +32,7 @@ pub(super) fn invalid_reason(call: &ToolCall, definitions: &[ToolDefinition]) ->
 /// gate is satisfied by the prompt, so the term only denies a tool that set
 /// `external_side_effect` without also setting `requires_approval` — a
 /// misconfiguration the loop refuses rather than trusting every author to
-/// set both (spec S8 Q1). Both execution paths consult this, so a tool the
+/// set both. Both execution paths consult this, so a tool the
 /// policy gates cannot be auto-run by one path and not the other.
 pub(super) fn external_side_effect_gated(definition: &ToolDefinition) -> bool {
     definition.effect.external_side_effect && !definition.effect.requires_approval
@@ -54,7 +54,7 @@ pub(super) fn candidate_denied(definition: &ToolDefinition, limits: &AgentLimits
 /// to run concurrently; the sequential execution path applies the same gates
 /// (via [`external_side_effect_gated`] and [`candidate_denied`]) after
 /// resolving approval, so adding a gate here cannot apply to one path and not
-/// the other (spec S8 invariant 1).
+/// the other.
 pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
     !definition.effect.requires_approval
         && !external_side_effect_gated(definition)
@@ -144,7 +144,7 @@ const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
 /// `byte_budget` is the loop's whole-conversation bound
 /// (`AgentLimits::context_byte_budget`); a single tool message is capped below
 /// it so one result can never, by itself, breach the budget and abort the run
-/// (S4 invariant 1). `MAX_TOOL_MESSAGE_BYTES` is a separate, provider-facing
+///. `MAX_TOOL_MESSAGE_BYTES` is a separate, provider-facing
 /// hard ceiling kept well under any provider's per-message limit.
 pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (ChatMessage, bool) {
     let cap = byte_budget.min(MAX_TOOL_MESSAGE_BYTES);

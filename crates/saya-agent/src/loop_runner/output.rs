@@ -74,7 +74,7 @@ pub(super) fn message_size(message: &crate::ChatMessage) -> usize {
 
 /// A completion summary for a tool result, flagged when the result was
 /// truncated to fit the conversation budget so the model is told it saw a cut
-/// result rather than a complete one (S4: the model must not be misled).
+/// result rather than a complete one — the model must not be misled.
 pub(super) fn completion_summary(base: &str, truncated: bool) -> String {
     if truncated {
         format!("{base} (truncated)")
@@ -94,7 +94,7 @@ const TRUNCATED_MARKER: &str = "…[truncated: tool result exceeded the conversa
 /// same recency policy the pre-loop history trim uses). When only the newest
 /// group remains and it alone is over budget, truncates the largest `tool`
 /// message to fit with a visible marker rather than discarding the freshest
-/// result or killing the run (S4 invariant 1).
+/// result or killing the run.
 pub(super) fn trim_to_budget(messages: &mut Vec<crate::ChatMessage>, budget: usize) {
     loop {
         let total = messages.iter().map(message_size).sum::<usize>();

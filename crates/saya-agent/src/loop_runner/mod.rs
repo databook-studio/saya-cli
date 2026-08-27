@@ -62,7 +62,7 @@ pub async fn run_agent_with_sink(
         // calls are independent: run them concurrently instead of paying
         // their latency sequentially. `auto_runnable` is the single policy
         // for "may this run with no questions asked"; the sequential path
-        // below applies the same gates, so the two cannot drift (S8).
+        // below applies the same gates, so the two cannot drift.
         let batch_parallel = assistant.tool_calls.len() > 1
             && assistant.tool_calls.iter().all(|call| {
                 tools::invalid_reason(call, &definitions).is_none()
@@ -192,7 +192,7 @@ pub async fn run_agent_with_sink(
             // gates bind whether or not approval was granted. This is the one
             // place the sequential path decides auto-run — keeping it here in
             // terms of the shared gates means a gate added to `tools.rs`
-            // cannot apply to the batch path and not this one (S8 invariant 1).
+            // cannot apply to the batch path and not this one.
             let candidate_denied = tools::candidate_denied(definition, &limits);
             let side_effect_denied = tools::external_side_effect_gated(definition);
             let executed = approved && !candidate_denied && !side_effect_denied;
