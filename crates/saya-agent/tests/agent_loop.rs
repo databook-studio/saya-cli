@@ -646,6 +646,146 @@ async fn approval_free_tool_calls_run_concurrently_and_results_stay_ordered() {
     );
 }
 
+/// Proves the fan-out in `execute_batch` is bounded: every executor entry
+/// increments an in-flight counter, parks on a zero-permit semaphore so peers
+/// can pile up, and records the high-water mark of simultaneous execution. The
+/// test waits for in-flight to stabilise (the cap's worth are parked), reads
+/// the high-water, and releases. Unbounded simultaneity drives the high-water
+/// to N; a cap of C holds it at C.
+#[tokio::test]
+async fn execute_batch_caps_simultaneous_concurrency() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use tokio::sync::Semaphore;
+
+    struct ProbeTools {
+        in_flight: Arc<AtomicUsize>,
+        high_water: Arc<AtomicUsize>,
+        gate: Arc<Semaphore>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for ProbeTools {
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            let cur = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut seen = self.high_water.load(Ordering::SeqCst);
+            while cur > seen {
+                match self.high_water.compare_exchange(
+                    seen,
+                    cur,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => seen = actual,
+                }
+            }
+            // Block on a zero-permit gate, holding the in-flight slot open so
+            // the next call can only start once a slot frees. The test adds the
+            // permits that release every parked call.
+            let _permit = self.gate.acquire().await.expect("gate not closed");
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            Ok(serde_json::json!({"ok": true}))
+        }
+    }
+
+    const N: usize = 12;
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            ChatResponse {
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: (0..N)
+                        .map(|index| ToolCall {
+                            id: format!("call-{index}"),
+                            name: "schema_discovery".into(),
+                            arguments: serde_json::json!({"which": index}),
+                        })
+                        .collect(),
+                    tool_call_id: None,
+                },
+            },
+            ChatResponse {
+                message: ChatMessage::text("assistant", "done"),
+            },
+        ]),
+    };
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let high_water = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(Semaphore::new(0));
+    let tools = ProbeTools {
+        in_flight: in_flight.clone(),
+        high_water: high_water.clone(),
+        gate: gate.clone(),
+    };
+    let run = run_agent(
+        &provider,
+        &tools,
+        request(),
+        definitions(),
+        AgentLimits {
+            max_turns: 4,
+            max_tool_calls: 64,
+            permit_candidate_writes: false,
+            context_byte_budget: 1024 * 1024,
+        },
+        &AllowReadOnlyApproval,
+    );
+    // Drive the run while waiting for in-flight to stabilise — i.e. the cap's
+    // worth are parked and the rest are queued behind the cap. Polling both
+    // futures on this task avoids borrowing across a `tokio::spawn` boundary.
+    let mut run = std::pin::pin!(run);
+    let stabilised = tokio::select! {
+        output = &mut run => { let _ = output; false },
+        _ = async {
+            let mut last = 0;
+            let mut stable = 0;
+            loop {
+                let cur = in_flight.load(Ordering::SeqCst);
+                if cur == last && cur > 0 {
+                    stable += 1;
+                    if stable >= 3 {
+                        return;
+                    }
+                } else {
+                    stable = 0;
+                }
+                last = cur;
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        } => true,
+    };
+    assert!(
+        stabilised,
+        "in-flight must stabilise under the cap, not finish"
+    );
+    let observed = high_water.load(Ordering::SeqCst);
+    // Release every parked call so the run can drain and finish. Permits
+    // accumulate, so one add covers all N calls regardless of how the cap
+    // batches them.
+    gate.add_permits(N);
+    let output = tokio::time::timeout(Duration::from_secs(10), run)
+        .await
+        .expect("batch must not deadlock under the cap")
+        .unwrap();
+    assert_eq!(output.answer, "done");
+    // Before the fix the high-water mark equalled N (all twelve ran at once);
+    // the cap must hold the observed simultaneity strictly below N.
+    assert!(
+        observed < N,
+        "concurrency must be capped below {N}; observed {observed} simultaneous"
+    );
+    assert!(
+        observed >= 1,
+        "at least one call must run; observed {observed}"
+    );
+}
+
 /// Providers disclose cumulative counts per response; the run total must sum
 /// them across turns and land in AgentOutput.
 #[tokio::test]
@@ -727,27 +867,59 @@ async fn token_usage_sums_across_turns_into_the_output() {
     );
 }
 
+/// The intra-loop context bound still binds, but it no longer aborts the run
+/// (S4 Problem A): runaway context is trimmed to fit rather than surfacing an
+/// opaque `Limit("context bytes")` after the query already ran. Each provider
+/// turn is issued a conversation assembled under the byte budget; the run
+/// completes instead of dying on the first oversized turn.
 #[tokio::test]
-async fn runaway_context_fails_closed_at_the_byte_budget() {
-    let provider = MockProvider {
-        responses: Mutex::new(
-            (0..4)
-                .map(|index| ChatResponse {
+async fn runaway_context_is_trimmed_not_aborted_and_the_bound_still_binds() {
+    struct CapturingProvider {
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+        turn: Mutex<usize>,
+    }
+    #[async_trait]
+    impl ChatProvider for CapturingProvider {
+        fn name(&self) -> &str {
+            "capture"
+        }
+        async fn complete(
+            &self,
+            request: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            self.requests.lock().unwrap().push(request);
+            let turn = {
+                let mut t = self.turn.lock().unwrap();
+                let was = *t;
+                *t += 1;
+                was
+            };
+            if turn < 4 {
+                return Ok(ChatResponse {
                     message: ChatMessage {
                         role: "assistant".into(),
                         content: String::new(),
                         tool_calls: vec![ToolCall {
-                            id: format!("call-{index}"),
+                            id: format!("call-{turn}"),
                             name: "schema_discovery".into(),
                             arguments: serde_json::json!({"padding": "x".repeat(2_048)}),
                         }],
                         tool_call_id: None,
                     },
-                })
-                .collect(),
-        ),
+                });
+            }
+            Ok(ChatResponse {
+                message: ChatMessage::text("assistant", "done"),
+            })
+        }
+    }
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = CapturingProvider {
+        requests: requests.clone(),
+        turn: Mutex::new(0),
     };
-    let error = run_agent(
+    let output = run_agent(
         &provider,
         &MockTools {
             calls: Arc::new(Mutex::new(Vec::new())),
@@ -763,10 +935,144 @@ async fn runaway_context_fails_closed_at_the_byte_budget() {
         &AllowReadOnlyApproval,
     )
     .await
-    .unwrap_err();
+    .expect("runaway context is trimmed, not aborted");
+    assert_eq!(output.answer, "done");
+    // The bound still binds: every turn's assembled conversation fits the byte
+    // budget. This is the invariant the old aborting test guarded — the
+    // mechanism changed from fail-closed to trim, the bound did not go away.
+    let budget = 4_096usize;
+    for request in requests.lock().unwrap().iter() {
+        let total = request
+            .messages
+            .iter()
+            .map(|message| {
+                message.content.len() + message.role.len() + message_size_overhead(message)
+            })
+            .sum::<usize>();
+        assert!(
+            total <= budget,
+            "each turn must stay within the {budget}-byte budget; saw {total}"
+        );
+    }
+}
+
+/// Approximates the loop's `message_size` for assertion purposes (content plus
+/// role plus tool-call argument bytes), matching what the bound measures.
+fn message_size_overhead(message: &ChatMessage) -> usize {
+    message
+        .tool_calls
+        .iter()
+        .map(|call| {
+            call.id.len()
+                + call.name.len()
+                + serde_json::to_string(&call.arguments).map_or(0, |text| text.len())
+        })
+        .sum::<usize>()
+}
+
+/// A single oversized tool result must not be able to abort the whole run by
+/// itself (S4 invariant 1). One query returning more than the conversation
+/// byte budget must let the run continue in some useful form rather than
+/// surfacing an opaque `Limit("context bytes")` after the query already ran.
+/// The model must also be told it received a cut result, not silently fed a
+/// partial one as if complete (S4: a correctness issue, not just UX).
+#[tokio::test]
+async fn single_oversized_tool_result_does_not_abort_the_run() {
+    struct BigTools;
+    #[async_trait::async_trait]
+    impl ToolExecutor for BigTools {
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            // One result larger than the whole conversation budget.
+            Ok(serde_json::json!({ "rows": vec!["x".repeat(8_192)] }))
+        }
+    }
+    struct CapturingProvider {
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+        turn: Mutex<usize>,
+    }
+    #[async_trait]
+    impl ChatProvider for CapturingProvider {
+        fn name(&self) -> &str {
+            "capture-big"
+        }
+        async fn complete(
+            &self,
+            request: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            self.requests.lock().unwrap().push(request);
+            let turn = {
+                let mut t = self.turn.lock().unwrap();
+                let was = *t;
+                *t += 1;
+                was
+            };
+            if turn == 0 {
+                return Ok(ChatResponse {
+                    message: ChatMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: vec![ToolCall {
+                            id: "call-1".into(),
+                            name: "schema_discovery".into(),
+                            arguments: serde_json::json!({}),
+                        }],
+                        tool_call_id: None,
+                    },
+                });
+            }
+            Ok(ChatResponse {
+                message: ChatMessage::text("assistant", "summarised the result"),
+            })
+        }
+    }
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = CapturingProvider {
+        requests: requests.clone(),
+        turn: Mutex::new(0),
+    };
+    let output = run_agent(
+        &provider,
+        &BigTools,
+        request(),
+        definitions(),
+        AgentLimits {
+            max_turns: 4,
+            max_tool_calls: 8,
+            permit_candidate_writes: false,
+            context_byte_budget: 4_096,
+        },
+        &AllowReadOnlyApproval,
+    )
+    .await
+    // Before the fix this returned `Err(AgentError::Limit("context bytes"))`.
+    .expect("one oversized result must not abort the run");
+    assert_eq!(output.answer, "summarised the result");
+    // The model must not silently believe it saw the complete result.
     assert!(
-        matches!(error, AgentError::Limit("context bytes")),
-        "{error:?}"
+        output.events.iter().any(
+            |event| matches!(event, AgentEvent::ToolCompleted { summary, .. } if summary
+                .contains("truncated"))
+        ),
+        "the model must be told the result was truncated; events: {:?}",
+        output.events
+    );
+    // And the tool message the model actually receives must carry the visible
+    // truncation marker, proving it is not misled about what it got.
+    let second = requests.lock().unwrap()[1].clone();
+    let tool_message = second
+        .messages
+        .iter()
+        .find(|message| message.role == "tool")
+        .expect("the truncated result must reach the model as a tool message");
+    assert!(
+        tool_message.content.contains("truncated"),
+        "the tool message content must mark the cut, got: {}",
+        tool_message.content
     );
 }
 

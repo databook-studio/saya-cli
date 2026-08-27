@@ -101,6 +101,8 @@ pub async fn run_agent_with_sink(
             let results =
                 tools::execute_batch(tools, &assistant.tool_calls.clone(), &definitions).await;
             for (call, (result, summary)) in assistant.tool_calls.iter().zip(results) {
+                let (message, truncated) =
+                    tools::tool_message(call.id.clone(), result, limits.context_byte_budget);
                 tool_metadata.push(crate::ToolMetadata {
                     name: call.name.clone(),
                     status: if summary.contains("failed") {
@@ -110,14 +112,14 @@ pub async fn run_agent_with_sink(
                     }
                     .into(),
                 });
-                messages.push(tools::tool_message(call.id.clone(), result));
+                messages.push(message);
                 check_cancelled(&cancellation)?;
                 emit(
                     &mut events,
                     sink,
                     AgentEvent::ToolCompleted {
                         name: call.name.clone(),
-                        summary: summary.into(),
+                        summary: output::completion_summary(summary, truncated),
                     },
                 )
                 .await;
@@ -149,10 +151,12 @@ pub async fn run_agent_with_sink(
                     name: call.name.clone(),
                     status: "failed".into(),
                 });
-                messages.push(tools::tool_message(
+                let (message, _) = tools::tool_message(
                     call.id,
                     serde_json::json!({"error": reason}),
-                ));
+                    limits.context_byte_budget,
+                );
+                messages.push(message);
                 emit(
                     &mut events,
                     sink,
@@ -233,7 +237,9 @@ pub async fn run_agent_with_sink(
                 }
                 .into(),
             });
-            messages.push(tools::tool_message(call.id, result));
+            let (message, truncated) =
+                tools::tool_message(call.id, result, limits.context_byte_budget);
+            messages.push(message);
             if executed {
                 check_cancelled(&cancellation)?;
                 emit(
@@ -241,36 +247,24 @@ pub async fn run_agent_with_sink(
                     sink,
                     AgentEvent::ToolCompleted {
                         name: call.name,
-                        summary: summary.into(),
+                        summary: output::completion_summary(summary, truncated),
                     },
                 )
                 .await;
             }
         }
         // Intra-loop context budget: the pre-loop trim bounds history, but
-        // assistant turns and tool results accumulate here unchecked. Fail
-        // closed rather than sending an ever growing payload upstream.
-        if messages.iter().map(message_size).sum::<usize>() > limits.context_byte_budget {
-            return Err(AgentError::Limit("context bytes"));
-        }
+        // assistant turns and tool results accumulate here. Trim the oldest
+        // tool-result pairs (the assistant turn that issued each call plus its
+        // `tool` message) until the conversation fits, keeping the newest
+        // context — the same recency policy the pre-loop path uses. A single
+        // result is already capped at construction, so this resolves
+        // accumulation; if trimming everything still leaves the newest result
+        // over budget, truncate it rather than aborting the whole run (S4
+        // invariant 1: one result must never kill the run by itself).
+        output::trim_to_budget(&mut messages, limits.context_byte_budget);
     }
     Err(AgentError::Limit("turns"))
-}
-
-/// Approximate serialized size of a message, including tool-call arguments,
-/// which dominate real growth during multi-turn runs.
-fn message_size(message: &crate::ChatMessage) -> usize {
-    message.content.len()
-        + message.role.len()
-        + message
-            .tool_calls
-            .iter()
-            .map(|call| {
-                call.id.len()
-                    + call.name.len()
-                    + serde_json::to_string(&call.arguments).map_or(0, |text| text.len())
-            })
-            .sum::<usize>()
 }
 
 pub(super) async fn emit(

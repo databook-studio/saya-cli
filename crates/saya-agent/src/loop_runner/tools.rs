@@ -60,42 +60,102 @@ pub(super) async fn execute(
     }
 }
 /// Executes already-validated, auto-runnable calls concurrently while
-/// preserving input order in the returned results. Concurrency is bounded
-/// upstream by `max_tool_calls`; actual database fan-out is bounded again by
-/// the connection pool.
+/// preserving input order in the returned results.
+///
+/// The tool-call list comes from the model, so its size is untrusted:
+/// `max_tool_calls` is a whole-run *total*, not a simultaneity cap, so a
+/// message emitting twenty calls would otherwise fan out twenty concurrent
+/// database queries. Concurrency is bounded here by
+/// [`MAX_CONCURRENT_TOOL_CALLS`]: `buffered` caps how many futures are polled
+/// at once and still yields results in input order. Actual database fan-out is
+/// bounded again by the connection pool, which defaults to four connections
+/// (see `saya-connectors`' factory), so a cap above the pool size only queues
+/// inside the connector — `MAX_CONCURRENT_TOOL_CALLS` matches that default.
 pub(super) async fn execute_batch(
     tools: &dyn ToolExecutor,
     calls: &[ToolCall],
     definitions: &[ToolDefinition],
 ) -> Vec<(Value, &'static str)> {
-    use futures_util::{StreamExt, stream::FuturesOrdered};
-    let mut pending = FuturesOrdered::new();
-    for call in calls {
+    use futures_util::{StreamExt, stream};
+    let pending = calls.iter().map(|call| {
         let read_only = definitions
             .iter()
             .find(|definition| definition.name == call.name)
             .is_some_and(|definition| definition.read_only);
         let name = call.name.clone();
         let arguments = call.arguments.clone();
-        pending.push_back(async move { execute(tools, &name, arguments, read_only).await });
-    }
-    pending.collect().await
+        async move { execute(tools, &name, arguments, read_only).await }
+    });
+    stream::iter(pending)
+        .buffered(MAX_CONCURRENT_TOOL_CALLS)
+        .collect()
+        .await
 }
 
-pub(super) fn tool_message(id: String, result: Value) -> ChatMessage {
-    ChatMessage {
-        role: "tool".into(),
-        content: bounded_json(&result),
-        tool_calls: Vec::new(),
-        tool_call_id: Some(id),
-    }
+/// Ceiling on how many tool calls from a single assistant message run at the
+/// same instant. The connection pool defaults to four connections
+/// (`saya-connectors`' factory), so fanning out more than this only queues
+/// inside the pool — matching the pool default keeps the cap meaningful without
+/// over-subscribing the database.
+const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
+
+/// Builds the `tool`-role message for a result, truncating it to fit the
+/// conversation byte budget when a single result would otherwise exceed it.
+/// Returns the message plus whether truncation was applied so the caller can
+/// mark the completion summary — the model must not silently believe it saw a
+/// complete result.
+///
+/// `byte_budget` is the loop's whole-conversation bound
+/// (`AgentLimits::context_byte_budget`); a single tool message is capped below
+/// it so one result can never, by itself, breach the budget and abort the run
+/// (S4 invariant 1). `MAX_TOOL_MESSAGE_BYTES` is a separate, provider-facing
+/// hard ceiling kept well under any provider's per-message limit.
+pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (ChatMessage, bool) {
+    let cap = byte_budget.min(MAX_TOOL_MESSAGE_BYTES);
+    let (content, truncated) = bounded_json(&result, cap);
+    (
+        ChatMessage {
+            role: "tool".into(),
+            content,
+            tool_calls: Vec::new(),
+            tool_call_id: Some(id),
+        },
+        truncated,
+    )
 }
-fn bounded_json(value: &Value) -> String {
+
+/// Absolute per-tool-message ceiling, independent of the conversation budget:
+/// no provider is asked to ingest a tool result larger than this. Kept below
+/// the 16 MiB a connector can return (`saya-connectors`' `MAX_RESULT_BYTES`)
+/// so the loop's own bounds, not the connector's, govern what reaches the model.
+const MAX_TOOL_MESSAGE_BYTES: usize = 65_536;
+
+fn bounded_json(value: &Value, cap: usize) -> (String, bool) {
     let text = serde_json::to_string(value)
         .unwrap_or_else(|_| "{\"error\":\"tool result unavailable\"}".into());
-    if text.len() <= 65_536 {
-        text
+    if text.len() <= cap {
+        (text, false)
     } else {
-        "{\"error\":\"tool result exceeded model context limit\"}".into()
+        // Truncate the serialized result to `cap` and append a visible marker
+        // so the model knows the data was cut, preserving the leading bytes it
+        // can still reason about instead of discarding the whole result.
+        let marker = "…[truncated: tool result exceeded the conversation byte budget]";
+        let head = cap.saturating_sub(marker.len());
+        let mut truncated = String::from(&text[..floor_boundary(&text, head)]);
+        truncated.push_str(marker);
+        (truncated, true)
     }
+}
+
+/// Largest byte index `<= idx` that falls on a UTF-8 character boundary, so a
+/// truncation slice never splits a multi-byte sequence. (`str::floor_char_boundary`
+/// would do this but is stable only since 1.91, above the 1.88 MSRV.)
+pub(super) fn floor_boundary(text: &str, mut idx: usize) -> usize {
+    if idx >= text.len() {
+        idx = text.len();
+    }
+    while idx > 0 && !text.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
 }
