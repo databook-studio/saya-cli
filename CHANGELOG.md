@@ -5,6 +5,56 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Changed — read this before upgrading
+
+Four changes alter behaviour you may be relying on. Three of them can stop
+SAYA starting or connecting on a setup that worked in 0.3.0.
+
+- **An unknown key in `config.toml` or `connections.toml` is now an error.**
+  Previously a typo fell back to the default silently — worst case a typo'd
+  `sslmodee` dropped TLS enforcement with no signal. The error names the
+  offending key and lists the valid ones.
+
+  This bites on upgrade if your config carries a key that no longer exists.
+  In particular `retention_days` was removed (it was parsed, merged and
+  surfaced in diagnostics while nothing read it), so a config that sets it
+  will not start. Delete the key.
+
+- **PostgreSQL `sslmode` now defaults to `require`, not `prefer`.** `prefer`
+  lets an active attacker answer the SSL request with a refusal and collect
+  the credentials in plaintext. A server that does not offer TLS will now be
+  refused rather than silently downgraded — including a local development
+  Postgres. Set `sslmode = "disable"` explicitly for those; see
+  [connections.md](docs/connections.md). Note `require` encrypts but does not
+  verify the certificate: use `verify-full` where you need that.
+
+- **The project layer is no longer trusted for security-critical settings.**
+  A repository's `.saya/config.toml` can no longer set `ai.base_url`,
+  `ai.api_key`, `ai.allow_data_sharing` or `run.read_only` — a cloned
+  repository is untrusted input, and those four decide where your API key is
+  sent, whether rows leave the machine, and whether read-only enforcement
+  stays on. SAYA warns when it ignores one. Pass `--trust-project-config` (or
+  set `SAYA_TRUST_PROJECT_CONFIG`) to accept them.
+
+- **Enter no longer approves a tool-approval prompt.** The prompt can appear
+  while you are typing your next message, so an implicit Enter must never
+  allow SQL to run. Press `y` to allow; `n` or Esc to deny.
+
+### Fixed
+
+- **The read-only guard now applies to the whole statement tree.** A denied
+  function reached through `FROM` as a table function, through `LATERAL`, or
+  schema-qualified (`pg_catalog.pg_read_file`, `main.read_csv`,
+  `x.load_file`) was accepted. `FOR UPDATE` and `FOR SHARE` inside a derived
+  table took row locks on a connection reported as read-only. Both are
+  closed, on every backend.
+
+- **Transcript redaction no longer fails open.** A credential header was only
+  recognised at the start of a line, so a pasted `curl -H 'Authorization:
+  Bearer …'` kept its token. A private-key block whose closing marker was cut
+  off — the normal case, since transcripts are byte-capped — was written out
+  in full.
+
 ## 0.3.0 — 2026-08-20 — conversational memory
 
 SAYA learns your data vocabulary from ordinary conversation and carries it

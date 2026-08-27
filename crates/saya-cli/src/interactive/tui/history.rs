@@ -263,18 +263,21 @@ mod tests {
 mod search_tests {
     use super::*;
 
+    /// Entries are set directly rather than pushed: `push` calls `save`, and
+    /// these tests only exercise `search`. Driving them through `push` wrote a
+    /// `saya-test-history` file into the crate directory on every `cargo test`.
     fn history() -> History {
-        let mut history = History {
-            entries: Vec::new(),
+        History {
+            entries: vec![
+                "SELECT * FROM orders".to_string(),
+                "explain select 1".to_string(),
+                "select count(*) from events".to_string(),
+            ],
             cursor: None,
-            path: std::path::PathBuf::from("saya-test-history"),
+            path: std::path::PathBuf::new(),
             limit: 1000,
-            disabled: false,
-        };
-        history.push("SELECT * FROM orders");
-        history.push("explain select 1");
-        history.push("select count(*) from events");
-        history
+            disabled: true,
+        }
     }
 
     #[test]

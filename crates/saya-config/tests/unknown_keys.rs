@@ -99,3 +99,31 @@ fn parse_errors_are_typed_as_config_parse_failures() {
     let error = ConfigFile::from_toml("[run]\nnope = 1\n").unwrap_err();
     assert!(matches!(error, ConfigError::Parse(_)));
 }
+
+// The two shipped example connection files are real inputs — they must
+// parse end to end so a typo or a stale key list never ships a config the
+// binary itself would reject. `examples/` lives at the workspace root, two
+// levels above this crate's manifest.
+fn example(name: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("examples")
+        .join(name);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+}
+
+#[test]
+fn shipped_connections_example_parses_end_to_end() {
+    let file = ConnectionsFile::from_toml(&example("connections.toml"))
+        .expect("examples/connections.toml must parse");
+    assert_eq!(file.profiles.len(), 7);
+}
+
+#[test]
+fn shipped_connections_docker_example_parses_end_to_end() {
+    let file = ConnectionsFile::from_toml(&example("connections.docker.toml"))
+        .expect("examples/connections.docker.toml must parse");
+    assert_eq!(file.profiles.len(), 2);
+}
