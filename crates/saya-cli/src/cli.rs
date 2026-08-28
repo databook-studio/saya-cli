@@ -191,19 +191,15 @@ pub enum ContractsCommand {
         #[arg(long)]
         profile: Option<String>,
     },
-    Review {
-        claim_id: String,
-        #[arg(long)]
-        confirm: bool,
-        #[arg(long)]
-        reject: bool,
-    },
-    /// Act on a claim from the turn that just showed it, by a short stored
-    /// claim-id prefix (the `ki-xxxx` `contracts list` abbreviates to), not a
-    /// 64-character id. Spec D. The `prefix` is resolved against the resolved
-    /// profile's claims to exactly one claim, or refused; the decision then
-    /// reaches the existing `confirm`/`reject`/`use_candidate_once` operations
-    /// — it is not a second implementation of them.
+    /// Confirm or reject a claim, naming it by the short `ki-xxxx` prefix that
+    /// `contracts list` prints. A prefix matching no claim, or more than one,
+    /// is refused and changes nothing.
+    //
+    // Implementation note, deliberately not a doc comment: clap prints doc
+    // comments verbatim in `--help`, so anything here is user-facing. The
+    // prefix resolves against the resolved profile's claims and the decision
+    // then reaches the existing confirm/reject/use_candidate_once operations —
+    // this is not a second implementation of them.
     Decide {
         /// A leading prefix of a stored claim id. Unambiguous-or-refused: zero
         /// matches or more than one is a typed error that changes nothing.

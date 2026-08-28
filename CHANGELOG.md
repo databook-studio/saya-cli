@@ -19,7 +19,7 @@ rewriting published release history. See
 
 ### Changed — read this before upgrading
 
-Four changes alter behaviour you may be relying on. Three of them can stop
+Five changes alter behaviour you may be relying on. Three of them can stop
 SAYA starting or connecting on a setup that worked in 0.3.0.
 
 - **An unknown key in `config.toml` or `connections.toml` is now an error.**
@@ -51,6 +51,23 @@ SAYA starting or connecting on a setup that worked in 0.3.0.
 - **Enter no longer approves a tool-approval prompt.** The prompt can appear
   while you are typing your next message, so an implicit Enter must never
   allow SQL to run. Press `y` to allow; `n` or Esc to deny.
+
+- **`saya contracts review` is removed; use `saya contracts decide`.** Two
+  commands confirmed or rejected a claim and `review` was the weaker one: its
+  `--confirm` and `--reject` were independent flags, so `--confirm --reject`
+  (or neither) was caught only at runtime, with a "choose exactly one" error,
+  and it took a 64-character claim id. `decide` takes a single `--decision`
+  flag clap rejects at parse time, and the short `ki-xxxx` prefix `contracts
+  list` prints. `decide` scopes to a profile and takes `--profile`, so a claim outside
+  the active one is still reachable. The slash commands
+  `/confirm` and `/reject` already route to `decide` and are unchanged.
+
+  Before: `saya contracts review ki-… --confirm`
+  After:  `saya contracts decide ki-… --decision confirm`
+
+  Neither command was documented, and nothing routed to `review` but the CLI
+  itself, so the removal should not affect recorded workflows; if a script used
+  `review`, swap the line above.
 
 ### Fixed
 
