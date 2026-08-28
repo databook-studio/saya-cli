@@ -30,9 +30,13 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("resume", "Resume a saved session by id"),
     (
         "contracts",
-        "List recalled contracts for the active profile",
+        "List contracts, or show one: /contracts [catalog.schema.object]",
     ),
-    ("contract", "Show one object's contract"),
+    // Kept parseable for anyone with the older spelling in muscle memory. The
+    // description says so rather than advertising a separate operation: the
+    // two names resolve to the same command, and the popup is where the old
+    // "list vs show" split was most visible.
+    ("contract", "Alias for /contracts"),
     ("remember", "Store a confirmed contract claim"),
     ("forget", "Tombstone a contract claim so recall excludes it"),
     ("queue", "Show pending candidate claims awaiting review"),
