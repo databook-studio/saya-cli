@@ -13,6 +13,26 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  # A file deleted in a later commit is still served by `git show <sha>:<path>`
+  # on a plain clone, so internal-only material must never reach a public ref
+  # in the first place. On a PR this checks the net diff, which is what a
+  # squash merge actually contributes; on main it checks the whole history.
+  internal-paths:
+    name: No internal-only paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # history scan needs every commit, not a shallow tip
+      - name: Check for internal-only paths
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            scripts/check-internal-paths.sh --diff "origin/${{ github.base_ref }}"
+          else
+            scripts/check-internal-paths.sh HEAD
+          fi
+
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest

@@ -5,6 +5,18 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Repository note
+
+Two internal skill files — `.claude/skills/saya-run/SKILL.md` and
+`.claude/skills/saya-smoke/SKILL.md` — shipped in the `v0.1.0` initial public
+release and were removed in `0.3.0`. They are absent from every current tree,
+but a deleted file stays retrievable from git history, so they can still be
+read from a clone. Both describe how to launch the CLI and smoke-test the REPL
+locally; neither contains credentials or infrastructure detail. The exposure is
+recorded and accepted rather than repaired, since removing it would mean
+rewriting published release history. See
+[RELEASING.md](RELEASING.md#internal-only-paths-must-not-reach-a-public-ref).
+
 ### Changed — read this before upgrading
 
 Four changes alter behaviour you may be relying on. Three of them can stop
