@@ -135,13 +135,87 @@ release branches, invalidating every clone, fork, and release SHA, and it would
 still not reach forks or caches that already hold them. The exposure is
 accepted and recorded here rather than repaired.
 
-The other fourteen internal files exist only in the history of
-`feat/memory-data-contracts` and `release/v0.3.0`. They are outside `main`, and
-the check above is what keeps them there.
+Fourteen other internal files were also published, on the `feat/memory-data-contracts`
+and `release/v0.3.0` branches. Those branches were deleted once their work was
+in `main`, which removed the last ref reaching those commits — no history
+rewrite was needed, and the tags were unaffected because none of them pointed
+into that lineage. A clean clone can no longer retrieve any of the fourteen.
 
 If either grandfathered path is legitimately removed from history later, drop
 it from `GRANDFATHERED` in the script so the allowance does not outlive the
 reason for it.
+
+## Delete a branch once it is merged
+
+**Automatically delete head branches** is enabled on the repository, so a
+merged pull request removes its head branch. Leave it on, and delete by hand
+any branch merged outside a PR.
+
+This is not tidiness. A merged branch that stays behind keeps its own commits
+reachable, and those commits are not what landed on `main` — a squash merge
+puts the *result* on `main` and leaves every intermediate commit alive on the
+branch. That is exactly how the fourteen files above stayed public: the work
+reached `main` as one squashed commit that contained none of them, while the
+branch went on serving all of them to anyone who cloned.
+
+So the two controls cover different halves of the same problem, and neither
+substitutes for the other:
+
+| Control | Catches |
+| --- | --- |
+| `scripts/check-internal-paths.sh` in CI | internal paths entering `main` |
+| deleting merged branches | internal paths persisting on a ref that never touched `main` |
+
+The CI check would not have caught the fourteen — they never went near `main`.
+
+### Confirming a branch really is merged
+
+There is no single command for this, and the obvious ones mislead. Work down
+this list and stop at the first that answers:
+
+**1. Is it an ancestor of `main`?** Conclusive when true — the branch was merged
+with a merge commit and every one of its commits is in `main`.
+
+```bash
+git merge-base --is-ancestor origin/<branch> origin/main
+```
+
+**2. Does its tip content match `main`?** For a squash merge the commits are not
+ancestors, but the content is identical.
+
+```bash
+git diff --name-only origin/main origin/<branch>   # empty => tip matches main
+```
+
+**3. Did its work flow through another merged branch?** A feature branch is
+often an ancestor of the release branch that carried it.
+
+```bash
+git merge-base --is-ancestor origin/<branch> origin/<release-branch>
+```
+
+**4. Otherwise, read `git log --oneline origin/main..origin/<branch>` and judge.**
+
+Two traps, both of which produce a confident wrong answer:
+
+- **A plain two-dot `git diff main <branch>` also reports `main`'s own advance.**
+  A branch that is merely *behind* looks like it has hundreds of unique files.
+  `release/v0.2.0` is a proven ancestor of `main` and still shows ~300 differing
+  files.
+- **Three-dot `git diff main...<branch>` fixes that for a merge commit but not
+  for a squash.** It diffs from the merge base, which for a squashed branch sits
+  *before* the squash, so all the branch's work reappears as if unmerged.
+
+`release/v0.2.0` gives 306 two-dot and 0 three-dot; `feat/memory-data-contracts`
+gave 201 two-dot and 307 three-dot, and was merged. Step 1 or step 3 settles
+both; a diff alone settles neither.
+
+GitHub will warn that a squash-merged branch is not merged. That warning is
+expected and is not the check — the list above is.
+
+Record the tip SHA before deleting. GitHub keeps unreachable objects for a
+while, so `git push origin <sha>:refs/heads/<branch>` restores it within that
+window.
 
 ## Security
 
