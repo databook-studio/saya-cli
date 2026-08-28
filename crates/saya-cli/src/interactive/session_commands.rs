@@ -226,4 +226,17 @@ mod tests {
             panic!("Expected SessionAction::Message");
         }
     }
+
+    /// `/history` and `/sessions` are one command under two names: both map to
+    /// `SessionAction::History` (saved sessions on disk). This is intentional
+    /// aliasing, not a bug — see `slash::tests::history_help_names_the_alias`
+    /// for the matching requirement that the help makes the aliasing explicit.
+    #[test]
+    fn history_and_sessions_map_to_the_same_action() {
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let history = state.apply(SlashCommand::History, &[]);
+        let sessions = state.apply(SlashCommand::Sessions, &[]);
+        assert_eq!(history, SessionAction::History);
+        assert_eq!(sessions, SessionAction::History);
+    }
 }

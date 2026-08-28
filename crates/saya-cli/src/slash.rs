@@ -274,4 +274,32 @@ mod tests {
             Ok(Some(SlashCommand::Connect("prod".into())))
         );
     }
+
+    /// `/history` and `/sessions` are both still known commands (S11 keeps
+    /// `/history` as an explicit alias of `/sessions`), and `exit`/`quit` are a
+    /// deliberate conventional alias pair. Invariant 4: the typo suggester
+    /// must still resolve anything it resolved before for names that still
+    /// exist — so a near-miss on each lands on the kept name, never on a
+    /// removed one.
+    #[test]
+    fn kept_alias_pairs_still_parse_and_suggest() {
+        // Both names still parse.
+        assert_eq!(
+            parse_slash_command("/history"),
+            Ok(Some(SlashCommand::History))
+        );
+        assert_eq!(
+            parse_slash_command("/sessions"),
+            Ok(Some(SlashCommand::Sessions))
+        );
+        assert_eq!(parse_slash_command("/exit"), Ok(Some(SlashCommand::Exit)));
+        assert_eq!(parse_slash_command("/quit"), Ok(Some(SlashCommand::Exit)));
+
+        // A one-char typo on a kept name suggests that name, not something else.
+        assert_eq!(registry::closest_command("histor"), Some("history"));
+        assert_eq!(registry::closest_command("session"), Some("sessions"));
+        // `quit` is a deliberate alias of `exit`; a near-miss still lands on a
+        // known name (the suggester picks the closest, never a removed one).
+        assert_eq!(registry::closest_command("exi"), Some("exit"));
+    }
 }

@@ -52,9 +52,11 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "explain" => Some(
             "explain [sql] — show the query plan (EXPLAIN) for the given SQL, or the last query if omitted",
         ),
-        "clear" => Some("clear — clear conversation history and context. Example: /clear"),
-        "history" => Some("history — display session history. Example: /history"),
-        "sessions" => Some("sessions — list available interactive sessions. Example: /sessions"),
+        "clear" => Some("clear — clear the conversation and context. Example: /clear"),
+        "history" => Some("history — list saved sessions as text. Example: /history"),
+        "sessions" => {
+            Some("sessions — browse saved sessions; opens a picker in the TUI. Example: /sessions")
+        }
         "doctor" => Some(
             "doctor — diagnose configuration: secrets resolve? provider endpoint? Example: /doctor",
         ),
@@ -99,5 +101,55 @@ pub(crate) fn help_for(topic: Option<&str>) -> String {
             }
         }
         None => help_text().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `/history` and `/sessions` are **not** interchangeable, and the help
+    /// must not claim they are. They share one `SessionAction` in the headless
+    /// REPL, but `tui/dispatch.rs` intercepts the literal line `/sessions`
+    /// before the parser and opens the interactive picker, so in the TUI —
+    /// the primary surface — `/sessions` is a picker and `/history` is a text
+    /// list. Help that called one an alias of the other would be wrong exactly
+    /// where most people read it. Both name "saved sessions" so neither implies
+    /// the conversation or the input-line history.
+    #[test]
+    fn history_and_sessions_help_describe_their_real_surfaces() {
+        let history = command_help("history").expect("history has help");
+        let sessions = command_help("sessions").expect("sessions has help");
+
+        // Neither may claim to be an alias of the other: the TUI behaviours differ
+        assert!(
+            !history.contains("alias") && !sessions.contains("alias"),
+            "neither may claim aliasing — the TUI routes them differently: {history} / {sessions}"
+        );
+        // `/sessions` must mention the picker, which is what the TUI does.
+        assert!(
+            sessions.contains("picker"),
+            "`/sessions` help must mention the picker it opens in the TUI, got: {sessions}"
+        );
+        // Both are about sessions saved on disk, not the conversation and not
+        // the input-line history.
+        assert!(
+            history.contains("saved") && sessions.contains("saved"),
+            "both must name saved sessions, got: {history} / {sessions}"
+        );
+    }
+
+    /// transcript; "conversation and context" is accurate and unambiguous.
+    #[test]
+    fn clear_help_describes_the_conversation_not_history() {
+        let clear = command_help("clear").expect("clear has help");
+        assert!(
+            clear.contains("conversation") && clear.contains("context"),
+            "/clear help should describe the conversation and context, got: {clear}"
+        );
+        assert!(
+            !clear.contains("history"),
+            "/clear help must not reuse the overloaded 'history' word (now = saved sessions), got: {clear}"
+        );
     }
 }
