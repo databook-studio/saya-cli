@@ -164,8 +164,18 @@ impl App {
         }
         self.history.push(&line);
         if self.is_busy() {
-            self.transcript
-                .push(BlockKind::System, "Still working — press Esc to cancel.");
+            // Queue instead of dropping: the prompt runs when the current
+            // request finishes. One slot — resubmitting replaces it.
+            let replaced = self.pending.is_some();
+            self.pending = Some(line);
+            self.transcript.push(
+                BlockKind::System,
+                if replaced {
+                    "Queued (replaced the earlier queued prompt) — runs after the current request."
+                } else {
+                    "Queued — runs as soon as the current request finishes."
+                },
+            );
             self.transcript.scroll_to_bottom();
             return;
         }

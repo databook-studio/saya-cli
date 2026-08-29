@@ -1,6 +1,6 @@
 //! Input box rendering and SQL keyword highlighting.
 
-use super::theme::{ACCENT, SECONDARY, SUCCESS};
+use super::theme::{accent, secondary, success};
 use crate::interactive::tui::types::App;
 use ratatui::{
     Frame,
@@ -15,17 +15,17 @@ pub(super) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT))
+        .border_style(Style::default().fg(accent()))
         .title(Span::styled(
             " saya ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
     // Empty input: show a dim placeholder and park the cursor at the start.
     if app.input.is_empty() {
         let hint = Paragraph::new(Line::from(Span::styled(
             "Ask about your data, or type / for commands",
-            Style::default().fg(SECONDARY),
+            Style::default().fg(secondary()),
         )))
         .block(block);
         frame.render_widget(hint, area);
@@ -61,7 +61,7 @@ fn highlight_input_line(line: &str) -> Line<'static> {
         return Line::from(vec![
             Span::styled(
                 cmd.to_string(),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent()).add_modifier(Modifier::BOLD),
             ),
             Span::raw(tail.to_string()),
         ]);
@@ -95,7 +95,7 @@ fn styled_segment(segment: &str) -> Span<'static> {
         "DISTINCT", "COUNT", "SUM", "AVG", "MIN", "MAX", "DESC", "ASC", "UNION", "ALL",
     ];
     if KEYWORDS.contains(&segment.to_ascii_uppercase().as_str()) {
-        Span::styled(segment.to_string(), Style::default().fg(SUCCESS))
+        Span::styled(segment.to_string(), Style::default().fg(success()))
     } else {
         Span::raw(segment.to_string())
     }

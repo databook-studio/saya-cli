@@ -8,8 +8,9 @@
 //! stdout (which would race under parallel test runs).
 
 use saya_cli::{
-    ClaimKindArg, ContractsCommand, ForgetReasonArg, RenderFormat, RuntimeConfig,
-    capture_output_start, capture_output_take, load_with_sources, profile_identity, run_contracts,
+    ClaimKindArg, Cli, Command, ContractsCommand, ForgetReasonArg, RenderFormat, ReviewDecisionArg,
+    RuntimeConfig, capture_output_start, capture_output_take, load_with_sources, profile_identity,
+    run_contracts,
 };
 use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -576,15 +577,17 @@ async fn remember_after_forget_reports_duplicate_forgotten_not_success() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. review --confirm: a `Pending` candidate becomes `Active` (confirmed);
-//    re-confirming the now-`Active` item against a valid cached schema
-//    *revalidates* and stays `Active` (confirm is idempotent — re-confirming is
-//    how a user asks "is this still true?"); confirming a `Dismissed` item is a
-//    typed conflict (a withdrawn fact is not revivable by revalidation).
+// 5. decide --decision confirm: a `Pending` candidate becomes `Active`
+//    (confirmed); re-confirming the now-`Active` item against a valid cached
+//    schema *revalidates* and stays `Active` (confirm is idempotent —
+//    re-confirming is how a user asks "is this still true?"); confirming a
+//    `Dismissed` item is a typed conflict (a withdrawn fact is not revivable
+//    by revalidation). This is the same confirm op `review --confirm` reached;
+//    `decide` resolves the prefix to the id and forwards to it.
 // ---------------------------------------------------------------------------
 #[tokio::test]
-async fn review_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
-    let root = temp_root("review");
+async fn decide_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
+    let root = temp_root("decide_confirm");
     let (runtime, _c, _n) = runtime_at(&root);
     let store = store_at(&root).await;
     // Cache a schema that names `orders` so a re-confirm of the now-`Active`
@@ -598,12 +601,15 @@ async fn review_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
         .unwrap();
 
     let candidate_id = seed_candidate(&store, &runtime, "orders").await;
+    // The full stored id is a prefix of itself, so `decide` resolves it to
+    // exactly one claim (spec invariant 1a).
+    let prefix = candidate_id.as_str().to_string();
 
     // 1. Pending → Active: the candidate is confirmed.
-    let confirm = ContractsCommand::Review {
-        claim_id: candidate_id.as_str().into(),
-        confirm: true,
-        reject: false,
+    let confirm = ContractsCommand::Decide {
+        prefix: prefix.clone(),
+        decision: ReviewDecisionArg::Confirm,
+        profile: None,
     };
     let (code, out, err) = run(confirm, &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "stderr: {err}");
@@ -614,10 +620,10 @@ async fn review_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
     //    A re-confirm is how a user asks "is this still true?", and refusing
     //    would leave them no way to re-check a fact they suspect has drifted.
     let (code, out, err) = run(
-        ContractsCommand::Review {
-            claim_id: candidate_id.as_str().into(),
-            confirm: true,
-            reject: false,
+        ContractsCommand::Decide {
+            prefix: prefix.clone(),
+            decision: ReviewDecisionArg::Confirm,
+            profile: None,
         },
         &runtime,
         &store,
@@ -645,10 +651,10 @@ async fn review_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
     )
     .await;
     let (code, out, err) = run(
-        ContractsCommand::Review {
-            claim_id: dismissed_id.as_str().into(),
-            confirm: true,
-            reject: false,
+        ContractsCommand::Decide {
+            prefix: dismissed_id.as_str().into(),
+            decision: ReviewDecisionArg::Confirm,
+            profile: None,
         },
         &runtime,
         &store,
@@ -932,11 +938,12 @@ async fn json_and_ndjson_carry_same_claim_ids_as_text() {
 // ---------------------------------------------------------------------------
 // 11. Phase 3d: `saya contracts queue` lists candidates, and confirming one
 //     from the queue makes it recallable while rejecting it never does. The
-//     queue reuses the existing `review` operation — no new write tool.
+//     confirm reaches the existing `confirm` op through `decide` (the survivor
+//     of the `review` retirement) — no new write tool.
 // ---------------------------------------------------------------------------
 #[tokio::test]
-async fn queue_lists_candidates_and_review_transitions_them() {
-    let root = temp_root("queue_review");
+async fn queue_lists_candidates_and_decide_transitions_them() {
+    let root = temp_root("queue_decide");
     let (runtime, _c, _n) = runtime_at(&root);
     let store = store_at(&root).await;
     // `store_at` cached an empty default schema for this profile; drop it so the
@@ -980,11 +987,12 @@ async fn queue_lists_candidates_and_review_transitions_them() {
     );
 
     // Confirm the candidate: it becomes recallable (show lists it) and leaves
-    // the queue on the next read.
-    let confirm = ContractsCommand::Review {
-        claim_id: cand_id.as_str().into(),
-        confirm: true,
-        reject: false,
+    // the queue on the next read. `decide` resolves the full id (a prefix of
+    // itself) to the candidate and forwards to the `confirm` op.
+    let confirm = ContractsCommand::Decide {
+        prefix: cand_id.as_str().into(),
+        decision: ReviewDecisionArg::Confirm,
+        profile: None,
     };
     let (code, out, err) = run(confirm, &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "confirm stderr: {err}");
@@ -1022,10 +1030,10 @@ async fn queue_rejected_candidate_never_becomes_recallable() {
     let store = store_at(&root).await;
 
     let cand_id = seed_candidate(&store, &runtime, "orders").await;
-    let reject = ContractsCommand::Review {
-        claim_id: cand_id.as_str().into(),
-        confirm: false,
-        reject: true,
+    let reject = ContractsCommand::Decide {
+        prefix: cand_id.as_str().into(),
+        decision: ReviewDecisionArg::Reject,
+        profile: None,
     };
     let (code, out, err) = run(reject, &runtime, &store, RenderFormat::Text).await;
     assert_eq!(code, 0, "reject stderr: {err}");
@@ -1825,4 +1833,370 @@ async fn queue_distinguishes_candidate_from_stale_in_output() {
     );
 
     let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// S12 evidence — the `decide` command covers every capability `review` had, so
+// retiring `review` loses nothing. Two differences matter (spec invariant 1):
+//   (a) `review` took a full claim id; `decide` takes a prefix with a
+//       `MIN_PREFIX_LEN` floor. A full-length id is a prefix of itself, so it
+//       must resolve to exactly one claim.
+//   (b) `review` was not profile-scoped; `decide` resolves the prefix against
+//       the resolved profile's claims and has a `--profile` flag. A claim in a
+//       non-active profile must stay reachable via `decide --profile <name>`.
+// These two tests are the evidence; they are written against the *current*
+// binary (before anything is removed) and must pass both before and after.
+// ---------------------------------------------------------------------------
+
+/// `decide` accepts a full-length claim id as a prefix of itself and resolves
+/// it to exactly one claim (spec invariant 1a). `review` took the full id;
+/// `decide` takes a prefix — a full id is the degenerate prefix that matches
+/// only itself.
+#[tokio::test]
+async fn decide_accepts_a_full_length_claim_id_as_a_prefix_of_itself() {
+    let root = temp_root("decide_full_id_prefix");
+    let (runtime, _c, _n) = runtime_at(&root);
+    let store = store_at(&root).await;
+    // Cache a schema that names `orders` so the confirm revalidation (confirm
+    // is idempotent on an Active alias whose table exists) succeeds.
+    let identity = identity_for(&runtime, "local");
+    store
+        .upsert_schema(&identity, &orders_schema())
+        .await
+        .unwrap();
+
+    let candidate_id = seed_candidate(&store, &runtime, "orders").await;
+    // The FULL stored id (a `ki-…` of 67 chars), not an abbreviation.
+    let full_id = candidate_id.as_str().to_string();
+
+    let decide = ContractsCommand::Decide {
+        prefix: full_id.clone(),
+        decision: ReviewDecisionArg::Confirm,
+        profile: None,
+    };
+    let (code, out, err) = run(decide, &runtime, &store, RenderFormat::Text).await;
+    assert_eq!(code, 0, "a full-length id must resolve via decide: {err}");
+    assert!(out.contains("confirmed"), "candidate -> confirmed: {out}");
+
+    // It resolved to *exactly* one claim: the candidate is now Active, and no
+    // other item changed. There was only one seeded item, so this is the
+    // "exactly one" guarantee the prefix floor exists to give a full id.
+    let profile = ProfileIdentity::parse(&identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    assert_eq!(items.len(), 1, "decide wrote no new row: {items:?}");
+    assert_eq!(
+        items[0].state,
+        KnowledgeState::Active,
+        "the one matched claim is the one that was confirmed: {items:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// `decide --profile <name>` reaches a claim in a non-active profile (spec
+/// invariant 1b). `review` was not profile-scoped; if `decide` could not reach
+/// a claim outside the active profile by name, that would be a real capability
+/// loss and the slice must stop. It can, so retiring `review` is safe.
+#[tokio::test]
+async fn decide_profile_flag_reaches_a_claim_outside_the_active_profile() {
+    let root = temp_root("decide_cross_profile");
+    // Two profiles; `local` is the configured default (selected via `--profile`),
+    // `staging` is a second profile whose claim is NOT reachable from the
+    // default. `runtime_at`/`runtime_for_scope` build a fresh runtime with no
+    // profile selection, which a two-profile file rejects (`MissingProfile`), so
+    // this test builds the runtime inline — mirroring the cross-profile harness
+    // in `contracts_slash_parity.rs` — and opens its own store.
+    let local_db = root.join("local.sqlite3");
+    let staging_db = root.join("staging.sqlite3");
+    fs::write(&local_db, b"").unwrap();
+    fs::write(&staging_db, b"").unwrap();
+    let connections = root.join("connections.toml");
+    fs::write(
+        &connections,
+        format!(
+            "[profiles.local]\ntype = 'sqlite'\npath = '{}'\n\n\
+             [profiles.staging]\ntype = 'sqlite'\npath = '{}'\n",
+            local_db.display(),
+            staging_db.display(),
+        ),
+    )
+    .unwrap();
+    let options = saya_cli::GlobalOptions {
+        connections: Some(connections),
+        profile: Some("local".into()),
+        ..Default::default()
+    };
+    let runtime = load_with_sources(&options, &root, &root, BTreeMap::new()).unwrap();
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    // Migrate the pool and seed an empty cached schema for `staging` so its
+    // candidate classifies against a real cache state and the confirm
+    // revalidation has a live table to revalidate against.
+    let staging_identity = identity_for(&runtime, "staging");
+    store
+        .upsert_schema(&staging_identity, &orders_schema())
+        .await
+        .unwrap();
+
+    // Seed a candidate under `staging` only — directly, keyed by staging's
+    // identity, so it is invisible to the default (`local`) profile.
+    let staging_profile = ProfileIdentity::parse(&staging_identity).unwrap();
+    let object = DatabaseObjectRef::new(
+        staging_profile,
+        "analytics",
+        "public",
+        "orders",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let payload = alias_payload();
+    let slot = KnowledgeSlot::TableAlias;
+    let binding = SchemaBinding::derive(&slot, &payload).expect("slot/payload agree");
+    store
+        .put_knowledge_item(KnowledgeItemRequest {
+            object: object.clone(),
+            slot,
+            value: payload,
+            source: ClaimOrigin::AssistantInferred,
+            state: KnowledgeState::Pending,
+            schema_binding_json: serde_json::to_string(&binding).unwrap(),
+            fingerprint: unobserved_fingerprint(),
+        })
+        .await
+        .unwrap();
+    let staging_id = store
+        .knowledge_for_object(&object)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.slot == KnowledgeSlot::TableAlias)
+        .expect("staging candidate seeded")
+        .id;
+    let staging_id = ClaimId::parse(&staging_id).expect("ki id parses");
+    let prefix = staging_id.as_str().chars().take(6).collect::<String>();
+
+    // Without `--profile`, `decide` resolves the default (`local`) and must NOT
+    // find the staging claim — proving the claim is genuinely outside the
+    // active profile (the thing `review`'s lack of scoping cannot address).
+    let (default_code, default_out, default_err) = run(
+        ContractsCommand::Decide {
+            prefix: prefix.clone(),
+            decision: ReviewDecisionArg::Confirm,
+            profile: None,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_ne!(
+        default_code, 0,
+        "decide without --profile must not reach a non-active profile's claim: {default_out}{default_err}"
+    );
+    let default_combined = format!("{default_out}{default_err}");
+    assert!(
+        default_combined.contains("no claim matches"),
+        "default-profile refusal must say no match: {default_combined}"
+    );
+
+    // With `--profile staging`, the staging claim IS reachable and confirmable.
+    let (code, out, err) = run(
+        ContractsCommand::Decide {
+            prefix,
+            decision: ReviewDecisionArg::Confirm,
+            profile: Some("staging".into()),
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_eq!(
+        code, 0,
+        "decide --profile staging must reach the staging claim: {err}"
+    );
+    assert!(
+        out.contains("confirmed"),
+        "staging candidate -> confirmed: {out}"
+    );
+
+    // The staging claim alone changed; it is now Active.
+    let items = store.knowledge_for_object(&object).await.unwrap();
+    assert_eq!(items.len(), 1, "no new row: {items:?}");
+    assert_eq!(
+        items[0].state,
+        KnowledgeState::Active,
+        "the staging claim was confirmed: {items:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A clap parse with a too-short prefix (`ki-`, two chars) is *accepted* — the
+/// floor is enforced at the resolve step, not parse time — but a bare empty
+/// prefix is also accepted by clap and refused at resolve. This documents that
+/// `decide`'s illegal-input story is "unambiguous or refused" at runtime, the
+/// property that retires `review`'s runtime `AmbiguousReview`. (Parse-time
+/// refusal of the *decision* value is exercised by the ValueEnum below.)
+#[tokio::test]
+async fn decide_refuses_an_ambiguous_prefix_at_runtime_not_parse_time() {
+    let root = temp_root("decide_ambiguous_prefix");
+    let (runtime, _c, _n) = runtime_at(&root);
+    let store = store_at(&root).await;
+    let _a = seed_candidate(&store, &runtime, "orders").await;
+    let _b = seed_candidate(&store, &runtime, "returns").await;
+
+    // `ki-` matches both candidates → ambiguous at the resolve step. clap does
+    // not reject it (a two-char prefix parses); the dispatcher refuses.
+    let (code, out, err) = run(
+        ContractsCommand::Decide {
+            prefix: "ki-".into(),
+            decision: ReviewDecisionArg::Confirm,
+            profile: None,
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_ne!(code, 0, "ambiguous prefix must refuse: {out}{err}");
+    let combined = format!("{out}{err}");
+    assert!(
+        combined.contains("more than one claim"),
+        "ambiguous refusal names why: {combined}"
+    );
+    assert!(
+        !combined.contains("ki-"),
+        "refusal must not echo the prefix: {combined}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// S12 — the retired `review` subcommand is gone, and its replacement `decide`
+// is what `--help` advertises. `review` was undocumented (never in `docs/`) and
+// nothing routes to it but the CLI and a pass-through TUI arm; `decide` covers
+// every capability it had (proven above). The illegal `--confirm --reject`
+// combination `review` caught at runtime is now unexpressible: `decide` takes a
+// single `--decision` ValueEnum clap rejects at parse time.
+// ---------------------------------------------------------------------------
+
+/// `saya contracts review …` no longer parses: the subcommand is gone (S12 Q1,
+/// outright removal). clap reports an unrecognized subcommand rather than
+/// reaching the runtime `AmbiguousReview` path the old `review` had.
+#[test]
+fn review_subcommand_no_longer_parses() {
+    use clap::Parser;
+    // `--decision confirm` is `decide`'s vocabulary, not `review`'s; the point
+    // is the *subcommand name* `review` is rejected regardless of its args.
+    let parsed = Cli::try_parse_from([
+        "saya",
+        "contracts",
+        "review",
+        "ki-deadbeef",
+        "--confirm",
+        "--reject",
+    ]);
+    assert!(
+        parsed.is_err(),
+        "`contracts review` must not parse after retirement: {parsed:?}"
+    );
+    let err = parsed.err().unwrap().to_string();
+    assert!(
+        !err.contains("choose exactly one"),
+        "the runtime AmbiguousReview message must not be reachable: {err}"
+    );
+}
+
+/// `saya contracts decide …` parses and the illegal input `review` caught at
+/// runtime (`--confirm --reject` together) is now unexpressible: `--decision`
+/// is a single ValueEnum, so two decisions or an unknown one is a parse error.
+#[test]
+fn decide_subcommand_parses_and_decision_is_a_single_value_enum() {
+    use clap::Parser;
+    let parsed = Cli::try_parse_from([
+        "saya",
+        "contracts",
+        "decide",
+        "ki-deadbeef",
+        "--decision",
+        "confirm",
+    ]);
+    let cli = parsed.expect("`contracts decide` parses");
+    let command = cli.command.expect("a subcommand was given");
+    let Command::Contracts {
+        command: ContractsCommand::Decide { decision, .. },
+    } = command
+    else {
+        panic!("parsed to Decide, got {command:?}");
+    };
+    assert_eq!(decision, ReviewDecisionArg::Confirm);
+
+    // Two decisions cannot be expressed: clap rejects a repeated `--decision`
+    // with a different value.
+    let two = Cli::try_parse_from([
+        "saya",
+        "contracts",
+        "decide",
+        "ki-deadbeef",
+        "--decision",
+        "confirm",
+        "--decision",
+        "reject",
+    ]);
+    assert!(
+        two.is_err(),
+        "two --decision values must not parse: {two:?}"
+    );
+
+    // An unknown decision value is a parse error, not a runtime path.
+    let unknown = Cli::try_parse_from([
+        "saya",
+        "contracts",
+        "decide",
+        "ki-deadbeef",
+        "--decision",
+        "maybe",
+    ]);
+    assert!(
+        unknown.is_err(),
+        "an unknown --decision must not parse: {unknown:?}"
+    );
+}
+
+/// `saya contracts --help` advertises `decide` and not `review`: the retired
+/// command left the help surface, and its replacement is what a user finds.
+#[test]
+fn contracts_help_advertises_decide_not_review() {
+    use clap::CommandFactory;
+    // Render the help for the `contracts` subcommand. `find_subcommand`
+    // returns a `&Command` but `render_help` takes `&mut self`, so clone the
+    // subcommand. `render_help` returns a `StyledStr` (clap 4.6) that
+    // stringifies to the plain help text.
+    let help = Cli::command()
+        .find_subcommand("contracts")
+        .expect("contracts subcommand exists")
+        .clone()
+        .render_help()
+        .to_string();
+    assert!(
+        help.contains("decide"),
+        "contracts --help must advertise decide: {help}"
+    );
+    // `review` appears in other subcommand prose (e.g. `queue`'s "pending
+    // review"), so assert on the subcommand *entry* line, not a bare substring.
+    assert!(
+        !help
+            .lines()
+            .any(|line| line.trim_start().starts_with("review ")),
+        "contracts --help must not list a `review` subcommand: {help}"
+    );
 }

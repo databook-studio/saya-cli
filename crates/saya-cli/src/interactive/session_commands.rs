@@ -15,6 +15,8 @@ pub enum SessionAction {
     NotImplemented(String),
     Error(String),
     History,
+    /// Run `config doctor` and surface its report as a message.
+    Doctor,
     Resume(String),
     Schema(bool),
     Sql(String),
@@ -39,7 +41,9 @@ impl SessionState {
                 SessionAction::Message(format!("Selected profile: {name}"))
             }
             SlashCommand::Connections => SessionAction::Message(if available.is_empty() {
-                "No configured connection profiles.".into()
+                "No configured connection profiles. Add one to .saya/connections.toml \
+                 (see `saya config init`) or pass --connections."
+                    .into()
             } else {
                 format!("Profiles: {}", available.join(", "))
             }),
@@ -121,9 +125,15 @@ impl SessionState {
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
-                SessionAction::Message("Conversation context cleared.".into())
+                // The transcript keeps what was said; the model's working
+                // memory does not. Say so, since there is no undo.
+                SessionAction::Message(
+                    "Conversation context cleared — the model will not remember earlier turns.                      This cannot be undone; use /export first if you need a copy."
+                        .into(),
+                )
             }
             SlashCommand::History => SessionAction::History,
+            SlashCommand::Doctor => SessionAction::Doctor,
             SlashCommand::Sessions => SessionAction::History,
             SlashCommand::Resume(id) => SessionAction::Resume(id),
             SlashCommand::Help(topic) => {
@@ -215,5 +225,18 @@ mod tests {
         } else {
             panic!("Expected SessionAction::Message");
         }
+    }
+
+    /// `/history` and `/sessions` are one command under two names: both map to
+    /// `SessionAction::History` (saved sessions on disk). This is intentional
+    /// aliasing, not a bug — see `slash::tests::history_help_names_the_alias`
+    /// for the matching requirement that the help makes the aliasing explicit.
+    #[test]
+    fn history_and_sessions_map_to_the_same_action() {
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let history = state.apply(SlashCommand::History, &[]);
+        let sessions = state.apply(SlashCommand::Sessions, &[]);
+        assert_eq!(history, SessionAction::History);
+        assert_eq!(sessions, SessionAction::History);
     }
 }

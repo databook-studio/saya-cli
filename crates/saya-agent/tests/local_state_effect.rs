@@ -8,9 +8,9 @@
 
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval, ChatProvider,
-    ChatRequest, ChatResponse, LocalStateEffect, ToolCall, ToolDefinition, ToolEffect, ToolError,
-    ToolExecutor, run_agent_with_sink,
+    AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval, ApprovalDecider,
+    ChatProvider, ChatRequest, ChatResponse, LocalStateEffect, ToolCall, ToolDefinition,
+    ToolEffect, ToolError, ToolExecutor, run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
@@ -269,5 +269,207 @@ async fn read_local_state_tool_is_unaffected_by_the_candidate_permission() {
             .iter()
             .any(|event| matches!(event, AgentEvent::ToolDenied { .. })),
         "a Read tool must not be denied by the candidate-write guard"
+    );
+}
+
+/// A decider that refuses every call, so a `requires_approval` tool is always
+/// denied at the prompt — used to prove the approval gate still fires for an
+/// external-side-effect tool that set `requires_approval`.
+struct DenyApproval;
+
+#[async_trait]
+impl ApprovalDecider for DenyApproval {
+    async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
+        false
+    }
+}
+
+/// Q1 (S8): a tool that declares `external_side_effect` *without* also
+/// declaring `requires_approval` is a misconfiguration the policy refuses to
+/// auto-run, rather than trusting the author to set both. The refusal surfaces
+/// as a `ToolDenied` event with a reason naming the side effect, and the tool
+/// never executes. This is the test that would catch a future tool setting
+/// only one of the two flags.
+#[tokio::test]
+async fn external_side_effect_without_approval_is_refused_not_auto_run() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provider = OneCallProvider {
+        call: ToolCall {
+            id: "c1".into(),
+            name: "open_browser".into(),
+            arguments: serde_json::json!({}),
+        },
+        turn: Mutex::new(0),
+    };
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let external_only = ToolDefinition {
+        name: "open_browser".into(),
+        description: "opens something outside the agent".into(),
+        read_only: true,
+        parameters: serde_json::json!({"type": "object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: false,
+            local_state: LocalStateEffect::None,
+        },
+    };
+    let _ = run_agent_with_sink(
+        &provider,
+        &RecordingExecutor {
+            calls: calls.clone(),
+        },
+        request(),
+        vec![external_only],
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        saya_agent::CancellationToken::new(),
+    )
+    .await
+    .expect("a denial is not a turn-ending error");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "the misconfigured tool must not execute"
+    );
+    let reason = events
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ToolDenied { name, reason } if name == "open_browser" => {
+                Some(reason.clone())
+            }
+            _ => None,
+        })
+        .expect("a ToolDenied event must be emitted");
+    assert!(
+        reason.contains("side effect"),
+        "the reason must name the external side effect, got: {reason}"
+    );
+}
+
+/// Q1 control (S8): the external-side-effect gate must NOT double-deny a tool
+/// that also requires approval and was approved — that is `render_chart`'s
+/// shape (`external_side_effect: true, requires_approval: true`). Approval is
+/// the real gate there; when granted, the tool runs. This preserves today's
+/// behaviour for the only real tool that sets `external_side_effect`.
+#[tokio::test]
+async fn external_side_effect_with_approval_runs_when_approved() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provider = OneCallProvider {
+        call: ToolCall {
+            id: "c1".into(),
+            name: "render_chart".into(),
+            arguments: serde_json::json!({}),
+        },
+        turn: Mutex::new(0),
+    };
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let render_chart = ToolDefinition {
+        name: "render_chart".into(),
+        description: "visualise a query".into(),
+        read_only: true,
+        parameters: serde_json::json!({"type": "object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: true,
+            local_state: LocalStateEffect::None,
+        },
+    };
+    let _ = run_agent_with_sink(
+        &provider,
+        &RecordingExecutor {
+            calls: calls.clone(),
+        },
+        request(),
+        vec![render_chart],
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        saya_agent::CancellationToken::new(),
+    )
+    .await
+    .expect("run completes");
+    assert_eq!(&*calls.lock().unwrap(), &["render_chart"]);
+    assert!(
+        !events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolDenied { .. })),
+        "an approved external-side-effect tool must run, not be denied"
+    );
+}
+
+/// Q1 control (S8): the same `render_chart`-shaped tool is still denied when
+/// approval is refused — the approval gate is the binding one, and the
+/// external-side-effect gate does not replace it.
+#[tokio::test]
+async fn external_side_effect_with_approval_is_denied_when_approval_refused() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provider = OneCallProvider {
+        call: ToolCall {
+            id: "c1".into(),
+            name: "render_chart".into(),
+            arguments: serde_json::json!({}),
+        },
+        turn: Mutex::new(0),
+    };
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let render_chart = ToolDefinition {
+        name: "render_chart".into(),
+        description: "visualise a query".into(),
+        read_only: true,
+        parameters: serde_json::json!({"type": "object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: true,
+            local_state: LocalStateEffect::None,
+        },
+    };
+    let _ = run_agent_with_sink(
+        &provider,
+        &RecordingExecutor {
+            calls: calls.clone(),
+        },
+        request(),
+        vec![render_chart],
+        AgentLimits::default(),
+        &DenyApproval,
+        &sink,
+        saya_agent::CancellationToken::new(),
+    )
+    .await
+    .expect("a denial is not a turn-ending error");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "the tool must not execute when approval is refused"
+    );
+    let reason = events
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ToolDenied { name, reason } if name == "render_chart" => {
+                Some(reason.clone())
+            }
+            _ => None,
+        })
+        .expect("a ToolDenied event must be emitted");
+    assert!(
+        reason.contains("approval"),
+        "the reason must name approval as the refusing gate, got: {reason}"
     );
 }
