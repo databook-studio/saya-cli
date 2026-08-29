@@ -105,7 +105,9 @@ fn legacy_turns(messages: &[SessionLine]) -> Vec<saya_store::RedactedTurn> {
         .iter()
         .filter(|message| message.role == "user" || message.role == "assistant")
         .collect::<Vec<_>>();
-    safe.chunks_exact(2)
+    safe.as_chunks::<2>()
+        .0
+        .iter()
         .filter(|pair| {
             pair[0].role == "user"
                 && pair[1].role == "assistant"
