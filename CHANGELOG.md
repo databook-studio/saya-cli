@@ -5,12 +5,16 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
-## 0.4.1 — 2026-08-29 — hardening
+## 0.3.1 — 2026-08-29 — hardening
 
 A hardening pass over 0.3.0: 30 fixes and 20 features across the read-only
-safety layer, the agent loop, the connectors, and the CLI/TUI surface. Read
-**Changed** before upgrading — three of the six entries there can stop SAYA
-starting or connecting on a setup that worked in 0.3.0.
+safety layer, the agent loop, the connectors, and the CLI/TUI surface.
+
+**Read Changed before upgrading.** Despite the patch version, this release
+contains six breaking changes, and three of them can stop SAYA starting or
+connecting on a setup that worked in 0.3.0: a stale config key now refuses to
+parse, PostgreSQL requires TLS by default, and the project config layer is no
+longer trusted for security-critical settings.
 
 ### Repository note
 
