@@ -36,7 +36,7 @@ pub fn build_messages(
     let mut chosen = Vec::new();
     let mut selected_messages = 0;
     let mut history_bytes = 0;
-    for pair in history.chunks_exact(2).rev() {
+    for pair in history.as_chunks::<2>().0.iter().rev() {
         let pair_bytes = pair.iter().map(message_bytes).sum::<usize>();
         if selected_messages + pair.len() > MAX_HISTORY_MESSAGES
             || history_bytes + pair_bytes > budget
