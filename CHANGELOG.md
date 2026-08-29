@@ -5,6 +5,13 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.4.1 — 2026-08-29 — hardening
+
+A hardening pass over 0.3.0: 30 fixes and 20 features across the read-only
+safety layer, the agent loop, the connectors, and the CLI/TUI surface. Read
+**Changed** before upgrading — three of the six entries there can stop SAYA
+starting or connecting on a setup that worked in 0.3.0.
+
 ### Repository note
 
 Two internal skill files — `.claude/skills/saya-run/SKILL.md` and
