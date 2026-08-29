@@ -63,6 +63,9 @@ pub async fn run(
         Command::Contracts { command } => {
             contracts::run_contracts(command, runtime, format, &state).await
         }
+        // Completions are handled in app::dispatch before the runtime loads;
+        // reaching here is a programming error.
+        Command::Completions { .. } => unreachable!("handled in dispatch"),
     }
 }
 

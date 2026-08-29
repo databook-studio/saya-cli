@@ -6,8 +6,10 @@ pub(crate) struct Candidate {
     pub(crate) description: Option<String>,
 }
 
-#[allow(dead_code)]
-const KNOWN_COMMANDS: &[(&str, &str)] = &[
+/// One-line description per command, shown in the popup. Keyed by the names
+/// in `crate::slash::registry::KNOWN_COMMANDS`; a test asserts the two lists
+/// never drift apart.
+const DESCRIPTIONS: &[(&str, &str)] = &[
     ("connect", "Connect to a database profile"),
     ("connections", "List configured database connections"),
     ("include", "Include a database profile in query scope"),
@@ -17,22 +19,40 @@ const KNOWN_COMMANDS: &[(&str, &str)] = &[
     ("privacy", "Enable or disable data sharing privacy"),
     ("approvals", "Set approval policy for tool execution"),
     ("schema", "Inspect or refresh database schema"),
+    ("doctor", "Diagnose config: secrets, provider endpoint"),
     ("sql", "Run a raw SQL query against the active profile"),
-    (
-        "contracts",
-        "List recalled contracts for the active profile",
-    ),
-    ("contract", "Show one object's contract"),
-    ("remember", "Store a confirmed contract claim"),
-    ("forget", "Tombstone a contract claim so recall excludes it"),
+    ("export", "Export the last query result as CSV or JSON"),
+    ("chart", "Render the last query as an HTML chart"),
+    ("explain", "Explain the given or last SQL statement"),
     ("clear", "Clear current session context"),
     ("history", "Show saved sessions"),
     ("sessions", "List saved sessions"),
     ("resume", "Resume a saved session by id"),
+    (
+        "contracts",
+        "List contracts, or show one: /contracts [catalog.schema.object]",
+    ),
+    // Kept parseable for anyone with the older spelling in muscle memory. The
+    // description says so rather than advertising a separate operation: the
+    // two names resolve to the same command, and the popup is where the old
+    // "list vs show" split was most visible.
+    ("contract", "Alias for /contracts"),
+    ("remember", "Store a confirmed contract claim"),
+    ("forget", "Tombstone a contract claim so recall excludes it"),
+    ("queue", "Show pending candidate claims awaiting review"),
+    ("confirm", "Confirm a pending candidate claim by id prefix"),
+    ("reject", "Reject a pending candidate claim by id prefix"),
     ("help", "Show help for slash commands"),
     ("exit", "Exit the REPL"),
     ("quit", "Exit the REPL"),
 ];
+
+fn description_for(name: &str) -> Option<&'static str> {
+    DESCRIPTIONS
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, description)| *description)
+}
 
 /// Given the current input line, returns the candidates for the slash popup plus
 /// the half-open CHAR range [start, end) in `line` that accepting a candidate
@@ -96,15 +116,16 @@ pub(crate) fn slash_candidates(
         Some((start_char, total_chars, candidates))
     } else {
         let prefix = &line[1..];
-        let mut scored: Vec<(i32, Candidate)> = KNOWN_COMMANDS
+        let mut scored: Vec<(i32, Candidate)> = crate::slash::registry::KNOWN_COMMANDS
             .iter()
-            .filter_map(|(name, desc)| {
+            .filter_map(|name| {
+                let description = description_for(name)?;
                 super::fuzzy::fuzzy_score(name, prefix).map(|score| {
                     (
                         score,
                         Candidate {
                             value: format!("/{name}"),
-                            description: Some((*desc).to_string()),
+                            description: Some(description.to_string()),
                         },
                     )
                 })
@@ -130,6 +151,27 @@ mod tests {
     }
 
     #[test]
+    fn descriptions_cover_exactly_the_registry() {
+        // The popup cannot drift from the parser's registry.
+        assert_eq!(
+            DESCRIPTIONS.len(),
+            crate::slash::registry::KNOWN_COMMANDS.len()
+        );
+        for (name, _) in DESCRIPTIONS {
+            assert!(
+                crate::slash::registry::KNOWN_COMMANDS.contains(name),
+                "{name} described but not registered"
+            );
+        }
+        for name in crate::slash::registry::KNOWN_COMMANDS {
+            assert!(
+                description_for(name).is_some(),
+                "{name} registered but not described"
+            );
+        }
+    }
+
+    #[test]
     fn test_non_slash_line() {
         assert_eq!(slash_candidates("hello", &profiles()), None);
     }
@@ -138,7 +180,7 @@ mod tests {
     fn test_slash_only() {
         let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
         assert_eq!((start, end), (0, 1));
-        assert_eq!(candidates.len(), 21);
+        assert_eq!(candidates.len(), 28);
         assert_eq!(candidates[0].value, "/connect");
         assert_eq!(
             candidates[0].description.as_deref(),
@@ -151,11 +193,18 @@ mod tests {
         let (start, end, candidates) = slash_candidates("/co", &profiles()).unwrap();
         assert_eq!((start, end), (0, 3));
         let values: Vec<_> = candidates.iter().map(|c| c.value.as_str()).collect();
-        // "co" prefixes connect, connections, contracts, contract; all tie on
-        // score, so the stable sort keeps KNOWN_COMMANDS order.
+        // "co" prefixes connect, connections, contracts, contract, confirm;
+        // all tie on score, so the stable sort keeps registry order.
         assert_eq!(
             values,
-            vec!["/connect", "/connections", "/contracts", "/contract"]
+            vec![
+                "/connect",
+                "/connections",
+                "/contracts",
+                "/contract",
+                "/confirm",
+                "/doctor"
+            ]
         );
     }
 
@@ -166,7 +215,14 @@ mod tests {
         let values: Vec<_> = candidates.iter().map(|c| c.value.as_str()).collect();
         assert_eq!(
             values,
-            vec!["/connect", "/connections", "/contracts", "/contract"]
+            vec![
+                "/connect",
+                "/connections",
+                "/contracts",
+                "/contract",
+                "/confirm",
+                "/doctor"
+            ]
         );
     }
 

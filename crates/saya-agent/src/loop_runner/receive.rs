@@ -1,10 +1,12 @@
 use super::{AgentError, check_cancelled, emit};
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
-    ProviderError, ProviderEvent, ToolDefinition,
+    ProviderError, ProviderEvent, TokenUsage, ToolDefinition,
 };
 use futures_util::StreamExt;
 
+/// Streams one provider turn: assembles the assistant message and reports
+/// the token usage the provider disclosed for it.
 pub(super) async fn receive(
     provider: &dyn ChatProvider,
     model: &str,
@@ -13,7 +15,7 @@ pub(super) async fn receive(
     sink: &dyn AgentEventSink,
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
-) -> Result<ChatMessage, AgentError> {
+) -> Result<(ChatMessage, TokenUsage), AgentError> {
     let mut stream = provider
         .stream(
             ChatRequest {
@@ -25,24 +27,34 @@ pub(super) async fn receive(
         )
         .await?;
     let (mut content, mut calls, mut complete) = (String::new(), Vec::new(), false);
+    let mut usage = TokenUsage::default();
     while let Some(event) = stream.next().await {
         check_cancelled(cancellation)?;
         match event? {
             ProviderEvent::TextDelta(text) => {
+                if content.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
+                    return Err(AgentError::Provider(ProviderError::Request(
+                        "provider stream exceeded size limit".into(),
+                    )));
+                }
                 content.push_str(&text);
                 emit(events, sink, AgentEvent::AssistantText { text }).await;
             }
             ProviderEvent::ToolCalls(value) => calls.extend(value),
+            ProviderEvent::Usage(counts) => usage = counts,
             ProviderEvent::Done => complete = true,
         }
     }
     if !complete || (content.trim().is_empty() && calls.is_empty()) {
         return Err(AgentError::Provider(ProviderError::InvalidResponse));
     }
-    Ok(ChatMessage {
-        role: "assistant".into(),
-        content,
-        tool_calls: calls,
-        tool_call_id: None,
-    })
+    Ok((
+        ChatMessage {
+            role: "assistant".into(),
+            content,
+            tool_calls: calls,
+            tool_call_id: None,
+        },
+        usage,
+    ))
 }

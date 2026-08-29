@@ -183,10 +183,12 @@ async fn contracts_list_slash_and_headless_agree_on_claim_ids_and_order() {
         RenderFormat::Text,
     )
     .await;
-    let (_cmd, code, out, err) =
-        run_slash("/contracts", &runtime, &store, RenderFormat::Text).await;
+    let (cmd, code, out, err) = run_slash("/contracts", &runtime, &store, RenderFormat::Text).await;
 
     assert_eq!(code, 0, "/contracts stderr: {err}");
+    // The translated slash command must equal the headless one — same operation,
+    // same `profile: None` (the active-profile stamp is the TUI adapter's job).
+    assert_eq!(cmd, ContractsCommand::List { profile: None });
     // The rendered stanzas — claim id lines and their order — must match byte
     // for byte. A second DTO mapping or a second recall would diverge here.
     assert_eq!(
@@ -199,7 +201,11 @@ async fn contracts_list_slash_and_headless_agree_on_claim_ids_and_order() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. /contract <t> and `saya contracts show <t>` produce the same contract.
+// 2. /contracts <t> (and its /contract alias) and `saya contracts show <t>`
+//    produce the same contract. S13 merged `/contracts` and `/contract` into one
+//    command whose optional argument selects the operation; this asserts the
+//    merged spelling translates to the same `Show` the headless parser builds,
+//    and that the kept `/contract` alias produces byte-identical output.
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn contract_show_slash_and_headless_agree_on_contract() {
@@ -232,18 +238,49 @@ async fn contract_show_slash_and_headless_agree_on_contract() {
         RenderFormat::Text,
     )
     .await;
-    let (_cmd, code, out, err) = run_slash(
+
+    // The merged spelling: `/contracts <table>` → Show.
+    let (merged_cmd, merged_code, merged_out, merged_err) = run_slash(
+        "/contracts analytics.public.orders",
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    assert_eq!(merged_code, 0, "/contracts <table> stderr: {merged_err}");
+    assert_eq!(
+        merged_cmd,
+        ContractsCommand::Show {
+            table: qualified().into(),
+            profile: None,
+        }
+    );
+    // Same object, schema state, claim ids, conflicts — the whole rendered stanza.
+    assert_eq!(
+        merged_out, headless.1,
+        "/contracts <table> diverged from headless show"
+    );
+    assert_eq!(merged_err, headless.2);
+
+    // The kept `/contract` alias must produce byte-identical output to the merged
+    // spelling and to headless — it is the same operation, not a second one.
+    let (alias_cmd, alias_code, alias_out, alias_err) = run_slash(
         "/contract analytics.public.orders",
         &runtime,
         &store,
         RenderFormat::Text,
     )
     .await;
-
-    assert_eq!(code, 0, "/contract stderr: {err}");
-    // Same object, schema state, claim ids, conflicts — the whole rendered stanza.
-    assert_eq!(out, headless.1, "/contract diverged from headless show");
-    assert_eq!(err, headless.2);
+    assert_eq!(alias_code, 0, "/contract alias stderr: {alias_err}");
+    assert_eq!(
+        alias_cmd, merged_cmd,
+        "/contract alias translated to a different command"
+    );
+    assert_eq!(
+        alias_out, merged_out,
+        "/contract alias diverged from /contracts"
+    );
+    assert_eq!(alias_err, merged_err);
 
     let _ = fs::remove_dir_all(root);
 }

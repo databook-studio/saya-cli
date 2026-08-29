@@ -263,7 +263,7 @@ the same precedence as the established `SAYA_AI_*` aliases.
 
 ```bash
 saya config doctor
-saya config show --resolved --redacted --format json
+saya config show --format json
 saya connection test analytics --connections examples/connections.toml
 saya connection schema analytics --connections examples/connections.toml
 saya --non-interactive connection test snowflake_keypair \

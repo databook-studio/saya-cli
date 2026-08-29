@@ -30,11 +30,34 @@ PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-full`; MySQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-identity`.
 
-MySQL defaults to `verify-identity` when `sslmode` is omitted. Passwords and CA
-certificates use SecretRefs. An environment CA reference contains PEM content;
-use a `{ file = "/path/to/ca.pem" }` reference when the CA is stored on disk.
-Use `sslmode = "disable"` only for an explicitly local-only TLS-disabled
-development server, never as a production default.
+When `sslmode` is omitted, PostgreSQL defaults to `require` and MySQL to
+`verify-identity`. Neither defaults to `prefer`: `prefer` lets an active
+attacker answer the SSL request with a refusal and collect the credentials in
+plaintext, and a default must not be downgradable.
+
+`require` encrypts the connection but does not verify the server certificate,
+so it stops a passive eavesdropper and a downgrade but not an attacker who can
+present a certificate. Use `verify-ca` or `verify-full` where the server's
+identity matters.
+
+A server that does not offer TLS is now refused rather than silently
+downgraded. For a local development database that genuinely has no TLS — a
+Docker Postgres, for instance — say so explicitly:
+
+```toml
+[profiles.local]
+type = "postgresql"
+host = "localhost"
+database = "pagila"
+user = "postgres"
+sslmode = "disable"
+```
+
+Use `sslmode = "disable"` only for that case, never as a production default.
+
+Passwords and CA certificates use SecretRefs. An environment CA reference
+contains PEM content; use a `{ file = "/path/to/ca.pem" }` reference when the
+CA is stored on disk.
 
 ```toml
 [profiles.mysql]
