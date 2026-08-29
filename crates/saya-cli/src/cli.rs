@@ -151,16 +151,7 @@ pub enum ConfigCommand {
     /// Diagnose configuration: secrets resolve? provider reachable?
     Doctor,
     /// Print the effective (redacted) configuration as JSON.
-    Show {
-        /// Print the fully resolved configuration — after every config layer
-        /// and CLI override is applied — rather than the file-level template.
-        #[arg(long)]
-        resolved: bool,
-        /// Keep secret-bearing values masked to their references. Secrets are
-        /// never printed in the clear, with or without this flag.
-        #[arg(long)]
-        redacted: bool,
-    },
+    Show,
 }
 
 #[derive(Debug, Clone, Subcommand)]

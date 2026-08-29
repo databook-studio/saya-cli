@@ -10,7 +10,7 @@
 //! of the test suite uses. clap sets `about` from the first doc-comment line
 //! and `help` from an arg's `///`, so a missing doc comment shows up as `None`.
 
-use clap::CommandFactory;
+use clap::{CommandFactory, Parser};
 use saya_cli::Cli;
 
 /// The arg ids clap synthesizes for its own `help` and `version` flags. They
@@ -80,4 +80,55 @@ fn walk(cmd: &clap::Command, offenders: &mut Vec<String>) {
 /// saya's tree uses unique leaf names, so the leaf alone locates the entry.
 fn command_path(cmd: &clap::Command) -> String {
     cmd.get_name().to_string()
+}
+
+// ---------------------------------------------------------------------------
+// S15 — `config show` advertised two flags it never read (S15 spec, invariants
+// 1 and 4). Both `--resolved` and `--redacted` were accepted and discarded
+// since the initial release: `config show` always printed the resolved,
+// redacted view regardless. Keeping a flag that implies redaction is optional
+// is worse than no flag (invariant 2 — redaction is never optional), so the
+// slice removes both. Verified against the unchanged binary beforehand:
+// `config show`, `config show --resolved`, `config show --redacted`, and
+// `config show --resolved --redacted` produced byte-identical output (run with
+// `--config /dev/null --connections /dev/null` for a hermetic input), and
+// `config show --help` advertised both flags. The two tests below pin the
+// post-removal surface: the flags no longer parse and are no longer advertised.
+// ---------------------------------------------------------------------------
+
+/// `config show --resolved` and `config show --redacted` no longer parse: a
+/// script passing the dead flags now gets a clap error instead of a silent
+/// success that changed nothing. This is the breaking change recorded in the
+/// changelog — the flags never had an effect, so the output is identical to
+/// plain `config show` for anyone who drops them.
+#[test]
+fn config_show_no_longer_accepts_resolved_or_redacted() {
+    for flag in ["--resolved", "--redacted"] {
+        let parsed = Cli::try_parse_from(["saya", "config", "show", flag]);
+        assert!(
+            parsed.is_err(),
+            "`config show {flag}` must not parse after S15: {parsed:?}"
+        );
+    }
+}
+
+/// `config show --help` no longer advertises the removed flags, so the help
+/// surface and behaviour agree (invariant 1). A user reading `--help` should
+/// not find an off switch for redaction that does not exist.
+#[test]
+fn config_show_help_no_longer_advertises_resolved_or_redacted() {
+    let mut cmd = Cli::command();
+    let show_help = cmd
+        .find_subcommand_mut("config")
+        .expect("`config` subcommand exists")
+        .find_subcommand_mut("show")
+        .expect("`config show` subcommand exists")
+        .render_help()
+        .to_string();
+    for flag in ["--resolved", "--redacted"] {
+        assert!(
+            !show_help.contains(flag),
+            "`config show --help` must not advertise {flag} after S15"
+        );
+    }
 }

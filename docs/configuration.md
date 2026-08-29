@@ -25,7 +25,7 @@ The process environment wins over the explicit env-file. `.env` is not loaded
 implicitly. This makes CI and scripts predictable:
 
 ```bash
-saya --env-file .env.saya config show --resolved --redacted
+saya --env-file .env.saya config show
 ```
 
 Profile selection is `--profile`, `SAYA_PROFILE`, `default_profile`, a sole
@@ -94,9 +94,10 @@ precedence.
 context_byte_budget = 524288   # 512 KiB; default is 256 KiB
 ```
 
-`config doctor` reports paths and selection. `config show --resolved
---redacted` emits only display-safe references and settings. It never resolves
-or prints secret values.
+`config doctor` reports paths and selection. `config show` emits the resolved
+configuration as display-safe references and settings only. It never resolves
+or prints secret values — that is not optional and there is no flag to change
+it.
 
 The REPL session directory uses `SAYA_SESSION_DIR` first, then
 `$XDG_DATA_HOME/saya/sessions`, `%APPDATA%/saya/sessions`, or

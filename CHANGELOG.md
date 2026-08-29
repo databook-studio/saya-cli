@@ -19,7 +19,7 @@ rewriting published release history. See
 
 ### Changed — read this before upgrading
 
-Five changes alter behaviour you may be relying on. Three of them can stop
+Six changes alter behaviour you may be relying on. Three of them can stop
 SAYA starting or connecting on a setup that worked in 0.3.0.
 
 - **An unknown key in `config.toml` or `connections.toml` is now an error.**
@@ -68,6 +68,16 @@ SAYA starting or connecting on a setup that worked in 0.3.0.
   Neither command was documented, and nothing routed to `review` but the CLI
   itself, so the removal should not affect recorded workflows; if a script used
   `review`, swap the line above.
+
+- **`saya config show` no longer accepts `--resolved` or `--redacted`.** Both
+  flags were accepted and ignored since the initial release: `config show`
+  always printed the one view it has — the resolved, redacted configuration —
+  regardless of either flag. A script passing `--resolved` or `--redacted`
+  succeeds today and will now fail with an "unexpected argument" error; drop
+  the flag. The printed output is unchanged, because the flags never had an
+  effect. `--redacted` is gone in particular because a flag that implies
+  redaction is optional is worse than no flag — redaction is not optional, and
+  the flag invited someone to look for the off switch.
 
 ### Fixed
 
