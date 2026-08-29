@@ -85,11 +85,6 @@ pub async fn run_contracts(
             }
             Err((code, message)) => failure_message(code, message, format),
         },
-        ContractsCommand::Review {
-            claim_id,
-            confirm,
-            reject,
-        } => contracts_write::review(store, format, &claim_id, confirm, reject).await,
         ContractsCommand::Decide {
             prefix,
             decision,
@@ -116,7 +111,7 @@ pub(super) fn op_failure(
 }
 
 /// Emits a payload-free argument-error message and returns the contract error
-/// exit code: malformed table, bad value, ambiguous review flags.
+/// exit code: malformed table, bad value, an ambiguous or unresolvable prefix.
 pub(super) fn arg_failure(
     message: ArgMessage,
     format: RenderFormat,
@@ -192,7 +187,6 @@ pub(super) enum ArgMessage {
     MalformedTable,
     MalformedClaimId,
     BadValue,
-    AmbiguousReview,
     /// A short-reference prefix matched more than one claim (spec D). The typed
     /// prefixes never reach the message — the user must type more characters.
     AmbiguousPrefix,
@@ -210,7 +204,6 @@ impl std::fmt::Display for ArgMessage {
             ),
             Self::MalformedClaimId => write!(f, "claim id must be alphanumeric, '-', or '_'"),
             Self::BadValue => write!(f, "claim value is invalid"),
-            Self::AmbiguousReview => write!(f, "choose exactly one of --confirm or --reject"),
             Self::AmbiguousPrefix => write!(
                 f,
                 "that claim reference matches more than one claim; type more characters"

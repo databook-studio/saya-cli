@@ -14,6 +14,8 @@ pub fn run(cli: Cli) -> i32 {
     }
 }
 
+use clap::CommandFactory as _;
+
 fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let Some(command) = cli.command.clone() else {
         if cli.options.non_interactive {
@@ -21,6 +23,12 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         }
         return interactive::run(cli);
     };
+    if let Command::Completions { shell } = command {
+        use clap_complete::generate;
+        let mut cmd = Cli::command();
+        generate(shell, &mut cmd, "saya", &mut std::io::stdout());
+        return Ok(0);
+    }
     if matches!(
         &command,
         Command::Config {

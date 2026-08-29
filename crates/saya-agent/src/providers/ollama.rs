@@ -16,8 +16,8 @@ pub struct OllamaProvider {
 
 impl OllamaProvider {
     pub fn new(settings: ProviderSettings) -> Result<Self, ProviderError> {
+        // No client-wide timeout: streams are bounded per chunk gap instead.
         let client = reqwest::Client::builder()
-            .timeout(settings.timeout)
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self { client, settings })
@@ -54,8 +54,13 @@ impl ChatProvider for OllamaProvider {
             || client.post(&url).json(&body),
             &self.settings.retry_delays,
             &cancellation,
+            &url,
         )
         .await?;
-        Ok(ollama_stream::parse(response, cancellation))
+        Ok(ollama_stream::parse(
+            response,
+            cancellation,
+            self.settings.idle_timeout,
+        ))
     }
 }

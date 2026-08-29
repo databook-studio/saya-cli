@@ -9,7 +9,10 @@ pub(crate) fn build(
     resolver: &dyn SecretResolver,
 ) -> Result<Box<dyn ChatProvider>, ProviderError> {
     let settings = ProviderSettings::new(config.model.clone(), config.base_url.clone())
-        .with_temperature(config.temperature);
+        .with_temperature(config.temperature)
+        .with_timeout(std::time::Duration::from_secs(config.timeout_seconds))
+        .with_idle_timeout(std::time::Duration::from_secs(config.idle_timeout_seconds))
+        .with_max_output_tokens(config.max_output_tokens);
     match config.provider {
         AiProvider::Ollama => Ok(Box::new(OllamaProvider::new(settings)?)),
         AiProvider::Openai | AiProvider::OpenaiCompatible => {

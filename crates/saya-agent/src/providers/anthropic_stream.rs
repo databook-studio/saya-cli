@@ -1,21 +1,35 @@
 use super::framing::whitespace;
-use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, ToolCall};
+use crate::{
+    CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage, ToolCall,
+};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    time::Duration,
+};
 
-pub(super) fn parse(response: Response, cancellation: CancellationToken) -> ProviderStream {
+pub(super) fn parse(
+    response: Response,
+    cancellation: CancellationToken,
+    idle: Duration,
+) -> ProviderStream {
     Box::pin(stream::unfold(
-        (response.bytes_stream(), State::default(), cancellation),
+        (
+            response.bytes_stream(),
+            State::default(),
+            cancellation,
+            idle,
+        ),
         next,
     ))
 }
 
 async fn next<S>(
-    mut value: (S, State, CancellationToken),
+    mut value: (S, State, CancellationToken, Duration),
 ) -> Option<(
     Result<ProviderEvent, ProviderError>,
-    (S, State, CancellationToken),
+    (S, State, CancellationToken, Duration),
 )>
 where
     S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
@@ -31,9 +45,20 @@ where
         if value.1.done {
             return None;
         }
+        // Streams are bounded per chunk gap, not by a total cap: a healthy
+        // long generation never times out, a stalled one fails fast.
         let item = tokio::select! {
             _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)),
-            item = value.0.next() => item
+            item = tokio::time::timeout(value.3, value.0.next()) => match item {
+                Ok(item) => item,
+                Err(_) => {
+                    value.1.done = true;
+                    return Some((
+                        Err(ProviderError::Request("provider stream stalled".into())),
+                        value,
+                    ));
+                }
+            }
         };
         let Some(chunk) = item else {
             value.1.done = true;
@@ -68,11 +93,17 @@ struct State {
     bytes: Vec<u8>,
     pending: VecDeque<ProviderEvent>,
     tools: BTreeMap<usize, ToolUseBlock>,
+    usage: TokenUsage,
     done: bool,
 }
 
 impl State {
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
+        if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
+            return Err(ProviderError::Request(
+                "provider stream exceeded size limit".into(),
+            ));
+        }
         self.bytes.extend_from_slice(chunk);
         while let Some((end, skip)) = boundary(&self.bytes) {
             let frame = String::from_utf8(self.bytes[..end].to_vec())
@@ -167,10 +198,22 @@ impl State {
                     self.done = true;
                     break;
                 }
+                "message_start" => {
+                    if let Some(input) = json["message"]["usage"]["input_tokens"].as_u64() {
+                        self.usage.input_tokens = input;
+                        self.pending.push_back(ProviderEvent::Usage(self.usage));
+                    }
+                }
+                "message_delta" => {
+                    if let Some(output) = json["usage"]["output_tokens"].as_u64() {
+                        self.usage.output_tokens = output;
+                        self.pending.push_back(ProviderEvent::Usage(self.usage));
+                    }
+                }
                 "error" => {
                     return Err(ProviderError::InvalidResponse);
                 }
-                "ping" | "message_start" | "content_block_stop" | "message_delta" => {}
+                "ping" | "content_block_stop" => {}
                 _ => {}
             }
         }

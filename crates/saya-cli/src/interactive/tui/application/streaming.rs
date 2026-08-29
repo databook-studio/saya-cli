@@ -84,12 +84,24 @@ impl App {
                 }
                 StreamMsg::Done(result) => {
                     match result {
-                        Ok(output) => state.record_turn(
-                            prompt.clone(),
-                            output.answer.clone(),
-                            output.used_bounded_sql_query,
-                            output.tool_metadata.clone(),
-                        ),
+                        Ok(output) => {
+                            state.record_turn(
+                                prompt.clone(),
+                                output.answer.clone(),
+                                output.used_bounded_sql_query,
+                                output.tool_metadata.clone(),
+                            );
+                            let usage = &output.usage;
+                            if usage.input_tokens > 0 || usage.output_tokens > 0 {
+                                self.transcript.push(
+                                    BlockKind::System,
+                                    format!(
+                                        "{} tokens in · {} tokens out",
+                                        usage.input_tokens, usage.output_tokens
+                                    ),
+                                );
+                            }
+                        }
                         Err(error) => self.transcript.push(BlockKind::Error, error),
                     }
                     finished = true;

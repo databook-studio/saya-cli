@@ -27,4 +27,14 @@ pub enum ConfigError {
         min: u32,
         max: u32,
     },
+    /// A non-memory numeric setting is below its floor. Sibling to
+    /// [`ConfigError::MemoryRange`] for settings that are not `[memory]` (e.g.
+    /// `[ai] context_byte_budget`), which have a minimum but no useful ceiling
+    /// — reporting one would mean printing `usize::MAX` at the user.
+    #[error("setting {field} = {value} must be at least {min}")]
+    SettingBelowMinimum {
+        field: &'static str,
+        value: usize,
+        min: usize,
+    },
 }

@@ -28,6 +28,7 @@ pub(crate) async fn query(
             .map(|statement| statement.column_names())
             .unwrap_or_default();
         let mut values = Vec::new();
+        let mut result_bytes = 0;
         while let Some(row) = rows.next().map_err(error)? {
             if values.len() == max_rows {
                 return Ok(QueryResult {
@@ -38,12 +39,30 @@ pub(crate) async fn query(
                     executed_sql: original_sql,
                 });
             }
-            values.push(Value::Array(
-                (0..columns.len())
-                    .map(|index| row.get_ref(index).map(json_value))
-                    .collect::<Result<_, _>>()
-                    .map_err(error)?,
-            ));
+            let cells: Vec<_> = (0..columns.len())
+                .map(|index| row.get_ref(index).map(json_value))
+                .collect::<Result<_, _>>()
+                .map_err(error)?;
+            let mut row_values = Vec::with_capacity(cells.len());
+            for cell in cells {
+                // Same per-cell and total-byte budgets as the other backends:
+                // without them a single `repeat('A', 500000000)` cell
+                // allocates hundreds of megabytes before the row check fires.
+                let cell = crate::common::cap_cell(cell);
+                result_bytes += crate::common::value_bytes(&cell);
+                row_values.push(cell);
+            }
+            values.push(Value::Array(row_values));
+            if result_bytes > crate::common::MAX_RESULT_BYTES {
+                let count = values.len();
+                return Ok(QueryResult {
+                    columns,
+                    rows: values,
+                    row_count: count,
+                    truncated: true,
+                    executed_sql: original_sql,
+                });
+            }
         }
         Ok(QueryResult {
             row_count: values.len(),

@@ -1,7 +1,7 @@
 use crate::ChatRequest;
 use serde_json::{Value, json};
 
-pub(super) fn build_body(request: ChatRequest, max_tokens: u32) -> Value {
+pub(super) fn build_body(request: ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Value {
     let mut system_prompts = Vec::new();
     let mut messages = Vec::new();
     let mut pending_tool_results = Vec::new();
@@ -83,6 +83,10 @@ pub(super) fn build_body(request: ChatRequest, max_tokens: u32) -> Value {
         body["system"] = json!(system_prompts.join("\n\n"));
     }
 
+    if let Some(temperature) = temperature {
+        body["temperature"] = json!(temperature);
+    }
+
     if !request.tools.is_empty() {
         let tools: Vec<Value> = request
             .tools
@@ -149,7 +153,7 @@ mod tests {
             }],
         };
 
-        let body = build_body(request, 1024);
+        let body = build_body(request, 1024, None);
 
         assert_eq!(body["system"], "You are helpful.");
         let messages = body["messages"].as_array().unwrap();

@@ -121,7 +121,7 @@ mod context_block_tests {
 
     #[test]
     fn anthropic_request_keeps_context_block_out_of_system_field() {
-        let body = anthropic_request::build_body(request(messages()), 1024);
+        let body = anthropic_request::build_body(request(messages()), 1024, None);
         // Anthropic hoists system-role messages into the top-level `system` string.
         assert!(
             !body["system"].as_str().unwrap_or("").contains(BODY),
@@ -148,7 +148,7 @@ mod context_block_tests {
 
     #[test]
     fn gemini_request_keeps_context_block_out_of_system_instruction() {
-        let body = gemini_request::build_body(request(messages()));
+        let body = gemini_request::build_body(request(messages()), 4096, None);
         let system_text = body["systemInstruction"]["parts"][0]["text"]
             .as_str()
             .unwrap_or("");

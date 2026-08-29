@@ -105,7 +105,9 @@ fn legacy_turns(messages: &[SessionLine]) -> Vec<saya_store::RedactedTurn> {
         .iter()
         .filter(|message| message.role == "user" || message.role == "assistant")
         .collect::<Vec<_>>();
-    safe.chunks_exact(2)
+    safe.as_chunks::<2>()
+        .0
+        .iter()
         .filter(|pair| {
             pair[0].role == "user"
                 && pair[1].role == "assistant"
@@ -127,9 +129,69 @@ pub(crate) fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
         .expect("runtime")
         .block_on(future)
 }
+/// A readable, filename-safe id: `<UTC stamp>-<nanos hex>`, e.g.
+/// `20260826-143210-9f3a`. The nanos suffix keeps ids unique within a second
+/// without pulling in a random source; the store's path validation accepts
+/// alphanumerics and hyphens.
 fn new_id() -> String {
-    SystemTime::now()
+    let now = SystemTime::now();
+    new_id_from(now)
+}
+
+fn new_id_from(now: SystemTime) -> String {
+    let unix = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let total_seconds = unix.as_secs();
+    // Derive UTC calendar fields from the epoch days (civil-from-days).
+    let days = i64::try_from(total_seconds / 86_400).unwrap_or(0);
+    let (year, month, day) = civil_from_days(days);
+    let seconds_today = total_seconds % 86_400;
+    let nanos = now
         .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_millis().to_string())
-        .unwrap_or_else(|_| "session".into())
+        .map_or(0, |value| value.subsec_nanos());
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}-{nanos:04x}",
+        year,
+        month,
+        day,
+        seconds_today / 3600,
+        (seconds_today % 3600) / 60,
+        seconds_today % 60
+    )
+}
+
+/// Howard Hinnant's `civil_from_days` algorithm: days since 1970-01-01 to
+/// (year, month, day) with no external date dependency.
+fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    ((if m <= 2 { y + 1 } else { y }), m, d)
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn ids_are_readable_and_filename_safe() {
+        let id = new_id_from(SystemTime::UNIX_EPOCH + Duration::from_secs(1_784_000_000));
+        // 2026-07-14 era: YYYYMMDD-HHMMSS-xxxx
+        assert_eq!(id.len(), 20, "{id}");
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].len(), 8);
+        assert_eq!(parts[1].len(), 6);
+        assert_eq!(parts[2].len(), 4);
+        assert!(id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        // Known epoch: 1970-01-01T00:00:10Z renders as the date it is.
+        let early = new_id_from(SystemTime::UNIX_EPOCH + Duration::from_secs(10));
+        assert!(early.starts_with("19700101-000010-"), "{early}");
+    }
 }

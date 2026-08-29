@@ -66,8 +66,8 @@ pub(super) fn run_contracts(
 /// The match is exhaustive on purpose: every variant is named, so a future
 /// profile-bearing variant the slash path routes through the TUI is a compile
 /// error here, not a silent fall-through that reads the configured default's
-/// data. `Review` and `Forget` have no `profile` field — they address a claim
-/// by id — so they pass through unchanged.
+/// data. `Forget` has no `profile` field — it addresses a claim by id — so it
+/// passes through unchanged.
 fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsCommand {
     let profile = profile.map(str::to_string);
     match command {
@@ -94,15 +94,6 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
             column: column.clone(),
             reason: reason.clone(),
             profile,
-        },
-        ContractsCommand::Review {
-            claim_id,
-            confirm,
-            reject,
-        } => ContractsCommand::Review {
-            claim_id: claim_id.clone(),
-            confirm: *confirm,
-            reject: *reject,
         },
         // `Decide` (spec D) carries a `profile` field like the other profiled
         // reads/writes: the TUI stamps the session's active profile so a
@@ -197,18 +188,12 @@ mod tests {
         );
     }
 
-    /// Claim-keyed variants (`Review`, `Forget`) have no profile field — they
-    /// address a claim by id, so the active profile must NOT be injected. This
-    /// guards against an over-broad fix that stamps a profile where none exists.
+    /// The claim-keyed variant (`Forget`) has no profile field — it addresses a
+    /// claim by id, so the active profile must NOT be injected. This guards
+    /// against an over-broad fix that stamps a profile where none exists. (`Decide`
+    /// is claim-keyed too but carries a `profile` field it stamps, above.)
     #[test]
     fn with_profile_leaves_claim_keyed_variants_untouched() {
-        let review = ContractsCommand::Review {
-            claim_id: "c-1".into(),
-            confirm: true,
-            reject: false,
-        };
-        assert_eq!(with_profile(&review, Some(ACTIVE)), review);
-
         let forget = ContractsCommand::Forget {
             claim_id: "c-1".into(),
             reason: ForgetReasonArg::UserRequest,

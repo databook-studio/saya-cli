@@ -6,6 +6,12 @@ pub(super) struct Chunk {
     pub(super) message: Option<Message>,
     #[serde(default)]
     pub(super) done: bool,
+    /// Prompt token count from the final done record.
+    #[serde(default)]
+    pub(super) prompt_eval_count: Option<u64>,
+    /// Generated token count from the final done record.
+    #[serde(default)]
+    pub(super) eval_count: Option<u64>,
 }
 #[derive(Deserialize)]
 pub(super) struct Message {

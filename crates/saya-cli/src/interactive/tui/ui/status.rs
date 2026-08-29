@@ -1,7 +1,7 @@
 //! Status bar rendering.
 
 use super::panels::SPINNER;
-use super::theme::{ACCENT, DANGER, SECONDARY, STATUS_BG, SUCCESS, WARNING};
+use super::theme::{accent, danger, secondary, status_bg, success, warning};
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::types::App;
 use ratatui::{
@@ -17,10 +17,10 @@ use ratatui::{
 fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     let base = Style::default().bg(bg);
     let approval_color = match view.approval_mode.as_str() {
-        "read-only" => SUCCESS,
-        "ask" => WARNING,
-        "never" => DANGER,
-        _ => SECONDARY,
+        "read-only" => success(),
+        "ask" => warning(),
+        "never" => danger(),
+        _ => secondary(),
     };
     let mut label = view.profile.clone();
     for inc in &view.included {
@@ -29,11 +29,11 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             format!(" [{label}] "),
-            base.fg(ACCENT).add_modifier(Modifier::BOLD),
+            base.fg(accent()).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("{}/{} ", view.provider, view.model),
-            base.fg(SECONDARY),
+            base.fg(secondary()),
         ),
         Span::styled(
             format!("approval:{} ", view.approval_mode),
@@ -41,7 +41,11 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
         ),
         Span::styled(
             format!("privacy:{}", if view.privacy_on { "on" } else { "off" }),
-            base.fg(if view.privacy_on { SUCCESS } else { SECONDARY }),
+            base.fg(if view.privacy_on {
+                success()
+            } else {
+                secondary()
+            }),
         ),
     ]
 }
@@ -49,8 +53,8 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
 /// Renders the status bar as a filled accent-tinted strip, with a spinner and
 /// hint while an agent request is streaming.
 pub(super) fn draw_status(frame: &mut Frame<'_>, app: &App, status: &StatusView, area: Rect) {
-    let bar = Style::default().bg(STATUS_BG).fg(SECONDARY);
-    let bg = STATUS_BG;
+    let bar = Style::default().bg(status_bg()).fg(secondary());
+    let bg = status_bg();
     let line = if app.is_busy() {
         let frame_char = SPINNER[app.spinner % SPINNER.len()];
         let elapsed = app
@@ -65,7 +69,7 @@ pub(super) fn draw_status(frame: &mut Frame<'_>, app: &App, status: &StatusView,
         let mut spans = vec![
             Span::styled(
                 format!(" {frame_char} {doing}{elapsed}s "),
-                Style::default().bg(bg).fg(ACCENT),
+                Style::default().bg(bg).fg(accent()),
             ),
             Span::styled("· ", bar),
         ];
@@ -76,7 +80,7 @@ pub(super) fn draw_status(frame: &mut Frame<'_>, app: &App, status: &StatusView,
         let mut spans = vec![Span::styled(
             " SELECT ",
             Style::default()
-                .bg(ACCENT)
+                .bg(accent())
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )];

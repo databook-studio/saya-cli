@@ -181,7 +181,7 @@ saya --approval-mode read-only --profile snowflake_prod query --sql \
 
 ## Safety and troubleshooting
 
-- `saya config show --resolved --redacted` confirms precedence without secrets.
+- `saya config show` confirms precedence without secrets.
 - Connection/schema failures exit `3`; rejected or failed queries exit `4`.
 - Use a Snowflake keypair file reference for automation; browser SSO is interactive only.
 - Protect CA, private-key, and DuckDB files with least-privilege permissions.

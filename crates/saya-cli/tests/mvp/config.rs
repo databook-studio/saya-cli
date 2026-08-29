@@ -35,11 +35,7 @@ fn config_init_creates_parseable_templates_with_stable_output() {
                 .status
                 .success()
         );
-        assert!(
-            saya_process(&root, &["config", "show", "--resolved", "--redacted"])
-                .status
-                .success()
-        );
+        assert!(saya_process(&root, &["config", "show"]).status.success());
 
         #[cfg(unix)]
         {

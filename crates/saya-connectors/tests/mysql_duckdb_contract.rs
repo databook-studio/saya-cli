@@ -26,7 +26,9 @@ async fn factory_builds_mysql_without_a_credential_url() {
     .await
     .unwrap();
     assert_eq!(connector.dialect().as_str(), "mysql");
-    assert!(connector.cancel().await.is_err());
+    // Idle cancellation is a no-op, not an unsupported error: MySQL queries
+    // are cancellable via KILL QUERY once one is in flight.
+    assert!(connector.cancel().await.is_ok());
 }
 
 #[tokio::test]
@@ -197,4 +199,34 @@ async fn duckdb_read_only_file_and_interrupt_are_enforced() {
         vec![serde_json::json!([1])]
     );
     let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn duckdb_caps_cells_and_result_bytes_like_other_backends() {
+    let connector = DuckDbConnector::open(":memory:", false, ConnectorOptions::default())
+        .await
+        .unwrap();
+    // A single oversized cell must be truncated to the per-cell cap instead
+    // of materializing unbounded bytes in the result.
+    let one_cell = connector
+        .execute(QueryRequest::new("SELECT repeat('A', 5000000)", 10))
+        .await
+        .unwrap();
+    let rendered = one_cell.rows[0].to_string();
+    assert!(
+        rendered.contains("[truncated"),
+        "oversized cell must be truncated: {rendered}"
+    );
+    assert!(rendered.len() < 2_000_000, "cell far below its input size");
+    // Many large rows must trip the total result-byte budget well before the
+    // row cap, flagging the result truncated.
+    let many_rows = connector
+        .execute(QueryRequest::new(
+            "SELECT repeat('B', 2000000) FROM range(50)",
+            1000,
+        ))
+        .await
+        .unwrap();
+    assert!(many_rows.truncated, "byte budget must mark truncation");
+    assert!(many_rows.rows.len() < 50);
 }
