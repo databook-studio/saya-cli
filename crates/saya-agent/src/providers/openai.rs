@@ -18,8 +18,8 @@ pub struct OpenAiCompatibleProvider {
 
 impl OpenAiCompatibleProvider {
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
+        // No client-wide timeout: streams are bounded per chunk gap instead.
         let client = reqwest::Client::builder()
-            .timeout(settings.timeout)
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
@@ -62,9 +62,14 @@ impl ChatProvider for OpenAiCompatibleProvider {
             },
             &self.settings.retry_delays,
             &cancellation,
+            &url,
         )
         .await?;
-        Ok(openai_stream::parse(response, cancellation))
+        Ok(openai_stream::parse(
+            response,
+            cancellation,
+            self.settings.idle_timeout,
+        ))
     }
 }
 
@@ -81,7 +86,15 @@ struct OpenAiRequest {
     /// the prompt prefix across turns instead of reprocessing it each time.
     #[serde(skip_serializing_if = "Option::is_none")]
     prompt_cache_key: Option<String>,
+    /// Ask the gateway for token counts on a trailing usage-only chunk.
+    stream_options: StreamOptions,
 }
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
 impl OpenAiRequest {
     fn from_request(request: ChatRequest, temperature: f32) -> Self {
         let prompt_cache_key = request
@@ -96,6 +109,9 @@ impl OpenAiRequest {
             stream: true,
             temperature,
             prompt_cache_key,
+            stream_options: StreamOptions {
+                include_usage: true,
+            },
         }
     }
 }

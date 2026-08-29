@@ -52,6 +52,10 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 api_key: None,
                 allow_data_sharing: true,
                 temperature: 0.0,
+                timeout_seconds: 60,
+                idle_timeout_seconds: 90,
+                max_output_tokens: 4096,
+                context_byte_budget: 256 * 1024,
             },
             max_rows: 100,
             read_only: true,
@@ -65,6 +69,7 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 max_claims_per_contract: 12,
                 max_context_bytes: 16384,
             },
+            ignored_project_overrides: Vec::new(),
         },
         connections: ConnectionsFile::default(),
         config_path: None,
@@ -85,6 +90,7 @@ fn unused_store() -> SqliteStateStore {
 /// directly so no history file is read (`App::new` calls `History::load`).
 fn empty_app() -> App {
     App {
+        sql_task: None,
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: vec!["analytics".into(), "billing".into()],

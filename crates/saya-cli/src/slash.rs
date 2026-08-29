@@ -4,7 +4,7 @@ use std::{fmt, str::FromStr};
 
 mod contracts;
 mod help;
-mod registry;
+pub(crate) mod registry;
 
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // still resolves after the help text moved to `help.rs`.
@@ -38,6 +38,8 @@ pub enum SlashCommand {
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
     /// hands it to the shared `run_contracts` dispatcher — no second parsing.
     Contracts(ContractsCommand),
+    /// Run `config doctor` in-session: secrets resolve? provider endpoint?
+    Doctor,
     Help(Option<String>),
     Exit,
 }
@@ -97,6 +99,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
+        "doctor" => SlashCommand::Doctor,
         "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject" => {
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
@@ -161,6 +164,19 @@ mod tests {
         assert!(help_unknown.contains("No help"));
 
         assert_eq!(help_for(None), help_text().to_string());
+    }
+
+    #[test]
+    fn test_parse_doctor_takes_no_arguments() {
+        assert!(matches!(
+            parse_slash_command("/doctor").unwrap(),
+            Some(SlashCommand::Doctor)
+        ));
+        // Like /clear and /history, a trailing argument is ignored.
+        assert!(matches!(
+            parse_slash_command("/doctor now").unwrap(),
+            Some(SlashCommand::Doctor)
+        ));
     }
 
     #[test]
@@ -257,5 +273,33 @@ mod tests {
             parse_slash_command("/connect prod"),
             Ok(Some(SlashCommand::Connect("prod".into())))
         );
+    }
+
+    /// `/history` and `/sessions` are both still known commands (S11 keeps
+    /// `/history` as an explicit alias of `/sessions`), and `exit`/`quit` are a
+    /// deliberate conventional alias pair. Invariant 4: the typo suggester
+    /// must still resolve anything it resolved before for names that still
+    /// exist — so a near-miss on each lands on the kept name, never on a
+    /// removed one.
+    #[test]
+    fn kept_alias_pairs_still_parse_and_suggest() {
+        // Both names still parse.
+        assert_eq!(
+            parse_slash_command("/history"),
+            Ok(Some(SlashCommand::History))
+        );
+        assert_eq!(
+            parse_slash_command("/sessions"),
+            Ok(Some(SlashCommand::Sessions))
+        );
+        assert_eq!(parse_slash_command("/exit"), Ok(Some(SlashCommand::Exit)));
+        assert_eq!(parse_slash_command("/quit"), Ok(Some(SlashCommand::Exit)));
+
+        // A one-char typo on a kept name suggests that name, not something else.
+        assert_eq!(registry::closest_command("histor"), Some("history"));
+        assert_eq!(registry::closest_command("session"), Some("sessions"));
+        // `quit` is a deliberate alias of `exit`; a near-miss still lands on a
+        // known name (the suggester picks the closest, never a removed one).
+        assert_eq!(registry::closest_command("exi"), Some("exit"));
     }
 }

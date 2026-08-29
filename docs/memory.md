@@ -47,9 +47,10 @@ saya ask "orders by month"
 saya contracts forget ki-1a2b3c…
 ```
 
-In the REPL and TUI the same operations are `/contracts`, `/contract <table>`, `/remember`,
-`/forget`, `/queue`, `/confirm` and `/reject`. They call the same code as the commands above, so
-they cannot disagree.
+In the REPL and TUI the same operations are `/contracts [table]`, `/remember`, `/forget`,
+`/queue`, `/confirm` and `/reject`. `/contracts` lists every contract; `/contracts
+analytics.public.orders` shows one. They call the same code as the commands above, so they cannot
+disagree.
 
 ## Configuration
 

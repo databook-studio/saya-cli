@@ -6,7 +6,7 @@ use sqlx::{
     MySqlPool,
     mysql::{MySqlConnectOptions, MySqlPoolOptions},
 };
-use tokio::time::timeout;
+use tokio::{sync::Mutex, time::timeout};
 
 use crate::{ConnectorOptions, DatabaseConnector};
 
@@ -14,6 +14,19 @@ pub struct MySqlConnector {
     pub(crate) pool: MySqlPool,
     pub(crate) database: String,
     pub(crate) query_timeout: Duration,
+    /// Connect options reused to open the *dedicated* `KILL QUERY` connection
+    /// in `cancellation::cancel`. Kept here (rather than re-deriving from the
+    /// pool) so the kill never competes with the timed-out query for a pooled
+    /// connection — see `cancellation.rs`. Postgres issues its cancel over the
+    /// shared pool; MySQL cannot, because a timed-out query holds its pooled
+    /// connection (see `execute.rs`) and `max_connections` may be 1.
+    pub(crate) kill_options: MySqlConnectOptions,
+    /// Serializes executes so the single connection ID used for cancellation
+    /// is unambiguous. `execute.rs` acquires one pooled connection, captures
+    /// `CONNECTION_ID()` on it, and runs the query on the same connection —
+    /// mirroring the Postgres connector's `pg_backend_pid()` shape.
+    pub(crate) in_flight: Mutex<()>,
+    pub(crate) active_id: Mutex<Option<u64>>,
 }
 
 impl MySqlConnector {
@@ -36,11 +49,17 @@ impl MySqlConnector {
                 })
             });
         }
+        // Clone before the pool consumes the options: `cancel` opens its own
+        // short-lived connection from these same options (same user, TLS, CA).
+        let kill_options = options.clone();
         let pool = pool_options.connect_lazy_with(options);
         Self {
             pool,
             database: database.into(),
             query_timeout,
+            kill_options,
+            in_flight: Mutex::new(()),
+            active_id: Mutex::new(None),
         }
     }
 }
@@ -71,8 +90,6 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     async fn cancel(&self) -> Result<(), ConnectionError> {
-        Err(ConnectionError::unsupported(
-            "MySQL cancellation is not safely available",
-        ))
+        super::cancellation::cancel(self).await
     }
 }

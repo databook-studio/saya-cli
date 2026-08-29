@@ -10,7 +10,7 @@ pub(super) fn run(
     match command {
         ConfigCommand::Init => run_init(format),
         ConfigCommand::Doctor => result(config::doctor::summary(runtime), format),
-        ConfigCommand::Show { .. } => {
+        ConfigCommand::Show => {
             let value = runtime.resolved.redacted_diagnostics();
             let output = match format {
                 RenderFormat::Text => serde_json::to_string_pretty(&value)?,

@@ -161,7 +161,7 @@ saya contracts queue          # what's waiting for a decision
 saya contracts forget <id>
 ```
 
-The same operations are `/contracts`, `/contract`, `/remember`, `/forget` and `/queue` in the REPL and
+The same operations are `/contracts [table]`, `/remember`, `/forget` and `/queue` in the REPL and
 TUI — the same code underneath, so they can't disagree with each other.
 
 Full behaviour, including what's stored and what `forget` does and doesn't erase:

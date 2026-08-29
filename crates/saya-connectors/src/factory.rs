@@ -60,7 +60,7 @@ pub async fn build_connector_with_prompt(
                 .port(port.unwrap_or(5432))
                 .database(database)
                 .username(user)
-                .ssl_mode(ssl_mode.map(ssl).unwrap_or(PgSslMode::Prefer));
+                .ssl_mode(pg_ssl_default(*ssl_mode));
             // Session read-only is applied once in PostgresConnector::from_options.
             if let Some(reference) = password {
                 let secret = resolver.resolve(reference).map_err(config_error)?;
@@ -136,6 +136,12 @@ fn ssl(mode: PostgresSslMode) -> PgSslMode {
     }
 }
 
+/// The effective Postgres TLS mode. Defaults to `Require` (encrypted, no cert
+/// verification) rather than `Prefer`, which an active MITM can downgrade.
+fn pg_ssl_default(mode: Option<PostgresSslMode>) -> PgSslMode {
+    mode.map(ssl).unwrap_or(PgSslMode::Require)
+}
+
 fn config_error(error: ConfigError) -> ConnectionError {
     ConnectionError::invalid_configuration(error.to_string())
 }
@@ -148,5 +154,21 @@ mod tests {
     fn connector_options_default_is_read_only() {
         let opts = ConnectorOptions::default();
         assert!(opts.read_only);
+    }
+
+    #[test]
+    fn postgres_ssl_defaults_to_require_not_prefer() {
+        // An unset sslmode must never be downgrade-capable: a MITM answering
+        // the SSLRequest with "N" would otherwise capture credentials in
+        // plaintext. MySQL already defaults to VerifyIdentity.
+        assert!(matches!(pg_ssl_default(None), PgSslMode::Require));
+        assert!(matches!(
+            pg_ssl_default(Some(PostgresSslMode::Prefer)),
+            PgSslMode::Prefer
+        ));
+        assert!(matches!(
+            pg_ssl_default(Some(PostgresSslMode::VerifyFull)),
+            PgSslMode::VerifyFull
+        ));
     }
 }

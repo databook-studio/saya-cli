@@ -47,14 +47,12 @@ fn is_read_only_statement_class(sql: &str, dialect: &dyn Dialect) -> bool {
     }
 }
 
-/// A lowercase SQL identifier safe to interpolate into a statement.
+/// A lowercase SQL identifier safe to interpolate into a statement. The
+/// `i_` prefix guarantees it can never collide with a reserved word (a bare
+/// `[a-z][a-z0-9_]*` draw once produced `all`, which parses as a SELECT
+/// quantifier and made acceptance assertions flaky).
 fn ident() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_]{0,10}".prop_filter("avoid SQL keywords", |s| {
-        !matches!(
-            s.as_str(),
-            "select" | "from" | "where" | "limit" | "table" | "into" | "values" | "set" | "with"
-        )
-    })
+    "[a-z][a-z0-9_]{0,10}".prop_map(|base| format!("i_{base}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +98,7 @@ fn sql_corpus_strategy() -> impl Strategy<Value = (String, TemplateKind)> {
                     TemplateKind::ReadOnly,
                 ),
                 (
-                    format!("EXPLAIN SELECT * FROM {tbl} WHERE {col1} = {n1}"),
+                    format!("EXPLAIN ANALYZE SELECT * FROM {tbl} WHERE {col1} = {n1}"),
                     TemplateKind::ReadOnly,
                 ),
                 ("SHOW TABLES".to_string(), TemplateKind::ReadOnly),
@@ -173,6 +171,26 @@ fn sql_corpus_strategy() -> impl Strategy<Value = (String, TemplateKind)> {
                 (
                     "SELECT setval('seq', 1)".to_string(),
                     TemplateKind::NonReadOnlyBoth,
+                ),
+                (
+                    "SELECT pg_catalog.nextval('seq')".to_string(),
+                    TemplateKind::NonReadOnlyBoth,
+                ),
+                (
+                    format!("SELECT * FROM {tbl} FOR UPDATE"),
+                    TemplateKind::NonReadOnlyBoth,
+                ),
+                (
+                    "SELECT set_config('role', 'admin', false)".to_string(),
+                    TemplateKind::NonReadOnlyPostgres,
+                ),
+                (
+                    "SELECT pg_advisory_lock(42)".to_string(),
+                    TemplateKind::NonReadOnlyPostgres,
+                ),
+                (
+                    "SELECT pg_sleep(10)".to_string(),
+                    TemplateKind::NonReadOnlyPostgres,
                 ),
                 // SQLite specific denied functions
                 (

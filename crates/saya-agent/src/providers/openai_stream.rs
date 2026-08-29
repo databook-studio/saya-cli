@@ -1,21 +1,30 @@
 use super::{framing::whitespace, openai_chunks::Chunk, tool_assembly::ToolAssembly};
-use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream};
+use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
-pub(super) fn parse(response: Response, cancellation: CancellationToken) -> ProviderStream {
+pub(super) fn parse(
+    response: Response,
+    cancellation: CancellationToken,
+    idle: Duration,
+) -> ProviderStream {
     Box::pin(stream::unfold(
-        (response.bytes_stream(), State::default(), cancellation),
+        (
+            response.bytes_stream(),
+            State::default(),
+            cancellation,
+            idle,
+        ),
         next,
     ))
 }
 
 async fn next<S>(
-    mut value: (S, State, CancellationToken),
+    mut value: (S, State, CancellationToken, Duration),
 ) -> Option<(
     Result<ProviderEvent, ProviderError>,
-    (S, State, CancellationToken),
+    (S, State, CancellationToken, Duration),
 )>
 where
     S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
@@ -31,7 +40,20 @@ where
         if value.1.done {
             return None;
         }
-        let item = tokio::select! { _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)), item = value.0.next() => item };
+        // Per-chunk idle budget instead of a total cap (see anthropic_stream).
+        let item = tokio::select! {
+            _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)),
+            item = tokio::time::timeout(value.3, value.0.next()) => match item {
+                Ok(item) => item,
+                Err(_) => {
+                    value.1.done = true;
+                    return Some((
+                        Err(ProviderError::Request("provider stream stalled".into())),
+                        value,
+                    ));
+                }
+            }
+        };
         let Some(chunk) = item else {
             value.1.done = true;
             return Some((Err(ProviderError::InvalidResponse), value));
@@ -58,11 +80,17 @@ struct State {
     bytes: Vec<u8>,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
+    usage: TokenUsage,
     content: bool,
     done: bool,
 }
 impl State {
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
+        if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
+            return Err(ProviderError::Request(
+                "provider stream exceeded size limit".into(),
+            ));
+        }
         self.bytes.extend_from_slice(chunk);
         while let Some((end, skip)) = boundary(&self.bytes) {
             let frame = String::from_utf8(self.bytes[..end].to_vec())
@@ -82,14 +110,32 @@ impl State {
             }
             let chunk: Chunk =
                 serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
-            let choice = chunk
-                .choices
-                .into_iter()
-                .next()
-                .ok_or(ProviderError::InvalidResponse)?;
+            if let Some(usage) = chunk.usage {
+                if let Some(input) = usage.prompt_tokens {
+                    self.usage.input_tokens = input;
+                }
+                if let Some(output) = usage.completion_tokens {
+                    self.usage.output_tokens = output;
+                }
+                self.pending.push_back(ProviderEvent::Usage(self.usage));
+            }
+            let Some(choice) = chunk.choices.into_iter().next() else {
+                // The trailing usage-only chunk carries an empty choices list.
+                if self.usage == TokenUsage::default() {
+                    return Err(ProviderError::InvalidResponse);
+                }
+                continue;
+            };
             if let Some(reason) = choice.finish_reason.as_deref()
                 && !matches!(reason, "stop" | "tool_calls")
             {
+                // `length` is diagnosable (raise the output cap); anything
+                // else stays a generic protocol failure.
+                if reason == "length" {
+                    return Err(ProviderError::Request(
+                        "output truncated: the model hit its output-token limit".into(),
+                    ));
+                }
                 return Err(ProviderError::InvalidResponse);
             }
             if let Some(text) = choice.delta.content

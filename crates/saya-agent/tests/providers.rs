@@ -321,3 +321,255 @@ async fn cancellation_and_errors_are_sanitized() {
     ));
     handle.join().unwrap();
 }
+
+#[tokio::test]
+async fn anthropic_stream_reports_stall_on_idle_timeout() {
+    use saya_agent::AnthropicProvider;
+    let body = "event: message_start\ndata: {\"type\":\"message_start\"}\n\n";
+    let (base, handle) = keep_open_server(body);
+    let provider = AnthropicProvider::new(
+        ProviderSettings::new("test-model", Some(base))
+            .with_retry_delays(vec![Duration::ZERO])
+            .with_idle_timeout(Duration::from_millis(120)),
+        Some("secret-sentinel"),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut stalled = false;
+    while let Some(event) = stream.next().await {
+        if let Err(error) = event {
+            stalled = format!("{error:?}").contains("stalled");
+            break;
+        }
+    }
+    assert!(stalled, "stall must surface as a stall error");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "idle budget, not socket close, must end the stream"
+    );
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn openai_stream_reports_stall_on_idle_timeout() {
+    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+    let (base, handle) = keep_open_server(body);
+    let provider = OpenAiCompatibleProvider::new(
+        ProviderSettings::new("test-model", Some(format!("{base}/v1")))
+            .with_retry_delays(vec![Duration::ZERO])
+            .with_idle_timeout(Duration::from_millis(120)),
+        Some("secret-sentinel"),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut stalled = false;
+    while let Some(event) = stream.next().await {
+        if let Err(error) = event {
+            stalled = format!("{error:?}").contains("stalled");
+            break;
+        }
+    }
+    assert!(stalled, "stall must surface as a stall error");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn ollama_stream_reports_stall_on_idle_timeout() {
+    let body = "{\"message\":{\"content\":\"partial\"}}\n";
+    let (base, handle) = keep_open_server(body);
+    let provider = OllamaProvider::new(
+        ProviderSettings::new("test-model", Some(base))
+            .with_retry_delays(vec![Duration::ZERO])
+            .with_idle_timeout(Duration::from_millis(120)),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut stalled = false;
+    while let Some(event) = stream.next().await {
+        if let Err(error) = event {
+            stalled = format!("{error:?}").contains("stalled");
+            break;
+        }
+    }
+    assert!(stalled, "stall must surface as a stall error");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    handle.join().unwrap();
+}
+
+async fn drain(stream: &mut saya_agent::ProviderStream) -> Vec<saya_agent::ProviderEvent> {
+    let mut seen = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            event @ saya_agent::ProviderEvent::Usage(_) => seen.push(event),
+            saya_agent::ProviderEvent::Done => {
+                seen.push(saya_agent::ProviderEvent::Done);
+                break;
+            }
+            _ => {}
+        }
+    }
+    seen
+}
+
+#[tokio::test]
+async fn anthropic_stream_surfaces_cumulative_token_usage() {
+    use saya_agent::{AnthropicProvider, ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12}}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{},\"usage\":{\"output_tokens\":34}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ],
+    }]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain(&mut stream).await;
+    handle.join().unwrap();
+    let position = events
+        .iter()
+        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage { input_tokens: 12, output_tokens: 34 }))
+        .expect("usage event with both counters must arrive");
+    assert!(
+        matches!(events[position + 1], ProviderEvent::Done),
+        "usage precedes Done"
+    );
+}
+
+#[tokio::test]
+async fn openai_stream_surfaces_usage_and_requests_it() {
+    use saya_agent::{ProviderEvent, TokenUsage};
+    let (base, requests, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n",
+        ],
+    }]);
+    let response = openai(base.clone()).complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    let sent = requests.lock().unwrap()[0].clone();
+    assert!(
+        sent.contains("\"stream_options\":{\"include_usage\":true}"),
+        "must ask the gateway for usage counts: {sent}"
+    );
+    // Re-run the stream directly to observe the Usage event.
+    let (base2, _, handle2) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n",
+        ],
+    }]);
+    let provider = OpenAiCompatibleProvider::new(
+        ProviderSettings::new("test-model", Some(format!("{base2}/v1"))),
+        Some("k"),
+    )
+    .unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain(&mut stream).await;
+    handle2.join().unwrap();
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
+        input_tokens: 5,
+        output_tokens: 6
+    })));
+}
+
+#[tokio::test]
+async fn ollama_stream_surfaces_eval_counts() {
+    use saya_agent::{ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"content\":\"ok\"},\"done\":false}\n",
+            "{\"done\":true,\"prompt_eval_count\":9,\"eval_count\":11}\n",
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain(&mut stream).await;
+    handle.join().unwrap();
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
+        input_tokens: 9,
+        output_tokens: 11
+    })));
+}
+
+#[tokio::test]
+async fn length_truncation_is_diagnosable_not_generic() {
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
+        ],
+    }]);
+    let error = openai(base).complete(request()).await.unwrap_err();
+    handle.join().unwrap();
+    let text = error.to_string();
+    assert!(
+        text.contains("truncated") && text.contains("output-token"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn unbounded_frames_fail_at_the_stream_byte_cap() {
+    let (base, handle) = byte_server(vec![vec![b'A'; 3 << 20]]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let started = std::time::Instant::now();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut capped = false;
+    while let Some(event) = stream.next().await {
+        if let Err(error) = event {
+            capped = error.to_string().contains("size limit");
+            break;
+        }
+    }
+    assert!(capped, "boundary-less frames must trip the stream cap");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn unreachable_provider_error_names_the_endpoint() {
+    use saya_agent::OllamaProvider;
+    // Port 1 is reserved and refuses connections: the error must say where
+    // we tried to go instead of a bare "network request failed".
+    let provider = OllamaProvider::new(ProviderSettings::new(
+        "m",
+        Some("http://127.0.0.1:1".into()),
+    ))
+    .unwrap();
+    let error = provider.complete(request()).await.unwrap_err().to_string();
+    assert!(error.contains("127.0.0.1:1"), "{error}");
+    assert!(error.contains("base_url"), "{error}");
+}

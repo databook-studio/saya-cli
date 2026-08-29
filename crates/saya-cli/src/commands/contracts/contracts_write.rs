@@ -1,7 +1,11 @@
-//! Mutating `contracts` commands: `remember`, `review`, `forget`. Each resolves
-//! its arguments, calls a `crate::contracts` write operation, and emits a
+//! Mutating `contracts` commands: `remember`, `forget`. Each resolves its
+//! arguments, calls a `crate::contracts` write operation, and emits a
 //! `ContractChanged` event. A write against an unavailable store is a genuine
 //! failure and exits non-zero — the user asked for something that did not happen.
+//!
+//! Confirm and reject moved to the `decide` subcommand (the survivor of the
+//! `review` retirement), which resolves a short claim-id prefix and forwards to
+//! the shared `confirm`/`reject` ops in `crate::contracts`.
 
 use super::contracts_remember_schema::{
     SchemaCheck, fingerprint_of, refuse_unknown, resolved_against,
@@ -12,8 +16,8 @@ use super::{
 };
 use crate::cli::{ClaimKindArg, ForgetReasonArg};
 use crate::commands::output::{emit, failure_message};
-use crate::contracts::args::{ReviewDecision, build_payload, parse_qualified, review_decision};
-use crate::contracts::{RememberOutcome, confirm, forget, reject, remember as remember_op};
+use crate::contracts::args::{build_payload, parse_qualified};
+use crate::contracts::{RememberOutcome, forget, remember as remember_op};
 use crate::render::{RenderFormat, TerminalEvent};
 use saya_store::{ForgetReason, SqliteStateStore};
 use saya_types::{
@@ -152,45 +156,6 @@ fn status_from_state(state: KnowledgeState) -> ClaimStatus {
         // than guess an authority it does not have.
         _ => ClaimStatus::Forgotten,
     }
-}
-
-pub(super) async fn review(
-    store: &SqliteStateStore,
-    format: RenderFormat,
-    claim_id: &str,
-    do_confirm: bool,
-    do_reject: bool,
-) -> Result<i32, Box<dyn std::error::Error>> {
-    let id = match parse_claim_id(claim_id) {
-        Ok(id) => id,
-        Err(message) => return failure_message(EXIT_CONTRACT_ERROR, message, format),
-    };
-    let decision = match review_decision(do_confirm, do_reject) {
-        Ok(decision) => decision,
-        Err(_) => return arg_failure(ArgMessage::AmbiguousReview, format),
-    };
-    let claim = match decision {
-        ReviewDecision::Confirm => confirm(store, &id).await,
-        ReviewDecision::Reject => reject(store, &id).await,
-    };
-    let claim = match claim {
-        Ok(claim) => claim,
-        Err(error) => return op_failure(error, format),
-    };
-    let (action, status) = match claim.status {
-        ClaimStatus::Confirmed => ("confirmed", "confirmed"),
-        ClaimStatus::Rejected => ("rejected", "rejected"),
-        other => ("reviewed", other.as_str()),
-    };
-    emit(
-        TerminalEvent::ContractChanged {
-            claim_id: claim.id.as_str().to_string(),
-            action: action.into(),
-            status: status.into(),
-        },
-        format,
-    );
-    Ok(0)
 }
 
 pub(super) async fn forget_claim(

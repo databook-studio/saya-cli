@@ -1,7 +1,7 @@
 //! Slash-text → `ContractsCommand` translation for the contract slash adapters.
 //!
-//! This is the *only* new surface in the 2b-4 slice: it turns `/contracts`,
-//! `/contract <table>`, `/remember …` and `/forget <id>` into the same
+//! This is the *only* new surface in the 2b-4 slice: it turns `/contracts
+//! [table]`, `/remember …` and `/forget <id>` into the same
 //! [`ContractsCommand`] the headless `saya contracts` clap parser produces, so
 //! both paths hand the same typed value to [`crate::commands::run_contracts`].
 //! No second parsing of qualified names, no second privacy decision, no second
@@ -168,9 +168,12 @@ fn usage_remember() -> String {
         .into()
 }
 
-/// Payload-free usage for `/contract`.
-fn usage_contract() -> String {
-    "/contract <catalog.schema.object>".into()
+/// Payload-free usage for the merged `/contracts` command. Never echoes the
+/// untrusted tail — a two-token argument is a usage error, not a Show of either
+/// token. The optional argument is what selects the operation: absent → list,
+/// one token → show.
+fn usage_contracts() -> String {
+    "/contracts [catalog.schema.object]".into()
 }
 
 /// Payload-free usage for `/forget`.
@@ -223,26 +226,27 @@ pub(crate) fn parse_contract_command(
     arg: &str,
 ) -> Result<Option<ContractsCommand>, SlashParseError> {
     match name {
-        "contracts" => {
-            if !arg.trim().is_empty() {
-                return Err(SlashParseError("/contracts takes no argument".into()));
-            }
-            Ok(Some(ContractsCommand::List { profile: None }))
-        }
-        "contract" => {
-            // Exactly one token: the qualified table name. `split_whitespace`
-            // already ignores surrounding whitespace, so no leading `trim()`.
+        // S13: one command, the optional argument selects the operation — what
+        // the headless `saya contracts` CLI already does (`contracts list`,
+        // `contracts show <t>`), and the same shape as `/queue [limit]`. No
+        // argument → list every contract for the active profile; one token →
+        // show that object's contract; two tokens → a payload-free usage error
+        // (a qualified name is a single token). `/contract` is kept as a silent
+        // alias of this same arm so the two names can no longer disagree on
+        // what they do — see `contract_is_a_silent_alias_of_the_merged_command`
+        // and the SPEC REVIEW for why it is an alias rather than removed. Both
+        // pass `profile: None`: the TUI stamps the active profile, the
+        // headless path resolves the default, exactly as before (Q3).
+        "contracts" | "contract" => {
             let tokens: Vec<&str> = arg.split_whitespace().collect();
-            let table = tokens
-                .first()
-                .ok_or_else(|| SlashParseError(usage_contract()))?;
-            if tokens.len() != 1 {
-                return Err(SlashParseError(usage_contract()));
+            match tokens.len() {
+                0 => Ok(Some(ContractsCommand::List { profile: None })),
+                1 => Ok(Some(ContractsCommand::Show {
+                    table: tokens[0].to_string(),
+                    profile: None,
+                })),
+                _ => Err(SlashParseError(usage_contracts())),
             }
-            Ok(Some(ContractsCommand::Show {
-                table: table.to_string(),
-                profile: None,
-            }))
         }
         "remember" => {
             let spec = parse_remember(arg)?;
@@ -305,27 +309,138 @@ pub(crate) fn parse_contract_command(
 mod tests {
     use super::*;
 
+    /// S13 — the trap this slice removed, and the regression guard against its
+    /// return. Before the merge, `/contracts` and `/contract` were two *separate
+    /// operations* distinguished only by a trailing `s`: `/contracts` was `List`
+    /// and rejected any argument, `/contract` was `Show` and rejected none. A
+    /// user who mistyped the one letter they would not notice got a usage error
+    /// from the command they did not mean, and `closest_command` resolved the
+    /// near-miss to the *other* command — so it could not help. The before state
+    /// was captured by an earlier form of this test that asserted the asymmetry;
+    /// it passed against the unmerged code and failed once the merge landed,
+    /// proving the behaviour changed exactly as intended. This is the forward
+    /// guard: the one-letter difference must no longer select a different
+    /// operation or turn a valid argument into a usage error.
     #[test]
-    fn parse_contract_contracts_no_arg() {
-        let cmd = parse_contract_command("contracts", "").unwrap().unwrap();
-        assert_eq!(cmd, ContractsCommand::List { profile: None });
-        assert!(parse_contract_command("contracts", "x").is_err());
-    }
-
-    #[test]
-    fn parse_contract_contract_one_table() {
-        let cmd = parse_contract_command("contract", "analytics.public.orders")
-            .unwrap()
-            .unwrap();
+    fn s13_the_one_letter_no_longer_selects_a_different_operation() {
+        // `/contracts <table>` is now Show, not the "takes no argument" error the
+        // old List-only spelling raised — so a user who meant Show no longer gets
+        // a usage error for supplying the very argument Show needs.
         assert_eq!(
-            cmd,
+            parse_contract_command("contracts", "analytics.public.orders")
+                .unwrap()
+                .unwrap(),
             ContractsCommand::Show {
                 table: "analytics.public.orders".into(),
                 profile: None,
             }
         );
-        assert!(parse_contract_command("contract", "").is_err());
+        // `/contract` with no argument is now List, not the "missing argument"
+        // error the old Show-only spelling raised — so a user who meant List no
+        // longer gets a usage error for omitting the argument List takes none of.
+        assert_eq!(
+            parse_contract_command("contract", "").unwrap().unwrap(),
+            ContractsCommand::List { profile: None }
+        );
+        // The two names no longer map to two different operations: for every
+        // argument shape they produce the *same* command, so mistyping the one
+        // letter cannot land you in a different operation.
+        assert_eq!(
+            parse_contract_command("contracts", "").unwrap().unwrap(),
+            parse_contract_command("contract", "").unwrap().unwrap()
+        );
+        assert_eq!(
+            parse_contract_command("contracts", "analytics.public.orders")
+                .unwrap()
+                .unwrap(),
+            parse_contract_command("contract", "analytics.public.orders")
+                .unwrap()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_contract_contracts_no_arg() {
+        let cmd = parse_contract_command("contracts", "").unwrap().unwrap();
+        assert_eq!(cmd, ContractsCommand::List { profile: None });
+        // After the S13 merge, `/contracts <table>` is Show, not an error.
+        assert_eq!(
+            parse_contract_command("contracts", "analytics.public.orders")
+                .unwrap()
+                .unwrap(),
+            ContractsCommand::Show {
+                table: "analytics.public.orders".into(),
+                profile: None,
+            }
+        );
+        // Two tokens is still a usage error: a qualified name is one token.
+        assert!(parse_contract_command("contracts", "a b").is_err());
+    }
+
+    /// S13 merge (Q1): one name, the optional argument selects the operation —
+    /// what the CLI already does, and the same shape as `/queue [limit]`. No
+    /// argument is List; one token is Show. The trap is gone because there is
+    /// no second name to mistype into a different operation.
+    #[test]
+    fn contracts_one_name_arg_selects_the_operation() {
+        // No argument → list every contract for the active profile.
+        assert_eq!(
+            parse_contract_command("contracts", "").unwrap().unwrap(),
+            ContractsCommand::List { profile: None }
+        );
+        // One token → show that one object's contract.
+        assert_eq!(
+            parse_contract_command("contracts", "analytics.public.orders")
+                .unwrap()
+                .unwrap(),
+            ContractsCommand::Show {
+                table: "analytics.public.orders".into(),
+                profile: None,
+            }
+        );
+        // Two tokens is a usage error — a qualified name is a single token, and a
+        // Show never takes two. The error is payload-free (no echo of the input).
+        let bad = parse_contract_command("contracts", "a b").unwrap_err();
+        assert!(!bad.0.contains("a b"));
+        assert!(!bad.0.is_empty());
+        // Surrounding whitespace does not turn one name into two.
+        assert_eq!(
+            parse_contract_command("contracts", "  analytics.public.orders  ")
+                .unwrap()
+                .unwrap(),
+            ContractsCommand::Show {
+                table: "analytics.public.orders".into(),
+                profile: None,
+            }
+        );
+    }
+
+    /// S13 Q2: `/contract` is kept as a silent alias of the merged command, not a
+    /// second operation. Whatever the argument, it routes to the same command
+    /// `/contracts` produces — so the two names can no longer disagree. (Kept as
+    /// an alias rather than removed so the TUI completion registry — mirrored by
+    /// `complete.rs`, outside this slice's owned paths — stays in lockstep; see
+    /// the SPEC REVIEW.)
+    #[test]
+    fn contract_is_a_silent_alias_of_the_merged_command() {
+        // `/contract <table>` does what `/contracts <table>` does: Show.
+        assert_eq!(
+            parse_contract_command("contract", "analytics.public.orders")
+                .unwrap()
+                .unwrap(),
+            parse_contract_command("contracts", "analytics.public.orders")
+                .unwrap()
+                .unwrap()
+        );
+        // `/contract` with no argument does what `/contracts` does: List. It is no
+        // longer the "missing argument" error the old Show-only spelling raised.
+        assert_eq!(
+            parse_contract_command("contract", "").unwrap().unwrap(),
+            parse_contract_command("contracts", "").unwrap().unwrap()
+        );
+        // Two tokens is a usage error on both spellings.
         assert!(parse_contract_command("contract", "a b").is_err());
+        assert!(parse_contract_command("contracts", "a b").is_err());
     }
 
     #[test]

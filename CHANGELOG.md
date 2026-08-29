@@ -5,6 +5,106 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.3.1 — 2026-08-29 — hardening
+
+A hardening pass over 0.3.0: 30 fixes and 20 features across the read-only
+safety layer, the agent loop, the connectors, and the CLI/TUI surface.
+
+**Read Changed before upgrading.** Despite the patch version, this release
+contains six breaking changes, and three of them can stop SAYA starting or
+connecting on a setup that worked in 0.3.0: a stale config key now refuses to
+parse, PostgreSQL requires TLS by default, and the project config layer is no
+longer trusted for security-critical settings.
+
+### Repository note
+
+Two internal skill files — `.claude/skills/saya-run/SKILL.md` and
+`.claude/skills/saya-smoke/SKILL.md` — shipped in the `v0.1.0` initial public
+release and were removed in `0.3.0`. They are absent from every current tree,
+but a deleted file stays retrievable from git history, so they can still be
+read from a clone. Both describe how to launch the CLI and smoke-test the REPL
+locally; neither contains credentials or infrastructure detail. The exposure is
+recorded and accepted rather than repaired, since removing it would mean
+rewriting published release history. See
+[RELEASING.md](RELEASING.md#internal-only-paths-must-not-reach-a-public-ref).
+
+### Changed — read this before upgrading
+
+Six changes alter behaviour you may be relying on. Three of them can stop
+SAYA starting or connecting on a setup that worked in 0.3.0.
+
+- **An unknown key in `config.toml` or `connections.toml` is now an error.**
+  Previously a typo fell back to the default silently — worst case a typo'd
+  `sslmodee` dropped TLS enforcement with no signal. The error names the
+  offending key and lists the valid ones.
+
+  This bites on upgrade if your config carries a key that no longer exists.
+  In particular `retention_days` was removed (it was parsed, merged and
+  surfaced in diagnostics while nothing read it), so a config that sets it
+  will not start. Delete the key.
+
+- **PostgreSQL `sslmode` now defaults to `require`, not `prefer`.** `prefer`
+  lets an active attacker answer the SSL request with a refusal and collect
+  the credentials in plaintext. A server that does not offer TLS will now be
+  refused rather than silently downgraded — including a local development
+  Postgres. Set `sslmode = "disable"` explicitly for those; see
+  [connections.md](docs/connections.md). Note `require` encrypts but does not
+  verify the certificate: use `verify-full` where you need that.
+
+- **The project layer is no longer trusted for security-critical settings.**
+  A repository's `.saya/config.toml` can no longer set `ai.base_url`,
+  `ai.api_key`, `ai.allow_data_sharing` or `run.read_only` — a cloned
+  repository is untrusted input, and those four decide where your API key is
+  sent, whether rows leave the machine, and whether read-only enforcement
+  stays on. SAYA warns when it ignores one. Pass `--trust-project-config` (or
+  set `SAYA_TRUST_PROJECT_CONFIG`) to accept them.
+
+- **Enter no longer approves a tool-approval prompt.** The prompt can appear
+  while you are typing your next message, so an implicit Enter must never
+  allow SQL to run. Press `y` to allow; `n` or Esc to deny.
+
+- **`saya contracts review` is removed; use `saya contracts decide`.** Two
+  commands confirmed or rejected a claim and `review` was the weaker one: its
+  `--confirm` and `--reject` were independent flags, so `--confirm --reject`
+  (or neither) was caught only at runtime, with a "choose exactly one" error,
+  and it took a 64-character claim id. `decide` takes a single `--decision`
+  flag clap rejects at parse time, and the short `ki-xxxx` prefix `contracts
+  list` prints. `decide` scopes to a profile and takes `--profile`, so a claim outside
+  the active one is still reachable. The slash commands
+  `/confirm` and `/reject` already route to `decide` and are unchanged.
+
+  Before: `saya contracts review ki-… --confirm`
+  After:  `saya contracts decide ki-… --decision confirm`
+
+  Neither command was documented, and nothing routed to `review` but the CLI
+  itself, so the removal should not affect recorded workflows; if a script used
+  `review`, swap the line above.
+
+- **`saya config show` no longer accepts `--resolved` or `--redacted`.** Both
+  flags were accepted and ignored since the initial release: `config show`
+  always printed the one view it has — the resolved, redacted configuration —
+  regardless of either flag. A script passing `--resolved` or `--redacted`
+  succeeds today and will now fail with an "unexpected argument" error; drop
+  the flag. The printed output is unchanged, because the flags never had an
+  effect. `--redacted` is gone in particular because a flag that implies
+  redaction is optional is worse than no flag — redaction is not optional, and
+  the flag invited someone to look for the off switch.
+
+### Fixed
+
+- **The read-only guard now applies to the whole statement tree.** A denied
+  function reached through `FROM` as a table function, through `LATERAL`, or
+  schema-qualified (`pg_catalog.pg_read_file`, `main.read_csv`,
+  `x.load_file`) was accepted. `FOR UPDATE` and `FOR SHARE` inside a derived
+  table took row locks on a connection reported as read-only. Both are
+  closed, on every backend.
+
+- **Transcript redaction no longer fails open.** A credential header was only
+  recognised at the start of a line, so a pasted `curl -H 'Authorization:
+  Bearer …'` kept its token. A private-key block whose closing marker was cut
+  off — the normal case, since transcripts are byte-capped — was written out
+  in full.
+
 ## 0.3.0 — 2026-08-20 — conversational memory
 
 SAYA learns your data vocabulary from ordinary conversation and carries it

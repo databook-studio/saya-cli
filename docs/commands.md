@@ -15,7 +15,7 @@ saya --continue
 saya --resume 1720000000000
 saya --format ndjson --non-interactive --approval-mode read-only ask "top customers"
 saya config doctor
-saya config show --resolved --redacted
+saya config show
 saya connection list --connections examples/connections.toml
 saya query --profile analytics --sql "select 1"
 ```

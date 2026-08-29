@@ -10,6 +10,11 @@ pub struct CliOverrides {
     pub model: Option<String>,
     pub allow_data_sharing: Option<bool>,
     pub max_rows: Option<usize>,
+    /// Explicitly trust security-critical settings from the project layer's
+    /// `.saya/config.toml` (`ai.base_url`, `ai.api_key`,
+    /// `ai.allow_data_sharing`, `run.read_only`). Off by default because a
+    /// cloned repository is untrusted input.
+    pub trust_project_config: bool,
 }
 
 /// Explicit configuration inputs. It never reads a `.env` file implicitly.

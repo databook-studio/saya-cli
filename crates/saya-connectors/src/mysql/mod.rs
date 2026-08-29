@@ -1,3 +1,4 @@
+mod cancellation;
 mod client;
 mod decode;
 mod errors;

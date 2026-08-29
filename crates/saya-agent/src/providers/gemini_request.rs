@@ -2,7 +2,11 @@ use crate::ChatRequest;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-pub(super) fn build_body(request: ChatRequest) -> Value {
+pub(super) fn build_body(
+    request: ChatRequest,
+    max_output_tokens: u32,
+    temperature: Option<f32>,
+) -> Value {
     let mut system_prompts = Vec::new();
     let mut contents = Vec::new();
     let mut tool_name_map = HashMap::new();
@@ -65,11 +69,15 @@ pub(super) fn build_body(request: ChatRequest) -> Value {
         }));
     }
 
+    let mut generation_config = json!({
+        "maxOutputTokens": max_output_tokens
+    });
+    if let Some(temperature) = temperature {
+        generation_config["temperature"] = json!(temperature);
+    }
     let mut body = json!({
         "contents": contents,
-        "generationConfig": {
-            "maxOutputTokens": 4096
-        }
+        "generationConfig": generation_config
     });
 
     if !system_prompts.is_empty() {
@@ -138,7 +146,7 @@ mod tests {
             }],
         };
 
-        let body = build_body(request);
+        let body = build_body(request, 4096, None);
 
         assert_eq!(
             body["systemInstruction"]["parts"][0]["text"],

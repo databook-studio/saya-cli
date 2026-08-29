@@ -33,12 +33,28 @@ pub struct RuntimeConfig {
 }
 
 pub fn load(options: &GlobalOptions, cwd: &Path) -> Result<RuntimeConfig, RuntimeError> {
-    load_with_sources(
+    let runtime = load_with_sources(
         options,
         cwd,
         &super::sources::user_config_dir(),
         super::sources::process_env(),
-    )
+    )?;
+    warn_ignored_project_overrides(&runtime);
+    Ok(runtime)
+}
+
+/// The project layer is untrusted: when it tried to change security-critical
+/// settings, say so instead of silently ignoring the attempt.
+fn warn_ignored_project_overrides(runtime: &RuntimeConfig) {
+    let ignored = &runtime.resolved.ignored_project_overrides;
+    if ignored.is_empty() {
+        return;
+    }
+    eprintln!(
+        "warning: ignored security-critical setting(s) from the project's .saya/config.toml: {}. \
+         Pass --trust-project-config to accept them.",
+        ignored.join(", ")
+    );
 }
 
 pub fn load_with_sources(
@@ -76,6 +92,14 @@ pub fn load_with_sources(
     };
     let mut secret_values = env_file.clone();
     secret_values.extend(process.clone());
+    let provider = match options.provider.as_deref() {
+        Some(raw) => Some(saya_config::AiProvider::parse(raw).ok_or_else(|| {
+            RuntimeError::Config(saya_config::ConfigError::Parse(format!(
+                "invalid --provider '{raw}' (expected ollama, openai, openai_compatible, anthropic, or gemini)"
+            )))
+        })?),
+        None => None,
+    };
     let input = ResolutionInput::new(connections.clone())
         .with_user(user.unwrap_or_default())
         .with_project(project.unwrap_or_default())
@@ -83,12 +107,23 @@ pub fn load_with_sources(
         .with_process_env(process)
         .with_cli(CliOverrides {
             profile: options.profile.clone(),
-            allow_data_sharing: options.allow_data_sharing.then_some(true),
-            ..Default::default()
+            provider,
+            model: options.model.clone(),
+            allow_data_sharing: if options.no_data_sharing {
+                Some(false)
+            } else {
+                options.allow_data_sharing.then_some(true)
+            },
+            max_rows: options.max_rows,
+            trust_project_config: options.trust_project_config,
         });
+    let mut resolved = resolve(input)?;
+    if options.no_color {
+        resolved.output_color = saya_config::ColorChoice::Never;
+    }
     let cache_scope = super::scope::resolve(selected_connections, cwd);
     Ok(RuntimeConfig {
-        resolved: resolve(input)?,
+        resolved,
         connections,
         config_path: selected_config.cloned(),
         connections_path: selected_connections.cloned(),

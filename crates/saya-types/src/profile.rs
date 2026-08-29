@@ -24,7 +24,7 @@ impl SecretRef {
 /// Typed database connection profile loaded from `connections.toml`.
 /// Exhaustive matching is intentional so the compiler forces every backend to handle every profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 pub enum DatabaseProfile {
     #[serde(rename = "postgresql")]
     Postgres {

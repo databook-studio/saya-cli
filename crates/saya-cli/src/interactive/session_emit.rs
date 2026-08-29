@@ -17,6 +17,9 @@ pub(crate) fn emit_action(
             }
             emit(TerminalEvent::Result { message }, format);
         }
+        // Doctor is intercepted in the session loop (it needs `runtime`) and
+        // never reaches here; the arm keeps the match exhaustive.
+        SessionAction::Doctor => {}
         SessionAction::Agent(_)
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)
@@ -62,12 +65,21 @@ fn history(
     store: &FsSessionStore,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let entries = block_on(store.history())?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
     let message = if entries.is_empty() {
         "No saved sessions.".into()
     } else {
         entries
             .into_iter()
-            .map(|entry| format!("{}\t{}", entry.id, entry.modified_unix_ms))
+            .map(|entry| {
+                let age = super::tui::replay::relative_time(
+                    now_ms.saturating_sub(entry.modified_unix_ms),
+                );
+                format!("{}\t{}", entry.id, age)
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };

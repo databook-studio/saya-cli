@@ -25,7 +25,7 @@ The process environment wins over the explicit env-file. `.env` is not loaded
 implicitly. This makes CI and scripts predictable:
 
 ```bash
-saya --env-file .env.saya config show --resolved --redacted
+saya --env-file .env.saya config show
 ```
 
 Profile selection is `--profile`, `SAYA_PROFILE`, `default_profile`, a sole
@@ -74,9 +74,30 @@ also drives session-level read-only on connectors that support it. This is
 distinct from a profile's own `SAYA_DB_READ_ONLY`, which sets a file engine's
 (DuckDB/SQLite) access mode.
 
-`config doctor` reports paths and selection. `config show --resolved
---redacted` emits only display-safe references and settings. It never resolves
-or prints secret values.
+The `[ai]` table tunes the provider request the agent loop assembles.
+`context_byte_budget` is the ceiling on the approximate byte size of the whole
+conversation sent to the provider (system prompt, user question, history, and
+the tool results the loop appends). The default is 256 KiB. When the assembled
+conversation grows past it, the loop **trims rather than aborts**: it drops the
+oldest complete tool-result group first (the assistant turn that issued the
+calls plus its tool messages), keeping the newest context; if only the newest
+group remains and it alone is over budget, the largest tool result is truncated
+in place with a visible `…[truncated]` marker so the model knows it saw a cut
+result. The run never fails for reaching the budget. Raise it on a model with a
+large context window to keep more history; a value below 1024 bytes is rejected
+as too small to hold a single turn. It has no environment variable or CLI flag
+of its own — set it in the `[ai]` table — and follows the usual file-then-defaults
+precedence.
+
+```toml
+[ai]
+context_byte_budget = 524288   # 512 KiB; default is 256 KiB
+```
+
+`config doctor` reports paths and selection. `config show` emits the resolved
+configuration as display-safe references and settings only. It never resolves
+or prints secret values — that is not optional and there is no flag to change
+it.
 
 The REPL session directory uses `SAYA_SESSION_DIR` first, then
 `$XDG_DATA_HOME/saya/sessions`, `%APPDATA%/saya/sessions`, or

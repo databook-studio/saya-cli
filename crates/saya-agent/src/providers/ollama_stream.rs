@@ -1,19 +1,30 @@
 use super::{framing::whitespace, ollama_chunks::Chunk, tool_assembly::ToolAssembly};
-use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream};
+use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
-use std::collections::VecDeque;
-pub(super) fn parse(response: Response, cancellation: CancellationToken) -> ProviderStream {
+use std::{collections::VecDeque, time::Duration};
+
+pub(super) fn parse(
+    response: Response,
+    cancellation: CancellationToken,
+    idle: Duration,
+) -> ProviderStream {
     Box::pin(stream::unfold(
-        (response.bytes_stream(), State::default(), cancellation),
+        (
+            response.bytes_stream(),
+            State::default(),
+            cancellation,
+            idle,
+        ),
         next,
     ))
 }
+
 async fn next<S>(
-    mut value: (S, State, CancellationToken),
+    mut value: (S, State, CancellationToken, Duration),
 ) -> Option<(
     Result<ProviderEvent, ProviderError>,
-    (S, State, CancellationToken),
+    (S, State, CancellationToken, Duration),
 )>
 where
     S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
@@ -29,7 +40,20 @@ where
         if value.1.done {
             return None;
         }
-        let item = tokio::select! { _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)), item = value.0.next() => item };
+        // Per-chunk idle budget instead of a total cap (see anthropic_stream).
+        let item = tokio::select! {
+            _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)),
+            item = tokio::time::timeout(value.3, value.0.next()) => match item {
+                Ok(item) => item,
+                Err(_) => {
+                    value.1.done = true;
+                    return Some((
+                        Err(ProviderError::Request("provider stream stalled".into())),
+                        value,
+                    ));
+                }
+            }
+        };
         let Some(chunk) = item else {
             if let Err(error) = value.1.finish() {
                 value.1.done = true;
@@ -56,6 +80,7 @@ where
 #[derive(Default)]
 struct State {
     bytes: Vec<u8>,
+    usage: TokenUsage,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
     content: bool,
@@ -83,6 +108,11 @@ impl State {
         }
     }
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
+        if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
+            return Err(ProviderError::Request(
+                "provider stream exceeded size limit".into(),
+            ));
+        }
         self.bytes.extend_from_slice(chunk);
         while let Some(end) = self.bytes.iter().position(|byte| *byte == b'\n') {
             let line = String::from_utf8(self.bytes[..end].to_vec())
@@ -122,6 +152,15 @@ impl State {
         }
         if chunk.done {
             self.done = true;
+            if let Some(input) = chunk.prompt_eval_count {
+                self.usage.input_tokens = input;
+            }
+            if let Some(output) = chunk.eval_count {
+                self.usage.output_tokens = output;
+            }
+            if self.usage != TokenUsage::default() {
+                self.pending.push_back(ProviderEvent::Usage(self.usage));
+            }
             self.complete()?;
         }
         Ok(())
