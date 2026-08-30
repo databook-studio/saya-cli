@@ -16,6 +16,9 @@ pub(crate) fn summary(runtime: &RuntimeConfig) -> String {
             runtime.resolved.profile_name.as_deref().unwrap_or("none")
         ),
     ];
+    lines.extend(ignored_override_lines(
+        &runtime.resolved.ignored_project_overrides,
+    ));
     lines.extend(secret_lines(runtime));
     lines.extend(provider_lines(
         runtime.resolved.ai.provider,
@@ -23,6 +26,27 @@ pub(crate) fn summary(runtime: &RuntimeConfig) -> String {
         runtime.resolved.ai.api_key.is_some(),
     ));
     lines.join("\n")
+}
+
+/// Names the security-critical settings the project layer tried to change and
+/// did not get. The one-shot warning is deliberately short, so this is where a
+/// user finds out *which* settings were ignored and what to do about it —
+/// doctor is the "what is wrong with my setup" command, and this is its
+/// subject. Empty when the project layer changed none of them.
+fn ignored_override_lines(ignored: &[String]) -> Vec<String> {
+    if ignored.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        format!(
+            "ignored from project config: {} (the project layer is untrusted)",
+            ignored.join(", ")
+        ),
+        "  these decide where your API key is sent, whether rows leave the machine,".into(),
+        "  and whether read-only enforcement stays on — so a cloned repository does".into(),
+        "  not get to set them. Move them to your user config to have them applied,".into(),
+        "  or pass --trust-project-config to accept this project's values.".into(),
+    ]
 }
 
 fn path(value: &Option<std::path::PathBuf>) -> String {
@@ -175,5 +199,39 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("unauthenticated")));
         let lines = provider_lines(AiProvider::Anthropic, None, true);
         assert!(!lines.iter().any(|line| line.contains("unauthenticated")));
+    }
+}
+
+#[cfg(test)]
+mod ignored_override_tests {
+    use super::ignored_override_lines;
+
+    /// The one-shot warning is deliberately terse, so doctor is the only place
+    /// a user can learn *which* settings were ignored. If this stops reporting
+    /// them, the terse warning becomes a dead end.
+    #[test]
+    fn doctor_names_every_ignored_setting_and_the_way_to_apply_it() {
+        let report =
+            ignored_override_lines(&["ai.base_url".to_string(), "run.read_only".to_string()])
+                .join("\n");
+
+        assert!(
+            report.contains("ai.base_url") && report.contains("run.read_only"),
+            "doctor must name each ignored setting: {report}"
+        );
+        // Both routes: the trusted one (move them) and the override.
+        assert!(
+            report.contains("user config") && report.contains("--trust-project-config"),
+            "doctor must say how to apply them: {report}"
+        );
+    }
+
+    /// A project layer that changed nothing adds no noise to the report.
+    #[test]
+    fn doctor_is_silent_when_nothing_was_ignored() {
+        assert!(
+            ignored_override_lines(&[]).is_empty(),
+            "no ignored settings means no section"
+        );
     }
 }
