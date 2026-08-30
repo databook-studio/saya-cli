@@ -53,7 +53,10 @@ fn byte_server(chunks: Vec<Vec<u8>>) -> (String, thread::JoinHandle<()>) {
         // write cannot push the run past its own deadline.
         let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
         let length: usize = chunks.iter().map(Vec::len).sum();
-        let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n");
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+        );
         for chunk in chunks {
             if stream.write_all(&chunk).is_err() {
                 break;
