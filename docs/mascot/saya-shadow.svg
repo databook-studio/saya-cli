@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="saya — an iris-violet diamond with two eyes and a blinking terminal cursor, casting a hard shadow">
+  <title>saya</title>
+  <style>
+    .saya-cursor { animation: saya-blink 1.15s steps(1, end) infinite; }
+    @keyframes saya-blink { 0%, 72% { opacity: 1 } 73%, 100% { opacity: 0 } }
+    @media (prefers-reduced-motion: reduce) { .saya-cursor { animation: none } }
+  </style>
+  <defs><clipPath id="saya-body-s"><path d="M107.6 31.6 L168.4 92.4 Q176 100 168.4 107.6 L107.6 168.4 Q100 176 92.4 168.4 L31.6 107.6 Q24 100 31.6 92.4 L92.4 31.6 Q100 24 107.6 31.6 Z"/></clipPath></defs>
+  <line x1="18" y1="186" x2="182" y2="186" stroke="#9d8bf5" stroke-opacity=".30" stroke-width="2" stroke-linecap="round"/>
+  <path d="M98 180 L152 172 L192 184 L138 192 Z" fill="#9d8bf5" opacity=".26"/>
+  <path fill="#9d8bf5" d="M107.6 31.6 L168.4 92.4 Q176 100 168.4 107.6 L107.6 168.4 Q100 176 92.4 168.4 L31.6 107.6 Q24 100 31.6 92.4 L92.4 31.6 Q100 24 107.6 31.6 Z"/>
+  <path fill="#8171e6" d="M52 200 L200 52 L200 200 Z" clip-path="url(#saya-body-s)"/>
+  <g fill="#17151f">
+    <rect x="74" y="80" width="14" height="19" rx="5"/>
+    <rect x="112" y="80" width="14" height="19" rx="5"/>
+  </g>
+  <rect class="saya-cursor" x="95.5" y="108" width="9" height="22" rx="1.5" fill="#17151f"/>
+</svg>

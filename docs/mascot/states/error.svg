@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 176" width="176" height="176" role="img" aria-label="saya, error — flat mouth in red">
+  <title>saya — error</title>
+  <defs><clipPath id="saya-body-e"><path d="M107.6 31.6 L168.4 92.4 Q176 100 168.4 107.6 L107.6 168.4 Q100 176 92.4 168.4 L31.6 107.6 Q24 100 31.6 92.4 L92.4 31.6 Q100 24 107.6 31.6 Z"/></clipPath></defs>
+  <g transform="translate(-12,-12)">
+    <path fill="#9d8bf5" d="M107.6 31.6 L168.4 92.4 Q176 100 168.4 107.6 L107.6 168.4 Q100 176 92.4 168.4 L31.6 107.6 Q24 100 31.6 92.4 L92.4 31.6 Q100 24 107.6 31.6 Z"/>
+    <path fill="#8171e6" d="M52 200 L200 52 L200 200 Z" clip-path="url(#saya-body-e)"/>
+    <g fill="#17151f">
+      <rect x="74" y="80" width="14" height="19" rx="5"/>
+      <rect x="112" y="80" width="14" height="19" rx="5"/>
+    </g>
+    <rect x="92" y="116" width="16" height="5" rx="2.5" fill="#e5695f"/>
+  </g>
+</svg>

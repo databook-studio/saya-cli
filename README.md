@@ -1,353 +1,136 @@
-# SAYA CLI
+<p align="center">
+  <img src="docs/mascot/saya-shadow.svg" width="170" alt="">
+</p>
 
-SAYA CLI is an open-source, terminal-native shell for a database-aware AI agent.
-Ask questions about your data in plain language and it discovers schema and runs
-**bounded, read-only** SQL against PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
+<h1 align="center">SAYA CLI</h1>
 
-An interactive terminal (TTY) launches a **full-screen TUI** — a scrolling
-transcript, a bottom-pinned input box, a slash-command popup that opens on `/`,
-`@table` schema autocomplete, live streaming answers, and an approval prompt
-before any query runs. Piped/non-TTY input uses a headless executor for scripts
-and CI, with text/JSON/NDJSON output. Providers: Ollama, OpenAI,
-OpenAI-compatible gateways, Anthropic, and Gemini. Sessions are redacted before
-they are persisted, and multi-database navigation lets the agent query several
-connected databases at once.
+<p align="center"><em>Ask your database questions in plain language, from the terminal.</em></p>
 
-## Features
+<p align="center">
+  <a href="https://crates.io/crates/saya-cli"><img alt="crates.io" src="https://img.shields.io/crates/v/saya-cli?style=flat-square&color=9d8bf5"></a>
+  <a href="https://github.com/databook-studio/saya-cli/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/databook-studio/saya-cli/ci.yml?branch=main&style=flat-square&label=ci"></a>
+  <a href="https://crates.io/crates/saya-cli"><img alt="downloads" src="https://img.shields.io/crates/d/saya-cli?style=flat-square"></a>
+  <img alt="minimum supported Rust version" src="https://img.shields.io/crates/msrv/saya-cli?style=flat-square">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/crates/l/saya-cli?style=flat-square"></a>
+</p>
 
-- 🖥️ **Full-screen TUI** — bottom-pinned input, scrolling transcript, live
-  streaming answers, `/` command popup with fuzzy matching, and `@table` schema
-  autocomplete. Copy out with `Ctrl+O` (selection mode), `Ctrl+Y` (last
-  answer), or `Ctrl+B` (whole transcript).
-- 🛡️ **Safe by default** — every query is bounded and read-only, and the
-  **exact SQL is shown** in the approval prompt (and echoed to the transcript)
-  before it runs; sessions are redacted before being persisted.
-- 🧠 **Memory** — tell it what your tables mean once (`saya contracts remember
-  orders --kind time-column --value created_at`) and later questions carry that
-  context. Facts are typed, bound to a table and its schema shape, and go stale
-  when a column they depend on changes. It never confirms anything by itself,
-  never picks between contradictions, and is **off by default**. Shareable via
-  `.saya/contracts/` in your repo. → [docs/memory.md](docs/memory.md)
-- 🔌 **Databases** — PostgreSQL, MySQL, SQLite, DuckDB, Snowflake; query several
-  connected databases at once, or run **one query across every connected
-  database** and get per-database results side by side.
-- 🤖 **Providers** — Ollama, OpenAI, OpenAI-compatible gateways, Anthropic,
-  Gemini; configurable model and temperature.
-- ⚙️ **Scriptable** — piped/non-TTY input runs headless with text/JSON/NDJSON
-  output for scripts and CI.
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#safety">Safety</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
 
-## Demo
+<p align="center">
+  <img src="docs/demo-live.gif" alt="saya answering a question against a live database" width="100%">
+</p>
 
-Ask in plain language — saya discovers the schema, runs bounded read-only SQL,
-and streams the answer (here against a PostgreSQL then a MySQL database):
-
-![saya live demo](docs/demo-live.gif)
-
-**Query across databases at once** — connect a second database and compare them
-in a single question:
-
-![saya cross-database demo](docs/demo-cross.gif)
-
-The command popup, fuzzy matching, and help overlay:
-
-![saya TUI demo](docs/demo.gif)
-
-The GIFs are generated with [vhs](https://github.com/charmbracelet/vhs) from the
-`docs/*.tape` scripts (the live ones need `SAYA_API_KEY` and reachable databases
-in the environment).
+saya discovers the schema, writes the SQL, **shows it to you**, and runs it
+read-only and bounded against PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
 
 ## Install
 
-Prebuilt binaries for macOS (Apple Silicon + Intel), Linux (x86_64), and Windows
-(x86_64) are attached to every
-[release](https://github.com/databook-studio/saya-cli/releases).
+Prebuilt binaries for macOS (Apple Silicon + Intel), Linux, and Windows are on
+every [release](https://github.com/databook-studio/saya-cli/releases), with
+`SHA256SUMS` to verify them.
 
 ```bash
-# Homebrew (macOS / Linux)
-brew install databook-studio/tap/saya
-
-# Cargo — prebuilt binary, no compile (cargo-bins.github.io/cargo-binstall)
-cargo binstall saya-cli
-
-# Cargo — from source (compiles the bundled DuckDB, so allow a few minutes)
-cargo install saya-cli
+brew install databook-studio/tap/saya   # macOS / Linux
+cargo binstall saya-cli                 # prebuilt binary, no compile
+cargo install saya-cli                  # from source (builds DuckDB; takes a few minutes)
 ```
 
-Or download the archive for your platform from the
-[releases page](https://github.com/databook-studio/saya-cli/releases), verify it
-against `SHA256SUMS`, and put the `saya` binary on your `PATH`. See
-[installation](docs/installation.md) for details.
+→ [installation](docs/installation.md)
 
 ## Quick start
 
 ```bash
-cargo build --release --locked -p saya-cli
-./target/release/saya config init
-export SAYA_ANALYTICS_PASSWORD='use-a-read-only-password'
-./target/release/saya config doctor
-./target/release/saya connection test analytics
-./target/release/saya --profile analytics --approval-mode read-only query --sql 'SELECT 1'
+saya config init                          # starter config in your user config dir (init prints the path)
+$EDITOR ~/.config/saya/connections.toml   # point the example profile at your database
+export SAYA_ANALYTICS_PASSWORD='...'      # the profile references it; never commit it
+saya config doctor                        # secrets resolve? provider reachable?
+saya                                      # start the TUI
 ```
 
-The five-minute path is: build from source, initialize the credential-free
-`.saya/` templates, set the environment SecretRef used by the example profile,
-then test a bounded read-only query. Running `saya` without a subcommand starts
-the REPL; use `/help` for interactive commands. The automation surface is
-available as `saya ask`, `saya query`, `saya config`, and `saya connection`.
-See [installation](docs/installation.md) for source install details and the
-current crates.io/Homebrew boundary.
+`config init` writes to your user config directory, which saya trusts. Pass
+`--project` to write a `.saya/` pair for a repository instead — that layer is
+untrusted, so security-critical settings in it are ignored unless you pass
+`--trust-project-config`. `config doctor` names what is missing and exits
+non-zero when the setup cannot run a query, so a script can tell.
 
-For complete connection-profile, dotenv, query, and cross-database examples,
-see the [database query guide](docs/querying-databases.md).
+The starter config points at a local [Ollama](https://ollama.com); edit `[ai]`
+in `config.toml` for OpenAI, Anthropic, Gemini, or any OpenAI-compatible
+gateway.
 
-## Configuration
-
-The canonical files are TOML:
-
-```text
-.saya/config.toml
-.saya/connections.toml
-~/.config/saya/config.toml
-~/.config/saya/connections.toml
-```
-
-Session files default to the platform user-data directory: `SAYA_SESSION_DIR`
-if set, then `$XDG_DATA_HOME/saya/sessions`, `%APPDATA%/saya/sessions`, or
-`~/.local/share/saya/sessions`. The override is useful for tests and CI.
-
-Use `--config` and `--connections` for explicit paths. Use `--env-file` to opt
-into a dotenv-style file; `.env` is never loaded automatically. Process
-environment values override explicit env-file values. Store only secret
-references such as `{ env = "SAYA_ANALYTICS_PASSWORD" }`, never passwords or
-API keys, in committed files. See [configuration](docs/configuration.md) and
-[connections](docs/connections.md).
-
-For a local Ollama setup, use a config file plus an explicit env file:
-
-```toml
-# .saya/config.toml
-[ai]
-provider = "ollama"
-model = "qwen2.5-coder:14b"
-base_url = "http://localhost:11434"
-```
-
-```dotenv
-# .env.saya (do not commit)
-SAYA_PROVIDER=ollama
-SAYA_MODEL=qwen2.5-coder:14b
-SAYA_PROVIDER_BASE_URL=http://localhost:11434
-```
-
-For an OpenAI-compatible service, use a runtime-only API-key reference:
-
-```toml
-[ai]
-provider = "openai_compatible"
-model = "your-model"
-base_url = "https://api.example.test/v1"
-api_key = { env = "SAYA_API_KEY" }
-```
-
-```dotenv
-SAYA_API_KEY=replace-me
-```
-
-The connection file remains separate:
-
-```toml
-[profiles.analytics]
-type = "postgresql"
-host = "localhost"
-port = 5432
-database = "warehouse"
-user = "saya_readonly"
-password = { env = "SAYA_ANALYTICS_PASSWORD" }
-sslmode = "require"
-```
-
-`saya config init` refuses to overwrite either project file and makes a
-best-effort rollback after an ordinary creation error; it is not crash-atomic.
-It emits one stable result event in text, JSON, or NDJSON. The generated
-templates contain SecretRefs only; they never contain credentials.
-
-MySQL uses the same SecretRef password pattern. Its safe default is
-`verify-identity`; use `disable` only for an explicitly local development
-server. Supported modes are `disable`, `prefer`, `require`, `verify-ca`, and
-`verify-identity`:
-
-```toml
-[profiles.mysql]
-type = "mysql"
-host = "localhost"
-port = 3306
-database = "warehouse"
-user = "saya_readonly"
-password = { env = "SAYA_MYSQL_PASSWORD" }
-sslmode = "verify-identity"
-# ssl_ca = { file = "/etc/ssl/certs/mysql-ca.pem" }
-```
-
-Snowflake accounts use an account identifier such as `xy12345` or
-`org-account.us-east-1.aws`, not a URL. Key-pair, password, and interactive
-browser authentication are supported:
-
-```toml
-[profiles.snowflake_keypair]
-type = "snowflake"
-account = "org-account.us-east-1.aws"
-user = "jane"
-auth_type = "keypair"
-private_key = { file = "/absolute/path/to/rsa_key.p8" }
-passphrase = { env = "SAYA_SNOWFLAKE_PASSPHRASE" }
-warehouse = "ANALYTICS"
-database = "PROD"
-schema = "PUBLIC"
-role = "ANALYST"
-
-[profiles.snowflake_userpass]
-type = "snowflake"
-account = "org-account.us-east-1.aws"
-user = "jane"
-auth_type = "userpass"
-password = { env = "SAYA_SNOWFLAKE_PASSWORD" }
-
-[profiles.snowflake_browser]
-type = "snowflake"
-account = "org-account.us-east-1.aws"
-user = "jane"
-auth_type = "externalbrowser"
-```
-
-File SecretRef paths are literal strings: `~` and environment variables are
-not expanded. The current runtime supports `env` and `file` SecretRefs;
-`{ keyring = "..." }` is a reserved shape and currently reports unavailable.
-For an environment-only profile, use an explicit env file or process
-environment with `SAYA_DB_TYPE`, `SAYA_DB_ACCOUNT`, `SAYA_DB_USER`, and
-`SAYA_DB_AUTH_TYPE`, plus `SAYA_DB_PRIVATE_KEY` for keypair or
-`SAYA_DB_PASSWORD` for userpass. Process environment overrides `--env-file`.
-`SAYA_DB_PRIVATE_KEY` is raw PEM content. Because env files are line-oriented
-and literal `\n` is not converted to a newline, put keypair PEM in a
-connections.toml file SecretRef such as `{ file = "/absolute/path/to/rsa_key.p8" }`,
-or provide raw multiline PEM through a process environment that preserves it.
-Browser authentication requires an interactive TTY and opens a system browser;
-it fails before binding, network, or browser launch with `--non-interactive` or
-piped input, and the localhost callback expires after 120 seconds.
-
-For a file-backed DuckDB profile, set `read_only` explicitly. `:memory:` may
-omit it. DuckDB external access, extension autoloading, community extensions,
-and persistent secrets are locked off by the CLI:
-
-```toml
-[profiles.local]
-type = "duckdb"
-path = "./data/warehouse.duckdb"
-read_only = true
-```
-
-A file-backed SQLite profile follows the same shape; `read_only` defaults to
-true and opens the file with `PRAGMA query_only = ON` (an in-memory `:memory:`
-path is rejected — point it at a file):
-
-```toml
-[profiles.sqlite_local]
-type = "sqlite"
-path = "./data/warehouse.sqlite3"
-read_only = true
-```
-
-Run `saya --env-file .env.saya --connections .saya/connections.toml
---approval-mode read-only ask "show revenue"`. The newer provider env names
-(`SAYA_PROVIDER`, `SAYA_MODEL`, `SAYA_PROVIDER_BASE_URL`, `SAYA_API_KEY`) have
-the same precedence as the established `SAYA_AI_*` aliases.
+One-shot, no TUI:
 
 ```bash
-saya config doctor
-saya config show --format json
-saya connection test analytics --connections examples/connections.toml
-saya connection schema analytics --connections examples/connections.toml
-saya --non-interactive connection test snowflake_keypair \
-  --connections examples/connections.toml
-saya --non-interactive connection schema snowflake_keypair \
-  --connections examples/connections.toml
-saya --non-interactive --env-file .env.snowflake \
-  --profile snowflake_userpass connection test snowflake_userpass
-saya --profile snowflake_browser connection test snowflake_browser
-saya query --profile analytics --sql "SELECT current_database()"
-saya --non-interactive --profile snowflake_keypair query \
-  --sql "SELECT CURRENT_DATABASE()"
-saya --profile snowflake_browser --approval-mode read-only ask \
-  "summarize the selected schema"
-saya connection test local --connections examples/connections.toml
-saya query --profile local --connections examples/connections.toml --sql "SELECT 1"
-saya --profile local --approval-mode read-only ask "summarize the local schema"
+saya ask "how many orders shipped last week?"
+saya query --sql "SELECT count(*) FROM orders"
 ```
 
-Schema discovery is cached in a private local SQLite state database. Live
-authentication is always attempted first; stale fallback is explicitly marked,
-and `connection schema --refresh` or interactive `/schema refresh` invalidates
-before discovery. Set `SAYA_STATE_DB` to override the platform data path.
+## What you get
 
-`--non-interactive` is valid for Snowflake keypair and userpass profiles, but
-not for `externalbrowser`, which requires an interactive TTY.
+- 🖥️ **A real terminal UI** — bottom-pinned input, streaming answers, a `/`
+  command popup with fuzzy matching, `@table` schema autocomplete, and copy-out
+  with `Ctrl+O` / `Ctrl+Y` / `Ctrl+B`. ([demo](docs/demo.gif))
+- 🛡️ **You see the SQL before it runs** — the exact statement appears in the
+  approval prompt and the transcript. `--approval-mode` picks `ask`,
+  `read-only`, or `never`.
+- 🧠 **Memory** — tell saya what a table means once and later questions carry
+  it. Facts are typed, bound to the schema shape they depend on, and go stale
+  when a column they rest on changes. saya never confirms a fact by itself and
+  never picks between contradictions. Off by default.
+  → [memory](docs/memory.md)
+- 🔌 **Databases** — PostgreSQL, MySQL, SQLite, DuckDB, Snowflake — and one
+  question can span several connected databases at once, with results side by
+  side. ([demo](docs/demo-cross.gif))
+- 🤖 **Providers** — Ollama, OpenAI, OpenAI-compatible gateways, Anthropic,
+  Gemini.
+- ⚙️ **Scriptable** — piped or non-TTY input runs headless with text, JSON, or
+  NDJSON output, and typed exit codes.
 
-## Privacy and limitations
+## Safety
 
-The intended MVP policy is read-only, bounded queries with cloud row sharing
-disabled. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake reject parse failures, writes, DDL, transaction/control
-statements, and multi-statements before execution. Results are bounded by both a
-row cap (one extra row is observed to mark truncation) and byte budgets — a 1 MiB
-per-cell cap and a 16 MiB total-result cap — and `truncated` is set when either
-limit is reached. Schema discovery is auto-allowed; bounded SQL is
-auto-approved only with `read-only`, denied with `never`, and explicitly
-confirmed per query with `ask`. A non-TTY `ask` request is denied safely.
-OpenAI, OpenAI-compatible, Anthropic, and Gemini providers are treated as
-cloud: when sharing is disabled, they receive schema metadata but not SQL tools
-or row data. Ollama is treated as local for this MVP. `/privacy`, `/model`,
-`/provider`, and `/connect` apply to the next interactive prompt. `/include`
-(and `--include-profile`) connect additional read-only databases, and the agent
-navigates between all connected databases by passing an optional `connection`
-argument to its schema and query tools; the primary database is the default.
-Fully offline agent use and release signing are not implemented. Provider
-execution covers Ollama, OpenAI, OpenAI-compatible endpoints, Anthropic, and
-Gemini.
-saya also enforces read-only at the **database session level** (PostgreSQL
+saya is read-only in two layers. Every statement is parsed and rejected if it
+writes, and the database session itself is opened read-only — Postgres
 `default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
-`query_only`, and a read-only DuckDB open) on top of the AST checks. Because AST
-checks cannot prove that an arbitrary database function is side-effect free — and
-Snowflake has no equivalent session switch — connect with a least-privilege,
-read-only database role and give DuckDB/SQLite file paths least-privilege
-filesystem permissions.
-Resolved config secrets, provider headers, and raw query rows are structurally
-excluded from session files. Known credential-shaped text is redacted, but
-redaction cannot identify every arbitrary secret—never paste credentials into
-prompts. See [SECURITY.md](SECURITY.md).
+`PRAGMA query_only`, a read-only DuckDB open. Results are bounded by a row cap
+and byte budgets, and marked when truncated.
 
-Unavailable or failed connection/schema operations return `3`, while safety and
-query failures return `4`; provider/agent failures return `5`. Non-interactive
-mode defaults to `never` approval (schema-only) unless `--approval-mode` is
-explicit; interactive sessions default to `ask`. This MVP streams token
-deltas from Ollama, OpenAI, OpenAI-compatible, and Anthropic chat providers, and returns Gemini
-responses as a single buffered reply. Text output writes
-deltas as they arrive; JSON and NDJSON each write one stable JSON event envelope per delta.
-Requests retry retryable connection setup failures, HTTP 429, and 5xx responses only before the
-provider yields an event. A body transport failure is surfaced without retry because replaying a
-partially consumed response cannot be proved action-free. `Ctrl+C` cancels a one-shot request with
-exit code 130; during an interactive request it returns to the `saya>` prompt without persisting
-the incomplete turn. Interactive prompts and `--continue`/`--resume` use bounded, redacted
-user/assistant history, and `/clear` removes visible and provider context. Session files persist
-provider/model/profile/privacy/approval settings and safe tool name/status metadata. Database-derived
-assistant turns are persisted locally after redaction but omitted from cloud provider history when
-sharing is disabled; v1 files fall back to current runtime settings. Raw tool arguments, tool
-responses, credentials, headers, and raw tool-result rows are not persisted or reconstructed as
-provider history. A natural-language assistant answer may still contain database values.
+Secrets live in your environment or on disk as *references*, never inline in
+committed config. Resolved secrets, provider headers, and raw result rows are
+structurally excluded from saved sessions.
+
+Neither layer can prove that an arbitrary database function is side-effect
+free, and Snowflake has no session read-only switch — so connect with a
+least-privilege, read-only database role. → [SECURITY.md](SECURITY.md)
+
+## Documentation
+
+`saya --help` and `/help` in the TUI are generated from the code, so they are
+always current — start there for flags and commands. The guides cover the rest:
+
+| Guide | Covers |
+| --- | --- |
+| [Installation](docs/installation.md) | binaries, Homebrew, cargo, building from source |
+| [Configuration](docs/configuration.md) | config layers, environment variables, state paths |
+| [Connections](docs/connections.md) | every database type, TLS modes, secret references |
+| [Providers](docs/providers.md) | every supported provider and its settings |
+| [Commands](docs/commands.md) | the CLI surface and output formats |
+| [Querying databases](docs/querying-databases.md) | worked examples, cross-database queries |
+| [Memory](docs/memory.md) | what saya remembers, and the trust model behind it |
 
 ## Development
 
 ```bash
 cargo fmt --check
-cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The project is Apache-2.0 licensed.
+The demo GIFs are generated with [vhs](https://github.com/charmbracelet/vhs)
+from the `docs/*.tape` scripts; the live ones need `SAYA_API_KEY` and a
+reachable database.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Apache-2.0 licensed.
