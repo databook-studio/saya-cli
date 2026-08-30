@@ -62,6 +62,7 @@ pub(crate) fn trace_extraction(
     object_count: usize,
     proposal_count: Option<usize>,
     error: Option<&str>,
+    elapsed: Option<std::time::Duration>,
 ) {
     if !enabled() {
         return;
@@ -74,7 +75,15 @@ pub(crate) fn trace_extraction(
         Some(e) => format!(" error={e}"),
         None => String::new(),
     };
-    eprintln!("saya extraction: outcome={outcome} objects={object_count}{proposals}{err}");
+    // Duration is what tells you whether EXTRACTION_TIMEOUT is generous or
+    // tight against a given gateway. Without it a `timed_out` line says the cap
+    // fired but not how close the successful turns were to it, which is the
+    // number the cap should be set from.
+    let ms = match elapsed {
+        Some(d) => format!(" ms={}", d.as_millis()),
+        None => String::new(),
+    };
+    eprintln!("saya extraction: outcome={outcome} objects={object_count}{proposals}{err}{ms}");
 }
 
 #[cfg(test)]

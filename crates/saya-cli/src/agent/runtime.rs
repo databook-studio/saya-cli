@@ -182,6 +182,10 @@ pub(crate) async fn run_prompt_with_inputs(
         );
         if gate.is_run() {
             let object_count = turn_record.object_table.len();
+            // The answer is already on screen; this call is what the adapter is
+            // still waiting on, so say so before starting it.
+            sink.emit(AgentEvent::KnowledgeLearningStarted).await;
+            let extraction_started = std::time::Instant::now();
             let extraction_res = tokio::time::timeout(
                 super::learning::EXTRACTION_TIMEOUT,
                 super::learning::run_extraction(
@@ -194,11 +198,18 @@ pub(crate) async fn run_prompt_with_inputs(
                 ),
             )
             .await;
+            let extraction_elapsed = Some(extraction_started.elapsed());
 
             match extraction_res {
                 // Happy path: emit one proposal event per persisted claim.
                 Ok(Ok(dtos)) => {
-                    trace_extraction("ok", object_count, Some(dtos.len()), None);
+                    trace_extraction(
+                        "ok",
+                        object_count,
+                        Some(dtos.len()),
+                        None,
+                        extraction_elapsed,
+                    );
                     for dto in dtos {
                         sink.emit(AgentEvent::knowledge_proposed(dto)).await;
                     }
@@ -206,7 +217,13 @@ pub(crate) async fn run_prompt_with_inputs(
                 // Extraction errored (provider/parse/ingest). Surface the skip;
                 // never propagate (Safety Property 1: fail-soft isolation).
                 Ok(Err(error)) => {
-                    trace_extraction("failed", object_count, Some(0), Some(&error.to_string()));
+                    trace_extraction(
+                        "failed",
+                        object_count,
+                        Some(0),
+                        Some(&error.to_string()),
+                        extraction_elapsed,
+                    );
                     sink.emit(AgentEvent::knowledge_learning_skipped(
                         saya_agent::LearningSkipReason::Failed,
                     ))
@@ -214,7 +231,7 @@ pub(crate) async fn run_prompt_with_inputs(
                 }
                 // Timeout fired before extraction returned; same fail-soft rule.
                 Err(_) => {
-                    trace_extraction("timed_out", object_count, Some(0), None);
+                    trace_extraction("timed_out", object_count, Some(0), None, extraction_elapsed);
                     sink.emit(AgentEvent::knowledge_learning_skipped(
                         saya_agent::LearningSkipReason::TimedOut,
                     ))
@@ -224,7 +241,13 @@ pub(crate) async fn run_prompt_with_inputs(
         } else {
             // Gate decline stays silent on screen (decision 2); trace it for
             // observability when debugging the boundary.
-            trace_extraction("gate_declined", turn_record.object_table.len(), None, None);
+            trace_extraction(
+                "gate_declined",
+                turn_record.object_table.len(),
+                None,
+                None,
+                None,
+            );
         }
     }
 
