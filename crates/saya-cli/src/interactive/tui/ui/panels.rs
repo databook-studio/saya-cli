@@ -12,6 +12,54 @@ use ratatui::{
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
+/// The splash mascot, in two sizes. Every row is padded to the same width so
+/// `Alignment::Center` shifts them all by the same amount — a ragged row would
+/// centre on its own width and skew the art. The `▌` is the cursor mouth and is
+/// styled separately, so it reads as a cursor rather than as more of the body.
+const SPLASH_ART: [&str; 8] = [
+    "      \u{2588}      ",
+    "    \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    ",
+    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
+    "\u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}",
+    "  \u{2588}\u{2588}\u{2588} \u{258c} \u{2588}\u{2588}\u{2588}  ",
+    "    \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    ",
+    "      \u{2588}      ",
+    "      \u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591} ",
+];
+
+/// The compact mascot, used when the full one would push the splash off-screen.
+const SPLASH_ART_COMPACT: [&str; 5] = [
+    "    \u{2588}    ",
+    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
+    "\u{2588}\u{2588}  \u{2588}  \u{2588}\u{2588}",
+    "  \u{2588} \u{258c} \u{2588}  ",
+    "    \u{2588}    ",
+];
+
+/// Builds the mascot rows: the body carries the accent, the cast-shadow row
+/// recedes into secondary, and the cursor mouth takes the foreground so it
+/// reads as a cursor.
+fn splash_art_lines(rows: &[&'static str]) -> Vec<Line<'static>> {
+    rows.iter()
+        .map(|row| {
+            // The cast-shadow row is the only one built from the shade glyph.
+            if row.contains('\u{2591}') {
+                return Line::from(Span::styled(*row, Style::default().fg(secondary())));
+            }
+            let Some(mouth) = row.find('\u{258c}') else {
+                return Line::from(Span::styled(*row, Style::default().fg(accent())));
+            };
+            let (head, rest) = row.split_at(mouth);
+            let (cursor, tail) = rest.split_at('\u{258c}'.len_utf8());
+            Line::from(vec![
+                Span::styled(head, Style::default().fg(accent())),
+                Span::styled(cursor, Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(tail, Style::default().fg(accent())),
+            ])
+        })
+        .collect()
+}
+
 /// Spinner frames shown while an agent request is streaming.
 pub(super) const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -148,6 +196,24 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
         "/ commands     @ tables     ? help     Ctrl+C quit",
         Style::default().fg(secondary()),
     )));
+
+    // Fit the largest mascot that still leaves the whole splash on screen. A
+    // short terminal drops it rather than pushing the tagline and hints off the
+    // top — the art is decoration, the text is the thing that has to be read.
+    let height = area.height as usize;
+    let art = if height > content.len() + SPLASH_ART.len() {
+        Some(&SPLASH_ART[..])
+    } else if height > content.len() + SPLASH_ART_COMPACT.len() {
+        Some(&SPLASH_ART_COMPACT[..])
+    } else {
+        None
+    };
+    if let Some(rows) = art {
+        let mut with_art = splash_art_lines(rows);
+        with_art.push(Line::from(""));
+        with_art.extend(content);
+        content = with_art;
+    }
 
     let content_len = content.len();
     let pad = (area.height as usize).saturating_sub(content_len) / 2;
