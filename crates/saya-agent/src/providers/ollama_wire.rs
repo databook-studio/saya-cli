@@ -1,5 +1,5 @@
 use super::wire::{WireTool, tools};
-use crate::{ChatMessage, ChatRequest, ToolCall};
+use crate::{ChatMessage, ChatRequest, ResponseFormat, ToolCall};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -8,6 +8,12 @@ pub(crate) struct OllamaRequest {
     pub messages: Vec<OllamaMessage>,
     pub tools: Vec<WireTool>,
     pub stream: bool,
+    /// Ollama's `format` field — `"json"` constrains the response to valid
+    /// JSON. Only present when the caller asked for JSON (the Ollama spelling of
+    /// [`ChatRequest::response_format`]); omitted for `Text` so the default
+    /// prose path is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -35,6 +41,10 @@ pub(crate) fn request(request: ChatRequest) -> OllamaRequest {
         messages: messages(request.messages),
         tools: tools(request.tools),
         stream: true,
+        format: match request.response_format {
+            ResponseFormat::JsonObject => Some("json"),
+            ResponseFormat::Text => None,
+        },
     }
 }
 
@@ -55,5 +65,54 @@ fn tool_call(call: ToolCall) -> OllamaToolCall {
             name: call.name,
             arguments: call.arguments,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{LocalStateEffect, ToolDefinition, ToolEffect};
+
+    fn request_with(format: ResponseFormat) -> ChatRequest {
+        ChatRequest {
+            model: "test-model".into(),
+            messages: vec![ChatMessage::text("user", "extract")],
+            tools: vec![ToolDefinition {
+                name: "schema_discovery".into(),
+                description: "schema".into(),
+                read_only: true,
+                parameters: serde_json::json!({"type": "object"}),
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::None,
+                },
+            }],
+            response_format: format,
+        }
+    }
+
+    /// Q2: a JSON-mode request carries Ollama's `format: "json"` spelling.
+    #[test]
+    fn json_object_request_carries_format_json_on_wire() {
+        let body = request(request_with(ResponseFormat::JsonObject));
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            json.contains(r#""format":"json""#),
+            "format json must appear on the wire: {json}"
+        );
+    }
+
+    /// Invariant 1 / Q2: a `Text` (default) request omits `format`, so the prose
+    /// path is unchanged.
+    #[test]
+    fn text_request_omits_format_on_wire() {
+        let body = request(request_with(ResponseFormat::Text));
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            !json.contains(r#""format""#),
+            "text request must not carry format: {json}"
+        );
     }
 }

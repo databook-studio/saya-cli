@@ -72,6 +72,7 @@ mod context_block_tests {
             model: "m".into(),
             messages,
             tools: definitions(),
+            ..Default::default()
         }
     }
 

@@ -86,6 +86,7 @@ fn request() -> ChatRequest {
                 local_state: LocalStateEffect::None,
             },
         }],
+        ..Default::default()
     }
 }
 

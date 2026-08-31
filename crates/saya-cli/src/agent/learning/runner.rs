@@ -1,6 +1,6 @@
 //! Post-turn structured extraction execution runner — spec F Chunk 4.
 
-use saya_agent::{ChatProvider, ProposedClaimDto, ProviderError};
+use saya_agent::{ChatProvider, ChatRequest, ProposedClaimDto, ProviderError, ResponseFormat};
 use saya_store::KnowledgeItemStore;
 use std::fmt;
 
@@ -63,6 +63,18 @@ pub(crate) async fn run_extraction(
     }
 
     let request = build_extraction_prompt(record, model);
+    // JSON mode lives here, not in the prompt builder: `build_extraction_prompt`
+    // assembles the prompt (its text is out of scope for this slice); the
+    // *policy* — "this is the extraction call, so the response must be a single
+    // JSON object" — belongs to the caller that knows what the call is for.
+    // On a reasoning model this stops the chain-of-thought we never read,
+    // cutting the post-turn wait from seconds to ~1s (spec S19). A provider that
+    // cannot honour it degrades to today's behaviour (the prompt already asks
+    // for JSON, `strip_markdown_fences` handles fences), never to an error.
+    let request = ChatRequest {
+        response_format: ResponseFormat::JsonObject,
+        ..request
+    };
     let response = provider.complete(request).await?;
     let extracted = parse_extraction_response(&response.message.content, &record.object_table)?;
     if extracted.is_empty() {
@@ -129,6 +141,26 @@ mod tests {
         }
         async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
             Err(ProviderError::configuration("http 500 server error"))
+        }
+    }
+
+    /// A provider that records the one `ChatRequest` `run_extraction` sent, so
+    /// the JSON-mode intent can be asserted at the call boundary (deliverable 4).
+    struct RecordingProvider {
+        response_text: String,
+        captured: Mutex<Option<ChatRequest>>,
+    }
+
+    #[async_trait]
+    impl ChatProvider for RecordingProvider {
+        fn name(&self) -> &str {
+            "recording-provider"
+        }
+        async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            *self.captured.lock().unwrap() = Some(request);
+            Ok(ChatResponse {
+                message: ChatMessage::text("assistant", &self.response_text),
+            })
         }
     }
 
@@ -334,6 +366,54 @@ mod tests {
         .await;
 
         assert!(matches!(res, Err(ExtractionRunnerError::Provider(_))));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Deliverable 4: the request `run_extraction` sends to the provider carries
+    /// the JSON intent (`ResponseFormat::JsonObject`), so a reasoning model skips
+    /// the chain-of-thought we discard. This is the one call in saya that sets
+    /// it — the main loop's request does not (see `receive.rs`).
+    #[tokio::test]
+    async fn run_extraction_sets_json_mode_on_the_provider_request() {
+        let identity = test_identity("analytics");
+        let registry = test_registry("analytics", &identity);
+        let root = temp_root("json_mode");
+        let store = SqliteStateStore::new(root.join("state.sqlite3"));
+        let receipt = RecallReceipt::ran_empty(false);
+
+        let mut object_table = TurnObjectTable::new();
+        object_table.register("analytics", "raw.orders", &["status".into()]);
+
+        let record = TurnRecord {
+            prompt: "what is orders status".into(),
+            assistant_answer: "status is pending".into(),
+            object_table,
+            user_corrections: Vec::new(),
+            override_findings: Vec::new(),
+            supplied_claims: Vec::new(),
+        };
+
+        let provider = RecordingProvider {
+            response_text: r#"{"proposals": []}"#.into(),
+            captured: Mutex::new(None),
+        };
+
+        let res = run_extraction(&provider, "glm-5.2", &record, &registry, &store, &receipt)
+            .await
+            .expect("extraction succeeds");
+
+        assert!(res.is_empty(), "empty-proposal response stores nothing");
+        let sent = provider
+            .captured
+            .lock()
+            .unwrap()
+            .take()
+            .expect("a request was sent to the provider");
+        assert_eq!(
+            sent.response_format,
+            ResponseFormat::JsonObject,
+            "the extraction call must request JSON mode"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
