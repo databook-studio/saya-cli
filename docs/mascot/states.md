@@ -1,34 +1,50 @@
-# Terminal states
+# The mascot
 
-The art is one string. Only the cursor glyph changes — substitute the character
-at the mouth position and the whole expression system falls out of it.
+saya is an owl: it watches everything and touches nothing, which is what
+read-only means. Its pupils are terminal cursors — the one detail that keeps the
+mark saya's rather than a generic bird, and the only thing the state system
+changes.
 
-| State | Glyph | Behaviour |
+## Terminal states
+
+The pupils are two glyphs in one row of the block art. Substitute them and the
+whole expression system falls out of it.
+
+| State | Pupils | Behaviour |
 | --- | --- | --- |
-| idle | `▌` / ` ` | alternate on a ~575ms timer |
-| thinking | `▌` / ` ` | alternate on a ~250ms timer |
-| answering | `█` | solid, no timer |
-| error | `─` | solid, rendered in red `#e5695f` |
+| idle | `▐` `▌` | steady, with an occasional blink |
+| thinking | `▐` `▌` | blink quickly, or track side to side in SVG |
+| answering | `█` `█` | solid and wide, no timer |
+| error | `─` `─` | flat, rendered in red `#e5695f` |
 
-Colours: body in iris `#9d8bf5`, cast-shadow row in a dimmed iris `#574f6e`.
+Colours: body in iris `#9d8bf5`, shade in `#8171e6`, sockets and beak in ink
+`#17151f`, pupils in the foreground. The pupils converge — `▐` in the left
+socket, `▌` in the right — so the owl reads as focused rather than vacant.
 
-## SVG assets
+## Assets
 
 | File | Use |
 | --- | --- |
-| `saya-shadow.svg` | the README header — cast shadow, blinking cursor |
-| `saya-shadow-static.svg` | same, no animation (print, or anywhere motion is unwanted) |
-| `saya-mark.svg` | the bare mark, no shadow — favicons, avatars, small sizes |
-| `states/*.svg` | the four terminal states above, as SVG |
+| `saya-owl.svg` | the README header — ground shadow, blinking eyelid |
+| `saya-owl-static.svg` | same, no animation (print, or anywhere motion is unwanted) |
+| `saya-mark.svg` | the bare mark, no ground — favicons, avatars, small sizes |
+| `states/*.svg` | the four states above |
+| `splash.txt`, `splash-compact.txt` | the block art, mirrored in `ui/splash.rs` |
 
-All seven share one body path and one face geometry; edit them together or the
-family drifts. Two rules the current shapes encode:
+All the SVGs share one body path and one face geometry; edit them together or
+the family drifts. Three rules the current shapes encode, each of which was a
+mistake first:
 
-- The shade is a **rim** clipped to the lower-right edge (`M52 200 L200 52 L200
-  200 Z`), not a half-and-half split. A vertical split bisects the face and
-  reads as a crease rather than as light.
-- The cursor is **narrower and taller** than the eyes (9×22 against 14×19). Give
-  it the eyes' proportions and it reads as a third eye instead of a cursor.
+- The shade is a **crescent** — the body filled in shade, then a large offset
+  circle of the body colour clipped to the silhouette. A straight-edged band
+  reads as a crease across a round form, and a half-and-half split bisects the
+  face.
+- Idle blinks with an **eyelid**, not by hiding the pupils. Fading a pupil out
+  leaves a black void where the cursor was, which reads as an empty stare. The
+  block art gets this free: its sockets are gaps, so a missing pupil is a closed
+  eye.
+- The pupils are **taller than they are wide**. Give them the sockets'
+  proportions and they stop reading as cursors.
 
-The cursor blinks 72% on / 28% off — longer than a real terminal cursor, so a
-screenshot or social-card thumbnail is unlikely to catch the mascot mouthless.
+The block art is duplicated in `ui/splash.rs` rather than loaded from these
+files, so the binary needs no assets at runtime. Change one, change both.

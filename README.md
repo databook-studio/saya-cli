@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/mascot/saya-shadow.svg" width="170" alt="">
+  <img src="docs/mascot/saya-owl.svg" width="170" alt="">
 </p>
 
 <h1 align="center">SAYA CLI</h1>

@@ -1,18 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 176" width="176" height="176" role="img" aria-label="saya, thinking — cursor blinking quickly">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="saya, thinking — pupils tracking side to side">
   <title>saya — thinking</title>
   <style>
-    .saya-cursor { animation: saya-blink 0.5s steps(1, end) infinite; }
-    @keyframes saya-blink { 0%, 55% { opacity: 1 } 56%, 100% { opacity: 0 } }
-    @media (prefers-reduced-motion: reduce) { .saya-cursor { animation: none } }
+    /* Thinking is the one state that has to read as work happening, so the
+       pupils track rather than blink. */
+    .scan { animation: saya-scan 1.5s ease-in-out infinite; }
+    @keyframes saya-scan {
+      0%, 100% { transform: translateX(-7px) }
+      50%      { transform: translateX(7px) }
+    }
+    @media (prefers-reduced-motion: reduce) { .scan { animation: none } }
   </style>
-  <defs><clipPath id="saya-body-t"><path d="M107.6 31.6 L168.4 92.4 Q176 100 168.4 107.6 L107.6 168.4 Q100 176 92.4 168.4 L31.6 107.6 Q24 100 31.6 92.4 L92.4 31.6 Q100 24 107.6 31.6 Z"/></clipPath></defs>
-  <g transform="translate(-12,-12)">
-    <path fill="#9d8bf5" d="M107.6 31.6 L168.4 92.4 Q176 100 168.4 107.6 L107.6 168.4 Q100 176 92.4 168.4 L31.6 107.6 Q24 100 31.6 92.4 L92.4 31.6 Q100 24 107.6 31.6 Z"/>
-    <path fill="#8171e6" d="M52 200 L200 52 L200 200 Z" clip-path="url(#saya-body-t)"/>
-    <g fill="#17151f">
-      <rect x="74" y="80" width="14" height="19" rx="5"/>
-      <rect x="112" y="80" width="14" height="19" rx="5"/>
-    </g>
-    <rect class="saya-cursor" x="95.5" y="108" width="9" height="22" rx="1.5" fill="#17151f"/>
-  </g>
+  <defs><clipPath id="body-thinking"><path d="M100 26 C146 26 172 62 172 106 C172 152 141 182 100 182 C59 182 28 152 28 106 C28 62 54 26 100 26 Z"/></clipPath><clipPath id="eye-thinking-0"><circle cx="68" cy="94" r="27"/></clipPath><clipPath id="eye-thinking-1"><circle cx="132" cy="94" r="27"/></clipPath></defs>
+  <path d="M44 60 L58 14 L88 44 Z" fill="#8171e6"/>
+  <path d="M156 60 L142 14 L112 44 Z" fill="#8171e6"/>
+  <path d="M67 186 q13 -9 26 0" fill="none" stroke="#17151f" stroke-width="7" stroke-linecap="round"/>
+  <path d="M107 186 q13 -9 26 0" fill="none" stroke="#17151f" stroke-width="7" stroke-linecap="round"/>
+  <!-- Shade first, then a large offset circle of the body colour clipped to the
+       silhouette: what the circle misses is a crescent rim that follows the
+       curve. A straight-edged band reads as a crease on a round form. -->
+  <path d="M100 26 C146 26 172 62 172 106 C172 152 141 182 100 182 C59 182 28 152 28 106 C28 62 54 26 100 26 Z" fill="#8171e6"/>
+  <circle cx="70" cy="80" r="104" fill="#9d8bf5" clip-path="url(#body-thinking)"/>
+  <circle cx="68" cy="94" r="27" fill="#17151f"/>
+  <circle cx="132" cy="94" r="27" fill="#17151f"/>
+  <rect class="scan" x="63.5" y="83" width="9" height="22" rx="2" fill="#9d8bf5"/>
+  <rect class="scan" x="127.5" y="83" width="9" height="22" rx="2" fill="#9d8bf5"/>
+  <path d="M100 126 L109 145 L91 145 Z" fill="#17151f"/>
 </svg>

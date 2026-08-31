@@ -27,28 +27,31 @@ pub(super) const NO_DATABASE_STEPS: [&str; 3] = [
 /// The closing line, after a blank row.
 pub(super) const NO_DATABASE_FOOTER: &str = "`saya config doctor` explains anything still missing.";
 
-/// The splash mascot. Every row is padded to the same width so
-/// `Alignment::Center` shifts them all by the same amount — a ragged row would
-/// centre on its own width and skew the art. The `▌` is the cursor mouth and is
-/// styled separately, so it reads as a cursor rather than as more of the body.
+/// The splash mascot: an owl whose pupils are terminal cursors.
+///
+/// Every row is padded to the same width so `Alignment::Center` shifts them all
+/// by the same amount — a ragged row centres on its own width and skews the
+/// figure. The pupils converge (`▐` in the left socket, `▌` in the right) so the
+/// owl reads as focused rather than vacant; the sockets themselves are gaps, so
+/// when a pupil is absent the eye reads as closed rather than as a hole.
 const SPLASH_ART: [&str; 8] = [
-    "      \u{2588}      ",
-    "    \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    ",
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
-    "\u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}",
-    "  \u{2588}\u{2588}\u{2588} \u{258c} \u{2588}\u{2588}\u{2588}  ",
-    "    \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    ",
-    "      \u{2588}      ",
-    "      \u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591} ",
+    "   \u{2584}\u{2584}       \u{2584}\u{2584}   ",
+    "   \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}   ",
+    " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588} ",
+    " \u{2588}\u{2588}\u{2588} \u{2590} \u{2588}\u{2588}\u{2588} \u{258c} \u{2588}\u{2588}\u{2588} ",
+    " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{25bc}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588} ",
+    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
+    "    \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    ",
+    "     \u{2580}\u{2580}   \u{2580}\u{2580}     ",
 ];
 
 /// The compact mascot, used when the full one would push the splash off-screen.
 const SPLASH_ART_COMPACT: [&str; 5] = [
-    "    \u{2588}    ",
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
-    "\u{2588}\u{2588}  \u{2588}  \u{2588}\u{2588}",
-    "  \u{2588} \u{258c} \u{2588}  ",
-    "    \u{2588}    ",
+    "  \u{2584}     \u{2584}  ",
+    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
+    " \u{2588}\u{2588} \u{2590} \u{258c} \u{2588}\u{2588} ",
+    " \u{2588}\u{2588}\u{2588}\u{2588}\u{25bc}\u{2588}\u{2588}\u{2588}\u{2588} ",
+    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
 ];
 
 /// The largest mascot that still leaves `content_len` lines of splash text on
@@ -68,26 +71,39 @@ pub(super) fn splash_art(
     }
 }
 
-/// Builds the mascot rows: the body carries the accent, the cast-shadow row
-/// recedes into secondary, and the cursor mouth takes the foreground so it
-/// reads as a cursor.
+/// How one glyph of the art is painted.
+///
+/// The art only ever draws the idle face, so `█` is unambiguously body: the
+/// states that would reuse it as a pupil are not rendered here. Were that to
+/// change, the pupils would need their own glyphs rather than a shared one.
+fn glyph_style(ch: char) -> Style {
+    match ch {
+        // The pupils are the cursor — the one part the state system substitutes.
+        '\u{258c}' | '\u{2590}' => Style::default().add_modifier(Modifier::BOLD),
+        // Beak and talons recede so the eyes stay the focus.
+        '\u{25bc}' | '\u{2580}' => Style::default().fg(secondary()),
+        _ => Style::default().fg(accent()),
+    }
+}
+
+/// Builds the mascot rows, coalescing runs of same-styled glyphs so a row is a
+/// handful of spans rather than one per cell.
+///
+/// This walks the row instead of splitting on a single cursor: the owl has two
+/// pupils, and the previous single-split version silently dropped everything
+/// after the first one.
 fn art_lines(rows: &[&'static str]) -> Vec<Line<'static>> {
     rows.iter()
         .map(|row| {
-            // The cast-shadow row is the only one built from the shade glyph.
-            if row.contains('\u{2591}') {
-                return Line::from(Span::styled(*row, Style::default().fg(secondary())));
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            for ch in row.chars() {
+                let style = glyph_style(ch);
+                match spans.last_mut() {
+                    Some(last) if last.style == style => last.content.to_mut().push(ch),
+                    _ => spans.push(Span::styled(ch.to_string(), style)),
+                }
             }
-            let Some(mouth) = row.find('\u{258c}') else {
-                return Line::from(Span::styled(*row, Style::default().fg(accent())));
-            };
-            let (head, rest) = row.split_at(mouth);
-            let (cursor, tail) = rest.split_at('\u{258c}'.len_utf8());
-            Line::from(vec![
-                Span::styled(head, Style::default().fg(accent())),
-                Span::styled(cursor, Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(tail, Style::default().fg(accent())),
-            ])
+            Line::from(spans)
         })
         .collect()
 }
@@ -165,20 +181,47 @@ mod tests {
         }
     }
 
-    /// The cursor mouth is its own span so it can be styled apart from the body.
+    /// Both pupils must survive styling. The previous builder split the row on
+    /// the first cursor glyph and emitted three spans, which silently dropped
+    /// the second eye the moment the mascot grew one.
     #[test]
-    fn the_cursor_mouth_is_styled_separately() {
-        let lines = art_lines(&SPLASH_ART);
-        let mouth_row = lines
-            .iter()
-            .find(|line| line.spans.len() == 3)
-            .expect("the mouth row splits into head, cursor, tail");
-        assert_eq!(mouth_row.spans[1].content, "\u{258c}");
-        assert!(
-            mouth_row.spans[1]
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
-        );
+    fn both_pupils_are_styled_as_cursors() {
+        for art in [&SPLASH_ART[..], &SPLASH_ART_COMPACT[..]] {
+            let lines = art_lines(art);
+            let bold: Vec<String> = lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .filter(|span| span.style.add_modifier.contains(Modifier::BOLD))
+                .map(|span| span.content.to_string())
+                .collect();
+            assert_eq!(
+                bold,
+                vec!["\u{2590}", "\u{258c}"],
+                "expected exactly two pupils"
+            );
+        }
+    }
+
+    /// A row must round-trip: coalescing runs may change how the text is split
+    /// into spans, never which characters reach the screen.
+    #[test]
+    fn styling_preserves_every_glyph_in_the_row() {
+        for art in [&SPLASH_ART[..], &SPLASH_ART_COMPACT[..]] {
+            for (row, line) in art.iter().zip(art_lines(art)) {
+                let rendered: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                assert_eq!(&rendered, row, "row must survive styling unchanged");
+            }
+        }
+    }
+
+    /// Beak and talons recede; the body carries the accent. Without this a glyph
+    /// added to the art silently inherits the body colour.
+    #[test]
+    fn beak_and_talons_recede_behind_the_body() {
+        let secondary_style = Style::default().fg(secondary());
+        for ch in ['\u{25bc}', '\u{2580}'] {
+            assert_eq!(glyph_style(ch), secondary_style, "{ch} should recede");
+        }
+        assert_eq!(glyph_style('\u{2588}'), Style::default().fg(accent()));
     }
 }
