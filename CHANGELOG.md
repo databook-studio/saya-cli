@@ -5,6 +5,8 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.3.2 — 2026-08-31 — first run, and an owl
+
 ### Changed — read this before upgrading
 
 - **`saya config init` writes your user config directory, not `.saya/`.** The
@@ -36,6 +38,52 @@ All notable changes to SAYA CLI are recorded here. This project follows
   missing config. An unresolvable secret reference says to set the environment
   variable (or a `.env.saya` file with `--env-file`); `init` cannot supply a
   secret.
+
+- **The post-turn learning wait says what it is waiting for.** A turn is not
+  over when the answer finishes: extraction, the second provider call that
+  decides what to remember, runs inside the same call the TUI awaits. The status
+  bar said "thinking" after visible output, which reads as a hang. It now shows
+  `running learning`, and the extraction budget moved from 15s to 25s — measured
+  over 12 turns (p50 4.7s, max 13.1s, 2 timeouts), because the old cap was
+  protecting you from a wait nobody had explained rather than one that was too
+  long.
+
+- **A new mascot: saya is an owl whose pupils are terminal cursors.** It replaces
+  the diamond in the README and on the TUI splash. An owl watches everything and
+  touches nothing, which is what read-only means. The four states — idle,
+  thinking, answering, error — are unchanged in kind: the pupils are the glyphs
+  that get substituted.
+
+### Fixed
+
+- **`saya ask` no longer prints "Not implemented: unrecognized agent event"
+  after a correct answer.** A progress-only event has no headless rendering, and
+  the renderer's catch-all turned that into an error line directly beneath the
+  reply. Progress events now render to nothing; events carrying content still
+  reach the loud path.
+
+- **The TUI empty state no longer sends first-run users to a file that is not
+  created.** It said to add a profile to `.saya/connections.toml`, which stopped
+  being where `config init` writes.
+
+- **The untrusted-override warning is one line, not four.** It named all four
+  settings on every command, which in a repository that ships a `.saya/config.toml`
+  meant a wall of text before every `config show` or `connection list` — and a
+  warning you see every time is one you learn to scroll past, which costs exactly
+  the case it exists for. It stays on every run and on stderr; `config doctor`
+  now carries the detail of which settings were ignored and why.
+
+- **`/help` lists commands in described groups.** It printed 28 commands as bare
+  syntax over six dense lines with one description among them, so learning the
+  surface meant running `/help <name>` 28 times.
+
+### Documentation
+
+- **The README is 136 lines instead of 355.** Roughly 190 of them restated
+  `docs/connections.md` and `docs/configuration.md` — TOML for every connector,
+  Snowflake auth modes, sslmode tables — and had already gone stale. It now
+  carries only what changes slowly; anything enumerable points at `docs/` or at
+  `saya --help`, which is generated from the code and cannot drift.
 
 ## 0.3.1 — 2026-08-29 — hardening
 
