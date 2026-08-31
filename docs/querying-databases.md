@@ -10,8 +10,9 @@ interactive slash commands.
 cargo build --release --locked -p saya-cli
 ./target/release/saya config init
 ```
-This creates credential-free `.saya/config.toml` and `.saya/connections.toml`
-without overwriting existing files. Keep private secrets in a local env file,
+This creates credential-free `config.toml` and `connections.toml` in your user
+config directory without overwriting existing files (`--project` writes the
+repo's `.saya/` pair instead). Keep private secrets in a local env file,
 such as `.env.postgres`, and add `.env.*` to `.gitignore`. Copy and adapt
 [`examples/connections.toml`](../examples/connections.toml) for a full template.
 For local Docker database services, use

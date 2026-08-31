@@ -7,12 +7,16 @@ credentials must be references:
 saya config init
 ```
 
-This creates `.saya/config.toml` and `.saya/connections.toml` only when neither
-exists. It is safe to rerun after editing because it refuses to overwrite, and
-it makes a best-effort rollback of the first file after an ordinary second-file
-creation error; it is not crash-atomic. The generated
-analytics profile is a PostgreSQL SecretRef template; set its referenced
-environment variable before connecting.
+This creates `config.toml` and `connections.toml` in your user config
+directory — the layer saya trusts — only when neither exists. Pass `--project`
+to write the `.saya/` pair in the current directory instead, for settings a repo
+shares; that layer is untrusted, so security-critical settings in it are ignored
+unless you pass `--trust-project-config`.
+
+It is safe to rerun after editing because it refuses to overwrite, and it makes
+a best-effort rollback of the first file after an ordinary second-file creation
+error; it is not crash-atomic. The generated analytics profile is a PostgreSQL
+SecretRef template; set its referenced environment variable before connecting.
 
 ```toml
 [profiles.analytics]

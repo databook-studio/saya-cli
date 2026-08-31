@@ -30,33 +30,61 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 "#;
 
-pub(crate) fn create_project_files(cwd: &Path) -> io::Result<String> {
-    create_project_files_with(cwd, create_private_file)
+/// Writes starter templates to the user config directory (the trusted layer),
+/// so a fresh `config init` followed by any command does not warn. This is the
+/// default — see S18. Returns a message naming where the files went.
+pub(crate) fn create_user_files(user_dir: &Path) -> io::Result<String> {
+    create_files_with(
+        user_dir,
+        /* create_parents */ true,
+        create_private_file,
+        |dir| {
+            format!(
+                "Created config.toml and connections.toml in {}",
+                dir.display()
+            )
+        },
+    )
 }
 
-fn create_project_files_with(
-    cwd: &Path,
+/// Writes starter templates to this project's `.saya/` (the untrusted layer).
+/// Reachable via `config init --project` for team-shared, non-secret settings
+/// checked into a repository. A command run afterward warns until
+/// `--trust-project-config` is passed — that is the trust boundary doing its
+/// job, not a bug.
+pub(crate) fn create_project_files(cwd: &Path) -> io::Result<String> {
+    create_files_with(
+        &cwd.join(".saya"),
+        /* create_parents */ false,
+        create_private_file,
+        |_| "Created .saya/config.toml and .saya/connections.toml".into(),
+    )
+}
+
+fn create_files_with(
+    directory: &Path,
+    create_parents: bool,
     mut write_file: impl FnMut(&Path, &str) -> io::Result<()>,
+    message: impl Fn(&Path) -> String,
 ) -> io::Result<String> {
-    let directory = cwd.join(".saya");
     let config = directory.join("config.toml");
     let connections = directory.join("connections.toml");
     if config.exists() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            ".saya/config.toml already exists",
+            "config.toml already exists",
         ));
     }
     if connections.exists() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            ".saya/connections.toml already exists",
+            "connections.toml already exists",
         ));
     }
 
     let created_directory = !directory.exists();
     if created_directory {
-        create_private_directory(&directory)?;
+        create_private_directory(directory, create_parents)?;
     }
     let mut created = Vec::new();
     let result = (|| {
@@ -71,23 +99,27 @@ fn create_project_files_with(
             let _ = fs::remove_file(path);
         }
         if created_directory {
-            let _ = fs::remove_dir(&directory);
+            let _ = fs::remove_dir(directory);
         }
         return Err(error);
     }
-    Ok("Created .saya/config.toml and .saya/connections.toml".into())
+    Ok(message(directory))
 }
 
 pub(crate) fn error_message(error: &io::Error) -> String {
     if error.kind() == io::ErrorKind::AlreadyExists {
         error.to_string()
     } else {
-        "config init failed: could not create project templates".into()
+        "config init failed: could not create starter templates".into()
     }
 }
 
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    fs::create_dir(path)?;
+fn create_private_directory(path: &Path, create_parents: bool) -> io::Result<()> {
+    if create_parents {
+        fs::create_dir_all(path)?;
+    } else {
+        fs::create_dir(path)?;
+    }
     if let Err(error) = set_private_directory(path) {
         let _ = fs::remove_dir(path);
         return Err(error);

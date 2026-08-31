@@ -8,8 +8,12 @@ pub(super) fn run(
     format: RenderFormat,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match command {
-        ConfigCommand::Init => run_init(format),
-        ConfigCommand::Doctor => result(config::doctor::summary(runtime), format),
+        ConfigCommand::Init { project } => run_init(format, project),
+        ConfigCommand::Doctor => {
+            let diagnosis = config::doctor::report(runtime);
+            result(diagnosis.lines.join("\n"), format)?;
+            Ok(diagnosis.exit_code())
+        }
         ConfigCommand::Show => {
             let value = runtime.resolved.redacted_diagnostics();
             let output = match format {
@@ -22,9 +26,44 @@ pub(super) fn run(
     }
 }
 
-pub(super) fn run_init(format: RenderFormat) -> Result<i32, Box<dyn std::error::Error>> {
-    match std::env::current_dir().and_then(|cwd| config::init::create_project_files(&cwd)) {
+pub(super) fn run_init(
+    format: RenderFormat,
+    project: bool,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir();
+    let message = match cwd {
+        Ok(cwd) if project => config::init::create_project_files(&cwd),
+        Ok(cwd) => {
+            // Default: the trusted user layer, so a following command does not
+            // warn (S18 invariant 1). Q2: if a project config already exists,
+            // append a one-line hint (not a migration) — folded into the result
+            // message so the structured --format envelopes stay on stdout and
+            // stderr stays empty.
+            let user_dir = config::sources::user_config_dir();
+            match config::init::create_user_files(&user_dir) {
+                Ok(message) => Ok(notice_existing_project_config(message, &cwd)),
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    };
+    match message {
         Ok(message) => result(message, format),
         Err(error) => failure_message(2, config::init::error_message(&error), format),
     }
+}
+
+/// If the cwd already has a `.saya/config.toml`, say so once. The default
+/// `config init` writes the trusted user layer; the existing project config
+/// stays untrusted, and a user who meant to refresh it has `--project` and
+/// `saya config doctor` to reach for. (S18 Q2 — a hint, not a migration.)
+fn notice_existing_project_config(mut message: String, cwd: &std::path::Path) -> String {
+    if cwd.join(".saya/config.toml").exists() {
+        message.push_str(
+            "\nNote: this project already has a .saya/config.toml. It stays \
+             untrusted; run `saya config doctor` to see how to apply it, or \
+             `saya config init --project` to refresh the project templates.",
+        );
+    }
+    message
 }

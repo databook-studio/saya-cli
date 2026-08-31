@@ -29,13 +29,11 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         generate(shell, &mut cmd, "saya", &mut std::io::stdout());
         return Ok(0);
     }
-    if matches!(
-        &command,
-        Command::Config {
-            command: ConfigCommand::Init
-        }
-    ) {
-        return commands::run_config_init(cli.options.format.into());
+    if let Command::Config {
+        command: ConfigCommand::Init { project },
+    } = &command
+    {
+        return commands::run_config_init(cli.options.format.into(), *project);
     }
     // `--verbose` seeds the extraction-boundary trace before any turn runs.
     // Until now the flag was declared and read nowhere, so passing it did

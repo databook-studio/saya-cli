@@ -50,10 +50,17 @@ fn warn_ignored_project_overrides(runtime: &RuntimeConfig) {
     if ignored.is_empty() {
         return;
     }
+    // One short line, every run. It cannot be less frequent without knowing
+    // whether this invocation is interactive, which `load` is not told — and
+    // it should not be silent, because the project layer trying to redirect an
+    // API key is worth saying out loud. The detail moved to `config doctor`,
+    // which is where someone goes to find out what is wrong with their setup;
+    // repeating four key names on every command trains people to skip the line.
+    let count = ignored.len();
+    let noun = if count == 1 { "setting" } else { "settings" };
     eprintln!(
-        "warning: ignored security-critical setting(s) from the project's .saya/config.toml: {}. \
-         Pass --trust-project-config to accept them.",
-        ignored.join(", ")
+        "warning: ignored {count} security-critical {noun} from this project's \
+         .saya/config.toml — run `saya config doctor` for which, and why."
     );
 }
 

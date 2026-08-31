@@ -9,6 +9,14 @@ pub(crate) mod registry;
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // still resolves after the help text moved to `help.rs`.
 pub(crate) use help::help_for;
+// S17: the one-line description per command is the single source shared by the
+// `/help` listing and the completion popup (`interactive::tui::complete`), so
+// the two surfaces cannot drift. `description_for` is read by the popup in
+// production; `COMMAND_DESCRIPTIONS` is only needed by tests that assert the
+// shared table covers the registry, so it is re-exported under `cfg(test)`.
+#[cfg(test)]
+pub(crate) use help::COMMAND_DESCRIPTIONS;
+pub(crate) use help::description_for;
 // The inline `test_help_command` test calls `help_text` bare via `super::*`;
 // bring it into scope for tests only so the test stays unchanged.
 #[cfg(test)]
