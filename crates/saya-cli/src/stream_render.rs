@@ -35,7 +35,14 @@ impl AgentEventSink for TerminalSink {
 }
 
 fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -> Rendered {
-    let event = terminal_event(event);
+    let Some(event) = terminal_event(event) else {
+        // Nothing to print, and nothing to close: a progress signal must not
+        // terminate an open text block the way a real event would.
+        return Rendered {
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+    };
     let close = matches!(format, RenderFormat::Text)
         && *text_open
         && !matches!(event, TerminalEvent::AssistantText { .. });
@@ -59,8 +66,18 @@ fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -
     rendered
 }
 
-pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
-    match event {
+/// Maps one agent event to what the headless renderer should print, or `None`
+/// when the event is a pure progress signal with nothing to say here.
+///
+/// The `None` case exists because the catch-all below is deliberately loud: a
+/// variant this renderer does not understand must surface as
+/// `NotImplemented` rather than silently end the stream. That is right for an
+/// event carrying content, and wrong for one that carries none — a spinner
+/// label is meaningful to the TUI and meaningless to a pipe. Without this
+/// distinction, adding a progress event prints `unrecognized agent event` at
+/// the user, which has now happened three times (see the arms below).
+pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
+    Some(match event {
         AgentEvent::AssistantText { text } => TerminalEvent::AssistantText { text },
         AgentEvent::ToolRequested { name, arguments } => {
             let detail = crate::agent::tools::tool_call_detail(&name, &arguments);
@@ -94,6 +111,10 @@ pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
         // `unrecognized agent event` — an error string at the exact moment the
         // product did the thing it is for.
         AgentEvent::KnowledgeProposed { claim } => TerminalEvent::KnowledgeLearned { claim },
+        // Progress only: the TUI labels its spinner with this, and a pipe has
+        // no spinner to label. Dropped rather than rendered — not forgotten,
+        // which is what the catch-all would make of it.
+        AgentEvent::KnowledgeLearningStarted => return None,
         AgentEvent::Complete => TerminalEvent::Complete,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
@@ -101,7 +122,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> TerminalEvent {
         _ => TerminalEvent::NotImplemented {
             feature: "unrecognized agent event".into(),
         },
-    }
+    })
 }
 
 #[cfg(test)]
@@ -251,7 +272,7 @@ mod tests {
             )])],
             0,
         );
-        let te = terminal_event(event);
+        let te = terminal_event(event).expect("this event renders headlessly");
         let rendered = render_event(&te, RenderFormat::Json);
         assert!(
             rendered.stdout.contains(r#""event":"knowledge_supplied""#),
@@ -363,7 +384,7 @@ mod tests {
             claimed_value: "return_date".into(),
             observed_columns: vec!["rental_date".into()],
         }]);
-        let te = terminal_event(event);
+        let te = terminal_event(event).expect("this event renders headlessly");
         let rendered = render_event(&te, RenderFormat::Json);
         assert!(
             rendered
@@ -413,7 +434,7 @@ mod tests {
     #[test]
     fn json_adapter_carries_the_learning_skipped_event_under_its_type_tag() {
         let event = AgentEvent::knowledge_learning_skipped(LearningSkipReason::TimedOut);
-        let te = terminal_event(event);
+        let te = terminal_event(event).expect("this event renders headlessly");
         let rendered = render_event(&te, RenderFormat::Json);
         assert!(
             rendered
@@ -431,6 +452,28 @@ mod tests {
             !rendered.stdout.contains("not_implemented"),
             "must not fall through to NotImplemented: {:?}",
             rendered.stdout
+        );
+    }
+
+    /// A progress-only event must render to nothing, not to
+    /// `unrecognized agent event`. The catch-all is deliberately loud so a
+    /// content-bearing variant cannot be dropped silently, which means every
+    /// contentless one needs an explicit arm — this has been missed three times
+    /// (`KnowledgeLearningSkipped`, `KnowledgeProposed`, and
+    /// `KnowledgeLearningStarted`, which printed the error string during a live
+    /// `saya ask` while the whole suite was green).
+    #[test]
+    fn progress_only_events_render_to_nothing_not_to_an_error() {
+        assert!(
+            terminal_event(AgentEvent::KnowledgeLearningStarted).is_none(),
+            "a progress signal must not reach the headless renderer"
+        );
+
+        // And the loud path still works for a variant that does carry content.
+        let complete = terminal_event(AgentEvent::Complete).expect("Complete renders");
+        assert!(
+            !matches!(complete, TerminalEvent::NotImplemented { .. }),
+            "a known content event must not fall through to the catch-all"
         );
     }
 }

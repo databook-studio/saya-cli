@@ -49,15 +49,16 @@ attached to the GitHub release alongside a `SHA256SUMS` manifest.
 
 ```bash
 saya config init
-${EDITOR:-vi} .saya/config.toml
-${EDITOR:-vi} .saya/connections.toml
+${EDITOR:-vi} ~/.config/saya/config.toml
+${EDITOR:-vi} ~/.config/saya/connections.toml
 export SAYA_ANALYTICS_PASSWORD='use-a-read-only-password'
 saya config doctor
 saya connection test analytics
 saya --profile analytics --approval-mode read-only query --sql 'SELECT 1'
 ```
 
-`config init` refuses to overwrite either file, uses restrictive Unix modes,
+`config init` writes to your user config directory (`--project` writes the
+repo's `.saya/` pair instead). It refuses to overwrite either file, uses restrictive Unix modes,
 and makes a best-effort rollback after an ordinary second-file creation error;
 it is not crash-atomic. The generated connection contains an environment
 SecretRef, not a credential.

@@ -28,7 +28,9 @@ pub(crate) async fn run_prompt_with_sink(
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    let inputs = prepare_turn(runtime, &overrides, can_prompt).await?;
+    let inputs = prepare_turn(runtime, &overrides, can_prompt)
+        .await
+        .map_err(with_next_step)?;
     run_prompt_with_inputs(
         runtime,
         inputs,
@@ -182,6 +184,10 @@ pub(crate) async fn run_prompt_with_inputs(
         );
         if gate.is_run() {
             let object_count = turn_record.object_table.len();
+            // The answer is already on screen; this call is what the adapter is
+            // still waiting on, so say so before starting it.
+            sink.emit(AgentEvent::KnowledgeLearningStarted).await;
+            let extraction_started = std::time::Instant::now();
             let extraction_res = tokio::time::timeout(
                 super::learning::EXTRACTION_TIMEOUT,
                 super::learning::run_extraction(
@@ -194,11 +200,18 @@ pub(crate) async fn run_prompt_with_inputs(
                 ),
             )
             .await;
+            let extraction_elapsed = Some(extraction_started.elapsed());
 
             match extraction_res {
                 // Happy path: emit one proposal event per persisted claim.
                 Ok(Ok(dtos)) => {
-                    trace_extraction("ok", object_count, Some(dtos.len()), None);
+                    trace_extraction(
+                        "ok",
+                        object_count,
+                        Some(dtos.len()),
+                        None,
+                        extraction_elapsed,
+                    );
                     for dto in dtos {
                         sink.emit(AgentEvent::knowledge_proposed(dto)).await;
                     }
@@ -206,7 +219,13 @@ pub(crate) async fn run_prompt_with_inputs(
                 // Extraction errored (provider/parse/ingest). Surface the skip;
                 // never propagate (Safety Property 1: fail-soft isolation).
                 Ok(Err(error)) => {
-                    trace_extraction("failed", object_count, Some(0), Some(&error.to_string()));
+                    trace_extraction(
+                        "failed",
+                        object_count,
+                        Some(0),
+                        Some(&error.to_string()),
+                        extraction_elapsed,
+                    );
                     sink.emit(AgentEvent::knowledge_learning_skipped(
                         saya_agent::LearningSkipReason::Failed,
                     ))
@@ -214,7 +233,7 @@ pub(crate) async fn run_prompt_with_inputs(
                 }
                 // Timeout fired before extraction returned; same fail-soft rule.
                 Err(_) => {
-                    trace_extraction("timed_out", object_count, Some(0), None);
+                    trace_extraction("timed_out", object_count, Some(0), None, extraction_elapsed);
                     sink.emit(AgentEvent::knowledge_learning_skipped(
                         saya_agent::LearningSkipReason::TimedOut,
                     ))
@@ -224,12 +243,18 @@ pub(crate) async fn run_prompt_with_inputs(
         } else {
             // Gate decline stays silent on screen (decision 2); trace it for
             // observability when debugging the boundary.
-            trace_extraction("gate_declined", turn_record.object_table.len(), None, None);
+            trace_extraction(
+                "gate_declined",
+                turn_record.object_table.len(),
+                None,
+                None,
+                None,
+            );
         }
     }
 
     output.map_err(|error| match error {
-        AgentError::Provider(error) => AgentRuntimeError::Provider(error.to_string()),
+        AgentError::Provider(error) => AgentRuntimeError::Provider(provider_message(&error)),
         AgentError::Limit(error) => {
             AgentRuntimeError::Agent(format!("agent limit reached: {error}"))
         }
@@ -244,6 +269,48 @@ pub(crate) async fn run_prompt_with_inputs(
         }
         AgentError::Cancelled => AgentRuntimeError::Agent("request cancelled".into()),
     })
+}
+
+/// S18 Q3: the three first-run failures used to name no next step. Guidance is
+/// added at the saya-cli boundary (here), not in the provider-neutral agent
+/// crate. A provider that is configured but unreachable is "what is configured
+/// did not work", not "nothing is configured" — so the next step is to start
+/// the provider or check the endpoint, never to re-run `config init` (telling a
+/// user whose gateway is momentarily down to re-init would be worse than
+/// saying nothing).
+fn provider_message(error: &saya_agent::ProviderError) -> String {
+    let message = error.to_string();
+    if message.contains("could not reach the provider") {
+        format!(
+            "{message}\nnext: start your AI provider, or run `saya config doctor` to check \
+             the endpoint and base_url."
+        )
+    } else {
+        message
+    }
+}
+
+/// S18 Q3: an unresolvable secret reference is "what is configured did not
+/// work" — the profile is there but its password is not. `init` cannot supply
+/// a secret, so the next step is setting the env var (doctor lists the
+/// unresolved references). Only the secret case is annotated; a genuine
+/// connection failure is left untouched rather than given advice that might
+/// not fit. Applied at the `prepare_turn` seam so both the `ask` and the
+/// interactive paths surface it.
+fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
+    match error {
+        AgentRuntimeError::Database(message)
+            if message.contains("secret reference")
+                && message.contains("could not be resolved") =>
+        {
+            AgentRuntimeError::Database(format!(
+                "{message}\nnext: set the referenced environment variable (or add it to a \
+                 .env.saya file passed with --env-file), then re-run; `saya config doctor` \
+                 lists unresolved secrets."
+            ))
+        }
+        other => other,
+    }
 }
 
 #[cfg(test)]

@@ -1,15 +1,155 @@
-//! Help text for the slash commands: the one-line summary (`/help` with no
+//! Help text for the slash commands: the grouped listing (`/help` with no
 //! argument) and the per-command usage + example (`/help <command>`).
 //!
 //! Extracted from `slash.rs` to keep that file under the size cap. `slash.rs`
 //! re-exports [`help_for`] so the existing `crate::slash::help_for` path used by
 //! the session command layer keeps resolving.
+//!
+//! [`COMMAND_DESCRIPTIONS`] is the single source of the one-line description per
+//! command. The completion popup in `interactive::tui::complete` reads it via
+//! [`description_for`], and the `/help` listing here reads it too — so the popup
+//! and the listing can never drift into two hand-maintained copies. The listing
+//! only adds presentation the popup does not carry: a usage form, a group
+//! heading, and which of the alias-folded commands to show.
 
-/// The one-line summary printed by `/help` with no argument. One string so the
-/// TUI and headless paths render it identically.
-pub(crate) fn help_text() -> &'static str {
-    "/connect <profile>  /connections  /include <profile>  /exclude <profile>\n/provider [name]     /model [name]  /privacy [on|off]\n/approvals [ask|read-only|never]  /schema [refresh]  /sql <query>  /export <path>\n/explain [sql]  /clear  /history  /sessions  /resume <id>  /doctor  /help  /exit\n/contracts [table]  /remember <table> <kind> <value…>  /forget <id>  /queue [limit]\n/confirm <prefix>  /reject <prefix> — act on a claim shown this turn by its short id prefix"
+/// The one-line description per command — **the single source**. Keyed by the
+/// names in [`crate::slash::registry::KNOWN_COMMANDS`]; a test asserts the two
+/// never drift apart. `interactive::tui::complete` reads this for its popup, and
+/// the `/help` listing reads it here, so the two surfaces share one copy.
+///
+/// `/connect` and `/include` carry the contrast (one replaces, one adds a
+/// secondary) so a user reading the listing can tell them apart without two more
+/// `/help <name>` round-trips.
+pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("connect", "Replace the active database profile"),
+    ("connections", "List configured database connections"),
+    ("include", "Add a secondary database profile to query scope"),
+    ("exclude", "Remove a database profile from query scope"),
+    ("provider", "Set or view the AI provider"),
+    ("model", "Set or view the AI model"),
+    ("privacy", "Enable or disable data sharing privacy"),
+    ("approvals", "Set approval policy for tool execution"),
+    ("schema", "Inspect or refresh database schema"),
+    ("doctor", "Diagnose config: secrets, provider endpoint"),
+    ("sql", "Run a raw SQL query against the active profile"),
+    ("export", "Export the last query result as CSV or JSON"),
+    ("chart", "Render the last query as an HTML chart"),
+    ("explain", "Explain the given or last SQL statement"),
+    ("clear", "Clear current session context"),
+    ("history", "List saved sessions as text"),
+    (
+        "sessions",
+        "Browse saved sessions; opens a picker in the TUI",
+    ),
+    ("resume", "Resume a saved session by id"),
+    ("contracts", "List contracts, or show one object's contract"),
+    ("contract", "Alias for /contracts"),
+    ("remember", "Store a confirmed contract claim"),
+    ("forget", "Tombstone a contract claim so recall excludes it"),
+    ("queue", "Show pending candidate claims awaiting review"),
+    ("confirm", "Confirm a pending candidate claim by id prefix"),
+    ("reject", "Reject a pending candidate claim by id prefix"),
+    ("help", "Show help for slash commands"),
+    ("exit", "Exit the REPL"),
+    ("quit", "Exit the REPL"),
+];
+
+/// Looks up the one-line description for a command name, or `None` if unknown.
+pub(crate) fn description_for(name: &str) -> Option<&'static str> {
+    COMMAND_DESCRIPTIONS
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, description)| *description)
 }
+
+/// The grouped, described listing printed by `/help` with no argument. Built
+/// from [`LISTING_GROUPS`] (the usage form and group heading) plus the
+/// description text from [`COMMAND_DESCRIPTIONS`], so every line carries a
+/// description and `/connect` lands beside `/include` under one heading. One
+/// string so the TUI and headless paths render it identically; the transcript
+/// word-wraps it at the terminal width.
+pub(crate) fn help_text() -> String {
+    let mut out = String::from("Slash commands:");
+    for (heading, commands) in LISTING_GROUPS {
+        out.push_str("\n\n");
+        out.push_str(heading);
+        for (name, usage) in *commands {
+            // Every shown command must have a description in the single source;
+            // a missing one is a bug, not a bare-syntax line.
+            out.push_str("\n  ");
+            out.push_str(usage);
+            // A missing description is a bug the listing test catches. Degrade
+            // to bare syntax rather than panicking: `/help` runs inside a live
+            // TUI session, where a panic costs the session and the terminal
+            // state, and a line without its description still works.
+            if let Some(description) = description_for(name) {
+                out.push_str(" — ");
+                out.push_str(description);
+            }
+        }
+    }
+    out
+}
+
+/// Listing-only presentation: the group heading, command name, and usage form
+/// for each shown command, in display order. The description text is NOT here
+/// — it comes from [`COMMAND_DESCRIPTIONS`] via [`description_for`], so there is
+/// one copy. The alias spellings `/contract` and `/quit` are folded under
+/// `/contracts` and `/exit` (the listing must not show `/contract <table>`), so
+/// this lists the canonical form of each command, not every alias.
+const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Connections",
+        &[
+            ("connect", "/connect <profile>"),
+            ("connections", "/connections"),
+            ("include", "/include <profile>"),
+            ("exclude", "/exclude <profile>"),
+        ],
+    ),
+    (
+        "Provider, model & privacy",
+        &[
+            ("provider", "/provider [name]"),
+            ("model", "/model [name]"),
+            ("privacy", "/privacy [on|off]"),
+            ("approvals", "/approvals [ask|read-only|never]"),
+        ],
+    ),
+    (
+        "Query & data",
+        &[
+            ("schema", "/schema [refresh]"),
+            ("sql", "/sql <query>"),
+            ("export", "/export <path>"),
+            ("chart", "/chart [type] [path]"),
+            ("explain", "/explain [sql]"),
+        ],
+    ),
+    (
+        "Session",
+        &[
+            ("clear", "/clear"),
+            ("history", "/history"),
+            ("sessions", "/sessions"),
+            ("resume", "/resume <id>"),
+            ("doctor", "/doctor"),
+            ("help", "/help [command]"),
+            ("exit", "/exit  (alias /quit)"),
+        ],
+    ),
+    (
+        "Memory",
+        &[
+            ("contracts", "/contracts [table]"),
+            ("remember", "/remember <table> <kind> <value…>"),
+            ("forget", "/forget <id>"),
+            ("queue", "/queue [limit]"),
+            ("confirm", "/confirm <prefix>"),
+            ("reject", "/reject <prefix>"),
+        ],
+    ),
+];
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
 pub(crate) fn command_help(name: &str) -> Option<&'static str> {
@@ -109,6 +249,7 @@ pub(crate) fn help_for(topic: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::slash::registry;
 
     /// `/history` and `/sessions` are **not** interchangeable, and the help
     /// must not claim they are. They share one `SessionAction` in the headless
@@ -153,6 +294,117 @@ mod tests {
             !clear.contains("history"),
             "/clear help must not reuse the overloaded 'history' word (now = saved sessions), got: {clear}"
         );
+    }
+
+    /// S17 deliverable 1 — the *before* state. Today's `/help` listing is a
+    /// wall of bare syntax: five lines of commands with no description, and
+    /// only the last line says what anything does. This test pins that defect
+    /// by name, so the report can show what changed. It asserts the inverse of
+    /// what holds today — that every command line in the listing carries a
+    /// description — and is therefore red until the listing is rebuilt.
+    #[test]
+    fn listing_gives_every_command_a_description() {
+        let summary = help_text();
+        // A command line is one that introduces a slash command (after the
+        // indent); a heading or the title is not a command line and need not
+        // carry a description. A command line "describes" its command when it
+        // pairs the usage with prose via the em-dash separator. Today, the
+        // listing is a wall of bare syntax — five lines of commands with no
+        // description — so this is red until the listing is rebuilt.
+        let bare = summary
+            .lines()
+            .map(str::trim_start)
+            .filter(|line| line.starts_with('/'))
+            .filter(|line| !line.contains(" — "))
+            .collect::<Vec<_>>();
+        assert!(
+            bare.is_empty(),
+            "every command line should carry a description (— ...), \
+             but these are bare syntax with no description:\n{}",
+            bare.join("\n")
+        );
+    }
+
+    /// S17 invariant 2 — `/connect` and `/include` sit beside each other in the
+    /// listing and must read as a contrast: one replaces the active profile, the
+    /// other adds a secondary. A user should be able to tell which is which
+    /// without running `/help connect` and `/help include` separately.
+    #[test]
+    fn connect_and_include_read_as_a_contrast() {
+        let summary = help_text();
+
+        let connect_line = summary
+            .lines()
+            .find(|line| line.trim_start().starts_with("/connect "))
+            .unwrap_or_else(|| panic!("listing must have a /connect line, got:\n{summary}"));
+        let include_line = summary
+            .lines()
+            .find(|line| line.trim_start().starts_with("/include "))
+            .unwrap_or_else(|| panic!("listing must have a /include line, got:\n{summary}"));
+
+        // The two lines must each state their role. "Replace" names the
+        // replacing-the-active-profile behaviour of /connect; "secondary" names
+        // the adds-a-profile behaviour of /include. Reading both, a user knows
+        // one swaps the active profile and the other layers a secondary on.
+        assert!(
+            connect_line.to_lowercase().contains("replace"),
+            "/connect listing must say it replaces the active profile, got: {connect_line}"
+        );
+        assert!(
+            include_line.to_lowercase().contains("secondary"),
+            "/include listing must say it adds a secondary profile, got: {include_line}"
+        );
+    }
+
+    /// S17 invariant 3 — there is one source of description text. The popup in
+    /// `complete.rs` and the `/help` listing here must not be two hand-maintained
+    /// copies. The popup reads its descriptions from this module's
+    /// [`COMMAND_DESCRIPTIONS`]; this test proves that single source covers
+    /// exactly the parser's registry, so a command added to one surface cannot
+    /// be missing from the other. (The same agreement is checked from the popup
+    /// side in `complete.rs::descriptions_cover_exactly_the_registry`, which
+    /// reads the same shared table.)
+    #[test]
+    fn command_descriptions_cover_exactly_the_registry() {
+        assert_eq!(
+            COMMAND_DESCRIPTIONS.len(),
+            registry::KNOWN_COMMANDS.len(),
+            "the description table and the command registry must list the same commands"
+        );
+        for (name, _) in COMMAND_DESCRIPTIONS {
+            assert!(
+                registry::KNOWN_COMMANDS.contains(name),
+                "{name} is described but not in the registry"
+            );
+        }
+        for name in registry::KNOWN_COMMANDS {
+            assert!(
+                description_for(name).is_some(),
+                "{name} is registered but has no description"
+            );
+        }
+    }
+
+    /// S17 — the listing groups commands under short headings, so 28 described
+    /// commands stay scannable and `/connect` lands beside `/include` under one
+    /// heading. Grouping is presentation only; it adds, renames, and removes
+    /// nothing.
+    #[test]
+    fn listing_groups_commands_under_headings() {
+        let summary = help_text();
+        // The five group headings the listing uses. Each is on its own line.
+        for heading in [
+            "Connections",
+            "Provider, model & privacy",
+            "Query & data",
+            "Session",
+            "Memory",
+        ] {
+            assert!(
+                summary.lines().any(|line| line.trim() == heading),
+                "listing must have a {heading:?} heading on its own line, got:\n{summary}"
+            );
+        }
     }
 
     /// S13: the merged `/contracts` command has one help entry covering both

@@ -6,52 +6,14 @@ pub(crate) struct Candidate {
     pub(crate) description: Option<String>,
 }
 
-/// One-line description per command, shown in the popup. Keyed by the names
-/// in `crate::slash::registry::KNOWN_COMMANDS`; a test asserts the two lists
-/// never drift apart.
-const DESCRIPTIONS: &[(&str, &str)] = &[
-    ("connect", "Connect to a database profile"),
-    ("connections", "List configured database connections"),
-    ("include", "Include a database profile in query scope"),
-    ("exclude", "Exclude a database profile from query scope"),
-    ("provider", "Set or view the AI provider"),
-    ("model", "Set or view the AI model"),
-    ("privacy", "Enable or disable data sharing privacy"),
-    ("approvals", "Set approval policy for tool execution"),
-    ("schema", "Inspect or refresh database schema"),
-    ("doctor", "Diagnose config: secrets, provider endpoint"),
-    ("sql", "Run a raw SQL query against the active profile"),
-    ("export", "Export the last query result as CSV or JSON"),
-    ("chart", "Render the last query as an HTML chart"),
-    ("explain", "Explain the given or last SQL statement"),
-    ("clear", "Clear current session context"),
-    ("history", "Show saved sessions"),
-    ("sessions", "List saved sessions"),
-    ("resume", "Resume a saved session by id"),
-    (
-        "contracts",
-        "List contracts, or show one: /contracts [catalog.schema.object]",
-    ),
-    // Kept parseable for anyone with the older spelling in muscle memory. The
-    // description says so rather than advertising a separate operation: the
-    // two names resolve to the same command, and the popup is where the old
-    // "list vs show" split was most visible.
-    ("contract", "Alias for /contracts"),
-    ("remember", "Store a confirmed contract claim"),
-    ("forget", "Tombstone a contract claim so recall excludes it"),
-    ("queue", "Show pending candidate claims awaiting review"),
-    ("confirm", "Confirm a pending candidate claim by id prefix"),
-    ("reject", "Reject a pending candidate claim by id prefix"),
-    ("help", "Show help for slash commands"),
-    ("exit", "Exit the REPL"),
-    ("quit", "Exit the REPL"),
-];
-
+/// One-line description per command, shown in the popup. The popup reads it
+/// from the single source in `slash::help` — see
+/// [`crate::slash::COMMAND_DESCRIPTIONS`] — so the popup and the `/help` listing
+/// share one copy and cannot drift. The thin local alias keeps the call site
+/// short; a test asserts the shared table still covers exactly the parser's
+/// registry.
 fn description_for(name: &str) -> Option<&'static str> {
-    DESCRIPTIONS
-        .iter()
-        .find(|(candidate, _)| *candidate == name)
-        .map(|(_, description)| *description)
+    crate::slash::description_for(name)
 }
 
 /// Given the current input line, returns the candidates for the slash popup plus
@@ -152,12 +114,16 @@ mod tests {
 
     #[test]
     fn descriptions_cover_exactly_the_registry() {
-        // The popup cannot drift from the parser's registry.
+        // S17: the popup reads its descriptions from the single source in
+        // `slash::help` (no local copy here), so this asserts that shared
+        // table covers exactly the parser's registry — the popup and the
+        // `/help` listing cannot drift, because they share this one table.
+        let descriptions = crate::slash::COMMAND_DESCRIPTIONS;
         assert_eq!(
-            DESCRIPTIONS.len(),
+            descriptions.len(),
             crate::slash::registry::KNOWN_COMMANDS.len()
         );
-        for (name, _) in DESCRIPTIONS {
+        for (name, _) in descriptions {
             assert!(
                 crate::slash::registry::KNOWN_COMMANDS.contains(name),
                 "{name} described but not registered"
@@ -182,9 +148,12 @@ mod tests {
         assert_eq!((start, end), (0, 1));
         assert_eq!(candidates.len(), 28);
         assert_eq!(candidates[0].value, "/connect");
+        // The description is the single-source one from slash::help, sharpened
+        // in S17 to carry the /connect vs /include contrast (one replaces the
+        // active profile, one adds a secondary).
         assert_eq!(
             candidates[0].description.as_deref(),
-            Some("Connect to a database profile")
+            Some("Replace the active database profile")
         );
     }
 

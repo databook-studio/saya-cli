@@ -5,8 +5,10 @@ looks for project files in `.saya/` and user files in the platform config
 directory (`$XDG_CONFIG_HOME/saya`, `$APPDATA/saya`, or `~/.config/saya`).
 Explicit `--config` and `--connections` paths override discovered files.
 
-Run `saya config init` in a project to create a safe starting pair:
-`.saya/config.toml` and `.saya/connections.toml`. The command never overwrites
+Run `saya config init` to create a safe starting pair — `config.toml` and
+`connections.toml` — in your user config directory, the layer saya trusts. Pass
+`--project` to write the `.saya/` pair in the current directory instead, for
+settings a repository shares. The command never overwrites
 existing files, writes `0600` files in a newly created Unix `0700` directory,
 and makes a best-effort rollback if ordinary creation of the second file fails;
 it is not crash-atomic. Text, JSON, and
