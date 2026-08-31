@@ -146,9 +146,19 @@ pub enum Command {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum ConfigCommand {
-    /// Write starter .saya/config.toml and connections.toml templates.
-    Init,
-    /// Diagnose configuration: secrets resolve? provider reachable?
+    /// Write starter config.toml and connections.toml templates to your user
+    /// config directory (the trusted layer), so a following command does not
+    /// warn. Pass `--project` to write this project's untrusted `.saya/` pair
+    /// instead — for team-shared, non-secret settings checked into a repo.
+    Init {
+        /// Write to this project's `.saya/` instead of your user config
+        /// directory. The project layer is untrusted, so a command run
+        /// afterward warns until you pass `--trust-project-config`.
+        #[arg(long)]
+        project: bool,
+    },
+    /// Diagnose configuration: secrets resolve? provider reachable? Exits
+    /// non-zero (3) when the setup cannot run a query, so a script can tell.
     Doctor,
     /// Print the effective (redacted) configuration as JSON.
     Show,

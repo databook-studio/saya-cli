@@ -2,7 +2,34 @@ use serde::Serialize;
 
 use crate::{ColorChoice, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig};
 
-/// A display-safe view of configuration; references are retained, values are not.
+/// A display-safe view of what a config *file* declares; references are
+/// retained, values are not.
+///
+/// Every field is an `Option`, and that is the point: `None` means the file did
+/// not set it. This answers "what did I configure?", which
+/// [`ResolvedDiagnostics`] cannot — the resolved view reports the effective
+/// value after every layer and default is applied, so a setting left unset and
+/// a setting explicitly set to the default look identical there.
+///
+/// **No binary in this workspace consumes this type, and that is deliberate.**
+/// `saya config show` prints the resolved view, because "what is in effect" is
+/// the question a user debugging a connection is asking. This one exists for
+/// callers of `saya-config` as a library — the crate is published, and reading
+/// a config file to see what it declares is a coherent thing to want without
+/// running the CLI. It is exercised by the doctest below and by this crate's
+/// own tests, not by dead-code accident.
+///
+/// ```
+/// use saya_config::ConfigFile;
+///
+/// // `max_rows` is absent, so the file view reports it as unset rather than
+/// // as the default the resolved view would show.
+/// let file = ConfigFile::from_toml("[ai]\nmodel = \"claude-opus-4\"\n").unwrap();
+/// let declared = file.redacted_diagnostics();
+///
+/// assert_eq!(declared.model.as_deref(), Some("claude-opus-4"));
+/// assert_eq!(declared.max_rows, None);
+/// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct RedactedDiagnostics {
     pub default_profile: Option<String>,
@@ -24,7 +51,12 @@ pub struct RedactedDiagnostics {
     pub memory_max_context_bytes: Option<u32>,
 }
 
-/// A display-safe view of effective runtime settings with no resolved secrets.
+/// A display-safe view of the *effective* runtime settings, with no resolved
+/// secrets. This is what `saya config show` prints.
+///
+/// Fields are concrete rather than optional: every one has a value once the
+/// layers and defaults have been applied. Use [`RedactedDiagnostics`] instead
+/// when the question is which of them a config file actually declared.
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedDiagnostics {
     pub profile_name: Option<String>,

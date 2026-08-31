@@ -29,14 +29,29 @@ pub(crate) mod turn_table;
 
 /// The wall-clock budget for one post-turn extraction call (spec packet-54
 /// decision 5). The user already has their answer when extraction runs — it
-/// trails the loop, after the assistant text — so this bounds the wait *before
-/// the prompt returns*, not the work that produced the answer. 15s is generous
-/// for a multi-object extraction prompt through a shared gateway (the 5s it
-/// replaces was tight enough to drop ~2/100 facts in isolation and ~half under
-/// concurrent load) and still bounded: a long hang after the answer is a worse
-/// defect than a missed fact, so this is never unbounded. The runtime emits
-/// `KnowledgeLearningSkipped { TimedOut }` when it fires.
-pub(crate) const EXTRACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// trails the loop, after the assistant text — but the loop still awaits it, so
+/// an adapter stays busy until it resolves. This bounds that wait, not the work
+/// that produced the answer, and it is never unbounded: a half-open connection
+/// would otherwise hold the session open indefinitely.
+///
+/// Set from measurement rather than estimate. Over 12 sequential turns against a
+/// shared gateway, successful extractions ran 2.6s (min) / 4.7s (p50) / 13.1s
+/// (max), and cost scales with how many objects the turn touched — single-object
+/// turns finished near 4s and were never at risk, while every timeout was a
+/// multi-object turn. At 15s a 13.1s extraction had under two seconds of
+/// headroom on exactly the shape that was failing; 25s covers the observed worst
+/// case with margin.
+///
+/// A fixed budget is admittedly the wrong shape for a cost that scales with
+/// object count — a base plus per-object allowance would fit the curve better.
+/// That is left undone deliberately: it is a tuning knob to maintain, and the
+/// sample is sequential and single-gateway, so it does not exercise the
+/// concurrent load the earlier 5s value was raised for. Widen the measurement
+/// before adding the knob.
+///
+/// The runtime emits `KnowledgeLearningSkipped { TimedOut }` when it fires, and
+/// `KnowledgeLearningStarted` when the call begins so the wait can be labelled.
+pub(crate) const EXTRACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 
 #[allow(unused_imports)]
 pub(crate) use extractor::parse_extraction_response;

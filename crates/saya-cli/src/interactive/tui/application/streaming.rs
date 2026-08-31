@@ -67,6 +67,13 @@ impl App {
                         AgentEvent::AssistantText { .. } | AgentEvent::ToolCompleted { .. } => {
                             self.request.activity = None;
                         }
+                        // The answer has streamed but the turn is not over:
+                        // extraction is a second provider call the loop awaits.
+                        // Without this the status bar falls back to "thinking"
+                        // beside a finished answer, which reads as a hang.
+                        AgentEvent::KnowledgeLearningStarted => {
+                            self.request.activity = Some("learning".into());
+                        }
                         _ => {}
                     }
                     apply_event(&mut self.transcript, event);

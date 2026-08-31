@@ -5,6 +5,7 @@ mod input_box;
 mod markdown;
 mod overlays;
 mod panels;
+mod splash;
 mod status;
 pub(crate) mod theme;
 

@@ -248,6 +248,16 @@ pub enum AgentEvent {
     KnowledgeProposed {
         claim: ProposedClaimDto,
     },
+    /// Post-turn extraction has started. The answer is already streamed and on
+    /// screen at this point, but the turn is not over: extraction is a second
+    /// provider call that the loop awaits, so an adapter stays busy until it
+    /// resolves. Emitted so that wait can be labelled — an unexplained spinner
+    /// after a finished answer reads as a hang, which is what forces the
+    /// extraction budget to be tighter than the work needs.
+    ///
+    /// Carries nothing. It is a progress signal, not content: an adapter with
+    /// no progress surface (the headless renderer) is right to ignore it.
+    KnowledgeLearningStarted,
     /// A confirmed claim the turn's SQL **contradicted** — spec A1. Emitted at
     /// most once per turn, after the loop, carrying every finding the detector
     /// raised across the turn's statements. Silent when there is nothing to say

@@ -62,8 +62,9 @@ diagnostic. `--refresh` and `/schema refresh` invalidate first and therefore
 never fall back. Agent schema tools use the same post-live-connection fallback;
 cached metadata never enables query execution without a live connector.
 
-`config init` creates `.saya/config.toml` and `.saya/connections.toml` in the
-current directory. It is credential-free, refuses to overwrite either file,
+`config init` creates `config.toml` and `connections.toml` in your user config
+directory; `--project` writes the `.saya/` pair in the current directory
+instead. It is credential-free, refuses to overwrite either file,
 and makes a best-effort rollback after an ordinary creation error; it is not
 crash-atomic. Use `--format text|json|ndjson` for a stable result envelope;
 errors and diagnostics remain on stderr.

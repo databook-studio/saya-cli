@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="saya, thinking — pupils tracking side to side">
+  <title>saya — thinking</title>
+  <style>
+    /* Thinking is the one state that has to read as work happening, so the
+       pupils track rather than blink. */
+    .scan { animation: saya-scan 1.5s ease-in-out infinite; }
+    @keyframes saya-scan {
+      0%, 100% { transform: translateX(-7px) }
+      50%      { transform: translateX(7px) }
+    }
+    @media (prefers-reduced-motion: reduce) { .scan { animation: none } }
+  </style>
+  <defs><clipPath id="body-thinking"><path d="M100 26 C146 26 172 62 172 106 C172 152 141 182 100 182 C59 182 28 152 28 106 C28 62 54 26 100 26 Z"/></clipPath><clipPath id="eye-thinking-0"><circle cx="68" cy="94" r="27"/></clipPath><clipPath id="eye-thinking-1"><circle cx="132" cy="94" r="27"/></clipPath></defs>
+  <path d="M44 60 L58 14 L88 44 Z" fill="#8171e6"/>
+  <path d="M156 60 L142 14 L112 44 Z" fill="#8171e6"/>
+  <path d="M67 186 q13 -9 26 0" fill="none" stroke="#17151f" stroke-width="7" stroke-linecap="round"/>
+  <path d="M107 186 q13 -9 26 0" fill="none" stroke="#17151f" stroke-width="7" stroke-linecap="round"/>
+  <!-- Shade first, then a large offset circle of the body colour clipped to the
+       silhouette: what the circle misses is a crescent rim that follows the
+       curve. A straight-edged band reads as a crease on a round form. -->
+  <path d="M100 26 C146 26 172 62 172 106 C172 152 141 182 100 182 C59 182 28 152 28 106 C28 62 54 26 100 26 Z" fill="#8171e6"/>
+  <circle cx="70" cy="80" r="104" fill="#9d8bf5" clip-path="url(#body-thinking)"/>
+  <circle cx="68" cy="94" r="27" fill="#17151f"/>
+  <circle cx="132" cy="94" r="27" fill="#17151f"/>
+  <rect class="scan" x="63.5" y="83" width="9" height="22" rx="2" fill="#9d8bf5"/>
+  <rect class="scan" x="127.5" y="83" width="9" height="22" rx="2" fill="#9d8bf5"/>
+  <path d="M100 126 L109 145 L91 145 Z" fill="#17151f"/>
+</svg>
