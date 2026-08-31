@@ -151,6 +151,7 @@ mod tests {
                     local_state: LocalStateEffect::None,
                 },
             }],
+            ..Default::default()
         };
 
         let body = build_body(request, 1024, None);
@@ -182,5 +183,31 @@ mod tests {
         // Tools present
         assert_eq!(body["tools"][0]["name"], "get_weather");
         assert_eq!(body["tools"][0]["input_schema"], json!({"type": "object"}));
+    }
+
+    /// Q2: Anthropic has no direct `response_format` equivalent (it shapes output
+    /// through tools), so this provider deliberately ignores the JSON hint and
+    /// never emits a `response_format` field — even when the caller asked for
+    /// `JsonObject`. Ignoring degrades to today's behaviour (the prompt already
+    /// asks for JSON, `strip_markdown_fences` handles fences), never to an error
+    /// (invariant 3). This test pins the "deliberately omits" decision so a
+    /// future change has to reconsider it consciously.
+    #[test]
+    fn json_hint_is_deliberately_omitted_from_anthropic_body() {
+        let request = ChatRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![
+                ChatMessage::text("system", "extract"),
+                ChatMessage::text("user", "proposals"),
+            ],
+            tools: Vec::new(),
+            response_format: crate::ResponseFormat::JsonObject,
+        };
+        let body = build_body(request, 1024, None);
+        assert!(
+            body.get("response_format").is_none(),
+            "anthropic must not emit response_format: {}",
+            body
+        );
     }
 }
