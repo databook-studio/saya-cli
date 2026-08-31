@@ -5,6 +5,38 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Changed — read this before upgrading
+
+- **`saya config init` writes your user config directory, not `.saya/`.** The
+  starter `config.toml` and `connections.toml` now land in the trusted user
+  layer (`~/.config/saya/`, or `$SAYA_CONFIG_HOME/saya/`), so a first run no
+  longer warns that it ignored the templates it just wrote. The project layer
+  is untrusted for security-critical settings; writing only there meant the
+  tool's own onboarding produced a state its own security model rejected, and
+  the next command scolded you for it. Pass `saya config init --project` to
+  write the old `.saya/` pair — for team-shared, non-secret settings checked
+  into a repository. A command run after `--project` warns until you pass
+  `--trust-project-config`; that is the trust boundary doing its job, and
+  `saya config doctor` explains how to apply the settings.
+
+### Added
+
+- **`config doctor` advises a next step and exits non-zero when the setup cannot
+  work.** It keeps its factual lines and adds actionable advice when something
+  is missing — `run saya config init` when nothing is configured, or "set the
+  referenced environment variable" when a profile's secret does not resolve. It
+  exits `3` (connection/config) when no profile is selected or the selected
+  profile's secret is unresolved, and `0` otherwise, so a script can tell a
+  broken setup from a working one. Warnings (a missing cloud API key, an ignored
+  project override) stay `0`.
+
+- **The three first-run failures name an actionable next command.** An
+  unreachable AI provider says to start the provider or run `saya config doctor`
+  — not to re-run `init`, since a gateway that is momentarily down is not a
+  missing config. An unresolvable secret reference says to set the environment
+  variable (or a `.env.saya` file with `--env-file`); `init` cannot supply a
+  secret.
+
 ## 0.3.1 — 2026-08-29 — hardening
 
 A hardening pass over 0.3.0: 30 fixes and 20 features across the read-only
