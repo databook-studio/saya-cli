@@ -1,7 +1,7 @@
 //! Transcript and empty-state rendering.
 
 use super::markdown::markdown_spans_fenced;
-use super::splash::splash_art;
+use super::splash::{NO_DATABASE_FOOTER, NO_DATABASE_HEADLINE, NO_DATABASE_STEPS, splash_art};
 use super::theme::{accent, kind_style, rail_style, secondary, warning};
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
@@ -84,23 +84,22 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
     content.push(Line::from(""));
 
     if app.profiles.is_empty() {
-        // The old text sent new users to /connect, which can only select
-        // already-configured profiles — a dead end. Point at the real path.
+        // The text before this sent new users to /connect, which can only select
+        // already-configured profiles — a dead end. The copy lives in `splash`
+        // so it can be asserted on; see the tests there for what it must hold.
         content.push(Line::from(Span::styled(
-            "No database is configured yet.",
+            NO_DATABASE_HEADLINE,
             Style::default().fg(warning()).add_modifier(Modifier::BOLD),
         )));
-        content.push(Line::from(Span::styled(
-            "Run `saya config init`, add a profile to .saya/connections.toml,",
-            Style::default().fg(secondary()),
-        )));
-        content.push(Line::from(Span::styled(
-            "then run `saya connection test <name>` and restart.",
-            Style::default().fg(secondary()),
-        )));
+        for step in NO_DATABASE_STEPS {
+            content.push(Line::from(Span::styled(
+                step,
+                Style::default().fg(secondary()),
+            )));
+        }
         content.push(Line::from(""));
         content.push(Line::from(Span::styled(
-            "Check problems any time with `saya config doctor`.",
+            NO_DATABASE_FOOTER,
             Style::default().fg(secondary()),
         )));
     } else {

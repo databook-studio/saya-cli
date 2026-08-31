@@ -1,10 +1,31 @@
-//! The mascot drawn on the empty-state splash.
+//! What the empty-state splash shows before the first turn: the mascot, and
+//! the first-run guidance for someone with no database configured yet.
 
 use super::theme::{accent, secondary};
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+
+/// The headline shown when no connection profile is configured.
+pub(super) const NO_DATABASE_HEADLINE: &str = "No database is configured yet.";
+
+/// The steps under that headline.
+///
+/// Deliberately names no config path. `config init` writes the user config
+/// directory by default, `--project` writes `.saya/`, and init prints whichever
+/// it chose — so the one place that knows the answer is the command itself.
+/// The previous copy hardcoded `.saya/connections.toml` and kept saying it
+/// after the default moved, sending first-run users to a file that is not
+/// created any more.
+pub(super) const NO_DATABASE_STEPS: [&str; 3] = [
+    "Run `saya config init` — it prints where it wrote the files.",
+    "Add your database there, then `saya connection test <name>`.",
+    "Restart saya to pick it up.",
+];
+
+/// The closing line, after a blank row.
+pub(super) const NO_DATABASE_FOOTER: &str = "`saya config doctor` explains anything still missing.";
 
 /// The splash mascot. Every row is padded to the same width so
 /// `Alignment::Center` shifts them all by the same amount — a ragged row would
@@ -100,6 +121,48 @@ mod tests {
         // One line short of the compact mascot: the text draws alone.
         assert!(splash_art(11 + SPLASH_ART_COMPACT.len(), 11).is_none());
         assert!(splash_art(0, 11).is_none());
+    }
+
+    /// The guidance must not name a config path. Init's default moved from the
+    /// project layer to the user one and this copy kept naming `.saya/`, which
+    /// nothing asserted — so it stayed wrong through a release.
+    #[test]
+    fn first_run_guidance_names_no_config_path() {
+        for line in NO_DATABASE_STEPS
+            .iter()
+            .chain([&NO_DATABASE_HEADLINE, &NO_DATABASE_FOOTER])
+        {
+            assert!(
+                !line.contains(".saya"),
+                "guidance must let `config init` report the path: {line}"
+            );
+        }
+    }
+
+    /// Every command the guidance names has to exist, or it is a dead end in the
+    /// one place a new user has nothing else to go on.
+    #[test]
+    fn first_run_guidance_names_real_commands() {
+        let all = NO_DATABASE_STEPS.join(" ") + NO_DATABASE_FOOTER;
+        for command in [
+            "saya config init",
+            "saya connection test",
+            "saya config doctor",
+        ] {
+            assert!(all.contains(command), "guidance should offer `{command}`");
+        }
+    }
+
+    /// The splash is centred, so a line wider than a narrow terminal wraps and
+    /// breaks the centring for every line under it.
+    #[test]
+    fn first_run_guidance_fits_a_narrow_terminal() {
+        for line in NO_DATABASE_STEPS
+            .iter()
+            .chain([&NO_DATABASE_HEADLINE, &NO_DATABASE_FOOTER])
+        {
+            assert!(line.chars().count() <= 64, "too wide to centre: {line}");
+        }
     }
 
     /// The cursor mouth is its own span so it can be styled apart from the body.
