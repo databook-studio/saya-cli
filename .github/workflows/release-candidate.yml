@@ -66,13 +66,32 @@ jobs:
           BIN="target/release/saya"
           test -x "$BIN" || BIN="target/release/saya.exe"
           "$BIN" --version
+          # `config doctor` exits 3 when the setup cannot run a query, which is
+          # the correct answer on a bare runner with no config and no database.
+          # The smoke test asks "does this binary work", not "is this machine
+          # configured", so 3 is a pass here — but only 0 and 3 are, since a
+          # panic or a usage error still has to fail the release.
+          set +e
           "$BIN" --non-interactive config doctor
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+            echo "config doctor exited $rc; expected 0 (configured) or 3 (nothing configured)" >&2
+            exit 1
+          fi
       - name: Smoke test binary on Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           & "target/release/saya.exe" --version
+          # See the Unix step: 3 means "nothing is configured", which is the
+          # expected state on a bare runner.
           & "target/release/saya.exe" --non-interactive config doctor
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) {
+            Write-Error "config doctor exited $LASTEXITCODE; expected 0 (configured) or 3 (nothing configured)"
+            exit 1
+          }
+          exit 0
       - name: Package archive on Unix
         if: matrix.os != 'windows-latest'
         id: package
