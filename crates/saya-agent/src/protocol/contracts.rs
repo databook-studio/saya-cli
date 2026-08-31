@@ -67,11 +67,36 @@ pub struct ToolMetadata {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The shape the caller wants the response in. Provider-neutral intent —
+/// **not** an OpenAI wire spelling — so `saya-agent` stays provider-agnostic.
+/// Each provider translates the variant it honours (`JsonObject` →
+/// `response_format: {"type":"json_object"}` on OpenAI, `format: "json"` on
+/// Ollama) or drops it; a provider with no equivalent degrades to today's
+/// behaviour (the prompt already asks for JSON, `strip_markdown_fences` already
+/// handles fences). `Text` is the default so the main agent loop — which never
+/// sets this — keeps answering in prose (invariant 1: JSON mode is for the
+/// extraction call only).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Free-form prose. The default; the main loop's request.
+    #[default]
+    Text,
+    /// The response must be a single JSON object. The extraction call sets this
+    /// so a reasoning model does not spend tokens on chain-of-thought we discard.
+    JsonObject,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<ToolDefinition>,
+    /// How the caller wants the response shaped. Defaults to [`ResponseFormat::Text`];
+    /// the extraction call sets [`ResponseFormat::JsonObject`]. The main agent
+    /// loop never sets it (left to `Default`), so a prose answer stays prose.
+    #[serde(default)]
+    pub response_format: ResponseFormat,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -478,7 +503,50 @@ pub trait ToolExecutor: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::LocalStateEffect;
+    use super::{ChatRequest, LocalStateEffect, ResponseFormat};
+
+    /// `ResponseFormat::Text` is the default — the whole point of leaving the
+    /// field unset on the main loop's request. If this regresses, invariant 1
+    /// (JSON mode is for the extraction call only) breaks silently.
+    #[test]
+    fn response_format_defaults_to_text() {
+        assert_eq!(ResponseFormat::default(), ResponseFormat::Text);
+        // A request built with struct-update (`..Default::default()`) — the
+        // shape the main loop and the call sites use — defaults to `Text`.
+        let request = ChatRequest {
+            model: "m".into(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            ..Default::default()
+        };
+        assert_eq!(request.response_format, ResponseFormat::Text);
+    }
+
+    /// `ResponseFormat` is provider-neutral intent, not an OpenAI wire spelling:
+    /// it serializes as `text` / `json_object` (snake_case) and round-trips, so a
+    /// serialized `ChatRequest` stays readable and stable.
+    #[test]
+    fn response_format_round_trips_through_snake_case() {
+        for (variant, expected) in [
+            (ResponseFormat::Text, "text"),
+            (ResponseFormat::JsonObject, "json_object"),
+        ] {
+            let text = serde_json::to_string(&variant).expect("serializes");
+            assert_eq!(text, format!("\"{expected}\""), "{variant:?}");
+            let back: ResponseFormat = serde_json::from_str(&text).expect("deserializes back");
+            assert_eq!(back, variant, "{variant:?}");
+        }
+    }
+
+    /// The back-compat guarantee: a `ChatRequest` serialized before this slice
+    /// (no `response_format` key) deserializes to the default `Text`, so old
+    /// serialized requests stay valid.
+    #[test]
+    fn chat_request_without_response_format_key_defaults_to_text() {
+        let json = r#"{"model":"m","messages":[],"tools":[]}"#;
+        let request: ChatRequest = serde_json::from_str(json).expect("old form deserializes");
+        assert_eq!(request.response_format, ResponseFormat::Text);
+    }
 
     /// The back-compat guarantee: a `ToolEffect` serialized before this slice
     /// (no `local_state` key) deserializes to the default `None`.

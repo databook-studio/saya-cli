@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{
     CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderStream,
+    ResponseFormat,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -88,6 +89,20 @@ struct OpenAiRequest {
     prompt_cache_key: Option<String>,
     /// Ask the gateway for token counts on a trailing usage-only chunk.
     stream_options: StreamOptions,
+    /// The OpenAI `response_format` spelling of [`ChatRequest::response_format`].
+    /// Only present when the caller asked for JSON — omitted for `Text` so the
+    /// default prose path is byte-identical to before this field existed
+    /// (invariant 1: JSON mode is opt-in, extraction-call only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<ResponseFormatWire>,
+}
+
+/// The OpenAI wire shape for `response_format`. Only `json_object` is emitted;
+/// `text` is the gateway default, so it is never sent.
+#[derive(Serialize)]
+struct ResponseFormatWire {
+    #[serde(rename = "type")]
+    kind: &'static str,
 }
 
 #[derive(Serialize)]
@@ -112,6 +127,12 @@ impl OpenAiRequest {
             stream_options: StreamOptions {
                 include_usage: true,
             },
+            response_format: match request.response_format {
+                ResponseFormat::JsonObject => Some(ResponseFormatWire {
+                    kind: "json_object",
+                }),
+                ResponseFormat::Text => None,
+            },
         }
     }
 }
@@ -125,4 +146,56 @@ fn fnv1a_hex(input: &str) -> String {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ChatMessage, LocalStateEffect, ToolDefinition, ToolEffect};
+
+    fn request_with(format: ResponseFormat) -> ChatRequest {
+        ChatRequest {
+            model: "test-model".into(),
+            messages: vec![ChatMessage::text("user", "extract")],
+            tools: vec![ToolDefinition {
+                name: "schema_discovery".into(),
+                description: "schema".into(),
+                read_only: true,
+                parameters: serde_json::json!({"type": "object"}),
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::None,
+                },
+            }],
+            response_format: format,
+        }
+    }
+
+    /// Q2: a JSON-mode request carries `response_format: {"type":"json_object"}`
+    /// on the OpenAI wire — the spelling the spec verified at 1.7s / 0 reasoning
+    /// tokens against the live gateway.
+    #[test]
+    fn json_object_request_carries_response_format_on_wire() {
+        let body = OpenAiRequest::from_request(request_with(ResponseFormat::JsonObject), 0.1);
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            json.contains(r#""response_format":{"type":"json_object"}"#),
+            "json_object must appear on the wire: {json}"
+        );
+    }
+
+    /// Invariant 1 / Q2: a `Text` (default) request omits `response_format`
+    /// entirely, so the prose path is byte-identical to before this slice —
+    /// JSON mode is opt-in, never a surprise on the main loop's request.
+    #[test]
+    fn text_request_omits_response_format_on_wire() {
+        let body = OpenAiRequest::from_request(request_with(ResponseFormat::Text), 0.1);
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            !json.contains("response_format"),
+            "text request must not carry response_format: {json}"
+        );
+    }
 }
