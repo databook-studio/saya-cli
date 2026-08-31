@@ -144,6 +144,7 @@ mod tests {
                     local_state: LocalStateEffect::None,
                 },
             }],
+            ..Default::default()
         };
 
         let body = build_body(request, 4096, None);
@@ -175,5 +176,31 @@ mod tests {
             "search"
         );
         assert_eq!(body["generationConfig"]["maxOutputTokens"], 4096);
+    }
+
+    /// Q2: Gemini shapes output with `responseMimeType`, but this provider
+    /// deliberately ignores the JSON hint for now and never emits it — even when
+    /// the caller asked for `JsonObject`. Ignoring degrades to today's behaviour
+    /// (the prompt already asks for JSON, `strip_markdown_fences` handles
+    /// fences), never to an error (invariant 3). This test pins the
+    /// "deliberately omits" decision so a future change has to reconsider it
+    /// consciously.
+    #[test]
+    fn json_hint_is_deliberately_omitted_from_gemini_body() {
+        let request = ChatRequest {
+            model: "gemini-1.5-flash".into(),
+            messages: vec![
+                ChatMessage::text("system", "extract"),
+                ChatMessage::text("user", "proposals"),
+            ],
+            tools: Vec::new(),
+            response_format: crate::ResponseFormat::JsonObject,
+        };
+        let body = build_body(request, 4096, None);
+        assert!(
+            body["generationConfig"].get("responseMimeType").is_none(),
+            "gemini must not emit responseMimeType: {}",
+            body["generationConfig"]
+        );
     }
 }

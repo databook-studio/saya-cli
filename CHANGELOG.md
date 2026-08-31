@@ -5,6 +5,22 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Changed — read this before upgrading
+
+- **The wait after an answer is shorter, because the extractor stops paying for
+  reasoning it throws away.** Post-turn extraction — the second provider call
+  that decides what to remember — ran on a reasoning model that emitted
+  thousands of chain-of-thought tokens before a ~500-token JSON answer, none of
+  which saya reads. On `glm-5.2` through the Vivanti gateway the same call that
+  took 8s (and could run to 25s) now requests JSON mode and returns in roughly
+  a second, with the same proposals. JSON mode is set for the extraction call
+  only: a turn that answers in prose still answers in prose. The OpenAI and
+  Ollama providers translate the intent; Anthropic and Gemini ignore it (the
+  prompt already asks for JSON and the fence-stripper still handles wrapped
+  output), so a provider that cannot honour it degrades to today's behaviour
+  rather than erroring. The 25s timeout stays — it guards a provider that
+  ignores the hint, not a problem this fixes.
+
 ## 0.3.2 — 2026-08-31 — first run, and an owl
 
 ### Changed — read this before upgrading

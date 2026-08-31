@@ -123,6 +123,7 @@ If no new knowledge was asserted or discovered, return {{"proposals": []}}."#
             ChatMessage::text("user", user_context),
         ],
         tools: Vec::new(),
+        ..Default::default()
     }
 }
 
