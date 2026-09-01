@@ -440,7 +440,7 @@ async fn drain(stream: &mut saya_agent::ProviderStream) -> Vec<saya_agent::Provi
 }
 
 /// Collects every `ReasoningDelta` a stream emits, plus the `Done` sentinel.
-/// S23 deliverable 6: the per-provider reasoning tests assert reasoning is
+/// the per-provider reasoning tests assert reasoning is
 /// captured when present and absent when the wire carries none. This drain
 /// keeps the reasoning events the general `drain` drops on the floor.
 async fn drain_reasoning(
@@ -612,9 +612,9 @@ async fn unreachable_provider_error_names_the_endpoint() {
     assert!(error.contains("base_url"), "{error}");
 }
 
-// --- S23: reasoning capture, one test per provider (present → captured) -------
+// --- reasoning capture, one test per provider (present → captured) -------
 
-/// S23 deliverable 6 (OpenAI, with): `delta.reasoning_content` is parsed into a
+/// `delta.reasoning_content` is parsed into a
 /// `ReasoningDelta` event, which `collect()` threads onto `ChatResponse.reasoning`.
 /// The chain-of-thought is captured even though no user toggle asked for it
 /// (invariant 4: capture is unconditional).
@@ -665,7 +665,7 @@ async fn openai_stream_captures_reasoning_content() {
     );
 }
 
-/// S23 deliverable 6 (OpenAI, absent): a stream with no `reasoning_content`
+/// a stream with no `reasoning_content`
 /// leaves `ChatResponse.reasoning` `None` — no error, no behaviour change
 /// (invariant 3).
 #[tokio::test]
@@ -683,7 +683,7 @@ async fn openai_stream_without_reasoning_leaves_it_none() {
     assert_eq!(response.reasoning, None);
 }
 
-/// S23 deliverable 6 (Anthropic, with): `thinking_delta.thinking` is parsed
+/// `thinking_delta.thinking` is parsed
 /// into a `ReasoningDelta` event and threaded onto `ChatResponse.reasoning`.
 #[tokio::test]
 async fn anthropic_stream_captures_thinking_delta() {
@@ -732,7 +732,7 @@ async fn anthropic_stream_captures_thinking_delta() {
     );
 }
 
-/// S23 deliverable 6 (Anthropic, absent): a stream with no `thinking` block
+/// a stream with no `thinking` block
 /// leaves `ChatResponse.reasoning` `None` — reasoning not reported, no error.
 #[tokio::test]
 async fn anthropic_stream_without_thinking_leaves_reasoning_none() {
@@ -752,7 +752,7 @@ async fn anthropic_stream_without_thinking_leaves_reasoning_none() {
     assert_eq!(response.reasoning, None);
 }
 
-/// S23 deliverable 6 (Ollama, with): `message.thinking` is parsed into a
+/// `message.thinking` is parsed into a
 /// `ReasoningDelta` and threaded onto `ChatResponse.reasoning`.
 #[tokio::test]
 async fn ollama_stream_captures_thinking() {
@@ -797,7 +797,7 @@ async fn ollama_stream_captures_thinking() {
     );
 }
 
-/// S23 deliverable 6 (Ollama, absent): a chunk with no `thinking` leaves
+/// a chunk with no `thinking` leaves
 /// `ChatResponse.reasoning` `None`.
 #[tokio::test]
 async fn ollama_stream_without_thinking_leaves_reasoning_none() {

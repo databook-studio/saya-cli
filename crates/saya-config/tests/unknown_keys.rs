@@ -130,10 +130,10 @@ fn shipped_connections_docker_example_parses_end_to_end() {
 
 // Invariant: the accepted key set is owned by the type, once. serde's
 // `deny_unknown_fields` enforces it directly, so a rejected key's error names
-// the type's own fields (`expected one of ... <a declared field> ...`).
+// the type's own fields (`expected one of... <a declared field>...`).
 // A reintroduced hand-written shadow list would either stop rejecting unknown
-// keys (if it replaced serde) or carry a different message (`unknown key ... in
-// profile ...`) — in either case this assertion, which pins the serde-shaped
+// keys (if it replaced serde) or carry a different message (`unknown key... in
+// profile...`) — in either case this assertion, which pins the serde-shaped
 // message and a declared Postgres field, breaks. That breakage is the alarm:
 // it means the key set is no longer defined by the type alone.
 #[test]

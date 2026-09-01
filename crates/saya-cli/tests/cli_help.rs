@@ -1,4 +1,4 @@
-//! Regression guard for the `--help` surface (S14). A user who runs `saya
+//! Regression guard for the `--help` surface. A user who runs `saya
 //! --help` decides what to do next from the one-line summaries and the per-flag
 //! descriptions, so a blank entry is a silent hole — it reads as "trivial" or
 //! "undocumented" with no way to tell which. This test walks clap's command tree
@@ -83,8 +83,8 @@ fn command_path(cmd: &clap::Command) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// S15 — `config show` advertised two flags it never read (S15 spec, invariants
-// 1 and 4). Both `--resolved` and `--redacted` were accepted and discarded
+// `config show` advertised two flags it never read. Both `--resolved` and
+// `--redacted` were accepted and discarded
 // since the initial release: `config show` always printed the resolved,
 // redacted view regardless. Keeping a flag that implies redaction is optional
 // is worse than no flag (invariant 2 — redaction is never optional), so the
@@ -133,7 +133,7 @@ fn config_show_help_no_longer_advertises_resolved_or_redacted() {
     }
 }
 
-/// S28 deliverable 1: `contracts approve-all --help` states what the batch
+/// `contracts approve-all --help` states what the batch
 /// approves, that every item still gets the per-item validation (so some are
 /// refused and every refusal is reported), and that consent is explicit via
 /// `--yes`. A user deciding whether to run it must be able to learn from the
@@ -165,8 +165,8 @@ fn approve_all_help_states_scope_consent_and_per_item_reporting() {
         "the help documents the --yes consent flag: {help}"
     );
 
-    // And the surface parses: scope (Q1) is the optional --profile, the queue
-    // bound (Q3) is the optional --limit, consent is --yes.
+    // And the surface parses: scope is the optional --profile, the queue
+    // bound is the optional --limit, consent is --yes.
     let parsed = Cli::try_parse_from([
         "saya",
         "contracts",

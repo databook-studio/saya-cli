@@ -1,4 +1,4 @@
-//! The recall→event mapping — spec P1b §3. Pure, so the three-state decision
+//! The recall→event mapping Pure, so the three-state decision
 //! (Off / Skipped / Ran) and the claim mapping are unit-testable without a live
 //! database; the runtime calls [`knowledge_supplied_event`] and emits it.
 //!

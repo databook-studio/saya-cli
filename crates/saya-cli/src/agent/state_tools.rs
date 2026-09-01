@@ -11,7 +11,7 @@ use std::time::Instant;
 /// hundreds of rows only bloats context and slows every later turn.
 const MODEL_ROW_CAP: usize = 50;
 
-/// Flattens a schema into a compact `{ "tables": { name: "col:type, ..." } }`
+/// Flattens a schema into a compact `{ "tables": { name: "col:type,..." } }`
 /// map — far smaller than the full serialized tree, which otherwise rides in
 /// context on every subsequent agent turn.
 fn compact_schema(schema: &SchemaTree) -> serde_json::Value {

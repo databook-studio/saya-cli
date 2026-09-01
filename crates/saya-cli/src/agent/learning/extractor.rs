@@ -1,4 +1,4 @@
-//! Structured extraction response parser and candidate validation — spec F Chunk 2.
+//! Structured extraction response parser and candidate validation.
 //!
 //! Parses LLM extraction JSON outputs, rejects hallucinated object IDs (Safety Property 2),
 //! enforces maximum proposal limits (Safety Property 3), and sanitizes credentials.
@@ -61,7 +61,7 @@ fn convert_raw_proposal(
     })
 }
 
-/// Strips markdown fences (e.g. ````json ... ````) from the LLM output.
+/// Strips markdown fences (e.g. ````json... ````) from the LLM output.
 #[allow(dead_code)]
 fn strip_markdown_fences(raw: &str) -> &str {
     let trimmed = raw.trim();

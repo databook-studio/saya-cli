@@ -51,10 +51,8 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
         AgentEvent::ToolDenied { name, reason } => {
             transcript.push(BlockKind::System, format!("✗ {name} denied: {reason}"))
         }
-        // What memory supplied, shown before the answer streams (spec P1c §6: the
-        // TUI transcript is persistent scrollback, so a block pushed before the
-        // answer stays visible above it — it leads, and does not compete with the
-        // status-bar spinner). The shared shaper centralizes the wording; an empty
+        // What memory supplied, shown before the answer streams. The shared
+        // shaper centralizes the wording; an empty
         // result (Ran-and-found-nothing) is silence — push nothing.
         AgentEvent::KnowledgeSupplied {
             outcome,
@@ -70,7 +68,7 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
                 transcript.push(BlockKind::System, text.trim_end_matches('\n'));
             }
         }
-        // A confirmed claim the turn's SQL contradicted (spec A1). Trails the
+        // A confirmed claim the turn's SQL contradicted. Trails the
         // answer — emitted after the loop — so a System block pushed here lands
         // below the assistant text, where a "the SQL contradicted a confirmed
         // claim" notice belongs. The shared shaper centralizes the wording; an
@@ -105,15 +103,15 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
             }
         }
         // The model's chain-of-thought. Accepted here (the catch-all `_` below
-        // would also accept it, but an explicit arm names the intent so S24
-        // knows where to wire live display) and pushed to nothing. S23b
-        // invariant 1: no TUI rendering in this slice — display is S24. S23b
+        // would also accept it, but an explicit arm names the intent so the display slice
+        // knows where to wire live display) and pushed to nothing. the CLI-boundary slice
+        // invariant 1: no TUI rendering in this slice — display is the display slice. the CLI-boundary slice
         // invariant 2: the transcript is in-memory and never serialized (the
         // serialized types are `SessionLine`/`RedactedTurn`, which carry role +
         // content only), so holding reasoning here would not violate
         // non-persistence — but holding it would render it now, which invariant
         // 1 forbids. So this slice accepts the event and drops it; buffering
-        // for S24's dim live-thinking is left to that slice.
+        // for the display slice's dim live-thinking is left to that slice.
         AgentEvent::ReasoningText { .. } => {}
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
@@ -155,7 +153,7 @@ mod tests {
     }
 
     /// KnowledgeSupplied pushes a System block whose text names the supplied
-    /// claims (spec P1c §5). Asserts on the rendered transcript, not state.
+    /// claims. Asserts on the rendered transcript, not state.
     #[test]
     fn knowledge_supplied_pushes_a_system_block_with_the_claims() {
         let mut t = Transcript::new();
@@ -178,7 +176,7 @@ mod tests {
             ),
         );
         let block = last_block_text(&t).expect("a block was pushed");
-        // S28 folded-in: the header points at /queue, the action the learn
+        // the batch-approve slice folded-in: the header points at /queue, the action the learn
         // path already names, beside the unconfirmed count it always carried.
         assert!(
             block.starts_with("memory supplied · 2 claims (1 unconfirmed — review with /queue)"),
@@ -282,7 +280,7 @@ mod tests {
     }
 
     /// KnowledgeOverridden pushes a System block whose text names the referenced
-    /// column and the specified value (spec A1 §3). Trails the answer — the
+    /// column and the specified value. Trails the answer — the
     /// block lands below the assistant text in the transcript.
     #[test]
     fn knowledge_overridden_pushes_a_system_block_naming_the_finding() {
@@ -317,7 +315,7 @@ mod tests {
         assert_eq!(t.blocks().last().unwrap().kind, BlockKind::System);
     }
 
-    /// An empty finding set pushes nothing — silence (spec A1 §3).
+    /// An empty finding set pushes nothing — silence.
     #[test]
     fn an_empty_knowledge_overridden_event_pushes_nothing() {
         let mut t = Transcript::new();
@@ -358,10 +356,10 @@ mod tests {
         );
     }
 
-    /// S23b invariant 1 (TUI): a `ReasoningText` event pushes nothing to the
+    /// A `ReasoningText` event pushes nothing to the
     /// transcript — no display in this slice. The event is accepted (the explicit
-    /// arm in `apply_event` names the intent for S24) but the transcript is
-    /// untouched, so the chain-of-thought cannot reach the screen until S24
+    /// arm in `apply_event` names the intent for the display slice) but the transcript is
+    /// untouched, so the chain-of-thought cannot reach the screen until the display slice
     /// wires it. Asserts on the transcript state, the same seam the other
     /// `apply_event` tests use.
     #[test]

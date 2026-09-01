@@ -17,7 +17,7 @@ pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
     let mut content = String::new();
     let mut tool_calls = Vec::new();
     // Reasoning parts are accumulated separately from the answer. Gemini marks
-    // chain-of-thought with `thought: true` on the part (S20 wire table); the
+    // chain-of-thought with `thought: true` on the part; the
     // answer's parts carry no such flag. A response with no `thought: true`
     // part leaves `reasoning` `None` (absent is not zero), distinct from a
     // model that reasoned and produced an empty string.
@@ -159,9 +159,9 @@ mod tests {
         assert!(parse(json!({"candidates": [{"content": {"parts": []}}]})).is_err());
     }
 
-    /// S26 deliverable 4 (Gemini override path): Gemini's `complete()` bypasses
+    /// Gemini's `complete()` bypasses
     /// `collect()` and returns `gemini_response::parse(value)`, so the usage
-    /// must be threaded here — the `let _ = usage(&body);` discard is gone (Q3).
+    /// must be threaded here — the `let _ = usage(&body);` discard is gone.
     /// A `usageMetadata` carrying the cache-read and reasoning counts reaches
     /// `response.usage`.
     #[test]
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(usage.cache_creation_input_tokens, None);
     }
 
-    /// S26 invariant 1 (Gemini override path, absent case): a response with no
+    /// Gemini override path, absent case: a response with no
     /// `usageMetadata` leaves `response.usage` `None`, distinct from a present
     /// block reporting zeros — a silent Gemini response is not a free one.
     #[test]
@@ -199,7 +199,7 @@ mod tests {
     /// Deliverable 4 (Gemini, with): `usageMetadata` carrying the cache-read
     /// and reasoning counts populates `cached_input_tokens` and
     /// `reasoning_tokens`. Note Gemini's `thoughtsTokenCount` is separate from
-    /// `candidatesTokenCount` (Q1), not inclusive of output.
+    /// `candidatesTokenCount`, not inclusive of output.
     #[test]
     fn usage_metadata_populates_cache_and_reasoning() {
         let body = json!({
@@ -245,10 +245,10 @@ mod tests {
         assert_eq!(usage.cached_input_tokens, Some(0));
     }
 
-    /// S23 deliverable 6 (Gemini, with): parts marked `thought: true` carry
+    /// parts marked `thought: true` carry
     /// the chain-of-thought; it reaches `response.reasoning`, separate from
     /// the answer's content. Gemini's `complete()` bypasses `collect()`, so
-    /// reasoning is parsed directly here (S23 Q4).
+    /// reasoning is parsed directly here.
     #[test]
     fn thought_parts_carry_reasoning_separate_from_content() {
         let body = json!({
@@ -270,7 +270,7 @@ mod tests {
         );
     }
 
-    /// S23 deliverable 6 (Gemini, absent): a response whose parts carry no
+    /// a response whose parts carry no
     /// `thought: true` flag leaves `response.reasoning` `None`, and content
     /// parses normally — a non-reasoning response is unaffected (invariant 3).
     #[test]

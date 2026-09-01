@@ -68,7 +68,7 @@ pub(super) fn changed(claim_id: &str, action: &str, status: &str) -> Rendered {
     }
 }
 
-/// Shapes the confirmation for a remembered claim (spec Chunk 3).
+/// Shapes the confirmation for a remembered claim.
 ///
 /// Dropping the 64-character raw id keeps hashes out of the user interface:
 /// the confirmation names the fact in words (kind, value, optional column)

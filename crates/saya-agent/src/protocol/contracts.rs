@@ -108,17 +108,17 @@ pub struct ChatResponse {
     /// the provider reported no reasoning. Lives **here, on `ChatResponse`** —
     /// transport for one call — and never on `ChatMessage`, which is what gets
     /// replayed to the provider as history and what session persistence is
-    /// shaped around. That placement is the point of S23's Q2: with no
+    /// shaped around. That placement is the point of the capture slice's Q2: with no
     /// reasoning field on `ChatMessage`, a session writer or history builder
     /// has nowhere to copy it, so "reasoning is never persisted" and "reasoning
-    /// is never replayed as history" (S23 invariants 1 and 2) are structural,
+    /// is never replayed as history" are structural,
     /// not remembered. `None` is the absent case — a provider that omits
     /// chain-of-thought — distinct from `Some(String::new())`, a model that
     /// reasoned and produced nothing; both survive `#[serde(default)]`, so a
     /// response serialized before this field existed (no `reasoning` key)
     /// deserializes to `None`. Capture is unconditional (invariant 4): this is
     /// populated whether or not the user has asked to see thinking — the
-    /// `show_thinking` toggle that gates *display* is S24.
+    /// `show_thinking` toggle that gates *display* is the display slice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     /// Token counts the provider reported for this response, or `None` when the
@@ -136,7 +136,7 @@ pub struct ChatResponse {
 }
 
 /// The three distinguishable states of a turn's recall, as
-/// [`AgentEvent::KnowledgeSupplied`] carries them (spec P1b §3). `Off` (recall
+/// [`AgentEvent::KnowledgeSupplied`] carries them. `Off` (recall
 /// disabled by config), `Skipped` (the privacy gate closed — SAYA was not
 /// allowed to look), and `Ran` (recall ran against the store) are three facts a
 /// user reads differently; collapsing them into a single "no event" would hide
@@ -162,7 +162,7 @@ pub enum KnowledgeOutcome {
 /// the claim id (so a later phase can name exactly which saved claims shaped
 /// an answer), its kind, the short rendered value the prompt block shows, a
 /// column when the claim is column-scoped, and its persisted status — so a
-/// `Candidate` reads as `candidate`, distinct from `confirmed` (spec P1b §4.5).
+/// `Candidate` reads as `candidate`, distinct from `confirmed`.
 ///
 /// No raw payload, evidence, or SQL. `value` is the same short rendered form
 /// the prompt block already shows (a column name, an alias), not the stored
@@ -186,7 +186,7 @@ pub struct SuppliedClaimDto {
 /// One object's claims, as supplied to the turn, in the DTO shape that crosses
 /// the crate boundary into [`AgentEvent::KnowledgeSupplied`]. `profile` is the
 /// human-facing profile **name**, never the opaque [`saya_types::ProfileIdentity`]
-/// — the identity has no field here, by construction (spec P1b §3). `schema_state`
+/// — the identity has no field here, by construction. `schema_state`
 /// is the contract's aggregated state token (`current` / `needs_review` /
 /// `live_schema_unavailable`); `stale` never appears (a contract aggregating to
 /// `Stale` is dropped by the model-path policy before supply).
@@ -202,7 +202,7 @@ pub struct SuppliedContractDto {
 }
 
 /// One candidate claim **proposed** (persisted) this turn, in the DTO shape that
-/// crosses the crate boundary into [`AgentEvent::KnowledgeProposed`] (spec P2d).
+/// crosses the crate boundary into [`AgentEvent::KnowledgeProposed`].
 /// Mirrors [`SuppliedClaimDto`]'s vocabulary — same `claim_id` / `kind` / `value`
 /// / `column` / `status` — and adds `profile` and `object`, because a proposal is
 /// a single flat claim, not a claim nested under a contract stanza. `profile` is
@@ -265,16 +265,16 @@ pub enum AgentEvent {
     },
     /// One delta of the model's chain-of-thought for this turn, streamed the way
     /// [`AgentEvent::AssistantText`] streams the answer. Capture is unconditional
-    /// (S23 invariant 4: parsed whether or not the user has asked to see it); the
-    /// `show_thinking` toggle that gates **display** is S24, not a precondition
-    /// for this event. This slice (S23b) carries reasoning across the crate
+    ///; the
+    /// `show_thinking` toggle that gates **display** is the display slice, not a precondition
+    /// for this event. This slice carries reasoning across the crate
     /// boundary and no further: the headless renderer renders it to nothing (it
-    /// is content the user has not asked for, not progress — see the S23b Q1
+    /// is content the user has not asked for, not progress — see the the CLI-boundary slice Q1
     /// note on `terminal_event`), and the TUI accepts it without displaying it
-    /// (display is S24). Reasoning is **never** on [`ChatMessage`] (S23
-    /// invariant 1/2, structural), so this event is the only way the turn's
+    /// (display is the display slice). Reasoning is **never** on [`ChatMessage`], so this
+    /// event is the only way the turn's
     /// thinking leaves `saya-agent` — and it leaves to in-memory consumers only,
-    /// never to a serialized session (S23b invariant 2).
+    /// never to a serialized session.
     ReasoningText {
         text: String,
     },
@@ -295,7 +295,7 @@ pub enum AgentEvent {
     },
     /// What recall **supplied** to this turn's context block, emitted once per
     /// turn *before* any provider request (so a reader can see what shaped the
-    /// SQL before it runs, not after — spec P1b §1/§2). The payload says
+    /// SQL before it runs, not after/§2). The payload says
     /// **supplied**, never *used*: a confirmed claim being supplied does not
     /// mean the generated SQL honoured it. Carries at most what recall supplied
     /// (already capped: ≤5 objects, ≤12 claims/object); no raw SQL or evidence.
@@ -307,7 +307,7 @@ pub enum AgentEvent {
         /// subset, not the whole"; zero means the supply path kept everything.
         dropped_by_bounds: usize,
     },
-    /// A candidate claim was **proposed** — persisted — this turn (spec P2d).
+    /// A candidate claim was **proposed** — persisted — this turn.
     /// Emitted once per persisted proposal, at the moment the store accepts it
     /// (the `Stored` arm), so a refused, duplicate, or validation-failed proposal
     /// emits nothing: the event names what was *written*, never what was merely
@@ -329,7 +329,7 @@ pub enum AgentEvent {
     /// Carries nothing. It is a progress signal, not content: an adapter with
     /// no progress surface (the headless renderer) is right to ignore it.
     KnowledgeLearningStarted,
-    /// A confirmed claim the turn's SQL **contradicted** — spec A1. Emitted at
+    /// A confirmed claim the turn's SQL **contradicted**. Emitted at
     /// most once per turn, after the loop, carrying every finding the detector
     /// raised across the turn's statements. Silent when there is nothing to say
     /// (the detector fails closed on unparseable SQL, partial column lists, joins,
@@ -351,7 +351,7 @@ pub enum AgentEvent {
     /// nothing — declining is the common case on ordinary turns and a line every
     /// turn would be noise; only an unexpected failure surfaces. Carries the
     /// reason so a render can distinguish "timed out" from "failed" without
-    /// re-deriving it. No raw response, no payload (spec packet-54 decision 1/2).
+    /// re-deriving it. No raw response, no payload.
     KnowledgeLearningSkipped {
         reason: LearningSkipReason,
     },
@@ -383,7 +383,7 @@ impl AgentEvent {
     /// Builds one chain-of-thought delta event, mirroring [`AgentEvent::assistant_text`].
     /// The caller is `receive`, forwarding a `ProviderEvent::ReasoningDelta` so the
     /// turn's thinking crosses the crate boundary the same way the answer does.
-    /// Display is gated elsewhere (S24); this event carries the text, it does not
+    /// Display is gated elsewhere; this event carries the text, it does not
     /// decide whether to show it.
     pub fn reasoning_text(text: impl Into<String>) -> Self {
         Self::ReasoningText { text: text.into() }
@@ -419,8 +419,7 @@ impl AgentEvent {
     /// Builds the per-turn `KnowledgeOverridden` event carrying every finding
     /// the detector raised across the turn's statements. The caller is the
     /// runtime, after the loop drains the override log; an empty `findings`
-    /// means the caller emits nothing (spec A1: "if it returns nothing, say
-    /// nothing").
+    /// means the caller emits nothing.
     pub fn knowledge_overridden(findings: Vec<OverrideFindingDto>) -> Self {
         Self::KnowledgeOverridden { findings }
     }
@@ -560,13 +559,13 @@ pub trait ToolExecutor: Send + Sync {
 mod tests {
     use super::{ChatMessage, ChatRequest, ChatResponse, LocalStateEffect, ResponseFormat};
 
-    /// S23 deliverable 4 (the structural guarantee): `ChatMessage` — what gets
+    /// `ChatMessage` — what gets
     /// replayed to the provider as history and what session persistence is
     /// shaped around — has **no** reasoning field. A `ChatMessage` carrying
     /// reasoning-shaped content serializes to the same wire form today had
     /// before this slice, because there is nowhere on the type to put the
     /// reasoning. If a field is ever added here, this test fails and the
-    /// reviewer is forced to justify breaking S23 invariants 1 and 2.
+    /// reviewer is forced to justify making reasoning persistable and replayable.
     #[test]
     fn chat_message_has_no_reasoning_field_and_wire_is_unchanged() {
         let message = ChatMessage::text("assistant", "the answer is 42");
@@ -583,14 +582,14 @@ mod tests {
             "a `reasoning` key appeared on ChatMessage: {json}"
         );
         // The wire form is exactly role + content + tool_calls + tool_call_id,
-        // the pre-S23 shape.
+        // the pre-the capture slice shape.
         assert_eq!(
             json, r#"{"role":"assistant","content":"the answer is 42"}"#,
             "ChatMessage wire form changed: {json}"
         );
     }
 
-    /// S23 deliverable 4 (the field lives on `ChatResponse`, the transport):
+    ///
     /// a response carrying reasoning serializes the reasoning under a
     /// `reasoning` key, and one with `None` omits it (`skip_serializing_if`),
     /// so a response written before this slice (no `reasoning` key)
@@ -622,7 +621,7 @@ mod tests {
             !json.contains("reasoning"),
             "None reasoning must be off the wire: {json}"
         );
-        // A pre-S23 response (no `reasoning` key) deserializes to `None`.
+        // A pre-the capture slice response (no `reasoning` key) deserializes to `None`.
         let old = r#"{"message":{"role":"assistant","content":"ok"}}"#;
         let old_response: ChatResponse = serde_json::from_str(old).expect("old form deserializes");
         assert_eq!(old_response.reasoning, None);
@@ -700,7 +699,7 @@ mod tests {
     }
 
     /// `KnowledgeOverridden` serializes under its `knowledge_overridden` type tag
-    /// (spec A1) and carries the finding's fields, with no opaque identity — the
+    /// and carries the finding's fields, with no opaque identity — the
     /// DTO has no such field, by construction.
     #[test]
     fn knowledge_overridden_serializes_with_type_tag_and_findings() {
@@ -730,8 +729,7 @@ mod tests {
     }
 
     /// `KnowledgeLearningSkipped` serializes under its `knowledge_learning_skipped`
-    /// type tag and carries the reason; both reasons round-trip (spec packet-54
-    /// decision 1 — `#[non_exhaustive]` enum with the same derive set as siblings).
+    /// type tag and carries the reason; both reasons round-trip.
     #[test]
     fn knowledge_learning_skipped_serializes_with_type_tag_and_reason() {
         use super::{AgentEvent, LearningSkipReason};
@@ -754,7 +752,7 @@ mod tests {
         }
     }
 
-    /// S23b deliverable 1: `ReasoningText` serializes under its `reasoning_text`
+    /// `ReasoningText` serializes under its `reasoning_text`
     /// type tag and carries the text, and round-trips through the same derive set
     /// as `AssistantText` (the variant it mirrors). A machine consumer reading an
     /// event stream sees the chain-of-thought under its own tag, never folded into
@@ -776,13 +774,13 @@ mod tests {
         assert_eq!(back, event, "round-trips");
     }
 
-    /// S23b invariant 2 (non-persistence survives the crossing): the turn's
+    /// Non-persistence survives the crossing into the CLI: the turn's
     /// reasoning reaches `AgentEvent::ReasoningText`, which is the only way it
     /// leaves `saya-agent`. It must never reach the persisted message types.
-    /// `ChatMessage` has no reasoning field (S23's structural guarantee), so the
+    /// `ChatMessage` has no reasoning field, so the
     /// message that gets replayed as history and shaped around for session
     /// persistence carries nothing of the reasoning, however hard a caller tries
-    /// to put it there — there is nothing to copy. This pins the boundary S23b
+    /// to put it there — there is nothing to copy. This pins the boundary the CLI-boundary slice
     /// must not cross.
     #[test]
     fn reasoning_event_does_not_place_reasoning_on_the_replayed_message() {
@@ -795,7 +793,7 @@ mod tests {
             event_json.contains(reasoning),
             "the event carries its reasoning: {event_json}"
         );
-        // ...and the message the turn replays as history. There is no constructor
+        //...and the message the turn replays as history. There is no constructor
         // that takes reasoning, and no field for it, so it cannot carry the text.
         let message = ChatMessage::text("assistant", "the answer is 42");
         let message_json = serde_json::to_string(&message).expect("serializes");

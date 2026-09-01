@@ -101,9 +101,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         }
         // Extraction timed out or errored after the turn succeeded — surface it
         // rather than fall through to the `unrecognized agent event` catch-all
-        // (spec packet-54 decision 4: an event with no renderer previously
-        // printed that, and repeating it would be worse than the bug being
-        // fixed).
+        //.
         AgentEvent::KnowledgeLearningSkipped { reason } => {
             TerminalEvent::KnowledgeLearningSkipped { reason }
         }
@@ -118,8 +116,8 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // The model's chain-of-thought. This is the one case where rendering to
         // nothing is a *scope* decision rather than a *nature-of-the-event*
         // decision: reasoning is content (it mirrors `AssistantText`), so by its
-        // nature it would belong on the loud path below — but display is S24's
-        // decision, not this slice's, and S23b invariant 1 says nothing is
+        // nature it would belong on the loud path below — but display is the display slice's
+        // decision, not this one's, and nothing is
         // displayed by default. So it renders to `None` here, the same way a
         // progress signal does, for a different reason. The test above pins both
         // halves: this arm stays silent, and a content event (`AssistantText`,
@@ -167,7 +165,7 @@ mod tests {
     }
 
     /// KnowledgeSupplied maps to a real TerminalEvent variant (not
-    /// NotImplemented) and renders through the text adapter (spec P1c §5).
+    /// NotImplemented) and renders through the text adapter.
     #[test]
     fn knowledge_supplied_renders_through_the_text_adapter() {
         let event = AgentEvent::knowledge_supplied(
@@ -186,7 +184,7 @@ mod tests {
             0,
         );
         let rendered = render_agent(event, RenderFormat::Text, &mut false);
-        // The compact header, the unconfirmed count (pointing at /queue since S28),
+        // The compact header, the unconfirmed count (pointing at /queue since the batch-approve slice),
         // and the per-claim lines all reach stdout through the adapter.
         assert!(
             rendered
@@ -357,7 +355,7 @@ mod tests {
     }
 
     /// KnowledgeOverridden maps to a real TerminalEvent variant (not
-    /// NotImplemented) and renders through the text adapter (spec A1 §3).
+    /// NotImplemented) and renders through the text adapter.
     #[test]
     fn knowledge_overridden_renders_through_the_text_adapter() {
         let event = AgentEvent::knowledge_overridden(vec![OverrideFindingDto {
@@ -489,12 +487,12 @@ mod tests {
         );
     }
 
-    /// S23b deliverable 2 — the test that prevents the fourth occurrence.
+    /// the CLI-boundary slice deliverable 2 — the test that prevents the fourth occurrence.
     /// `ReasoningText` carries content (chain-of-thought), so by its nature it
     /// would reach the loud catch-all and print
     /// `Not implemented: unrecognized agent event` under a correct answer in the
     /// headless `saya ask` path — exactly the regression that shipped green
-    /// three times. Display is S24's decision, not this slice's, so the variant
+    /// three times. Display is the display slice's decision, not this slice's, so the variant
     /// renders to `None` here: silent, not an error. This is the one case where
     /// "renders to nothing" is a *scope* decision (display deferred) rather than
     /// a *nature-of-the-event* decision (reasoning is content, not progress) —
@@ -509,7 +507,7 @@ mod tests {
         );
     }
 
-    /// S23b deliverable 2 — the second half: the fix is not a blanket silence.
+    /// the CLI-boundary slice deliverable 2 — the second half: the fix is not a blanket silence.
     /// `ReasoningText` renders to `None`, but a content event the headless
     /// renderer *does* understand still reaches a real `TerminalEvent` and never
     /// the `NotImplemented` catch-all. Without this, silencing reasoning by

@@ -214,7 +214,7 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "contracts" => Some(
             "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",
         ),
-        // `/contract` is a silent alias of the merged `/contracts` command (S13),
+        // `/contract` is a silent alias of the merged `/contracts` command,
         // so `/help contract` returns the same help rather than "no help".
         "contract" => Some(
             "contract [catalog.schema.object] — alias for /contracts: list every recalled contract, or show one object's contract when you name it. Example: /contract analytics.public.orders",
@@ -309,7 +309,7 @@ mod tests {
         );
     }
 
-    /// S17 deliverable 1 — the *before* state. Today's `/help` listing is a
+    /// Today's `/help` listing is a
     /// wall of bare syntax: five lines of commands with no description, and
     /// only the last line says what anything does. This test pins that defect
     /// by name, so the report can show what changed. It asserts the inverse of
@@ -338,7 +338,7 @@ mod tests {
         );
     }
 
-    /// S17 invariant 2 — `/connect` and `/include` sit beside each other in the
+    /// `/connect` and `/include` sit beside each other in the
     /// listing and must read as a contrast: one replaces the active profile, the
     /// other adds a secondary. A user should be able to tell which is which
     /// without running `/help connect` and `/help include` separately.
@@ -369,7 +369,7 @@ mod tests {
         );
     }
 
-    /// S17 invariant 3 — there is one source of description text. The popup in
+    /// There is one source of description text. The popup in
     /// `complete.rs` and the `/help` listing here must not be two hand-maintained
     /// copies. The popup reads its descriptions from this module's
     /// [`COMMAND_DESCRIPTIONS`]; this test proves that single source covers
@@ -398,7 +398,7 @@ mod tests {
         }
     }
 
-    /// S17 — the listing groups commands under short headings, so 28 described
+    /// the listing groups commands under short headings, so 28 described
     /// commands stay scannable and `/connect` lands beside `/include` under one
     /// heading. Grouping is presentation only; it adds, renames, and removes
     /// nothing.
@@ -420,7 +420,7 @@ mod tests {
         }
     }
 
-    /// S13: the merged `/contracts` command has one help entry covering both
+    /// the merged `/contracts` command has one help entry covering both
     /// forms, and the optional argument that selects the operation is obvious —
     /// the `[…]` bracket, the prose ("or … when you name it"), and both examples.
     /// `/contract` stays documented so `/help contract` does not say "no help".

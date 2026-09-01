@@ -28,7 +28,7 @@ pub const MAX_PROFILE_NAME_CHARS: usize = 128;
 ///
 /// `Deserialize` is hand-rolled, not derived: the string-carrying variants run
 /// their shape validators on deserialization too, so a `{"kind":"timezone",
-/// "value":"SELECT ..."}` row is refused by the *type*, not only by the store's
+/// "value":"SELECT..."}` row is refused by the *type*, not only by the store's
 /// admission gate. A derived `Deserialize` would populate the field directly
 /// and bypass the constructors — exactly the "validated constructor beside a
 /// publicly-constructible variant" the security standard warns about, and the

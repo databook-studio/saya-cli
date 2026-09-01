@@ -95,7 +95,7 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
             reason: reason.clone(),
             profile,
         },
-        // `Decide` (spec D) carries a `profile` field like the other profiled
+        // `Decide` carries a `profile` field like the other profiled
         // reads/writes: the TUI stamps the session's active profile so a
         // `/confirm ki-xxxx` resolves against the database the user /connect-ed
         // to, not the configured default (cross-profile isolation, the same
@@ -107,7 +107,7 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
             decision: *decision,
             profile,
         },
-        // S28: the batch approve is a profiled command like `/queue` — the
+        // the batch approve is a profiled command like `/queue` — the
         // session's active profile is stamped so `/approve-all` approves the
         // queue of the database the user is looking at, never the configured
         // default's.

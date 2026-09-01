@@ -1,4 +1,4 @@
-//! Proposal resolution and schema binding derivation — spec F Chunk 3 / Chunk 2.
+//! Proposal resolution and schema binding derivation / Chunk 2.
 //!
 //! Maps extracted turn-scoped proposals (`T0..Tn`) back to fully-resolved
 //! `DatabaseObjectRef`s and derives structural `SchemaBinding`s from the

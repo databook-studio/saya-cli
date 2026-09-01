@@ -22,7 +22,7 @@ mod render;
 // The single source of truth for the short rendered value a claim shows. The
 // prompt body and the recall receipt read it inside this module; the propose
 // tool reuses it so a `KnowledgeProposed` event names the same value a later
-// recall would, never a divergent one (spec P2d).
+// recall would, never a divergent one.
 pub(crate) use render::claim_value;
 
 use crate::connection::ConnectionRegistry;
@@ -38,7 +38,7 @@ use saya_types::{DatabaseObjectRef, ProfileIdentity};
 pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 
 /// Builds the context blocks for a prompt from recalled contracts, and a
-/// [`RecallReceipt`] naming exactly which claims reached the block (spec P1a).
+/// [`RecallReceipt`] naming exactly which claims reached the block.
 ///
 /// `allow_database_context == false` skips recall entirely — the store is not
 /// queried (§3.1: not querying is both cheaper and a stronger guarantee) and the

@@ -4,7 +4,7 @@
 //! through the `ToolExecutor` surface the agent uses, against a real
 //! `SqliteStateStore`. They assert the privacy gate, the store-failure
 //! degradation, the absence of the opaque identity, and the `ToolDefinition`
-//! invariants — see .claude/specs/spec-2b3a-agent-contract-tools.md §4.
+//! invariants — see.claude/specs/spec-2b3a-agent-contract-tools.md §4.
 
 use super::*;
 use async_trait::async_trait;

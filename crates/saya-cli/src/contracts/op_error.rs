@@ -43,7 +43,7 @@ pub(crate) enum ContractOpError {
     ColumnGone,
     /// [`use_candidate_once`] was called on a claim that is not a live candidate.
     /// Confirmed is refused too — already admissible by the mode, so a silent
-    /// success would let a caller believe it did something it did not (spec C §5.5).
+    /// success would let a caller believe it did something it did not.
     #[error("the claim is not a live candidate; only an unconfirmed candidate may be used once")]
     NotACandidate,
 }

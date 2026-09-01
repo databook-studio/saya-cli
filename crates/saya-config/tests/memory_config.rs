@@ -53,7 +53,7 @@ fn out_of_range_numbers_are_typed_errors_naming_the_field_and_range() {
 
 /// `max_context_bytes` is clamped below the agent message budget: a setting above
 /// the ceiling is a typed error naming both the configured value and the maximum,
-/// not a silent clamp (spec test 5). A user who wrote the old 256 KiB should learn
+/// not a silent clamp. A user who wrote the old 256 KiB should learn
 /// it is impossible, not have it quietly become something else.
 #[test]
 fn max_context_bytes_above_the_ceiling_names_the_value_and_the_maximum() {
@@ -83,7 +83,7 @@ fn max_context_bytes_above_the_ceiling_names_the_value_and_the_maximum() {
     );
 }
 
-/// `max_context_bytes` at the ceiling is accepted (spec test 6): the boundary is
+/// `max_context_bytes` at the ceiling is accepted: the boundary is
 /// inclusive, only values above it are refused.
 #[test]
 fn max_context_bytes_at_the_ceiling_is_accepted() {

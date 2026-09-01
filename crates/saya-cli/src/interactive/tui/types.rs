@@ -13,10 +13,10 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
 
-/// Session-wide token usage accumulator (S22). Sums every field S21 widened
+/// Session-wide token usage accumulator. Sums every field the usage-accounting slice widened
 /// `TokenUsage` with across turns that reported usage. The `Option` fields
 /// are tracked with a "was this ever reported?" flag so a cache hit rate over
-/// unreported data renders as **unknown**, never 0% — the invariant S21's
+/// unreported data renders as **unknown**, never 0% — the invariant the usage-accounting slice's
 /// `Option` fields exist for (invariant 1: absent is not zero).
 ///
 /// In-memory only: the `SessionState` field carrying this is `#[serde(skip)]`,
@@ -71,7 +71,7 @@ impl SessionUsage {
     /// The session-wide cache hit rate as a percentage string, or "unknown"
     /// when no turn reported cached tokens (invariant 1 / deliverable 5).
     /// The formula is `Σcached / Σinput` — the honest ratio of sums across
-    /// all turns, not a mean of per-turn rates (Q3). Turns that did not report
+    /// all turns, not a mean of per-turn rates. Turns that did not report
     /// cache tokens contribute their input to the denominator but 0 to the
     /// numerator, so the rate is a lower bound, not an invention.
     fn cache_hit_rate(&self) -> String {
@@ -82,7 +82,7 @@ impl SessionUsage {
         format!("{rate:.0}%")
     }
 
-    /// Renders the session usage breakdown for `/usage`. Each S21 field shows
+    /// Renders the session usage breakdown for `/usage`. Each the usage-accounting slice field shows
     /// its total or `—` when no turn reported it; the hit rate shows the
     /// formula so a reader knows what the number is (Q3, deliverable 4).
     pub(crate) fn render(&self) -> String {

@@ -193,7 +193,7 @@ fn usage_decide() -> String {
     "/confirm|/reject|/use <claim-id-prefix>".into()
 }
 
-/// Payload-free usage for `/approve-all` (S28). The optional tokens are
+/// Payload-free usage for `/approve-all`. The optional tokens are
 /// `--yes` and a numeric limit; anything else is a usage error.
 fn usage_approve_all() -> String {
     "/approve-all [--yes] [limit]".into()
@@ -232,7 +232,7 @@ pub(crate) fn parse_contract_command(
     arg: &str,
 ) -> Result<Option<ContractsCommand>, SlashParseError> {
     match name {
-        // S13: one command, the optional argument selects the operation — what
+        // one command, the optional argument selects the operation — what
         // the headless `saya contracts` CLI already does (`contracts list`,
         // `contracts show <t>`), and the same shape as `/queue [limit]`. No
         // argument → list every contract for the active profile; one token →
@@ -242,7 +242,7 @@ pub(crate) fn parse_contract_command(
         // what they do — see `contract_is_a_silent_alias_of_the_merged_command`
         // and the SPEC REVIEW for why it is an alias rather than removed. Both
         // pass `profile: None`: the TUI stamps the active profile, the
-        // headless path resolves the default, exactly as before (Q3).
+        // headless path resolves the default, exactly as before.
         "contracts" | "contract" => {
             let tokens: Vec<&str> = arg.split_whitespace().collect();
             match tokens.len() {
@@ -307,12 +307,12 @@ pub(crate) fn parse_contract_command(
         // `parse_decide` and the §4 defence in the report.
         "confirm" => parse_decide(name, arg, ReviewDecisionArg::Confirm),
         "reject" => parse_decide(name, arg, ReviewDecisionArg::Reject),
-        // S28: the batch approve. `/approve-all` previews the queue and
+        // the batch approve. `/approve-all` previews the queue and
         // approves nothing — deny by default, the same posture
         // `--non-interactive` gives approvals — and `/approve-all --yes`
         // approves. An optional number overrides the limit, matching
         // `/queue [limit]`. `profile: None`: the TUI stamps the active
-        // profile, the headless path resolves the default (Q1).
+        // profile, the headless path resolves the default.
         "approve-all" => {
             let mut yes = false;
             let mut limit = None;
@@ -345,7 +345,7 @@ pub(crate) fn parse_contract_command(
 mod tests {
     use super::*;
 
-    /// S13 — the trap this slice removed, and the regression guard against its
+    /// the trap this slice removed, and the regression guard against its
     /// return. Before the merge, `/contracts` and `/contract` were two *separate
     /// operations* distinguished only by a trailing `s`: `/contracts` was `List`
     /// and rejected any argument, `/contract` was `Show` and rejected none. A
@@ -399,7 +399,7 @@ mod tests {
     fn parse_contract_contracts_no_arg() {
         let cmd = parse_contract_command("contracts", "").unwrap().unwrap();
         assert_eq!(cmd, ContractsCommand::List { profile: None });
-        // After the S13 merge, `/contracts <table>` is Show, not an error.
+        // After the merge, `/contracts <table>` is Show, not an error.
         assert_eq!(
             parse_contract_command("contracts", "analytics.public.orders")
                 .unwrap()
@@ -413,7 +413,7 @@ mod tests {
         assert!(parse_contract_command("contracts", "a b").is_err());
     }
 
-    /// S13 merge (Q1): one name, the optional argument selects the operation —
+    /// one name, the optional argument selects the operation —
     /// what the CLI already does, and the same shape as `/queue [limit]`. No
     /// argument is List; one token is Show. The trap is gone because there is
     /// no second name to mistype into a different operation.
@@ -451,7 +451,7 @@ mod tests {
         );
     }
 
-    /// S13 Q2: `/contract` is kept as a silent alias of the merged command, not a
+    /// `/contract` is kept as a silent alias of the merged command, not a
     /// second operation. Whatever the argument, it routes to the same command
     /// `/contracts` produces — so the two names can no longer disagree. (Kept as
     /// an alias rather than removed so the TUI completion registry — mirrored by
@@ -707,7 +707,7 @@ mod tests {
         assert!(parse_contract_command("sql", "select 1").unwrap().is_none());
     }
 
-    /// S28: `/approve-all` defaults to the deny-by-default preview (no `--yes`),
+    /// `/approve-all` defaults to the deny-by-default preview (no `--yes`),
     /// `--yes` flips it, an optional number overrides the limit, and anything
     /// else is a payload-free usage error.
     #[test]
