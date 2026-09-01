@@ -50,6 +50,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("queue", "Show pending candidate claims awaiting review"),
     ("confirm", "Confirm a pending candidate claim by id prefix"),
     ("reject", "Reject a pending candidate claim by id prefix"),
+    (
+        "approve-all",
+        "Approve the whole review queue (needs --yes)",
+    ),
     ("help", "Show help for slash commands"),
     ("exit", "Exit the REPL"),
     ("quit", "Exit the REPL"),
@@ -149,6 +153,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("queue", "/queue [limit]"),
             ("confirm", "/confirm <prefix>"),
             ("reject", "/reject <prefix>"),
+            ("approve-all", "/approve-all [--yes] [limit]"),
         ],
     ),
 ];
@@ -228,6 +233,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "reject" => Some(
             "reject <claim-id-prefix> — reject the claim named by its short id prefix. Example: /reject ki-a86a3f",
+        ),
+        "approve-all" => Some(
+            "approve-all [--yes] [limit] — approve every candidate in the review queue: the same set /queue shows. Each candidate still gets the per-item validation /confirm applies, so some may be refused; every approval and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /approve-all --yes",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",

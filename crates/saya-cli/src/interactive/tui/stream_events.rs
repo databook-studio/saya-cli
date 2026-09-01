@@ -178,8 +178,10 @@ mod tests {
             ),
         );
         let block = last_block_text(&t).expect("a block was pushed");
+        // S28 folded-in: the header points at /queue, the action the learn
+        // path already names, beside the unconfirmed count it always carried.
         assert!(
-            block.starts_with("memory supplied · 2 claims (1 unconfirmed)"),
+            block.starts_with("memory supplied · 2 claims (1 unconfirmed — review with /queue)"),
             "{block}"
         );
         assert!(block.contains("table_alias  orders  confirmed"), "{block}");

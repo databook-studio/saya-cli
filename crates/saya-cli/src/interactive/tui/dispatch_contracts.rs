@@ -107,6 +107,15 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
             decision: *decision,
             profile,
         },
+        // S28: the batch approve is a profiled command like `/queue` — the
+        // session's active profile is stamped so `/approve-all` approves the
+        // queue of the database the user is looking at, never the configured
+        // default's.
+        ContractsCommand::ApproveAll { limit, yes, .. } => ContractsCommand::ApproveAll {
+            profile,
+            limit: *limit,
+            yes: *yes,
+        },
         ContractsCommand::Forget { claim_id, reason } => ContractsCommand::Forget {
             claim_id: claim_id.clone(),
             reason: *reason,

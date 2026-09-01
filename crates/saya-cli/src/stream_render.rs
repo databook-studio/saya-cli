@@ -186,12 +186,12 @@ mod tests {
             0,
         );
         let rendered = render_agent(event, RenderFormat::Text, &mut false);
-        // The compact header, the unconfirmed count, and the per-claim lines all
-        // reach stdout through the adapter.
+        // The compact header, the unconfirmed count (pointing at /queue since S28),
+        // and the per-claim lines all reach stdout through the adapter.
         assert!(
             rendered
                 .stdout
-                .contains("memory supplied · 2 claims (1 unconfirmed)"),
+                .contains("memory supplied · 2 claims (1 unconfirmed — review with /queue)"),
             "{:?}",
             rendered.stdout
         );

@@ -261,6 +261,35 @@ pub enum ContractsCommand {
         #[arg(long)]
         profile: Option<String>,
     },
+    /// Confirm every candidate claim in the review queue — the same bounded
+    /// set `contracts queue` shows. Every candidate still goes through the
+    /// per-item validation `contracts decide --confirm` applies, so a batch is
+    /// expected to be a mixture: an item dismissed since it was queued, or one
+    /// whose object the cached schema can no longer vet, is refused. Every
+    /// approved item and every refusal (with its reason) is reported by claim
+    /// id; approved items are never rolled back. Exits 0 when anything was
+    /// approved (or nothing was waiting) and 2 when every item was refused.
+    /// Without `--yes` the queue is printed and nothing is approved.
+    //
+    // Implementation note, deliberately not a doc comment: clap prints doc
+    // comments verbatim in `--help`, so anything here is user-facing. This
+    // variant routes through the same `confirm()` the single-item decide path
+    // uses — the batch adds no validation and removes none.
+    ApproveAll {
+        /// Profile whose queue to approve; defaults to the active profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Maximum candidates to approve. Clamped to 200, exactly like
+        /// `contracts queue` — this approves the queue you were shown, not the
+        /// whole archive.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Approve. Without it the command prints the queue and approves
+        /// nothing (the same deny-by-default the `--non-interactive` approval
+        /// policy applies); with it the per-item sweep runs and reports.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Tombstone a claim so recall stops surfacing it.
     Forget {
         /// The stored claim id to forget (the full id, or a `ki-xxxx` prefix

@@ -106,6 +106,30 @@ pub(crate) async fn confirm(
     ContractClaim::from_knowledge_item(&item).ok_or(ContractOpError::Unavailable)
 }
 
+/// One item's outcome in a batch approve: the item's id paired with what
+/// [`confirm`] did — the confirmed claim, or the refusal and its reason. The
+/// pair (not an aggregate) is what the command layer reports per item; a
+/// summary that hides a refusal would tell the user something false about
+/// their own memory.
+pub(crate) type ApproveOutcome = (ClaimId, Result<ContractClaim, ContractOpError>);
+
+/// Confirms every id in `ids` — the bounded queue the user was shown — in
+/// queue order, running each through [`confirm`] unchanged. No batch path
+/// bypasses `confirm`'s validation, and no transaction wraps the sweep: a
+/// batch is expected to be a mixture (an item dismissed between the queue
+/// read and the sweep refuses as `Conflict`; a candidate whose schema cannot
+/// vet it refuses), and the correct outcome is the successes persisted plus
+/// every refusal reported — not a rollback that discards good confirmations
+/// because one item was dismissed. An empty `ids` is a clean no-op.
+pub(crate) async fn approve_all(store: &SqliteStateStore, ids: &[ClaimId]) -> Vec<ApproveOutcome> {
+    let mut outcomes = Vec::with_capacity(ids.len());
+    for id in ids {
+        let result = confirm(store, id).await;
+        outcomes.push((id.clone(), result));
+    }
+    outcomes
+}
+
 /// Rejects `id`: a `Pending` candidate is moved to `Dismissed`. An `Active` or
 /// `Dismissed` item refuses with [`ContractOpError::Conflict`] — rejecting a
 /// confirmed fact is not the undo path (forget is), and a dismissed item is

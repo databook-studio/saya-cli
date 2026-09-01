@@ -132,3 +132,65 @@ fn config_show_help_no_longer_advertises_resolved_or_redacted() {
         );
     }
 }
+
+/// S28 deliverable 1: `contracts approve-all --help` states what the batch
+/// approves, that every item still gets the per-item validation (so some are
+/// refused and every refusal is reported), and that consent is explicit via
+/// `--yes`. A user deciding whether to run it must be able to learn from the
+/// help alone that approving is preview-then-consent, never silent.
+#[test]
+fn approve_all_help_states_scope_consent_and_per_item_reporting() {
+    let mut cmd = Cli::command();
+    let help = cmd
+        .find_subcommand_mut("contracts")
+        .expect("`contracts` subcommand exists")
+        .find_subcommand_mut("approve-all")
+        .expect("`contracts approve-all` subcommand exists")
+        .render_help()
+        .to_string();
+    // The scope: the bounded queue the user was shown, not the archive.
+    assert!(
+        help.contains("review queue"),
+        "the help names the queue scope: {help}"
+    );
+    // The failure mode this command exists to prevent: refusals are reported,
+    // not aggregated away.
+    assert!(
+        help.contains("refused"),
+        "the help says refusals are reported: {help}"
+    );
+    // Consent is explicit and visible before anything happens.
+    assert!(
+        help.contains("--yes"),
+        "the help documents the --yes consent flag: {help}"
+    );
+
+    // And the surface parses: scope (Q1) is the optional --profile, the queue
+    // bound (Q3) is the optional --limit, consent is --yes.
+    let parsed = Cli::try_parse_from([
+        "saya",
+        "contracts",
+        "approve-all",
+        "--yes",
+        "--limit",
+        "5",
+        "--profile",
+        "local",
+    ])
+    .expect("approve-all parses profile/limit/yes");
+    match parsed.command {
+        Some(saya_cli::Command::Contracts {
+            command:
+                saya_cli::ContractsCommand::ApproveAll {
+                    profile,
+                    limit,
+                    yes,
+                },
+        }) => {
+            assert_eq!(profile.as_deref(), Some("local"));
+            assert_eq!(limit, Some(5));
+            assert!(yes);
+        }
+        other => panic!("expected Contracts ApproveAll, got {other:?}"),
+    }
+}
