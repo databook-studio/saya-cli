@@ -1,4 +1,4 @@
-use crate::{ChatMessage, ChatResponse, ProviderError, ToolCall};
+use crate::{ChatMessage, ChatResponse, ProviderError, TokenUsage, ToolCall};
 use serde_json::Value;
 
 pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
@@ -44,6 +44,12 @@ pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
         return Err(ProviderError::InvalidResponse);
     }
 
+    // Parsed so the Gemini wire shapes are correct and tested today. Gemini's
+    // `complete()` is non-streaming and returns `ChatResponse`, which does not
+    // yet carry usage, so the counts are discarded here. Threading them to the
+    // loop belongs in the slice that adds usage to `ChatResponse` (S21 Q3).
+    let _ = usage(&body);
+
     Ok(ChatResponse {
         message: ChatMessage {
             role: "assistant".into(),
@@ -52,6 +58,33 @@ pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
             tool_call_id: None,
         },
     })
+}
+
+/// Extracts token usage from a Gemini `generateContent` response's
+/// `usageMetadata`. Gemini reports `promptTokenCount`/`candidatesTokenCount`
+/// (input/output) plus `cachedContentTokenCount` (a cache read, inclusive of
+/// the prompt) and `thoughtsTokenCount` (reasoning, **separate** from
+/// `candidatesTokenCount`, unlike OpenAI's reasoning figure). Fields a Gemini
+/// response omits stay `None` (absent is not zero); it has no cache-creation
+/// concept.
+fn usage(body: &Value) -> TokenUsage {
+    let Some(metadata) = body.get("usageMetadata") else {
+        return TokenUsage::default();
+    };
+    let mut usage = TokenUsage::default();
+    if let Some(input) = metadata["promptTokenCount"].as_u64() {
+        usage.input_tokens = input;
+    }
+    if let Some(output) = metadata["candidatesTokenCount"].as_u64() {
+        usage.output_tokens = output;
+    }
+    if let Some(cached) = metadata["cachedContentTokenCount"].as_u64() {
+        usage.cached_input_tokens = Some(cached);
+    }
+    if let Some(reasoning) = metadata["thoughtsTokenCount"].as_u64() {
+        usage.reasoning_tokens = Some(reasoning);
+    }
+    usage
 }
 
 #[cfg(test)]
@@ -107,5 +140,59 @@ mod tests {
         assert!(parse(json!({})).is_err());
         assert!(parse(json!({"candidates": []})).is_err());
         assert!(parse(json!({"candidates": [{"content": {"parts": []}}]})).is_err());
+    }
+
+    /// Deliverable 4 (Gemini, with): `usageMetadata` carrying the cache-read
+    /// and reasoning counts populates `cached_input_tokens` and
+    /// `reasoning_tokens`. Note Gemini's `thoughtsTokenCount` is separate from
+    /// `candidatesTokenCount` (Q1), not inclusive of output.
+    #[test]
+    fn usage_metadata_populates_cache_and_reasoning() {
+        let body = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "hi"}]}
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 200,
+                "cachedContentTokenCount": 90,
+                "thoughtsTokenCount": 270
+            }
+        });
+        let usage = usage(&body);
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 200);
+        assert_eq!(usage.cached_input_tokens, Some(90));
+        assert_eq!(usage.reasoning_tokens, Some(270));
+        assert_eq!(usage.cache_creation_input_tokens, None);
+    }
+
+    /// Deliverable 4 (Gemini, without): a response with no `usageMetadata`
+    /// leaves every new field `None` (absent is not zero) and the input/output
+    /// counters at zero.
+    #[test]
+    fn missing_usage_metadata_leaves_new_fields_none() {
+        let body = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "hi"}]}
+            }]
+        });
+        let usage = usage(&body);
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cached_input_tokens, None);
+        assert_eq!(usage.cache_creation_input_tokens, None);
+        assert_eq!(usage.reasoning_tokens, None);
+    }
+
+    /// Deliverable 5 (Gemini): a reported `cachedContentTokenCount: 0` stays
+    /// `Some(0)`, distinct from an absent field.
+    #[test]
+    fn reported_zero_cache_is_some_zero() {
+        let body = json!({
+            "usageMetadata": {"promptTokenCount": 10, "cachedContentTokenCount": 0}
+        });
+        let usage = usage(&body);
+        assert_eq!(usage.cached_input_tokens, Some(0));
     }
 }

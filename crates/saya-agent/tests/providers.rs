@@ -461,7 +461,7 @@ async fn anthropic_stream_surfaces_cumulative_token_usage() {
     handle.join().unwrap();
     let position = events
         .iter()
-        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage { input_tokens: 12, output_tokens: 34 }))
+        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage { input_tokens: 12, output_tokens: 34, ..Default::default() }))
         .expect("usage event with both counters must arrive");
     assert!(
         matches!(events[position + 1], ProviderEvent::Done),
@@ -508,7 +508,8 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
     handle2.join().unwrap();
     assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
         input_tokens: 5,
-        output_tokens: 6
+        output_tokens: 6,
+        ..Default::default()
     })));
 }
 
@@ -531,7 +532,8 @@ async fn ollama_stream_surfaces_eval_counts() {
     handle.join().unwrap();
     assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
         input_tokens: 9,
-        output_tokens: 11
+        output_tokens: 11,
+        ..Default::default()
     })));
 }
 
