@@ -11,6 +11,7 @@
 //! `contracts_profile.rs`, read commands in `contracts_read.rs`, write commands
 //! in `contracts_write.rs`, and view→DTO mapping in `contracts_map.rs`.
 
+mod contracts_approve;
 mod contracts_decide;
 mod contracts_map;
 mod contracts_profile;
@@ -98,6 +99,16 @@ pub async fn run_contracts(
         ContractsCommand::Forget { claim_id, reason } => {
             contracts_write::forget_claim(store, format, &claim_id, reason).await
         }
+        ContractsCommand::ApproveAll {
+            profile,
+            limit,
+            yes,
+        } => match resolve_profile(runtime, profile.as_deref()) {
+            Ok((name, identity)) => {
+                contracts_approve::approve_queue(store, format, &name, &identity, yes, limit).await
+            }
+            Err((code, message)) => failure_message(code, message, format),
+        },
     }
 }
 

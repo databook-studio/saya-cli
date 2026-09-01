@@ -52,7 +52,7 @@ pub(crate) use recall::{RecallBounds, RecallMode, RecallRequest, recall};
 pub(crate) use remember::{RememberOutcome, remember};
 #[allow(unused_imports)]
 pub(crate) use retrieval::RetrievalPolicy;
-pub(crate) use review::{confirm, forget, reject};
+pub(crate) use review::{approve_all, confirm, forget, reject};
 pub(crate) use show::show;
 // `conflicts_for` is `pub(crate)` in `conflict` but the module is private; the
 // contracts tests exercise it directly, so re-export it alongside the other

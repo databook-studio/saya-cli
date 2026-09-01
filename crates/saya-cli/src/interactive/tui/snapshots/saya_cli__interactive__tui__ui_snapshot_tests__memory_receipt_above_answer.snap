@@ -2,7 +2,7 @@
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
 expression: buffer
 ---
-"· memory supplied · 2 claims (1 unconfirmed)                                    "
+"· memory supplied · 2 claims (1 unconfirmed — review with /queue)               "
 "·   catalog.public.orders  [current]  (profile: analytics)                      "
 "·     ki-abc…  table_alias  orders  confirmed                                   "
 "·     ki-bbb…  default_time_column  created_at  col:created_at  candidate       "

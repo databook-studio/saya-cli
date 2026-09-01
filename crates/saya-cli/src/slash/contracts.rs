@@ -193,6 +193,12 @@ fn usage_decide() -> String {
     "/confirm|/reject|/use <claim-id-prefix>".into()
 }
 
+/// Payload-free usage for `/approve-all` (S28). The optional tokens are
+/// `--yes` and a numeric limit; anything else is a usage error.
+fn usage_approve_all() -> String {
+    "/approve-all [--yes] [limit]".into()
+}
+
 /// Parses the tail of a `/confirm`, `/reject`, or `/use` command: exactly one
 /// token (the claim-id prefix). The decision is fixed by the command name.
 /// Translates to `ContractsCommand::Decide` with `profile: None` — the TUI
@@ -301,6 +307,36 @@ pub(crate) fn parse_contract_command(
         // `parse_decide` and the §4 defence in the report.
         "confirm" => parse_decide(name, arg, ReviewDecisionArg::Confirm),
         "reject" => parse_decide(name, arg, ReviewDecisionArg::Reject),
+        // S28: the batch approve. `/approve-all` previews the queue and
+        // approves nothing — deny by default, the same posture
+        // `--non-interactive` gives approvals — and `/approve-all --yes`
+        // approves. An optional number overrides the limit, matching
+        // `/queue [limit]`. `profile: None`: the TUI stamps the active
+        // profile, the headless path resolves the default (Q1).
+        "approve-all" => {
+            let mut yes = false;
+            let mut limit = None;
+            for token in arg.split_whitespace() {
+                if token == "--yes" {
+                    if yes {
+                        return Err(SlashParseError(usage_approve_all()));
+                    }
+                    yes = true;
+                } else if let Ok(parsed) = token.parse::<usize>() {
+                    if limit.is_some() {
+                        return Err(SlashParseError(usage_approve_all()));
+                    }
+                    limit = Some(parsed);
+                } else {
+                    return Err(SlashParseError(usage_approve_all()));
+                }
+            }
+            Ok(Some(ContractsCommand::ApproveAll {
+                profile: None,
+                limit,
+                yes,
+            }))
+        }
         _ => Ok(None),
     }
 }
@@ -669,5 +705,48 @@ mod tests {
     #[test]
     fn parse_unknown_name_returns_none() {
         assert!(parse_contract_command("sql", "select 1").unwrap().is_none());
+    }
+
+    /// S28: `/approve-all` defaults to the deny-by-default preview (no `--yes`),
+    /// `--yes` flips it, an optional number overrides the limit, and anything
+    /// else is a payload-free usage error.
+    #[test]
+    fn parse_approve_all_translates_to_the_batch_command() {
+        assert_eq!(
+            parse_contract_command("approve-all", "").unwrap().unwrap(),
+            ContractsCommand::ApproveAll {
+                profile: None,
+                limit: None,
+                yes: false,
+            }
+        );
+        assert_eq!(
+            parse_contract_command("approve-all", "--yes")
+                .unwrap()
+                .unwrap(),
+            ContractsCommand::ApproveAll {
+                profile: None,
+                limit: None,
+                yes: true,
+            }
+        );
+        assert_eq!(
+            parse_contract_command("approve-all", "--yes 10")
+                .unwrap()
+                .unwrap(),
+            ContractsCommand::ApproveAll {
+                profile: None,
+                limit: Some(10),
+                yes: true,
+            }
+        );
+        // A token that is neither `--yes` nor a number is a usage error that
+        // does not echo it.
+        let bad = parse_contract_command("approve-all", "kaboom").unwrap_err();
+        assert!(!bad.0.contains("kaboom"));
+        assert!(!bad.0.is_empty());
+        // Two limits or two --yes flags are usage errors, not silent overrides.
+        assert!(parse_contract_command("approve-all", "10 20").is_err());
+        assert!(parse_contract_command("approve-all", "--yes --yes").is_err());
     }
 }
