@@ -50,6 +50,7 @@ fn request() -> AgentRequest {
 fn text_response(value: &str) -> ChatResponse {
     ChatResponse {
         message: ChatMessage::text("assistant", value),
+        ..Default::default()
     }
 }
 
@@ -100,6 +101,7 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             text_response("done"),
         ]),

@@ -7,6 +7,20 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **The extraction call's token spend is no longer invisible.** The
+  non-streaming `complete()` path now carries the usage a provider reports on
+  the returned `ChatResponse`, instead of dropping it. Three of four providers
+  (OpenAI, Anthropic, Ollama) already route `complete()` through `collect()`,
+  which drove `stream()` and threw the `Usage` event away; `collect()` now
+  threads the last usage event through. Gemini overrides `complete()` and
+  bypasses the stream, so its parsed `usageMetadata` is threaded directly. The
+  field is `Option<TokenUsage>`: `None` means the provider reported nothing,
+  distinct from `Some(TokenUsage::default())` — a silent provider is not
+  mistaken for a free one (absent is not zero, as in the prior slice). The
+  `let _ = usage(&body);` discard in the Gemini parser is gone; that parsing now
+  earns its keep. Nothing displays this yet — session totals and `/usage` are
+  the next slice; this one ends when `complete()` returns the numbers.
+
 - **Token usage can report what it does not know.** `TokenUsage` gains three
   optional fields — `cached_input_tokens`, `cache_creation_input_tokens`, and
   `reasoning_tokens` — parsed from each provider's wire shape (OpenAI
