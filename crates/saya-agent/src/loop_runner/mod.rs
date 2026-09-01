@@ -33,7 +33,7 @@ pub async fn run_agent_with_sink(
     let mut usage = TokenUsage::default();
     for _ in 0..limits.max_turns {
         check_cancelled(&cancellation)?;
-        let (assistant, turn_usage) = receive::receive(
+        let (assistant, turn_usage, _reasoning) = receive::receive(
             provider,
             &request.model,
             &messages,
@@ -46,6 +46,13 @@ pub async fn run_agent_with_sink(
         // Providers report cumulative counts per response; sum across turns.
         usage.input_tokens += turn_usage.input_tokens;
         usage.output_tokens += turn_usage.output_tokens;
+        // `_reasoning` is the turn's captured chain-of-thought. It is held
+        // turn-local and dropped here: surfacing it to the user is S23b, which
+        // this slice does not start. Crucially it is NOT pushed onto
+        // `messages` — `assistant` (a `ChatMessage`) is what gets replayed to
+        // the provider as history, and `ChatMessage` has no reasoning field, so
+        // reasoning cannot leak into the next turn's request (S23 invariant 2,
+        // structural in the type choice).
         messages.push(assistant.clone());
         if assistant.tool_calls.is_empty() {
             check_cancelled(&cancellation)?;
