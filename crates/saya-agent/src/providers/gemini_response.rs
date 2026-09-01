@@ -16,10 +16,24 @@ pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
 
     let mut content = String::new();
     let mut tool_calls = Vec::new();
+    // Reasoning parts are accumulated separately from the answer. Gemini marks
+    // chain-of-thought with `thought: true` on the part (S20 wire table); the
+    // answer's parts carry no such flag. A response with no `thought: true`
+    // part leaves `reasoning` `None` (absent is not zero), distinct from a
+    // model that reasoned and produced an empty string.
+    let mut reasoning = None;
 
     for part in parts {
+        let is_thought = part
+            .get("thought")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false);
         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-            content.push_str(text);
+            if is_thought {
+                reasoning.get_or_insert_with(String::new).push_str(text);
+            } else {
+                content.push_str(text);
+            }
         }
         if let Some(name) = part
             .get("functionCall")
@@ -57,6 +71,7 @@ pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
             tool_calls,
             tool_call_id: None,
         },
+        reasoning,
         usage,
     })
 }
@@ -228,5 +243,45 @@ mod tests {
         });
         let usage = usage(&body).expect("present usageMetadata yields Some");
         assert_eq!(usage.cached_input_tokens, Some(0));
+    }
+
+    /// S23 deliverable 6 (Gemini, with): parts marked `thought: true` carry
+    /// the chain-of-thought; it reaches `response.reasoning`, separate from
+    /// the answer's content. Gemini's `complete()` bypasses `collect()`, so
+    /// reasoning is parsed directly here (S23 Q4).
+    #[test]
+    fn thought_parts_carry_reasoning_separate_from_content() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "the time column looks nullable", "thought": true},
+                        {"text": "use return_date"}
+                    ]
+                }
+            }]
+        });
+        let response = parse(body).expect("parses");
+        assert_eq!(response.message.content, "use return_date");
+        assert_eq!(
+            response.reasoning.as_deref(),
+            Some("the time column looks nullable"),
+            "thought:true parts are reasoning, not content"
+        );
+    }
+
+    /// S23 deliverable 6 (Gemini, absent): a response whose parts carry no
+    /// `thought: true` flag leaves `response.reasoning` `None`, and content
+    /// parses normally — a non-reasoning response is unaffected (invariant 3).
+    #[test]
+    fn response_without_thought_parts_leaves_reasoning_none() {
+        let body = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "just an answer"}]}
+            }]
+        });
+        let response = parse(body).expect("parses");
+        assert_eq!(response.message.content, "just an answer");
+        assert_eq!(response.reasoning, None);
     }
 }

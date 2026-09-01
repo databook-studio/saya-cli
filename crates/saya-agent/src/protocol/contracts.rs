@@ -104,6 +104,23 @@ pub struct ChatRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatResponse {
     pub message: ChatMessage,
+    /// The chain-of-thought the model produced for this call, or `None` when
+    /// the provider reported no reasoning. Lives **here, on `ChatResponse`** —
+    /// transport for one call — and never on `ChatMessage`, which is what gets
+    /// replayed to the provider as history and what session persistence is
+    /// shaped around. That placement is the point of S23's Q2: with no
+    /// reasoning field on `ChatMessage`, a session writer or history builder
+    /// has nowhere to copy it, so "reasoning is never persisted" and "reasoning
+    /// is never replayed as history" (S23 invariants 1 and 2) are structural,
+    /// not remembered. `None` is the absent case — a provider that omits
+    /// chain-of-thought — distinct from `Some(String::new())`, a model that
+    /// reasoned and produced nothing; both survive `#[serde(default)]`, so a
+    /// response serialized before this field existed (no `reasoning` key)
+    /// deserializes to `None`. Capture is unconditional (invariant 4): this is
+    /// populated whether or not the user has asked to see thinking — the
+    /// `show_thinking` toggle that gates *display* is S24.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     /// Token counts the provider reported for this response, or `None` when the
     /// provider reported nothing. `None` is the absent case — distinct from
     /// `Some(TokenUsage::default())`, which would read as "this call cost
@@ -517,7 +534,75 @@ pub trait ToolExecutor: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatRequest, LocalStateEffect, ResponseFormat};
+    use super::{ChatMessage, ChatRequest, ChatResponse, LocalStateEffect, ResponseFormat};
+
+    /// S23 deliverable 4 (the structural guarantee): `ChatMessage` — what gets
+    /// replayed to the provider as history and what session persistence is
+    /// shaped around — has **no** reasoning field. A `ChatMessage` carrying
+    /// reasoning-shaped content serializes to the same wire form today had
+    /// before this slice, because there is nowhere on the type to put the
+    /// reasoning. If a field is ever added here, this test fails and the
+    /// reviewer is forced to justify breaking S23 invariants 1 and 2.
+    #[test]
+    fn chat_message_has_no_reasoning_field_and_wire_is_unchanged() {
+        let message = ChatMessage::text("assistant", "the answer is 42");
+        let json = serde_json::to_string(&message).expect("serializes");
+        // The reasoning this turn *would have* carried. It must not appear in
+        // the message's wire form — there is no field for it.
+        let reasoning = "I reasoned about the row values and the time column";
+        assert!(
+            !json.contains(reasoning),
+            "reasoning leaked onto ChatMessage wire form: {json}"
+        );
+        assert!(
+            !json.contains("reasoning"),
+            "a `reasoning` key appeared on ChatMessage: {json}"
+        );
+        // The wire form is exactly role + content + tool_calls + tool_call_id,
+        // the pre-S23 shape.
+        assert_eq!(
+            json, r#"{"role":"assistant","content":"the answer is 42"}"#,
+            "ChatMessage wire form changed: {json}"
+        );
+    }
+
+    /// S23 deliverable 4 (the field lives on `ChatResponse`, the transport):
+    /// a response carrying reasoning serializes the reasoning under a
+    /// `reasoning` key, and one with `None` omits it (`skip_serializing_if`),
+    /// so a response written before this slice (no `reasoning` key)
+    /// deserializes to `None` — old serialized responses stay valid.
+    #[test]
+    fn chat_response_carries_reasoning_and_round_trips() {
+        let with = ChatResponse {
+            message: ChatMessage::text("assistant", "ok"),
+            reasoning: Some("because the column is nullable".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&with).expect("serializes");
+        assert!(
+            json.contains(r#""reasoning":"because the column is nullable""#),
+            "reasoning must appear on ChatResponse: {json}"
+        );
+        let back: ChatResponse = serde_json::from_str(&json).expect("deserializes back");
+        assert_eq!(back.reasoning, with.reasoning);
+
+        // `None` is omitted from the wire (a present-but-null would read as
+        // "the model reasoned and produced nothing", which is a different
+        // fact than "the provider reported no reasoning").
+        let without = ChatResponse {
+            message: ChatMessage::text("assistant", "ok"),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&without).expect("serializes");
+        assert!(
+            !json.contains("reasoning"),
+            "None reasoning must be off the wire: {json}"
+        );
+        // A pre-S23 response (no `reasoning` key) deserializes to `None`.
+        let old = r#"{"message":{"role":"assistant","content":"ok"}}"#;
+        let old_response: ChatResponse = serde_json::from_str(old).expect("old form deserializes");
+        assert_eq!(old_response.reasoning, None);
+    }
 
     /// `ResponseFormat::Text` is the default — the whole point of leaving the
     /// field unset on the main loop's request. If this regresses, invariant 1
