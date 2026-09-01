@@ -5,6 +5,21 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Added
+
+- **Token usage can report what it does not know.** `TokenUsage` gains three
+  optional fields — `cached_input_tokens`, `cache_creation_input_tokens`, and
+  `reasoning_tokens` — parsed from each provider's wire shape (OpenAI
+  `prompt_tokens_details.cached_tokens` / `completion_tokens_details.reasoning_tokens`,
+  Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, Gemini
+  `cachedContentTokenCount` / `thoughtsTokenCount`). A provider that omits a
+  number leaves it `None`, distinct from a reported `0`: a cache hit rate over
+  unknown data is unknown, not 0%. `reasoning_tokens` is documented per field as
+  inclusive of `output_tokens` on OpenAI but separate on Gemini, so a later
+  display layer does not double-count. The two existing counters keep their type
+  and meaning, and `TokenUsage` stays `Copy`. Nothing displays these yet — that
+  is the next slice.
+
 ### Changed — read this before upgrading
 
 - **The wait after an answer is shorter, because the extractor stops paying for
