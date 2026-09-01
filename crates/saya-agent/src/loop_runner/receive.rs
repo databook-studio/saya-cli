@@ -12,12 +12,12 @@ use futures_util::StreamExt;
 /// `reasoning` is returned separately and **never** placed on the `ChatMessage`
 /// — that message is pushed into `messages` and replayed to the provider as
 /// history on the next turn, so reasoning on it would violate S23 invariant 2.
-/// The caller binds it to a turn-local and (for now) drops it: capture is
-/// unconditional (invariant 4), but surfacing reasoning to the user is S23b,
-/// which this slice does not start. S20 invariant 2 is why `receive` keeps
-/// reasoning at all: the main loop must not suppress thinking, or SQL quality
-/// degrades; a reasoning model's chain-of-thought is held for the turn either
-/// way and reaches S23b's display when that lands.
+/// The caller (`loop_runner::mod`) forwards the accumulated string onto the
+/// event stream as one `AgentEvent::ReasoningText` (S23b), so the turn's
+/// thinking reaches the CLI; it is not pushed onto `messages`. S20 invariant 2
+/// is why `receive` keeps reasoning at all: the main loop must not suppress
+/// thinking, or SQL quality degrades; a reasoning model's chain-of-thought is
+/// held for the turn and forwarded when the stream completes.
 pub(super) async fn receive(
     provider: &dyn ChatProvider,
     model: &str,
