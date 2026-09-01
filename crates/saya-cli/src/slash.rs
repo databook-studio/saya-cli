@@ -48,6 +48,8 @@ pub enum SlashCommand {
     Contracts(ContractsCommand),
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
+    /// Show session token usage totals and cache hit rate (S22).
+    Usage,
     Help(Option<String>),
     Exit,
 }
@@ -108,6 +110,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
         "doctor" => SlashCommand::Doctor,
+        "usage" => SlashCommand::Usage,
         "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject" => {
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
