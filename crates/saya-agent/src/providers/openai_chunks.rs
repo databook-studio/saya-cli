@@ -42,4 +42,115 @@ pub(super) struct Usage {
     pub(super) prompt_tokens: Option<u64>,
     #[serde(default, alias = "output_tokens")]
     pub(super) completion_tokens: Option<u64>,
+    /// OpenAI `usage.prompt_tokens_details`. Present only when the gateway
+    /// reports prompt-token breakdowns (e.g. `cached_tokens`).
+    #[serde(default, alias = "input_tokens_details")]
+    pub(super) prompt_tokens_details: Option<PromptTokensDetails>,
+    /// OpenAI `usage.completion_tokens_details`. Present only when the gateway
+    /// reports completion-token breakdowns (e.g. `reasoning_tokens`).
+    #[serde(default, alias = "output_tokens_details")]
+    pub(super) completion_tokens_details: Option<CompletionTokensDetails>,
+}
+
+/// OpenAI `usage.prompt_tokens_details`: the prompt side, including cache hits.
+#[derive(Deserialize, Default, Debug, PartialEq)]
+pub(super) struct PromptTokensDetails {
+    /// `prompt_tokens_details.cached_tokens` — prompt tokens served from
+    /// cache. Inclusive of `prompt_tokens`. `Some(0)` is a reported cache
+    /// miss; absent is `None`.
+    #[serde(default)]
+    pub(super) cached_tokens: Option<u64>,
+}
+
+/// OpenAI `usage.completion_tokens_details`: the completion side, including
+/// reasoning.
+#[derive(Deserialize, Default, Debug, PartialEq)]
+pub(super) struct CompletionTokensDetails {
+    /// `completion_tokens_details.reasoning_tokens` — chain-of-thought
+    /// tokens. **Inclusive of `completion_tokens`** (inside it), so adding the
+    /// two double-counts.
+    #[serde(default)]
+    pub(super) reasoning_tokens: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Usage;
+    use serde_json::json;
+
+    /// Deliverable 4 (OpenAI, with): a usage chunk carrying both detail
+    /// objects populates the new fields.
+    #[test]
+    fn usage_with_details_populates_cache_and_reasoning() {
+        let usage: Usage = serde_json::from_value(json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {"cached_tokens": 90},
+            "completion_tokens_details": {"reasoning_tokens": 270}
+        }))
+        .expect("parses");
+        assert_eq!(usage.prompt_tokens, Some(100));
+        assert_eq!(usage.completion_tokens, Some(200));
+        assert_eq!(
+            usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens),
+            Some(90)
+        );
+        assert_eq!(
+            usage
+                .completion_tokens_details
+                .as_ref()
+                .and_then(|d| d.reasoning_tokens),
+            Some(270)
+        );
+    }
+
+    /// Deliverable 4 (OpenAI, without — the assertion that matters): a usage
+    /// chunk with no detail objects leaves them `None`, and the two existing
+    /// counters still parse. Also accepts the `input_tokens`/`output_tokens`
+    /// aliases some OpenAI-compatible gateways use.
+    #[test]
+    fn usage_without_details_leaves_them_none() {
+        let usage: Usage = serde_json::from_value(json!({
+            "input_tokens": 5,
+            "output_tokens": 6
+        }))
+        .expect("parses");
+        assert_eq!(usage.prompt_tokens, Some(5));
+        assert_eq!(usage.completion_tokens, Some(6));
+        assert_eq!(usage.prompt_tokens_details, None);
+        assert_eq!(usage.completion_tokens_details, None);
+    }
+
+    /// Deliverable 5 (OpenAI): a reported `cached_tokens: 0` deserialises to
+    /// `Some(0)`, distinct from an omitted field (`None`).
+    #[test]
+    fn reported_zero_cached_tokens_is_some_zero_not_none() {
+        let with_zero: Usage = serde_json::from_value(json!({
+            "prompt_tokens": 10,
+            "prompt_tokens_details": {"cached_tokens": 0}
+        }))
+        .expect("parses");
+        assert_eq!(
+            with_zero
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens),
+            Some(0)
+        );
+        let without: Usage = serde_json::from_value(json!({
+            "prompt_tokens": 10,
+            "prompt_tokens_details": {}
+        }))
+        .expect("parses");
+        assert_eq!(
+            without
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens),
+            None
+        );
+    }
 }

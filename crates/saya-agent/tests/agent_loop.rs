@@ -837,6 +837,7 @@ async fn token_usage_sums_across_turns_into_the_output() {
                     Ok(ProviderEvent::Usage(TokenUsage {
                         input_tokens: 3,
                         output_tokens: 7,
+                        ..Default::default()
                     })),
                     Ok(ProviderEvent::Done),
                 ]
@@ -846,6 +847,7 @@ async fn token_usage_sums_across_turns_into_the_output() {
                     Ok(ProviderEvent::Usage(TokenUsage {
                         input_tokens: 5,
                         output_tokens: 9,
+                        ..Default::default()
                     })),
                     Ok(ProviderEvent::Done),
                 ]
@@ -873,7 +875,8 @@ async fn token_usage_sums_across_turns_into_the_output() {
         output.usage,
         TokenUsage {
             input_tokens: 8,
-            output_tokens: 16
+            output_tokens: 16,
+            ..Default::default()
         }
     );
 }
