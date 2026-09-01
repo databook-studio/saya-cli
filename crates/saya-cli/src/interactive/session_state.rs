@@ -114,3 +114,66 @@ impl SessionState {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// S23b deliverable 4 / invariant 2 (non-persistence survives the crossing).
+    /// A turn that carried chain-of-thought — surfaced this slice as
+    /// `AgentEvent::ReasoningText` — must leave none of it in a persisted session.
+    /// `SessionLine` and `RedactedTurn` carry `role` + `content` only; the
+    /// reasoning lives on `ChatResponse.reasoning` (transport for one call) and
+    /// `AgentEvent::ReasoningText` (an in-memory event), neither of which has a
+    /// field on the persisted types. So `record_turn` — the only write path into
+    /// a session — has nowhere to copy the reasoning, however hard a caller
+    /// tries. This pins that: serialize a session built from a reasoning turn
+    /// and assert neither the persisted JSON nor the replayed provider history
+    /// contains the reasoning text. If a reasoning field is ever added to
+    /// `SessionLine` or `RedactedTurn`, this test fails and the reviewer must
+    /// justify breaking S23/S23b invariant 2.
+    #[test]
+    fn a_session_persisted_after_a_reasoning_turn_contains_none_of_it() {
+        let reasoning = "the secret chain-of-thought about row values 9f3a";
+        // The turn's answer, as the loop assembles it. The reasoning the turn
+        // produced is not an argument to `record_turn` and never could be — the
+        // signature takes `user`, `assistant`, `database_derived`, `tools`.
+        let mut session =
+            SessionState::new("s1", Some(String::from("analytics")), String::from("m"));
+        session.record_turn("what is the answer", "the answer is 42", false, Vec::new());
+
+        // The serialized form a session file would write.
+        let json = serde_json::to_string(&session).expect("serializes");
+        assert!(
+            !json.contains(reasoning),
+            "reasoning leaked into the persisted session: {json}"
+        );
+        // No `reasoning` key exists on `SessionLine` or `RedactedTurn`; a
+        // fabricated one must not appear.
+        assert!(
+            !json.contains("reasoning"),
+            "a `reasoning` key appeared in the persisted session: {json}"
+        );
+
+        // And the replay path: `provider_history` rebuilds the messages sent
+        // back to the model on a later turn. Reasoning must not be replayed
+        // (S23 invariant 2) — it cannot be, because the history is built from
+        // `SessionLine`/`RedactedTurn` content, which carries only the answer.
+        let replayed = session.provider_history();
+        assert!(
+            replayed.iter().all(|m| !m.content.contains(reasoning)),
+            "reasoning leaked into replayed provider history: {replayed:?}"
+        );
+        // The redacted form (what a session file actually stores) is the same.
+        let redacted = session.redacted();
+        let redacted_json = serde_json::to_string(&redacted).expect("serializes");
+        assert!(
+            !redacted_json.contains(reasoning),
+            "reasoning leaked into the redacted session: {redacted_json}"
+        );
+        assert!(
+            !redacted_json.contains("reasoning"),
+            "a `reasoning` key appeared in the redacted session: {redacted_json}"
+        );
+    }
+}

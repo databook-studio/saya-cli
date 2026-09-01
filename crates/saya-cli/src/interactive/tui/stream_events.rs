@@ -104,6 +104,17 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
                 transcript.push(BlockKind::System, text.trim_end_matches('\n'));
             }
         }
+        // The model's chain-of-thought. Accepted here (the catch-all `_` below
+        // would also accept it, but an explicit arm names the intent so S24
+        // knows where to wire live display) and pushed to nothing. S23b
+        // invariant 1: no TUI rendering in this slice — display is S24. S23b
+        // invariant 2: the transcript is in-memory and never serialized (the
+        // serialized types are `SessionLine`/`RedactedTurn`, which carry role +
+        // content only), so holding reasoning here would not violate
+        // non-persistence — but holding it would render it now, which invariant
+        // 1 forbids. So this slice accepts the event and drops it; buffering
+        // for S24's dim live-thinking is left to that slice.
+        AgentEvent::ReasoningText { .. } => {}
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
         }
@@ -342,6 +353,42 @@ mod tests {
         assert!(
             block.contains("memory not recorded · extraction failed"),
             "TUI block names the failure: {block}"
+        );
+    }
+
+    /// S23b invariant 1 (TUI): a `ReasoningText` event pushes nothing to the
+    /// transcript — no display in this slice. The event is accepted (the explicit
+    /// arm in `apply_event` names the intent for S24) but the transcript is
+    /// untouched, so the chain-of-thought cannot reach the screen until S24
+    /// wires it. Asserts on the transcript state, the same seam the other
+    /// `apply_event` tests use.
+    #[test]
+    fn reasoning_text_pushes_nothing_to_the_transcript() {
+        let mut t = Transcript::new();
+        apply_event(
+            &mut t,
+            AgentEvent::reasoning_text("I considered the time column"),
+        );
+        assert!(
+            t.blocks().is_empty(),
+            "reasoning must not reach the TUI transcript in S23b: {:?}",
+            t.blocks()
+        );
+        // And it stays silent even when an answer has already streamed — it
+        // does not push a block above, below, or between assistant blocks.
+        apply_event(&mut t, AgentEvent::assistant_text("the answer"));
+        apply_event(&mut t, AgentEvent::reasoning_text("more thinking mid-turn"));
+        assert_eq!(
+            t.blocks().len(),
+            1,
+            "only the assistant block should be present: {:?}",
+            t.blocks()
+        );
+        assert_eq!(t.blocks()[0].kind, BlockKind::Assistant);
+        assert!(
+            !t.blocks()[0].text.contains("thinking"),
+            "reasoning must not be folded into the assistant block: {:?}",
+            t.blocks()[0].text
         );
     }
 }

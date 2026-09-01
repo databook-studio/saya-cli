@@ -1370,3 +1370,151 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_in_a_batch() {
         "the non-gated sibling must still execute; got calls {calls:?}"
     );
 }
+
+// --- S23b: reasoning crosses the crate boundary, but is not displayed --------
+
+/// A streaming provider whose `stream()` emits a fixed list of events for the
+/// one turn the loop drives, so the S23b tests can observe exactly which
+/// `AgentEvent`s reasoning (or its absence) produces.
+struct ReasoningProvider {
+    events: Vec<ProviderEvent>,
+}
+
+#[async_trait::async_trait]
+impl ChatProvider for ReasoningProvider {
+    fn name(&self) -> &str {
+        "reasoning-mock"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        panic!("the loop drives providers through stream()")
+    }
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        Ok(Box::pin(futures_util::stream::iter(
+            self.events
+                .clone()
+                .into_iter()
+                .map(Ok::<ProviderEvent, saya_agent::ProviderError>),
+        )))
+    }
+}
+
+/// S23b invariant 4: with reasoning absent, output is byte-identical to today.
+/// A provider that streams an answer and no `ReasoningDelta` produces no
+/// `ReasoningText` event — the new variant is silent when there is nothing to
+/// carry, so a non-reasoning provider's event stream is unchanged from pre-S23b.
+#[tokio::test]
+async fn a_stream_without_reasoning_emits_no_reasoning_event() {
+    let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let provider = ReasoningProvider {
+        events: vec![
+            ProviderEvent::TextDelta("the answer".into()),
+            ProviderEvent::Done,
+        ],
+    };
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run completes");
+    assert_eq!(output.answer, "the answer");
+    let events = events.lock().unwrap().clone();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ReasoningText { .. })),
+        "a reasoning-free stream must emit no ReasoningText: {events:?}"
+    );
+    // The answer and the terminator still arrive — the event shape a
+    // non-reasoning provider has always produced.
+    assert!(
+        events.iter().any(
+            |event| matches!(event, AgentEvent::AssistantText { text } if text == "the answer")
+        ),
+        "the answer must still stream: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Complete)),
+        "the terminator must still arrive: {events:?}"
+    );
+}
+
+/// S23b deliverable 1 (wiring): the turn's captured chain-of-thought is
+/// forwarded onto the event stream as `ReasoningText`. A provider that streams
+/// reasoning deltas produces exactly one `ReasoningText` carrying the
+/// concatenated text — proving the `_reasoning` drop S23 left is now a
+/// forward, and that the headless renderer's silence (S23b Q1) is a display
+/// decision, not a capture gap. The reasoning event reaches the sink; what the
+/// sink's renderer does with it is S24's call.
+#[tokio::test]
+async fn a_stream_with_reasoning_forwards_one_reasoning_event() {
+    let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let provider = ReasoningProvider {
+        events: vec![
+            ProviderEvent::ReasoningDelta("first I considered ".into()),
+            ProviderEvent::ReasoningDelta("the time column".into()),
+            ProviderEvent::TextDelta("ok".into()),
+            ProviderEvent::Done,
+        ],
+    };
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run completes");
+    assert_eq!(output.answer, "ok");
+    let events = events.lock().unwrap().clone();
+    let reasoning: Vec<&AgentEvent> = events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::ReasoningText { .. }))
+        .collect();
+    assert_eq!(
+        reasoning.len(),
+        1,
+        "exactly one ReasoningText event (the accumulated turn): {events:?}"
+    );
+    match reasoning[0] {
+        AgentEvent::ReasoningText { text } => assert_eq!(
+            text, "first I considered the time column",
+            "deltas concatenate into one turn string: {events:?}"
+        ),
+        _ => unreachable!(),
+    }
+    // The answer still arrives alongside it — reasoning does not displace the
+    // answer on the event stream.
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AssistantText { text } if text == "ok")),
+        "the answer must still stream: {events:?}"
+    );
+}

@@ -28,6 +28,32 @@ All notable changes to SAYA CLI are recorded here. This project follows
   `show_thinking` toggle that gates *display* is a later slice. This slice ends
   when reasoning reaches `ChatResponse`.
 
+- **The model's chain-of-thought is carried across the crate boundary — and
+  still cannot be persisted, and still is not displayed.** The prior slice
+  captured reasoning on `ChatResponse.reasoning` inside `saya-agent` and bound
+  it to a turn-local it dropped. This slice forwards that dropped value onto
+  the event stream as a new `AgentEvent::ReasoningText { text }`, mirroring
+  `AssistantText` (one event per turn, the accumulated string), so the CLI
+  *can* reach the thinking. It crosses a renderer that has turned three prior
+  events into `Not implemented: unrecognized agent event` printed under a
+  correct answer in the headless `saya ask` path, each time with a green
+  suite (`KnowledgeLearningSkipped`, `KnowledgeProposed`,
+  `KnowledgeLearningStarted`): `terminal_event` renders `ReasoningText` to
+  `None` — silent, not an error — and a test pins both that and that a content
+  event still reaches the loud path, so the fix is not a blanket silence. This
+  is the one case where "renders to nothing" is a scope decision (display is
+  the next slice) rather than a nature-of-the-event decision (reasoning is
+  content, not progress); the comment names that so a future reader does not
+  conclude reasoning is progress. The TUI accepts the event and pushes nothing
+  to its transcript — display, and the `show_thinking` / `--show-thinking` /
+  `/thinking` toggle that gates it, is the next slice. The non-persistence
+  guarantee survives the crossing: reasoning lives on `ChatResponse` and on the
+  in-memory `ReasoningText` event, never on `ChatMessage`, so a session
+  (`SessionLine` / `RedactedTurn`, role + content only) and the replayed
+  provider history have nowhere to copy it — a test pins that a session
+  persisted after a reasoning turn contains none of it. A provider that reports
+  no reasoning emits nothing, byte-identical to today.
+
 - **The extraction call's token spend is no longer invisible.** The
 
 - **The extraction call's token spend is no longer invisible.** The
