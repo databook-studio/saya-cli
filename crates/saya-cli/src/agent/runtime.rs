@@ -271,7 +271,7 @@ pub(crate) async fn run_prompt_with_inputs(
     })
 }
 
-/// S18 Q3: the three first-run failures used to name no next step. Guidance is
+/// the three first-run failures used to name no next step. Guidance is
 /// added at the saya-cli boundary (here), not in the provider-neutral agent
 /// crate. A provider that is configured but unreachable is "what is configured
 /// did not work", not "nothing is configured" — so the next step is to start
@@ -290,7 +290,7 @@ fn provider_message(error: &saya_agent::ProviderError) -> String {
     }
 }
 
-/// S18 Q3: an unresolvable secret reference is "what is configured did not
+/// an unresolvable secret reference is "what is configured did not
 /// work" — the profile is there but its password is not. `init` cannot supply
 /// a secret, so the next step is setting the env var (doctor lists the
 /// unresolved references). Only the secret case is annotated; a genuine

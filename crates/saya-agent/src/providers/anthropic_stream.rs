@@ -151,7 +151,7 @@ impl State {
                         );
                     } else if cb_type == "thinking" {
                         // A `thinking` content block can carry its initial text
-                        // inline on `content_block_start` (the S20 "whole"
+                        // inline on `content_block_start` (the the model-I/O design "whole"
                         // spelling). Emit it as reasoning; the subsequent
                         // `thinking_delta`s append to it.
                         if let Some(thinking) = json["content_block"]["thinking"]
@@ -178,8 +178,7 @@ impl State {
                         self.pending
                             .push_back(ProviderEvent::TextDelta(text.to_string()));
                     } else if delta_type == "thinking_delta" {
-                        // The streamed reasoning increment (S20 wire table:
-                        // `thinking_delta.thinking`). Forwarded as a
+                        // The streamed reasoning increment. Forwarded as a
                         // `ReasoningDelta` for `collect()` to accumulate.
                         let thinking = json["delta"]["thinking"]
                             .as_str()

@@ -85,7 +85,7 @@ pub(super) async fn decide(
         }
         ReviewDecisionArg::UseOnce => {
             // `use_candidate_once` validates the claim is a live `Candidate` and
-            // writes nothing — a candidate stays a candidate (spec C §3). The
+            // writes nothing — a candidate stays a candidate. The
             // admission's effect (one candidate reaching the next recall's
             // `admit_candidate`) is request-scoped and lives on the recall
             // request of the *interactive* turn that follows; threading it from

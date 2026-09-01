@@ -1,5 +1,5 @@
 //! Building a turn's injectable inputs from config — the testability seam for
-//! `run_prompt_with_inputs` (spec P1b). Production goes through [`prepare_turn`];
+//! `run_prompt_with_inputs`. Production goes through [`prepare_turn`];
 //! tests construct [`TurnInputs`] directly with a mock provider and an idle
 //! registry so the recall→emit→provider ordering is assertable without a live
 //! database.
@@ -19,7 +19,7 @@ pub(crate) use super::runtime::AgentRuntimeError;
 /// against — everything [`super::run_prompt_with_inputs`] needs that
 /// production builds from config (via [`prepare_turn`]) and tests inject
 /// directly (a mock provider, an idle registry) so the recall→emit→provider
-/// ordering is assertable without a live database (spec P1b §4.2).
+/// ordering is assertable without a live database.
 pub(crate) struct TurnInputs {
     pub(crate) ai: ResolvedAi,
     pub(crate) provider: Box<dyn ChatProvider>,

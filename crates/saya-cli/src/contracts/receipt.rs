@@ -1,4 +1,4 @@
-//! A typed receipt for what a recall **supplied** to the model — spec P1a.
+//! A typed receipt for what a recall **supplied** to the model.
 //!
 //! This is a contract, not presentation: it carries data and IDs only, mirrors
 //! the doc style of [`super::view`], and lives here (not in a render module) for

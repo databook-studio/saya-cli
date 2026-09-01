@@ -1,4 +1,4 @@
-//! Tests for [`SessionUsage`] — the session token accumulator (S22).
+//! Tests for [`SessionUsage`] — the session token accumulator.
 //!
 //! These tests pin the two invariants the `Option` fields exist for:
 //! - Invariant 1 (deliverable 5): a cache hit rate over unreported data is

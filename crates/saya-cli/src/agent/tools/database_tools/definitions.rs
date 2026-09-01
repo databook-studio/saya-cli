@@ -6,9 +6,9 @@ impl DatabaseTools {
     /// Returns available database tool definitions. Contract read tools are
     /// appended only when a state store is present **and** database context is
     /// allowed; when the privacy gate forbids database context they are hidden
-    /// rather than advertised as always-empty (spec 2b-3a §3). `contract_propose`
+    /// rather than advertised as always-empty. `contract_propose`
     /// is appended only when candidate writes are permitted **and** a store is
-    /// present **and** the gate is open (spec 3c §3) — hidden, not advertised and
+    /// present **and** the gate is open — hidden, not advertised and
     /// denied, matching the read-tool precedent (SPEC REVIEW, Q1).
     pub(crate) fn definitions(
         allow_query_data: bool,

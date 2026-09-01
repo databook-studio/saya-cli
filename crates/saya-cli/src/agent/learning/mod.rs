@@ -1,4 +1,4 @@
-//! Wiring the `[memory]` setting into the agent turn — spec E.
+//! Wiring the `[memory]` setting into the agent turn.
 //!
 //! Two pure translations live here, both provider-free so the behaviour the
 //! spec governs — "the default configuration performs no automatic writes and
@@ -27,8 +27,8 @@ pub(crate) mod runner;
 pub(crate) mod turn_record;
 pub(crate) mod turn_table;
 
-/// The wall-clock budget for one post-turn extraction call (spec packet-54
-/// decision 5). The user already has their answer when extraction runs — it
+/// The wall-clock budget for one post-turn extraction call. The user already
+/// has their answer when extraction runs — it
 /// trails the loop, after the assistant text — but the loop still awaits it, so
 /// an adapter stays busy until it resolves. This bounds that wait, not the work
 /// that produced the answer, and it is never unbounded: a half-open connection

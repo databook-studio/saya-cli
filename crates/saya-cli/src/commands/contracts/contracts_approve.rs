@@ -1,4 +1,4 @@
-//! S28 — the batch approve path: confirm every candidate in the profile's
+//! the batch approve path: confirm every candidate in the profile's
 //! bounded review queue, then report every item it refused.
 //!
 //! Split from `contracts_decide.rs` (the single-item path this parallels) to
@@ -11,7 +11,7 @@
 //! hides those refusals, so outcomes are reported per item and the summary
 //! names both counts.
 //!
-//! Consent (Q2): the queue is always printed first — the same lines `/queue`
+//! Consent: the queue is always printed first — the same lines `/queue`
 //! prints — and without `--yes` nothing is approved (deny by default, the
 //! precedent `--non-interactive` sets for approvals). With `--yes` the sweep
 //! runs. The command never blocks on a prompt: the shared dispatcher also
@@ -224,7 +224,7 @@ mod tests {
         (code, out, err)
     }
 
-    /// S28 deliverable 5 at the command layer: a mixed batch with `--yes` —
+    /// the batch-approve slice deliverable 5 at the command layer: a mixed batch with `--yes` —
     /// one candidate confirms (persisted), one is refused with its reason —
     /// reports the per-item outcomes and both counts, and exits 0 (a partial
     /// batch is a success, never a rollback). The refusal exercised here is the
@@ -289,12 +289,12 @@ mod tests {
             "preview shown: {out}"
         );
         assert!(out.contains("shipments"), "preview shows both: {out}");
-        // ...the approval was reported per item...
+        //...the approval was reported per item...
         assert!(
             out.contains(&format!("confirmed {}", pending.as_str())),
             "approval line: {out}"
         );
-        // ...the refusal was reported per item, with the reason...
+        //...the refusal was reported per item, with the reason...
         assert!(
             out.contains(&format!("refused {}", gone.as_str())),
             "refusal line names the item: {out}"
@@ -303,7 +303,7 @@ mod tests {
             out.contains("no longer in the schema"),
             "refusal line names why: {out}"
         );
-        // ...and the summary carries both counts.
+        //...and the summary carries both counts.
         assert!(out.contains("approved 1, refused 1"), "summary: {out}");
         // The approval persisted despite the refusal (invariant 3).
         let state = store
@@ -317,7 +317,7 @@ mod tests {
     }
 
     /// Without `--yes` the queue is printed and nothing is approved — the
-    /// deny-by-default consent path (Q2), including under `--non-interactive`.
+    /// deny-by-default consent path, including under `--non-interactive`.
     #[tokio::test]
     async fn without_yes_the_queue_is_printed_and_nothing_is_approved() {
         let root = std::env::temp_dir().join(format!(

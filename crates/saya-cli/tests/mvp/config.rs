@@ -20,8 +20,8 @@ fn saya_isolated(root: &Path, args: &[&str]) -> std::process::Output {
 
 #[test]
 fn config_init_creates_parseable_templates_with_stable_output() {
-    // S18: `config init` now writes the user layer (root/user-config/saya under
-    // the test's SAYA_CONFIG_HOME), not .saya/. The success message names that
+    // `config init` now writes the user layer (root/user-config/saya under
+    // the test's SAYA_CONFIG_HOME), not.saya/. The success message names that
     // directory, so its exact bytes vary per run; the stable prefix and the
     // parseable/permissions/follow-up checks are what the invariant guards.
     let user_dir = |root: &std::path::Path| root.join("user-config/saya");
@@ -45,7 +45,7 @@ fn config_init_creates_parseable_templates_with_stable_output() {
 
         // The rest of the CLI loads the created config. `connection list` and
         // `config show` do not need the secret. `config doctor` now exits
-        // non-zero when the secret is unresolved (Q4), so resolve it to keep
+        // non-zero when the secret is unresolved, so resolve it to keep
         // this a "doctor reports a working post-init setup" check.
         assert!(
             saya_process(&root, &["connection", "list"])
@@ -197,8 +197,8 @@ fn runtime_debug_redacts_merged_environment_values_and_keys() {
 }
 
 // ---------------------------------------------------------------------------
-// S18 — a first run that ends somewhere. The cold path (empty config home, no
-// .saya) used to land a new user on three unrelated failures, none naming a
+// a first run that ends somewhere. The cold path (empty config home, no
+//.saya) used to land a new user on three unrelated failures, none naming a
 // next step, and the third was self-inflicted: `config init` wrote only to the
 // untrusted project layer, so the next command warned that it had ignored the
 // templates init itself just wrote. These tests pin the post-fix behaviour:
@@ -361,7 +361,7 @@ fn ask_with_unresolvable_secret_names_a_next_command() {
 /// Q3 failure path 2 / deliverable 4 — no config found. The empty-config
 /// `config doctor` used to print "config file: not found" and exit 0, naming no
 /// next step. It must now advise `saya config init` (nothing is configured) and
-/// exit non-zero so a script can tell the setup is unusable (Q4).
+/// exit non-zero so a script can tell the setup is unusable.
 #[test]
 fn doctor_with_no_config_advises_init_and_exits_nonzero() {
     let root = test_root("s18-doctor-empty");

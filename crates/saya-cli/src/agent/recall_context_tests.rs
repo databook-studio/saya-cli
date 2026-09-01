@@ -1058,7 +1058,7 @@ async fn remember_confirmed_alias(
 
 /// recall = include-candidates: the candidate reaches the block, and the body
 /// marks it unconfirmed so the model cannot read it as an established fact
-/// (spec 4b §1, test 3). The confirmed alias is unmarked.
+///. The confirmed alias is unmarked.
 #[tokio::test]
 async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
     let root = temp_root("include_candidates");
@@ -1101,7 +1101,7 @@ async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
 }
 
 /// recall = confirmed: the candidate is excluded — today's behaviour, unchanged
-/// (spec 4b §1, test 4). Only the confirmed alias reaches the block, and it
+///. Only the confirmed alias reaches the block, and it
 /// carries no candidate marker.
 #[tokio::test]
 async fn confirmed_excludes_candidates_unchanged_behaviour() {
@@ -1140,7 +1140,7 @@ async fn confirmed_excludes_candidates_unchanged_behaviour() {
 }
 
 /// Bounds from config are honoured: lowering `max_contracts` (max_objects) to 1
-/// returns exactly one contract even when two match (spec 4b §1, test 5).
+/// returns exactly one contract even when two match.
 #[tokio::test]
 async fn bounds_from_config_lowering_max_contracts_returns_one_contract() {
     let root = temp_root("bounds_one");
@@ -1280,7 +1280,7 @@ fn many_orders_schema(identity: &ProfileIdentity, count: usize) -> (ProfileIdent
 
 /// Two confirmed `TableGrain` claims on one object: both reach the block, both
 /// are marked as disputed in-band, and the block names the disputed kind once
-/// (spec 5e §3 test 1).
+///.
 ///
 /// D-3 NOTE: `table_grain` is a single-valued slot, so two confirmed grains
 /// cannot coexist in `knowledge_items` — the second `put` replaces the first.
@@ -1350,7 +1350,7 @@ async fn conflicting_grains_both_appear_marked_and_kind_named() {
 }
 
 /// The block carries an instruction that the model must not choose between the
-/// conflicting claims silently (spec 5e §3 test 2). See the D-3 NOTE on
+/// conflicting claims silently. See the D-3 NOTE on
 /// `conflicting_grains_both_appear_marked_and_kind_named`: the store cannot
 /// hold two confirmed grains, so this renders a directly-constructed contract.
 #[tokio::test]
@@ -1401,7 +1401,7 @@ async fn conflict_block_instructs_not_to_choose_silently() {
 
 /// A contract with no conflict renders a deterministic shape: the P2a stanza
 /// directive, then the `[confirmed]`-marked claim, and **no** dispute marker or
-/// do-not-choose instruction (spec 5e §3 test 3, updated for P2a).
+/// do-not-choose instruction.
 ///
 /// What this test guarded before P2a, and what it guards now:
 ///
@@ -1410,7 +1410,7 @@ async fn conflict_block_instructs_not_to_choose_silently() {
 ///   visible text. That property is **deliberately given up** in P2a: a
 ///   confirmed claim now binds, so it gains a stanza directive and a
 ///   `[confirmed]` marker. Asserting the old bytes would defend the bug this
-///   slice exists to fix (spec P2a §1, §4).
+///   slice exists to fix.
 /// - **Now:** the invariant that survives is narrower and still fully
 ///   guarded here — a *clean* contract (no conflict) carries **no** dispute
 ///   marker and **no** do-not-choose instruction. The exact bytes are pinned
@@ -1539,7 +1539,7 @@ async fn a_directive_claim_with_no_reason_renders_no_reason_line() {
 
 /// A conflict does not suppress the object's other, non-disputed claims: a
 /// confirmed alias on the same object as two conflicting grains still appears
-/// and carries no dispute marker (spec 5e §3 test 4).
+/// and carries no dispute marker.
 #[tokio::test]
 async fn conflict_does_not_suppress_non_disputed_claims() {
     use crate::contracts::{ContractClaim, ContractConflict, RetrievedContract};
@@ -1602,7 +1602,7 @@ async fn conflict_does_not_suppress_non_disputed_claims() {
 
 /// Conflict and candidate marking compose: under `include-candidates`, a
 /// contract can carry both a disputed confirmed pair and an admitted candidate,
-/// and both markers appear in the same block (spec 5e §3 test 5). A candidate
+/// and both markers appear in the same block. A candidate
 /// can never itself be disputed — `is_recallable` is `Confirmed` only, so
 /// conflict detection never names a candidate id (SPEC REVIEW) — but the two
 /// in-band markers coexist on different lines.
@@ -1668,8 +1668,7 @@ async fn conflict_and_candidate_markers_compose_in_one_block() {
 }
 
 /// The opaque profile identity still appears nowhere in a conflict block: the
-/// dispute summary names the kind and count, never the identity (spec 5e §3
-/// test 6).
+/// dispute summary names the kind and count, never the identity.
 #[tokio::test]
 async fn opaque_identity_appears_nowhere_in_conflict_block() {
     use crate::contracts::{ContractClaim, ContractConflict, RetrievedContract};
@@ -2262,8 +2261,8 @@ async fn five_objects_with_oversized_claims_do_not_admit_five_unbounded_claims()
         "the rendered body must be within the byte budget: {}",
         block.body.len()
     );
-    // ...and it does not carry five claims — the bound dropped the excess. Each
-    // object's header line is `catalog.public.ordersN  [current]  ...`; count
+    //...and it does not carry five claims — the bound dropped the excess. Each
+    // object's header line is `catalog.public.ordersN  [current]...`; count
     // them to assert how many stanzas survived.
     let stanza_count = block.body.matches("[current]").count();
     assert!(
@@ -2511,7 +2510,7 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
 // These assert on the `RecallReceipt` returned beside the blocks. The receipt
 // names what recall **supplied** to the prompt (the claims whose rendered lines
 // reached the block), never what the model **used** — see the type docs in
-// `contracts/receipt.rs`. Nothing renders it yet (P1b).
+// `contracts/receipt.rs`. Nothing renders it yet.
 // ===========================================================================
 
 /// Seeds the orders table's cached schema and two confirmed claims on it: a

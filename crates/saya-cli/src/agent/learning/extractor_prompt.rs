@@ -1,4 +1,4 @@
-//! Structured extraction prompt builder — spec F Chunk 2.
+//! Structured extraction prompt builder.
 //!
 //! Generates the precision extraction prompt presenting `TurnRecord` and `TurnObjectTable`
 //! with turn-scoped object IDs (`T0..Tn`) to the model.

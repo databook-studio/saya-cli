@@ -902,7 +902,7 @@ async fn token_usage_sums_across_turns_into_the_output() {
 }
 
 /// The intra-loop context bound still binds, but it no longer aborts the run
-/// (S4 Problem A): runaway context is trimmed to fit rather than surfacing an
+///: runaway context is trimmed to fit rather than surfacing an
 /// opaque `Limit("context bytes")` after the query already ran. Each provider
 /// turn is issued a conversation assembled under the byte budget; the run
 /// completes instead of dying on the first oversized turn.
@@ -1007,11 +1007,11 @@ fn message_size_overhead(message: &ChatMessage) -> usize {
 }
 
 /// A single oversized tool result must not be able to abort the whole run by
-/// itself (S4 invariant 1). One query returning more than the conversation
+/// itself. One query returning more than the conversation
 /// byte budget must let the run continue in some useful form rather than
 /// surfacing an opaque `Limit("context bytes")` after the query already ran.
 /// The model must also be told it received a cut result, not silently fed a
-/// partial one as if complete (S4: a correctness issue, not just UX).
+/// partial one as if complete.
 #[tokio::test]
 async fn single_oversized_tool_result_does_not_abort_the_run() {
     struct BigTools;
@@ -1251,7 +1251,7 @@ fn assert_open_browser_gated(calls: &[String], events: &[AgentEvent]) {
 }
 
 /// The gated tool arriving alone takes the sequential path: it must be
-/// denied, not executed. Against the pre-S8 code the sequential path ignored
+/// denied, not executed. Against the code before parallel tool calls the sequential path ignored
 /// `external_side_effect`, so this assertion fails there (the tool ran).
 #[tokio::test]
 async fn external_side_effect_tool_is_gated_when_it_arrives_alone() {
@@ -1303,7 +1303,7 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_alone() {
 /// The gated tool arriving in a batch with an auto-runnable call must still be
 /// gated: the batch is not run concurrently for it, it falls through to the
 /// sequential path and is denied, while the auto-runnable sibling executes.
-/// Against the pre-S8 code the batch predicate already excluded the gated
+/// Against the code before parallel tool calls the batch predicate already excluded the gated
 /// tool (it tests `external_side_effect`), so the batch fell through — but the
 /// sequential path then *ran* it, since it ignored `external_side_effect`. So
 /// the "must not execute" assertion fails there.
@@ -1371,10 +1371,10 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_in_a_batch() {
     );
 }
 
-// --- S23b: reasoning crosses the crate boundary, but is not displayed --------
+// --- reasoning crosses the crate boundary, but is not displayed --------
 
 /// A streaming provider whose `stream()` emits a fixed list of events for the
-/// one turn the loop drives, so the S23b tests can observe exactly which
+/// one turn the loop drives, so the the CLI-boundary slice tests can observe exactly which
 /// `AgentEvent`s reasoning (or its absence) produces.
 struct ReasoningProvider {
     events: Vec<ProviderEvent>,
@@ -1402,10 +1402,10 @@ impl ChatProvider for ReasoningProvider {
     }
 }
 
-/// S23b invariant 4: with reasoning absent, output is byte-identical to today.
+/// With reasoning absent, output is byte-identical to before reasoning existed.
 /// A provider that streams an answer and no `ReasoningDelta` produces no
 /// `ReasoningText` event — the new variant is silent when there is nothing to
-/// carry, so a non-reasoning provider's event stream is unchanged from pre-S23b.
+/// carry, so a non-reasoning provider's event stream is unchanged from pre-the CLI-boundary slice.
 #[tokio::test]
 async fn a_stream_without_reasoning_emits_no_reasoning_event() {
     let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1456,13 +1456,13 @@ async fn a_stream_without_reasoning_emits_no_reasoning_event() {
     );
 }
 
-/// S23b deliverable 1 (wiring): the turn's captured chain-of-thought is
+/// the turn's captured chain-of-thought is
 /// forwarded onto the event stream as `ReasoningText`. A provider that streams
 /// reasoning deltas produces exactly one `ReasoningText` carrying the
-/// concatenated text — proving the `_reasoning` drop S23 left is now a
-/// forward, and that the headless renderer's silence (S23b Q1) is a display
+/// concatenated text — proving the `_reasoning` drop the capture slice left is now a
+/// forward, and that the headless renderer's silence is a display
 /// decision, not a capture gap. The reasoning event reaches the sink; what the
-/// sink's renderer does with it is S24's call.
+/// sink's renderer does with it is the display slice's call.
 #[tokio::test]
 async fn a_stream_with_reasoning_forwards_one_reasoning_event() {
     let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));

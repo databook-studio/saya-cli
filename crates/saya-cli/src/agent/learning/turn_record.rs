@@ -1,4 +1,4 @@
-//! Bounded turn record assembly — spec F Chunk 1.
+//! Bounded turn record assembly.
 //!
 //! Captures the facts of what occurred during a turn: user prompt, assistant answer,
 //! observed objects mapped to turn-scoped identifiers (`T0..Tn`), user corrections,

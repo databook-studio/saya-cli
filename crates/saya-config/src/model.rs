@@ -53,7 +53,7 @@ impl ConnectionsFile {
     }
 }
 
-/// Secret-bearing keys that must hold a *reference* (`{ env = ... }`), never
+/// Secret-bearing keys that must hold a *reference* (`{ env =... }`), never
 /// an inline value. A plain string here is the most common config mistake and
 /// serde's untagged-enum error for it is undiagnosable — replace it with the
 /// field, the location, and the fix.

@@ -198,10 +198,10 @@ pub(super) enum ArgMessage {
     MalformedTable,
     MalformedClaimId,
     BadValue,
-    /// A short-reference prefix matched more than one claim (spec D). The typed
+    /// A short-reference prefix matched more than one claim. The typed
     /// prefixes never reach the message — the user must type more characters.
     AmbiguousPrefix,
-    /// A short-reference prefix matched no claim (spec D). Payload-free: the
+    /// A short-reference prefix matched no claim. Payload-free: the
     /// prefix the user typed is untrusted and never echoed.
     PrefixNotFound,
 }

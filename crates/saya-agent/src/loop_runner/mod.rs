@@ -47,15 +47,15 @@ pub async fn run_agent_with_sink(
         usage.input_tokens += turn_usage.input_tokens;
         usage.output_tokens += turn_usage.output_tokens;
         // Forward the turn's captured chain-of-thought onto the event stream as
-        // one `ReasoningText` event — S23 captured it on `ChatResponse.reasoning`
-        // and bound it to `_reasoning` here; S23b carries it across the crate
-        // boundary so the CLI *can* reach it (display is S24, not this slice).
+        // one `ReasoningText` event — the capture slice captured it on `ChatResponse.reasoning`
+        // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate
+        // boundary so the CLI *can* reach it (display is the display slice, not this slice).
         // This is the only way reasoning leaves `saya-agent`: it is NOT pushed
         // onto `messages` — `assistant` (a `ChatMessage`) is what gets replayed
         // to the provider as history, and `ChatMessage` has no reasoning field,
-        // so reasoning cannot leak into the next turn's request (S23 invariant 2,
-        // structural in the type choice). `None` (a provider that reported no
-        // reasoning) emits nothing — byte-identical to today (S23b invariant 4).
+        // so reasoning cannot leak into the next turn's request. `None` (a
+        // provider that reported no reasoning) emits nothing — byte-identical
+        // to today.
         if let Some(text) = reasoning
             && !text.is_empty()
         {
@@ -275,8 +275,7 @@ pub async fn run_agent_with_sink(
         // context — the same recency policy the pre-loop path uses. A single
         // result is already capped at construction, so this resolves
         // accumulation; if trimming everything still leaves the newest result
-        // over budget, truncate it rather than aborting the whole run (S4
-        // invariant 1: one result must never kill the run by itself).
+        // over budget, truncate it rather than aborting the whole run.
         output::trim_to_budget(&mut messages, limits.context_byte_budget);
     }
     Err(AgentError::Limit("turns"))

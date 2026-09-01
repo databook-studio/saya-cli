@@ -14,16 +14,16 @@ use saya_types::{ClaimId, KnowledgeState};
 /// [`ContractOpError::NotACandidate`]. The operation writes **nothing** to the
 /// store: no state flip, no binding change, no fingerprint change, no audit.
 /// The item keeps its `Pending` state and `AssistantInferred` origin, so a
-/// user who uses one and never returns finds it exactly as it was (spec C §3).
+/// user who uses one and never returns finds it exactly as it was.
 ///
 /// The admission itself is not a persisted thing; it is request-scoped. The
 /// caller threads the validated id into the next [`RecallRequest`]'s
 /// `admit_candidate`, which [`selection`](super::selection) honours for that
 /// one recall only — the request is built and dropped per turn, so an admission
-/// cannot outlive the turn it was made for (spec C §4 — one turn, in-memory).
+/// cannot outlive the turn it was made for.
 /// Because the item stays `Pending`, the render layer still marks it
 /// `[candidate — unconfirmed]` when supplied: being chosen for one turn confers
-/// no authority (spec C §3, ADR 0002 §4).
+/// no authority.
 ///
 /// Fail-soft: a store read failure returns a typed error and damages nothing —
 /// nothing was written.

@@ -75,13 +75,13 @@ pub enum ProviderEvent {
     TextDelta(String),
     /// Chain-of-thought from a reasoning model. Captured unconditionally
     /// (invariant 4: parse whether or not the user has asked to see it — the
-    /// `show_thinking` toggle is S24, not a precondition for capture) and
+    /// `show_thinking` toggle is the display slice, not a precondition for capture) and
     /// accumulated under the same `MAX_STREAM_BYTES` bound as `TextDelta`, so a
     /// hostile endpoint cannot stream unbounded "thinking" into memory. Never
     /// reaches a session file or the provider as history: reasoning lives on
     /// `ChatResponse` (transport for one call), never on `ChatMessage` (what
     /// gets replayed and persisted), so there is no field to copy it through
-    /// (S23 invariants 1 and 2, made structural by the type choice in Q2).
+    ///.
     ReasoningDelta(String),
     ToolCalls(Vec<ToolCall>),
     /// The provider's cumulative token counts so far for this response.
@@ -159,7 +159,7 @@ pub trait ChatProvider: Send + Sync {
         // string (absent is not zero, mirrored from usage).
         let mut reasoning = None;
         // `None` until the stream emits a `Usage` event; the last event wins
-        // (Q2). OpenAI emits one trailing usage-only chunk; Anthropic emits
+        //. OpenAI emits one trailing usage-only chunk; Anthropic emits
         // cumulative snapshots on `message_start`/`message_delta`, so summing
         // would double-count — the final snapshot is the truth, exactly as the
         // stream's own accumulator already folds them into one running total.
@@ -295,7 +295,7 @@ mod tests {
     }
 
     /// Deliverable 2: a stream that emits a `Usage` event produces a response
-    /// carrying it. The last event wins (Q2): Anthropic emits cumulative
+    /// carrying it. The last event wins: Anthropic emits cumulative
     /// snapshots, so summing would double-count; the final snapshot is the
     /// truth, folded here into the one accumulator the stream already keeps.
     #[tokio::test]
@@ -408,9 +408,9 @@ mod tests {
         assert_eq!(response.usage, None);
     }
 
-    // --- S23: reasoning capture -------------------------------------------------
+    // --- reasoning capture -------------------------------------------------
 
-    /// S23 deliverable 1 / Q1: `collect()` accumulates `ReasoningDelta` events
+    /// the capture slice deliverable 1 / Q1: `collect()` accumulates `ReasoningDelta` events
     /// into `response.reasoning` the way it accumulates `TextDelta` into
     /// content. Two deltas concatenate; the result reaches `ChatResponse`.
     #[tokio::test]
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(response.message.content, "ok");
     }
 
-    /// S23 deliverable 6 (the absent case): a stream that emits no
+    /// a stream that emits no
     /// `ReasoningDelta` leaves `response.reasoning` `None`, not
     /// `Some(String::new())` — a provider that reports no reasoning is not
     /// mistaken for one that reasoned and produced nothing (absent is not
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(response.reasoning, None);
     }
 
-    /// S23 Q1: `collect()`'s `MAX_STREAM_BYTES` bound covers reasoning too. A
+    /// the capture slice Q1: `collect()`'s `MAX_STREAM_BYTES` bound covers reasoning too. A
     /// hostile endpoint streaming unbounded "thinking" must be rejected exactly
     /// as an oversized content stream is — extending the bound, not duplicating
     /// it. The check fires before the turn completes.
@@ -494,13 +494,13 @@ mod tests {
         );
     }
 
-    /// S23 deliverable 1: an unhandled-by-design consumer of `ProviderEvent`
+    /// an unhandled-by-design consumer of `ProviderEvent`
     /// renders `ReasoningDelta` to **nothing**, not to an error line. The
     /// "unhandled variant became `Not implemented: unrecognized agent event`
     /// under a correct answer" regression has happened three times in this
     /// repo; this pins that a catch-all consumer stays silent. The loop in
     /// `receive` is *not* such a consumer (the main loop keeps its reasoning,
-    /// S20 invariant 2) — this models the other kind: a drain that only cares
+    /// a reported zero) — this models the other kind: a drain that only cares
     /// about `Usage`/`Done` and ignores the rest.
     #[tokio::test]
     async fn an_unhandled_consumer_renders_reasoning_to_nothing_not_an_error() {
@@ -541,7 +541,7 @@ mod tests {
         assert!(errored.is_none(), "ignoring ReasoningDelta must not error");
     }
 
-    /// S23 deliverable 5 / invariant 2: reasoning is never replayed to the
+    /// the capture slice deliverable 5 / invariant 2: reasoning is never replayed to the
     /// provider as history. The replay path consumes `&[ChatMessage]`; the
     /// turn's reasoning lives on `ChatResponse` and `ChatMessage` has no field
     /// for it. So a follow-up request built by taking the response's message

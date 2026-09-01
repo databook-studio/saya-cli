@@ -9,7 +9,7 @@ pub(crate) mod registry;
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // still resolves after the help text moved to `help.rs`.
 pub(crate) use help::help_for;
-// S17: the one-line description per command is the single source shared by the
+// the one-line description per command is the single source shared by the
 // `/help` listing and the completion popup (`interactive::tui::complete`), so
 // the two surfaces cannot drift. `description_for` is read by the popup in
 // production; `COMMAND_DESCRIPTIONS` is only needed by tests that assert the
@@ -48,7 +48,7 @@ pub enum SlashCommand {
     Contracts(ContractsCommand),
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
-    /// Show session token usage totals and cache hit rate (S22).
+    /// Show session token usage totals and cache hit rate.
     Usage,
     Help(Option<String>),
     Exit,
@@ -116,7 +116,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
             // shared dispatcher. No second parsing or DTO mapping lives here.
-            // `confirm`/`reject` (spec D) translate to `ContractsCommand::Decide`.
+            // `confirm`/`reject` translate to `ContractsCommand::Decide`.
             return contracts::parse_contract_command(name, &arg)
                 .map(|maybe| maybe.map(SlashCommand::Contracts));
         }
@@ -287,8 +287,8 @@ mod tests {
         );
     }
 
-    /// `/history` and `/sessions` are both still known commands (S11 keeps
-    /// `/history` as an explicit alias of `/sessions`), and `exit`/`quit` are a
+    /// `/history` and `/sessions` are both still known commands, and
+    /// `exit`/`quit` are a
     /// deliberate conventional alias pair. Invariant 4: the typo suggester
     /// must still resolve anything it resolved before for names that still
     /// exist — so a near-miss on each lands on the kept name, never on a

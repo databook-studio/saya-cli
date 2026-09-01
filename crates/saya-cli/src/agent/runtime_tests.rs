@@ -1,4 +1,4 @@
-//! Tests for the `KnowledgeSupplied` event — spec P1b.
+//! Tests for the `KnowledgeSupplied` event.
 //!
 //! Two layers:
 //! - **The pure mapping** [`crate::agent::knowledge_event::knowledge_supplied_event`] — the
@@ -963,7 +963,7 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
         assert_eq!(proposed[0].object, "catalog.public.orders");
         assert_eq!(proposed[0].kind, "table_alias");
         assert_eq!(proposed[0].value, "orders");
-        // The user explicitly asserted the alias, so per spec F Chunk 3 +
+        // The user explicitly asserted the alias, so
         // `ClaimOrigin::may_confirm_directly` the proposal lands `Active`, which
         // the DTO reports as `Confirmed` — a user assertion is the act of
         // confirmation, not a candidate pending it.
