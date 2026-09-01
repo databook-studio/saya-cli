@@ -115,6 +115,18 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // no spinner to label. Dropped rather than rendered — not forgotten,
         // which is what the catch-all would make of it.
         AgentEvent::KnowledgeLearningStarted => return None,
+        // The model's chain-of-thought. This is the one case where rendering to
+        // nothing is a *scope* decision rather than a *nature-of-the-event*
+        // decision: reasoning is content (it mirrors `AssistantText`), so by its
+        // nature it would belong on the loud path below — but display is S24's
+        // decision, not this slice's, and S23b invariant 1 says nothing is
+        // displayed by default. So it renders to `None` here, the same way a
+        // progress signal does, for a different reason. The test above pins both
+        // halves: this arm stays silent, and a content event (`AssistantText`,
+        // `Complete`) still reaches the loud path — so a future reader cannot
+        // conclude reasoning is progress, and a future change cannot silence the
+        // catch-all to pass one and break the other.
+        AgentEvent::ReasoningText { .. } => return None,
         AgentEvent::Complete => TerminalEvent::Complete,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
@@ -474,6 +486,49 @@ mod tests {
         assert!(
             !matches!(complete, TerminalEvent::NotImplemented { .. }),
             "a known content event must not fall through to the catch-all"
+        );
+    }
+
+    /// S23b deliverable 2 — the test that prevents the fourth occurrence.
+    /// `ReasoningText` carries content (chain-of-thought), so by its nature it
+    /// would reach the loud catch-all and print
+    /// `Not implemented: unrecognized agent event` under a correct answer in the
+    /// headless `saya ask` path — exactly the regression that shipped green
+    /// three times. Display is S24's decision, not this slice's, so the variant
+    /// renders to `None` here: silent, not an error. This is the one case where
+    /// "renders to nothing" is a *scope* decision (display deferred) rather than
+    /// a *nature-of-the-event* decision (reasoning is content, not progress) —
+    /// the assertion below pins the scope choice so a future reader cannot
+    /// conclude reasoning is progress.
+    #[test]
+    fn reasoning_text_renders_to_nothing_in_the_headless_path() {
+        assert!(
+            terminal_event(AgentEvent::reasoning_text("I considered the time column")).is_none(),
+            "reasoning must not reach the headless renderer (display is S24), \
+             and must not fall through to the `unrecognized agent event` catch-all"
+        );
+    }
+
+    /// S23b deliverable 2 — the second half: the fix is not a blanket silence.
+    /// `ReasoningText` renders to `None`, but a content event the headless
+    /// renderer *does* understand still reaches a real `TerminalEvent` and never
+    /// the `NotImplemented` catch-all. Without this, silencing reasoning by
+    /// widening the catch-all would pass the test above and quietly break every
+    /// other variant.
+    #[test]
+    fn silencing_reasoning_does_not_silence_a_content_event() {
+        // `AssistantText` is the variant `ReasoningText` mirrors — content, and
+        // the headless renderer must still surface it.
+        let text = terminal_event(AgentEvent::assistant_text("the answer")).expect("renders");
+        assert!(
+            matches!(text, TerminalEvent::AssistantText { .. }),
+            "a content event must reach a real TerminalEvent, not be silenced: {text:?}"
+        );
+        // And `Complete` — the other content-bearing terminator — still renders.
+        let complete = terminal_event(AgentEvent::complete()).expect("renders");
+        assert!(
+            !matches!(complete, TerminalEvent::NotImplemented { .. }),
+            "Complete must not fall through to the catch-all: {complete:?}"
         );
     }
 }

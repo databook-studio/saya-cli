@@ -263,6 +263,21 @@ pub enum AgentEvent {
     AssistantText {
         text: String,
     },
+    /// One delta of the model's chain-of-thought for this turn, streamed the way
+    /// [`AgentEvent::AssistantText`] streams the answer. Capture is unconditional
+    /// (S23 invariant 4: parsed whether or not the user has asked to see it); the
+    /// `show_thinking` toggle that gates **display** is S24, not a precondition
+    /// for this event. This slice (S23b) carries reasoning across the crate
+    /// boundary and no further: the headless renderer renders it to nothing (it
+    /// is content the user has not asked for, not progress — see the S23b Q1
+    /// note on `terminal_event`), and the TUI accepts it without displaying it
+    /// (display is S24). Reasoning is **never** on [`ChatMessage`] (S23
+    /// invariant 1/2, structural), so this event is the only way the turn's
+    /// thinking leaves `saya-agent` — and it leaves to in-memory consumers only,
+    /// never to a serialized session (S23b invariant 2).
+    ReasoningText {
+        text: String,
+    },
     /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
     /// surfaced so the user can see exactly what will run before approving it.
     ToolRequested {
@@ -363,6 +378,15 @@ pub enum LearningSkipReason {
 impl AgentEvent {
     pub fn assistant_text(text: impl Into<String>) -> Self {
         Self::AssistantText { text: text.into() }
+    }
+
+    /// Builds one chain-of-thought delta event, mirroring [`AgentEvent::assistant_text`].
+    /// The caller is `receive`, forwarding a `ProviderEvent::ReasoningDelta` so the
+    /// turn's thinking crosses the crate boundary the same way the answer does.
+    /// Display is gated elsewhere (S24); this event carries the text, it does not
+    /// decide whether to show it.
+    pub fn reasoning_text(text: impl Into<String>) -> Self {
+        Self::ReasoningText { text: text.into() }
     }
 
     pub fn tool_requested(name: impl Into<String>, arguments: serde_json::Value) -> Self {
@@ -728,5 +752,60 @@ mod tests {
             let back: AgentEvent = serde_json::from_str(&json).expect("deserializes back");
             assert_eq!(back, event, "round-trips for {reason:?}");
         }
+    }
+
+    /// S23b deliverable 1: `ReasoningText` serializes under its `reasoning_text`
+    /// type tag and carries the text, and round-trips through the same derive set
+    /// as `AssistantText` (the variant it mirrors). A machine consumer reading an
+    /// event stream sees the chain-of-thought under its own tag, never folded into
+    /// the answer.
+    #[test]
+    fn reasoning_text_serializes_with_type_tag_and_round_trips() {
+        use super::AgentEvent;
+        let event = AgentEvent::reasoning_text("I considered the time column");
+        let json = serde_json::to_string(&event).expect("serializes");
+        assert!(
+            json.contains(r#""type":"reasoning_text""#),
+            "type tag: {json}"
+        );
+        assert!(
+            json.contains(r#""text":"I considered the time column""#),
+            "carries the text: {json}"
+        );
+        let back: AgentEvent = serde_json::from_str(&json).expect("deserializes back");
+        assert_eq!(back, event, "round-trips");
+    }
+
+    /// S23b invariant 2 (non-persistence survives the crossing): the turn's
+    /// reasoning reaches `AgentEvent::ReasoningText`, which is the only way it
+    /// leaves `saya-agent`. It must never reach the persisted message types.
+    /// `ChatMessage` has no reasoning field (S23's structural guarantee), so the
+    /// message that gets replayed as history and shaped around for session
+    /// persistence carries nothing of the reasoning, however hard a caller tries
+    /// to put it there — there is nothing to copy. This pins the boundary S23b
+    /// must not cross.
+    #[test]
+    fn reasoning_event_does_not_place_reasoning_on_the_replayed_message() {
+        use super::{AgentEvent, ChatMessage};
+        let reasoning = "the secret chain-of-thought about row values 9f3a";
+        // The event the turn emits for the reasoning...
+        let event = AgentEvent::reasoning_text(reasoning);
+        let event_json = serde_json::to_string(&event).expect("serializes");
+        assert!(
+            event_json.contains(reasoning),
+            "the event carries its reasoning: {event_json}"
+        );
+        // ...and the message the turn replays as history. There is no constructor
+        // that takes reasoning, and no field for it, so it cannot carry the text.
+        let message = ChatMessage::text("assistant", "the answer is 42");
+        let message_json = serde_json::to_string(&message).expect("serializes");
+        assert!(
+            !message_json.contains(reasoning),
+            "the replayed message carries reasoning: {message_json}"
+        );
+        assert!(
+            !message_json.contains("reasoning"),
+            "a `reasoning` key appeared on ChatMessage: {message_json}"
+        );
     }
 }
