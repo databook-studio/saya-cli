@@ -7,6 +7,23 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **`/usage` shows session token totals and a cache hit rate that can say
+  "unknown".** The TUI printed one line per turn — `9828 tokens in · 1082
+  tokens out` — never accumulated, never showing cache or reasoning spend, and
+  nothing for the second provider call (extraction) that also spends tokens. A
+  session that ran twenty turns gave you twenty numbers and no total. `/usage`
+  now sums every field S21 added (input, output, reasoning, cached input, cache
+  creation) across the session and shows the cache hit rate as
+  `Σcached / Σinput` — a ratio of sums, not a mean of per-turn rates, stated in
+  the command's help text and in the breakdown itself so a reader knows what
+  the number is. A field no provider reported renders as `—`; the hit rate
+  renders as `unknown` when no turn reported cached tokens, never `0%`. This is
+  why S21 made the fields `Option`: a provider that omits `cached_tokens` is
+  not reporting a cache miss, and a rate computed over a missing denominator is
+  unknown, not zero. The per-turn line stays; `/usage` is the breakdown.
+
+### Added — earlier this cycle
+
 - **The model's chain-of-thought is captured — and cannot be persisted.** A
   reasoning model's thinking was generated, billed, and dropped on the floor:
   `glm-5.2` returns a `reasoning_content` field on every response, including
