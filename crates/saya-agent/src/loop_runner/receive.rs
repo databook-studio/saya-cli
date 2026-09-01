@@ -5,8 +5,19 @@ use crate::{
 };
 use futures_util::StreamExt;
 
-/// Streams one provider turn: assembles the assistant message and reports
-/// the token usage the provider disclosed for it.
+/// Streams one provider turn: assembles the assistant message, captures the
+/// chain-of-thought the model produced, and reports the token usage the
+/// provider disclosed for it. Returns `(message, usage, reasoning)`.
+///
+/// `reasoning` is returned separately and **never** placed on the `ChatMessage`
+/// — that message is pushed into `messages` and replayed to the provider as
+/// history on the next turn, so reasoning on it would violate S23 invariant 2.
+/// The caller binds it to a turn-local and (for now) drops it: capture is
+/// unconditional (invariant 4), but surfacing reasoning to the user is S23b,
+/// which this slice does not start. S20 invariant 2 is why `receive` keeps
+/// reasoning at all: the main loop must not suppress thinking, or SQL quality
+/// degrades; a reasoning model's chain-of-thought is held for the turn either
+/// way and reaches S23b's display when that lands.
 pub(super) async fn receive(
     provider: &dyn ChatProvider,
     model: &str,
@@ -15,7 +26,7 @@ pub(super) async fn receive(
     sink: &dyn AgentEventSink,
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
-) -> Result<(ChatMessage, TokenUsage), AgentError> {
+) -> Result<(ChatMessage, TokenUsage, Option<String>), AgentError> {
     let mut stream = provider
         .stream(
             ChatRequest {
@@ -32,6 +43,10 @@ pub(super) async fn receive(
         .await?;
     let (mut content, mut calls, mut complete) = (String::new(), Vec::new(), false);
     let mut usage = TokenUsage::default();
+    // `None` until the stream emits reasoning; accumulated under the same
+    // `MAX_STREAM_BYTES` bound as content so a hostile endpoint cannot stream
+    // unbounded "thinking" into memory (S23 Q1).
+    let mut reasoning = None;
     while let Some(event) = stream.next().await {
         check_cancelled(cancellation)?;
         match event? {
@@ -43,6 +58,15 @@ pub(super) async fn receive(
                 }
                 content.push_str(&text);
                 emit(events, sink, AgentEvent::AssistantText { text }).await;
+            }
+            ProviderEvent::ReasoningDelta(text) => {
+                let accumulated = reasoning.get_or_insert_with(String::new);
+                if accumulated.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
+                    return Err(AgentError::Provider(ProviderError::Request(
+                        "provider stream exceeded size limit".into(),
+                    )));
+                }
+                accumulated.push_str(&text);
             }
             ProviderEvent::ToolCalls(value) => calls.extend(value),
             ProviderEvent::Usage(counts) => usage = counts,
@@ -60,6 +84,7 @@ pub(super) async fn receive(
             tool_call_id: None,
         },
         usage,
+        reasoning,
     ))
 }
 

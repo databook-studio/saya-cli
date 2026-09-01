@@ -139,6 +139,12 @@ impl State {
                 self.content = true;
                 self.pending.push_back(ProviderEvent::TextDelta(text));
             }
+            if let Some(reasoning) = choice.delta.reasoning_content
+                && !reasoning.is_empty()
+            {
+                self.pending
+                    .push_back(ProviderEvent::ReasoningDelta(reasoning));
+            }
             for call in choice.delta.tool_calls {
                 self.tools.push(
                     call.index,

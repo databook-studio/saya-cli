@@ -7,6 +7,29 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **The model's chain-of-thought is captured — and cannot be persisted.** A
+  reasoning model's thinking was generated, billed, and dropped on the floor:
+  `glm-5.2` returns a `reasoning_content` field on every response, including
+  "reply with the single word: ok", and saya never read it. It is now parsed
+  into a new `ProviderEvent::ReasoningDelta`, accumulated per turn under the
+  same `MAX_STREAM_BYTES` bound as content (a hostile endpoint cannot stream
+  unbounded "thinking" into memory), and carried on `ChatResponse.reasoning`
+  as `Option<String>`. Four providers parse it: OpenAI-compatible
+  `delta.reasoning_content` (with `reasoning` as an alias — providers differ on
+  the spelling), Anthropic `thinking_delta.thinking` and the `thinking`
+  content block, Gemini parts marked `thought: true`, Ollama `message.thinking`.
+  A provider that reports no reasoning leaves it `None`, no error, no behaviour
+  change. The field lives on `ChatResponse` — transport for one call — and
+  **never** on `ChatMessage`, which is what gets replayed to the provider as
+  history and what session persistence is shaped around. With no reasoning
+  field on `ChatMessage`, "reasoning is never written to a session file" and
+  "reasoning is never replayed as history" are structural: there is nothing for
+  a session writer or history builder to copy. Capture is unconditional; the
+  `show_thinking` toggle that gates *display* is a later slice. This slice ends
+  when reasoning reaches `ChatResponse`.
+
+- **The extraction call's token spend is no longer invisible.** The
+
 - **The extraction call's token spend is no longer invisible.** The
   non-streaming `complete()` path now carries the usage a provider reports on
   the returned `ChatResponse`, instead of dropping it. Three of four providers
