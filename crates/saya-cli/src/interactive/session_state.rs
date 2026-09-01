@@ -14,7 +14,7 @@ pub struct SessionState {
     pub approval_mode: String,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
-    /// In-memory session token accumulator (S22). `#[serde(skip)]` keeps it
+    /// In-memory session token accumulator. `#[serde(skip)]` keeps it
     /// out of persisted session files (invariant 2: no new persisted state);
     /// a resumed session starts with a fresh total. `/clear` resets it.
     #[serde(skip)]
@@ -126,7 +126,7 @@ impl SessionState {
 mod tests {
     use super::*;
 
-    /// S23b deliverable 4 / invariant 2 (non-persistence survives the crossing).
+    /// the CLI-boundary slice deliverable 4 / invariant 2 (non-persistence survives the crossing).
     /// A turn that carried chain-of-thought — surfaced this slice as
     /// `AgentEvent::ReasoningText` — must leave none of it in a persisted session.
     /// `SessionLine` and `RedactedTurn` carry `role` + `content` only; the
@@ -138,7 +138,7 @@ mod tests {
     /// and assert neither the persisted JSON nor the replayed provider history
     /// contains the reasoning text. If a reasoning field is ever added to
     /// `SessionLine` or `RedactedTurn`, this test fails and the reviewer must
-    /// justify breaking S23/S23b invariant 2.
+    /// justify letting reasoning reach a persisted session.
     #[test]
     fn a_session_persisted_after_a_reasoning_turn_contains_none_of_it() {
         let reasoning = "the secret chain-of-thought about row values 9f3a";
@@ -164,7 +164,7 @@ mod tests {
 
         // And the replay path: `provider_history` rebuilds the messages sent
         // back to the model on a later turn. Reasoning must not be replayed
-        // (S23 invariant 2) — it cannot be, because the history is built from
+        // — it cannot be, because the history is built from
         // `SessionLine`/`RedactedTurn` content, which carries only the answer.
         let replayed = session.provider_history();
         assert!(

@@ -1,4 +1,4 @@
-//! Schema definitions and DTOs for structured extraction — spec F Chunk 2.
+//! Schema definitions and DTOs for structured extraction.
 //!
 //! Defines `ExtractedProposal`, `ProposalOrigin`, `ExtractionError`, and wire representations
 //! for LLM-based knowledge extraction.

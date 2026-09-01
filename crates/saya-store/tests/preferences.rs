@@ -35,7 +35,7 @@ fn profile_b() -> ProfileIdentity {
     ProfileIdentity::parse(&format!("p-{}", "b".repeat(64))).unwrap()
 }
 
-/// Each value round-trips through the store at its correct scope (spec test 1).
+/// Each value round-trips through the store at its correct scope.
 #[tokio::test]
 async fn each_value_round_trips_at_its_correct_scope() {
     let root = temp_root("roundtrip");
@@ -75,7 +75,7 @@ async fn each_value_round_trips_at_its_correct_scope() {
 }
 
 /// Setting a `Profile`-scoped value with `Global` scope is a typed error, and
-/// vice versa (spec test 2). The store enforces the rule because it receives
+/// vice versa. The store enforces the rule because it receives
 /// the scope and value separately — a wrong pairing must be refused, not
 /// silently coerced to the other scope.
 #[tokio::test]
@@ -111,7 +111,7 @@ async fn wrong_scope_is_a_typed_error_both_ways() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Setting the same kind twice replaces rather than duplicating (spec test 3).
+/// Setting the same kind twice replaces rather than duplicating.
 #[tokio::test]
 async fn setting_the_same_kind_twice_replaces() {
     let root = temp_root("replace");
@@ -141,7 +141,7 @@ async fn setting_the_same_kind_twice_replaces() {
 }
 
 /// Two profiles hold independent values for the same kind — the isolation
-/// invariant (spec test 4).
+/// invariant.
 #[tokio::test]
 async fn two_profiles_hold_independent_values_for_the_same_kind() {
     let root = temp_root("isolation");
@@ -184,7 +184,7 @@ async fn two_profiles_hold_independent_values_for_the_same_kind() {
 }
 
 /// A malformed timezone is rejected by shape; a well shaped but fictional one
-/// is accepted (spec test 5). The shape gate lives on the value constructor in
+/// is accepted. The shape gate lives on the value constructor in
 /// `saya-types`; this test pins the store end so a hand-built row with a bad
 /// timezone never round-trips back as if it were valid.
 #[tokio::test]
@@ -214,7 +214,7 @@ async fn malformed_timezone_is_rejected_by_shape() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// `unset` removes only the named kind at the named scope (spec test 6).
+/// `unset` removes only the named kind at the named scope.
 #[tokio::test]
 async fn unset_removes_only_the_named_kind_at_the_named_scope() {
     let root = temp_root("unset");
@@ -274,7 +274,7 @@ async fn unset_removes_only_the_named_kind_at_the_named_scope() {
 }
 
 /// A preference containing a credential or SQL shape is refused by the
-/// admission gate (spec test 8). A preference value cannot carry such shapes by
+/// admission gate. A preference value cannot carry such shapes by
 /// construction, so the gate is exercised by a hand-injected `value_json` row:
 /// the store must refuse to *read back* a row whose persisted JSON looks like a
 /// secret or a statement, even though the type could never have produced it.
@@ -311,7 +311,7 @@ async fn a_credential_or_sql_shape_is_refused_by_admission_on_readback() {
 }
 
 // The next three tests guard the type-level "make it unrepresentable, not
-// filtered" rule (spec emphasis). A derived `Deserialize` would populate the
+// filtered" rule. A derived `Deserialize` would populate the
 // string fields directly and bypass the validated constructors, so the type's
 // `Deserialize` is hand-rolled to run the validators on deserialization too.
 // These pin that: a SQL-shaped timezone, a control-char profile name, and an

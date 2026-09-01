@@ -202,7 +202,7 @@ async fn contracts_list_slash_and_headless_agree_on_claim_ids_and_order() {
 
 // ---------------------------------------------------------------------------
 // 2. /contracts <t> (and its /contract alias) and `saya contracts show <t>`
-//    produce the same contract. S13 merged `/contracts` and `/contract` into one
+//    produce the same contract. A later change merged `/contracts` and `/contract` into one
 //    command whose optional argument selects the operation; this asserts the
 //    merged spelling translates to the same `Show` the headless parser builds,
 //    and that the kept `/contract` alias produces byte-identical output.

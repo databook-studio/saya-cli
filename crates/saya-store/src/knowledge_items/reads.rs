@@ -81,7 +81,7 @@ fn decode_item(row: ItemRow) -> Result<KnowledgeItem, KnowledgeStoreError> {
     })
 }
 
-/// Every knowledge item for `profile` in one query (spec test 6).
+/// Every knowledge item for `profile` in one query.
 pub(crate) async fn read_for_profile(
     store: &SqliteStateStore,
     profile: &ProfileIdentity,
@@ -97,7 +97,7 @@ pub(crate) async fn read_for_profile(
     rows.into_iter().map(decode_item).collect()
 }
 
-/// Every knowledge item for one object in one query (spec test 4).
+/// Every knowledge item for one object in one query.
 pub(crate) async fn read_for_object(
     store: &SqliteStateStore,
     object: &DatabaseObjectRef,

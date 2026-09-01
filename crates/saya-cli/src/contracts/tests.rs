@@ -4,7 +4,7 @@
 //! recall, validity, conflict detection, and the review wrappers. They are
 //! in-crate (not under `tests/`) because the surface is `pub(crate)` — the
 //! operations layer returns typed data for saya-cli's own adapters, not for
-//! external consumers. See the spec at .claude/specs/spec-2b1-contract-operations.md.
+//! external consumers. See the spec at.claude/specs/spec-2b1-contract-operations.md.
 
 use super::{
     ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
@@ -874,7 +874,7 @@ async fn forgotten_claim_disappears_from_recall() {
 // `review_queue` is the opposite view from recall: recall answers "what is
 // true about this question", the queue answers "what is waiting for me". It
 // lists candidates only, ordered most-evidence-first then oldest then by claim
-// id, so a reviewer works a stable list. See .claude/specs/spec-3d-review-queue.md.
+// id, so a reviewer works a stable list. See.claude/specs/spec-3d-review-queue.md.
 
 use super::review_queue;
 
@@ -2529,7 +2529,7 @@ async fn use_candidate_once_admits_it_within_the_scope() {
     // The render layer marks a claim `[candidate — unconfirmed]` solely from
     // `status == Candidate`, so this is the property that keeps an admitted
     // candidate indistinguishable-from-nothing-special in the prompt: being
-    // chosen for one turn confers no authority (spec C §3). If this read
+    // chosen for one turn confers no authority. If this read
     // `Confirmed`, the admission would have silently promoted it.
     let stored_admitted = with.contracts[0]
         .claims
@@ -2857,7 +2857,7 @@ async fn remember_single_slot_different_value_replaces_and_names_previous() {
 }
 
 // ---------------------------------------------------------------------------
-// S28 — approve the whole queue, and report every item it refused.
+// approve the whole queue, and report every item it refused.
 //
 // `approve_all` is the batch entry beside `confirm`: it takes the ids of the
 // bounded queue the user was shown and runs each one through `confirm()`
@@ -2868,7 +2868,7 @@ async fn remember_single_slot_different_value_replaces_and_names_previous() {
 // never a rollback.
 // ---------------------------------------------------------------------------
 
-/// S28 deliverable 5: a mixed batch — one `Pending` that confirms and one
+/// a mixed batch — one `Pending` that confirms and one
 /// `Dismissed` that is refused as `Conflict` — asserts the confirmation
 /// persisted AND the refusal was reported per-item. An all-success batch
 /// proves nothing about the reporting or the partial-success invariants.
@@ -2889,7 +2889,7 @@ async fn approve_all_reports_a_mixed_batch_and_persists_the_successes() {
     )
     .await;
     let live_id = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
-    // ...and one that was Pending when the queue was read but was dismissed
+    //...and one that was Pending when the queue was read but was dismissed
     // before its turn (another session rejected it). The batch must go through
     // `confirm()` for it and surface the refusal, not hide it.
     put_item(
@@ -2942,7 +2942,7 @@ async fn approve_all_reports_a_mixed_batch_and_persists_the_successes() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// S28 deliverable 6: an empty queue is a clean no-op — an empty outcome, not
+/// an empty queue is a clean no-op — an empty outcome, not
 /// an error — and nothing outside the named set is touched (scope is explicit).
 #[tokio::test]
 async fn approve_all_on_an_empty_queue_is_a_clean_noop() {

@@ -1,4 +1,4 @@
-//! Post-turn structured extraction execution runner — spec F Chunk 4.
+//! Post-turn structured extraction execution runner.
 
 use saya_agent::{ChatProvider, ChatRequest, ProposedClaimDto, ProviderError, ResponseFormat};
 use saya_store::KnowledgeItemStore;
@@ -68,7 +68,7 @@ pub(crate) async fn run_extraction(
     // *policy* — "this is the extraction call, so the response must be a single
     // JSON object" — belongs to the caller that knows what the call is for.
     // On a reasoning model this stops the chain-of-thought we never read,
-    // cutting the post-turn wait from seconds to ~1s (spec S19). A provider that
+    // cutting the post-turn wait from seconds to ~1s. A provider that
     // cannot honour it degrades to today's behaviour (the prompt already asks
     // for JSON, `strip_markdown_fences` handles fences), never to an error.
     let request = ChatRequest {

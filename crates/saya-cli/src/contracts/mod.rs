@@ -73,7 +73,7 @@ pub(crate) use view::{
     RetrievedContract, status_from_state,
 };
 // P1a: the typed recall receipt. The agent layer (`recall_context`) builds it
-// beside the context blocks; nothing consumes it yet (P1b). Re-exported here
+// beside the context blocks; nothing consumes it yet. Re-exported here
 // alongside the other contract operations the adapter slices will consume.
 #[allow(unused_imports)]
 pub(crate) use receipt::{RecallOutcomeKind, RecallReceipt, SuppliedClaim, SuppliedContract};

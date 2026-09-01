@@ -35,11 +35,11 @@ pub(crate) const CONTEXT_PREAMBLE: &str = "User-derived database context follows
 ///
 /// {CONTEXT_OPEN}
 /// source: <label>
-/// [truncated: ...]      <- only when truncated
+/// [truncated:...]      <- only when truncated
 /// <escaped body>
 /// {CONTEXT_CLOSE}
 ///
-/// ...further blocks...
+///...further blocks...
 ///
 /// <user prompt>
 /// ```

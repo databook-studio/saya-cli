@@ -5,7 +5,7 @@
 //! false` (a local read that mutates nothing — the SQL approval flow exists to
 //! gate *execution*, and asking the user to approve a memory lookup would train
 //! them to click through prompts). See
-//! .claude/specs/spec-2b3a-agent-contract-tools.md §1.
+//!.claude/specs/spec-2b3a-agent-contract-tools.md §1.
 //!
 //! The `terms` array is capped at 16: an unbounded term list is untrusted input
 //! driving a lexical scan over every stored object. Argument validation lives

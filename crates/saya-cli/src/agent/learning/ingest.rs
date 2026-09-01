@@ -1,4 +1,4 @@
-//! Anti-self-reinforcement filtering and store ingestion — spec F Chunk 3.
+//! Anti-self-reinforcement filtering and store ingestion.
 //!
 //! Enforces Safety Property 4 (drops redundant inferences on already supplied claims)
 //! and persists verified proposals to [`KnowledgeItemStore`].
