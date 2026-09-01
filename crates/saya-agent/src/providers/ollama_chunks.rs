@@ -17,6 +17,13 @@ pub(super) struct Chunk {
 pub(super) struct Message {
     #[serde(default)]
     pub(super) content: String,
+    /// Chain-of-thought from a thinking model (S20 wire table:
+    /// `message.thinking`). Ollama streams and whole-returns the same shape,
+    /// and its `complete()` routes through `collect()`→`stream()`, so this one
+    /// field serves both. Empty/absent → no `ReasoningDelta` emitted, so a
+    /// model that is not thinking leaves `ChatResponse.reasoning` `None`.
+    #[serde(default)]
+    pub(super) thinking: String,
     #[serde(default)]
     pub(super) tool_calls: Vec<Call>,
 }
@@ -34,8 +41,36 @@ pub(super) struct Function {
 
 #[cfg(test)]
 mod tests {
-    use super::Chunk;
+    use super::{Chunk, Message};
     use serde_json::json;
+
+    /// S23 deliverable 6 (Ollama, with): a chunk whose `message.thinking`
+    /// carries chain-of-thought parses into the new field (S20 wire table:
+    /// `message.thinking`). Ollama's `complete()` routes through
+    /// `collect()`→`stream()`, so the streaming chunk is the one path.
+    #[test]
+    fn message_carries_thinking() {
+        let chunk: Chunk = serde_json::from_value(json!({
+            "message": {"content": "ok", "thinking": "I considered the schema"}
+        }))
+        .expect("parses");
+        let message: &Message = chunk.message.as_ref().expect("message present");
+        assert_eq!(message.content, "ok");
+        assert_eq!(message.thinking, "I considered the schema");
+    }
+
+    /// S23 deliverable 6 (Ollama, absent): a chunk with no `thinking` field
+    /// leaves it the empty string (serde default), which the stream parser
+    /// treats as "no reasoning" — a model that is not thinking is unaffected
+    /// (invariant 3).
+    #[test]
+    fn message_without_thinking_leaves_it_empty() {
+        let chunk: Chunk =
+            serde_json::from_value(json!({"message": {"content": "ok"}})).expect("parses");
+        let message: &Message = chunk.message.as_ref().expect("message present");
+        assert_eq!(message.content, "ok");
+        assert!(message.thinking.is_empty());
+    }
 
     /// Deliverable 4 (Ollama, without — the provider with nothing to report):
     /// Ollama's done record carries only prompt/generated counts and no cache

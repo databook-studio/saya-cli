@@ -16,6 +16,15 @@ pub(super) struct Choice {
 pub(super) struct Delta {
     #[serde(default)]
     pub(super) content: Option<String>,
+    /// Chain-of-thought from a reasoning model. OpenAI-compatible gateways
+    /// spell this `delta.reasoning_content` (the field the `glm-5.2`
+    /// measurement found on every response); some spell it `reasoning`, so
+    /// both are accepted (S20 wire table; S23 deliverable 2: "providers
+    /// differ on the spelling"). Streamed only — OpenAI's `complete()` routes
+    /// through `collect()` and drives a `stream: true` request, so there is no
+    /// whole-response `message.reasoning_content` path to parse here.
+    #[serde(default, alias = "reasoning")]
+    pub(super) reasoning_content: Option<String>,
     #[serde(default)]
     pub(super) tool_calls: Vec<Call>,
 }
@@ -75,8 +84,43 @@ pub(super) struct CompletionTokensDetails {
 
 #[cfg(test)]
 mod tests {
-    use super::Usage;
+    use super::{Delta, Usage};
     use serde_json::json;
+
+    /// S23 deliverable 2 (OpenAI, with — `reasoning_content`): a streaming
+    /// delta carrying `delta.reasoning_content` parses into the new field,
+    /// ready to become a `ReasoningDelta` event.
+    #[test]
+    fn delta_carries_reasoning_content() {
+        let delta: Delta = serde_json::from_value(json!({
+            "reasoning_content": "I considered the time column"
+        }))
+        .expect("parses");
+        assert_eq!(
+            delta.reasoning_content.as_deref(),
+            Some("I considered the time column")
+        );
+    }
+
+    /// S23 deliverable 2 (OpenAI, alias — "providers differ on the spelling"):
+    /// some OpenAI-compatible gateways spell it `reasoning` rather than
+    /// `reasoning_content`. The `alias` accepts both.
+    #[test]
+    fn delta_accepts_reasoning_alias() {
+        let delta: Delta =
+            serde_json::from_value(json!({"reasoning": "alt spelling"})).expect("parses");
+        assert_eq!(delta.reasoning_content.as_deref(), Some("alt spelling"));
+    }
+
+    /// S23 deliverable 6 (OpenAI, absent): a delta with no reasoning field
+    /// leaves `reasoning_content` `None`, and content still parses — a
+    /// non-reasoning response is unaffected (invariant 3).
+    #[test]
+    fn delta_without_reasoning_leaves_it_none() {
+        let delta: Delta = serde_json::from_value(json!({"content": "ok"})).expect("parses");
+        assert_eq!(delta.reasoning_content, None);
+        assert_eq!(delta.content.as_deref(), Some("ok"));
+    }
 
     /// Deliverable 4 (OpenAI, with): a usage chunk carrying both detail
     /// objects populates the new fields.
