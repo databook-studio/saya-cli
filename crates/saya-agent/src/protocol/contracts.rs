@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use saya_types::{ClaimId, ClaimStatus};
 use serde::{Deserialize, Serialize};
 
+use crate::protocol::streaming::TokenUsage;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRequest {
     pub prompt: String,
@@ -33,7 +35,7 @@ pub struct ContextBlock {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -99,9 +101,21 @@ pub struct ChatRequest {
     pub response_format: ResponseFormat,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatResponse {
     pub message: ChatMessage,
+    /// Token counts the provider reported for this response, or `None` when the
+    /// provider reported nothing. `None` is the absent case — distinct from
+    /// `Some(TokenUsage::default())`, which would read as "this call cost
+    /// nothing" — so a caller cannot mistake a silent provider for a free one
+    /// (invariant 1: absent is not zero, mirroring the streaming path, which
+    /// models absence by simply not emitting a `Usage` event). The streaming
+    /// path's `collect()` threads the last `Usage` event it sees here; Gemini's
+    /// non-streaming `complete()` threads the usage it parses directly.
+    /// `#[serde(default)]` keeps a serialized response written before this field
+    /// existed (no `usage` key) deserializing to `None`.
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
 }
 
 /// The three distinguishable states of a turn's recall, as

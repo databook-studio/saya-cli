@@ -155,10 +155,12 @@ impl ChatProvider for OneThenDoneProvider {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             })
         } else {
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", "done"),
+                ..Default::default()
             })
         }
     }

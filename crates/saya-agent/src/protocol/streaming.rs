@@ -1,6 +1,7 @@
 use crate::{ChatMessage, ChatRequest, ChatResponse, ProviderError, ToolCall};
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::{
     pin::Pin,
     sync::{
@@ -23,7 +24,7 @@ pub const MAX_STREAM_BYTES: usize = 2 * 1024 * 1024;
 /// The two existing fields keep their meaning and type (`u64`) so callers
 /// that sum or copy them are unaffected. The struct stays `Copy` because every
 /// field is `Copy`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -123,6 +124,15 @@ pub trait ChatProvider: Send + Sync {
     async fn collect(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut stream = self.stream(request, CancellationToken::new()).await?;
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
+        // `None` until the stream emits a `Usage` event; the last event wins
+        // (Q2). OpenAI emits one trailing usage-only chunk; Anthropic emits
+        // cumulative snapshots on `message_start`/`message_delta`, so summing
+        // would double-count — the final snapshot is the truth, exactly as the
+        // stream's own accumulator already folds them into one running total.
+        // Keeping `None` when no event arrives preserves "absent is not zero"
+        // (invariant 1): a provider that reports nothing stays distinguishable
+        // from one that reported zeros.
+        let mut usage = None;
         while let Some(event) = stream.next().await {
             match event? {
                 ProviderEvent::TextDelta(value) => {
@@ -134,7 +144,7 @@ pub trait ChatProvider: Send + Sync {
                     content.push_str(&value);
                 }
                 ProviderEvent::ToolCalls(calls) => tool_calls.extend(calls),
-                ProviderEvent::Usage(_) => {}
+                ProviderEvent::Usage(reported) => usage = Some(reported),
                 ProviderEvent::Done => complete = true,
             }
         }
@@ -148,13 +158,19 @@ pub trait ChatProvider: Send + Sync {
                 tool_calls,
                 tool_call_id: None,
             },
+            usage,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CancellationToken, TokenUsage};
+    use super::{
+        CancellationToken, ChatProvider, ChatRequest, ChatResponse, MAX_STREAM_BYTES,
+        ProviderError, ProviderEvent, ProviderStream, TokenUsage,
+    };
+    use async_trait::async_trait;
+    use futures_util::stream;
     use std::time::Duration;
 
     /// Deliverable 5: `Some(0)` is a *report* of zero and must survive
@@ -207,5 +223,143 @@ mod tests {
                 .unwrap()
                 .unwrap();
         }
+    }
+
+    /// A minimal provider whose `stream()` replays a canned event list, so the
+    /// default `collect()` can be exercised without a network. `complete()`
+    /// forwards to `collect()` exactly as the three real providers do.
+    struct CannedProvider {
+        events: Vec<Result<ProviderEvent, ProviderError>>,
+    }
+
+    #[async_trait]
+    impl ChatProvider for CannedProvider {
+        fn name(&self) -> &str {
+            "canned"
+        }
+        async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            self.collect(request).await
+        }
+        async fn stream(
+            &self,
+            _request: ChatRequest,
+            _cancellation: CancellationToken,
+        ) -> Result<ProviderStream, ProviderError> {
+            Ok(Box::pin(stream::iter(self.events.clone())))
+        }
+    }
+
+    /// Deliverable 2: a stream that emits a `Usage` event produces a response
+    /// carrying it. The last event wins (Q2): Anthropic emits cumulative
+    /// snapshots, so summing would double-count; the final snapshot is the
+    /// truth, folded here into the one accumulator the stream already keeps.
+    #[tokio::test]
+    async fn collect_threads_the_last_usage_event_into_the_response() {
+        let provider = CannedProvider {
+            events: vec![
+                Ok(ProviderEvent::TextDelta("hi".into())),
+                Ok(ProviderEvent::Usage(TokenUsage {
+                    input_tokens: 5,
+                    output_tokens: 6,
+                    cached_input_tokens: Some(90),
+                    ..Default::default()
+                })),
+                // A later snapshot supersedes the earlier one — the cumulative
+                // output count grows; the cache detail, once set, is not reset.
+                Ok(ProviderEvent::Usage(TokenUsage {
+                    input_tokens: 5,
+                    output_tokens: 34,
+                    cached_input_tokens: Some(90),
+                    ..Default::default()
+                })),
+                Ok(ProviderEvent::Done),
+            ],
+        };
+        let response = provider
+            .complete(ChatRequest {
+                model: "m".into(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                ..Default::default()
+            })
+            .await
+            .expect("collect succeeds");
+        let usage = response.usage.expect("usage reached the response");
+        // The last snapshot, not the first, and not a sum.
+        assert_eq!(usage.output_tokens, 34);
+        assert_eq!(usage.input_tokens, 5);
+        assert_eq!(usage.cached_input_tokens, Some(90));
+    }
+
+    /// Deliverable 2 (the absent case): a stream that emits no `Usage` event
+    /// leaves `response.usage` `None`, not `Some(TokenUsage::default())` — a
+    /// silent provider is not mistaken for one that reported a free turn
+    /// (invariant 1: absent is not zero).
+    #[tokio::test]
+    async fn collect_leaves_usage_none_when_the_stream_emits_none() {
+        let provider = CannedProvider {
+            events: vec![
+                Ok(ProviderEvent::TextDelta("hi".into())),
+                Ok(ProviderEvent::Done),
+            ],
+        };
+        let response = provider
+            .complete(ChatRequest {
+                model: "m".into(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                ..Default::default()
+            })
+            .await
+            .expect("collect succeeds");
+        assert_eq!(response.usage, None);
+    }
+
+    /// Deliverable 5 / invariant 2: `collect()` still rejects a stream whose
+    /// accumulated bytes exceed `MAX_STREAM_BYTES`. The size check fires before
+    /// `usage` is read, so accumulating usage cannot reorder or weaken it.
+    #[tokio::test]
+    async fn collect_rejects_a_stream_exceeding_max_stream_bytes() {
+        let oversized = "A".repeat(MAX_STREAM_BYTES + 1);
+        let provider = CannedProvider {
+            events: vec![
+                Ok(ProviderEvent::TextDelta(oversized)),
+                Ok(ProviderEvent::Done),
+            ],
+        };
+        let error = provider
+            .complete(ChatRequest {
+                model: "m".into(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("oversized stream must be rejected");
+        assert!(
+            error.to_string().contains("size limit"),
+            "size-limit error, got: {error}"
+        );
+    }
+
+    /// The back-compat guarantee (deliverable 1): a serialized `ChatResponse`
+    /// written before this slice — with a `message` key but no `usage` key —
+    /// deserializes to `usage: None`, so old serialized responses stay valid.
+    #[test]
+    fn chat_response_without_usage_key_defaults_to_none() {
+        let json = r#"{"message":{"role":"assistant","content":"hi","tool_calls":[],"tool_call_id":null}}"#;
+        let response: ChatResponse = serde_json::from_str(json).expect("old form deserializes");
+        assert_eq!(response.usage, None);
+        assert_eq!(response.message.content, "hi");
+    }
+
+    /// A response whose `usage` key carries `null` (an explicit "no usage" on
+    /// the wire) also deserializes to `None`, distinct from a present usage
+    /// reporting zeros.
+    #[test]
+    fn chat_response_with_null_usage_deserializes_to_none() {
+        let json = r#"{"message":{"role":"assistant","content":"hi","tool_calls":[],"tool_call_id":null},"usage":null}"#;
+        let response: ChatResponse = serde_json::from_str(json).expect("null usage deserializes");
+        assert_eq!(response.usage, None);
     }
 }

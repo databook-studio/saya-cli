@@ -46,6 +46,7 @@ impl ChatProvider for HistoryProvider {
         self.requests.lock().unwrap().push(request);
         Ok(ChatResponse {
             message: ChatMessage::text("assistant", "second answer"),
+            ..Default::default()
         })
     }
 }
@@ -179,9 +180,11 @@ async fn tool_call_round_trip_is_deterministic_and_emits_safe_events() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "There is one result."),
+                ..Default::default()
             },
         ]),
     };
@@ -219,6 +222,7 @@ async fn tool_call_limits_stop_run_before_unbounded_execution() {
                 }],
                 tool_call_id: None,
             },
+            ..Default::default()
         }]),
     };
     let error = run_agent(
@@ -256,9 +260,11 @@ async fn unknown_tool_call_feeds_an_error_result_and_the_turn_recovers() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "recovered"),
+                ..Default::default()
             },
         ]),
     };
@@ -302,9 +308,11 @@ async fn non_object_tool_arguments_are_recovered_not_fatal() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "recovered"),
+                ..Default::default()
             },
         ]),
     };
@@ -339,6 +347,7 @@ async fn missing_tool_call_id_remains_fail_closed() {
                 }],
                 tool_call_id: None,
             },
+            ..Default::default()
         }]),
     };
     let error = run_agent(
@@ -363,6 +372,7 @@ async fn empty_provider_response_is_invalid() {
     let provider = MockProvider {
         responses: Mutex::new(vec![ChatResponse {
             message: ChatMessage::text("assistant", ""),
+            ..Default::default()
         }]),
     };
     let error = run_agent(
@@ -399,9 +409,11 @@ async fn injected_denial_does_not_execute_query_or_persist_rows() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "The query was denied."),
+                ..Default::default()
             },
         ]),
     };
@@ -521,9 +533,11 @@ async fn bounded_sql_query_all_sets_flag_and_schema_discovery_does_not() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "Results across databases."),
+                ..Default::default()
             },
         ]),
     };
@@ -557,9 +571,11 @@ async fn bounded_sql_query_all_sets_flag_and_schema_discovery_does_not() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "Discovered schema."),
+                ..Default::default()
             },
         ]),
     };
@@ -626,9 +642,11 @@ async fn approval_free_tool_calls_run_concurrently_and_results_stay_ordered() {
                     ],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "parallel done"),
+                ..Default::default()
             },
         ]),
     };
@@ -720,9 +738,11 @@ async fn execute_batch_caps_simultaneous_concurrency() {
                         .collect(),
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "done"),
+                ..Default::default()
             },
         ]),
     };
@@ -920,10 +940,12 @@ async fn runaway_context_is_trimmed_not_aborted_and_the_bound_still_binds() {
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 });
             }
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", "done"),
+                ..Default::default()
             })
         }
     }
@@ -1036,10 +1058,12 @@ async fn single_oversized_tool_result_does_not_abort_the_run() {
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 });
             }
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", "summarised the result"),
+                ..Default::default()
             })
         }
     }
@@ -1138,10 +1162,12 @@ async fn tool_failure_details_reach_the_model() {
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 });
             }
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", "adjusted"),
+                ..Default::default()
             })
         }
     }
@@ -1244,9 +1270,11 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_alone() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "done"),
+                ..Default::default()
             },
         ]),
     };
@@ -1303,9 +1331,11 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_in_a_batch() {
                     ],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "done"),
+                ..Default::default()
             },
         ]),
     };

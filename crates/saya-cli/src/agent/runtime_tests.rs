@@ -301,6 +301,7 @@ impl ChatProvider for AnswerProvider {
         self.log.lock().unwrap().push("provider");
         Ok(ChatResponse {
             message: ChatMessage::text("assistant", self.answer),
+            ..Default::default()
         })
     }
 }
@@ -853,6 +854,7 @@ impl ChatProvider for TurnAndExtractionProvider {
             } else {
                 Ok(ChatResponse {
                     message: ChatMessage::text("assistant", "done"),
+                    ..Default::default()
                 })
             }
         }
@@ -903,12 +905,14 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 },
                 ChatResponse {
                     message: ChatMessage::text(
                         "assistant",
                         "The orders table contains customer orders.",
                     ),
+                    ..Default::default()
                 },
             ],
             extraction_response: Ok(ChatResponse {
@@ -916,6 +920,7 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
                     "assistant",
                     r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
                 ),
+                ..Default::default()
             }),
             extraction_calls: Mutex::new(0),
         }),
@@ -1021,12 +1026,14 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 },
                 ChatResponse {
                     message: ChatMessage::text(
                         "assistant",
                         "The orders table was inspected successfully.",
                     ),
+                    ..Default::default()
                 },
             ],
             extraction_response: Err(ProviderError::configuration("http 500 error")),
@@ -1097,13 +1104,16 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             },
             ChatResponse {
                 message: ChatMessage::text("assistant", "query completed"),
+                ..Default::default()
             },
         ],
         extraction_response: Ok(ChatResponse {
             message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
+            ..Default::default()
         }),
         extraction_calls: Mutex::new(0),
     });
@@ -1241,9 +1251,11 @@ async fn test_anti_self_reinforcement_end_to_end() {
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 },
                 ChatResponse {
                     message: ChatMessage::text("assistant", "Order dates checked."),
+                    ..Default::default()
                 },
             ],
             // The model re-infers the *same* default-time claim recall already
@@ -1257,6 +1269,7 @@ async fn test_anti_self_reinforcement_end_to_end() {
                     "assistant",
                     r#"{"proposals": [{"object_id": "T0", "slot": "table.default_time", "value": "created_at", "origin": "assistant_inferred"}]}"#,
                 ),
+                ..Default::default()
             }),
             extraction_calls: Mutex::new(0),
         }),
@@ -1488,10 +1501,12 @@ impl ChatProvider for QueryProvider {
                     }],
                     tool_call_id: None,
                 },
+                ..Default::default()
             })
         } else {
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", "done"),
+                ..Default::default()
             })
         }
     }
@@ -1917,6 +1932,7 @@ impl ChatProvider for SleepingExtractionProvider {
             .await;
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
+                ..Default::default()
             })
         } else {
             let mut step = self.turn_step.lock().unwrap();
@@ -1927,6 +1943,7 @@ impl ChatProvider for SleepingExtractionProvider {
             } else {
                 Ok(ChatResponse {
                     message: ChatMessage::text("assistant", "done"),
+                    ..Default::default()
                 })
             }
         }
@@ -1979,12 +1996,14 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 },
                 ChatResponse {
                     message: ChatMessage::text(
                         "assistant",
                         "The orders table contains customer orders.",
                     ),
+                    ..Default::default()
                 },
             ],
             extraction_calls: Mutex::new(0),
@@ -2058,6 +2077,7 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         // extraction block is never entered regardless — proving the silent path.
         turn_steps: vec![ChatResponse {
             message: ChatMessage::text("assistant", "ok"),
+            ..Default::default()
         }],
         extraction_calls: Mutex::new(0),
     });
@@ -2178,12 +2198,14 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
                         }],
                         tool_call_id: None,
                     },
+                    ..Default::default()
                 },
                 ChatResponse {
                     message: ChatMessage::text(
                         "assistant",
                         "The orders table was inspected successfully.",
                     ),
+                    ..Default::default()
                 },
             ],
             extraction_response: Err(ProviderError::configuration("http 500 error")),
