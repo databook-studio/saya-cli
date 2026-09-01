@@ -128,6 +128,7 @@ mod tests {
             *calls += 1;
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", &self.response_text),
+                ..Default::default()
             })
         }
     }
@@ -160,6 +161,7 @@ mod tests {
             *self.captured.lock().unwrap() = Some(request);
             Ok(ChatResponse {
                 message: ChatMessage::text("assistant", &self.response_text),
+                ..Default::default()
             })
         }
     }
