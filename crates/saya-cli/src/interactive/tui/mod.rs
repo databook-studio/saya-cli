@@ -28,7 +28,7 @@ mod stream_events;
 mod table;
 mod terminal;
 mod transcript;
-mod types;
+pub(super) mod types;
 mod ui;
 #[cfg(test)]
 mod ui_snapshot_tests;

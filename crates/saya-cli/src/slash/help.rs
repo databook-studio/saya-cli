@@ -31,6 +31,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("approvals", "Set approval policy for tool execution"),
     ("schema", "Inspect or refresh database schema"),
     ("doctor", "Diagnose config: secrets, provider endpoint"),
+    ("usage", "Show session token usage and cache hit rate"),
     ("sql", "Run a raw SQL query against the active profile"),
     ("export", "Export the last query result as CSV or JSON"),
     ("chart", "Render the last query as an HTML chart"),
@@ -134,6 +135,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("sessions", "/sessions"),
             ("resume", "/resume <id>"),
             ("doctor", "/doctor"),
+            ("usage", "/usage"),
             ("help", "/help [command]"),
             ("exit", "/exit  (alias /quit)"),
         ],
@@ -199,6 +201,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         }
         "doctor" => Some(
             "doctor — diagnose configuration: secrets resolve? provider endpoint? Example: /doctor",
+        ),
+        "usage" => Some(
+            "usage — show session token usage: input, output, reasoning, cached input, cache creation, and the cache hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a mean of per-turn rates). Fields the provider did not report show —; the hit rate shows 'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
         "contracts" => Some(
