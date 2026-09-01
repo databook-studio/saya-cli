@@ -191,7 +191,7 @@ mod tests {
             !messages[0].content.contains(body),
             "context block body leaked into the system message"
         );
-        // ...and must appear in the user turn, inside the wrapper.
+        //...and must appear in the user turn, inside the wrapper.
         assert!(messages[1].content.contains(CONTEXT_OPEN));
         assert!(messages[1].content.contains(CONTEXT_CLOSE));
         assert!(messages[1].content.contains(body));
@@ -358,7 +358,7 @@ mod tests {
     /// to the (old) legal maximum saw ordinary questions fail with `ContextLimit`,
     /// a memory setting breaking the thing memory is supposed to help. The
     /// `max_context_bytes` ceiling is now derived below the message budget, so a
-    /// block at that ceiling plus an ordinary prompt still builds (spec test 7).
+    /// block at that ceiling plus an ordinary prompt still builds.
     /// The `4096` is the reservation `saya-config` derives the ceiling from
     /// (`MAX_MESSAGE_BYTES - CONTEXT_RESERVATION_BYTES`); named concretely here
     /// because `saya-agent` cannot depend on `saya-config` for the constant.

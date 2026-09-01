@@ -1,4 +1,4 @@
-//! Heuristic proposal-worthiness gating for post-turn extraction — spec F Chunk 1.
+//! Heuristic proposal-worthiness gating for post-turn extraction.
 //!
 //! Evaluates whether a completed turn warrants invoking structured extraction:
 //! 1. Override findings: confirmed claims contradicted by executed SQL.

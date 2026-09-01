@@ -1,4 +1,4 @@
-//! Tests for the single-knob `[memory]` wiring — spec E.
+//! Tests for the single-knob `[memory]` wiring.
 //!
 //! Two layers are exercised:
 //! - The pure translations in [`super`] (`recall_mode_for`, `bounds_from`,

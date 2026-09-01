@@ -19,8 +19,7 @@ pub(super) struct Delta {
     /// Chain-of-thought from a reasoning model. OpenAI-compatible gateways
     /// spell this `delta.reasoning_content` (the field the `glm-5.2`
     /// measurement found on every response); some spell it `reasoning`, so
-    /// both are accepted (S20 wire table; S23 deliverable 2: "providers
-    /// differ on the spelling"). Streamed only — OpenAI's `complete()` routes
+    /// both are accepted. Streamed only — OpenAI's `complete()` routes
     /// through `collect()` and drives a `stream: true` request, so there is no
     /// whole-response `message.reasoning_content` path to parse here.
     #[serde(default, alias = "reasoning")]
@@ -87,7 +86,7 @@ mod tests {
     use super::{Delta, Usage};
     use serde_json::json;
 
-    /// S23 deliverable 2 (OpenAI, with — `reasoning_content`): a streaming
+    /// a streaming
     /// delta carrying `delta.reasoning_content` parses into the new field,
     /// ready to become a `ReasoningDelta` event.
     #[test]
@@ -102,7 +101,7 @@ mod tests {
         );
     }
 
-    /// S23 deliverable 2 (OpenAI, alias — "providers differ on the spelling"):
+    ///
     /// some OpenAI-compatible gateways spell it `reasoning` rather than
     /// `reasoning_content`. The `alias` accepts both.
     #[test]
@@ -112,7 +111,7 @@ mod tests {
         assert_eq!(delta.reasoning_content.as_deref(), Some("alt spelling"));
     }
 
-    /// S23 deliverable 6 (OpenAI, absent): a delta with no reasoning field
+    /// a delta with no reasoning field
     /// leaves `reasoning_content` `None`, and content still parses — a
     /// non-reasoning response is unaffected (invariant 3).
     #[test]

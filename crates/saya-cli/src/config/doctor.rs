@@ -10,7 +10,7 @@ use saya_types::DatabaseProfile;
 /// a query. `can_run_query` is false when nothing is configured or the selected
 /// profile cannot connect (an unresolved secret); warnings stay true here, so a
 /// missing cloud API key or an ignored project override does not by itself make
-/// doctor fail. See S18 Q4.
+/// doctor fail.
 pub(crate) struct DoctorReport {
     pub(crate) lines: Vec<String>,
     pub(crate) can_run_query: bool,
@@ -58,7 +58,7 @@ pub(crate) fn summary(runtime: &RuntimeConfig) -> String {
 
 /// Actionable next steps. The factual lines above stay; this only adds. A first
 /// run that "ends somewhere" needs doctor to say what to do, not just that
-/// something is missing — see S18 deliverable 4.
+/// something is missing.
 fn advice_lines(runtime: &RuntimeConfig, selected_unresolved: bool) -> Vec<String> {
     let mut advice: Vec<String> = Vec::new();
     if runtime.config_path.is_none() && runtime.connections_path.is_none() {

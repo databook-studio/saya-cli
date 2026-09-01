@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn descriptions_cover_exactly_the_registry() {
-        // S17: the popup reads its descriptions from the single source in
+        // the popup reads its descriptions from the single source in
         // `slash::help` (no local copy here), so this asserts that shared
         // table covers exactly the parser's registry — the popup and the
         // `/help` listing cannot drift, because they share this one table.
@@ -146,10 +146,10 @@ mod tests {
     fn test_slash_only() {
         let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
         assert_eq!((start, end), (0, 1));
-        assert_eq!(candidates.len(), 30); // 29 commands + `/approve-all` (S28)
+        assert_eq!(candidates.len(), 30); // 29 commands + `/approve-all`
         assert_eq!(candidates[0].value, "/connect");
         // The description is the single-source one from slash::help, sharpened
-        // in S17 to carry the /connect vs /include contrast (one replaces the
+        // to carry the /connect vs /include contrast (one replaces the
         // active profile, one adds a secondary).
         assert_eq!(
             candidates[0].description.as_deref(),

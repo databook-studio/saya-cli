@@ -5,7 +5,7 @@
 //! model sees the profile *name*. Bounds are the 2b-1 defaults; a truncated
 //! result says so. Only recallable claims are returned. Store failure degrades
 //! to an empty result with a diagnostic, never a tool error. See
-//! .claude/specs/spec-2b3a-agent-contract-tools.md §2.
+//!.claude/specs/spec-2b3a-agent-contract-tools.md §2.
 
 mod definitions;
 mod mapping;

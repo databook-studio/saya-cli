@@ -1,5 +1,4 @@
-//! Stderr tracing for the post-turn extraction boundary (spec packet-54 open
-//! question).
+//! Stderr tracing for the post-turn extraction boundary.
 //!
 //! Until this slice there was zero visibility into the only path that writes
 //! memory — no log, no receipt, no counter — and two reviews were misled by the

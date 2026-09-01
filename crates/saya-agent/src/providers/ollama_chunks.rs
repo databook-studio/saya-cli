@@ -17,8 +17,8 @@ pub(super) struct Chunk {
 pub(super) struct Message {
     #[serde(default)]
     pub(super) content: String,
-    /// Chain-of-thought from a thinking model (S20 wire table:
-    /// `message.thinking`). Ollama streams and whole-returns the same shape,
+    /// Chain-of-thought from a thinking model. Ollama streams and whole-returns
+    /// the same shape,
     /// and its `complete()` routes through `collect()`→`stream()`, so this one
     /// field serves both. Empty/absent → no `ReasoningDelta` emitted, so a
     /// model that is not thinking leaves `ChatResponse.reasoning` `None`.
@@ -44,9 +44,9 @@ mod tests {
     use super::{Chunk, Message};
     use serde_json::json;
 
-    /// S23 deliverable 6 (Ollama, with): a chunk whose `message.thinking`
-    /// carries chain-of-thought parses into the new field (S20 wire table:
-    /// `message.thinking`). Ollama's `complete()` routes through
+    /// a chunk whose `message.thinking`
+    /// carries chain-of-thought parses into the new field. Ollama's
+    /// `complete()` routes through
     /// `collect()`→`stream()`, so the streaming chunk is the one path.
     #[test]
     fn message_carries_thinking() {
@@ -59,7 +59,7 @@ mod tests {
         assert_eq!(message.thinking, "I considered the schema");
     }
 
-    /// S23 deliverable 6 (Ollama, absent): a chunk with no `thinking` field
+    /// a chunk with no `thinking` field
     /// leaves it the empty string (serde default), which the stream parser
     /// treats as "no reasoning" — a model that is not thinking is unaffected
     /// (invariant 3).
@@ -74,7 +74,7 @@ mod tests {
 
     /// Deliverable 4 (Ollama, without — the provider with nothing to report):
     /// Ollama's done record carries only prompt/generated counts and no cache
-    /// or reasoning fields (S20: Ollama reports neither). The slice must not
+    /// or reasoning fields. The slice must not
     /// invent them: a `TokenUsage` built from this record leaves the new
     /// fields `None`. This is the "obvious" provider the spec says not to skip.
     #[test]

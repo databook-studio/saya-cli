@@ -73,7 +73,7 @@ pub enum TerminalEvent {
         reason: String,
     },
     /// What memory **supplied** to the turn, emitted once before the provider
-    /// call (spec P1c). Carries the outcome, the supplied contracts (claim DTOs,
+    /// call. Carries the outcome, the supplied contracts (claim DTOs,
     /// no opaque identity), and the count the bounds dropped. Text is shaped in
     /// [`render_memory`]; JSON/NDJSON fall out of the serde derive.
     KnowledgeSupplied {
@@ -89,7 +89,7 @@ pub enum TerminalEvent {
     KnowledgeLearned {
         claim: ProposedClaimDto,
     },
-    /// A confirmed claim the turn's SQL **contradicted** (spec A1). Emitted at
+    /// A confirmed claim the turn's SQL **contradicted**. Emitted at
     /// most once per turn, after the loop, carrying every finding the detector
     /// raised. The finding says the SQL **referenced** columns, never that it
     /// **used** them — the extractor cannot prove role. Text is shaped in
@@ -98,7 +98,7 @@ pub enum TerminalEvent {
         findings: Vec<OverrideFindingDto>,
     },
     /// Post-turn extraction was skipped after the turn succeeded — no memory
-    /// was recorded, and the line says so (spec packet-54). Trails the answer.
+    /// was recorded, and the line says so. Trails the answer.
     /// Text is shaped in [`render_memory`]; JSON/NDJSON fall out of the serde
     /// derive.
     KnowledgeLearningSkipped {

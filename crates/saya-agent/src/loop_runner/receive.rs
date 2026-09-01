@@ -11,10 +11,10 @@ use futures_util::StreamExt;
 ///
 /// `reasoning` is returned separately and **never** placed on the `ChatMessage`
 /// — that message is pushed into `messages` and replayed to the provider as
-/// history on the next turn, so reasoning on it would violate S23 invariant 2.
+/// history on the next turn, so reasoning on it would be replayed to the model.
 /// The caller (`loop_runner::mod`) forwards the accumulated string onto the
-/// event stream as one `AgentEvent::ReasoningText` (S23b), so the turn's
-/// thinking reaches the CLI; it is not pushed onto `messages`. S20 invariant 2
+/// event stream as one `AgentEvent::ReasoningText`, so the turn's
+/// thinking reaches the CLI; it is not pushed onto `messages`. Absent is not zero
 /// is why `receive` keeps reasoning at all: the main loop must not suppress
 /// thinking, or SQL quality degrades; a reasoning model's chain-of-thought is
 /// held for the turn and forwarded when the stream completes.
@@ -45,7 +45,7 @@ pub(super) async fn receive(
     let mut usage = TokenUsage::default();
     // `None` until the stream emits reasoning; accumulated under the same
     // `MAX_STREAM_BYTES` bound as content so a hostile endpoint cannot stream
-    // unbounded "thinking" into memory (S23 Q1).
+    // unbounded "thinking" into memory.
     let mut reasoning = None;
     while let Some(event) = stream.next().await {
         check_cancelled(cancellation)?;
