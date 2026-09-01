@@ -7,6 +7,33 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **`contracts approve-all` approves the whole review queue — and reports
+  every item it refused.** Candidates were only ever confirmable one at a time
+  (`contracts decide --confirm <prefix>`), and a measured store held 26
+  pending candidates the user had been told about 26 times without acting —
+  the gap was the action, not the notice. The batch approves the same bounded
+  queue `contracts queue` shows (default limit 50, `--limit` overrides, clamped
+  to 200; the active profile by default, `--profile` to name another) and sends
+  **every** candidate through the same per-item validation the single-item
+  confirm applies, so a batch is expected to be a mixture: an item dismissed
+  between the queue read and the sweep is refused as a conflict, and a
+  candidate whose object the cached schema can no longer vet is refused rather
+  than rubber-stamped. Nothing is hidden and nothing is rolled back: the queue
+  is printed first on every path, then each approval and each refusal is
+  reported by claim id with the reason it was refused, and the summary names
+  both counts. Without `--yes` the command prints the queue and approves
+  nothing (the same deny-by-default `--non-interactive` applies to approvals),
+  so a script cannot bulk-confirm by accident; with `--yes` the sweep runs.
+  Exits 0 when anything was approved (or nothing was waiting) and 2 when every
+  item was refused. A partial batch is a success by design — approving 22 of
+  26 and naming the 4 refusals is the correct outcome. Slash surface:
+  `/approve-all [--yes] [limit]`. The recall receipt now also points at the
+  action the learn path already named: unconfirmed claims render as
+  `(N unconfirmed — review with /queue)`, and a recall that found nothing (or
+  found only confirmed claims) stays silent as before.
+
+### Added — earlier this cycle
+
 - **`/usage` shows session token totals and a cache hit rate that can say
   "unknown".** The TUI printed one line per turn — `9828 tokens in · 1082
   tokens out` — never accumulated, never showing cache or reasoning spend, and

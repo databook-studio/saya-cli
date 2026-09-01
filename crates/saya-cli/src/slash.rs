@@ -111,7 +111,8 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "resume" => SlashCommand::Resume(required()?),
         "doctor" => SlashCommand::Doctor,
         "usage" => SlashCommand::Usage,
-        "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject" => {
+        "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject"
+        | "approve-all" => {
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
             // shared dispatcher. No second parsing or DTO mapping lives here.
