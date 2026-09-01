@@ -146,6 +146,9 @@ fn handle_line(
                         output.used_bounded_sql_query,
                         output.tool_metadata.clone(),
                     );
+                    // Feed the session accumulator so /usage is honest in
+                    // headless mode too (the TUI does this in drain_stream).
+                    state.usage.record(&output.usage);
                     SessionAction::Agent(output)
                 }
                 Ok(PromptResult::Cancelled) => SessionAction::Cancelled,

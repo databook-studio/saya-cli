@@ -108,6 +108,10 @@ impl App {
                                     ),
                                 );
                             }
+                            // Accumulate into the session total. `record`
+                            // applies the same zero-guard (invariant 4), so a
+                            // silent provider's all-zero usage adds nothing.
+                            state.usage.record(usage);
                         }
                         Err(error) => self.transcript.push(BlockKind::Error, error),
                     }

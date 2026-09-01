@@ -1,3 +1,4 @@
+use crate::interactive::tui::types::SessionUsage;
 use saya_agent::{ChatMessage, ToolMetadata};
 use saya_store::{RedactedSession, RedactedToolMetadata, RedactedTurn, SESSION_VERSION};
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,11 @@ pub struct SessionState {
     pub approval_mode: String,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
+    /// In-memory session token accumulator (S22). `#[serde(skip)]` keeps it
+    /// out of persisted session files (invariant 2: no new persisted state);
+    /// a resumed session starts with a fresh total. `/clear` resets it.
+    #[serde(skip)]
+    pub(crate) usage: SessionUsage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +40,7 @@ impl SessionState {
             approval_mode: "ask".into(),
             messages: Vec::new(),
             turns: Vec::new(),
+            usage: SessionUsage::default(),
         }
     }
 

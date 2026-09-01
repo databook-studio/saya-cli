@@ -125,6 +125,7 @@ impl SessionState {
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
+                self.usage = Default::default();
                 // The transcript keeps what was said; the model's working
                 // memory does not. Say so, since there is no undo.
                 SessionAction::Message(
@@ -134,6 +135,7 @@ impl SessionState {
             }
             SlashCommand::History => SessionAction::History,
             SlashCommand::Doctor => SessionAction::Doctor,
+            SlashCommand::Usage => SessionAction::Message(self.usage.render()),
             SlashCommand::Sessions => SessionAction::History,
             SlashCommand::Resume(id) => SessionAction::Resume(id),
             SlashCommand::Help(topic) => {
@@ -238,5 +240,71 @@ mod tests {
         let sessions = state.apply(SlashCommand::Sessions, &[]);
         assert_eq!(history, SessionAction::History);
         assert_eq!(sessions, SessionAction::History);
+    }
+
+    /// `/usage` returns a `SessionAction::Message` carrying the session usage
+    /// breakdown. The message is handled by the existing `Message` arm in both
+    /// the TUI dispatch and the headless `emit_action`, so no dispatch-layer
+    /// changes were needed.
+    #[test]
+    fn usage_returns_breakdown_message() {
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        state.usage.record(&saya_agent::TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cached_input_tokens: Some(80),
+            ..Default::default()
+        });
+        let action = state.apply(SlashCommand::Usage, &[]);
+        let SessionAction::Message(msg) = action else {
+            panic!("expected SessionAction::Message, got {action:?}");
+        };
+        assert!(
+            msg.contains("Input tokens: 100"),
+            "breakdown must show input total, got:\n{msg}"
+        );
+        assert!(
+            msg.contains("Output tokens: 50"),
+            "breakdown must show output total, got:\n{msg}"
+        );
+        assert!(
+            msg.contains("Cache hit rate: 80%"),
+            "breakdown must show computed hit rate, got:\n{msg}"
+        );
+        assert!(
+            msg.contains("Σcached / Σinput"),
+            "breakdown must state the formula, got:\n{msg}"
+        );
+    }
+
+    /// `/usage` on an empty session (no turns with usage) reports nothing
+    /// rather than a row of zeros — invariant 4.
+    #[test]
+    fn usage_on_empty_session_reports_nothing() {
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let action = state.apply(SlashCommand::Usage, &[]);
+        let SessionAction::Message(msg) = action else {
+            panic!("expected SessionAction::Message, got {action:?}");
+        };
+        assert!(
+            msg.contains("No token usage reported yet"),
+            "empty session must say no usage was reported, got:\n{msg}"
+        );
+    }
+
+    /// `/clear` resets the usage accumulator along with the conversation, so a
+    /// fresh context does not inherit the prior turns' token accounting.
+    #[test]
+    fn clear_resets_usage_accumulator() {
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        state.usage.record(&saya_agent::TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        });
+        assert_eq!(state.usage.turns, 1);
+        state.apply(SlashCommand::Clear, &[]);
+        assert_eq!(state.usage.turns, 0);
+        assert_eq!(state.usage.input_tokens, 0);
     }
 }
