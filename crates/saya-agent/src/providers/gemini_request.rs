@@ -1,4 +1,4 @@
-use crate::ChatRequest;
+use crate::{ChatRequest, ReasoningEffort};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -74,6 +74,20 @@ pub(super) fn build_body(
     });
     if let Some(temperature) = temperature {
         generation_config["temperature"] = json!(temperature);
+    }
+    // Gemini's effort lever is a thinking token budget. `0` disables thinking
+    // (Gemini API docs); `Minimal` maps to `0` (the least-thinking lever Gemini
+    // offers), then conservative steps — Low=1024, Medium=4096, High=8192.
+    // `Default` sends nothing so the endpoint's own configuration wins.
+    if request.reasoning_effort != ReasoningEffort::Default {
+        let thinking_budget = match request.reasoning_effort {
+            ReasoningEffort::Minimal => 0,
+            ReasoningEffort::Low => 1024,
+            ReasoningEffort::Medium => 4096,
+            ReasoningEffort::High => 8192,
+            ReasoningEffort::Default => 0,
+        };
+        generation_config["thinkingConfig"] = json!({ "thinkingBudget": thinking_budget });
     }
     let mut body = json!({
         "contents": contents,
@@ -195,11 +209,49 @@ mod tests {
             ],
             tools: Vec::new(),
             response_format: crate::ResponseFormat::JsonObject,
+            reasoning_effort: ReasoningEffort::Default,
         };
         let body = build_body(request, 4096, None);
         assert!(
             body["generationConfig"].get("responseMimeType").is_none(),
             "gemini must not emit responseMimeType: {}",
+            body["generationConfig"]
+        );
+    }
+
+    /// Gemini's effort lever is a thinking token budget. `Minimal` carries
+    /// `thinkingConfig: {thinkingBudget: 0}` — `0` disables thinking (Gemini API
+    /// docs), the least-thinking lever Gemini offers.
+    #[test]
+    fn minimal_effort_request_carries_thinking_budget_zero_on_wire() {
+        let request = ChatRequest {
+            model: "gemini-1.5-flash".into(),
+            messages: vec![ChatMessage::text("user", "extract")],
+            tools: Vec::new(),
+            reasoning_effort: ReasoningEffort::Minimal,
+            ..Default::default()
+        };
+        let body = build_body(request, 4096, None);
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
+        );
+    }
+
+    /// Q2: a `Default` effort request omits `thinkingConfig` entirely, so the
+    /// default path sends nothing and the endpoint's own configuration wins.
+    #[test]
+    fn default_effort_request_omits_thinking_config_on_wire() {
+        let request = ChatRequest {
+            model: "gemini-1.5-flash".into(),
+            messages: vec![ChatMessage::text("user", "extract")],
+            tools: Vec::new(),
+            ..Default::default()
+        };
+        let body = build_body(request, 4096, None);
+        assert!(
+            body["generationConfig"].get("thinkingConfig").is_none(),
+            "default effort must not emit thinkingConfig: {}",
             body["generationConfig"]
         );
     }

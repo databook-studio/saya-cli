@@ -89,6 +89,35 @@ pub enum ResponseFormat {
     JsonObject,
 }
 
+/// How hard the caller wants the model to think. Provider-neutral intent —
+/// **not** an OpenAI wire spelling — so `saya-agent` stays provider-agnostic.
+/// Each provider translates the variant it honours (`Minimal` →
+/// `reasoning_effort: "minimal"` on OpenAI, `think: false` on Ollama, a token
+/// budget on Anthropic/Gemini) or drops it; a provider with no equivalent
+/// degrades to today's behaviour, never to an error. `Default` is the default
+/// and means *send nothing*: the main agent loop — which never sets this —
+/// leaves effort to the endpoint, so a self-hosted gateway operator's own
+/// configuration wins (the main loop keeps real reasoning; only
+/// mechanical call sites request less). Whether the model *complied* is only
+/// knowable from the reported reasoning tokens, so saya reports what it asked
+/// for, never that an effort was applied.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// Send nothing; let the endpoint's own configuration decide. The default;
+    /// the main loop's request.
+    #[default]
+    Default,
+    /// Ask for the least thinking the provider offers.
+    Minimal,
+    /// Ask for less thinking than the endpoint would do unasked.
+    Low,
+    /// A middle effort.
+    Medium,
+    /// Ask for the most thinking the provider offers.
+    High,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatRequest {
     pub model: String,
@@ -99,6 +128,14 @@ pub struct ChatRequest {
     /// loop never sets it (left to `Default`), so a prose answer stays prose.
     #[serde(default)]
     pub response_format: ResponseFormat,
+    /// How hard the caller wants the model to think. Defaults to
+    /// [`ReasoningEffort::Default`] (send nothing); the extraction call sets
+    /// [`ReasoningEffort::Minimal`]. The main agent loop never sets it (left to
+    /// `Default`), so the endpoint's own effort configuration wins and the main
+    /// loop keeps real reasoning. Separate from `response_format` — the answer's
+    /// form is not how hard to think.
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -557,7 +594,9 @@ pub trait ToolExecutor: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatMessage, ChatRequest, ChatResponse, LocalStateEffect, ResponseFormat};
+    use super::{
+        ChatMessage, ChatRequest, ChatResponse, LocalStateEffect, ReasoningEffort, ResponseFormat,
+    };
 
     /// `ChatMessage` — what gets
     /// replayed to the provider as history and what session persistence is
@@ -668,6 +707,52 @@ mod tests {
         let json = r#"{"model":"m","messages":[],"tools":[]}"#;
         let request: ChatRequest = serde_json::from_str(json).expect("old form deserializes");
         assert_eq!(request.response_format, ResponseFormat::Text);
+    }
+
+    /// `ReasoningEffort::Default` is the default — it means "send nothing", so
+    /// the main loop's request (built with `..Default::default()`) leaves effort
+    /// to the endpoint. If this regresses, the main loop would silently ask for
+    /// less thinking; the main loop keeps real reasoning.
+    #[test]
+    fn reasoning_effort_defaults_to_default_send_nothing() {
+        assert_eq!(ReasoningEffort::default(), ReasoningEffort::Default);
+        let request = ChatRequest {
+            model: "m".into(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            ..Default::default()
+        };
+        assert_eq!(request.reasoning_effort, ReasoningEffort::Default);
+    }
+
+    /// `ReasoningEffort` is provider-neutral intent, not an OpenAI wire spelling:
+    /// it serializes as `default` / `minimal` / `low` / `medium` / `high`
+    /// (snake_case) and round-trips, so a serialized `ChatRequest` stays readable
+    /// and stable.
+    #[test]
+    fn reasoning_effort_round_trips_through_snake_case() {
+        for (variant, expected) in [
+            (ReasoningEffort::Default, "default"),
+            (ReasoningEffort::Minimal, "minimal"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+        ] {
+            let text = serde_json::to_string(&variant).expect("serializes");
+            assert_eq!(text, format!("\"{expected}\""), "{variant:?}");
+            let back: ReasoningEffort = serde_json::from_str(&text).expect("deserializes back");
+            assert_eq!(back, variant, "{variant:?}");
+        }
+    }
+
+    /// The back-compat guarantee: a `ChatRequest` serialized before this slice
+    /// (no `reasoning_effort` key) deserializes to the default `Default`, so old
+    /// serialized requests stay valid.
+    #[test]
+    fn chat_request_without_reasoning_effort_key_defaults_to_default() {
+        let json = r#"{"model":"m","messages":[],"tools":[]}"#;
+        let request: ChatRequest = serde_json::from_str(json).expect("old form deserializes");
+        assert_eq!(request.reasoning_effort, ReasoningEffort::Default);
     }
 
     /// The back-compat guarantee: a `ToolEffect` serialized before this slice
