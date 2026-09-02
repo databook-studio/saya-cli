@@ -1,9 +1,9 @@
 //! Tests for [`SessionUsage`] — the session token accumulator.
 //!
 //! These tests pin the two invariants the `Option` fields exist for:
-//! - Invariant 1 (deliverable 5): a cache hit rate over unreported data is
+//! - a cache hit rate over unreported data is
 //!   "unknown", never 0%.
-//! - Invariant 4 (deliverable 6): a usage-less turn adds nothing.
+//! - a usage-less turn adds nothing.
 
 use super::SessionUsage;
 use saya_agent::TokenUsage;
@@ -17,7 +17,7 @@ fn usage(input: u64, output: u64) -> TokenUsage {
     }
 }
 
-/// Deliverable 5 — the test invariant 1 exists for. A session where no
+/// A session where no
 /// provider reported cached tokens must render the hit rate as "unknown", not
 /// "0%". This is the most skippable test in the slice and the reason the
 /// `Option` fields exist at all: a display layer that renders `None` as 0%
@@ -38,7 +38,7 @@ fn cache_hit_rate_is_unknown_when_no_turn_reported_cached_tokens() {
     );
 }
 
-/// The flip side of deliverable 5 and the thesis of `2e1c69a`: a *reported*
+/// The flip side, and the thesis of `2e1c69a`: a *reported*
 /// `Some(0)` is a cache miss, not an absence. It must render as "0%", never
 /// "unknown". This is the case where the cache was cold and the provider said
 /// so — conflating it with "the provider said nothing" erases the signal.
@@ -97,7 +97,7 @@ fn totals_accumulate_across_turns_and_a_usage_less_turn_adds_nothing() {
     );
 }
 
-/// Q3 — the hit rate is `Σcached / Σinput`, a ratio of sums, not a mean of
+/// The hit rate is `Σcached / Σinput`, a ratio of sums, not a mean of
 /// per-turn rates. Two turns with different rates must produce the pooled
 /// rate, not the average. Turn 1: 80/100 = 80%. Turn 2: 20/200 = 10%.
 /// Mean of rates = 45%. Pooled = 100/300 = 33%. The test pins the pooled one.
@@ -145,8 +145,8 @@ fn unreported_fields_render_as_dash() {
     );
 }
 
-/// The formula is stated in the output where the user can see it (Q3 /
-/// deliverable 4), not just in the help text.
+/// The formula is stated in the output where the user can see it (
+/// in the output), not just in the help text.
 #[test]
 fn render_states_the_hit_rate_formula() {
     let mut session = SessionUsage::default();
@@ -267,7 +267,7 @@ fn a_timed_out_extraction_does_not_corrupt_the_totals() {
 }
 
 /// With learning disabled no extraction call runs, so `/usage` must render
-/// byte-for-byte what it rendered before this slice — no learning section
+/// byte-for-byte what it rendered before learning was counted — no learning section
 /// appears and the answering breakdown is untouched.
 #[test]
 fn with_learning_off_usage_output_is_unchanged() {

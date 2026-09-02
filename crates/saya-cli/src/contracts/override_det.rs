@@ -1,7 +1,7 @@
 //! Detect when a generated SQL statement contradicts a confirmed claim.
 //!
 //! Spec P2b-1. Pure: no store, no schema fetch, no clock, no I/O. The caller
-//! (P2b-2, not this slice) parses the SQL with [`saya_connectors::sql_references`]
+//! Override detection parses the SQL with [`saya_connectors::sql_references`]
 //! and passes the result here; this function only reads the names.
 //!
 //! ## What a contradiction is, and the failure direction

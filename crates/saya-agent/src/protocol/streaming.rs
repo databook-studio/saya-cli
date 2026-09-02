@@ -74,14 +74,13 @@ pub struct TokenUsage {
 pub enum ProviderEvent {
     TextDelta(String),
     /// Chain-of-thought from a reasoning model. Captured unconditionally
-    /// (invariant 4: parse whether or not the user has asked to see it — the
-    /// `show_thinking` toggle is the display slice, not a precondition for capture) and
+    /// (parse whether or not the user has asked to see it — the
+    /// `show_thinking` toggle gates display only, not a precondition for capture) and
     /// accumulated under the same `MAX_STREAM_BYTES` bound as `TextDelta`, so a
     /// hostile endpoint cannot stream unbounded "thinking" into memory. Never
     /// reaches a session file or the provider as history: reasoning lives on
     /// `ChatResponse` (transport for one call), never on `ChatMessage` (what
-    /// gets replayed and persisted), so there is no field to copy it through
-    ///.
+    /// gets replayed and persisted), so there is no field to copy it through.
     ReasoningDelta(String),
     ToolCalls(Vec<ToolCall>),
     /// The provider's cumulative token counts so far for this response.
@@ -149,11 +148,11 @@ pub trait ChatProvider: Send + Sync {
     async fn collect(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut stream = self.stream(request, CancellationToken::new()).await?;
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
-        // Reasoning is accumulated alongside content (Q1/Q3): a single string
+        // Reasoning is accumulated alongside content: a single string
         // per turn, no ordering relative to text. The bound covers reasoning
         // too — a hostile endpoint streaming unbounded "thinking" must not
         // exhaust memory, so each delta is checked against `MAX_STREAM_BYTES`
-        // exactly as `TextDelta` is (invariant 2 of `collect()`). `None` when
+        // exactly as `TextDelta` is (as `collect()` requires). `None` when
         // the stream emits no `ReasoningDelta`, so a provider that reports no
         // reasoning stays distinguishable from one that reported an empty
         // string (absent is not zero, mirrored from usage).
@@ -164,7 +163,7 @@ pub trait ChatProvider: Send + Sync {
         // would double-count — the final snapshot is the truth, exactly as the
         // stream's own accumulator already folds them into one running total.
         // Keeping `None` when no event arrives preserves "absent is not zero"
-        // (invariant 1): a provider that reports nothing stays distinguishable
+        //: a provider that reports nothing stays distinguishable
         // from one that reported zeros.
         let mut usage = None;
         while let Some(event) = stream.next().await {
@@ -218,7 +217,7 @@ mod tests {
     use futures_util::{StreamExt, stream};
     use std::time::Duration;
 
-    /// Deliverable 5: `Some(0)` is a *report* of zero and must survive
+    /// `Some(0)` is a *report* of zero and must survive
     /// distinct from `None` (an unreported number). If this cannot be written,
     /// the type is wrong — here the two compare unequal and `Some(0)` survives
     /// a `Copy`.
@@ -235,7 +234,7 @@ mod tests {
         assert_eq!(unreported.cached_input_tokens, None);
     }
 
-    /// `TokenUsage` stays `Copy` (invariant 3): assigning rebinds a value, not
+    /// `TokenUsage` stays `Copy`: assigning rebinds a value, not
     /// a borrow, and the new fields default to `None` without disturbing the
     /// two existing counters.
     #[test]
@@ -294,7 +293,7 @@ mod tests {
         }
     }
 
-    /// Deliverable 2: a stream that emits a `Usage` event produces a response
+    /// A stream that emits a `Usage` event produces a response
     /// carrying it. The last event wins: Anthropic emits cumulative
     /// snapshots, so summing would double-count; the final snapshot is the
     /// truth, folded here into the one accumulator the stream already keeps.
@@ -339,7 +338,7 @@ mod tests {
     /// Deliverable 2 (the absent case): a stream that emits no `Usage` event
     /// leaves `response.usage` `None`, not `Some(TokenUsage::default())` — a
     /// silent provider is not mistaken for one that reported a free turn
-    /// (invariant 1: absent is not zero).
+    /// (absent is not zero).
     #[tokio::test]
     async fn collect_leaves_usage_none_when_the_stream_emits_none() {
         let provider = CannedProvider {
@@ -360,7 +359,7 @@ mod tests {
         assert_eq!(response.usage, None);
     }
 
-    /// Deliverable 5 / invariant 2: `collect()` still rejects a stream whose
+    /// `collect()` still rejects a stream whose
     /// accumulated bytes exceed `MAX_STREAM_BYTES`. The size check fires before
     /// `usage` is read, so accumulating usage cannot reorder or weaken it.
     #[tokio::test]
@@ -387,8 +386,8 @@ mod tests {
         );
     }
 
-    /// The back-compat guarantee (deliverable 1): a serialized `ChatResponse`
-    /// written before this slice — with a `message` key but no `usage` key —
+    /// A serialized `ChatResponse`
+    /// written before `usage` existed — with a `message` key but no `usage` key —
     /// deserializes to `usage: None`, so old serialized responses stay valid.
     #[test]
     fn chat_response_without_usage_key_defaults_to_none() {
@@ -410,7 +409,7 @@ mod tests {
 
     // --- reasoning capture -------------------------------------------------
 
-    /// the capture slice deliverable 1 / Q1: `collect()` accumulates `ReasoningDelta` events
+    /// `collect()` accumulates `ReasoningDelta` events
     /// into `response.reasoning` the way it accumulates `TextDelta` into
     /// content. Two deltas concatenate; the result reaches `ChatResponse`.
     #[tokio::test]
@@ -465,7 +464,7 @@ mod tests {
         assert_eq!(response.reasoning, None);
     }
 
-    /// the capture slice Q1: `collect()`'s `MAX_STREAM_BYTES` bound covers reasoning too. A
+    /// `collect()`'s `MAX_STREAM_BYTES` bound covers reasoning too. A
     /// hostile endpoint streaming unbounded "thinking" must be rejected exactly
     /// as an oversized content stream is — extending the bound, not duplicating
     /// it. The check fires before the turn completes.
@@ -541,12 +540,12 @@ mod tests {
         assert!(errored.is_none(), "ignoring ReasoningDelta must not error");
     }
 
-    /// the capture slice deliverable 5 / invariant 2: reasoning is never replayed to the
+    /// Reasoning is never replayed to the
     /// provider as history. The replay path consumes `&[ChatMessage]`; the
     /// turn's reasoning lives on `ChatResponse` and `ChatMessage` has no field
     /// for it. So a follow-up request built by taking the response's message
     /// into history cannot carry the reasoning, however hard the builder tries
-    /// — there is nothing to copy. This is the structural guarantee Q2 makes.
+    /// — there is nothing to copy. That is the structural guarantee.
     #[tokio::test]
     async fn reasoning_is_not_replayed_to_the_provider_as_history() {
         use crate::history::build_messages;

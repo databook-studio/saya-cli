@@ -105,7 +105,7 @@ mod tests {
         }
     }
 
-    /// Q2: a JSON-mode request carries Ollama's `format: "json"` spelling.
+    /// A JSON-mode request carries Ollama's `format: "json"` spelling.
     #[test]
     fn json_object_request_carries_format_json_on_wire() {
         let body = request(request_with(
@@ -119,7 +119,7 @@ mod tests {
         );
     }
 
-    /// Invariant 1 / Q2: a `Text` (default) request omits `format`, so the prose
+    /// A `Text` (default) request omits `format`, so the prose
     /// path is unchanged.
     #[test]
     fn text_request_omits_format_on_wire() {
@@ -154,7 +154,7 @@ mod tests {
         );
     }
 
-    /// Q2: a `Default` effort request omits `think`, so the default path sends
+    /// A `Default` effort request omits `think`, so the default path sends
     /// nothing and the endpoint's own configuration wins.
     #[test]
     fn default_effort_request_omits_think_on_wire() {

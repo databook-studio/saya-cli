@@ -8,7 +8,7 @@
 //!
 //! Decisions recorded in the SPEC REVIEW:
 //! - **Stale claims are included, plainly labelled** — excluding would discard
-//!   the query-shaping signal this slice exists to deliver.
+//!   the query-shaping signal this module exists to deliver.
 //! - **Schemas are the store-cached tree** per profile, not a live `connector`
 //!   round-trip — recall must not add a connection call on every prompt.
 //! - **Identities come from the registry** (profiles that actually connected),
@@ -106,7 +106,7 @@ pub(crate) async fn recall_context_blocks(
         bounds,
         recall_mode,
         // No candidate is admitted per-claim yet — the prompt-recall caller has
-        // no `use_candidate_once` path this slice (the `/queue` wiring is a later
+        // no `use_candidate_once` path yet (the `/queue` wiring is a later
         // slice). `None` keeps today's behaviour: the mode alone decides.
         admit_candidate: None,
         // This block is shown to the model, so a contract computed `Stale` is

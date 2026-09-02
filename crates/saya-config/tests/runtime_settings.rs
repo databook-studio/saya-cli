@@ -132,7 +132,7 @@ fn ai_request_budgets_resolve_from_file_with_defaults() {
 }
 
 /// `[ai] context_byte_budget` resolves from a config file and, when unset, keeps
-/// the same default the agent loop used before the setting existed (Invariant 1:
+/// the same default the agent loop used before the setting existed (
 /// a user with no setting gets exactly what they get today). The default is the
 /// crate's 256 KiB conversation budget, not a new number.
 #[test]
@@ -151,7 +151,7 @@ fn ai_context_byte_budget_resolves_from_file_with_unchanged_default() {
 }
 
 /// A budget of 0 would trim the conversation to nothing on every turn, so it is
-/// rejected at resolve time with a typed error naming the field (Invariant 3),
+/// rejected at resolve time with a typed error naming the field,
 /// not silently clamped at the point of use. The validation matches the
 /// `[memory]` range-check style already in this crate rather than a third form.
 #[test]

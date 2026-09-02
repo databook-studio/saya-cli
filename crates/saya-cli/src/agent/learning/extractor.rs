@@ -293,7 +293,7 @@ mod tests {
         }
     }
 
-    /// Q3 / deliverable 5: JSON mode returns bare JSON (no fence); the default
+    /// JSON mode returns bare JSON (no fence); the default
     /// path returns ```` ```json ````-wrapped output. Not every provider honours
     /// the JSON hint, so the stripper stays and both shapes must parse.
     #[test]

@@ -192,11 +192,11 @@ mod tests {
         assert_eq!(body["generationConfig"]["maxOutputTokens"], 4096);
     }
 
-    /// Q2: Gemini shapes output with `responseMimeType`, but this provider
+    /// Gemini shapes output with `responseMimeType`, but this provider
     /// deliberately ignores the JSON hint for now and never emits it — even when
     /// the caller asked for `JsonObject`. Ignoring degrades to today's behaviour
     /// (the prompt already asks for JSON, `strip_markdown_fences` handles
-    /// fences), never to an error (invariant 3). This test pins the
+    /// fences), never to an error. This test pins the
     /// "deliberately omits" decision so a future change has to reconsider it
     /// consciously.
     #[test]
@@ -238,7 +238,7 @@ mod tests {
         );
     }
 
-    /// Q2: a `Default` effort request omits `thinkingConfig` entirely, so the
+    /// A `Default` effort request omits `thinkingConfig` entirely, so the
     /// default path sends nothing and the endpoint's own configuration wins.
     #[test]
     fn default_effort_request_omits_thinking_config_on_wire() {

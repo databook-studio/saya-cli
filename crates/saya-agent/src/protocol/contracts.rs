@@ -76,7 +76,7 @@ pub struct ToolMetadata {
 /// Ollama) or drops it; a provider with no equivalent degrades to today's
 /// behaviour (the prompt already asks for JSON, `strip_markdown_fences` already
 /// handles fences). `Text` is the default so the main agent loop — which never
-/// sets this — keeps answering in prose (invariant 1: JSON mode is for the
+/// sets this — keeps answering in prose (JSON mode is for the
 /// extraction call only).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -145,7 +145,7 @@ pub struct ChatResponse {
     /// the provider reported no reasoning. Lives **here, on `ChatResponse`** —
     /// transport for one call — and never on `ChatMessage`, which is what gets
     /// replayed to the provider as history and what session persistence is
-    /// shaped around. That placement is the point of the capture slice's Q2: with no
+    /// shaped around. That placement is deliberate: with no
     /// reasoning field on `ChatMessage`, a session writer or history builder
     /// has nowhere to copy it, so "reasoning is never persisted" and "reasoning
     /// is never replayed as history" are structural,
@@ -153,16 +153,16 @@ pub struct ChatResponse {
     /// chain-of-thought — distinct from `Some(String::new())`, a model that
     /// reasoned and produced nothing; both survive `#[serde(default)]`, so a
     /// response serialized before this field existed (no `reasoning` key)
-    /// deserializes to `None`. Capture is unconditional (invariant 4): this is
+    /// deserializes to `None`. Capture is unconditional: this is
     /// populated whether or not the user has asked to see thinking — the
-    /// `show_thinking` toggle that gates *display* is the display slice.
+    /// `show_thinking` toggle gates *display* only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     /// Token counts the provider reported for this response, or `None` when the
     /// provider reported nothing. `None` is the absent case — distinct from
     /// `Some(TokenUsage::default())`, which would read as "this call cost
     /// nothing" — so a caller cannot mistake a silent provider for a free one
-    /// (invariant 1: absent is not zero, mirroring the streaming path, which
+    /// (absent is not zero, mirroring the streaming path, which
     /// models absence by simply not emitting a `Usage` event). The streaming
     /// path's `collect()` threads the last `Usage` event it sees here; Gemini's
     /// non-streaming `complete()` threads the usage it parses directly.
@@ -301,14 +301,14 @@ pub enum AgentEvent {
         text: String,
     },
     /// One delta of the model's chain-of-thought for this turn, streamed the way
-    /// [`AgentEvent::AssistantText`] streams the answer. Capture is unconditional
-    ///; the
-    /// `show_thinking` toggle that gates **display** is the display slice, not a precondition
-    /// for this event. This slice carries reasoning across the crate
-    /// boundary and no further: the headless renderer renders it to nothing (it
-    /// is content the user has not asked for, not progress — see the the CLI-boundary slice Q1
+    /// [`AgentEvent::AssistantText`] streams the answer. Capture is
+    /// unconditional; the `show_thinking` toggle gates **display** only and is
+    /// not a precondition for this event. The event carries reasoning across
+    /// the crate boundary and no further: the headless renderer renders it to
+    /// nothing (it
+    /// is content the user has not asked for, not progress — see the note on granularity
     /// note on `terminal_event`), and the TUI accepts it without displaying it
-    /// (display is the display slice). Reasoning is **never** on [`ChatMessage`], so this
+    /// (display is a separate concern). Reasoning is **never** on [`ChatMessage`], so this
     /// event is the only way the turn's
     /// thinking leaves `saya-agent` — and it leaves to in-memory consumers only,
     /// never to a serialized session.
@@ -602,7 +602,7 @@ mod tests {
     /// replayed to the provider as history and what session persistence is
     /// shaped around — has **no** reasoning field. A `ChatMessage` carrying
     /// reasoning-shaped content serializes to the same wire form today had
-    /// before this slice, because there is nowhere on the type to put the
+    /// before reasoning was captured, because there is nowhere on the type to put the
     /// reasoning. If a field is ever added here, this test fails and the
     /// reviewer is forced to justify making reasoning persistable and replayable.
     #[test]
@@ -621,7 +621,7 @@ mod tests {
             "a `reasoning` key appeared on ChatMessage: {json}"
         );
         // The wire form is exactly role + content + tool_calls + tool_call_id,
-        // the pre-the capture slice shape.
+        // the shape from before reasoning was captured.
         assert_eq!(
             json, r#"{"role":"assistant","content":"the answer is 42"}"#,
             "ChatMessage wire form changed: {json}"
@@ -631,7 +631,7 @@ mod tests {
     ///
     /// a response carrying reasoning serializes the reasoning under a
     /// `reasoning` key, and one with `None` omits it (`skip_serializing_if`),
-    /// so a response written before this slice (no `reasoning` key)
+    /// so a response written before reasoning capture (no `reasoning` key)
     /// deserializes to `None` — old serialized responses stay valid.
     #[test]
     fn chat_response_carries_reasoning_and_round_trips() {
@@ -660,14 +660,14 @@ mod tests {
             !json.contains("reasoning"),
             "None reasoning must be off the wire: {json}"
         );
-        // A pre-the capture slice response (no `reasoning` key) deserializes to `None`.
+        // A response from before reasoning capture (no `reasoning` key) deserializes to `None`.
         let old = r#"{"message":{"role":"assistant","content":"ok"}}"#;
         let old_response: ChatResponse = serde_json::from_str(old).expect("old form deserializes");
         assert_eq!(old_response.reasoning, None);
     }
 
     /// `ResponseFormat::Text` is the default — the whole point of leaving the
-    /// field unset on the main loop's request. If this regresses, invariant 1
+    /// field unset on the main loop's request. If this regresses, the opt-in rule
     /// (JSON mode is for the extraction call only) breaks silently.
     #[test]
     fn response_format_defaults_to_text() {
@@ -699,7 +699,7 @@ mod tests {
         }
     }
 
-    /// The back-compat guarantee: a `ChatRequest` serialized before this slice
+    /// The back-compat guarantee: a `ChatRequest` serialized by an older build
     /// (no `response_format` key) deserializes to the default `Text`, so old
     /// serialized requests stay valid.
     #[test]
@@ -745,7 +745,7 @@ mod tests {
         }
     }
 
-    /// The back-compat guarantee: a `ChatRequest` serialized before this slice
+    /// The back-compat guarantee: a `ChatRequest` serialized by an older build
     /// (no `reasoning_effort` key) deserializes to the default `Default`, so old
     /// serialized requests stay valid.
     #[test]
@@ -755,7 +755,7 @@ mod tests {
         assert_eq!(request.reasoning_effort, ReasoningEffort::Default);
     }
 
-    /// The back-compat guarantee: a `ToolEffect` serialized before this slice
+    /// The back-compat guarantee: a `ToolEffect` serialized by an older build
     /// (no `local_state` key) deserializes to the default `None`.
     #[test]
     fn tool_effect_without_local_state_key_defaults_to_none() {

@@ -617,7 +617,7 @@ async fn unreachable_provider_error_names_the_endpoint() {
 /// `delta.reasoning_content` is parsed into a
 /// `ReasoningDelta` event, which `collect()` threads onto `ChatResponse.reasoning`.
 /// The chain-of-thought is captured even though no user toggle asked for it
-/// (invariant 4: capture is unconditional).
+/// (capture is unconditional).
 #[tokio::test]
 async fn openai_stream_captures_reasoning_content() {
     use saya_agent::ProviderEvent;
@@ -667,7 +667,7 @@ async fn openai_stream_captures_reasoning_content() {
 
 /// a stream with no `reasoning_content`
 /// leaves `ChatResponse.reasoning` `None` — no error, no behaviour change
-/// (invariant 3).
+///.
 #[tokio::test]
 async fn openai_stream_without_reasoning_leaves_it_none() {
     let (base, _, handle) = server(vec![Reply {
