@@ -5,6 +5,7 @@ use super::complete::Candidate;
 use super::history::History;
 use super::input::InputBuffer;
 use super::transcript::Transcript;
+use super::usage_totals::UsageTotals;
 use crate::config::runtime::RuntimeConfig;
 use saya_agent::TokenUsage;
 use saya_store::{RedactedSession, SqliteStateStore};
@@ -13,117 +14,68 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
 
-/// Session-wide token usage accumulator. Sums every field the usage-accounting slice widened
-/// `TokenUsage` with across turns that reported usage. The `Option` fields
-/// are tracked with a "was this ever reported?" flag so a cache hit rate over
-/// unreported data renders as **unknown**, never 0% — the invariant the usage-accounting slice's
-/// `Option` fields exist for (invariant 1: absent is not zero).
+/// Session-wide token usage accumulator. Sums every field the usage-accounting
+/// slice widened `TokenUsage` with, kept in two labelled totals: the answering
+/// call and the post-turn extraction (learning) call. The `Option` fields are
+/// tracked with a "was this ever reported?" flag so a cache hit rate over
+/// unreported data renders as **unknown**, never 0% — absent is not zero.
 ///
 /// In-memory only: the `SessionState` field carrying this is `#[serde(skip)]`,
-/// so it never enters a persisted session file (invariant 2). `/clear` resets
-/// it, matching the conversation reset.
+/// so it never enters a persisted session file. `/clear` resets it, matching
+/// the conversation reset.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SessionUsage {
-    pub(crate) input_tokens: u64,
-    pub(crate) output_tokens: u64,
-    pub(crate) reasoning_tokens: u64,
-    pub(crate) cached_input_tokens: u64,
-    pub(crate) cache_creation_input_tokens: u64,
-    pub(crate) turns: u32,
-    /// Whether any turn reported `cached_input_tokens`. When false the cache
-    /// hit rate is "unknown" — no provider reported cache data, so a
-    /// percentage would be invented. When true, even 0% is an honest
-    /// "the cache was cold" (a reported `Some(0)`, not an absent `None`).
-    pub(crate) reported_cached: bool,
-    pub(crate) reported_cache_creation: bool,
-    pub(crate) reported_reasoning: bool,
+    pub(crate) answering: UsageTotals,
+    pub(crate) learning: UsageTotals,
+    /// Whether any extraction call reported usage. A provider that reported
+    /// nothing (`None`) leaves this false so the learning section is omitted
+    /// entirely — absent is not zero, and the section would otherwise show a
+    /// misleading row of zeros.
+    pub(crate) learning_reported: bool,
 }
 
 impl SessionUsage {
-    /// Folds one turn's usage into the session totals. A turn that reports no
-    /// usage (both base counters zero) adds nothing — invariant 4, mirroring
-    /// the existing `if usage.input_tokens > 0 || usage.output_tokens > 0`
-    /// guard. `AgentOutput.usage` is a bare `TokenUsage` (never `None`), but a
-    /// silent provider produces an all-zero one, which this guard skips. The
-    /// extraction call's `ChatResponse.usage` is `Option<TokenUsage>`; when Q1
-    /// is implemented, `None` maps to "skip" here (absent is not zero).
+    /// Folds one answering turn's usage into the answering total. A silent
+    /// provider produces an all-zero `TokenUsage`, which the accumulator skips
+    /// so a usage-less turn adds nothing.
     pub(crate) fn record(&mut self, usage: &TokenUsage) {
-        if usage.input_tokens == 0 && usage.output_tokens == 0 {
-            return;
-        }
-        self.input_tokens += usage.input_tokens;
-        self.output_tokens += usage.output_tokens;
-        if let Some(cached) = usage.cached_input_tokens {
-            self.cached_input_tokens += cached;
-            self.reported_cached = true;
-        }
-        if let Some(created) = usage.cache_creation_input_tokens {
-            self.cache_creation_input_tokens += created;
-            self.reported_cache_creation = true;
-        }
-        if let Some(reasoning) = usage.reasoning_tokens {
-            self.reasoning_tokens += reasoning;
-            self.reported_reasoning = true;
-        }
-        self.turns += 1;
+        self.answering.record(usage);
     }
 
-    /// The session-wide cache hit rate as a percentage string, or "unknown"
-    /// when no turn reported cached tokens (invariant 1 / deliverable 5).
-    /// The formula is `Σcached / Σinput` — the honest ratio of sums across
-    /// all turns, not a mean of per-turn rates. Turns that did not report
-    /// cache tokens contribute their input to the denominator but 0 to the
-    /// numerator, so the rate is a lower bound, not an invention.
-    fn cache_hit_rate(&self) -> String {
-        if !self.reported_cached || self.input_tokens == 0 {
-            return "unknown".into();
+    /// Folds one extraction call's usage into the learning total. `None` (the
+    /// provider reported nothing) skips entirely — absent is not zero, and
+    /// must stay distinguishable from a reported zero, which is recorded as a
+    /// counted call with zero tokens.
+    pub(crate) fn record_learning(&mut self, usage: Option<TokenUsage>) {
+        if let Some(usage) = usage {
+            self.learning_reported = true;
+            self.learning.record_call(&usage);
         }
-        let rate = (self.cached_input_tokens as f64 / self.input_tokens as f64) * 100.0;
-        format!("{rate:.0}%")
     }
 
-    /// Renders the session usage breakdown for `/usage`. Each the usage-accounting slice field shows
-    /// its total or `—` when no turn reported it; the hit rate shows the
-    /// formula so a reader knows what the number is (Q3, deliverable 4).
+    /// Renders the session usage breakdown for `/usage`. The answering section
+    /// is shown whenever there were answering turns; the learning section
+    /// appears only when an extraction call reported usage, so a session with
+    /// learning disabled renders exactly what it did before the learning total
+    /// existed. Each section states the hit-rate formula so a rate over a
+    /// merged denominator is never implied.
     pub(crate) fn render(&self) -> String {
-        if self.turns == 0 {
+        let answering_empty = self.answering.turns == 0;
+        let learning_empty = !self.learning_reported;
+        if answering_empty && learning_empty {
             return "No token usage reported yet this session.".into();
         }
-        let dash = "—";
-        let opt = |reported: bool, value: u64| -> String {
-            if reported {
-                value.to_string()
-            } else {
-                dash.into()
+        let mut out = String::new();
+        if !answering_empty {
+            out.push_str(&self.answering.render_section("Session token usage"));
+        }
+        if !learning_empty {
+            if !out.is_empty() {
+                out.push_str("\n\n");
             }
-        };
-        let rate = self.cache_hit_rate();
-        let formula = if self.reported_cached {
-            "Σcached / Σinput"
-        } else {
-            "Σcached / Σinput; no provider reported cache data"
-        };
-        format!(
-            "Session token usage ({turns} turn{plural}):\n\n\
-             \x20 Input tokens: {input}\n\
-             \x20 Output tokens: {output}\n\
-             \x20 Reasoning tokens: {reasoning}\n\
-             \x20 Cached input: {cached}\n\
-             \x20 Cache creation: {cache_creation}\n\
-             \x20 Cache hit rate: {rate} ({formula})",
-            turns = self.turns,
-            plural = if self.turns == 1 { "" } else { "s" },
-            input = self.input_tokens,
-            output = self.output_tokens,
-            reasoning = opt(self.reported_reasoning, self.reasoning_tokens),
-            cached = opt(self.reported_cached, self.cached_input_tokens),
-            cache_creation = opt(
-                self.reported_cache_creation,
-                self.cache_creation_input_tokens
-            ),
-            rate = rate,
-            formula = formula,
-        )
+            out.push_str(&self.learning.render_section("Learning call"));
+        }
+        out
     }
 }
 

@@ -39,6 +39,14 @@ pub struct AgentOutput {
     /// Token counts summed over every provider turn of this run (zero when
     /// the provider does not report usage).
     pub usage: crate::TokenUsage,
+    /// Token counts the post-turn extraction call reported, when it produced a
+    /// response. `None` covers both "no extraction ran" (learning disabled or
+    /// the gate declined) and "extraction ran but produced no response"
+    /// (provider error or timeout) — absent is not zero, so the recorder must
+    /// not fold it in as a row of zeros. Kept separate from `usage` so the
+    /// answering total's meaning is unchanged and `/usage` can label the two
+    /// calls apart.
+    pub learning_usage: Option<crate::TokenUsage>,
 }
 #[derive(Debug, Error)]
 pub enum AgentError {

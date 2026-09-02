@@ -7,6 +7,18 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **`/usage` counts the learning call, labelled apart from the answer.** Every
+  turn makes two provider calls: the one that answers, and the extraction call
+  that decides what to remember. Only the first was counted, so the session
+  total silently omitted a call you paid for — and because extraction is
+  invisible in the transcript, nothing else would have revealed the omission. A
+  total that quietly leaves something out makes every number beside it suspect.
+  The two are reported separately rather than merged, since the point is to see
+  what learning costs. A provider that reports no usage for the extraction call
+  still adds nothing to the total and stays distinguishable from one that
+  reported zeros; a timed-out extraction reports whatever the provider billed
+  rather than nothing at all.
+
 - **`contracts approve-all` approves the whole review queue — and reports
   every item it refused.** Candidates were only ever confirmable one at a time
   (`contracts decide --confirm <prefix>`), and a measured store held 26

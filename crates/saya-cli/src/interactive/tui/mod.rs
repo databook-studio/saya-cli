@@ -32,6 +32,7 @@ pub(super) mod types;
 mod ui;
 #[cfg(test)]
 mod ui_snapshot_tests;
+mod usage_totals;
 
 use super::session_state::SessionState;
 use crate::config::runtime::RuntimeConfig;
