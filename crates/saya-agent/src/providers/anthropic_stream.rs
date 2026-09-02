@@ -151,7 +151,7 @@ impl State {
                         );
                     } else if cb_type == "thinking" {
                         // A `thinking` content block can carry its initial text
-                        // inline on `content_block_start` (the the model-I/O design "whole"
+                        // inline on `content_block_start` (the model-I/O design "whole"
                         // spelling). Emit it as reasoning; the subsequent
                         // `thinking_delta`s append to it.
                         if let Some(thinking) = json["content_block"]["thinking"]
@@ -298,7 +298,7 @@ mod tests {
 
     /// Deliverable 4 (Anthropic, with): a `message_start` usage object
     /// carrying both cache numbers populates the two cache fields (distinct,
-    /// because reads and creation bill differently — Q2).
+    /// because reads and creation bill differently).
     #[test]
     fn message_start_with_cache_fields_populates_both() {
         let mut accumulated = TokenUsage::default();

@@ -191,9 +191,9 @@ fn safety_rejects_denied_functions_and_locks_in_every_position() {
         ("snow", "SELECT * FROM d.s.directory(@x)"),
         ("pg", "SELECT * FROM (SELECT 1 FROM t FOR UPDATE) s"),
         ("pg", "SELECT * FROM (SELECT 1 FROM t FOR SHARE) s"),
-        // Q3: a locking clause inside a scalar subquery expression.
+        // A locking clause inside a scalar subquery expression.
         ("pg", "SELECT (SELECT 1 FROM t FOR UPDATE)"),
-        // Invariant 1: a denied name reached through a CTE or a nested
+        // A denied name reached through a CTE or a nested
         // subquery's `FROM` is denied identically to the top-level case.
         (
             "pg",

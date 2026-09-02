@@ -94,7 +94,7 @@ pub(crate) async fn run_extraction(
 
     let request = build_extraction_prompt(record, model);
     // JSON mode lives here, not in the prompt builder: `build_extraction_prompt`
-    // assembles the prompt (its text is out of scope for this slice); the
+    // assembles the prompt; the
     // *policy* — "this is the extraction call, so the response must be a single
     // JSON object" — belongs to the caller that knows what the call is for.
     // On a reasoning model this stops the chain-of-thought we never read,
@@ -196,7 +196,7 @@ mod tests {
     }
 
     /// A provider that records the one `ChatRequest` `run_extraction` sent, so
-    /// the JSON-mode intent can be asserted at the call boundary (deliverable 4).
+    /// the JSON-mode intent can be asserted at the call boundary.
     struct RecordingProvider {
         response_text: String,
         captured: Mutex<Option<ChatRequest>>,

@@ -88,7 +88,7 @@ impl App {
     /// in `pending` and dispatches only after the first finishes (both results
     /// report). This guard is the backstop: should a `SqlTask` ever reach the
     /// dispatch handler while one is already running, it is refused with a
-    /// message instead of replacing the first receiver (invariant 2).
+    /// message instead of replacing the first receiver.
     pub(crate) fn admit_second_sql(&self) -> SecondSqlDecision {
         if self.sql_task.is_some() {
             SecondSqlDecision::Reject(
@@ -103,7 +103,7 @@ impl App {
     /// The worker thread is not joined and the connector has no cancellation
     /// token wired here, so the query keeps running **server-side**; its result
     /// lands on a dropped channel and is discarded. The message says exactly
-    /// that — it never claims the query was cancelled. (Q1, option 2.)
+    /// that — it never claims the query was cancelled.
     pub(crate) fn detach_sql_task(&mut self) {
         if let Some((_, _, started)) = self.sql_task.take() {
             // Release the status fields the bar reused while the query ran.
@@ -291,7 +291,7 @@ mod tests {
 
     /// Backstop guard: should a `SqlTask` reach the dispatch handler while one
     /// is already running, it is refused (first preserved, message shown) —
-    /// never a silent replacement (invariant 2).
+    /// never a silent replacement.
     #[test]
     fn second_sql_command_at_the_handler_is_rejected_not_silently_dropped() {
         let mut app = idle_app();
@@ -355,7 +355,7 @@ mod tests {
         assert!(app.transcript.blocks().is_empty());
     }
 
-    /// Invariant 1: a running direct-SQL command is visible. The status bar
+    /// A running direct-SQL command is visible. The status bar
     /// must render a spinner and a "running query" label while a query is in
     /// flight, so the user can tell "working" from "hung". Renders through the
     /// real `ui::draw` (the same path the snapshot tests use) onto a

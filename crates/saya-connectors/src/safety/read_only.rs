@@ -253,7 +253,7 @@ impl Visitor for Guard<'_> {
         match factor {
             // A table *function* in `FROM` (`SELECT * FROM pg_read_file(...)`)
             // carries arguments. Per-part matching makes schema qualification
-            // (`pg_catalog.pg_read_file`) no help — invariant 1.
+            // (`pg_catalog.pg_read_file`) no help.
             TableFactor::Table {
                 name,
                 args: Some(_),

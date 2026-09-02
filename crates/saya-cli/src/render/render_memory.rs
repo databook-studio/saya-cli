@@ -354,7 +354,7 @@ mod tests {
         );
     }
 
-    /// the batch-approve slice folded-in: the `/queue` pointer rides only the unconfirmed count. A
+    /// The `/queue` pointer rides only the unconfirmed count. A
     /// recall that supplied only confirmed claims must not nag, and the pre-existing
     /// silence rule stands — a `Ran`-and-found-nothing recall renders nothing at
     /// all (spec §4), so there is no pointer when there is nothing to point at.

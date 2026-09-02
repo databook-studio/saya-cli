@@ -5,7 +5,7 @@
 //! Every other shape failure (a non-array `terms`, a non-string element, more
 //! than `MAX_TERMS` entries, a non-string `table`) maps to `InvalidQueryArguments`
 //! — `ToolError` has no more-specific variant for these and lives in
-//! `saya-agent`, which this slice does not touch; see the SPEC REVIEW for 2b-3a.
+//! `saya-agent`, which this module does not touch.
 
 use saya_agent::ToolError;
 

@@ -5,7 +5,7 @@ mod cli;
 mod commands;
 mod config;
 mod connection;
-#[allow(dead_code)] // contract ops surface for the adapter slices (2b-2/3/4) not yet wired in
+#[allow(dead_code)] // contract ops surface, not yet wired into an adapter
 mod contracts;
 mod interactive;
 mod render;

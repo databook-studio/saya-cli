@@ -4,7 +4,7 @@
 //! dropping `RetrievedContract → ContractView` mapping — so the opaque
 //! `ProfileIdentity` never appears in a tool result (the DTO has no field for
 //! it). The agent sees the profile *name* the registry resolved, never the
-//! identity. See.claude/specs/spec-2b3a-agent-contract-tools.md §2.
+//! identity. See .claude/specs/spec-2b3a-agent-contract-tools.md §2.
 //!
 //! Also owns the empty-result shapes and the short reasons they carry: a tool
 //! that returns nothing tells the model *why*, so it does not retry the same

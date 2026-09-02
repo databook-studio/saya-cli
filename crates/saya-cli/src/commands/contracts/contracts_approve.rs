@@ -31,7 +31,7 @@ const STORE_UNAVAILABLE_MSG: &str = "Local state store unavailable; contracts co
 /// Approves the profile's queued candidates. `profile_name` is the
 /// human-facing name (renders); `identity` is what the store is read against —
 /// the same pair `resolve_profile` produces, with the opaque identity kept out
-/// of every message. Scope (Q1/Q3): the same bounded queue the user reads with
+/// of every message. Scope: the same bounded queue the user reads with
 /// `contracts queue` — default limit [`QUEUE_DEFAULT_LIMIT`], `limit`
 /// overridden and clamped inside [`review_queue`], active profile by default.
 pub(super) async fn approve_queue(
@@ -52,7 +52,7 @@ pub(super) async fn approve_queue(
             return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);
         }
     };
-    // Invariant 4: the user sees the exact set before anything happens — the
+    // The user sees the exact set before anything happens — the
     // same lines `/queue` shows, on every path, `--yes` or not.
     let items: Vec<_> = queued
         .iter()
@@ -65,7 +65,7 @@ pub(super) async fn approve_queue(
         format,
     );
     if queued.is_empty() {
-        // A clean no-op, not an error (deliverable 6).
+        // A clean no-op, not an error.
         return result("No candidates awaiting approval.".into(), format);
     }
     if !yes {
@@ -134,7 +134,7 @@ pub(super) async fn approve_queue(
         },
         format,
     );
-    // A partial batch is a success (invariant 3). Only a sweep that approved
+    // A partial batch is a success. Only a sweep that approved
     // nothing is the failure a script must see in the exit status.
     if approved == 0 {
         Ok(EXIT_CONTRACT_ERROR)
@@ -224,7 +224,7 @@ mod tests {
         (code, out, err)
     }
 
-    /// the batch-approve slice deliverable 5 at the command layer: a mixed batch with `--yes` —
+    /// A mixed batch with `--yes` —
     /// one candidate confirms (persisted), one is refused with its reason —
     /// reports the per-item outcomes and both counts, and exits 0 (a partial
     /// batch is a success, never a rollback). The refusal exercised here is the
@@ -283,7 +283,7 @@ mod tests {
         let (code, out, err) = run(&store, true).await;
 
         assert_eq!(code, 0, "a partial batch is a success; stderr: {err}");
-        // The preview named the set first (invariant 4)...
+        // The preview named the set first...
         assert!(
             out.contains("catalog.public.orders"),
             "preview shown: {out}"
@@ -305,7 +305,7 @@ mod tests {
         );
         //...and the summary carries both counts.
         assert!(out.contains("approved 1, refused 1"), "summary: {out}");
-        // The approval persisted despite the refusal (invariant 3).
+        // The approval persisted despite the refusal.
         let state = store
             .get_knowledge_item(pending.as_str())
             .await
@@ -360,7 +360,7 @@ mod tests {
     }
 
     /// An empty queue is a clean no-op: exit 0, one line, nothing approved
-    /// (deliverable 6 at the command layer).
+    /// (at the command layer).
     #[tokio::test]
     async fn empty_queue_is_a_clean_noop() {
         let root = std::env::temp_dir().join(format!(

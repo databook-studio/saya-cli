@@ -345,7 +345,7 @@ pub(crate) fn parse_contract_command(
 mod tests {
     use super::*;
 
-    /// the trap this slice removed, and the regression guard against its
+    /// the trap that was removed, and the regression guard against its
     /// return. Before the merge, `/contracts` and `/contract` were two *separate
     /// operations* distinguished only by a trailing `s`: `/contracts` was `List`
     /// and rejected any argument, `/contract` was `Show` and rejected none. A
@@ -455,7 +455,7 @@ mod tests {
     /// second operation. Whatever the argument, it routes to the same command
     /// `/contracts` produces — so the two names can no longer disagree. (Kept as
     /// an alias rather than removed so the TUI completion registry — mirrored by
-    /// `complete.rs`, outside this slice's owned paths — stays in lockstep; see
+    /// `complete.rs` — stays in lockstep; see
     /// the SPEC REVIEW.)
     #[test]
     fn contract_is_a_silent_alias_of_the_merged_command() {

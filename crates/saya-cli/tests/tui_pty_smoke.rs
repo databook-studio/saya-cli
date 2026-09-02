@@ -183,7 +183,7 @@ fn tui_paints_splash_with_memory_on_after_a_store_write() {
 #[test]
 fn tui_paints_splash_with_memory_on_after_schema_refresh() {
     // Cheapest reachability probe: a TCP connect to the docker postgres port.
-    // No docker CLI, no.env.saya, no provider key — just the port the
+    // No docker CLI, no .env.saya, no provider key — just the port the
     // container would listen on. Unreachable ⇒ skip, never fail.
     const PAGILA: &str = "127.0.0.1:5434";
     if !tcp_reachable(PAGILA, Duration::from_secs(1)) {
@@ -517,7 +517,7 @@ fn write_docker_config(home: &Path) -> ScratchConfig {
     let connections = home.join("connections.toml");
     std::fs::write(
         &connections,
-        // Mirrors.saya/connections.toml's docker_postgres profile. The
+        // Mirrors .saya/connections.toml's docker_postgres profile. The
         // password is an env reference to DOCKER_POSTGRES_PASSWORD_ENV (the
         // env var name, not the Rust const) — run_saya_schema_refresh sets
         // that env var in the child; the value is never inlined in config.

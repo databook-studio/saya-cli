@@ -213,7 +213,7 @@ pub(crate) fn run(
 
         // Advance the spinner while anything is in flight. `is_busy()` covers both an
         // agent stream and a direct-SQL command, so the status bar shows a
-        // spinner while a query runs too (invariant 1). `drain_stream` is only
+        // spinner while a query runs too. `drain_stream` is only
         // meaningful for an agent stream — a SQL task has no channel messages —
         // so it is gated on the stream itself.
         if app.is_busy() {
@@ -250,14 +250,14 @@ pub(crate) fn run(
                     // runs is held until the first finishes. This guard is the
                     // backstop — should a SqlTask reach the handler while one
                     // is already running, refuse rather than silently drop the
-                    // first result (invariant 2).
+                    // first result.
                     match app.admit_second_sql() {
                         application::SecondSqlDecision::Start => {
                             let started = std::time::Instant::now();
                             // Share the existing `Arc<RuntimeConfig>` instead of
                             // deep-cloning the whole config (resolved plaintext
                             // secrets included) onto a detached thread per
-                            // command (invariant 3).
+                            // command.
                             app.sql_task = Some((
                                 sql_task::spawn(Arc::clone(&app.runtime), task.clone()),
                                 task,
@@ -265,7 +265,7 @@ pub(crate) fn run(
                             ));
                             // Reuse the agent status fields so the status bar
                             // (which reads them) shows "running query Ns" with
-                            // a spinner while the query runs (invariant 1). A
+                            // a spinner while the query runs. A
                             // SQL task and an agent stream never run
                             // concurrently — the gate prevents dispatch while
                             // either is busy — so these fields are free to reuse.

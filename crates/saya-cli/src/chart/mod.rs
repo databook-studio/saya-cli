@@ -51,7 +51,7 @@ pub(crate) fn write_html(html: &str, path: &std::path::Path) -> Result<(), Strin
     std::fs::write(path, html).map_err(|e| format!("failed to write chart file: {e}"))
 }
 
-/// Opens `path` in the user's default application (browser for.html).
+/// Opens `path` in the user's default application (browser for .html).
 pub(crate) fn open_file(path: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
     #[cfg(target_os = "macos")]
