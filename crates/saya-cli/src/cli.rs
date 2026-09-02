@@ -80,6 +80,11 @@ pub struct GlobalOptions {
     /// Disable colored output (overrides the detected terminal capability).
     #[arg(long, global = true)]
     pub no_color: bool,
+    /// Show the model's chain-of-thought in the transcript as it streams.
+    /// Off by default: thinking is verbose and restates database contents in
+    /// prose. Display only — reasoning is never persisted to a session file.
+    #[arg(long, global = true)]
+    pub show_thinking: bool,
     /// Print extraction-trace diagnostics: why a learned fact was or was not
     /// recorded after a turn (the "memory didn't record" gate).
     #[arg(long, short, global = true)]
