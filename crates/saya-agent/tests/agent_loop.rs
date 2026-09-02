@@ -44,10 +44,10 @@ impl ChatProvider for HistoryProvider {
         request: ChatRequest,
     ) -> Result<ChatResponse, saya_agent::ProviderError> {
         self.requests.lock().unwrap().push(request);
-        Ok(ChatResponse {
-            message: ChatMessage::text("assistant", "second answer"),
-            ..Default::default()
-        })
+        Ok(ChatResponse::new(ChatMessage::text(
+            "assistant",
+            "second answer",
+        )))
     }
 }
 
@@ -169,23 +169,17 @@ async fn tool_call_round_trip_is_deterministic_and_emits_safe_events() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({"sql":"select 1"}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "There is one result."),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql":"select 1"}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "There is one result.")),
         ]),
     };
     let output = run_agent(
@@ -211,19 +205,16 @@ async fn tool_call_round_trip_is_deterministic_and_emits_safe_events() {
 #[tokio::test]
 async fn tool_call_limits_stop_run_before_unbounded_execution() {
     let provider = MockProvider {
-        responses: Mutex::new(vec![ChatResponse {
-            message: ChatMessage {
-                role: "assistant".into(),
-                content: String::new(),
-                tool_calls: vec![ToolCall {
-                    id: "call-1".into(),
-                    name: "bounded_sql_query".into(),
-                    arguments: serde_json::json!({}),
-                }],
-                tool_call_id: None,
-            },
-            ..Default::default()
-        }]),
+        responses: Mutex::new(vec![ChatResponse::new(ChatMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                id: "call-1".into(),
+                name: "bounded_sql_query".into(),
+                arguments: serde_json::json!({}),
+            }],
+            tool_call_id: None,
+        })]),
     };
     let error = run_agent(
         &provider,
@@ -249,23 +240,17 @@ async fn tool_call_limits_stop_run_before_unbounded_execution() {
 async fn unknown_tool_call_feeds_an_error_result_and_the_turn_recovers() {
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "shell".into(),
-                        arguments: serde_json::json!({}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "recovered"),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "recovered")),
         ]),
     };
     let tools = MockTools {
@@ -297,23 +282,17 @@ async fn unknown_tool_call_feeds_an_error_result_and_the_turn_recovers() {
 async fn non_object_tool_arguments_are_recovered_not_fatal() {
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "schema_discovery".into(),
-                        arguments: serde_json::json!("not-an-object"),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "recovered"),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "schema_discovery".into(),
+                    arguments: serde_json::json!("not-an-object"),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "recovered")),
         ]),
     };
     let tools = MockTools {
@@ -336,19 +315,16 @@ async fn non_object_tool_arguments_are_recovered_not_fatal() {
 #[tokio::test]
 async fn missing_tool_call_id_remains_fail_closed() {
     let provider = MockProvider {
-        responses: Mutex::new(vec![ChatResponse {
-            message: ChatMessage {
-                role: "assistant".into(),
-                content: String::new(),
-                tool_calls: vec![ToolCall {
-                    id: String::new(),
-                    name: "shell".into(),
-                    arguments: serde_json::json!({}),
-                }],
-                tool_call_id: None,
-            },
-            ..Default::default()
-        }]),
+        responses: Mutex::new(vec![ChatResponse::new(ChatMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                id: String::new(),
+                name: "shell".into(),
+                arguments: serde_json::json!({}),
+            }],
+            tool_call_id: None,
+        })]),
     };
     let error = run_agent(
         &provider,
@@ -370,10 +346,7 @@ async fn missing_tool_call_id_remains_fail_closed() {
 #[tokio::test]
 async fn empty_provider_response_is_invalid() {
     let provider = MockProvider {
-        responses: Mutex::new(vec![ChatResponse {
-            message: ChatMessage::text("assistant", ""),
-            ..Default::default()
-        }]),
+        responses: Mutex::new(vec![ChatResponse::new(ChatMessage::text("assistant", ""))]),
     };
     let error = run_agent(
         &provider,
@@ -398,23 +371,17 @@ async fn injected_denial_does_not_execute_query_or_persist_rows() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({"sql":"select secret"}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "The query was denied."),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql":"select secret"}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "The query was denied.")),
         ]),
     };
     let output = run_agent(
@@ -522,23 +489,17 @@ async fn bounded_sql_query_all_sets_flag_and_schema_discovery_does_not() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "bounded_sql_query_all".into(),
-                        arguments: serde_json::json!({"sql":"select 1"}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "Results across databases."),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "bounded_sql_query_all".into(),
+                    arguments: serde_json::json!({"sql":"select 1"}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "Results across databases.")),
         ]),
     };
     let output = run_agent(
@@ -560,23 +521,17 @@ async fn bounded_sql_query_all_sets_flag_and_schema_discovery_does_not() {
     let calls_schema = Arc::new(Mutex::new(Vec::new()));
     let provider_schema = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-2".into(),
-                        name: "schema_discovery".into(),
-                        arguments: serde_json::json!({}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "Discovered schema."),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-2".into(),
+                    name: "schema_discovery".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "Discovered schema.")),
         ]),
     };
     let output_schema = run_agent(
@@ -624,30 +579,24 @@ async fn approval_free_tool_calls_run_concurrently_and_results_stay_ordered() {
 
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![
-                        ToolCall {
-                            id: "call-a".into(),
-                            name: "schema_discovery".into(),
-                            arguments: serde_json::json!({"which": 1}),
-                        },
-                        ToolCall {
-                            id: "call-b".into(),
-                            name: "schema_discovery".into(),
-                            arguments: serde_json::json!({"which": 2}),
-                        },
-                    ],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "parallel done"),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![
+                    ToolCall {
+                        id: "call-a".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({"which": 1}),
+                    },
+                    ToolCall {
+                        id: "call-b".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({"which": 2}),
+                    },
+                ],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "parallel done")),
         ]),
     };
     let tools = BarrierTools {
@@ -725,25 +674,19 @@ async fn execute_batch_caps_simultaneous_concurrency() {
     const N: usize = 12;
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: (0..N)
-                        .map(|index| ToolCall {
-                            id: format!("call-{index}"),
-                            name: "schema_discovery".into(),
-                            arguments: serde_json::json!({"which": index}),
-                        })
-                        .collect(),
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: (0..N)
+                    .map(|index| ToolCall {
+                        id: format!("call-{index}"),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({"which": index}),
+                    })
+                    .collect(),
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "done")),
         ]),
     };
     let in_flight = Arc::new(AtomicUsize::new(0));
@@ -854,21 +797,13 @@ async fn token_usage_sums_across_turns_into_the_output() {
                         name: "schema_discovery".into(),
                         arguments: serde_json::json!({}),
                     }])),
-                    Ok(ProviderEvent::Usage(TokenUsage {
-                        input_tokens: 3,
-                        output_tokens: 7,
-                        ..Default::default()
-                    })),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(3, 7))),
                     Ok(ProviderEvent::Done),
                 ]
             } else {
                 vec![
                     Ok(ProviderEvent::TextDelta("final answer".into())),
-                    Ok(ProviderEvent::Usage(TokenUsage {
-                        input_tokens: 5,
-                        output_tokens: 9,
-                        ..Default::default()
-                    })),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(5, 9))),
                     Ok(ProviderEvent::Done),
                 ]
             };
@@ -891,14 +826,7 @@ async fn token_usage_sums_across_turns_into_the_output() {
     .await
     .unwrap();
     assert_eq!(output.answer, "final answer");
-    assert_eq!(
-        output.usage,
-        TokenUsage {
-            input_tokens: 8,
-            output_tokens: 16,
-            ..Default::default()
-        }
-    );
+    assert_eq!(output.usage, TokenUsage::new(8, 16));
 }
 
 /// Cache and reasoning counts must survive the run, not just the turn. Each is
@@ -941,13 +869,11 @@ async fn optional_usage_counts_survive_the_run_and_absent_stays_absent() {
                         name: "schema_discovery".into(),
                         arguments: serde_json::json!({}),
                     }])),
-                    Ok(ProviderEvent::Usage(TokenUsage {
-                        input_tokens: 3,
-                        output_tokens: 7,
-                        cached_input_tokens: Some(2),
-                        reasoning_tokens: Some(4),
-                        ..Default::default()
-                    })),
+                    Ok(ProviderEvent::Usage(
+                        TokenUsage::new(3, 7)
+                            .with_cached_input(Some(2))
+                            .with_reasoning(Some(4)),
+                    )),
                     Ok(ProviderEvent::Done),
                 ]
             } else {
@@ -955,12 +881,9 @@ async fn optional_usage_counts_survive_the_run_and_absent_stays_absent() {
                 // reset what the first turn reported, nor count as a zero.
                 vec![
                     Ok(ProviderEvent::TextDelta("final answer".into())),
-                    Ok(ProviderEvent::Usage(TokenUsage {
-                        input_tokens: 5,
-                        output_tokens: 9,
-                        cached_input_tokens: Some(6),
-                        ..Default::default()
-                    })),
+                    Ok(ProviderEvent::Usage(
+                        TokenUsage::new(5, 9).with_cached_input(Some(6)),
+                    )),
                     Ok(ProviderEvent::Done),
                 ]
             };
@@ -1027,24 +950,18 @@ async fn runaway_context_is_trimmed_not_aborted_and_the_bound_still_binds() {
                 was
             };
             if turn < 4 {
-                return Ok(ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: format!("call-{turn}"),
-                            name: "schema_discovery".into(),
-                            arguments: serde_json::json!({"padding": "x".repeat(2_048)}),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                });
+                return Ok(ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: format!("call-{turn}"),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({"padding": "x".repeat(2_048)}),
+                    }],
+                    tool_call_id: None,
+                }));
             }
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
         }
     }
 
@@ -1145,24 +1062,21 @@ async fn single_oversized_tool_result_does_not_abort_the_run() {
                 was
             };
             if turn == 0 {
-                return Ok(ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "schema_discovery".into(),
-                            arguments: serde_json::json!({}),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                });
+                return Ok(ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    tool_call_id: None,
+                }));
             }
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "summarised the result"),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "summarised the result",
+            )))
         }
     }
 
@@ -1249,24 +1163,21 @@ async fn tool_failure_details_reach_the_model() {
             let turn = turns.len();
             turns.push(request);
             if turn == 0 {
-                return Ok(ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "schema_discovery".into(),
-                            arguments: serde_json::json!({}),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                });
+                return Ok(ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    tool_call_id: None,
+                }));
             }
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "adjusted"),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "adjusted",
+            )))
         }
     }
 
@@ -1357,23 +1268,17 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_alone() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "open_browser".into(),
-                        arguments: serde_json::json!({}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "open_browser".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "done")),
         ]),
     };
     let sink = RecordingSink {
@@ -1411,30 +1316,24 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_in_a_batch() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![
-                        ToolCall {
-                            id: "call-a".into(),
-                            name: "open_browser".into(),
-                            arguments: serde_json::json!({}),
-                        },
-                        ToolCall {
-                            id: "call-b".into(),
-                            name: "schema_discovery".into(),
-                            arguments: serde_json::json!({}),
-                        },
-                    ],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![
+                    ToolCall {
+                        id: "call-a".into(),
+                        name: "open_browser".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                    ToolCall {
+                        id: "call-b".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                ],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "done")),
         ]),
     };
     let definitions = {

@@ -25,6 +25,7 @@ pub const MAX_STREAM_BYTES: usize = 2 * 1024 * 1024;
 /// that sum or copy them are unaffected. The struct stays `Copy` because every
 /// field is `Copy`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -53,6 +54,46 @@ pub struct TokenUsage {
     /// reasoning inside its output tokens (no separate field) and Ollama
     /// reports none; both leave this `None`.
     pub reasoning_tokens: Option<u64>,
+}
+
+impl TokenUsage {
+    /// The two counts every provider reports. The optional cache and reasoning
+    /// counts stay absent — absent meaning "not reported", which is not the
+    /// same as a reported zero — until a provider fills them in. This is the
+    /// way in from another crate, where the struct is `#[non_exhaustive]` and a
+    /// literal will not compile.
+    pub fn new(input_tokens: u64, output_tokens: u64) -> Self {
+        Self {
+            input_tokens,
+            output_tokens,
+            ..Self::default()
+        }
+    }
+
+    /// The same counts with a cache-read figure attached. Takes an `Option` so
+    /// a caller passing `None` states "the provider did not report this",
+    /// which is not the same as `Some(0)`, a cold cache.
+    #[must_use]
+    pub fn with_cached_input(mut self, cached_input_tokens: Option<u64>) -> Self {
+        self.cached_input_tokens = cached_input_tokens;
+        self
+    }
+
+    /// The same counts with a cache-write figure attached; `None` means
+    /// unreported, as above.
+    #[must_use]
+    pub fn with_cache_creation(mut self, cache_creation_input_tokens: Option<u64>) -> Self {
+        self.cache_creation_input_tokens = cache_creation_input_tokens;
+        self
+    }
+
+    /// The same counts with a reasoning figure attached; `None` means
+    /// unreported, as above.
+    #[must_use]
+    pub fn with_reasoning(mut self, reasoning_tokens: Option<u64>) -> Self {
+        self.reasoning_tokens = reasoning_tokens;
+        self
+    }
 }
 
 /// One increment from a provider stream.

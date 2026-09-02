@@ -106,10 +106,8 @@ fn read_request(stream: &mut TcpStream) -> String {
 }
 
 fn request() -> ChatRequest {
-    ChatRequest {
-        model: "test-model".into(),
-        messages: vec![ChatMessage::text("user", "hello")],
-        tools: vec![ToolDefinition {
+    ChatRequest::new("test-model", vec![ChatMessage::text("user", "hello")]).with_tools(vec![
+        ToolDefinition {
             name: "schema_discovery".into(),
             description: "schema".into(),
             read_only: true,
@@ -120,9 +118,8 @@ fn request() -> ChatRequest {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
-        }],
-        ..Default::default()
-    }
+        },
+    ])
 }
 fn openai(base: String) -> OpenAiCompatibleProvider {
     OpenAiCompatibleProvider::new(
@@ -482,7 +479,7 @@ async fn anthropic_stream_surfaces_cumulative_token_usage() {
     handle.join().unwrap();
     let position = events
         .iter()
-        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage { input_tokens: 12, output_tokens: 34, ..Default::default() }))
+        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage::new(12, 34)))
         .expect("usage event with both counters must arrive");
     assert!(
         matches!(events[position + 1], ProviderEvent::Done),
@@ -527,11 +524,7 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
         .unwrap();
     let events = drain(&mut stream).await;
     handle2.join().unwrap();
-    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
-        input_tokens: 5,
-        output_tokens: 6,
-        ..Default::default()
-    })));
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage::new(5, 6))));
 }
 
 #[tokio::test]
@@ -551,11 +544,7 @@ async fn ollama_stream_surfaces_eval_counts() {
         .unwrap();
     let events = drain(&mut stream).await;
     handle.join().unwrap();
-    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
-        input_tokens: 9,
-        output_tokens: 11,
-        ..Default::default()
-    })));
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage::new(9, 11))));
 }
 
 #[tokio::test]
