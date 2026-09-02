@@ -139,7 +139,7 @@ pub(crate) async fn run_prompt_with_inputs(
         permit_candidate_writes: learning.permit_candidate_writes,
         context_byte_budget: runtime.resolved.ai.context_byte_budget,
     };
-    let output = run_agent_with_sink(
+    let mut output = run_agent_with_sink(
         &*provider,
         &tools,
         request,
@@ -160,6 +160,10 @@ pub(crate) async fn run_prompt_with_inputs(
         sink.emit(AgentEvent::knowledge_overridden(overridden.clone()))
             .await;
     }
+    // The usage the extraction call reported, if any. Stays `None` when
+    // learning is disabled, the gate declined, or the call produced no
+    // response (provider error or timeout) — absent is not zero.
+    let mut learning_usage: Option<saya_agent::TokenUsage> = None;
     // Post-turn structured extraction (Safety Property 1: fail-soft isolation).
     if learning.permit_candidate_writes
         && let Some(store) = tools.state_db()
@@ -203,35 +207,41 @@ pub(crate) async fn run_prompt_with_inputs(
             let extraction_elapsed = Some(extraction_started.elapsed());
 
             match extraction_res {
-                // Happy path: emit one proposal event per persisted claim.
-                Ok(Ok(dtos)) => {
-                    trace_extraction(
-                        "ok",
-                        object_count,
-                        Some(dtos.len()),
-                        None,
-                        extraction_elapsed,
-                    );
-                    for dto in dtos {
-                        sink.emit(AgentEvent::knowledge_proposed(dto)).await;
+                // Extraction completed: the outcome carries the proposals and
+                // the usage the provider reported, even when parsing or
+                // ingestion then failed (tokens may have been billed first).
+                Ok(outcome) => {
+                    learning_usage = outcome.usage;
+                    match outcome.dtos {
+                        Ok(dtos) => {
+                            trace_extraction(
+                                "ok",
+                                object_count,
+                                Some(dtos.len()),
+                                None,
+                                extraction_elapsed,
+                            );
+                            for dto in dtos {
+                                sink.emit(AgentEvent::knowledge_proposed(dto)).await;
+                            }
+                        }
+                        Err(error) => {
+                            trace_extraction(
+                                "failed",
+                                object_count,
+                                Some(0),
+                                Some(&error.to_string()),
+                                extraction_elapsed,
+                            );
+                            sink.emit(AgentEvent::knowledge_learning_skipped(
+                                saya_agent::LearningSkipReason::Failed,
+                            ))
+                            .await;
+                        }
                     }
                 }
-                // Extraction errored (provider/parse/ingest). Surface the skip;
-                // never propagate (Safety Property 1: fail-soft isolation).
-                Ok(Err(error)) => {
-                    trace_extraction(
-                        "failed",
-                        object_count,
-                        Some(0),
-                        Some(&error.to_string()),
-                        extraction_elapsed,
-                    );
-                    sink.emit(AgentEvent::knowledge_learning_skipped(
-                        saya_agent::LearningSkipReason::Failed,
-                    ))
-                    .await;
-                }
                 // Timeout fired before extraction returned; same fail-soft rule.
+                // No response was produced, so there is no usage to report.
                 Err(_) => {
                     trace_extraction("timed_out", object_count, Some(0), None, extraction_elapsed);
                     sink.emit(AgentEvent::knowledge_learning_skipped(
@@ -251,6 +261,13 @@ pub(crate) async fn run_prompt_with_inputs(
                 None,
             );
         }
+    }
+
+    // Attach the extraction usage to the output so both the TUI and headless
+    // recorders can fold it into the learning total. A failed answering call
+    // leaves the output as `Err`, so the learning usage is simply dropped.
+    if let Ok(out) = output.as_mut() {
+        out.learning_usage = learning_usage;
     }
 
     output.map_err(|error| match error {

@@ -149,7 +149,12 @@ fn handle_line(
                     // Feed the session accumulator so /usage is honest in
                     // headless mode too (the TUI does this in drain_stream).
                     state.usage.record(&output.usage);
-                    SessionAction::Agent(output)
+                    // Fold the extraction call's usage into the learning total
+                    // before the output moves into the action. `None` (no
+                    // extraction or no response) records nothing, so a session
+                    // with learning disabled is unaffected.
+                    state.usage.record_learning(output.learning_usage);
+                    SessionAction::Agent(*output)
                 }
                 Ok(PromptResult::Cancelled) => SessionAction::Cancelled,
                 Err(error) => SessionAction::Error(error.to_string()),
