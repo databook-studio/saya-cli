@@ -1,6 +1,10 @@
 use crate::{ChatRequest, ReasoningEffort};
 use serde_json::{Value, json};
 
+/// Anthropic's documented floor for `thinking.budget_tokens`; a smaller budget
+/// is refused, so a ceiling with no room for it means no thinking at all.
+const MIN_THINKING_BUDGET: u32 = 1024;
+
 pub(super) fn build_body(request: ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Value {
     let mut system_prompts = Vec::new();
     let mut messages = Vec::new();
@@ -102,20 +106,27 @@ pub(super) fn build_body(request: ChatRequest, max_tokens: u32, temperature: Opt
         body["tools"] = json!(tools);
     }
 
-    // Anthropic's effort lever is a thinking token budget. `budget_tokens` minimum
-    // is 1024 (Anthropic API docs); each level doubles from that floor —
+    // Anthropic's effort lever is a thinking token budget. Each level doubles
+    // from the documented minimum —
     // Minimal=1024, Low=2048, Medium=4096, High=8192 — so a higher effort asks for
     // proportionally more thinking. `Default` sends nothing so the endpoint's own
     // configuration wins.
     if request.reasoning_effort != ReasoningEffort::Default {
-        let budget_tokens = match request.reasoning_effort {
-            ReasoningEffort::Minimal => 1024,
+        let asked = match request.reasoning_effort {
+            ReasoningEffort::Minimal => MIN_THINKING_BUDGET,
             ReasoningEffort::Low => 2048,
             ReasoningEffort::Medium => 4096,
             ReasoningEffort::High => 8192,
             ReasoningEffort::Default => 0,
         };
-        body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget_tokens });
+        // Anthropic requires the budget to sit strictly below `max_tokens` and
+        // rejects the call otherwise, so cap it to the room available. A ceiling
+        // too low for the minimum budget cannot carry thinking at all — omit the
+        // field rather than send a request the endpoint will refuse.
+        let budget_tokens = asked.min(max_tokens.saturating_sub(1));
+        if budget_tokens >= MIN_THINKING_BUDGET {
+            body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget_tokens });
+        }
     }
 
     body
@@ -201,12 +212,12 @@ mod tests {
         assert_eq!(body["tools"][0]["input_schema"], json!({"type": "object"}));
     }
 
-    /// Q2: Anthropic has no direct `response_format` equivalent (it shapes output
+    /// Anthropic has no direct `response_format` equivalent (it shapes output
     /// through tools), so this provider deliberately ignores the JSON hint and
     /// never emits a `response_format` field — even when the caller asked for
     /// `JsonObject`. Ignoring degrades to today's behaviour (the prompt already
     /// asks for JSON, `strip_markdown_fences` handles fences), never to an error
-    /// (invariant 3). This test pins the "deliberately omits" decision so a
+    ///. This test pins the "deliberately omits" decision so a
     /// future change has to reconsider it consciously.
     #[test]
     fn json_hint_is_deliberately_omitted_from_anthropic_body() {
@@ -240,12 +251,54 @@ mod tests {
             reasoning_effort: ReasoningEffort::Minimal,
             ..Default::default()
         };
-        let body = build_body(request, 1024, None);
+        let body = build_body(request, 4096, None);
         assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["thinking"]["budget_tokens"], 1024);
     }
 
-    /// Q2: a `Default` effort request omits the `thinking` field entirely, so
+    /// Anthropic rejects a request whose thinking budget is not strictly below
+    /// `max_tokens`, so the budget is capped to leave room rather than sent as
+    /// asked. Without this, the default 4096 ceiling makes `Medium` (4096) and
+    /// `High` (8192) invalid on every call.
+    #[test]
+    fn a_thinking_budget_stays_below_the_output_ceiling() {
+        let request = ChatRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![ChatMessage::text("user", "think hard")],
+            tools: Vec::new(),
+            reasoning_effort: ReasoningEffort::High,
+            ..Default::default()
+        };
+        let body = build_body(request, 4096, None);
+        let budget = body["thinking"]["budget_tokens"]
+            .as_u64()
+            .expect("a budget");
+        assert!(
+            budget < 4096,
+            "budget {budget} must stay under max_tokens or Anthropic rejects the call"
+        );
+    }
+
+    /// When the output ceiling leaves no room for Anthropic's 1024-token
+    /// minimum budget, asking for thinking at all would make the request
+    /// invalid — so the field is omitted and the call still works.
+    #[test]
+    fn no_thinking_field_when_the_ceiling_cannot_fit_the_minimum_budget() {
+        let request = ChatRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![ChatMessage::text("user", "extract")],
+            tools: Vec::new(),
+            reasoning_effort: ReasoningEffort::Minimal,
+            ..Default::default()
+        };
+        let body = build_body(request, 1024, None);
+        assert!(
+            body.get("thinking").is_none(),
+            "a ceiling with no room for the minimum budget must omit thinking: {body}"
+        );
+    }
+
+    /// A `Default` effort request omits the `thinking` field entirely, so
     /// the default path sends nothing and the endpoint's own configuration wins.
     #[test]
     fn default_effort_request_omits_thinking_on_wire() {
