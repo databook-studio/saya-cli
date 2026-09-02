@@ -300,10 +300,10 @@ impl ChatProvider for AnswerProvider {
     }
     async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.log.lock().unwrap().push("provider");
-        Ok(ChatResponse {
-            message: ChatMessage::text("assistant", self.answer),
-            ..Default::default()
-        })
+        Ok(ChatResponse::new(ChatMessage::text(
+            "assistant",
+            self.answer,
+        )))
     }
 }
 
@@ -856,10 +856,7 @@ impl ChatProvider for TurnAndExtractionProvider {
             if idx < self.turn_steps.len() {
                 Ok(self.turn_steps[idx].clone())
             } else {
-                Ok(ChatResponse {
-                    message: ChatMessage::text("assistant", "done"),
-                    ..Default::default()
-                })
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
             }
         }
     }
@@ -896,37 +893,28 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table contains customer orders.",
-                    ),
-                    ..Default::default()
-                },
-            ],
-            extraction_response: Ok(ChatResponse {
-                message: ChatMessage::text(
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
                     "assistant",
-                    r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
-                ),
-                ..Default::default()
-            }),
+                    "The orders table contains customer orders.",
+                )),
+            ],
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
+            ))),
             extraction_calls: Mutex::new(0),
         }),
         registry: registry_for("analytics", &identity),
@@ -1018,29 +1006,23 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table was inspected successfully.",
-                    ),
-                    ..Default::default()
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
+                    "assistant",
+                    "The orders table was inspected successfully.",
+                )),
             ],
             extraction_response: Err(ProviderError::configuration("http 500 error")),
             extraction_calls: Mutex::new(0),
@@ -1096,31 +1078,25 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
     let provider = Arc::new(TurnAndExtractionProvider {
         turn_step: Mutex::new(0),
         turn_steps: vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({
-                            "connection": "analytics",
-                            "sql": "SELECT id, status FROM catalog.public.orders",
-                        }),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "query completed"),
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({
+                        "connection": "analytics",
+                        "sql": "SELECT id, status FROM catalog.public.orders",
+                    }),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "query completed")),
         ],
-        extraction_response: Ok(ChatResponse {
-            message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
-            ..Default::default()
-        }),
+        extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+            "assistant",
+            r#"{"proposals": []}"#,
+        ))),
         extraction_calls: Mutex::new(0),
     });
 
@@ -1245,26 +1221,20 @@ async fn test_anti_self_reinforcement_end_to_end() {
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, created_at FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                },
-                ChatResponse {
-                    message: ChatMessage::text("assistant", "Order dates checked."),
-                    ..Default::default()
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, created_at FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text("assistant", "Order dates checked.")),
             ],
             // The model re-infers the *same* default-time claim recall already
             // supplied (`default_time_column=created_at` → slot `table.default_time`,
@@ -1272,13 +1242,10 @@ async fn test_anti_self_reinforcement_end_to_end() {
             // drops it as an exact duplicate of the supplied claim — the property
             // this test exists for. A different-slot inference would NOT be dropped,
             // so the fixture must duplicate the supplied slot+value to exercise it.
-            extraction_response: Ok(ChatResponse {
-                message: ChatMessage::text(
-                    "assistant",
-                    r#"{"proposals": [{"object_id": "T0", "slot": "table.default_time", "value": "created_at", "origin": "assistant_inferred"}]}"#,
-                ),
-                ..Default::default()
-            }),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.default_time", "value": "created_at", "origin": "assistant_inferred"}]}"#,
+            ))),
             extraction_calls: Mutex::new(0),
         }),
         registry: registry_for("analytics", &identity),
@@ -1500,24 +1467,18 @@ impl ChatProvider for QueryProvider {
         let mut calls = self.calls.lock().unwrap();
         if *calls == 0 {
             *calls = 1;
-            Ok(ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({ "sql": self.sql }),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({ "sql": self.sql }),
+                }],
+                tool_call_id: None,
+            }))
         } else {
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
         }
     }
 }
@@ -1945,10 +1906,10 @@ impl ChatProvider for SleepingExtractionProvider {
                 super::super::learning::EXTRACTION_TIMEOUT + std::time::Duration::from_secs(1),
             )
             .await;
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": []}"#,
+            )))
         } else {
             let mut step = self.turn_step.lock().unwrap();
             let idx = *step;
@@ -1956,10 +1917,7 @@ impl ChatProvider for SleepingExtractionProvider {
             if idx < self.turn_steps.len() {
                 Ok(self.turn_steps[idx].clone())
             } else {
-                Ok(ChatResponse {
-                    message: ChatMessage::text("assistant", "done"),
-                    ..Default::default()
-                })
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
             }
         }
     }
@@ -1998,29 +1956,23 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
         provider: Box::new(SleepingExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table contains customer orders.",
-                    ),
-                    ..Default::default()
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
+                    "assistant",
+                    "The orders table contains customer orders.",
+                )),
             ],
             extraction_calls: Mutex::new(0),
         }),
@@ -2091,10 +2043,7 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         // A trivial turn with no tool call and a short answer: the gate would
         // decline (no object activity, <15-char answer). Memory is Off, so the
         // extraction block is never entered regardless — proving the silent path.
-        turn_steps: vec![ChatResponse {
-            message: ChatMessage::text("assistant", "ok"),
-            ..Default::default()
-        }],
+        turn_steps: vec![ChatResponse::new(ChatMessage::text("assistant", "ok"))],
         extraction_calls: Mutex::new(0),
     });
     struct SharedProvider(Arc<SleepingExtractionProvider>);
@@ -2202,29 +2151,23 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                    ..Default::default()
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table was inspected successfully.",
-                    ),
-                    ..Default::default()
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
+                    "assistant",
+                    "The orders table was inspected successfully.",
+                )),
             ],
             extraction_response: Err(ProviderError::configuration("http 500 error")),
             extraction_calls: Mutex::new(0),

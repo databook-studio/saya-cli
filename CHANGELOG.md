@@ -5,6 +5,25 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Changed (breaking, for users of the library crates)
+
+- **`ChatRequest`, `ChatResponse` and `TokenUsage` are now `#[non_exhaustive]`,
+  and are built through constructors.** These three types gained fields in this
+  release — three on `TokenUsage`, two each on the others — and every addition
+  broke struct-literal construction in any crate outside `saya-agent`. Marking
+  them stops that recurring: fields may be added from now on without breaking a
+  downstream build. The enums beside them were already `#[non_exhaustive]`; the
+  structs were not, which was an oversight rather than a decision.
+
+  Construct them with `ChatRequest::new(model, messages)`,
+  `ChatResponse::new(message)` and `TokenUsage::new(input, output)`, then attach
+  the optional parts: `with_tools`, `with_response_format`,
+  `with_reasoning_effort` on a request, and `with_cached_input`,
+  `with_cache_creation`, `with_reasoning` on usage. The usage builders take
+  `Option<u64>` so a call site still says plainly whether a count was reported
+  at all — `None` is "the provider did not say", which is not `Some(0)`.
+  Reading these types is unchanged; only construction moves.
+
 ### Added
 
 - **Show the model's chain-of-thought on demand.** A new `[ai] show_thinking`
@@ -22,7 +41,10 @@ All notable changes to SAYA CLI are recorded here. This project follows
   transcript) and `Ctrl+Y` (copy last answer) exclude thinking blocks — the
   clipboard is a channel off-screen, and model prose that may restate row
   values belongs on screen to the person already reading the answer, not on
-  the system clipboard; `/help thinking` names this. The `/thinking` toggle
+  the system clipboard; `/help thinking` names this, and names the one path
+  that is not filtered: selection mode (`Ctrl+O`) hands the screen to the
+  terminal, whose own drag-select cannot be filtered, so entering it while
+  reasoning is visible says so. The `/thinking` toggle
   affects only subsequent turns: reasoning from earlier turns was not retained
   and cannot be re-rendered. `show_thinking` is not security-critical — it
   renders locally to the person who already sees the answer and cannot

@@ -116,15 +116,13 @@ If no new knowledge was asserted or discovered, return {{"proposals": []}}."#
     user_context.push_str("### ASSISTANT ANSWER:\n");
     user_context.push_str(&record.assistant_answer);
 
-    ChatRequest {
-        model: model.to_string(),
-        messages: vec![
+    ChatRequest::new(
+        model,
+        vec![
             ChatMessage::text("system", system_prompt),
             ChatMessage::text("user", user_context),
         ],
-        tools: Vec::new(),
-        ..Default::default()
-    }
+    )
 }
 
 #[cfg(test)]
