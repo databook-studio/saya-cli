@@ -213,7 +213,7 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "usage — show session token usage: input, output, reasoning, cached input, cache creation, and the cache hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a mean of per-turn rates). Fields the provider did not report show —; the hit rate shows 'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
         ),
         "thinking" => Some(
-            "thinking [on|off] — toggle display of the model's chain-of-thought in the transcript. Off by default: thinking is verbose (often longer than the answer) and restates database contents in prose. With no argument, toggles; with on/off, sets explicitly. Display only — reasoning is never written to a saved session, and Ctrl+B (copy transcript) excludes it. Example: /thinking on",
+            "thinking [on|off] — toggle display of the model's chain-of-thought in the transcript. Off by default: thinking is verbose (often longer than the answer) and restates database contents in prose. With no argument, toggles; with on/off, sets explicitly. Display only — reasoning is never written to a saved session, and the copy keys (Ctrl+Y, Ctrl+B) leave it out. Selection mode (Ctrl+O) hands the screen to your terminal, so a mouse drag can still copy thinking that is visible. Example: /thinking on",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
         "contracts" => Some(
