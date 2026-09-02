@@ -1,7 +1,8 @@
 //! Post-turn structured extraction execution runner.
 
 use saya_agent::{
-    ChatProvider, ChatRequest, ProposedClaimDto, ProviderError, ResponseFormat, TokenUsage,
+    ChatProvider, ChatRequest, ProposedClaimDto, ProviderError, ReasoningEffort, ResponseFormat,
+    TokenUsage,
 };
 use saya_store::KnowledgeItemStore;
 use std::fmt;
@@ -100,8 +101,18 @@ pub(crate) async fn run_extraction(
     // cutting the post-turn wait from seconds to ~1s. A provider that
     // cannot honour it degrades to today's behaviour (the prompt already asks
     // for JSON, `strip_markdown_fences` handles fences), never to an error.
+    //
+    // `Minimal` effort is the honest lever for the same goal — ask for less
+    // thinking rather than suppressing it as a side effect of the JSON shape.
+    // Both are set together because the measurement shows the effort hint is a
+    // no-op on the gateway in use, while JSON mode demonstrably is not: dropping
+    // JSON mode would silently restore the multi-second waits, so the mechanism
+    // that works stays and the correct lever is added alongside it. Whether the
+    // model complied is only knowable from the reported reasoning tokens; saya
+    // reports what it asked for, never that the effort was applied.
     let request = ChatRequest {
         response_format: ResponseFormat::JsonObject,
+        reasoning_effort: ReasoningEffort::Minimal,
         ..request
     };
     let response = match provider.complete(request).await {
@@ -414,12 +425,15 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    /// Deliverable 4: the request `run_extraction` sends to the provider carries
-    /// the JSON intent (`ResponseFormat::JsonObject`), so a reasoning model skips
-    /// the chain-of-thought we discard. This is the one call in saya that sets
-    /// it — the main loop's request does not (see `receive.rs`).
+    /// The extraction request carries both JSON intent (`ResponseFormat::JsonObject`)
+    /// and the honest effort lever (`ReasoningEffort::Minimal`): JSON mode
+    /// demonstrably cuts the chain-of-thought on the gateway in use, and Minimal
+    /// is the correct lever that works on endpoints which honour it. Both are
+    /// set so dropping one cannot silently restore the multi-second waits. This
+    /// is the one call in saya that sets them — the main loop's request does not
+    /// (see `receive.rs`).
     #[tokio::test]
-    async fn run_extraction_sets_json_mode_on_the_provider_request() {
+    async fn run_extraction_sets_json_mode_and_minimal_effort_on_the_provider_request() {
         let identity = test_identity("analytics");
         let registry = test_registry("analytics", &identity);
         let root = temp_root("json_mode");
@@ -458,6 +472,11 @@ mod tests {
             sent.response_format,
             ResponseFormat::JsonObject,
             "the extraction call must request JSON mode"
+        );
+        assert_eq!(
+            sent.reasoning_effort,
+            ReasoningEffort::Minimal,
+            "the extraction call must request minimal effort"
         );
         let _ = fs::remove_dir_all(root);
     }
