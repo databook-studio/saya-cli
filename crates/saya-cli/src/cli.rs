@@ -61,7 +61,7 @@ pub struct GlobalOptions {
     /// Explicit connections.toml path.
     #[arg(long, global = true)]
     pub connections: Option<std::path::PathBuf>,
-    /// Explicit env file with SAYA_* overrides (never implicit.env).
+    /// Explicit env file with SAYA_* overrides (never implicit .env).
     #[arg(long, global = true)]
     pub env_file: Option<std::path::PathBuf>,
     /// Enable cloud data sharing for this invocation (privacy:on), overriding any

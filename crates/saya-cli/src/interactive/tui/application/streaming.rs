@@ -109,7 +109,7 @@ impl App {
                                 );
                             }
                             // Accumulate into the session total. `record`
-                            // applies the same zero-guard (invariant 4), so a
+                            // applies the same zero-guard, so a
                             // silent provider's all-zero usage adds nothing.
                             state.usage.record(usage);
                             // Fold the extraction call's usage into a separate

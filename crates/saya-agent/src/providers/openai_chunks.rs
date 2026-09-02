@@ -113,7 +113,7 @@ mod tests {
 
     /// a delta with no reasoning field
     /// leaves `reasoning_content` `None`, and content still parses — a
-    /// non-reasoning response is unaffected (invariant 3).
+    /// non-reasoning response is unaffected.
     #[test]
     fn delta_without_reasoning_leaves_it_none() {
         let delta: Delta = serde_json::from_value(json!({"content": "ok"})).expect("parses");

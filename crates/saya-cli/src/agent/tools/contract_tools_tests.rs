@@ -294,7 +294,7 @@ async fn contract_read_returns_one_contract_and_rejects_malformed_table() {
     );
 
     // A malformed table is a typed tool error, not a panic or an untyped string.
-    // `ToolError` (in saya-agent, untouchable from this slice) has no variant that
+    // `ToolError` (in saya-agent) has no variant that
     // names the expected form, so the form is named in the tool description the
     // model reads; the typed error is `InvalidQueryArguments` (SPEC REVIEW 2b-3a).
     let err = tools

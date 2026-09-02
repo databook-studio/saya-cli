@@ -6,7 +6,7 @@
 //! job (Phase 2a) and doing it twice would double-escape.
 //!
 //! A `stale` contract is **included but plainly labelled** (SPEC REVIEW):
-//! excluding would discard the query-shaping signal this slice exists to
+//! excluding would discard the query-shaping signal this module exists to
 //! deliver. The marker is in-band on the header line so the model never reads
 //! a stale claim as current.
 //!
@@ -59,7 +59,7 @@ pub(super) fn render_body(
             profile = profile_name,
             stale = stale_note(contract.schema_state),
         );
-        // P2a: one stanza-level directive per contract, before its claims, so
+        // One stanza-level directive per contract, before its claims, so
         // the model reads the authority policy then the facts it governs. The
         // directive is literally an instruction (it does not guarantee the model
         // obeys — structural detection is P2b), and it names "Confirmed" so the
@@ -100,7 +100,7 @@ pub(super) fn render_body(
 /// The stanza-level directive that gives a confirmed claim its authority. One
 /// line per contract, before the claims, so the `[confirmed]` / `[candidate —
 /// unconfirmed]` markers below point back at it. Wording is an instruction, not
-/// a guarantee: it does not say SAYA *will* use the facts (this slice cannot
+/// a guarantee: it does not say SAYA *will* use the facts (this module cannot
 /// enforce that — structural detection is P2b), only that a confirmed claim
 /// binds and a departure must be named in the answer. "Confirmed" (not "your
 /// facts") keeps it literally true for a `TeamFile`-imported confirmed claim a
@@ -125,7 +125,7 @@ fn claim_line(claim: &ContractClaim, is_disputed: bool) -> String {
     let marker = authority_marker(claim.status, is_disputed);
     // `claim_value` is the single source of the value/column a claim shows; the
     // prompt body and the P1a receipt both read it. `authority_marker` already
-    // picks one in-band prefix (empty for an unknown status this slice never
+    // picks one in-band prefix (empty for an unknown status this module never
     // admits), so no trailing space is added for a payload shape that renders
     // no value.
     let (column, value) = claim_value(payload);
@@ -156,7 +156,7 @@ pub(crate) fn claim_reason(payload: &ClaimPayload) -> Option<&str> {
 /// as a value: the prompt body ([`claim_line`]) and the P1a recall receipt both
 /// read it here, so the receipt can never name a value the prompt did not; the
 /// propose tool reuses it so a `KnowledgeProposed` event names the same value.
-/// `value` is `""` only for a payload shape this slice does not render (a
+/// `value` is `""` only for a payload shape this module does not render (a
 /// future variant); the `kind` still identifies it.
 pub(crate) fn claim_value(payload: &ClaimPayload) -> (Option<String>, String) {
     match payload {
@@ -170,7 +170,7 @@ pub(crate) fn claim_value(payload: &ClaimPayload) -> (Option<String>, String) {
             (Some(column.clone()), role.as_str().to_string())
         }
         ClaimPayload::DefaultTimeColumn { column, .. } => (None, column.clone()),
-        // `Relationship` is not exposed on the CLI in this slice; a future
+        // `Relationship` is not exposed on the CLI yet; a future
         // variant is handled here too. No value leaks for an unknown shape.
         _ => (None, String::new()),
     }
@@ -184,7 +184,7 @@ pub(crate) fn claim_value(payload: &ClaimPayload) -> (Option<String>, String) {
 ///   so two contradictory confirmed claims never both read as binding. Only
 ///   `Confirmed` claims can be disputed (`is_recallable` is `Confirmed`-only),
 ///   so this arm suppresses the `[confirmed] ` marker a disputed confirmed
-///   claim would otherwise carry — the dispute must win (Deliverable 2).
+///   claim would otherwise carry — the dispute must win.
 /// - A `Candidate` claim carries `[candidate — unconfirmed] `, so an inferred
 ///   claim never reads as an established fact (ADR 0002 §4).
 /// - A `Confirmed`, undisputed claim carries `[confirmed] `, the marker the

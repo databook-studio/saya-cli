@@ -103,7 +103,7 @@ pub(crate) fn render_payload(
             reason.clone(),
         ),
         // `ClaimPayload` is `#[non_exhaustive]`; `Relationship` is not exposed on
-        // the CLI in this slice and any future variant is handled here too. Both
+        // the CLI yet, and any future variant is handled here too. Both
         // render a stable kind with no value, leaking neither the target object
         // nor any payload field.
         _ => (payload.kind().into(), String::new(), None, None),

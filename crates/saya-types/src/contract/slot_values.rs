@@ -5,7 +5,7 @@
 //! is no operation that can silently grow a single-valued slot to two values;
 //! a multi-valued slot refuses past its declared bound. The slot names the
 //! position and declares the rule; the value type `T` is whatever the caller
-//! brings (the adopting slice will bind it to a payload), so this holder does
+//! brings (a later caller binds it to a payload), so this holder does
 //! not duplicate `ClaimPayload`.
 
 use crate::contract::slot::KnowledgeSlot;

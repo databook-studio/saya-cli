@@ -35,7 +35,7 @@ pub(super) fn run_init(
         Ok(cwd) if project => config::init::create_project_files(&cwd),
         Ok(cwd) => {
             // Default: the trusted user layer, so a following command does not
-            // warn. Q2: if a project config already exists,
+            // warn. If a project config already exists,
             // append a one-line hint (not a migration) — folded into the result
             // message so the structured --format envelopes stay on stdout and
             // stderr stays empty.

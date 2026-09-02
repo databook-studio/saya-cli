@@ -176,7 +176,7 @@ mod tests {
         // still demand an argument rather than submitting "".
     }
 
-    // Deliverable 1: the read is bounded. Over-limit input is refused with a
+    // The read is bounded. Over-limit input is refused with a
     // message that names the limit (not silently truncated).
     #[test]
     fn over_limit_input_is_refused_naming_the_limit() {
@@ -236,7 +236,7 @@ mod tests {
         ));
     }
 
-    // Deliverable 3: the idle-stdin guard. A reader that never produces a byte
+    // The idle-stdin guard. A reader that never produces a byte
     // must give up within the idle deadline and report that stdin was silent —
     // not block forever. The deadline is injected so the test stays fast.
     #[test]

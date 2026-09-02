@@ -33,7 +33,7 @@ pub(super) async fn receive(
                 model: model.into(),
                 messages: messages.into(),
                 tools: definitions.into(),
-                // Invariant 1: JSON mode is for the extraction call only. The
+                // JSON mode is for the extraction call only. The
                 // main loop never sets `response_format`, so it stays `Text`
                 // (the default) and a prose answer remains prose.
                 ..Default::default()
@@ -124,7 +124,7 @@ mod tests {
         }
     }
 
-    /// Invariant 1 (deliverable 4): the main loop's request must NOT carry JSON
+    /// The main loop's request must NOT carry JSON
     /// mode — a prose answer stays prose. `receive` builds the request with
     /// `..Default::default()`, so `response_format` is `Text` and
     /// `reasoning_effort` is `Default` (send nothing): the main loop keeps real

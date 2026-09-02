@@ -4,7 +4,7 @@
 //! slots map one-to-one onto six payload variants. The repository refuses a
 //! payload filed under the wrong slot — and a `relationship` payload, which no
 //! slot names — as `CardinalityMismatch`, before anything is written. This is
-//! the one place that mapping lives, so the adopting slice cannot silently file
+//! the one place that mapping lives, so a caller cannot silently file
 //! a `TableAlias` under `table.grain` and have it render as a grain.
 
 use saya_types::{ClaimPayload, KnowledgeSlot};

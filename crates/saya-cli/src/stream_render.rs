@@ -100,8 +100,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
             TerminalEvent::KnowledgeOverridden { findings }
         }
         // Extraction timed out or errored after the turn succeeded — surface it
-        // rather than fall through to the `unrecognized agent event` catch-all
-        //.
+        // rather than fall through to the `unrecognized agent event` catch-all.
         AgentEvent::KnowledgeLearningSkipped { reason } => {
             TerminalEvent::KnowledgeLearningSkipped { reason }
         }
@@ -184,7 +183,7 @@ mod tests {
             0,
         );
         let rendered = render_agent(event, RenderFormat::Text, &mut false);
-        // The compact header, the unconfirmed count (pointing at /queue since the batch-approve slice),
+        // The compact header, the unconfirmed count (pointing at /queue),
         // and the per-claim lines all reach stdout through the adapter.
         assert!(
             rendered

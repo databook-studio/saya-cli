@@ -9,7 +9,7 @@ impl DatabaseTools {
     /// rather than advertised as always-empty. `contract_propose`
     /// is appended only when candidate writes are permitted **and** a store is
     /// present **and** the gate is open — hidden, not advertised and
-    /// denied, matching the read-tool precedent (SPEC REVIEW, Q1).
+    /// denied, matching the read-tool precedent.
     pub(crate) fn definitions(
         allow_query_data: bool,
         has_state_store: bool,

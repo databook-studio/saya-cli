@@ -21,7 +21,7 @@ fn saya_isolated(root: &Path, args: &[&str]) -> std::process::Output {
 #[test]
 fn config_init_creates_parseable_templates_with_stable_output() {
     // `config init` now writes the user layer (root/user-config/saya under
-    // the test's SAYA_CONFIG_HOME), not.saya/. The success message names that
+    // the test's SAYA_CONFIG_HOME), not .saya/. The success message names that
     // directory, so its exact bytes vary per run; the stable prefix and the
     // parseable/permissions/follow-up checks are what the invariant guards.
     let user_dir = |root: &std::path::Path| root.join("user-config/saya");
@@ -207,7 +207,7 @@ fn runtime_debug_redacts_merged_environment_values_and_keys() {
 // work), and the three failure paths each name an actionable next command.
 // ---------------------------------------------------------------------------
 
-/// Invariant 1 / deliverable 1: a default `config init` followed by any command
+/// A default `config init` followed by any command
 /// must NOT print "ignored N security-critical settings". Before the fix, init
 /// wrote `.saya/` (the untrusted project layer), so the next command warned
 /// about the very templates init had just written. Red before the fix; green
@@ -242,8 +242,8 @@ fn default_init_then_command_does_not_warn_about_ignored_settings() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Deliverable 2: `--project` writes the old `.saya/` pair, so the team-shared
-/// project layer stays reachable (invariant 4). It is the untrusted layer, so a
+/// `--project` writes the old `.saya/` pair, so the team-shared
+/// project layer stays reachable. It is the untrusted layer, so a
 /// command run afterward warns — that is the trust boundary doing its job, and
 /// doctor explains how to apply the settings. This pins both halves.
 #[test]
@@ -268,7 +268,7 @@ fn project_init_writes_saya_dir_and_the_next_command_warns() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Deliverable 2: the default-init success message points at the user config
+/// The default-init success message points at the user config
 /// directory, not `.saya/`, so a new user knows where their starter config
 /// went. (Before the fix the message named `.saya/config.toml`.)
 #[test]
@@ -288,7 +288,7 @@ fn default_init_message_names_the_user_config_directory() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Q3 failure path 1 — provider unreachable: a configured-but-down AI endpoint.
+/// Failure path — provider unreachable: a configured-but-down AI endpoint.
 /// The error must name an actionable next command. A user whose gateway is
 /// momentarily down does NOT need to re-run init, so the next step is doctor
 /// (and starting the provider), not init. Hermetic: a dead base_url is refused
@@ -324,7 +324,7 @@ fn ask_with_unreachable_provider_names_a_next_command() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Q3 failure path 3 — unresolvable secret: a profile is configured but its
+/// Failure path — unresolvable secret: a profile is configured but its
 /// password reference does not resolve. This is "what is configured did not
 /// work", not "nothing is configured", so the next step is setting the env var
 /// (with doctor to list the unresolved references), not init.
@@ -358,7 +358,7 @@ fn ask_with_unresolvable_secret_names_a_next_command() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Q3 failure path 2 / deliverable 4 — no config found. The empty-config
+/// Failure path — no config found. The empty-config
 /// `config doctor` used to print "config file: not found" and exit 0, naming no
 /// next step. It must now advise `saya config init` (nothing is configured) and
 /// exit non-zero so a script can tell the setup is unusable.
@@ -384,7 +384,7 @@ fn doctor_with_no_config_advises_init_and_exits_nonzero() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Q4: doctor exits 0 when the setup can plausibly run a query (a selected
+/// Doctor exits 0 when the setup can plausibly run a query (a selected
 /// profile whose referenced secrets resolve), so the non-zero from the test
 /// above means "broken", not "doctor ran". The env var resolves the template's
 /// secret reference, so this is a genuinely working post-init setup.

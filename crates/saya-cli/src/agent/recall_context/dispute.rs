@@ -3,8 +3,7 @@
 //! recall (2b-1) already detects conflicts and returns them on the contract;
 //! this module turns that typed `Vec<ContractConflict>` into the in-band marks
 //! and the per-contract summary the model reads. It consumes detection
-//! unchanged — it never drops, ranks, or resolves between conflicting claims
-//!.
+//! unchanged — it never drops, ranks, or resolves between conflicting claims.
 //!
 //! Presentation-only, like the rest of `recall_context`: no claim ids reach the
 //! body. The summary names the disputed kind and how many claims dispute it —

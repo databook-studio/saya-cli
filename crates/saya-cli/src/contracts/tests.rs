@@ -874,7 +874,7 @@ async fn forgotten_claim_disappears_from_recall() {
 // `review_queue` is the opposite view from recall: recall answers "what is
 // true about this question", the queue answers "what is waiting for me". It
 // lists candidates only, ordered most-evidence-first then oldest then by claim
-// id, so a reviewer works a stable list. See.claude/specs/spec-3d-review-queue.md.
+// id, so a reviewer works a stable list. See .claude/specs/spec-3d-review-queue.md.
 
 use super::review_queue;
 
@@ -1543,7 +1543,7 @@ async fn recall_for_model_counts_a_stale_exclusion() {
 }
 
 // ---------------------------------------------------------------------------
-// P2: bulk store reads — recall over many objects.
+// Bulk store reads — recall over many objects.
 //
 // The N+1 fix moved recall and the queue from one store round trip per object
 // to a bounded number per profile. What remains here is the property the bulk
@@ -2032,7 +2032,7 @@ async fn confirming_a_stale_claim_names_the_missing_column_and_the_repair() {
 }
 
 // ---------------------------------------------------------------------------
-// P0: term matching must bridge an ordinary English plural to the singular
+// Term matching must bridge an ordinary English plural to the singular
 // object it names. A user asks "how many rentals…" for the table `rental`;
 // `rentals` is longer than `rental` so it can never be a substring of the
 // qualified name, and a confirmed claim about that table never reached the

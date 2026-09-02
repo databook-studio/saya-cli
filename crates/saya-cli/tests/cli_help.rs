@@ -87,7 +87,7 @@ fn command_path(cmd: &clap::Command) -> String {
 // `--redacted` were accepted and discarded
 // since the initial release: `config show` always printed the resolved,
 // redacted view regardless. Keeping a flag that implies redaction is optional
-// is worse than no flag (invariant 2 — redaction is never optional), so the
+// is worse than no flag (redaction is never optional), so the
 // slice removes both. Verified against the unchanged binary beforehand:
 // `config show`, `config show --resolved`, `config show --redacted`, and
 // `config show --resolved --redacted` produced byte-identical output (run with
@@ -113,7 +113,7 @@ fn config_show_no_longer_accepts_resolved_or_redacted() {
 }
 
 /// `config show --help` no longer advertises the removed flags, so the help
-/// surface and behaviour agree (invariant 1). A user reading `--help` should
+/// surface and behaviour agree. A user reading `--help` should
 /// not find an off switch for redaction that does not exist.
 #[test]
 fn config_show_help_no_longer_advertises_resolved_or_redacted() {
