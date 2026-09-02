@@ -16,13 +16,14 @@ pub struct SessionState {
     pub turns: Vec<RedactedTurn>,
     /// Whether the model's chain-of-thought is shown in the transcript. Off by
     /// default; toggled by `/thinking` or `--show-thinking`. In-memory only: it
-    /// is a display preference, not conversation data, and a resumed session
-    /// re-derives it from config and flags. `#[serde(skip)]` keeps it out of
+    /// is a display preference, not conversation data. A resumed session
+    /// deserializes it as off and the startup path re-derives it from the
+    /// config setting and `--show-thinking`. `#[serde(skip)]` keeps it out of
     /// persisted session files.
     #[serde(skip)]
     pub show_thinking: bool,
     /// In-memory session token accumulator. `#[serde(skip)]` keeps it
-    /// out of persisted session files (invariant 2: no new persisted state);
+    /// out of persisted session files (no new persisted state);
     /// a resumed session starts with a fresh total. `/clear` resets it.
     #[serde(skip)]
     pub(crate) usage: SessionUsage,
