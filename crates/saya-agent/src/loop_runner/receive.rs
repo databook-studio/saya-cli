@@ -91,7 +91,7 @@ pub(super) async fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChatResponse, ProviderStream, ResponseFormat};
+    use crate::{ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
     use async_trait::async_trait;
     use futures_util::stream;
     use std::sync::Mutex;
@@ -126,7 +126,10 @@ mod tests {
 
     /// Invariant 1 (deliverable 4): the main loop's request must NOT carry JSON
     /// mode — a prose answer stays prose. `receive` builds the request with
-    /// `..Default::default()`, so `response_format` is `Text`.
+    /// `..Default::default()`, so `response_format` is `Text` and
+    /// `reasoning_effort` is `Default` (send nothing): the main loop keeps real
+    /// reasoning, leaving effort to the endpoint — only mechanical call sites
+    /// request less.
     #[tokio::test]
     async fn main_loop_request_does_not_set_json_mode() {
         let provider = RecordingProvider {
@@ -157,6 +160,11 @@ mod tests {
             sent.response_format,
             ResponseFormat::Text,
             "the main loop must not set JSON mode (invariant 1)"
+        );
+        assert_eq!(
+            sent.reasoning_effort,
+            ReasoningEffort::Default,
+            "the main loop must not request less effort"
         );
     }
 }

@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderStream,
-    ResponseFormat,
+    ReasoningEffort, ResponseFormat,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -95,6 +95,12 @@ struct OpenAiRequest {
     /// (invariant 1: JSON mode is opt-in, extraction-call only).
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormatWire>,
+    /// The OpenAI `reasoning_effort` spelling of [`ChatRequest::reasoning_effort`].
+    /// Omitted for `Default` so the default path sends nothing and the endpoint's
+    /// own configuration wins; the wire spellings are the provider's own
+    /// (`minimal`/`low`/`medium`/`high`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'static str>,
 }
 
 /// The OpenAI wire shape for `response_format`. Only `json_object` is emitted;
@@ -133,6 +139,13 @@ impl OpenAiRequest {
                 }),
                 ResponseFormat::Text => None,
             },
+            reasoning_effort: match request.reasoning_effort {
+                ReasoningEffort::Default => None,
+                ReasoningEffort::Minimal => Some("minimal"),
+                ReasoningEffort::Low => Some("low"),
+                ReasoningEffort::Medium => Some("medium"),
+                ReasoningEffort::High => Some("high"),
+            },
         }
     }
 }
@@ -153,7 +166,7 @@ mod tests {
     use super::*;
     use crate::{ChatMessage, LocalStateEffect, ToolDefinition, ToolEffect};
 
-    fn request_with(format: ResponseFormat) -> ChatRequest {
+    fn request_with(format: ResponseFormat, effort: ReasoningEffort) -> ChatRequest {
         ChatRequest {
             model: "test-model".into(),
             messages: vec![ChatMessage::text("user", "extract")],
@@ -170,6 +183,7 @@ mod tests {
                 },
             }],
             response_format: format,
+            reasoning_effort: effort,
         }
     }
 
@@ -178,7 +192,10 @@ mod tests {
     /// tokens against the live gateway.
     #[test]
     fn json_object_request_carries_response_format_on_wire() {
-        let body = OpenAiRequest::from_request(request_with(ResponseFormat::JsonObject), 0.1);
+        let body = OpenAiRequest::from_request(
+            request_with(ResponseFormat::JsonObject, ReasoningEffort::Default),
+            0.1,
+        );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
             json.contains(r#""response_format":{"type":"json_object"}"#),
@@ -191,11 +208,45 @@ mod tests {
     /// JSON mode is opt-in, never a surprise on the main loop's request.
     #[test]
     fn text_request_omits_response_format_on_wire() {
-        let body = OpenAiRequest::from_request(request_with(ResponseFormat::Text), 0.1);
+        let body = OpenAiRequest::from_request(
+            request_with(ResponseFormat::Text, ReasoningEffort::Default),
+            0.1,
+        );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
             !json.contains("response_format"),
             "text request must not carry response_format: {json}"
+        );
+    }
+
+    /// A `Minimal` effort request carries OpenAI's `reasoning_effort: "minimal"`
+    /// spelling on the wire — the direct four-level mapping the provider offers.
+    #[test]
+    fn minimal_effort_request_carries_reasoning_effort_on_wire() {
+        let body = OpenAiRequest::from_request(
+            request_with(ResponseFormat::Text, ReasoningEffort::Minimal),
+            0.1,
+        );
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            json.contains(r#""reasoning_effort":"minimal""#),
+            "minimal effort must appear on the wire: {json}"
+        );
+    }
+
+    /// Q2: a `Default` effort request omits `reasoning_effort` entirely, so the
+    /// default path sends nothing and the endpoint's own configuration wins —
+    /// never a surprise on the main loop's request.
+    #[test]
+    fn default_effort_request_omits_reasoning_effort_on_wire() {
+        let body = OpenAiRequest::from_request(
+            request_with(ResponseFormat::Text, ReasoningEffort::Default),
+            0.1,
+        );
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            !json.contains("reasoning_effort"),
+            "default effort must not carry reasoning_effort: {json}"
         );
     }
 }
