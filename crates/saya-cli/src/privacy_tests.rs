@@ -48,10 +48,7 @@ fn request() -> AgentRequest {
 }
 
 fn text_response(value: &str) -> ChatResponse {
-    ChatResponse {
-        message: ChatMessage::text("assistant", value),
-        ..Default::default()
-    }
+    ChatResponse::new(ChatMessage::text("assistant", value))
 }
 
 #[tokio::test]
@@ -90,19 +87,16 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({"sql":"select 1"}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql":"select 1"}),
+                }],
+                tool_call_id: None,
+            }),
             text_response("done"),
         ]),
         requests: requests.clone(),

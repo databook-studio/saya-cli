@@ -1,8 +1,7 @@
 //! Post-turn structured extraction execution runner.
 
 use saya_agent::{
-    ChatProvider, ChatRequest, ProposedClaimDto, ProviderError, ReasoningEffort, ResponseFormat,
-    TokenUsage,
+    ChatProvider, ProposedClaimDto, ProviderError, ReasoningEffort, ResponseFormat, TokenUsage,
 };
 use saya_store::KnowledgeItemStore;
 use std::fmt;
@@ -110,11 +109,9 @@ pub(crate) async fn run_extraction(
     // that works stays and the correct lever is added alongside it. Whether the
     // model complied is only knowable from the reported reasoning tokens; saya
     // reports what it asked for, never that the effort was applied.
-    let request = ChatRequest {
-        response_format: ResponseFormat::JsonObject,
-        reasoning_effort: ReasoningEffort::Minimal,
-        ..request
-    };
+    let request = request
+        .with_response_format(ResponseFormat::JsonObject)
+        .with_reasoning_effort(ReasoningEffort::Minimal);
     let response = match provider.complete(request).await {
         Ok(response) => response,
         Err(error) => return ExtractionOutcome::failed(error.into(), None),
@@ -176,10 +173,10 @@ mod tests {
         async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
             let mut calls = self.calls.lock().unwrap();
             *calls += 1;
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", &self.response_text),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                &self.response_text,
+            )))
         }
     }
 
@@ -209,10 +206,10 @@ mod tests {
         }
         async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
             *self.captured.lock().unwrap() = Some(request);
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", &self.response_text),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                &self.response_text,
+            )))
         }
     }
 
@@ -494,11 +491,10 @@ mod tests {
             "usage-provider"
         }
         async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", &self.response_text),
-                usage: Some(self.usage),
-                ..Default::default()
-            })
+            let mut response =
+                ChatResponse::new(ChatMessage::text("assistant", &self.response_text));
+            response.usage = Some(self.usage);
+            Ok(response)
         }
     }
 
@@ -526,11 +522,7 @@ mod tests {
 
         let provider = UsageExtractionProvider {
             response_text: r#"{"proposals": []}"#.into(),
-            usage: TokenUsage {
-                input_tokens: 40,
-                output_tokens: 10,
-                ..Default::default()
-            },
+            usage: TokenUsage::new(40, 10),
         };
 
         let outcome = run_extraction(
@@ -546,11 +538,7 @@ mod tests {
         outcome.dtos.expect("extraction succeeds");
         assert_eq!(
             outcome.usage,
-            Some(TokenUsage {
-                input_tokens: 40,
-                output_tokens: 10,
-                ..Default::default()
-            }),
+            Some(TokenUsage::new(40, 10)),
             "a successful extraction must surface the provider-reported usage"
         );
         let _ = fs::remove_dir_all(root);
@@ -581,11 +569,7 @@ mod tests {
 
         let provider = UsageExtractionProvider {
             response_text: "definitely not json".into(),
-            usage: TokenUsage {
-                input_tokens: 40,
-                output_tokens: 10,
-                ..Default::default()
-            },
+            usage: TokenUsage::new(40, 10),
         };
 
         let outcome = run_extraction(
@@ -605,11 +589,7 @@ mod tests {
         );
         assert_eq!(
             outcome.usage,
-            Some(TokenUsage {
-                input_tokens: 40,
-                output_tokens: 10,
-                ..Default::default()
-            }),
+            Some(TokenUsage::new(40, 10)),
             "a failed extraction that received a response must still surface its usage"
         );
         let _ = fs::remove_dir_all(root);

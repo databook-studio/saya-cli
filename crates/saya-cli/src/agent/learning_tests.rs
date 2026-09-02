@@ -144,24 +144,18 @@ impl ChatProvider for OneThenDoneProvider {
         let mut calls = self.calls.lock().unwrap();
         if *calls == 0 {
             *calls = 1;
-            Ok(ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({"sql": ONE_QUERY_SQL}),
-                    }],
-                    tool_call_id: None,
-                },
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql": ONE_QUERY_SQL}),
+                }],
+                tool_call_id: None,
+            }))
         } else {
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-                ..Default::default()
-            })
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
         }
     }
 }

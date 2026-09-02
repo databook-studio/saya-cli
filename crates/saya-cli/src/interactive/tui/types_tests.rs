@@ -10,11 +10,7 @@ use saya_agent::TokenUsage;
 
 /// Helper: build a `TokenUsage` with only the two base counters set.
 fn usage(input: u64, output: u64) -> TokenUsage {
-    TokenUsage {
-        input_tokens: input,
-        output_tokens: output,
-        ..Default::default()
-    }
+    TokenUsage::new(input, output)
 }
 
 /// A session where no
@@ -45,12 +41,7 @@ fn cache_hit_rate_is_unknown_when_no_turn_reported_cached_tokens() {
 #[test]
 fn reported_zero_cache_is_a_cold_cache_not_unknown() {
     let mut session = SessionUsage::default();
-    session.record(&TokenUsage {
-        input_tokens: 100,
-        output_tokens: 50,
-        cached_input_tokens: Some(0),
-        ..Default::default()
-    });
+    session.record(&TokenUsage::new(100, 50).with_cached_input(Some(0)));
     let rendered = session.render();
     assert!(
         rendered.contains("0%"),
@@ -68,19 +59,12 @@ fn reported_zero_cache_is_a_cold_cache_not_unknown() {
 #[test]
 fn totals_accumulate_across_turns_and_a_usage_less_turn_adds_nothing() {
     let mut session = SessionUsage::default();
-    session.record(&TokenUsage {
-        input_tokens: 100,
-        output_tokens: 50,
-        cached_input_tokens: Some(80),
-        reasoning_tokens: Some(30),
-        ..Default::default()
-    });
-    session.record(&TokenUsage {
-        input_tokens: 200,
-        output_tokens: 80,
-        cached_input_tokens: Some(20),
-        ..Default::default()
-    });
+    session.record(
+        &TokenUsage::new(100, 50)
+            .with_cached_input(Some(80))
+            .with_reasoning(Some(30)),
+    );
+    session.record(&TokenUsage::new(200, 80).with_cached_input(Some(20)));
     assert_eq!(session.answering.input_tokens, 300);
     assert_eq!(session.answering.output_tokens, 130);
     assert_eq!(session.answering.cached_input_tokens, 100);
@@ -104,18 +88,8 @@ fn totals_accumulate_across_turns_and_a_usage_less_turn_adds_nothing() {
 #[test]
 fn cache_hit_rate_is_pooled_not_averaged() {
     let mut session = SessionUsage::default();
-    session.record(&TokenUsage {
-        input_tokens: 100,
-        output_tokens: 50,
-        cached_input_tokens: Some(80),
-        ..Default::default()
-    });
-    session.record(&TokenUsage {
-        input_tokens: 200,
-        output_tokens: 80,
-        cached_input_tokens: Some(20),
-        ..Default::default()
-    });
+    session.record(&TokenUsage::new(100, 50).with_cached_input(Some(80)));
+    session.record(&TokenUsage::new(200, 80).with_cached_input(Some(20)));
     let rendered = session.render();
     // 100 cached / 300 input = 33%, not 45% (mean of 80% and 10%).
     assert!(
@@ -150,12 +124,7 @@ fn unreported_fields_render_as_dash() {
 #[test]
 fn render_states_the_hit_rate_formula() {
     let mut session = SessionUsage::default();
-    session.record(&TokenUsage {
-        input_tokens: 100,
-        output_tokens: 50,
-        cached_input_tokens: Some(90),
-        ..Default::default()
-    });
+    session.record(&TokenUsage::new(100, 50).with_cached_input(Some(90)));
     let rendered = session.render();
     assert!(
         rendered.contains("Σcached / Σinput"),
@@ -272,12 +241,7 @@ fn a_timed_out_extraction_does_not_corrupt_the_totals() {
 #[test]
 fn with_learning_off_usage_output_is_unchanged() {
     let mut session = SessionUsage::default();
-    session.record(&TokenUsage {
-        input_tokens: 100,
-        output_tokens: 50,
-        cached_input_tokens: Some(80),
-        ..Default::default()
-    });
+    session.record(&TokenUsage::new(100, 50).with_cached_input(Some(80)));
     let rendered = session.render();
     let expected = "Session token usage (1 turn):\n\n\
      \x20 Input tokens: 100\n\

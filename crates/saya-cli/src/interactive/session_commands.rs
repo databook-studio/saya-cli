@@ -264,12 +264,9 @@ mod tests {
     #[test]
     fn usage_returns_breakdown_message() {
         let mut state = SessionState::new("test", None, "gpt-4o");
-        state.usage.record(&saya_agent::TokenUsage {
-            input_tokens: 100,
-            output_tokens: 50,
-            cached_input_tokens: Some(80),
-            ..Default::default()
-        });
+        state
+            .usage
+            .record(&saya_agent::TokenUsage::new(100, 50).with_cached_input(Some(80)));
         let action = state.apply(SlashCommand::Usage, &[]);
         let SessionAction::Message(msg) = action else {
             panic!("expected SessionAction::Message, got {action:?}");
@@ -312,11 +309,7 @@ mod tests {
     #[test]
     fn clear_resets_usage_accumulator() {
         let mut state = SessionState::new("test", None, "gpt-4o");
-        state.usage.record(&saya_agent::TokenUsage {
-            input_tokens: 100,
-            output_tokens: 50,
-            ..Default::default()
-        });
+        state.usage.record(&saya_agent::TokenUsage::new(100, 50));
         assert_eq!(state.usage.answering.turns, 1);
         state.apply(SlashCommand::Clear, &[]);
         assert_eq!(state.usage.answering.turns, 0);
