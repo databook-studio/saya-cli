@@ -71,7 +71,7 @@ pub(crate) use ingest::{
 #[allow(unused_imports)]
 pub(crate) use resolver::{ResolutionError, ResolvedProposal, resolve_proposal, resolve_proposals};
 #[allow(unused_imports)]
-pub(crate) use runner::{ExtractionRunnerError, run_extraction};
+pub(crate) use runner::{ExtractionOutcome, ExtractionRunnerError, run_extraction};
 #[allow(unused_imports)]
 pub(crate) use turn_record::{
     MAX_ANSWER_BYTES, MAX_PROMPT_BYTES, MAX_TURN_RECORD_BYTES, SuppliedClaimDto,

@@ -71,6 +71,7 @@ pub async fn run_agent_with_sink(
                 used_bounded_sql_query,
                 tool_metadata,
                 usage,
+                learning_usage: None,
             });
         }
         // When every call in the message is valid and auto-runnable, the
