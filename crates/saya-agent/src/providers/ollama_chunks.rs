@@ -62,7 +62,7 @@ mod tests {
     /// a chunk with no `thinking` field
     /// leaves it the empty string (serde default), which the stream parser
     /// treats as "no reasoning" — a model that is not thinking is unaffected
-    /// (invariant 3).
+    ///.
     #[test]
     fn message_without_thinking_leaves_it_empty() {
         let chunk: Chunk =

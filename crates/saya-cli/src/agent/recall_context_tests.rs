@@ -1279,8 +1279,7 @@ fn many_orders_schema(identity: &ProfileIdentity, count: usize) -> (ProfileIdent
 // ---------------------------------------------------------------------------
 
 /// Two confirmed `TableGrain` claims on one object: both reach the block, both
-/// are marked as disputed in-band, and the block names the disputed kind once
-///.
+/// are marked as disputed in-band, and the block names the disputed kind once.
 ///
 /// D-3 NOTE: `table_grain` is a single-valued slot, so two confirmed grains
 /// cannot coexist in `knowledge_items` — the second `put` replaces the first.
@@ -1865,7 +1864,7 @@ async fn confirmed_and_candidate_in_one_stanza_remain_distinguishable() {
 
 /// D4d: a disputed confirmed claim does NOT read as binding. Two
 /// contradictory confirmed `table_grain` claims both carry `[disputed] ` and
-/// NOT `[confirmed] ` — the dispute marker wins precedence (Deliverable 2), so
+/// NOT `[confirmed] ` — the dispute marker wins precedence, so
 /// a disagreement is never presented as a settled instruction.
 #[tokio::test]
 async fn disputed_confirmed_claim_does_not_read_as_binding() {
@@ -2837,7 +2836,7 @@ async fn claims_dropped_by_the_byte_bound_are_counted() {
 /// "recall ran and found nothing". The privacy-gate-closed path returns a
 /// `PrivacyGateClosed` receipt; a prompt that matches nothing returns a `Ran` receipt
 /// with empty `supplied`. The two must not be confusable. (The `recall = off`
-/// arm is a runtime concern producing `ConfiguredOff`; this slice's
+/// arm is a runtime concern producing `ConfiguredOff`; this module's
 /// `recall_context_blocks` is never called with recall off, so it cannot observe it —
 /// but the `PrivacyGateClosed` variant it constructs is distinct from `ConfiguredOff`
 /// and `Ran`.)

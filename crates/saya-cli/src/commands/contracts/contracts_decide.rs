@@ -1,7 +1,7 @@
 //! Spec D — the `Decide` write path: resolve a short on-screen reference to
 //! exactly one claim, then reach the **existing** confirm/reject/use-once
 //! operations. Split from `contracts_write.rs` by concern: the resolution
-//! step (prefix → one claim id, or a typed refusal) is this slice's only new
+//! step (prefix → one claim id, or a typed refusal) is this module's only new
 //! logic; the operations themselves are unchanged.
 //!
 //! Confirm and reject emit `ContractChanged` exactly as `review` does (the

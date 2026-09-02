@@ -409,7 +409,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
 // ===========================================================================
 // Test 2: the event is emitted BEFORE any provider request. Asserted against
 // the sink's event sequence AND a shared log the provider writes at call time,
-// not merely that the event appears (the bug this slice prevents is emitting
+// not merely that the event appears (the bug being prevented is emitting
 // after the answer).
 // ===========================================================================
 

@@ -293,7 +293,7 @@ mod tests {
     }
 
     /// `/usage` on an empty session (no turns with usage) reports nothing
-    /// rather than a row of zeros — invariant 4.
+    /// rather than a row of zeros.
     #[test]
     fn usage_on_empty_session_reports_nothing() {
         let mut state = SessionState::new("test", None, "gpt-4o");

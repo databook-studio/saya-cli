@@ -10,14 +10,14 @@ use crate::{
 const DEFAULT_MODEL: &str = "qwen2.5-coder:14b";
 
 /// Default conversation byte budget: the 256 KiB the agent loop used before
-/// this setting existed (Invariant 1 — a user with no setting changes nothing).
+/// this setting existed (a user with no setting changes nothing).
 const DEFAULT_CONTEXT_BYTE_BUDGET: usize = 256 * 1024;
 
 /// Smallest accepted `[ai] context_byte_budget`. Below this the budget is too
 /// small to hold a system prompt and a single turn, so the loop would trim away
 /// useful context on every turn — a budget of 0 trims the conversation to
 /// nothing. Matched against the existing `[memory]` range-check style rather
-/// than a silent clamp (Invariant 3). No upper bound: a user with a large
+/// than a silent clamp. No upper bound: a user with a large
 /// context window may raise it freely, which is the point of making it settable.
 const MIN_CONTEXT_BYTE_BUDGET: usize = 1024;
 
@@ -139,7 +139,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
 }
 
 /// Rejects an `[ai] context_byte_budget` below the floor with a typed error
-/// (Invariant 3), matching the `[memory]` range-check style. The upper end is
+///, matching the `[memory]` range-check style. The upper end is
 /// unbounded: a user may raise the budget to fit a larger context window, which
 /// is the reason the setting exists, so no ceiling is enforced here.
 fn require_context_byte_budget(value: usize) -> Result<(), ConfigError> {

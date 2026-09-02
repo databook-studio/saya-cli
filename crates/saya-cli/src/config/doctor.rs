@@ -17,7 +17,7 @@ pub(crate) struct DoctorReport {
 }
 
 impl DoctorReport {
-    /// Q4: 0 when the setup can run a query, 3 (connection/config) when it cannot.
+    /// 0 when the setup can run a query, 3 (connection/config) when it cannot.
     pub(crate) fn exit_code(&self) -> i32 {
         if self.can_run_query { 0 } else { 3 }
     }

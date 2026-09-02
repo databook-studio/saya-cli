@@ -85,7 +85,7 @@ pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
 /// response omits stay `None` (absent is not zero); it has no cache-creation
 /// concept. A wholly absent `usageMetadata` is `None` — distinct from a present
 /// block reporting zeros — so a silent Gemini response is not mistaken for a
-/// free one (invariant 1).
+/// free one.
 fn usage(body: &Value) -> Option<TokenUsage> {
     let metadata = body.get("usageMetadata")?;
     let mut usage = TokenUsage::default();
@@ -272,7 +272,7 @@ mod tests {
 
     /// a response whose parts carry no
     /// `thought: true` flag leaves `response.reasoning` `None`, and content
-    /// parses normally — a non-reasoning response is unaffected (invariant 3).
+    /// parses normally — a non-reasoning response is unaffected.
     #[test]
     fn response_without_thought_parts_leaves_reasoning_none() {
         let body = json!({

@@ -654,7 +654,7 @@ async fn remember_too_few_args_reports_usage_without_panicking() {
 
 // ---------------------------------------------------------------------------
 // 9. An unopenable store. Parity with the headless path is what matters here
-//    (spec §2, the rule this slice enforces). Every assertion here compares
+//    Every assertion here compares
 //    against the headless result rather than a hardcoded code — a parity test
 //    that pins an exit value stops testing parity the moment the shared
 //    behaviour changes. `/contract`,

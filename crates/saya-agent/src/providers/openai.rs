@@ -92,7 +92,7 @@ struct OpenAiRequest {
     /// The OpenAI `response_format` spelling of [`ChatRequest::response_format`].
     /// Only present when the caller asked for JSON — omitted for `Text` so the
     /// default prose path is byte-identical to before this field existed
-    /// (invariant 1: JSON mode is opt-in, extraction-call only).
+    /// (JSON mode is opt-in, extraction-call only).
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormatWire>,
     /// The OpenAI `reasoning_effort` spelling of [`ChatRequest::reasoning_effort`].
@@ -187,7 +187,7 @@ mod tests {
         }
     }
 
-    /// Q2: a JSON-mode request carries `response_format: {"type":"json_object"}`
+    /// A JSON-mode request carries `response_format: {"type":"json_object"}`
     /// on the OpenAI wire — the spelling the spec verified at 1.7s / 0 reasoning
     /// tokens against the live gateway.
     #[test]
@@ -203,8 +203,8 @@ mod tests {
         );
     }
 
-    /// Invariant 1 / Q2: a `Text` (default) request omits `response_format`
-    /// entirely, so the prose path is byte-identical to before this slice —
+    /// A `Text` (default) request omits `response_format`
+    /// entirely, so the prose path is byte-identical to a request without JSON mode —
     /// JSON mode is opt-in, never a surprise on the main loop's request.
     #[test]
     fn text_request_omits_response_format_on_wire() {
@@ -234,7 +234,7 @@ mod tests {
         );
     }
 
-    /// Q2: a `Default` effort request omits `reasoning_effort` entirely, so the
+    /// A `Default` effort request omits `reasoning_effort` entirely, so the
     /// default path sends nothing and the endpoint's own configuration wins —
     /// never a surprise on the main loop's request.
     #[test]

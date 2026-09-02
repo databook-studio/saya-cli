@@ -292,7 +292,7 @@ mod tests {
 
     /// `/history` and `/sessions` are both still known commands, and
     /// `exit`/`quit` are a
-    /// deliberate conventional alias pair. Invariant 4: the typo suggester
+    /// deliberate conventional alias pair. The typo suggester
     /// must still resolve anything it resolved before for names that still
     /// exist — so a near-miss on each lands on the kept name, never on a
     /// removed one.
