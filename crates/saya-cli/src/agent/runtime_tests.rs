@@ -229,6 +229,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
                 idle_timeout_seconds: 90,
                 max_output_tokens: 4096,
                 context_byte_budget: 256 * 1024,
+                show_thinking: false,
             },
             max_rows: 100,
             read_only: true,
@@ -357,6 +358,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -456,6 +458,7 @@ async fn knowledge_supplied_precedes_the_provider_request() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -675,6 +678,7 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -887,6 +891,7 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
@@ -1008,6 +1013,7 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
@@ -1141,6 +1147,7 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(SharedProvider(provider.clone())),
         registry: registry_for("analytics", &identity),
@@ -1233,6 +1240,7 @@ async fn test_anti_self_reinforcement_end_to_end() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
@@ -1338,6 +1346,7 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -1403,6 +1412,7 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -1598,6 +1608,7 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(QueryProvider {
             sql: OVERRIDE_SQL,
@@ -1667,6 +1678,7 @@ async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(QueryProvider {
             sql: honoring_sql,
@@ -1725,6 +1737,7 @@ async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(QueryProvider {
             sql: unparseable_sql,
@@ -1784,6 +1797,7 @@ async fn a_candidate_claim_contradicted_emits_nothing() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(QueryProvider {
             sql: OVERRIDE_SQL,
@@ -1851,6 +1865,7 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(QueryProvider {
             sql: OVERRIDE_SQL,
@@ -1978,6 +1993,7 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(SleepingExtractionProvider {
             turn_step: Mutex::new(0),
@@ -2103,6 +2119,7 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(SharedProvider(provider.clone())),
         registry: registry_for("analytics", &identity),
@@ -2180,6 +2197,7 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),

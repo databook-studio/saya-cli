@@ -136,6 +136,21 @@ impl SessionState {
             SlashCommand::History => SessionAction::History,
             SlashCommand::Doctor => SessionAction::Doctor,
             SlashCommand::Usage => SessionAction::Message(self.usage.render()),
+            SlashCommand::Thinking(value) => {
+                if let Some(value) = value {
+                    self.show_thinking = value;
+                } else {
+                    self.show_thinking = !self.show_thinking;
+                }
+                // The toggle applies to subsequent turns only: reasoning from
+                // earlier turns was not retained (it lives on the per-call
+                // ChatResponse and the in-memory ReasoningText event, neither
+                // stored on the session), so there is nothing to re-render.
+                SessionAction::Message(format!(
+                    "Thinking display: {}",
+                    if self.show_thinking { "on" } else { "off" }
+                ))
+            }
             SlashCommand::Sessions => SessionAction::History,
             SlashCommand::Resume(id) => SessionAction::Resume(id),
             SlashCommand::Help(topic) => {

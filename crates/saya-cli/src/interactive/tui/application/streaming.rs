@@ -76,7 +76,7 @@ impl App {
                         }
                         _ => {}
                     }
-                    apply_event(&mut self.transcript, event);
+                    apply_event(&mut self.transcript, event, state.show_thinking);
                 }
                 StreamMsg::ApprovalRequest {
                     tool,

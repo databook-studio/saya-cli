@@ -58,6 +58,9 @@ pub struct ResolvedAi {
     /// assembles. The loop trims under it instead of aborting, so a user on a
     /// model with a large context window can raise it to keep more history.
     pub context_byte_budget: usize,
+    /// Show the model's chain-of-thought in the transcript. Off by default;
+    /// display only — reasoning is never persisted regardless of this setting.
+    pub show_thinking: bool,
 }
 
 pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
@@ -122,6 +125,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
             idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
             max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
             context_byte_budget,
+            show_thinking: file.ai.show_thinking.unwrap_or(false),
         },
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),

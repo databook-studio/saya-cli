@@ -14,6 +14,10 @@ pub(crate) enum BlockKind {
     System,
     Error,
     Tool,
+    /// The model's chain-of-thought, shown only when the user asked for it.
+    /// Visually subordinate to the answer and excluded from clipboard copy and
+    /// session persistence — reasoning restates database contents in prose.
+    Thinking,
 }
 
 #[allow(dead_code)]

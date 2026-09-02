@@ -7,6 +7,30 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **Show the model's chain-of-thought on demand.** A new `[ai] show_thinking`
+  setting (default off), a `--show-thinking` flag, and a `/thinking` slash
+  command toggle the display of the model's reasoning in the transcript. It
+  arrives once per provider round-trip rather than token by token, so on a turn
+  that calls tools it appears in installments, before each call. Off by
+  default: thinking is verbose (measured at ~2x the answer length) and restates
+  database contents in prose, so a user who did not ask for it never sees it. When on, reasoning renders as a dimmed block visually
+  subordinate to the answer — never mistakable for it — using the existing
+  secondary style. What is shown is never stored: reasoning lives on the
+  per-call `ChatResponse` and the in-memory `ReasoningText` event, neither of
+  which has a field on the persisted `SessionLine` or `RedactedTurn`, so a
+  session saved while thinking is on contains none of it. `Ctrl+B` (copy
+  transcript) and `Ctrl+Y` (copy last answer) exclude thinking blocks — the
+  clipboard is a channel off-screen, and model prose that may restate row
+  values belongs on screen to the person already reading the answer, not on
+  the system clipboard; `/help thinking` names this. The `/thinking` toggle
+  affects only subsequent turns: reasoning from earlier turns was not retained
+  and cannot be re-rendered. `show_thinking` is not security-critical — it
+  renders locally to the person who already sees the answer and cannot
+  exfiltrate anything the answer does not already show — so the project layer
+  may set it without `--trust-project-config`. The headless renderer stays
+  silent for reasoning events (a pipe has no transcript), and a content event
+  still reaches the loud path so the silence is not a blanket one.
+
 - **`ChatRequest` carries a `reasoning_effort` the extraction call sets to
   `Minimal`, alongside the JSON mode it already set.** This is the honest lever
   for "think less" — ask for it directly rather than suppressing reasoning as a

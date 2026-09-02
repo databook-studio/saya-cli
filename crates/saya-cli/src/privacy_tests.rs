@@ -177,6 +177,7 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         idle_timeout_seconds: 90,
         max_output_tokens: 4096,
         context_byte_budget: 256 * 1024,
+        show_thinking: false,
     };
     let to_openai = crate::agent::runtime::PromptOverrides {
         provider: Some(saya_config::AiProvider::OpenaiCompatible),

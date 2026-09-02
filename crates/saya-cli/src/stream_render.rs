@@ -116,13 +116,13 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // The model's chain-of-thought. This is the one case where rendering to
         // nothing is a *scope* decision rather than a *nature-of-the-event*
         // decision: reasoning is content (it mirrors `AssistantText`), so by its
-        // nature it would belong on the loud path below — but display is the display slice's
-        // decision, not this one's, and nothing is
-        // displayed by default. So it renders to `None` here, the same way a
-        // progress signal does, for a different reason. The test above pins both
-        // halves: this arm stays silent, and a content event (`AssistantText`,
-        // `Complete`) still reaches the loud path — so a future reader cannot
-        // conclude reasoning is progress, and a future change cannot silence the
+        // nature it would belong on the loud path below — but display belongs
+        // to the interactive transcript, not a pipe, and nothing is displayed
+        // by default. So it renders to `None` here, the same way a progress
+        // signal does, for a different reason. The tests pin both halves: this
+        // arm stays silent, and a content event (`AssistantText`, `Complete`)
+        // still reaches the loud path — so a future reader cannot conclude
+        // reasoning is progress, and a future change cannot silence the
         // catch-all to pass one and break the other.
         AgentEvent::ReasoningText { .. } => return None,
         AgentEvent::Complete => TerminalEvent::Complete,
@@ -487,32 +487,29 @@ mod tests {
         );
     }
 
-    /// the CLI-boundary slice deliverable 2 — the test that prevents the fourth occurrence.
     /// `ReasoningText` carries content (chain-of-thought), so by its nature it
     /// would reach the loud catch-all and print
     /// `Not implemented: unrecognized agent event` under a correct answer in the
     /// headless `saya ask` path — exactly the regression that shipped green
-    /// three times. Display is the display slice's decision, not this slice's, so the variant
-    /// renders to `None` here: silent, not an error. This is the one case where
-    /// "renders to nothing" is a *scope* decision (display deferred) rather than
-    /// a *nature-of-the-event* decision (reasoning is content, not progress) —
-    /// the assertion below pins the scope choice so a future reader cannot
-    /// conclude reasoning is progress.
+    /// three times. The headless renderer displays nothing for reasoning: it is
+    /// a *scope* decision (display belongs to the interactive transcript, not a
+    /// pipe) rather than a *nature-of-the-event* decision (reasoning is content,
+    /// not progress). The assertion pins the scope choice so a future reader
+    /// cannot conclude reasoning is progress.
     #[test]
     fn reasoning_text_renders_to_nothing_in_the_headless_path() {
         assert!(
             terminal_event(AgentEvent::reasoning_text("I considered the time column")).is_none(),
-            "reasoning must not reach the headless renderer (display is S24), \
-             and must not fall through to the `unrecognized agent event` catch-all"
+            "reasoning must not reach the headless renderer, and must not fall \
+             through to the `unrecognized agent event` catch-all"
         );
     }
 
-    /// the CLI-boundary slice deliverable 2 — the second half: the fix is not a blanket silence.
-    /// `ReasoningText` renders to `None`, but a content event the headless
-    /// renderer *does* understand still reaches a real `TerminalEvent` and never
-    /// the `NotImplemented` catch-all. Without this, silencing reasoning by
-    /// widening the catch-all would pass the test above and quietly break every
-    /// other variant.
+    /// The fix is not a blanket silence. `ReasoningText` renders to `None`, but
+    /// a content event the headless renderer *does* understand still reaches a
+    /// real `TerminalEvent` and never the `NotImplemented` catch-all. Without
+    /// this, silencing reasoning by widening the catch-all would pass the test
+    /// above and quietly break every other variant.
     #[test]
     fn silencing_reasoning_does_not_silence_a_content_event() {
         // `AssistantText` is the variant `ReasoningText` mirrors — content, and

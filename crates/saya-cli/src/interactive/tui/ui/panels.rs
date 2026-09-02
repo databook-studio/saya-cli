@@ -42,6 +42,7 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
             BlockKind::Tool => "▸ ",
             BlockKind::Error => "✗ ",
             BlockKind::System => "· ",
+            BlockKind::Thinking => "≈ ",
         };
         let rail = Span::styled(glyph, rail_style(kind));
         let mut spans = vec![rail];
