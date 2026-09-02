@@ -7,6 +7,28 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **`ChatRequest` carries a `reasoning_effort` the extraction call sets to
+  `Minimal`, alongside the JSON mode it already set.** This is the honest lever
+  for "think less" — ask for it directly rather than suppressing reasoning as a
+  side effect of the response shape. The two are separate: `response_format` is
+  the answer's form, `reasoning_effort` is how hard to think. The extraction call
+  sets both, because the JSON shape is the only mechanism measured to actually
+  cut the chain-of-thought on the gateway in use, while the effort hint is the
+  correct lever that other endpoints honour; dropping JSON mode would silently
+  restore the multi-second waits, so the mechanism that works stays and the
+  correct lever is added alongside it. Support for the effort hint is
+  endpoint-dependent and frequently a no-op: against the configured gateway
+  (`glm-5.2`), `reasoning_effort: "minimal"` produced 223 reasoning tokens
+  against a 270-token baseline — the hint was accepted and ignored. saya reports
+  what it asked for, never that the effort was applied; whether the model
+  complied is only knowable from the reported reasoning tokens. The main agent
+  loop is unchanged: it sends nothing, leaving effort to the endpoint, so a
+  self-hosted gateway operator's own configuration wins and the main loop keeps
+  real reasoning. Each provider translates the variant it honours — OpenAI's
+  `reasoning_effort` string, Ollama's `think` boolean, Anthropic's and Gemini's
+  thinking token budgets — or drops it; a provider with no equivalent still
+  works.
+
 - **`/usage` counts the learning call, labelled apart from the answer.** Every
   turn makes two provider calls: the one that answers, and the extraction call
   that decides what to remember. Only the first was counted, so the session

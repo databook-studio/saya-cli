@@ -1,4 +1,4 @@
-use crate::ChatRequest;
+use crate::{ChatRequest, ReasoningEffort};
 use serde_json::{Value, json};
 
 pub(super) fn build_body(request: ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Value {
@@ -102,6 +102,22 @@ pub(super) fn build_body(request: ChatRequest, max_tokens: u32, temperature: Opt
         body["tools"] = json!(tools);
     }
 
+    // Anthropic's effort lever is a thinking token budget. `budget_tokens` minimum
+    // is 1024 (Anthropic API docs); each level doubles from that floor —
+    // Minimal=1024, Low=2048, Medium=4096, High=8192 — so a higher effort asks for
+    // proportionally more thinking. `Default` sends nothing so the endpoint's own
+    // configuration wins.
+    if request.reasoning_effort != ReasoningEffort::Default {
+        let budget_tokens = match request.reasoning_effort {
+            ReasoningEffort::Minimal => 1024,
+            ReasoningEffort::Low => 2048,
+            ReasoningEffort::Medium => 4096,
+            ReasoningEffort::High => 8192,
+            ReasoningEffort::Default => 0,
+        };
+        body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget_tokens });
+    }
+
     body
 }
 
@@ -202,11 +218,47 @@ mod tests {
             ],
             tools: Vec::new(),
             response_format: crate::ResponseFormat::JsonObject,
+            reasoning_effort: ReasoningEffort::Default,
         };
         let body = build_body(request, 1024, None);
         assert!(
             body.get("response_format").is_none(),
             "anthropic must not emit response_format: {}",
+            body
+        );
+    }
+
+    /// Anthropic's effort lever is a thinking token budget. `Minimal` carries
+    /// `thinking: {type: "enabled", budget_tokens: 1024}` — the documented
+    /// `budget_tokens` minimum (each higher level doubles from that floor).
+    #[test]
+    fn minimal_effort_request_carries_thinking_budget_on_wire() {
+        let request = ChatRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![ChatMessage::text("user", "extract")],
+            tools: Vec::new(),
+            reasoning_effort: ReasoningEffort::Minimal,
+            ..Default::default()
+        };
+        let body = build_body(request, 1024, None);
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 1024);
+    }
+
+    /// Q2: a `Default` effort request omits the `thinking` field entirely, so
+    /// the default path sends nothing and the endpoint's own configuration wins.
+    #[test]
+    fn default_effort_request_omits_thinking_on_wire() {
+        let request = ChatRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![ChatMessage::text("user", "extract")],
+            tools: Vec::new(),
+            ..Default::default()
+        };
+        let body = build_body(request, 1024, None);
+        assert!(
+            body.get("thinking").is_none(),
+            "default effort must not emit thinking: {}",
             body
         );
     }

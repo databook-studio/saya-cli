@@ -14,9 +14,9 @@ pub use protocol::approval::{ApprovalPolicy, ApprovalPolicyParseError};
 pub use protocol::contracts::{
     AgentEvent, AgentRequest, AllowReadOnlyApproval, ApprovalDecider, ChatMessage, ChatRequest,
     ChatResponse, ContextBlock, KnowledgeOutcome, LearningSkipReason, LocalStateEffect,
-    OverrideFindingDto, ProposedClaimDto, ProviderError, ResponseFormat, SuppliedClaimDto,
-    SuppliedContractDto, ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
-    ToolMetadata,
+    OverrideFindingDto, ProposedClaimDto, ProviderError, ReasoningEffort, ResponseFormat,
+    SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolDefinition, ToolEffect, ToolError,
+    ToolExecutor, ToolMetadata,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::streaming::{
