@@ -9,6 +9,18 @@ use crate::{
 
 pub use output::{AgentError, AgentLimits, AgentOutput};
 
+/// Add a turn's optional count into a run total without inventing data.
+///
+/// A turn that reported nothing leaves the total untouched, and the total stays
+/// `None` until some turn reports — so a provider that never reports cache reads
+/// stays distinguishable from one reporting a cold cache. Folding `None` in as
+/// zero would collapse that distinction and make an unreported rate render as 0%.
+fn sum_reported(total: &mut Option<u64>, turn: Option<u64>) {
+    if let Some(count) = turn {
+        *total = Some(total.unwrap_or(0) + count);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_agent_with_sink(
     provider: &dyn ChatProvider,
@@ -46,10 +58,19 @@ pub async fn run_agent_with_sink(
         // Providers report cumulative counts per response; sum across turns.
         usage.input_tokens += turn_usage.input_tokens;
         usage.output_tokens += turn_usage.output_tokens;
+        sum_reported(
+            &mut usage.cached_input_tokens,
+            turn_usage.cached_input_tokens,
+        );
+        sum_reported(
+            &mut usage.cache_creation_input_tokens,
+            turn_usage.cache_creation_input_tokens,
+        );
+        sum_reported(&mut usage.reasoning_tokens, turn_usage.reasoning_tokens);
         // Forward the turn's captured chain-of-thought onto the event stream as
-        // one `ReasoningText` event — the capture slice captured it on `ChatResponse.reasoning`
+        // one `ReasoningText` event — the provider layer puts it on `ChatResponse.reasoning`
         // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate
-        // boundary so the CLI *can* reach it (display is the display slice, not this slice).
+        // boundary so the CLI *can* reach it; whether to display it is the CLI's call.
         // This is the only way reasoning leaves `saya-agent`: it is NOT pushed
         // onto `messages` — `assistant` (a `ChatMessage`) is what gets replayed
         // to the provider as history, and `ChatMessage` has no reasoning field,

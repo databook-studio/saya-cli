@@ -901,8 +901,106 @@ async fn token_usage_sums_across_turns_into_the_output() {
     );
 }
 
+/// Cache and reasoning counts must survive the run, not just the turn. Each is
+/// optional because a provider that never reports one has to stay
+/// distinguishable from a cold cache — so the run total stays `None` until some
+/// turn reports, and from then on sums only what was actually reported. A turn
+/// that reports nothing must not fold in as a zero.
+#[tokio::test]
+async fn optional_usage_counts_survive_the_run_and_absent_stays_absent() {
+    use saya_agent::{ProviderEvent, ProviderStream, TokenUsage};
+
+    struct DetailedUsageProvider {
+        turns: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for DetailedUsageProvider {
+        fn name(&self) -> &str {
+            "detailed-usage"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            panic!("loop must drive providers through stream()");
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            let mut turns = self.turns.lock().unwrap();
+            *turns += 1;
+            let turn = *turns;
+            drop(turns);
+            let events = if turn == 1 {
+                vec![
+                    Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }])),
+                    Ok(ProviderEvent::Usage(TokenUsage {
+                        input_tokens: 3,
+                        output_tokens: 7,
+                        cached_input_tokens: Some(2),
+                        reasoning_tokens: Some(4),
+                        ..Default::default()
+                    })),
+                    Ok(ProviderEvent::Done),
+                ]
+            } else {
+                // A second turn that reports no cache detail at all: it must not
+                // reset what the first turn reported, nor count as a zero.
+                vec![
+                    Ok(ProviderEvent::TextDelta("final answer".into())),
+                    Ok(ProviderEvent::Usage(TokenUsage {
+                        input_tokens: 5,
+                        output_tokens: 9,
+                        cached_input_tokens: Some(6),
+                        ..Default::default()
+                    })),
+                    Ok(ProviderEvent::Done),
+                ]
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    let output = run_agent(
+        &DetailedUsageProvider {
+            turns: std::sync::Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        output.usage.cached_input_tokens,
+        Some(8),
+        "cache reads reported across turns must reach the run total"
+    );
+    assert_eq!(
+        output.usage.reasoning_tokens,
+        Some(4),
+        "a count reported by one turn must survive a later turn that reports none"
+    );
+    assert_eq!(
+        output.usage.cache_creation_input_tokens, None,
+        "a count no turn reported must stay absent, not become zero"
+    );
+}
+
 /// The intra-loop context bound still binds, but it no longer aborts the run
-///: runaway context is trimmed to fit rather than surfacing an
+/// Runaway context is trimmed to fit rather than surfacing an
 /// opaque `Limit("context bytes")` after the query already ran. Each provider
 /// turn is issued a conversation assembled under the byte budget; the run
 /// completes instead of dying on the first oversized turn.
@@ -1374,7 +1472,7 @@ async fn external_side_effect_tool_is_gated_when_it_arrives_in_a_batch() {
 // --- reasoning crosses the crate boundary, but is not displayed --------
 
 /// A streaming provider whose `stream()` emits a fixed list of events for the
-/// one turn the loop drives, so the the CLI-boundary slice tests can observe exactly which
+/// one turn the loop drives, so tests can observe exactly which
 /// `AgentEvent`s reasoning (or its absence) produces.
 struct ReasoningProvider {
     events: Vec<ProviderEvent>,
@@ -1405,7 +1503,7 @@ impl ChatProvider for ReasoningProvider {
 /// With reasoning absent, output is byte-identical to before reasoning existed.
 /// A provider that streams an answer and no `ReasoningDelta` produces no
 /// `ReasoningText` event — the new variant is silent when there is nothing to
-/// carry, so a non-reasoning provider's event stream is unchanged from pre-the CLI-boundary slice.
+/// carry, so a non-reasoning provider's event stream is unchanged.
 #[tokio::test]
 async fn a_stream_without_reasoning_emits_no_reasoning_event() {
     let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1459,10 +1557,10 @@ async fn a_stream_without_reasoning_emits_no_reasoning_event() {
 /// the turn's captured chain-of-thought is
 /// forwarded onto the event stream as `ReasoningText`. A provider that streams
 /// reasoning deltas produces exactly one `ReasoningText` carrying the
-/// concatenated text — proving the `_reasoning` drop the capture slice left is now a
+/// concatenated text — proving the `_reasoning` value once dropped is now a
 /// forward, and that the headless renderer's silence is a display
 /// decision, not a capture gap. The reasoning event reaches the sink; what the
-/// sink's renderer does with it is the display slice's call.
+/// sink's renderer does with it is the renderer's call.
 #[tokio::test]
 async fn a_stream_with_reasoning_forwards_one_reasoning_event() {
     let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
