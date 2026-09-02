@@ -5,7 +5,13 @@ use super::transcript::{BlockKind, Transcript};
 use saya_agent::AgentEvent;
 
 /// Applies one streamed agent event to the transcript.
-pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
+///
+/// `show_thinking` gates whether the model's chain-of-thought reaches the
+/// transcript: off by default, so a user who did not ask for it never sees it.
+/// When on, reasoning is pushed as a dimmed `Thinking` block — visually
+/// subordinate to the answer, never mistakable for it. Either way reasoning is
+/// in-memory only and never persisted.
+pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_thinking: bool) {
     match event {
         AgentEvent::AssistantText { text } => {
             if !matches!(
@@ -102,17 +108,18 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent) {
                 transcript.push(BlockKind::System, text.trim_end_matches('\n'));
             }
         }
-        // The model's chain-of-thought. Accepted here (the catch-all `_` below
-        // would also accept it, but an explicit arm names the intent so the display slice
-        // knows where to wire live display) and pushed to nothing. the CLI-boundary slice
-        // invariant 1: no TUI rendering in this slice — display is the display slice. the CLI-boundary slice
-        // invariant 2: the transcript is in-memory and never serialized (the
-        // serialized types are `SessionLine`/`RedactedTurn`, which carry role +
-        // content only), so holding reasoning here would not violate
-        // non-persistence — but holding it would render it now, which invariant
-        // 1 forbids. So this slice accepts the event and drops it; buffering
-        // for the display slice's dim live-thinking is left to that slice.
-        AgentEvent::ReasoningText { .. } => {}
+        // The model's chain-of-thought. Shown only when the user opted in; otherwise
+        // accepted and dropped, so the event never reaches the catch-all and never
+        // renders as an error. When shown it lands as a dimmed `Thinking` block,
+        // separate from the assistant answer and visually subordinate to it. Reasoning
+        // is in-memory only: the transcript is never serialized, and the persisted
+        // session types carry role + content only, so holding it here cannot reach a
+        // session file regardless of the display toggle.
+        AgentEvent::ReasoningText { text } => {
+            if show_thinking && !text.is_empty() {
+                transcript.push(BlockKind::Thinking, text);
+            }
+        }
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
         }
@@ -174,6 +181,7 @@ mod tests {
                 ])],
                 0,
             ),
+            false,
         );
         let block = last_block_text(&t).expect("a block was pushed");
         // the batch-approve slice folded-in: the header points at /queue, the action the learn
@@ -197,6 +205,7 @@ mod tests {
         apply_event(
             &mut t,
             AgentEvent::knowledge_supplied(KnowledgeOutcome::Off, Vec::new(), 0),
+            false,
         );
         assert_eq!(last_block_text(&t), Some("memory off · recall disabled"));
 
@@ -204,6 +213,7 @@ mod tests {
         apply_event(
             &mut t,
             AgentEvent::knowledge_supplied(KnowledgeOutcome::Skipped, Vec::new(), 0),
+            false,
         );
         assert_eq!(
             last_block_text(&t),
@@ -221,6 +231,7 @@ mod tests {
                 Vec::new(),
                 0,
             ),
+            false,
         );
         assert!(
             t.blocks().is_empty(),
@@ -247,6 +258,7 @@ mod tests {
                 )])],
                 30,
             ),
+            false,
         );
         let block = last_block_text(&t).expect("a block was pushed");
         assert!(block.contains("· 30 more dropped by bounds"), "{block}");
@@ -273,6 +285,7 @@ mod tests {
                 )])],
                 0,
             ),
+            false,
         );
         let block = last_block_text(&t).expect("a block was pushed");
         assert!(block.contains("analytics"), "profile name appears: {block}");
@@ -293,6 +306,7 @@ mod tests {
                 claimed_value: "return_date".into(),
                 observed_columns: vec!["rental_date".into()],
             }]),
+            false,
         );
         let block = last_block_text(&t).expect("a block was pushed");
         assert!(
@@ -319,7 +333,7 @@ mod tests {
     #[test]
     fn an_empty_knowledge_overridden_event_pushes_nothing() {
         let mut t = Transcript::new();
-        apply_event(&mut t, AgentEvent::knowledge_overridden(Vec::new()));
+        apply_event(&mut t, AgentEvent::knowledge_overridden(Vec::new()), false);
         assert!(
             t.blocks().is_empty(),
             "no findings → no block: {:?}",
@@ -336,6 +350,7 @@ mod tests {
         apply_event(
             &mut t,
             AgentEvent::knowledge_learning_skipped(LearningSkipReason::TimedOut),
+            false,
         );
         let block = last_block_text(&t).expect("a block was pushed");
         assert!(
@@ -348,6 +363,7 @@ mod tests {
         apply_event(
             &mut t,
             AgentEvent::knowledge_learning_skipped(LearningSkipReason::Failed),
+            false,
         );
         let block = last_block_text(&t).expect("a block was pushed");
         assert!(
@@ -356,28 +372,32 @@ mod tests {
         );
     }
 
-    /// A `ReasoningText` event pushes nothing to the
-    /// transcript — no display in this slice. The event is accepted (the explicit
-    /// arm in `apply_event` names the intent for the display slice) but the transcript is
-    /// untouched, so the chain-of-thought cannot reach the screen until the display slice
-    /// wires it. Asserts on the transcript state, the same seam the other
-    /// `apply_event` tests use.
+    /// The model's chain-of-thought reaches the transcript only when the user
+    /// opted in. Off by default, so a user who did not ask for it never sees it;
+    /// on, it lands as a `Thinking` block separate from the assistant answer.
+    /// Asserts on the transcript state, the same seam the other `apply_event`
+    /// tests use.
     #[test]
-    fn reasoning_text_pushes_nothing_to_the_transcript() {
+    fn reasoning_text_is_silent_when_thinking_is_off() {
         let mut t = Transcript::new();
         apply_event(
             &mut t,
             AgentEvent::reasoning_text("I considered the time column"),
+            false,
         );
         assert!(
             t.blocks().is_empty(),
-            "reasoning must not reach the TUI transcript in S23b: {:?}",
+            "reasoning must not reach the transcript when thinking is off: {:?}",
             t.blocks()
         );
-        // And it stays silent even when an answer has already streamed — it
-        // does not push a block above, below, or between assistant blocks.
-        apply_event(&mut t, AgentEvent::assistant_text("the answer"));
-        apply_event(&mut t, AgentEvent::reasoning_text("more thinking mid-turn"));
+        // It stays silent even when an answer has already streamed — it does
+        // not push a block above, below, or between assistant blocks.
+        apply_event(&mut t, AgentEvent::assistant_text("the answer"), false);
+        apply_event(
+            &mut t,
+            AgentEvent::reasoning_text("more thinking mid-turn"),
+            false,
+        );
         assert_eq!(
             t.blocks().len(),
             1,
@@ -389,6 +409,81 @@ mod tests {
             !t.blocks()[0].text.contains("thinking"),
             "reasoning must not be folded into the assistant block: {:?}",
             t.blocks()[0].text
+        );
+    }
+
+    /// When thinking is on, a `ReasoningText` event pushes a `Thinking` block
+    /// carrying the chain-of-thought — separate from the assistant answer, so
+    /// it cannot be mistaken for it. Empty reasoning pushes nothing either way.
+    #[test]
+    fn reasoning_text_pushes_a_thinking_block_when_thinking_is_on() {
+        let mut t = Transcript::new();
+        apply_event(
+            &mut t,
+            AgentEvent::reasoning_text("I considered the time column"),
+            true,
+        );
+        assert_eq!(t.blocks().len(), 1, "one thinking block is pushed");
+        assert_eq!(t.blocks()[0].kind, BlockKind::Thinking);
+        assert_eq!(t.blocks()[0].text, "I considered the time column");
+
+        // Empty reasoning pushes nothing, even with thinking on.
+        apply_event(&mut t, AgentEvent::reasoning_text(""), true);
+        assert_eq!(t.blocks().len(), 1, "empty reasoning pushes no block");
+    }
+
+    /// Displaying the chain-of-thought must not open a path for it to reach a
+    /// persisted session. The reasoning restates row values and column
+    /// contents in prose, and session files are redacted against a different
+    /// threat, so the display toggle and the persistence boundary stay
+    /// independent: turning the former on must not weaken the latter.
+    ///
+    /// The reasoning is asserted to be on screen first. Without that, the
+    /// absence checks below would pass on a build that leaked, because a
+    /// string never introduced is trivially absent.
+    #[test]
+    fn reasoning_shown_on_screen_stays_out_of_the_persisted_session() {
+        use crate::interactive::session_state::SessionState;
+
+        let reasoning = "the secret chain-of-thought about row values 9f3a";
+        let mut transcript = Transcript::default();
+        apply_event(&mut transcript, AgentEvent::reasoning_text(reasoning), true);
+        apply_event(
+            &mut transcript,
+            AgentEvent::assistant_text("the answer is 42"),
+            true,
+        );
+
+        assert!(
+            transcript
+                .blocks()
+                .iter()
+                .any(|b| b.kind == BlockKind::Thinking && b.text.contains(reasoning)),
+            "the reasoning must be on screen for this test to prove anything"
+        );
+
+        let mut session =
+            SessionState::new("s1", Some(String::from("analytics")), String::from("m"));
+        session.show_thinking = true;
+        session.record_turn("what is the answer", "the answer is 42", false, Vec::new());
+
+        let json = serde_json::to_string(&session).expect("serializes");
+        assert!(
+            !json.contains(reasoning),
+            "reasoning on screen leaked into the persisted session: {json}"
+        );
+
+        let replayed = session.provider_history();
+        assert!(
+            replayed.iter().all(|m| !m.content.contains(reasoning)),
+            "reasoning on screen leaked into replayed history: {replayed:?}"
+        );
+
+        let redacted = session.redacted();
+        let redacted_json = serde_json::to_string(&redacted).expect("serializes");
+        assert!(
+            !redacted_json.contains(reasoning),
+            "reasoning on screen leaked into the redacted session: {redacted_json}"
         );
     }
 }

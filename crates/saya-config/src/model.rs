@@ -109,6 +109,12 @@ pub struct AiFile {
     /// assembles and sends to the provider. The loop trims under it (oldest
     /// tool results dropped, newest truncated with a marker) rather than abort.
     pub context_byte_budget: Option<usize>,
+    /// Show the model's chain-of-thought in the transcript. Off by default:
+    /// thinking is verbose (measured at ~2x the answer length) and restates
+    /// database contents in prose, so a user who did not ask for it must not
+    /// get it. Display only — reasoning is never persisted regardless of this
+    /// setting.
+    pub show_thinking: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

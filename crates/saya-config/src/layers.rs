@@ -16,6 +16,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(ai.idle_timeout_seconds);
     apply!(ai.max_output_tokens);
     apply!(ai.context_byte_budget);
+    apply!(ai.show_thinking);
     apply!(run.read_only);
     apply!(run.max_rows);
     apply!(run.max_iterations);
@@ -92,6 +93,9 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
     if cli.max_rows.is_some() {
         file.run.max_rows = cli.max_rows;
     }
+    if cli.show_thinking.is_some() {
+        file.ai.show_thinking = cli.show_thinking;
+    }
 }
 
 /// The values of security-critical settings captured after the user layer
@@ -99,6 +103,13 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
 /// `.saya/config.toml` is untrusted input, and these four settings decide
 /// where the API key is sent, whether rows leave the machine, and whether
 /// engine-level read-only enforcement stays on.
+///
+/// `ai.show_thinking` is deliberately not on this list. It renders locally, to
+/// the person who already sees the answer, and cannot exfiltrate anything the
+/// answer does not already show — so it is an ordinary setting the project
+/// layer may set without `--trust-project-config`. Adding a fifth protected
+/// setting would be a deliberate decision, not an oversight; this is that
+/// decision recorded next to the list it would join.
 pub(crate) struct ProtectedSettings {
     ai_base_url: Option<String>,
     ai_api_key: Option<SecretRef>,

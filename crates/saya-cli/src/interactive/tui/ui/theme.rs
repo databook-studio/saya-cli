@@ -92,6 +92,10 @@ pub(super) fn kind_style(kind: BlockKind) -> Style {
             .add_modifier(Modifier::ITALIC),
         BlockKind::Error => Style::default().fg(danger()).add_modifier(Modifier::BOLD),
         BlockKind::Tool => Style::default().fg(secondary()),
+        // The model's chain-of-thought restates database contents in prose and
+        // is often longer than the answer, so it stays visually subordinate:
+        // dimmed secondary, never mistakable for the answer.
+        BlockKind::Thinking => Style::default().fg(secondary()).add_modifier(Modifier::DIM),
     }
 }
 
@@ -104,6 +108,7 @@ pub(super) fn rail_style(kind: BlockKind) -> Style {
         BlockKind::Assistant => Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         BlockKind::Tool | BlockKind::System => Style::default().fg(secondary()),
         BlockKind::Error => Style::default().fg(danger()).add_modifier(Modifier::BOLD),
+        BlockKind::Thinking => Style::default().fg(secondary()),
     }
 }
 
