@@ -10,6 +10,7 @@ pub struct CliOverrides {
     pub model: Option<String>,
     pub allow_data_sharing: Option<bool>,
     pub max_rows: Option<usize>,
+    pub show_thinking: Option<bool>,
     /// Explicitly trust security-critical settings from the project layer's
     /// `.saya/config.toml` (`ai.base_url`, `ai.api_key`,
     /// `ai.allow_data_sharing`, `run.read_only`). Off by default because a

@@ -50,6 +50,8 @@ pub enum SlashCommand {
     Doctor,
     /// Show session token usage totals and cache hit rate.
     Usage,
+    /// Toggle display of the model's chain-of-thought in the transcript.
+    Thinking(Option<bool>),
     Help(Option<String>),
     Exit,
 }
@@ -111,6 +113,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "resume" => SlashCommand::Resume(required()?),
         "doctor" => SlashCommand::Doctor,
         "usage" => SlashCommand::Usage,
+        "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
         "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject"
         | "approve-all" => {
             // The contract slash adapters: translate to the same
@@ -140,7 +143,7 @@ fn parse_bool(value: &str) -> Result<Option<bool>, SlashParseError> {
     match value {
         "on" | "true" | "enable" => Ok(Some(true)),
         "off" | "false" | "disable" => Ok(Some(false)),
-        _ => Err(SlashParseError("privacy expects on or off".into())),
+        _ => Err(SlashParseError("expected on or off".into())),
     }
 }
 

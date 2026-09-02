@@ -56,6 +56,7 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 idle_timeout_seconds: 90,
                 max_output_tokens: 4096,
                 context_byte_budget: 256 * 1024,
+                show_thinking: false,
             },
             max_rows: 100,
             read_only: true,
@@ -232,10 +233,12 @@ fn memory_receipt_above_answer() {
             )],
             0,
         ),
+        false,
     );
     apply_event(
         &mut app.transcript,
         AgentEvent::assistant_text("The orders table uses created_at as its time column."),
+        false,
     );
 
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
@@ -253,6 +256,7 @@ fn learned_and_noted_trailing_answer() {
     apply_event(
         &mut app.transcript,
         AgentEvent::assistant_text("Done — I've recorded what you told me and flagged the guess."),
+        false,
     );
     // A user-stated fact lands Confirmed → "learned". Trails the answer.
     apply_event(
@@ -266,6 +270,7 @@ fn learned_and_noted_trailing_answer() {
             None,
             ClaimStatus::Confirmed,
         )),
+        false,
     );
     // An assistant inference lands Candidate → "noted", unconfirmed. Trails too.
     apply_event(
@@ -279,6 +284,7 @@ fn learned_and_noted_trailing_answer() {
             Some("created_at"),
             ClaimStatus::Candidate,
         )),
+        false,
     );
 
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
@@ -305,6 +311,7 @@ fn long_content_at_real_width() {
                 "connection": "analytics",
             }),
         ),
+        false,
     );
     apply_event(
         &mut app.transcript,
@@ -312,6 +319,7 @@ fn long_content_at_real_width() {
             name: "bounded_sql_query".into(),
             summary: "50 rows".into(),
         },
+        false,
     );
     // A second wide SQL block so the transcript overflows the 26-row region at
     // 100×30: the tail-view truncates the top, cutting off the first SQL header.
@@ -324,6 +332,7 @@ fn long_content_at_real_width() {
                 "connection": "analytics",
             }),
         ),
+        false,
     );
     apply_event(
         &mut app.transcript,
@@ -331,12 +340,14 @@ fn long_content_at_real_width() {
             name: "bounded_sql_query".into(),
             summary: "25 rows".into(),
         },
+        false,
     );
     apply_event(
         &mut app.transcript,
         AgentEvent::assistant_text(
             "Here are the fulfilled orders and the top spenders over 100 USD.",
         ),
+        false,
     );
     // A long claim value: the supplied path renders the value raw (no eliding),
     // so a 180-char description wraps across several lines.
@@ -360,6 +371,7 @@ fn long_content_at_real_width() {
             )],
             0,
         ),
+        false,
     );
 
     let buffer = render_buffer(&app, &fixed_status(), 100, 30);

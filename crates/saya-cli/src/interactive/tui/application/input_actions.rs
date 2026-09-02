@@ -43,6 +43,13 @@ impl App {
     }
 
     /// Queues the whole transcript for the clipboard (F4).
+    ///
+    /// The model's chain-of-thought is excluded: it restates row values and
+    /// column contents in prose, and the clipboard is a channel off-screen —
+    /// putting model reasoning that may restate database contents on the system
+    /// clipboard is a sharper exposure than showing it on screen to the person
+    /// already reading the answer. `/help thinking` names this so it is not a
+    /// surprise.
     pub(crate) fn copy_transcript(&mut self) {
         if self.clipboard_copy.is_some() || self.pending_clipboard.is_some() {
             self.transcript
@@ -53,6 +60,7 @@ impl App {
             .transcript
             .blocks()
             .iter()
+            .filter(|block| block.kind != BlockKind::Thinking)
             .map(|block| block.text.as_str())
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -183,5 +191,59 @@ impl App {
         self.transcript.push(BlockKind::User, line.clone());
         self.transcript.scroll_to_bottom();
         self.pending = Some(line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interactive::tui::application::tests_support::idle_app;
+
+    /// Copying the transcript excludes the model's chain-of-thought. Reasoning
+    /// restates row values and column contents in prose, and the clipboard is a
+    /// channel off-screen — putting it on the system clipboard is a sharper
+    /// exposure than showing it to the person already reading the answer. The
+    /// user and assistant blocks are copied; the thinking block is not.
+    #[test]
+    fn copy_transcript_excludes_thinking_blocks() {
+        let mut app = idle_app();
+        app.transcript.push(BlockKind::User, "what is the answer");
+        app.transcript.push(
+            BlockKind::Thinking,
+            "the secret chain-of-thought about row values",
+        );
+        app.transcript
+            .push(BlockKind::Assistant, "the answer is 42");
+
+        app.copy_transcript();
+        let copied = app.pending_clipboard.expect("transcript was queued");
+        assert!(
+            copied.contains("the answer is 42"),
+            "assistant text must be copied: {copied}"
+        );
+        assert!(
+            copied.contains("what is the answer"),
+            "user text must be copied: {copied}"
+        );
+        assert!(
+            !copied.contains("the secret chain-of-thought about row values"),
+            "thinking must not reach the clipboard: {copied}"
+        );
+    }
+
+    /// `copy_last_answer` finds the assistant block, not a thinking block, so the
+    /// chain-of-thought never reaches the clipboard even when it is the most
+    /// recent block.
+    #[test]
+    fn copy_last_answer_skips_thinking_blocks() {
+        let mut app = idle_app();
+        app.transcript
+            .push(BlockKind::Assistant, "the answer is 42");
+        app.transcript
+            .push(BlockKind::Thinking, "the secret chain-of-thought");
+
+        app.copy_last_answer();
+        let copied = app.pending_clipboard.expect("answer was queued");
+        assert_eq!(copied, "the answer is 42");
     }
 }
