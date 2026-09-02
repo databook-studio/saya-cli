@@ -184,7 +184,7 @@ mod tests {
             false,
         );
         let block = last_block_text(&t).expect("a block was pushed");
-        // the batch-approve slice folded-in: the header points at /queue, the action the learn
+        // The header points at /queue, the action the learn
         // path already names, beside the unconfirmed count it always carried.
         assert!(
             block.starts_with("memory supplied · 2 claims (1 unconfirmed — review with /queue)"),
@@ -438,9 +438,13 @@ mod tests {
     /// threat, so the display toggle and the persistence boundary stay
     /// independent: turning the former on must not weaken the latter.
     ///
-    /// The reasoning is asserted to be on screen first. Without that, the
-    /// absence checks below would pass on a build that leaked, because a
-    /// string never introduced is trivially absent.
+    /// What this pins is the display half: the reasoning really reaches the
+    /// transcript as its own block. The session built alongside it is a
+    /// separate object, so the absence checks below are a shape check on the
+    /// persisted form, not proof that a live turn cannot carry reasoning into
+    /// it — that guarantee is structural and pinned elsewhere, by
+    /// `record_turn` taking no reasoning argument and by `ChatMessage`'s wire
+    /// form being fixed by test.
     #[test]
     fn reasoning_shown_on_screen_stays_out_of_the_persisted_session() {
         use crate::interactive::session_state::SessionState;

@@ -33,8 +33,11 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         state.allow_data_sharing = runtime.resolved.ai.allow_data_sharing;
         state.approval_mode = config::runtime::approval_name(&cli.options)?;
         state.included_profiles = cli.options.include_profiles.clone();
-        state.show_thinking = runtime.resolved.ai.show_thinking || cli.options.show_thinking;
     }
+    // Always derived, including on a resumed session: the toggle is a display
+    // preference that is never persisted, so a resumed session deserializes it
+    // as off and would otherwise ignore both the config setting and the flag.
+    state.show_thinking = runtime.resolved.ai.show_thinking || cli.options.show_thinking;
     // Reflect the configured default profile so the status bar and @-references
     // match the database the agent actually queries.
     if state.profile.is_none() {
