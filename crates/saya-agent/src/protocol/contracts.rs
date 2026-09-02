@@ -119,6 +119,7 @@ pub enum ReasoningEffort {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
@@ -139,6 +140,7 @@ pub struct ChatRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ChatResponse {
     pub message: ChatMessage,
     /// The chain-of-thought the model produced for this call, or `None` when
@@ -170,6 +172,58 @@ pub struct ChatResponse {
     /// existed (no `usage` key) deserializing to `None`.
     #[serde(default)]
     pub usage: Option<TokenUsage>,
+}
+
+impl ChatRequest {
+    /// A request for `model` carrying `messages`; tools, response format and
+    /// reasoning effort stay at their defaults until a caller sets them. This
+    /// is the way in from another crate, where the struct is
+    /// `#[non_exhaustive]` and a literal will not compile.
+    pub fn new(model: impl Into<String>, messages: Vec<ChatMessage>) -> Self {
+        Self {
+            model: model.into(),
+            messages,
+            ..Self::default()
+        }
+    }
+
+    /// The same request with tool definitions attached, for a call that lets
+    /// the model reach for them.
+    #[must_use]
+    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    /// The same request with a response shape requested, for a call site that
+    /// needs the answer in a machine-readable form.
+    #[must_use]
+    pub fn with_response_format(mut self, format: ResponseFormat) -> Self {
+        self.response_format = format;
+        self
+    }
+
+    /// The same request with an effort hint attached. Whether the endpoint
+    /// honours it is not knowable from here — see `reasoning_effort`.
+    #[must_use]
+    pub fn with_reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = effort;
+        self
+    }
+}
+
+impl ChatResponse {
+    /// A response carrying just the model's message; reasoning and usage stay
+    /// absent until a provider reports them. This is the way in from another
+    /// crate, where the struct is `#[non_exhaustive]` and a literal will not
+    /// compile — a provider implementation sets the extras on the returned
+    /// value.
+    pub fn new(message: ChatMessage) -> Self {
+        Self {
+            message,
+            ..Self::default()
+        }
+    }
 }
 
 /// The three distinguishable states of a turn's recall, as
