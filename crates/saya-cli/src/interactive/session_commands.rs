@@ -302,9 +302,9 @@ mod tests {
             output_tokens: 50,
             ..Default::default()
         });
-        assert_eq!(state.usage.turns, 1);
+        assert_eq!(state.usage.answering.turns, 1);
         state.apply(SlashCommand::Clear, &[]);
-        assert_eq!(state.usage.turns, 0);
-        assert_eq!(state.usage.input_tokens, 0);
+        assert_eq!(state.usage.answering.turns, 0);
+        assert_eq!(state.usage.answering.input_tokens, 0);
     }
 }

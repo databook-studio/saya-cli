@@ -1,6 +1,8 @@
 //! Post-turn structured extraction execution runner.
 
-use saya_agent::{ChatProvider, ChatRequest, ProposedClaimDto, ProviderError, ResponseFormat};
+use saya_agent::{
+    ChatProvider, ChatRequest, ProposedClaimDto, ProviderError, ResponseFormat, TokenUsage,
+};
 use saya_store::KnowledgeItemStore;
 use std::fmt;
 
@@ -49,6 +51,33 @@ impl From<IngestionError> for ExtractionRunnerError {
     }
 }
 
+/// What a post-turn extraction call produced: the persisted proposals (on
+/// success) and the usage the provider reported for the call whenever a
+/// response was received. A parse or ingestion failure still carries the
+/// usage — tokens may have been billed before the failure — so the accounting
+/// is not tied to the success path. A provider error or timeout produces no
+/// response, so the usage is `None` and the recorder invents nothing.
+pub(crate) struct ExtractionOutcome {
+    pub dtos: Result<Vec<ProposedClaimDto>, ExtractionRunnerError>,
+    pub usage: Option<TokenUsage>,
+}
+
+impl ExtractionOutcome {
+    fn ok(dtos: Vec<ProposedClaimDto>, usage: Option<TokenUsage>) -> Self {
+        Self {
+            dtos: Ok(dtos),
+            usage,
+        }
+    }
+
+    fn failed(error: ExtractionRunnerError, usage: Option<TokenUsage>) -> Self {
+        Self {
+            dtos: Err(error),
+            usage,
+        }
+    }
+}
+
 /// Executes post-turn structured extraction using the given provider and persists resolved proposals.
 pub(crate) async fn run_extraction(
     provider: &dyn ChatProvider,
@@ -57,9 +86,9 @@ pub(crate) async fn run_extraction(
     registry: &ConnectionRegistry,
     store: &dyn KnowledgeItemStore,
     receipt: &RecallReceipt,
-) -> Result<Vec<ProposedClaimDto>, ExtractionRunnerError> {
+) -> ExtractionOutcome {
     if record.object_table.is_empty() {
-        return Ok(Vec::new());
+        return ExtractionOutcome::ok(Vec::new(), None);
     }
 
     let request = build_extraction_prompt(record, model);
@@ -75,22 +104,32 @@ pub(crate) async fn run_extraction(
         response_format: ResponseFormat::JsonObject,
         ..request
     };
-    let response = provider.complete(request).await?;
-    let extracted = parse_extraction_response(&response.message.content, &record.object_table)?;
+    let response = match provider.complete(request).await {
+        Ok(response) => response,
+        Err(error) => return ExtractionOutcome::failed(error.into(), None),
+    };
+    let usage = response.usage;
+    let extracted = match parse_extraction_response(&response.message.content, &record.object_table)
+    {
+        Ok(extracted) => extracted,
+        Err(error) => return ExtractionOutcome::failed(error.into(), usage),
+    };
     if extracted.is_empty() {
-        return Ok(Vec::new());
+        return ExtractionOutcome::ok(Vec::new(), usage);
     }
 
     let resolved = resolve_proposals(extracted, &record.object_table, registry).await;
 
     let filtered = filter_anti_self_reinforcement(resolved, &receipt.supplied);
     if filtered.is_empty() {
-        return Ok(Vec::new());
+        return ExtractionOutcome::ok(Vec::new(), usage);
     }
 
     let fingerprint = crate::commands::unobserved_fingerprint();
-    let dtos = ingest_proposals(store, filtered, fingerprint).await?;
-    Ok(dtos)
+    match ingest_proposals(store, filtered, fingerprint).await {
+        Ok(dtos) => ExtractionOutcome::ok(dtos, usage),
+        Err(error) => ExtractionOutcome::failed(error.into(), usage),
+    }
 }
 
 #[cfg(test)]
@@ -258,7 +297,7 @@ mod tests {
             calls: Mutex::new(0),
         };
 
-        let res = run_extraction(
+        let outcome = run_extraction(
             &provider,
             "test-model",
             &record,
@@ -266,8 +305,9 @@ mod tests {
             &store,
             &receipt,
         )
-        .await
-        .expect("empty table succeeds");
+        .await;
+
+        let res = outcome.dtos.expect("empty table succeeds");
 
         assert!(res.is_empty());
         assert_eq!(*provider.calls.lock().unwrap(), 0);
@@ -305,7 +345,7 @@ mod tests {
             calls: Mutex::new(0),
         };
 
-        let res = run_extraction(
+        let outcome = run_extraction(
             &provider,
             "test-model",
             &record,
@@ -313,8 +353,8 @@ mod tests {
             &store,
             &receipt,
         )
-        .await
-        .expect("extraction succeeds");
+        .await;
+        let res = outcome.dtos.expect("extraction succeeds");
 
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].profile, "analytics");
@@ -357,7 +397,7 @@ mod tests {
         };
 
         let provider = ErrorProvider;
-        let res = run_extraction(
+        let outcome = run_extraction(
             &provider,
             "test-model",
             &record,
@@ -367,7 +407,10 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(res, Err(ExtractionRunnerError::Provider(_))));
+        assert!(matches!(
+            outcome.dtos,
+            Err(ExtractionRunnerError::Provider(_))
+        ));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -400,9 +443,9 @@ mod tests {
             captured: Mutex::new(None),
         };
 
-        let res = run_extraction(&provider, "glm-5.2", &record, &registry, &store, &receipt)
-            .await
-            .expect("extraction succeeds");
+        let outcome =
+            run_extraction(&provider, "glm-5.2", &record, &registry, &store, &receipt).await;
+        let res = outcome.dtos.expect("extraction succeeds");
 
         assert!(res.is_empty(), "empty-proposal response stores nothing");
         let sent = provider
@@ -415,6 +458,140 @@ mod tests {
             sent.response_format,
             ResponseFormat::JsonObject,
             "the extraction call must request JSON mode"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A provider that returns a response carrying a configurable usage, so the
+    /// accounting can assert what the extraction call reported.
+    struct UsageExtractionProvider {
+        response_text: String,
+        usage: TokenUsage,
+    }
+
+    #[async_trait]
+    impl ChatProvider for UsageExtractionProvider {
+        fn name(&self) -> &str {
+            "usage-provider"
+        }
+        async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            Ok(ChatResponse {
+                message: ChatMessage::text("assistant", &self.response_text),
+                usage: Some(self.usage),
+                ..Default::default()
+            })
+        }
+    }
+
+    /// A successful extraction surfaces the usage the provider reported, so the
+    /// recorder can fold it into the learning total rather than dropping it.
+    #[tokio::test]
+    async fn run_extraction_surfaces_usage_on_success() {
+        let identity = test_identity("analytics");
+        let registry = test_registry("analytics", &identity);
+        let root = temp_root("usage_ok");
+        let store = SqliteStateStore::new(root.join("state.sqlite3"));
+        let receipt = RecallReceipt::ran_empty(false);
+
+        let mut object_table = TurnObjectTable::new();
+        object_table.register("analytics", "raw.orders", &["status".into()]);
+
+        let record = TurnRecord {
+            prompt: "what is orders status".into(),
+            assistant_answer: "status is pending".into(),
+            object_table,
+            user_corrections: Vec::new(),
+            override_findings: Vec::new(),
+            supplied_claims: Vec::new(),
+        };
+
+        let provider = UsageExtractionProvider {
+            response_text: r#"{"proposals": []}"#.into(),
+            usage: TokenUsage {
+                input_tokens: 40,
+                output_tokens: 10,
+                ..Default::default()
+            },
+        };
+
+        let outcome = run_extraction(
+            &provider,
+            "test-model",
+            &record,
+            &registry,
+            &store,
+            &receipt,
+        )
+        .await;
+
+        outcome.dtos.expect("extraction succeeds");
+        assert_eq!(
+            outcome.usage,
+            Some(TokenUsage {
+                input_tokens: 40,
+                output_tokens: 10,
+                ..Default::default()
+            }),
+            "a successful extraction must surface the provider-reported usage"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A failed extraction that still received a response surfaces the usage:
+    /// tokens may have been billed before the parse failed, and the accounting
+    /// must not be tied to the success path.
+    #[tokio::test]
+    async fn run_extraction_surfaces_usage_on_parse_failure() {
+        let identity = test_identity("analytics");
+        let registry = test_registry("analytics", &identity);
+        let root = temp_root("usage_parse_err");
+        let store = SqliteStateStore::new(root.join("state.sqlite3"));
+        let receipt = RecallReceipt::ran_empty(false);
+
+        let mut object_table = TurnObjectTable::new();
+        object_table.register("analytics", "raw.orders", &["status".into()]);
+
+        let record = TurnRecord {
+            prompt: "what is orders status".into(),
+            assistant_answer: "status is pending".into(),
+            object_table,
+            user_corrections: Vec::new(),
+            override_findings: Vec::new(),
+            supplied_claims: Vec::new(),
+        };
+
+        let provider = UsageExtractionProvider {
+            response_text: "definitely not json".into(),
+            usage: TokenUsage {
+                input_tokens: 40,
+                output_tokens: 10,
+                ..Default::default()
+            },
+        };
+
+        let outcome = run_extraction(
+            &provider,
+            "test-model",
+            &record,
+            &registry,
+            &store,
+            &receipt,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome.dtos, Err(ExtractionRunnerError::Extraction(_))),
+            "malformed content must fail extraction, got: {:?}",
+            outcome.dtos
+        );
+        assert_eq!(
+            outcome.usage,
+            Some(TokenUsage {
+                input_tokens: 40,
+                output_tokens: 10,
+                ..Default::default()
+            }),
+            "a failed extraction that received a response must still surface its usage"
         );
         let _ = fs::remove_dir_all(root);
     }

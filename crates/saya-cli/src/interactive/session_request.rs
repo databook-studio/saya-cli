@@ -11,7 +11,10 @@ use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
 use saya_store::SqliteStateStore;
 
 pub(crate) enum PromptResult {
-    Completed(AgentOutput),
+    /// Boxed because the variant dwarfs `Cancelled`, which carries nothing;
+    /// an unboxed `AgentOutput` makes every `PromptResult` as large as a
+    /// completed turn.
+    Completed(Box<AgentOutput>),
     Cancelled,
 }
 
@@ -43,7 +46,7 @@ pub(crate) async fn run(
     );
     tokio::pin!(work);
     tokio::select! {
-        result = &mut work => result.map(PromptResult::Completed),
+        result = &mut work => result.map(|output| PromptResult::Completed(Box::new(output))),
         _ = tokio::signal::ctrl_c() => {
             cancellation.cancel();
             Ok(PromptResult::Cancelled)
