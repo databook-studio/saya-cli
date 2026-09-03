@@ -203,37 +203,46 @@ async fn tool_call_round_trip_is_deterministic_and_emits_safe_events() {
 }
 
 #[tokio::test]
-async fn tool_call_limits_stop_run_before_unbounded_execution() {
+async fn tool_call_limit_salvages_before_any_unbounded_execution() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
-        responses: Mutex::new(vec![ChatResponse::new(ChatMessage {
-            role: "assistant".into(),
-            content: String::new(),
-            tool_calls: vec![ToolCall {
-                id: "call-1".into(),
-                name: "bounded_sql_query".into(),
-                arguments: serde_json::json!({}),
-            }],
-            tool_call_id: None,
-        })]),
+        responses: Mutex::new(vec![
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "salvaged answer")),
+        ]),
     };
-    let error = run_agent(
+    let output = run_agent(
         &provider,
         &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
+            calls: calls.clone(),
         },
         request(),
         definitions(),
         AgentLimits {
-            max_turns: 1,
-            max_tool_calls: 0,
+            max_turns: Some(1),
+            max_tool_calls: Some(0),
             permit_candidate_writes: false,
             ..AgentLimits::default()
         },
         &AllowReadOnlyApproval,
     )
     .await
-    .unwrap_err();
-    assert!(matches!(error, AgentError::Limit("tool calls")));
+    .expect("a crossed budget salvages rather than erroring");
+    assert_eq!(output.answer, "salvaged answer");
+    assert!(output.truncated, "a salvaged run is marked truncated");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "the budget-crossing tool must not execute"
+    );
 }
 
 #[tokio::test]
@@ -703,8 +712,8 @@ async fn execute_batch_caps_simultaneous_concurrency() {
         request(),
         definitions(),
         AgentLimits {
-            max_turns: 4,
-            max_tool_calls: 64,
+            max_turns: Some(4),
+            max_tool_calls: Some(64),
             permit_candidate_writes: false,
             context_byte_budget: 1024 * 1024,
         },
@@ -978,8 +987,8 @@ async fn runaway_context_is_trimmed_not_aborted_and_the_bound_still_binds() {
         request(),
         definitions(),
         AgentLimits {
-            max_turns: 8,
-            max_tool_calls: 64,
+            max_turns: Some(8),
+            max_tool_calls: Some(64),
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
         },
@@ -1091,8 +1100,8 @@ async fn single_oversized_tool_result_does_not_abort_the_run() {
         request(),
         definitions(),
         AgentLimits {
-            max_turns: 4,
-            max_tool_calls: 8,
+            max_turns: Some(4),
+            max_tool_calls: Some(8),
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
         },
@@ -1513,5 +1522,460 @@ async fn a_stream_with_reasoning_forwards_one_reasoning_event() {
             .iter()
             .any(|event| matches!(event, AgentEvent::AssistantText { text } if text == "ok")),
         "the answer must still stream: {events:?}"
+    );
+}
+
+/// A loop with no turn ceiling must still end promptly when the cancellation
+/// token fires — Ctrl+C has to work when nothing else will stop a runaway
+/// model. A provider that never stops calling tools is driven under the
+/// default limits and a sink that cancels after many tool requests. The run
+/// must return `Cancelled`, and it must have run well past the old fixed turn
+/// ceiling to prove it was the cancellation, not a budget, that stopped it.
+#[tokio::test]
+async fn unbounded_loop_stops_on_cancellation() {
+    use std::time::Duration;
+    struct ForeverTools;
+    #[async_trait::async_trait]
+    impl ToolExecutor for ForeverTools {
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            Ok(serde_json::json!({"rows": 1}))
+        }
+    }
+    struct LoopingProvider;
+    #[async_trait]
+    impl ChatProvider for LoopingProvider {
+        fn name(&self) -> &str {
+            "loop"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call".into(),
+                    name: "schema_discovery".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }))
+        }
+    }
+    struct CancelAfter {
+        token: CancellationToken,
+        seen: Mutex<usize>,
+        at: usize,
+    }
+    #[async_trait]
+    impl AgentEventSink for CancelAfter {
+        async fn emit(&self, event: AgentEvent) {
+            if matches!(event, AgentEvent::ToolRequested { .. }) {
+                let mut count = self.seen.lock().unwrap();
+                *count += 1;
+                if *count == self.at {
+                    self.token.cancel();
+                }
+            }
+        }
+    }
+    let token = CancellationToken::new();
+    let sink = CancelAfter {
+        token: token.clone(),
+        seen: Mutex::new(0),
+        at: 20,
+    };
+    let run = run_agent_with_sink(
+        &LoopingProvider,
+        &ForeverTools,
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        token,
+    );
+    let error = tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("an unbounded loop must still end on cancellation")
+        .unwrap_err();
+    assert!(
+        matches!(error, AgentError::Cancelled),
+        "unbounded loop must end on cancellation, got {error:?}"
+    );
+}
+
+/// A loop with no turn ceiling must keep bounding memory: `trim_to_budget`
+/// still caps the conversation at `context_byte_budget` every turn, so a long
+/// run cannot exhaust RAM. A provider that runs many turns — each returning a
+/// result far larger than the budget — must complete, and every provider
+/// request must fit the budget.
+#[tokio::test]
+async fn unbounded_loop_trims_context_to_budget() {
+    struct BigTools;
+    #[async_trait::async_trait]
+    impl ToolExecutor for BigTools {
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            Ok(serde_json::json!({ "rows": vec!["x".repeat(8_192)] }))
+        }
+    }
+    struct LongRunProvider {
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+        turns: usize,
+    }
+    #[async_trait]
+    impl ChatProvider for LongRunProvider {
+        fn name(&self) -> &str {
+            "long"
+        }
+        async fn complete(
+            &self,
+            request: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            let turn = {
+                let mut requests = self.requests.lock().unwrap();
+                requests.push(request);
+                requests.len()
+            };
+            if turn <= self.turns {
+                Ok(ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: format!("c{turn}"),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    tool_call_id: None,
+                }))
+            } else {
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
+            }
+        }
+    }
+    const TURNS: usize = 30;
+    const BUDGET: usize = 4_096;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent(
+        &LongRunProvider {
+            requests: requests.clone(),
+            turns: TURNS,
+        },
+        &BigTools,
+        request(),
+        definitions(),
+        AgentLimits {
+            context_byte_budget: BUDGET,
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .expect("an unbounded run completes by trimming, not by a turn ceiling");
+    assert_eq!(output.answer, "done");
+    for request in requests.lock().unwrap().iter() {
+        let total = request
+            .messages
+            .iter()
+            .map(|message| {
+                message.content.len() + message.role.len() + message_size_overhead(message)
+            })
+            .sum::<usize>();
+        assert!(
+            total <= BUDGET,
+            "each turn must stay within the {BUDGET}-byte budget; saw {total}"
+        );
+    }
+}
+
+/// When the turn budget is exhausted the run salvages: one final provider
+/// call with no tools asks for the best answer from the work already done,
+/// and the run returns that answer marked truncated instead of discarding
+/// everything with `Limit("turns")`.
+#[tokio::test]
+async fn salvage_on_turn_budget_returns_best_answer_marked_truncated() {
+    let tool_calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "c1".into(),
+                    name: "schema_discovery".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "c2".into(),
+                    name: "schema_discovery".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "best effort from gathered results",
+            )),
+        ]),
+    };
+    let output = run_agent(
+        &provider,
+        &MockTools {
+            calls: tool_calls.clone(),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_turns: Some(2),
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .expect("salvage returns an answer, not an error");
+    assert_eq!(output.answer, "best effort from gathered results");
+    assert!(output.truncated, "a salvaged run must be marked truncated");
+    // The two turns of real work still ran before the budget ran out.
+    assert_eq!(
+        &*tool_calls.lock().unwrap(),
+        &["schema_discovery", "schema_discovery"]
+    );
+}
+
+/// When the tool-call budget would be crossed, the run salvages from the work
+/// already done instead of erroring. None of the turn's calls run, and the
+/// salvaged answer is returned marked truncated.
+#[tokio::test]
+async fn salvage_on_tool_call_budget_returns_best_answer_marked_truncated() {
+    let tool_calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![
+                    ToolCall {
+                        id: "c1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                    ToolCall {
+                        id: "c2".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                ],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "best effort")),
+        ]),
+    };
+    let output = run_agent(
+        &provider,
+        &MockTools {
+            calls: tool_calls.clone(),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_tool_calls: Some(1),
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .expect("salvage returns an answer, not an error");
+    assert_eq!(output.answer, "best effort");
+    assert!(output.truncated, "a salvaged run must be marked truncated");
+    assert!(
+        tool_calls.lock().unwrap().is_empty(),
+        "no tools run when the turn would cross the budget"
+    );
+}
+
+/// If the salvage call itself fails, the error surfaces — the run does not
+/// invent an answer and does not swallow the provider failure.
+#[tokio::test]
+async fn salvage_surfaces_error_when_the_final_call_itself_fails() {
+    struct FailOnSalvage {
+        turn: Mutex<usize>,
+    }
+    #[async_trait]
+    impl ChatProvider for FailOnSalvage {
+        fn name(&self) -> &str {
+            "fail-salvage"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            let turn = {
+                let mut t = self.turn.lock().unwrap();
+                let was = *t;
+                *t += 1;
+                was
+            };
+            if turn == 0 {
+                Ok(ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "c1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    tool_call_id: None,
+                }))
+            } else {
+                Err(saya_agent::ProviderError::Request(
+                    "salvage call failed".into(),
+                ))
+            }
+        }
+    }
+    let error = run_agent(
+        &FailOnSalvage {
+            turn: Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_turns: Some(1),
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(error, AgentError::Provider(_)),
+        "a failed salvage call must surface its error, got {error:?}"
+    );
+}
+
+/// The model designates the SQL that answers the question by calling
+/// `designate_answer` in its terminal turn, alongside the prose answer. The
+/// run ends there: the prose is the answer, the designated SQL is carried on
+/// the output, and an `AnswerDesignated` event reaches the stream so a
+/// headless reader can pair the answer with its query without guessing. A turn
+/// that never designates works exactly as today (no SQL carried).
+#[tokio::test]
+async fn designate_answer_terminal_turn_carries_the_sql_and_emits_an_event() {
+    struct DesignationProvider;
+    #[async_trait]
+    impl ChatProvider for DesignationProvider {
+        fn name(&self) -> &str {
+            "designate"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            unreachable!("designation drives the provider through stream")
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            Ok(Box::pin(futures_util::stream::iter(vec![
+                Ok(ProviderEvent::TextDelta("The answer is 42.".into())),
+                Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                    id: "d1".into(),
+                    name: "designate_answer".into(),
+                    arguments: serde_json::json!({"sql": "SELECT count(*) FROM t"}),
+                }])),
+                Ok(ProviderEvent::Done),
+            ])))
+        }
+    }
+    let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    struct RecordSink {
+        events: Arc<Mutex<Vec<AgentEvent>>>,
+    }
+    #[async_trait]
+    impl AgentEventSink for RecordSink {
+        async fn emit(&self, event: AgentEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+    let sink = RecordSink {
+        events: events.clone(),
+    };
+    let output = run_agent_with_sink(
+        &DesignationProvider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("designation completes the run");
+    assert_eq!(
+        output.answer, "The answer is 42.",
+        "the prose answer is unchanged"
+    );
+    assert_eq!(
+        output.answer_sql.as_deref(),
+        Some("SELECT count(*) FROM t"),
+        "the designated SQL is carried on the output"
+    );
+    let streamed = events.lock().unwrap().clone();
+    assert!(
+        streamed.iter().any(|event| matches!(
+            event,
+            AgentEvent::AnswerDesignated { sql } if sql == "SELECT count(*) FROM t"
+        )),
+        "an AnswerDesignated event must reach the stream: {streamed:?}"
+    );
+    assert!(
+        streamed
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Complete)),
+        "designation still ends with Complete: {streamed:?}"
+    );
+    // A normal turn (no designation) carries no SQL — the protocol is optional.
+    let plain = run_agent(
+        &MockProvider {
+            responses: Mutex::new(vec![ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "plain answer",
+            ))]),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .unwrap();
+    assert!(
+        plain.answer_sql.is_none(),
+        "a turn without designation carries no SQL"
     );
 }

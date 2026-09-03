@@ -11,7 +11,7 @@
 use super::*;
 use crate::contracts::{RecallBounds, RecallMode};
 use async_trait::async_trait;
-use saya_agent::{MAX_HISTORY_BYTES, turn_bytes};
+use saya_agent::turn_bytes;
 use saya_connectors::DatabaseConnector;
 use saya_store::{SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -26,6 +26,35 @@ use std::{
 };
 
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
+
+/// The conversation byte budget these recall tests build against — the same role
+/// the loop's `context_byte_budget` plays in production.
+const RECALL_BYTE_BUDGET: usize = 32 * 1024;
+
+/// Drives [`recall_context_blocks`] with a fixed byte budget so the tests do not
+/// each repeat the budget argument. The budget is the loop's
+/// `context_byte_budget`, which bounds the rendered block alongside the prompt.
+async fn recall_blocks(
+    prompt: &str,
+    system_prompt: Option<&str>,
+    allow_database_context: bool,
+    recall_mode: RecallMode,
+    bounds: RecallBounds,
+    registry: &ConnectionRegistry,
+    state_db: Option<&SqliteStateStore>,
+) -> (Vec<ContextBlock>, RecallReceipt) {
+    recall_context_blocks(
+        prompt,
+        system_prompt,
+        allow_database_context,
+        recall_mode,
+        bounds,
+        registry,
+        state_db,
+        RECALL_BYTE_BUDGET,
+    )
+    .await
+}
 
 // ---------------------------------------------------------------------------
 // harness
@@ -313,7 +342,7 @@ async fn acceptance_remembered_time_column_reaches_one_block_not_system_prompt()
     seed_orders_with_created_at(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -357,7 +386,7 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
     let (obj, _fp) = seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (before, _receipt) = recall_context_blocks(
+    let (before, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -385,7 +414,7 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
         .await
         .expect("item dismissed");
 
-    let (after, _receipt) = recall_context_blocks(
+    let (after, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -419,7 +448,7 @@ async fn candidate_claim_never_appears_in_block() {
     remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -450,7 +479,7 @@ async fn privacy_off_produces_no_block_and_does_not_query_store() {
     let store = SqliteStateStore::new(&bad_path);
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         false,
@@ -489,7 +518,7 @@ async fn explicit_ref_selects_object_without_term_match() {
 
     let registry = registry_for("analytics", &identity);
     // No term matches "obscure_table_name"; only the explicit @ref does.
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "summarize @catalog.public.obscure_table_name",
         None,
         true,
@@ -518,7 +547,7 @@ async fn prompt_matching_nothing_produces_no_block() {
     let (obj, fp) = seed_orders_with_created_at(&store, &identity).await;
     let _ = (obj, fp);
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "completely unrelated zzztop words",
         None,
         true,
@@ -545,7 +574,7 @@ async fn unopenable_store_produces_no_block_and_no_error() {
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -572,7 +601,7 @@ async fn opaque_identity_appears_nowhere_in_block() {
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -623,7 +652,7 @@ async fn injection_text_reaches_body_unmodified() {
     .await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -684,7 +713,7 @@ async fn stale_claim_is_excluded_from_the_model_block() {
     remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -763,7 +792,7 @@ async fn needs_review_claim_still_reaches_the_model_labelled() {
         .unwrap();
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -830,7 +859,7 @@ async fn needs_review_from_a_non_current_fingerprint_still_reaches_the_model_lab
     .await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -878,7 +907,7 @@ async fn no_profiles_produces_no_block() {
             profile_id: None,
         },
     );
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -900,7 +929,7 @@ async fn empty_prompt_produces_no_block() {
     let store = store_at(&db, &identity).await;
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "   ",
         None,
         true,
@@ -937,7 +966,7 @@ async fn recall_truncation_flags_the_block() {
         remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
     }
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -961,7 +990,7 @@ async fn no_state_db_produces_no_block() {
     let root = temp_root("no_store");
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -992,7 +1021,7 @@ async fn claim_text_lives_only_in_block_body_not_describe_context() {
     let store = store_at(&db, &identity).await;
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1068,7 +1097,7 @@ async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
     seed_orders_confirmed_and_candidate(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1112,7 +1141,7 @@ async fn confirmed_excludes_candidates_unchanged_behaviour() {
     seed_orders_confirmed_and_candidate(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1159,7 +1188,7 @@ async fn bounds_from_config_lowering_max_contracts_returns_one_contract() {
         remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
     }
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -1740,7 +1769,7 @@ async fn confirmed_claim_renders_with_directive_and_marker() {
     seed_orders_with_created_at(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1792,7 +1821,7 @@ async fn candidate_claim_does_not_read_as_binding_and_keeps_its_marker() {
     remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1830,7 +1859,7 @@ async fn confirmed_and_candidate_in_one_stanza_remain_distinguishable() {
     seed_orders_confirmed_and_candidate(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1992,7 +2021,7 @@ async fn byte_budget_holds_at_caps_with_directive_present() {
     }
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2033,8 +2062,8 @@ async fn byte_budget_holds_at_caps_with_directive_present() {
     // measured with the same accounting build_messages enforces.
     let turn = turn_bytes(None, std::slice::from_ref(block), "orders");
     assert!(
-        turn <= MAX_HISTORY_BYTES,
-        "turn fits the message budget: {turn} <= {MAX_HISTORY_BYTES}"
+        turn <= RECALL_BYTE_BUDGET,
+        "turn fits the conversation budget: {turn} <= {RECALL_BYTE_BUDGET}"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -2065,7 +2094,7 @@ async fn missing_cache_entry_keeps_the_claim_labelled_not_muted_as_stale() {
     remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2162,7 +2191,7 @@ async fn a_single_oversized_claim_is_omitted_and_the_block_is_marked_truncated()
         max_claims_per_object: 12,
         max_bytes: 512,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2243,7 +2272,7 @@ async fn five_objects_with_oversized_claims_do_not_admit_five_unbounded_claims()
         max_claims_per_object: 12,
         max_bytes: 2300,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2352,7 +2381,7 @@ async fn the_byte_bound_measures_the_rendered_block_not_the_payload() {
         max_claims_per_object: 12,
         max_bytes: between,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2382,7 +2411,7 @@ async fn the_byte_bound_measures_the_rendered_block_not_the_payload() {
         max_claims_per_object: 12,
         max_bytes: rendered_stanza.len() + 64,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2451,7 +2480,7 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
     // A short prompt: the whole message budget is available for context, so all
     // five contracts fit (their ~5.5 KiB is well under the 16 KiB configured cap
     // and the ~32 KiB message budget).
-    let (short_blocks, _receipt) = recall_context_blocks(
+    let (short_blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2473,7 +2502,7 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
     // request still builds — `turn_bytes` (the exact size `build_messages`
     // enforces) stays under the message budget.
     let long_prompt = format!("orders {}", "x".repeat(30_000));
-    let (long_blocks, _receipt) = recall_context_blocks(
+    let (long_blocks, _receipt) = recall_blocks(
         &long_prompt,
         None,
         true,
@@ -2497,8 +2526,8 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
     // long prompt, and the system message together stay under the message budget.
     let turn = turn_bytes(None, std::slice::from_ref(block), &long_prompt);
     assert!(
-        turn <= MAX_HISTORY_BYTES,
-        "context must not consume the budget the prompt needs: turn={turn} budget={MAX_HISTORY_BYTES}"
+        turn <= RECALL_BYTE_BUDGET,
+        "context must not consume the budget the prompt needs: turn={turn} budget={RECALL_BYTE_BUDGET}"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -2578,7 +2607,7 @@ async fn a_turn_supplying_two_claims_names_exactly_those_two_in_the_receipt() {
     let (_obj, time_id, alias_id) = seed_two_confirmed_claims(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2650,7 +2679,7 @@ async fn claims_dropped_by_the_object_count_bound_are_counted() {
     }
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2740,7 +2769,7 @@ async fn claims_dropped_by_the_per_object_bound_are_counted() {
         max_claims_per_object: 3,
         max_bytes: 16384,
     };
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2807,7 +2836,7 @@ async fn claims_dropped_by_the_byte_bound_are_counted() {
         max_claims_per_object: 12,
         max_bytes: 2300,
     };
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2853,7 +2882,7 @@ async fn skipped_is_distinguishable_from_ran_and_found_nothing() {
     let unopenable = SqliteStateStore::new(&bad_path);
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let (_blocks, skipped) = recall_context_blocks(
+    let (_blocks, skipped) = recall_blocks(
         "orders by month",
         None,
         false, // privacy gate closed
@@ -2876,7 +2905,7 @@ async fn skipped_is_distinguishable_from_ran_and_found_nothing() {
     let (obj, fp) = seed_orders_with_created_at(&store2, &identity).await;
     let _ = (obj, fp);
     let registry2 = registry_for("analytics", &identity);
-    let (_blocks, ran_empty) = recall_context_blocks(
+    let (_blocks, ran_empty) = recall_blocks(
         "completely unrelated zzztop words",
         None,
         true,
@@ -2924,7 +2953,7 @@ async fn a_candidate_claims_status_survives_into_the_receipt() {
     remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2960,7 +2989,7 @@ async fn store_unavailable_yields_a_receipt_not_an_error() {
 
     // The turn completes: the call returns a receipt rather than panicking or
     // propagating an error.
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2995,7 +3024,7 @@ async fn no_opaque_profile_identity_value_appears_in_the_receipt() {
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (_blocks, receipt) = recall_context_blocks(
+    let (_blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,

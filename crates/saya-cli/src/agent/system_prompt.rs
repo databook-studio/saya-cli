@@ -18,6 +18,30 @@ pub(crate) fn memory_section(mode: MemoryMode) -> Option<&'static str> {
     }
 }
 
+/// Names the engine a single connection queries. `describe_context` stays
+/// silent for one connection, so without this the model is never told it is
+/// writing SQLite (or PostgreSQL, …) and pays a rejected query to find out.
+/// With several connections the engines are already named by
+/// `describe_context`, so this returns `None` to avoid restating them.
+fn engine_section(registry: &ConnectionRegistry) -> Option<String> {
+    let dialects: Vec<_> = registry.dialects().collect();
+    match dialects.as_slice() {
+        [dialect] => Some(format!("You are querying a {} database.", dialect.as_str())),
+        _ => None,
+    }
+}
+
+/// Coaching that applies to every turn regardless of how many databases are
+/// connected: multi-step work is the norm, a failed query must not be repeated,
+/// and a question no connected database can answer must end with a stated reason
+/// rather than an endless loop. With no turn ceiling by default, the model
+/// giving up well is the primary stopping condition.
+const WORKING_GUIDANCE: &str = "Discover the schema before you query it; multi-step work is \
+    expected. Do not repeat a query that already failed — change your approach instead. When the \
+    question cannot be answered from this database, stop and say so, explaining what you tried and \
+    what is missing: a missing table or column, data that is not present, or a question the schema \
+    cannot express. Giving up with a reason is a correct outcome; looping is not.";
+
 /// Whether this turn can honour what the memory section promises.
 ///
 /// The section tells the model that confirmed facts are already in context and
@@ -102,6 +126,10 @@ pub(crate) fn assemble_system_prompt(
     if let Some(m) = memory {
         sections.push(m.to_string());
     }
+    if let Some(engine) = engine_section(registry) {
+        sections.push(engine);
+    }
+    sections.push(WORKING_GUIDANCE.to_string());
     // Independent of memory mode: schema discovery hands the model a
     // catalog/schema/table tree for every engine, including the ones whose SQL
     // has no such depth, so without this the model writes back the shape it was
