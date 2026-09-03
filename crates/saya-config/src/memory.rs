@@ -14,20 +14,11 @@ const DEFAULT_MAX_CONTRACTS: u32 = 5;
 const DEFAULT_MAX_CLAIMS_PER_CONTRACT: u32 = 12;
 const DEFAULT_MAX_CONTEXT_BYTES: u32 = 16384;
 
-/// The floor reserved out of the agent message budget for the parts a request
-/// needs besides memory context: the fixed system prompt, the context-block
-/// wrapper, and the user's own question. `max_context_bytes` may not consume
-/// this — the question is the point and the context is the assist.
-const CONTEXT_RESERVATION_BYTES: u32 = 4096;
-
-/// The largest accepted `[memory] max_context_bytes`: the agent message budget
-/// ([`saya_types::MAX_MESSAGE_BYTES`]) less [`CONTEXT_RESERVATION_BYTES`].
-/// Derived from the agent constant rather than copied so the two cannot drift: a
-/// setting above this guarantees an ordinary request exceeds the message budget
-/// and fails with `ContextLimit` — a memory setting breaking the thing memory is
-/// supposed to help — so it is refused here with a typed error naming both values.
-const MAX_CONTEXT_BYTES_CEILING: u32 =
-    (saya_types::MAX_MESSAGE_BYTES as u32).saturating_sub(CONTEXT_RESERVATION_BYTES);
+/// The floor on `[memory] max_context_bytes`. The recall path bounds the
+/// rendered block to fit the loop's `context_byte_budget` at request time, so
+/// there is no upper ceiling here: a large setting is clamped by what the
+/// conversation budget actually holds, never allowed to crowd out the prompt.
+const MIN_MAX_CONTEXT_BYTES: u32 = 1024;
 
 /// Resolve `[memory]` into concrete values, validating the numeric bounds. Unknown
 /// mode strings are already rejected by serde with the accepted values named, so only
@@ -41,11 +32,10 @@ pub(crate) fn resolve(file: &MemoryFile) -> Result<ResolvedMemory, ConfigError> 
     let max_context_bytes = file.max_context_bytes.unwrap_or(DEFAULT_MAX_CONTEXT_BYTES);
     require_range("max_contracts", max_contracts, 1, 50)?;
     require_range("max_claims_per_contract", max_claims_per_contract, 1, 100)?;
-    require_range(
+    require_min(
         "max_context_bytes",
         max_context_bytes,
-        1024,
-        MAX_CONTEXT_BYTES_CEILING,
+        MIN_MAX_CONTEXT_BYTES,
     )?;
     Ok(ResolvedMemory {
         mode,
@@ -64,6 +54,19 @@ fn require_range(field: &'static str, value: u32, min: u32, max: u32) -> Result<
             value,
             min,
             max,
+        })
+    }
+}
+
+fn require_min(field: &'static str, value: u32, min: u32) -> Result<(), ConfigError> {
+    if value >= min {
+        Ok(())
+    } else {
+        Err(ConfigError::MemoryRange {
+            field,
+            value,
+            min,
+            max: u32::MAX,
         })
     }
 }

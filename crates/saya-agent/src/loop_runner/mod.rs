@@ -7,7 +7,7 @@ use crate::{
     TokenUsage, ToolDefinition, ToolExecutor,
 };
 
-pub use output::{AgentError, AgentLimits, AgentOutput};
+pub use output::{AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, budgets_from_env};
 
 /// Add a turn's optional count into a run total without inventing data.
 ///
@@ -37,14 +37,35 @@ pub async fn run_agent_with_sink(
         &request.context_blocks,
         &request.prompt,
         &request.history,
+        limits.context_byte_budget,
     )?;
     let mut events = Vec::new();
     let mut tool_count = 0;
     let mut used_bounded_sql_query = false;
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
-    for _ in 0..limits.max_turns {
+    let mut turn_count = 0;
+    loop {
         check_cancelled(&cancellation)?;
+        if let Some(max_turns) = limits.max_turns
+            && turn_count >= max_turns
+        {
+            return salvage(
+                provider,
+                &request.model,
+                &mut messages,
+                &[],
+                limits.context_byte_budget,
+                sink,
+                &cancellation,
+                &mut events,
+                &mut usage,
+                used_bounded_sql_query,
+                tool_metadata,
+            )
+            .await;
+        }
+        turn_count += 1;
         let (assistant, turn_usage, reasoning) = receive::receive(
             provider,
             &request.model,
@@ -83,6 +104,31 @@ pub async fn run_agent_with_sink(
             emit(&mut events, sink, AgentEvent::reasoning_text(text)).await;
         }
         messages.push(assistant.clone());
+        // The model designates the SQL that answers the question by calling
+        // `designate_answer` in its terminal turn, alongside the prose answer.
+        // That ends the run: the prose is the answer, the SQL is carried on
+        // the output and an event, and no tool is executed. Optional — a turn
+        // without the call falls through to the normal terminal below.
+        if let Some(sql) = designation_from(&assistant) {
+            emit(
+                &mut events,
+                sink,
+                AgentEvent::answer_designated(sql.clone()),
+            )
+            .await;
+            check_cancelled(&cancellation)?;
+            emit(&mut events, sink, AgentEvent::Complete).await;
+            return Ok(AgentOutput {
+                answer: assistant.content,
+                events,
+                used_bounded_sql_query,
+                tool_metadata,
+                usage,
+                learning_usage: None,
+                truncated: false,
+                answer_sql: Some(sql),
+            });
+        }
         if assistant.tool_calls.is_empty() {
             check_cancelled(&cancellation)?;
             emit(&mut events, sink, AgentEvent::Complete).await;
@@ -93,8 +139,33 @@ pub async fn run_agent_with_sink(
                 tool_metadata,
                 usage,
                 learning_usage: None,
+                truncated: false,
+                answer_sql: None,
             });
         }
+        // The tool-call ceiling is a whole-run total checked once per turn,
+        // before any of the turn's calls run: if this turn would cross it, the
+        // run stops rather than executing a partial batch.
+        let projected_tool_calls = tool_count + assistant.tool_calls.len();
+        if let Some(max_tool_calls) = limits.max_tool_calls
+            && projected_tool_calls > max_tool_calls
+        {
+            return salvage(
+                provider,
+                &request.model,
+                &mut messages,
+                &assistant.tool_calls,
+                limits.context_byte_budget,
+                sink,
+                &cancellation,
+                &mut events,
+                &mut usage,
+                used_bounded_sql_query,
+                tool_metadata,
+            )
+            .await;
+        }
+        tool_count = projected_tool_calls;
         // When every call in the message is valid and auto-runnable, the
         // calls are independent: run them concurrently instead of paying
         // their latency sequentially. `auto_runnable` is the single policy
@@ -109,10 +180,6 @@ pub async fn run_agent_with_sink(
                         .is_some_and(|definition| tools::auto_runnable(definition, &limits))
             });
         if batch_parallel {
-            tool_count += assistant.tool_calls.len();
-            if tool_count > limits.max_tool_calls {
-                return Err(AgentError::Limit("tool calls"));
-            }
             check_cancelled(&cancellation)?;
             for call in &assistant.tool_calls {
                 emit(
@@ -165,10 +232,6 @@ pub async fn run_agent_with_sink(
                 if call.id.trim().is_empty() {
                     return Err(AgentError::InvalidToolCall);
                 }
-                tool_count += 1;
-                if tool_count > limits.max_tool_calls {
-                    return Err(AgentError::Limit("tool calls"));
-                }
                 check_cancelled(&cancellation)?;
                 emit(
                     &mut events,
@@ -201,10 +264,6 @@ pub async fn run_agent_with_sink(
                 )
                 .await;
                 continue;
-            }
-            tool_count += 1;
-            if tool_count > limits.max_tool_calls {
-                return Err(AgentError::Limit("tool calls"));
             }
             check_cancelled(&cancellation)?;
             emit(
@@ -300,7 +359,6 @@ pub async fn run_agent_with_sink(
         // over budget, truncate it rather than aborting the whole run.
         output::trim_to_budget(&mut messages, limits.context_byte_budget);
     }
-    Err(AgentError::Limit("turns"))
 }
 
 pub(super) async fn emit(
@@ -317,4 +375,81 @@ fn check_cancelled(token: &CancellationToken) -> Result<(), AgentError> {
     } else {
         Ok(())
     }
+}
+
+/// Appended to the conversation before the salvage call so the model knows its
+/// tools are gone and it must answer from what it has, not call more tools.
+const SALVAGE_INSTRUCTION: &str = "You have no further tool calls available. Using only the results you have already gathered, give your best answer to the question now.";
+
+/// Salvages a run that has hit a ceiling instead of discarding everything. Any
+/// tool calls the run did not get to execute are answered with a "budget
+/// exhausted" result so the conversation the provider sees is well-formed;
+/// then one final call with no tools asks for the best answer from the work
+/// already done. The returned output is marked [`AgentOutput::truncated`]. If
+/// the final call itself fails, its error is returned unchanged — the run does
+/// not invent an answer and does not swallow the provider failure.
+#[allow(clippy::too_many_arguments)]
+async fn salvage(
+    provider: &dyn ChatProvider,
+    model: &str,
+    messages: &mut Vec<crate::ChatMessage>,
+    pending: &[crate::ToolCall],
+    context_byte_budget: usize,
+    sink: &dyn AgentEventSink,
+    cancellation: &CancellationToken,
+    events: &mut Vec<AgentEvent>,
+    usage: &mut TokenUsage,
+    used_bounded_sql_query: bool,
+    tool_metadata: Vec<crate::ToolMetadata>,
+) -> Result<AgentOutput, AgentError> {
+    for call in pending {
+        let (message, _) = tools::tool_message(
+            call.id.clone(),
+            serde_json::json!({"error": "tool call budget exhausted"}),
+            context_byte_budget,
+        );
+        messages.push(message);
+    }
+    messages.push(crate::ChatMessage::text("user", SALVAGE_INSTRUCTION));
+    let (assistant, turn_usage, _) =
+        receive::receive(provider, model, messages, &[], sink, cancellation, events).await?;
+    usage.input_tokens += turn_usage.input_tokens;
+    usage.output_tokens += turn_usage.output_tokens;
+    sum_reported(
+        &mut usage.cached_input_tokens,
+        turn_usage.cached_input_tokens,
+    );
+    sum_reported(
+        &mut usage.cache_creation_input_tokens,
+        turn_usage.cache_creation_input_tokens,
+    );
+    sum_reported(&mut usage.reasoning_tokens, turn_usage.reasoning_tokens);
+    emit(events, sink, AgentEvent::Complete).await;
+    Ok(AgentOutput {
+        answer: assistant.content,
+        events: std::mem::take(events),
+        used_bounded_sql_query,
+        tool_metadata,
+        usage: *usage,
+        learning_usage: None,
+        truncated: true,
+        answer_sql: None,
+    })
+}
+
+/// The SQL the model designated as the answering query, when the terminal turn
+/// contains a `designate_answer` call whose `sql` argument is a string. `None`
+/// for a turn without the call (or a malformed argument) so the protocol stays
+/// optional.
+fn designation_from(assistant: &crate::ChatMessage) -> Option<String> {
+    assistant.tool_calls.iter().find_map(|call| {
+        if call.name == DESIGNATE_ANSWER_TOOL {
+            call.arguments
+                .get("sql")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        } else {
+            None
+        }
+    })
 }

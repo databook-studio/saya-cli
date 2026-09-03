@@ -603,7 +603,7 @@ mod tests {
             ChatMessage::text("user", "what is the answer"),
             response.message.clone(),
         ];
-        let next = build_messages(None, &[], "follow up", &history).expect("builds");
+        let next = build_messages(None, &[], "follow up", &history, 32 * 1024).expect("builds");
         for message in &next {
             assert!(
                 !message.content.contains(reasoning_text),

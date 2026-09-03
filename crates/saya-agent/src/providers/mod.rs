@@ -64,7 +64,7 @@ mod context_block_tests {
 
     /// Messages shaped by `build_messages` with one context block.
     fn messages() -> Vec<ChatMessage> {
-        build_messages(None, &[block()], "real prompt", &[]).unwrap()
+        build_messages(None, &[block()], "real prompt", &[], 32 * 1024).unwrap()
     }
 
     fn request(messages: Vec<ChatMessage>) -> ChatRequest {

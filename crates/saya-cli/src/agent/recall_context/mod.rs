@@ -62,6 +62,7 @@ pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 /// never consumes the bytes the prompt needs: [`bound_body`] drops contracts from
 /// the end (least-relevant first) until the rendered block fits, and if even the
 /// first contract does not fit it is omitted and the block is marked truncated.
+#[allow(clippy::too_many_arguments)] // each arg is a distinct, named input; grouping would obscure the call sites
 pub(crate) async fn recall_context_blocks(
     prompt: &str,
     system_prompt: Option<&str>,
@@ -70,6 +71,7 @@ pub(crate) async fn recall_context_blocks(
     bounds: RecallBounds,
     registry: &ConnectionRegistry,
     state_db: Option<&SqliteStateStore>,
+    byte_budget: usize,
 ) -> (Vec<ContextBlock>, RecallReceipt) {
     // §3.1: skip recall entirely when database context is off. Not querying is
     // both cheaper and a stronger guarantee than querying and discarding. The
@@ -136,6 +138,7 @@ pub(crate) async fn recall_context_blocks(
         system_prompt,
         prompt,
         bounds.max_bytes,
+        byte_budget,
     );
     // Claims the bounds dropped: the count-bound drops `recall` already counted
     // in `excluded_by_count_bounds`, plus the whole contracts the byte bound

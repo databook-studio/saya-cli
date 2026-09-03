@@ -101,6 +101,7 @@ pub(crate) async fn run_prompt_with_inputs(
                 super::learning::bounds_from(memory),
                 &registry,
                 state_db.as_ref(),
+                runtime.resolved.ai.context_byte_budget,
             )
             .await
         }
@@ -133,9 +134,13 @@ pub(crate) async fn run_prompt_with_inputs(
         Some(decider) => decider,
         None => &fallback_approval,
     };
+    // Turn and tool-call ceilings come from the environment and are unbounded
+    // when unset: SAYA_AGENT_MAX_TURNS / SAYA_AGENT_MAX_TOOL_CALLS, with no
+    // upper limit on a set value.
+    let env_budgets = saya_agent::budgets_from_env(|name| std::env::var(name).ok());
     let limits = AgentLimits {
-        max_turns: runtime.resolved.max_iterations,
-        max_tool_calls: runtime.resolved.max_iterations.saturating_mul(2),
+        max_turns: env_budgets.0,
+        max_tool_calls: env_budgets.1,
         permit_candidate_writes: learning.permit_candidate_writes,
         context_byte_budget: runtime.resolved.ai.context_byte_budget,
     };
@@ -280,9 +285,6 @@ pub(crate) async fn run_prompt_with_inputs(
         }
         AgentError::InvalidHistory => {
             AgentRuntimeError::Agent("conversation history is invalid".into())
-        }
-        AgentError::ContextLimit => {
-            AgentRuntimeError::Agent("conversation context exceeds the safe limit".into())
         }
         AgentError::Cancelled => AgentRuntimeError::Agent("request cancelled".into()),
     })

@@ -120,6 +120,29 @@ impl DatabaseTools {
                     local_state: LocalStateEffect::None,
                 },
             });
+            tools.push(ToolDefinition {
+                name: "designate_answer".into(),
+                description: "Designate the SQL query that answers the user's question. Call this \
+                    exactly once, in your final message, alongside your prose answer, with the SQL \
+                    that produced it. This does not run a query — it records which of the queries \
+                    you ran is the answering one. Omit it when no single query answers the question."
+                    .into(),
+                read_only: true,
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "sql": { "type": "string" }
+                    },
+                    "required": ["sql"],
+                    "additionalProperties": false
+                }),
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::None,
+                },
+            });
         }
         // Contract tools are a sibling concern (see `contract_tools`); they are
         // appended here so the agent receives one flat definition list, matching
@@ -148,6 +171,7 @@ pub(super) fn validate_arguments(
             &["connection", "sql", "chart_type", "x", "y", "title"][..],
             true,
         ),
+        "designate_answer" => (&["sql"][..], true),
         _ => return Err(ToolError::UnsupportedTool),
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
