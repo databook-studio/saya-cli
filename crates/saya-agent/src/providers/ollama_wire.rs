@@ -20,6 +20,19 @@ pub(crate) struct OllamaRequest {
     /// levels, so the boundary sits at `Medium`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
+    /// Ollama's `options` object — a bag of model parameters. Only
+    /// `temperature` is carried, and only when the caller set one, so the
+    /// endpoint's own defaults win otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<OllamaOptions>,
+}
+
+/// Ollama's `options` field: model parameters nested under one object. Only
+/// the fields a caller actually set are carried, so an unset parameter never
+/// overrides the endpoint's own default.
+#[derive(Serialize)]
+pub(crate) struct OllamaOptions {
+    pub temperature: f32,
 }
 
 #[derive(Serialize)]
@@ -56,6 +69,17 @@ pub(crate) fn request(request: ChatRequest) -> OllamaRequest {
             ReasoningEffort::Minimal | ReasoningEffort::Low => Some(false),
             ReasoningEffort::Medium | ReasoningEffort::High => Some(true),
         },
+        options: None,
+    }
+}
+
+impl OllamaRequest {
+    /// Carry sampling temperature under `options.temperature`. `None` leaves
+    /// `options` off the wire so the endpoint's own default wins — a value the
+    /// caller did not set is never sent.
+    pub(crate) fn with_temperature(mut self, temperature: Option<f32>) -> Self {
+        self.options = temperature.map(|temperature| OllamaOptions { temperature });
+        self
     }
 }
 
@@ -163,6 +187,36 @@ mod tests {
         assert!(
             !json.contains(r#""think""#),
             "default effort must not carry think: {json}"
+        );
+    }
+
+    /// Ollama takes sampling temperature under `options.temperature`. A
+    /// configured value rides on the wire so an Ollama user's setting reaches
+    /// the model — the same `Option<f32>` + emit-only-when-set shape the other
+    /// providers use.
+    #[test]
+    fn temperature_is_carried_under_options_when_configured() {
+        let body = request(request_with(ResponseFormat::Text, ReasoningEffort::Default))
+            .with_temperature(Some(0.5));
+        let value: serde_json::Value = serde_json::to_value(&body).expect("serializes");
+        assert_eq!(
+            value["options"]["temperature"].as_f64(),
+            Some(0.5),
+            "configured temperature must ride under options.temperature: {value}"
+        );
+    }
+
+    /// With no temperature configured, `options` is omitted entirely so the
+    /// endpoint's own default wins — a value the caller did not set is never
+    /// sent.
+    #[test]
+    fn options_omitted_when_no_temperature_is_configured() {
+        let body = request(request_with(ResponseFormat::Text, ReasoningEffort::Default))
+            .with_temperature(None);
+        let value: serde_json::Value = serde_json::to_value(&body).expect("serializes");
+        assert!(
+            value.get("options").is_none(),
+            "no temperature configured must not send options: {value}"
         );
     }
 }
