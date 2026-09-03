@@ -1,12 +1,12 @@
 //! Modal overlays: slash-command popup, session picker, and help.
 
-use super::theme::{accent, centered, secondary};
+use super::theme::{accent, centered, foreground, on_accent, secondary};
 use crate::interactive::tui::complete::Candidate;
 use crate::interactive::tui::types::Menu;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
@@ -31,7 +31,7 @@ pub(super) fn draw_picker(
     if !picker.query.is_empty() {
         lines.push(Line::from(Span::styled(
             format!("filter: {}▏", picker.query),
-            Style::default().fg(Color::White),
+            Style::default().fg(foreground()),
         )));
     }
     if visible.is_empty() {
@@ -44,7 +44,7 @@ pub(super) fn draw_picker(
         let style = if i == picker.selected {
             Style::default()
                 .bg(accent())
-                .fg(Color::Black)
+                .fg(on_accent())
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
@@ -143,13 +143,13 @@ fn menu_row(candidate: &Candidate, selected: bool, width: usize) -> Line<'static
             padded,
             Style::default()
                 .bg(accent())
-                .fg(Color::Black)
+                .fg(on_accent())
                 .add_modifier(Modifier::BOLD),
         ));
     }
     let mut spans = vec![Span::styled(
         candidate.value.clone(),
-        Style::default().fg(Color::White),
+        Style::default().fg(foreground()),
     )];
     if let Some(desc) = &candidate.description {
         spans.push(Span::styled(
@@ -177,7 +177,7 @@ pub(super) fn draw_search(
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!("> {}▏", search.query),
-        Style::default().fg(Color::White),
+        Style::default().fg(foreground()),
     )));
     match search.kind {
         SearchKind::History => {
@@ -190,9 +190,9 @@ pub(super) fn draw_search(
             }
             for (i, entry) in matches.iter().take(8).enumerate() {
                 let style = if i == search.selected {
-                    Style::default().bg(accent()).fg(Color::Black)
+                    Style::default().bg(accent()).fg(on_accent())
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(foreground())
                 };
                 let one_line: String = entry
                     .chars()
