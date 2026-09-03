@@ -76,21 +76,29 @@ fn memory_section_appears_under_assisted_and_absent_under_off() {
     assert!(text.contains("contract_search"));
     assert!(text.contains("contract_read"));
     assert!(text.contains("restate it explicitly and precisely in the answer"));
-    assert!(text.contains("fully qualified `catalog.schema.object`"));
+    // The naming rule is not here: its correct wording depends on the engine,
+    // so it is built per connection alongside this section.
+    assert!(!text.contains("catalog.schema.object"));
 }
 
 #[test]
 fn assemble_system_prompt_single_connection_off() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, None, MemoryMode::Off, true);
-    assert_eq!(prompt, None);
+    let prompt = assemble_system_prompt(&reg, None, MemoryMode::Off, true).expect("a prompt");
+    // With one connection and memory off there is no context and no briefing —
+    // but the model is still shown a catalog/schema/table tree by schema
+    // discovery, so it still has to be told what SQL will accept.
+    assert!(!prompt.contains("durable knowledge"));
+    assert!(prompt.contains("catalog.schema.object"));
 }
 
 #[test]
 fn assemble_system_prompt_single_connection_assisted() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, None, MemoryMode::Assisted, true);
-    assert_eq!(prompt, Some(MEMORY_SYSTEM_PROMPT.to_string()));
+    let prompt = assemble_system_prompt(&reg, None, MemoryMode::Assisted, true).expect("a prompt");
+    assert!(prompt.starts_with(MEMORY_SYSTEM_PROMPT));
+    // A single PostgreSQL connection: the memory briefing, then its naming rule.
+    assert!(prompt.contains("catalog.schema.object"));
 }
 
 #[test]
@@ -159,8 +167,11 @@ fn assemble_system_prompt_stays_within_budget() {
 #[test]
 fn memory_section_is_absent_when_memory_is_configured_on_but_unreachable() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, None, MemoryMode::Assisted, false);
-    assert_eq!(prompt, None, "no section, and nothing else to say");
+    let prompt = assemble_system_prompt(&reg, None, MemoryMode::Assisted, false).expect("a prompt");
+    assert!(
+        !prompt.contains("durable knowledge"),
+        "memory is unreachable, so the briefing must not claim otherwise: {prompt}"
+    );
 
     assert!(memory_reachable(true, true));
     assert!(
@@ -170,5 +181,93 @@ fn memory_section_is_absent_when_memory_is_configured_on_but_unreachable() {
     assert!(
         !memory_reachable(true, false),
         "privacy gate shut, no briefing"
+    );
+}
+
+fn registry_with(dialect: SqlDialect) -> ConnectionRegistry {
+    let mut reg = ConnectionRegistry::new("db");
+    reg.insert(
+        "db",
+        ConnectionEntry {
+            connector: Box::new(DummyConnector { dialect }),
+            dialect,
+            profile_id: None,
+        },
+    );
+    reg
+}
+
+/// SQLite has no catalog and no schema, so a three-part name is a syntax error
+/// there. Telling the model to write one regardless costs a rejected query and
+/// a wasted round trip on nearly every question before it corrects itself.
+#[test]
+fn the_naming_rule_matches_what_the_engine_accepts() {
+    let sqlite = assemble_system_prompt(
+        &registry_with(SqlDialect::Sqlite),
+        None,
+        MemoryMode::Assisted,
+        true,
+    )
+    .expect("a prompt");
+    assert!(
+        !sqlite.contains("catalog.schema.object"),
+        "SQLite cannot parse a three-part name, so the prompt must not ask for one: {sqlite}"
+    );
+
+    let postgres = assemble_system_prompt(
+        &registry_with(SqlDialect::Postgres),
+        None,
+        MemoryMode::Assisted,
+        true,
+    )
+    .expect("a prompt");
+    assert!(
+        postgres.contains("catalog.schema.object"),
+        "PostgreSQL does accept the three-part name and should still be asked for it: {postgres}"
+    );
+}
+
+/// The rule exists so a remembered fact binds to a real object, and that need
+/// does not go away on an engine with fewer name parts — the prompt must still
+/// ask for the fullest name the engine has.
+#[test]
+fn every_engine_is_still_told_to_qualify_names() {
+    for dialect in [
+        SqlDialect::Postgres,
+        SqlDialect::Mysql,
+        SqlDialect::Sqlite,
+        SqlDialect::DuckDb,
+        SqlDialect::Snowflake,
+    ] {
+        let prompt =
+            assemble_system_prompt(&registry_with(dialect), None, MemoryMode::Assisted, true)
+                .expect("a prompt");
+        assert!(
+            prompt.contains(dialect.qualified_name_form()),
+            "{} must be told its own name form: {prompt}",
+            dialect.as_str()
+        );
+    }
+}
+
+/// Writing a name the engine can parse is not a memory concern: schema
+/// discovery shows the same catalog/schema/table tree whether memory is on or
+/// off, so the rule that keeps SQL valid has to be present either way.
+#[test]
+fn the_naming_rule_is_present_with_memory_off() {
+    let prompt = assemble_system_prompt(
+        &registry_with(SqlDialect::Sqlite),
+        None,
+        MemoryMode::Off,
+        false,
+    )
+    .expect("a prompt");
+    assert!(
+        prompt.contains(SqlDialect::Sqlite.qualified_name_form()),
+        "the SQL naming rule must survive memory being off: {prompt}"
+    );
+    assert!(
+        !prompt.contains("durable knowledge"),
+        "memory is off, so the memory briefing must stay absent: {prompt}"
     );
 }
