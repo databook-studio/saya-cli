@@ -17,6 +17,12 @@ pub enum StoreError {
     Invalid,
     #[error("the state database was written by a newer version of saya")]
     VersionUnsupported,
+    /// The store's path can never be opened — a parent component is a regular
+    /// file, the filesystem denies access, or it is read-only. Permanent, not
+    /// the transient lock contention `Unavailable` exists for, so the opener
+    /// fails fast instead of retrying for the busy ceiling.
+    #[error("the state store cannot be opened at its path")]
+    OpenFailed,
 }
 
 impl StoreError {
@@ -50,6 +56,7 @@ mod tests {
             StoreError::LimitExceeded,
             StoreError::Invalid,
             StoreError::VersionUnsupported,
+            StoreError::OpenFailed,
         ];
         for error in errors {
             let rendered = error.to_string();
