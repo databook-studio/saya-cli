@@ -1,14 +1,14 @@
 //! Lightweight markdown styling for assistant transcript lines.
 
-use super::theme::{accent, code_color, secondary};
+use super::theme::{accent, code_color, foreground, secondary};
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
 };
 
 /// Formats a single transcript view line with lightweight markdown styling for assistant output.
 fn base_style() -> Style {
-    Style::default().fg(Color::White)
+    Style::default().fg(foreground())
 }
 
 /// Styles one assistant line, tracking ``` fence state across consecutive

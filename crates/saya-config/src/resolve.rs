@@ -1,7 +1,7 @@
 use saya_types::DatabaseProfile;
 
 use crate::{
-    AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput,
+    AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput, ThemeChoice,
     layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
     profile_env::overlay_database_environment,
@@ -44,6 +44,7 @@ pub struct ResolvedConfig {
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
+    pub ui_theme: ThemeChoice,
     pub memory: ResolvedMemory,
     /// Security-critical setting names (`ai.base_url`, `run.read_only`, …)
     /// that the project layer tried to override and were ignored. Empty when
@@ -155,6 +156,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
+        ui_theme: file.ui.theme.unwrap_or(ThemeChoice::Auto),
         memory,
         ignored_project_overrides,
     })

@@ -60,6 +60,31 @@ pub enum ColorChoice {
     Never,
 }
 
+/// Which colour palette the TUI paints with.
+///
+/// `Auto` resolves at session start: it honours `COLORFGBG` when the terminal
+/// publishes a background, and falls back to `Dark` otherwise. `Dark` and
+/// `Light` force a palette regardless of the terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeChoice {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+impl ThemeChoice {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            _ => None,
+        }
+    }
+}
+
 /// Memory operational mode.
 ///
 /// - `Off`: memory is completely disabled — no store queries, no proposals, no observation logging.

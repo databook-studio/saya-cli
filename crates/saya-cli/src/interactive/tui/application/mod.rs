@@ -190,7 +190,7 @@ pub(crate) mod tests_support {
     pub(crate) fn unused_runtime() -> RuntimeConfig {
         use saya_config::{
             AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi,
-            ResolvedConfig, ResolvedMemory,
+            ResolvedConfig, ResolvedMemory, ThemeChoice,
         };
         RuntimeConfig {
             resolved: ResolvedConfig {
@@ -216,6 +216,7 @@ pub(crate) mod tests_support {
                 query_timeout_seconds: 5,
                 output_format: OutputFormat::Text,
                 output_color: ColorChoice::Auto,
+                ui_theme: ThemeChoice::Auto,
                 memory: ResolvedMemory {
                     mode: MemoryMode::Off,
                     max_contracts: 5,
