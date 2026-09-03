@@ -3,7 +3,7 @@ use saya_connectors::DatabaseConnector;
 use saya_store::{
     AuditEntry, AuditOperation, AuditStatus, AuditStore, SchemaStore, SqliteStateStore,
 };
-use saya_types::{QueryRequest, SchemaTree};
+use saya_types::{QueryRequest, SchemaTree, SqlDialect};
 use std::time::Instant;
 
 /// Rows returned to the MODEL from a tool call are capped small: the model
@@ -14,8 +14,18 @@ const MODEL_ROW_CAP: usize = 50;
 /// Flattens a schema into a compact `{ "tables": { name: "col:type,..." } }`
 /// map — far smaller than the full serialized tree, which otherwise rides in
 /// context on every subsequent agent turn.
-fn compact_schema(schema: &SchemaTree) -> serde_json::Value {
-    let mut tables = serde_json::Map::new();
+/// The schema as the model sees it: one entry per table, keyed by the name it
+/// should write in SQL.
+///
+/// The key is an example the model copies, so its depth follows the engine
+/// rather than the tree. Every engine is discovered as catalog → schema →
+/// table, but SQLite parses only the table name and MySQL only
+/// `database.table`; keying those three-deep hands the model a name its own
+/// engine rejects, costing a failed statement before it retries. Where the
+/// engine's depth cannot separate two tables, both keep the full name — a name
+/// that needs correcting beats a table silently missing from the schema.
+fn compact_schema(schema: &SchemaTree, dialect: SqlDialect) -> serde_json::Value {
+    let mut entries: Vec<(String, String, String)> = Vec::new();
     for database in &schema.databases {
         for schema_ns in &database.schemas {
             for table in &schema_ns.tables {
@@ -25,10 +35,22 @@ fn compact_schema(schema: &SchemaTree) -> serde_json::Value {
                     .map(|column| format!("{}:{}", column.name, column.data_type))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let key = format!("{}.{}.{}", database.name, schema_ns.name, table.name);
-                tables.insert(key, serde_json::Value::String(columns));
+                let full = format!("{}.{}.{}", database.name, schema_ns.name, table.name);
+                let short = match dialect.sql_name_parts() {
+                    1 => table.name.clone(),
+                    2 => format!("{}.{}", database.name, table.name),
+                    _ => full.clone(),
+                };
+                entries.push((short, full, columns));
             }
         }
+    }
+
+    let mut tables = serde_json::Map::new();
+    for (short, full, columns) in &entries {
+        let ambiguous = entries.iter().filter(|(s, ..)| s == short).count() > 1;
+        let key = if ambiguous { full } else { short };
+        tables.insert(key.clone(), serde_json::Value::String(columns.clone()));
     }
     serde_json::json!({ "tables": tables })
 }
@@ -54,9 +76,9 @@ pub(crate) async fn schema(
                 )
                 .await;
             }
-            Ok(compact_schema(&schema))
+            Ok(compact_schema(&schema, connector.dialect()))
         }
-        Err(error) => cached(store, profile_id, started, &error).await,
+        Err(error) => cached(store, profile_id, started, &error, connector.dialect()).await,
     }
 }
 
@@ -65,6 +87,7 @@ async fn cached(
     profile_id: Option<&str>,
     started: Instant,
     live_error: &saya_types::ConnectionError,
+    dialect: SqlDialect,
 ) -> Result<serde_json::Value, ToolError> {
     let (Some(store), Some(profile_id)) = (store, profile_id) else {
         return Err(ToolError::SchemaDiscoveryFailed(live_error.to_string()));
@@ -81,7 +104,7 @@ async fn cached(
                 None,
             )
             .await;
-            let mut value = compact_schema(&cached.schema);
+            let mut value = compact_schema(&cached.schema, dialect);
             if let Some(object) = value.as_object_mut() {
                 object.insert(
                     "diagnostic".into(),

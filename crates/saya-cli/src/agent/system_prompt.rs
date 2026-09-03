@@ -8,8 +8,7 @@ pub(crate) const MEMORY_SYSTEM_PROMPT: &str = "\
 SAYA maintains durable knowledge about the user's databases across sessions. \
 Confirmed facts relevant to the question are already supplied in context; there is no need to fetch them. \
 The `contract_search` and `contract_read` tools are available for objects discovered mid-turn that were not in the supplied set. \
-When the user states something durable about their data — what a word means, which column counts, what a table's grain is — restate it explicitly and precisely in the answer. What SAYA records is drawn from the turn, so a vague restatement is recorded vaguely. \
-Always name objects by their fully qualified `catalog.schema.object` when writing SQL. An under-qualified name cannot be recorded against a real object.";
+When the user states something durable about their data — what a word means, which column counts, what a table's grain is — restate it explicitly and precisely in the answer. What SAYA records is drawn from the turn, so a vague restatement is recorded vaguely.";
 
 /// Memory section for the system prompt, present only in [`MemoryMode::Assisted`].
 pub(crate) fn memory_section(mode: MemoryMode) -> Option<&'static str> {
@@ -29,6 +28,43 @@ pub(crate) fn memory_section(mode: MemoryMode) -> Option<&'static str> {
 /// not have, which is a worse failure than saying nothing.
 pub(crate) fn memory_reachable(has_state_store: bool, allow_query_data: bool) -> bool {
     has_state_store && allow_query_data
+}
+
+/// How the connected engines want an object named in SQL.
+///
+/// Schema discovery reports every engine as catalog → schema → table, because
+/// that is what a durable fact binds to. SQLite has no such depth in SQL: shown
+/// `db.main.singer`, a model writes exactly that and the statement is rejected,
+/// costing a round trip on nearly every question before it retries unqualified.
+/// So each engine is told the fullest name it actually accepts — and no more.
+fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
+    let mut forms: Vec<(&str, &str)> = Vec::new();
+    for dialect in registry.dialects() {
+        let entry = (dialect.as_str(), dialect.qualified_name_form());
+        if !forms.contains(&entry) {
+            forms.push(entry);
+        }
+    }
+    match forms.as_slice() {
+        [] => None,
+        [(_, form)] => Some(format!(
+            "Name objects as `{form}` when writing SQL — the fullest form this engine \
+             accepts. An under-qualified name cannot be recorded against a real object, \
+             and an over-qualified one is a syntax error."
+        )),
+        many => {
+            let list = many
+                .iter()
+                .map(|(engine, form)| format!("- {engine}: `{form}`"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(format!(
+                "Name objects with the fullest form the target engine accepts, and no \
+                 more — an under-qualified name cannot be recorded against a real object, \
+                 and an over-qualified one is a syntax error:\n{list}"
+            ))
+        }
+    }
 }
 
 /// Hint for adapting the most recent executed SQL query.
@@ -65,6 +101,13 @@ pub(crate) fn assemble_system_prompt(
     }
     if let Some(m) = memory {
         sections.push(m.to_string());
+    }
+    // Independent of memory mode: schema discovery hands the model a
+    // catalog/schema/table tree for every engine, including the ones whose SQL
+    // has no such depth, so without this the model writes back the shape it was
+    // shown and the statement is rejected.
+    if let Some(n) = naming_section(registry) {
+        sections.push(n);
     }
     if let Some(h) = hint {
         sections.push(h);
