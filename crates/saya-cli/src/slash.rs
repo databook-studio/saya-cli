@@ -41,6 +41,9 @@ pub enum SlashCommand {
     History,
     Sessions,
     Resume(String),
+    /// Choose which columns wide result tables show in the TUI:
+    /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
+    Columns(Option<String>),
     /// A contract slash command (`/contracts`, `/contract`, `/remember`,
     /// `/forget`), already translated to the same `ContractsCommand` the
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
@@ -111,6 +114,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
+        "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
         "doctor" => SlashCommand::Doctor,
         "usage" => SlashCommand::Usage,
         "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
@@ -265,6 +269,22 @@ mod tests {
         assert_eq!(
             parse_slash_command("/explain SELECT 1"),
             Ok(Some(SlashCommand::Explain("SELECT 1".into())))
+        );
+    }
+
+    #[test]
+    fn test_parse_columns_command() {
+        assert_eq!(
+            parse_slash_command("/columns"),
+            Ok(Some(SlashCommand::Columns(None)))
+        );
+        assert_eq!(
+            parse_slash_command("/columns id, total"),
+            Ok(Some(SlashCommand::Columns(Some("id, total".into()))))
+        );
+        assert_eq!(
+            parse_slash_command("/columns all"),
+            Ok(Some(SlashCommand::Columns(Some("all".into()))))
         );
     }
 

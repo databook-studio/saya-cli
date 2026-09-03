@@ -100,7 +100,7 @@ pub(crate) fn complete(
                 sql: task.sql.clone(),
                 connection: connection.clone(),
             });
-            transcript.push(BlockKind::Tool, super::table::format_table(&result));
+            transcript.push(BlockKind::Table, super::table::format_table(&result));
         }
         Followup::Export { path } => {
             match super::export::write_result(&result, std::path::Path::new(path)) {
