@@ -18,10 +18,19 @@ fn config_file_rejects_unknown_keys_with_the_key_named() {
 #[test]
 fn config_file_still_accepts_known_sections_and_keys() {
     let config = ConfigFile::from_toml(
-        "[run]\nmax_rows = 5\n[ai]\nmodel = 'm'\nallow_data_sharing = true\n",
+        "[run]\nmax_rows = 5\n[ai]\nmodel = 'm'\nallow_data_sharing = true\n[ui]\ntheme = 'dark'\n",
     )
     .expect("known keys must parse");
     assert_eq!(config.run.max_rows, Some(5));
+}
+
+#[test]
+fn ui_section_rejects_unknown_keys_with_the_key_named() {
+    let error = ConfigFile::from_toml("[ui]\ntheem = 'dark'\n").expect_err("typo must fail");
+    assert!(
+        error.to_string().contains("theem"),
+        "error must name the offending key: {error}"
+    );
 }
 
 #[test]

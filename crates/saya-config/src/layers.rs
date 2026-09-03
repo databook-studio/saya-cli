@@ -24,6 +24,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(run.query_timeout_seconds);
     apply!(output.format);
     apply!(output.color);
+    apply!(ui.theme);
     apply!(memory.mode);
     apply!(memory.max_contracts);
     apply!(memory.max_claims_per_contract);
@@ -96,6 +97,9 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
     }
     if cli.show_thinking.is_some() {
         file.ai.show_thinking = cli.show_thinking;
+    }
+    if cli.theme.is_some() {
+        file.ui.theme = cli.theme;
     }
 }
 

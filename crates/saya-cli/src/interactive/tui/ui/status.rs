@@ -1,7 +1,7 @@
 //! Status bar rendering.
 
 use super::panels::SPINNER;
-use super::theme::{accent, danger, secondary, status_bg, success, warning};
+use super::theme::{accent, danger, on_accent, secondary, status_bg, success, warning};
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::types::App;
 use ratatui::{
@@ -81,7 +81,7 @@ pub(super) fn draw_status(frame: &mut Frame<'_>, app: &App, status: &StatusView,
             " SELECT ",
             Style::default()
                 .bg(accent())
-                .fg(Color::Black)
+                .fg(on_accent())
                 .add_modifier(Modifier::BOLD),
         )];
         spans.extend(status_spans(status, bg));
