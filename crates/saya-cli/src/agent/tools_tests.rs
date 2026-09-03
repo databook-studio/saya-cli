@@ -31,6 +31,8 @@ impl DatabaseConnector for FakeConnector {
                     name: "public".into(),
                     tables: vec![Table {
                         name: self.table_name.clone(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![],
                     }],
                 }],

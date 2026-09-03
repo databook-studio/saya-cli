@@ -43,6 +43,8 @@ fn sample_tree() -> SchemaTree {
                 tables: vec![
                     Table {
                         name: "orders".into(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![
                             Column {
                                 name: "id".into(),
@@ -58,6 +60,8 @@ fn sample_tree() -> SchemaTree {
                     },
                     Table {
                         name: "staff".into(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![
                             Column {
                                 name: "id".into(),
@@ -254,6 +258,8 @@ async fn test_must_not_widen_resolution_to_guess_across_profiles() {
                 name: "inventory".into(),
                 tables: vec![Table {
                     name: "stock".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![],
                 }],
             }],
@@ -511,6 +517,8 @@ async fn test_column_claim_on_real_column_survives_join_attribution() {
                 tables: vec![
                     Table {
                         name: "orders".into(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![
                             Column {
                                 name: "orderid".into(),
@@ -531,6 +539,8 @@ async fn test_column_claim_on_real_column_survives_join_attribution() {
                     },
                     Table {
                         name: "customers".into(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![
                             Column {
                                 name: "customerid".into(),

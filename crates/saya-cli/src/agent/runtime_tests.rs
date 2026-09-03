@@ -147,6 +147,8 @@ fn orders_table() -> Table {
                 nullable: false,
             },
         ],
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -1523,6 +1525,8 @@ async fn a1_turn_setup(
                 name: "public".into(),
                 tables: vec![Table {
                     name: "orders".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![
                         Column {
                             name: "id".into(),

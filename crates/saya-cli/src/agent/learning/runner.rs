@@ -232,6 +232,8 @@ mod tests {
                         name: "raw".into(),
                         tables: vec![Table {
                             name: "orders".into(),
+                            primary_key: vec![],
+                            foreign_keys: vec![],
                             columns: vec![Column {
                                 name: "status".into(),
                                 data_type: "text".into(),

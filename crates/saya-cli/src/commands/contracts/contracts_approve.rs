@@ -253,6 +253,8 @@ mod tests {
                     name: "public".into(),
                     tables: vec![saya_types::Table {
                         name: "orders".into(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![saya_types::Column {
                             name: "id".into(),
                             data_type: "bigint".into(),

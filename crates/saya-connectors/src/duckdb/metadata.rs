@@ -9,6 +9,15 @@ use super::{
 
 const SCHEMA_SQL: &str = "SELECT table_catalog, table_schema, table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema NOT IN ('information_schema', 'pg_catalog') ORDER BY table_catalog, table_schema, table_name, ordinal_position";
 
+/// Inspects a DuckDB database schema and returns a [`SchemaTree`].
+///
+/// Foreign keys are deliberately not extracted: DuckDB's catalog exposes a
+/// constraint only as the `constraint_text` blob from `duckdb_constraints()`
+/// (a DDL fragment such as `FOREIGN KEY (a, b) REFERENCES other(x, y)`), with
+/// no structured column mapping. Parsing that text is fragile across DuckDB
+/// versions and cannot be bounded the way a column query can, so tables here
+/// carry no foreign keys rather than guessed ones. Adding extraction later
+/// means a stable structured source, not a DDL parser.
 pub(crate) async fn schema(connector: &DuckDbConnector) -> Result<SchemaTree, ConnectionError> {
     let tree = execute::run(connector, Operation::Schema, |connection| {
         let mut statement = connection.prepare(SCHEMA_SQL).map_err(error)?;
@@ -43,7 +52,12 @@ pub(crate) async fn schema(connector: &DuckDbConnector) -> Result<SchemaTree, Co
                         name,
                         tables: tables
                             .into_iter()
-                            .map(|(name, columns)| Table { name, columns })
+                            .map(|(name, columns)| Table {
+                                name,
+                                columns,
+                                primary_key: vec![],
+                                foreign_keys: vec![],
+                            })
                             .collect(),
                     })
                     .collect(),
