@@ -1,4 +1,8 @@
-use std::{path::Path, time::Duration};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
@@ -11,6 +15,10 @@ pub struct SqliteConnector {
     pub(crate) pool: SqlitePool,
     pub(crate) query_timeout: Duration,
     pub(crate) database: String,
+    /// Shared with the progress-handler closure installed by `execute`. `cancel`
+    /// sets it so the handler returns `false` (the same signal a missed deadline
+    /// sends), aborting the running statement from inside the SQLite VM.
+    pub(crate) cancelled: Arc<AtomicBool>,
 }
 
 impl SqliteConnector {
@@ -50,6 +58,7 @@ impl SqliteConnector {
             pool,
             query_timeout,
             database,
+            cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -77,6 +86,12 @@ impl DatabaseConnector for SqliteConnector {
 
     async fn execute(&self, request: QueryRequest) -> Result<QueryResult, ConnectionError> {
         super::execute::query(self, request).await
+    }
+
+    async fn cancel(&self) -> Result<(), ConnectionError> {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
     }
 }
 
