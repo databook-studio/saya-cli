@@ -92,6 +92,9 @@ pub(super) fn kind_style(kind: BlockKind) -> Style {
             .add_modifier(Modifier::ITALIC),
         BlockKind::Error => Style::default().fg(danger()).add_modifier(Modifier::BOLD),
         BlockKind::Tool => Style::default().fg(secondary()),
+        // A result table is grid text, so it reads like inline code: aligned
+        // and monospaced-feeling, distinct from prose tool lines.
+        BlockKind::Table => Style::default().fg(code_color()),
         // The model's chain-of-thought restates database contents in prose and
         // is often longer than the answer, so it stays visually subordinate:
         // dimmed secondary, never mistakable for the answer.
@@ -107,6 +110,7 @@ pub(super) fn rail_style(kind: BlockKind) -> Style {
             .add_modifier(Modifier::BOLD),
         BlockKind::Assistant => Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         BlockKind::Tool | BlockKind::System => Style::default().fg(secondary()),
+        BlockKind::Table => Style::default().fg(secondary()),
         BlockKind::Error => Style::default().fg(danger()).add_modifier(Modifier::BOLD),
         BlockKind::Thinking => Style::default().fg(secondary()),
     }
