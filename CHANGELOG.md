@@ -34,6 +34,19 @@ All notable changes to SAYA CLI are recorded here. This project follows
   two tables collide. The same rule is stated in the system prompt, for every
   engine and regardless of memory mode.
 
+- **Assisted memory no longer records facts about columns that do not exist.**
+  Observed columns are gathered from result sets and SQL text, so a SELECT
+  alias — or a column belonging to the other side of a join — could be stored
+  as a fact about a table that never had it, then recalled later as if it were
+  real. A measured corpus held three such claims against one table. The
+  resolver now refuses a claim whose column the resolved table does not have.
+- **A model can no longer confirm its own inference.** A proposal reports
+  whether it came from the user, and a self-reported user origin was enough to
+  write a confirmed, binding claim. In a 119-fact corpus the only two confirmed
+  claims were the model's own reasoning labelled as the user's words.
+  Confirmation now requires the turn to show an assertion; without one the
+  proposal is still recorded, as the inference it is.
+
 ### Changed (breaking, for users of the library crates)
 
 - **`ChatRequest`, `ChatResponse` and `TokenUsage` are now `#[non_exhaustive]`,
