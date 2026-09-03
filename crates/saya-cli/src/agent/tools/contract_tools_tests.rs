@@ -107,6 +107,8 @@ fn current_table(object: &DatabaseObjectRef) -> Table {
             data_type: "bigint".into(),
             nullable: false,
         }],
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -625,6 +627,8 @@ async fn contract_read_truncates_claims_past_the_bound_and_says_so() {
                 name: obj.schema().to_string(),
                 tables: vec![Table {
                     name: obj.object().to_string(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: (0..5)
                         .map(|col| Column {
                             name: format!("c{col}"),
@@ -725,6 +729,8 @@ async fn contract_search_drops_a_stale_claim_and_says_so() {
                 name: obj.schema().to_string(),
                 tables: vec![Table {
                     name: obj.object().to_string(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![Column {
                         name: "id".into(),
                         data_type: "bigint".into(),

@@ -1148,6 +1148,8 @@ fn orders_table() -> Table {
             data_type: "bigint".into(),
             nullable: false,
         }],
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -1389,6 +1391,8 @@ async fn remember_column_claim_against_cached_schema_snapshots_real_type() {
                 name: "public".into(),
                 tables: vec![Table {
                     name: "orders".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![Column {
                         name: "id".into(),
                         data_type: "bigint".into(),
@@ -1727,6 +1731,8 @@ async fn seed_drifted_active_claim(
                 name: "public".into(),
                 tables: vec![Table {
                     name: table.into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![Column {
                         name: "id".into(),
                         data_type: "bigint".into(),

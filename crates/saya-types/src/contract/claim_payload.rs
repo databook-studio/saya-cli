@@ -778,6 +778,8 @@ mod tests {
                     nullable: *nullable,
                 })
                 .collect(),
+            primary_key: vec![],
+            foreign_keys: vec![],
         }
     }
 
