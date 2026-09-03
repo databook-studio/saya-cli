@@ -55,7 +55,9 @@ impl From<StoreError> for ContractOpError {
             StoreError::Conflict => Self::Conflict,
             StoreError::Invalid => Self::Invalid,
             StoreError::LimitExceeded => Self::Limit,
-            StoreError::Unavailable | StoreError::VersionUnsupported => Self::Unavailable,
+            StoreError::Unavailable | StoreError::VersionUnsupported | StoreError::OpenFailed => {
+                Self::Unavailable
+            }
             // StoreError is #[non_exhaustive]; a future variant is a store
             // problem the adapter cannot route around, so it degrades to
             // Unavailable rather than becoming an unhandled case.
