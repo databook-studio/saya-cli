@@ -4,6 +4,7 @@ mod input_actions;
 mod picker;
 mod search;
 mod streaming;
+mod wide_table;
 
 use super::history::History;
 use super::input::InputBuffer;
@@ -44,6 +45,7 @@ impl App {
             sql_task: None,
             pending_session_save: None,
             last_query: None,
+            wide_table: Default::default(),
             runtime,
             state_db,
             should_quit: false,
@@ -157,6 +159,7 @@ pub(crate) mod tests_support {
             session_save: None,
             pending_session_save: None,
             last_query: None,
+            wide_table: Default::default(),
             runtime: Arc::new(unused_runtime()),
             state_db: SqliteStateStore::new(PathBuf::new()),
             should_quit: false,
