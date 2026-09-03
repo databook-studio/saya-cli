@@ -447,6 +447,14 @@ pub enum AgentEvent {
         reason: LearningSkipReason,
     },
     Complete,
+    /// The model designated the SQL that answers the question — emitted once,
+    /// at the terminal turn, so a headless reader can pair the prose answer
+    /// with the query that produced it instead of guessing from the last query
+    /// that ran. Carries the SQL text only (already user-visible via tool-call
+    /// detail); never result rows.
+    AnswerDesignated {
+        sql: String,
+    },
 }
 
 /// Why post-turn extraction was skipped after the gate admitted it
@@ -526,6 +534,12 @@ impl AgentEvent {
 
     pub fn complete() -> Self {
         Self::Complete
+    }
+
+    /// Builds the terminal `AnswerDesignated` event carrying the SQL the model
+    /// flagged as the answering query. Emitted once, at the terminal turn.
+    pub fn answer_designated(sql: impl Into<String>) -> Self {
+        Self::AnswerDesignated { sql: sql.into() }
     }
 }
 

@@ -105,6 +105,13 @@ pub enum TerminalEvent {
         reason: LearningSkipReason,
     },
     Complete,
+    /// The SQL the model designated as the answering query for the turn.
+    /// Carried on the NDJSON stream so a harness can pair the answer with its
+    /// query; silent in the text adapter, where the SQL was already shown when
+    /// the query ran.
+    AnswerDesignated {
+        sql: String,
+    },
     Result {
         message: String,
     },
@@ -228,6 +235,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::Complete => Rendered {
             stdout: "\n".into(),
+            stderr: String::new(),
+        },
+        TerminalEvent::AnswerDesignated { .. } => Rendered {
+            stdout: String::new(),
             stderr: String::new(),
         },
         TerminalEvent::Result { message } => Rendered {

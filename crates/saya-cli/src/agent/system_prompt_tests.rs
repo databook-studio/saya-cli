@@ -153,12 +153,14 @@ fn assemble_system_prompt_stays_within_budget() {
     assert!(prompt.is_some());
     let system_text = prompt.unwrap();
 
-    // Check raw length is tiny compared to limit
-    assert!(system_text.len() < 2000);
+    // Check raw length is tiny compared to a conversation budget.
+    assert!(system_text.len() < 4000);
 
-    // Check turn_bytes calculation passes budget
+    // The system prompt plus an ordinary question is far below any realistic
+    // context_byte_budget — the loop bounds the conversation, not a start-of-run
+    // cap, so this is a sanity check, not an enforced ceiling.
     let bytes = turn_bytes(Some(&system_text), &[], "How many orders were placed?");
-    assert!(bytes < saya_types::MAX_MESSAGE_BYTES);
+    assert!(bytes < 32 * 1024);
 }
 
 /// Assisted, but the state store did not open or the privacy gate is shut: the
@@ -269,5 +271,54 @@ fn the_naming_rule_is_present_with_memory_off() {
     assert!(
         !prompt.contains("durable knowledge"),
         "memory is off, so the memory briefing must stay absent: {prompt}"
+    );
+}
+
+/// A single connection is never named by `describe_context` (it stays silent
+/// for one connection), so the prompt itself must name the engine — the model
+/// is otherwise never told it is writing SQLite. The prompt must also coach
+/// multi-step work, refusing to repeat a failed query, and giving up with a
+/// reason when the question cannot be answered from this database.
+#[test]
+fn single_connection_prompt_names_engine_and_guides_giving_up() {
+    let prompt = assemble_system_prompt(
+        &registry_with(SqlDialect::Postgres),
+        None,
+        MemoryMode::Off,
+        false,
+    )
+    .expect("a prompt");
+    assert!(
+        prompt.contains("postgresql"),
+        "the engine must be named for a single connection: {prompt}"
+    );
+    assert!(
+        prompt.contains("multi-step"),
+        "the prompt must say multi-step work is expected: {prompt}"
+    );
+    assert!(
+        prompt.contains("Do not repeat a query that already failed"),
+        "the prompt must tell the model not to repeat a failed query: {prompt}"
+    );
+    assert!(
+        prompt.contains("Giving up with a reason"),
+        "the prompt must sanction giving up with a reason: {prompt}"
+    );
+    assert!(
+        prompt.contains("stop and say so"),
+        "the prompt must tell the model to stop and explain when it cannot answer: {prompt}"
+    );
+}
+
+/// The give-up guidance is not a single-connection concern: with several
+/// databases the model can still hit a question no connected database can
+/// answer, so the coaching must be present there too.
+#[test]
+fn multi_connection_prompt_also_guides_giving_up() {
+    let prompt =
+        assemble_system_prompt(&multi_registry(), None, MemoryMode::Off, false).expect("a prompt");
+    assert!(
+        prompt.contains("Giving up with a reason"),
+        "multi-connection prompt must also coach giving up: {prompt}"
     );
 }

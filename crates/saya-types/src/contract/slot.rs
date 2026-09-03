@@ -22,11 +22,11 @@ use crate::contract::identity::validate_name;
 /// Bound on every multi-valued slot. Multi-valued slots render into the
 /// recall context block, so an unbounded list is a context-budget problem.
 /// Four keeps the worst case modest: four `table.description` values at
-/// `MAX_TEXT_CHARS` (1024) each is ~4 KB, a small slice of the 32 KB
-/// `MAX_MESSAGE_BYTES` whole-message budget; aliases are short names and
-/// negligible at four. Four is large enough that a table is never forced to
-/// drop a legitimate second alias or clarification, and small enough that a
-/// runaway list cannot crowd out the question the context is meant to help.
+/// `MAX_TEXT_CHARS` (1024) each is ~4 KB, a small slice of the conversation
+/// byte budget; aliases are short names and negligible at four. Four is large
+/// enough that a table is never forced to drop a legitimate second alias or
+/// clarification, and small enough that a runaway list cannot crowd out the
+/// question the context is meant to help.
 pub const MAX_MULTI_SLOT_VALUES: usize = 4;
 
 /// The position a piece of knowledge occupies on a database object.
