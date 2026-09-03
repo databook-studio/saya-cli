@@ -153,6 +153,9 @@ impl SessionState {
             }
             SlashCommand::Sessions => SessionAction::History,
             SlashCommand::Resume(id) => SessionAction::Resume(id),
+            SlashCommand::Columns(_) => {
+                SessionAction::Message("Column selection applies in the interactive TUI.".into())
+            }
             SlashCommand::Help(topic) => {
                 SessionAction::Message(crate::slash::help_for(topic.as_deref()))
             }

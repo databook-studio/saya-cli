@@ -30,7 +30,7 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // ``` fence state persists across the consecutive lines of one assistant
     // block; any other role ends it.
     let mut fence = false;
-    for (kind, text) in app.transcript.view(width, height) {
+    for (kind, text) in app.transcript.wide_view(width, height, &app.wide_table) {
         if text.is_empty() {
             lines.push(Line::from(""));
             continue;
@@ -40,6 +40,7 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
             BlockKind::User => "❯ ",
             BlockKind::Assistant => "◆ ",
             BlockKind::Tool => "▸ ",
+            BlockKind::Table => "▸ ",
             BlockKind::Error => "✗ ",
             BlockKind::System => "· ",
             BlockKind::Thinking => "≈ ",

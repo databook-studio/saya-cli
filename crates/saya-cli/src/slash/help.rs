@@ -44,6 +44,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "Browse saved sessions; opens a picker in the TUI",
     ),
     ("resume", "Resume a saved session by id"),
+    ("columns", "Choose which columns wide result tables show"),
     ("contracts", "List contracts, or show one object's contract"),
     ("contract", "Alias for /contracts"),
     ("remember", "Store a confirmed contract claim"),
@@ -130,6 +131,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("export", "/export <path>"),
             ("chart", "/chart [type] [path]"),
             ("explain", "/explain [sql]"),
+            ("columns", "/columns [name,name,… | all]"),
         ],
     ),
     (
@@ -200,6 +202,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "explain" => Some(
             "explain [sql] — show the query plan (EXPLAIN) for the given SQL, or the last query if omitted",
+        ),
+        "columns" => Some(
+            "columns [name,name,… | all] — choose which columns wide result tables show in the TUI. Names match column headers (case-insensitive); unmatched names are ignored, and a filter that matches nothing falls back to all columns. /columns or /columns all resets. The full table is still copied by Ctrl+Y/Ctrl+B; this only changes what is painted. Example: /columns id, total   or   /columns all",
         ),
         "clear" => Some("clear — clear the conversation and context. Example: /clear"),
         "history" => Some("history — list saved sessions as text. Example: /history"),
@@ -401,6 +406,35 @@ mod tests {
                 "{name} is registered but has no description"
             );
         }
+    }
+
+    /// `/columns` is a slash command, so it needs a `/help` entry, a listing
+    /// line, and a description shared with the popup — and the help must say
+    /// that copy still yields the full table (the view filter is paint-only).
+    #[test]
+    fn columns_has_help_listing_and_copy_guarantee() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"columns"),
+            "columns is registered"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/columns [name,name,… | all]"),
+            "listing shows the /columns usage: {listing}"
+        );
+        let help = command_help("columns").expect("columns has help");
+        assert!(
+            help.contains("which columns"),
+            "/columns help names what it selects: {help}"
+        );
+        assert!(
+            help.contains("Ctrl+Y"),
+            "/columns help must say copy still yields the full table: {help}"
+        );
+        assert!(
+            description_for("columns").is_some(),
+            "columns has a popup description"
+        );
     }
 
     /// the listing groups commands under short headings, so 28 described

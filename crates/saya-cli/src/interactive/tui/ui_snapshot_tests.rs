@@ -109,6 +109,7 @@ fn empty_app() -> App {
         session_save: None,
         pending_session_save: None,
         last_query: None,
+        wide_table: Default::default(),
         runtime: unused_runtime(),
         state_db: unused_store(),
         should_quit: false,
@@ -377,4 +378,144 @@ fn long_content_at_real_width() {
 
     let buffer = render_buffer(&app, &fixed_status(), 100, 30);
     insta::assert_snapshot!(buffer);
+}
+
+// --- Wide-table horizontal scrolling + copy. ---------------------------------
+
+use super::table::format_table;
+use super::transcript::BlockKind;
+use saya_types::QueryResult;
+
+/// A 12-column result that overflows the text area at 80×24, so the view must
+/// scroll horizontally rather than word-wrap the grid into noise.
+fn wide_table_result() -> QueryResult {
+    QueryResult {
+        columns: vec![
+            "id".into(),
+            "name".into(),
+            "status".into(),
+            "region".into(),
+            "country".into(),
+            "city".into(),
+            "postal".into(),
+            "carrier".into(),
+            "tracking".into(),
+            "total".into(),
+            "tax".into(),
+            "shipped_at".into(),
+        ],
+        rows: vec![serde_json::json!([
+            1,
+            "alice",
+            "fulfilled",
+            "north",
+            "CA",
+            "SF",
+            "94105",
+            "UPS",
+            "1Z999",
+            120,
+            12,
+            "2024-01-03"
+        ])],
+        row_count: 1,
+        truncated: false,
+        executed_sql: "SELECT * FROM orders".into(),
+    }
+}
+
+fn app_with_wide_table() -> App {
+    let mut app = empty_app();
+    // A direct /sql command lands as a user line, then the result table — the
+    // table alone would not count as a "turn", so the user line is needed for
+    // the transcript pane (not the splash) to render.
+    app.transcript
+        .push(BlockKind::User, "/sql SELECT * FROM orders");
+    app.transcript
+        .push(BlockKind::Table, format_table(&wide_table_result()));
+    app
+}
+
+/// At the left edge the first columns are painted and the last column is off
+/// the right side; scrolling right reveals it. This asserts real paint through
+/// `ui::draw` (the same path the PTY smoke tests exercise at the process level).
+#[test]
+fn wide_table_scrolls_horizontally_in_the_transcript() {
+    let mut app = app_with_wide_table();
+    app.wide_table.h_offset = 0;
+
+    let left = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        left.contains("id"),
+        "first column is visible at the left edge:\n{left}"
+    );
+    assert!(
+        !left.contains("shipped_at"),
+        "last column does not fit before scrolling:\n{left}"
+    );
+
+    // Scroll far enough that the early columns leave the window.
+    app.wide_table.h_offset = 11;
+    let right = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        right.contains("shipped_at"),
+        "scrolling right reveals the last column:\n{right}"
+    );
+    assert!(
+        !right.contains("│ id"),
+        "scrolling right drops the first column:\n{right}"
+    );
+}
+
+/// Pinning the first column holds it in place while the rest scroll, so the
+/// key column (an id) never leaves the screen while reading wide rows.
+#[test]
+fn pin_first_column_stays_put_while_scrolling() {
+    let mut app = app_with_wide_table();
+    app.wide_table.pin_first = true;
+    app.wide_table.h_offset = 11;
+
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        buffer.contains("│ id"),
+        "pinned first column stays on screen:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("shipped_at"),
+        "a far column is reached by scrolling:\n{buffer}"
+    );
+}
+
+/// The view offset is presentation only: the transcript block text is the full
+/// untruncated table, so copy (Ctrl+B) still yields every column even while the
+/// screen is scrolled and clipped.
+#[test]
+fn copy_transcript_yields_the_full_untruncated_table_while_scrolled() {
+    let mut app = app_with_wide_table();
+    app.wide_table.h_offset = 11;
+    app.wide_table.pin_first = true;
+
+    app.copy_transcript();
+    let copied = app.pending_clipboard.expect("transcript was queued");
+    assert!(
+        copied.contains("id") && copied.contains("name") && copied.contains("shipped_at"),
+        "copy must include every column, not just the visible window:\n{copied}"
+    );
+    assert!(
+        copied.contains("1 row(s)"),
+        "copy must include the row-count footer:\n{copied}"
+    );
+}
+
+/// `copy_last_answer` copies the assistant answer, not the table; the table is
+/// never mistaken for the answer. (Guards the new BlockKind against regressing
+/// the copy-last-answer path.)
+#[test]
+fn copy_last_answer_does_not_grab_a_table_block() {
+    let mut app = app_with_wide_table();
+    app.transcript
+        .push(BlockKind::Assistant, "the answer is here");
+    app.copy_last_answer();
+    let copied = app.pending_clipboard.expect("answer was queued");
+    assert_eq!(copied, "the answer is here");
 }

@@ -14,6 +14,11 @@ pub(crate) enum BlockKind {
     System,
     Error,
     Tool,
+    /// A query result rendered as a box-drawing table. The block text is the
+    /// full, untruncated table (what copy and persistence see); the view paints
+    /// it with horizontal scrolling rather than word-wrapping, so a wide result
+    /// stays readable.
+    Table,
     /// The model's chain-of-thought, shown only when the user asked for it.
     /// Visually subordinate to the answer and excluded from clipboard copy and
     /// session persistence — reasoning restates database contents in prose.
@@ -107,6 +112,11 @@ impl Transcript {
             for raw in block.text.split('\n') {
                 if raw.is_empty() {
                     lines.push((block.kind, String::new()));
+                } else if block.kind == BlockKind::Table {
+                    // A table row is one line of box drawing; word-wrapping it
+                    // destroys the grid, so each line is kept whole and the
+                    // view clips it horizontally instead.
+                    lines.push((block.kind, raw.to_string()));
                 } else {
                     wrap_word_aware(raw, eff, block.kind, &mut lines);
                 }
@@ -136,6 +146,53 @@ impl Transcript {
         }
         let start = rem - self.scroll_up.min(rem);
         lines[start..start + height].to_vec()
+    }
+
+    /// Like [`view`], but table blocks are painted through the wide-table
+    /// view: each table line is horizontally clipped (and optionally
+    /// column-filtered) to `width` instead of left whole. The line count is
+    /// unchanged, so vertical scroll metrics from [`total_lines`] still match.
+    /// The offset/column state is passed in from the view — it never lives on
+    /// the transcript data.
+    pub(crate) fn wide_view(
+        &self,
+        width: usize,
+        height: usize,
+        wv: &super::types::WideTableView,
+    ) -> WrappedLines {
+        let src = self.lines(width);
+        let mut out: WrappedLines = Vec::with_capacity(src.len());
+        let mut i = 0;
+        while i < src.len() {
+            if src[i].0 == BlockKind::Table {
+                // A table block's lines are contiguous; collect the run, then
+                // split it into individual tables (each starts with ┌) so two
+                // adjacent results are clipped independently.
+                let run_start = i;
+                while i < src.len() && src[i].0 == BlockKind::Table {
+                    i += 1;
+                }
+                let run = src[run_start..i]
+                    .iter()
+                    .map(|(_, t)| t.clone())
+                    .collect::<Vec<_>>();
+                for line in super::table::clip_table_block(&run, wv, width) {
+                    out.push((BlockKind::Table, line));
+                }
+            } else {
+                out.push(src[i].clone());
+                i += 1;
+            }
+        }
+        if height == 0 {
+            return Vec::new();
+        }
+        let rem = out.len().saturating_sub(height);
+        if rem == 0 {
+            return out;
+        }
+        let start = rem - self.scroll_up.min(rem);
+        out[start..start + height].to_vec()
     }
 
     pub(crate) fn scroll_up(&mut self, n: usize, width: usize, height: usize) {
