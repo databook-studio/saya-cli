@@ -21,6 +21,18 @@ const DEFAULT_CONTEXT_BYTE_BUDGET: usize = 256 * 1024;
 /// context window may raise it freely, which is the point of making it settable.
 const MIN_CONTEXT_BYTE_BUDGET: usize = 1024;
 
+/// Default provider retry backoff in milliseconds: three sleeps before the
+/// provider gives up. A user who sets nothing gets these.
+const DEFAULT_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1000];
+
+/// Most provider retries a config-supplied schedule may request. Each retry
+/// repeats a full failing request, so an unbounded list turns one provider
+/// failure into many; this bounds that cost while leaving room to widen beyond
+/// the three-entry default for a slow or rate-limited gateway. Each sleep is
+/// also capped at 60s by the provider HTTP layer, so worst-case backoff
+/// sleeping is this count times 60s.
+const MAX_RETRY_DELAYS: usize = 8;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {
     pub profile_name: Option<String>,
@@ -54,6 +66,9 @@ pub struct ResolvedAi {
     pub idle_timeout_seconds: u64,
     /// Per-response output-token ceiling requested from the provider.
     pub max_output_tokens: u32,
+    /// Provider retry backoff in milliseconds, tried in order before the
+    /// provider gives up. An empty list means one attempt with no sleeps.
+    pub retry_delays_ms: Vec<u64>,
     /// Ceiling on the approximate byte size of the conversation the agent loop
     /// assembles. The loop trims under it instead of aborting, so a user on a
     /// model with a large context window can raise it to keep more history.
@@ -111,6 +126,12 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .context_byte_budget
         .unwrap_or(DEFAULT_CONTEXT_BYTE_BUDGET);
     require_context_byte_budget(context_byte_budget)?;
+    let retry_delays_ms = file
+        .ai
+        .retry_delays_ms
+        .clone()
+        .unwrap_or_else(|| DEFAULT_RETRY_DELAYS_MS.to_vec());
+    require_retry_delays(&retry_delays_ms)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
@@ -126,6 +147,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
             max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
             context_byte_budget,
             show_thinking: file.ai.show_thinking.unwrap_or(false),
+            retry_delays_ms,
         },
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
@@ -150,6 +172,23 @@ fn require_context_byte_budget(value: usize) -> Result<(), ConfigError> {
             field: "context_byte_budget",
             value,
             min: MIN_CONTEXT_BYTE_BUDGET,
+        })
+    }
+}
+
+/// Rejects an `[ai] retry_delays_ms` schedule longer than `MAX_RETRY_DELAYS`.
+/// An empty list is allowed — it means "do not retry" (one attempt, no
+/// sleeps), which is a valid choice. Sibling to `require_context_byte_budget`
+/// in style: a typed error at resolve time rather than a silent clamp at the
+/// point of use.
+fn require_retry_delays(value: &[u64]) -> Result<(), ConfigError> {
+    if value.len() <= MAX_RETRY_DELAYS {
+        Ok(())
+    } else {
+        Err(ConfigError::SettingAboveMaximum {
+            field: "retry_delays_ms",
+            value: value.len(),
+            max: MAX_RETRY_DELAYS,
         })
     }
 }
