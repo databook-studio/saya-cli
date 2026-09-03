@@ -22,4 +22,4 @@ pub use model::{ConfigFile, ConnectionsFile};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::SecretRef;
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};
-pub use values::{AiProvider, ColorChoice, MemoryMode, OutputFormat};
+pub use values::{AiProvider, ColorChoice, MemoryMode, OutputFormat, ThemeChoice};

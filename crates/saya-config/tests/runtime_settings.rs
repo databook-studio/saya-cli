@@ -1,6 +1,6 @@
 use saya_config::{
     AiProvider, ColorChoice, ConfigError, ConfigFile, ConnectionsFile, OutputFormat,
-    ResolutionInput, resolve,
+    ResolutionInput, ThemeChoice, resolve,
 };
 use saya_types::SecretRef;
 
@@ -240,4 +240,39 @@ fn ai_retry_delays_above_the_limit_is_a_typed_error() {
         ),
         "expected SettingAboveMaximum for a too-long schedule, got {rendered}"
     );
+}
+
+/// The `[ui] theme` setting resolves from the config file, and a config that
+/// sets nothing keeps `auto` — the default a user who never touches the
+/// setting gets.
+#[test]
+fn ui_theme_resolves_from_file_with_auto_default() {
+    let config = ConfigFile::from_toml("[ui]\ntheme = 'light'\n").unwrap();
+    let resolved = saya_config::resolve(
+        saya_config::ResolutionInput::new(ConnectionsFile::default()).with_user(config),
+    )
+    .unwrap();
+    assert_eq!(resolved.ui_theme, ThemeChoice::Light);
+
+    let defaults =
+        saya_config::resolve(saya_config::ResolutionInput::new(ConnectionsFile::default()))
+            .unwrap();
+    assert_eq!(defaults.ui_theme, ThemeChoice::Auto);
+}
+
+/// The `--theme` CLI override has the highest precedence, so a flag wins over
+/// a `[ui] theme` value the config file declared.
+#[test]
+fn cli_theme_flag_overrides_the_config_file_value() {
+    let config = ConfigFile::from_toml("[ui]\ntheme = 'light'\n").unwrap();
+    let resolved = saya_config::resolve(
+        saya_config::ResolutionInput::new(ConnectionsFile::default())
+            .with_user(config)
+            .with_cli(saya_config::CliOverrides {
+                theme: Some(ThemeChoice::Dark),
+                ..Default::default()
+            }),
+    )
+    .unwrap();
+    assert_eq!(resolved.ui_theme, ThemeChoice::Dark);
 }

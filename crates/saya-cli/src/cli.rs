@@ -80,6 +80,10 @@ pub struct GlobalOptions {
     /// Disable colored output (overrides the detected terminal capability).
     #[arg(long, global = true)]
     pub no_color: bool,
+    /// Colour palette for the TUI: `dark`, `light`, or `auto` (honour
+    /// `COLORFGBG`, falling back to dark when the terminal reports nothing).
+    #[arg(long, value_enum, default_value_t = ThemeArg::Auto, global = true)]
+    pub theme: ThemeArg,
     /// Show the model's chain-of-thought in the transcript as it streams.
     /// Off by default: thinking is verbose and restates database contents in
     /// prose. Display only — reasoning is never persisted to a session file.
@@ -97,6 +101,26 @@ pub enum FormatArg {
     Text,
     Json,
     Ndjson,
+}
+
+/// CLI mirror of the `[ui] theme` config setting, parsed by clap from
+/// `--theme <dark|light|auto>`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ThemeArg {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+impl ThemeArg {
+    pub fn to_choice(self) -> saya_config::ThemeChoice {
+        match self {
+            Self::Auto => saya_config::ThemeChoice::Auto,
+            Self::Dark => saya_config::ThemeChoice::Dark,
+            Self::Light => saya_config::ThemeChoice::Light,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Subcommand)]

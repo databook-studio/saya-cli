@@ -127,6 +127,7 @@ pub fn load_with_sources(
             } else {
                 None
             },
+            theme: Some(options.theme.to_choice()),
             trust_project_config: options.trust_project_config,
         });
     let mut resolved = resolve(input)?;
