@@ -68,6 +68,10 @@ pub(crate) fn run(
         std::io::stdout().is_terminal(),
         std::env::var_os("NO_COLOR").is_some(),
     ));
+    ui::theme::set_theme(ui::theme::resolve_theme(
+        runtime.resolved.ui_theme,
+        std::env::var("COLORFGBG").ok().as_deref(),
+    ));
     let profiles = runtime
         .connections
         .profiles

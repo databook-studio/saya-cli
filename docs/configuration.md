@@ -76,6 +76,21 @@ also drives session-level read-only on connectors that support it. This is
 distinct from a profile's own `SAYA_DB_READ_ONLY`, which sets a file engine's
 (DuckDB/SQLite) access mode.
 
+The `[ui]` table sets the interactive TUI's colour palette:
+
+```toml
+[ui]
+theme = "auto"   # dark | light | auto
+```
+
+`theme` selects the palette the full-screen TUI paints with. `auto` (the
+default) honours the `COLORFGBG` environment variable when the terminal
+publishes it — a background of 7–15 selects the light palette, anything else
+stays dark — and falls back to dark when `COLORFGBG` is absent or unparseable,
+since a silent guess at the wrong theme is worse than the common case. The
+`--theme <dark|light|auto>` global flag overrides this for a single invocation
+and follows the usual CLI-over-config precedence.
+
 The `[ai]` table tunes the provider request the agent loop assembles.
 `context_byte_budget` is the ceiling on the approximate byte size of the whole
 conversation sent to the provider (system prompt, user question, history, and
