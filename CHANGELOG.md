@@ -5,6 +5,35 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## 0.3.3 — 2026-09-03
 
+### Fixed
+
+- **SQLite can do arithmetic again.** `sqrt`, `pow`, `ceil`, `floor`, `mod`,
+  the logarithms and the whole trigonometric family were unavailable on SQLite
+  profiles — 19 of 23 standard functions — because the bundled build was not
+  compiled with `SQLITE_ENABLE_MATH_FUNCTIONS`. Any question involving a
+  distance, a rate or a rounding boundary failed on SQLite while working on
+  PostgreSQL, so the engine a profile happened to point at silently decided
+  which questions could be answered. The released binaries and any build from
+  the repository carry the flag; installing from crates.io needs
+  `LIBSQLITE3_FLAGS=-DSQLITE_ENABLE_MATH_FUNCTIONS`, because a Cargo config
+  cannot reach a build the user starts elsewhere. The README says so.
+- **A failed SQLite query says what was wrong with it.** Every failure reported
+  the same "SQLite query failed", so a missing function, a misspelt table and a
+  typo were indistinguishable and the agent retried blind. Failures that name
+  something absent from the SQL — an unknown function, table or column, or an
+  ambiguous column — now say which name and what kind. Only that recognised set
+  is reported: the identifier came from the caller's own SQL and discloses
+  nothing about stored rows, and any other failure keeps the redacted wording.
+- **Schema discovery names tables the way the engine will accept them.** Every
+  database was reported to the model as `catalog.schema.table`, including
+  SQLite, which parses neither part, and MySQL, which has no separate schema.
+  Shown a name its own engine rejects, the model wrote it back and the
+  statement failed — measured on 87% of questions in a SQLite benchmark, each
+  costing a wasted round trip before it retried unqualified. Keys now carry the
+  depth the engine accepts, and fall back to the full name if that would make
+  two tables collide. The same rule is stated in the system prompt, for every
+  engine and regardless of memory mode.
+
 ### Changed (breaking, for users of the library crates)
 
 - **`ChatRequest`, `ChatResponse` and `TokenUsage` are now `#[non_exhaustive]`,
