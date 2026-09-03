@@ -105,6 +105,11 @@ pub struct AiFile {
     pub idle_timeout_seconds: Option<u64>,
     /// Per-response output-token ceiling requested from the provider.
     pub max_output_tokens: Option<u32>,
+    /// Provider retry backoff in milliseconds, tried in order before the
+    /// provider gives up. Absent keeps the default three-entry schedule. An
+    /// empty list means "do not retry" (one attempt, no sleeps). The list
+    /// length is bounded at resolve time.
+    pub retry_delays_ms: Option<Vec<u64>>,
     /// Ceiling on the approximate byte size of the conversation the agent loop
     /// assembles and sends to the provider. The loop trims under it (oldest
     /// tool results dropped, newest truncated with a marker) rather than abort.

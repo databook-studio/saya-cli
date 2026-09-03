@@ -37,4 +37,15 @@ pub enum ConfigError {
         value: usize,
         min: usize,
     },
+    /// A non-memory setting exceeds its ceiling. Sibling to
+    /// [`ConfigError::SettingBelowMinimum`] for list-shaped settings such as
+    /// `[ai] retry_delays_ms`, where the floor is meaningful (an empty list is
+    /// a valid "do not retry" choice, so zero is allowed) but a runaway length
+    /// is not. `value` is the supplied length and `max` the permitted count.
+    #[error("setting {field} lists {value} entries; the limit is {max}")]
+    SettingAboveMaximum {
+        field: &'static str,
+        value: usize,
+        max: usize,
+    },
 }

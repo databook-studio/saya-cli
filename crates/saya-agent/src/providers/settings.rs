@@ -11,6 +11,8 @@ pub struct ProviderSettings {
     /// Maximum gap between stream chunks before the provider is considered
     /// stalled. This — not a total-duration cap — is what bounds streams.
     pub idle_timeout: Duration,
+    /// Backoff schedule slept between retryable provider failures, in order. An
+    /// empty list means one attempt with no retries.
     pub retry_delays: Vec<Duration>,
     /// Sampling temperature sent to every provider that supports it.
     pub temperature: f32,
@@ -64,4 +66,32 @@ impl ProviderSettings {
 pub(super) fn endpoint(base: Option<&str>, default: &str, suffix: &str) -> String {
     let root = base.unwrap_or(default).trim_end_matches('/');
     format!("{root}/{suffix}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_retry_delays_carries_the_configured_schedule() {
+        let settings = ProviderSettings::new("m", None)
+            .with_retry_delays(vec![Duration::from_millis(100), Duration::from_millis(200)]);
+        assert_eq!(
+            settings.retry_delays,
+            vec![Duration::from_millis(100), Duration::from_millis(200),]
+        );
+    }
+
+    #[test]
+    fn new_defaults_to_the_three_entry_backoff() {
+        let settings = ProviderSettings::new("m", None);
+        assert_eq!(
+            settings.retry_delays,
+            vec![
+                Duration::from_millis(250),
+                Duration::from_millis(500),
+                Duration::from_millis(1000),
+            ]
+        );
+    }
 }

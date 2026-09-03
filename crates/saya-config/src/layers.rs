@@ -15,6 +15,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(ai.timeout_seconds);
     apply!(ai.idle_timeout_seconds);
     apply!(ai.max_output_tokens);
+    apply!(ai.retry_delays_ms);
     apply!(ai.context_byte_budget);
     apply!(ai.show_thinking);
     apply!(run.read_only);
