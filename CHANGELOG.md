@@ -3,7 +3,7 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.3.3 — 2026-09-03
 
 ### Changed (breaking, for users of the library crates)
 
