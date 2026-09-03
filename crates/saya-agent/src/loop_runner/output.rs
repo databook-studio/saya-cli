@@ -3,30 +3,64 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentLimits {
-    pub max_turns: usize,
-    pub max_tool_calls: usize,
+    /// Ceiling on the number of provider turns, or `None` to run without a
+    /// turn ceiling. `None` is the default: the loop stops when the model
+    /// stops calling tools, when it is cancelled, or — when a ceiling is set
+    /// — by salvaging the best answer from the work already done. There is no
+    /// upper limit on a set value.
+    pub max_turns: Option<usize>,
+    /// Ceiling on the total number of tool calls across the whole run, or
+    /// `None` for no ceiling. Same stopping policy as [`Self::max_turns`].
+    pub max_tool_calls: Option<usize>,
     /// Whether the loop may execute tools that declare
     /// [`LocalStateEffect::WriteCandidate`](crate::LocalStateEffect::WriteCandidate).
     /// Defaults to **not permitted**: a tool that can write a candidate claim
-    /// must not start writing merely because it was registered. Phase 4 turns
-    /// this on under an explicit config setting; until then nothing can enable
-    /// it, which is correct.
+    /// must not start writing merely because it was registered.
     pub permit_candidate_writes: bool,
     /// Ceiling on the approximate byte size of the conversation the loop has
     /// assembled (assistant turns plus tool results grow it past the pre-loop
-    /// history budget). Breaching it fails closed instead of sending an ever
-    /// growing payload to the provider.
+    /// history budget). Breaching it trims the oldest tool-result groups
+    /// rather than sending an ever-growing payload to the provider.
     pub context_byte_budget: usize,
 }
 impl Default for AgentLimits {
     fn default() -> Self {
         Self {
-            max_turns: 12,
-            max_tool_calls: 24,
+            max_turns: None,
+            max_tool_calls: None,
             permit_candidate_writes: false,
             context_byte_budget: 256 * 1024,
         }
     }
+}
+
+/// Environment variable naming the turn ceiling (`SAYA_AGENT_MAX_TURNS`).
+pub const MAX_TURNS_ENV: &str = "SAYA_AGENT_MAX_TURNS";
+/// Environment variable naming the tool-call ceiling (`SAYA_AGENT_MAX_TOOL_CALLS`).
+pub const MAX_TOOL_CALLS_ENV: &str = "SAYA_AGENT_MAX_TOOL_CALLS";
+
+/// The tool name the model calls to designate the SQL that answers the
+/// question. Recognised by the loop at the terminal turn; the SQL text is
+/// carried on [`AgentOutput::answer_sql`] and an `AnswerDesignated` event, not
+/// executed as a tool.
+pub const DESIGNATE_ANSWER_TOOL: &str = "designate_answer";
+
+/// Reads the turn and tool-call ceilings from the environment through `get`.
+///
+/// Each is optional: `None` (unset or unparseable) leaves the loop unbounded
+/// for that ceiling, and a set value imposes no upper limit. `get` is a
+/// callback rather than a direct `std::env::var` so the parsing is testable
+/// without mutating process-global environment; the caller supplies the env
+/// source.
+pub fn budgets_from_env(get: impl Fn(&str) -> Option<String>) -> (Option<usize>, Option<usize>) {
+    (
+        parse_budget(get(MAX_TURNS_ENV)),
+        parse_budget(get(MAX_TOOL_CALLS_ENV)),
+    )
+}
+
+fn parse_budget(value: Option<String>) -> Option<usize> {
+    value.and_then(|raw| raw.trim().parse().ok())
 }
 // `events` holds `AgentEvent`, which carries a `serde_json::Value` and is
 // therefore `PartialEq` but not `Eq`.
@@ -47,6 +81,16 @@ pub struct AgentOutput {
     /// answering total's meaning is unchanged and `/usage` can label the two
     /// calls apart.
     pub learning_usage: Option<crate::TokenUsage>,
+    /// `true` when the answer is the best the model could produce after a
+    /// budget ran out mid-run, rather than a natural completion. The run did
+    /// not finish on its own; the caller may surface this so a reader knows the
+    /// answer is bounded-effort, not a clean result.
+    pub truncated: bool,
+    /// The SQL the model designated as the query that answers the question, or
+    /// `None` when the model did not designate one. Optional by design: a turn
+    /// that never designates works exactly as before. Carries the SQL text
+    /// only — already user-visible via tool-call detail — never result rows.
+    pub answer_sql: Option<String>,
 }
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -58,8 +102,6 @@ pub enum AgentError {
     InvalidToolCall,
     #[error("conversation history is invalid")]
     InvalidHistory,
-    #[error("conversation context exceeds the safe limit")]
-    ContextLimit,
     #[error("request cancelled")]
     Cancelled,
 }
@@ -168,4 +210,45 @@ fn tool_groups(messages: &[crate::ChatMessage]) -> Vec<std::ops::Range<usize>> {
         }
     }
     groups
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_limits_are_unbounded() {
+        let limits = AgentLimits::default();
+        assert!(limits.max_turns.is_none(), "no turn ceiling by default");
+        assert!(
+            limits.max_tool_calls.is_none(),
+            "no tool-call ceiling by default"
+        );
+    }
+
+    #[test]
+    fn budgets_from_env_sets_each_ceiling_independently_with_no_upper_limit() {
+        let lookup = |name: &str| match name {
+            "SAYA_AGENT_MAX_TURNS" => Some("1000000".to_string()),
+            "SAYA_AGENT_MAX_TOOL_CALLS" => Some("7".to_string()),
+            _ => None,
+        };
+        let (turns, tool_calls) = budgets_from_env(lookup);
+        assert_eq!(turns, Some(1_000_000));
+        assert_eq!(tool_calls, Some(7));
+    }
+
+    #[test]
+    fn budgets_from_env_is_unbounded_when_unset_or_unparseable() {
+        let (turns, tool_calls) = budgets_from_env(|_| None);
+        assert!(turns.is_none() && tool_calls.is_none());
+        // A set but unparseable value is treated as unset, not as zero: a typo
+        // cannot silently collapse the ceiling to the smallest bound.
+        let lookup = |name: &str| match name {
+            "SAYA_AGENT_MAX_TURNS" => Some("not-a-number".to_string()),
+            _ => None,
+        };
+        let (turns, _) = budgets_from_env(lookup);
+        assert!(turns.is_none());
+    }
 }

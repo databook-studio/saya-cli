@@ -184,8 +184,8 @@ async fn run_one_turn(mode: MemoryMode) -> (SqliteStateStore, ProfileIdentity, P
         setup.observations.clone(),
     );
     let limits = AgentLimits {
-        max_turns: 4,
-        max_tool_calls: 8,
+        max_turns: Some(4),
+        max_tool_calls: Some(8),
         permit_candidate_writes: setup.permit_candidate_writes,
         ..saya_agent::AgentLimits::default()
     };

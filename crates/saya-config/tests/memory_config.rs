@@ -22,8 +22,9 @@ fn each_valid_mode_string_parses_to_its_variant() {
 }
 
 /// An out-of-range number is a typed error naming the field and the accepted range.
-/// These values size untrusted work, so the upper bounds stop a typo becoming an
-/// unbounded scan.
+/// These values size untrusted work, so the lower bounds stop a typo becoming an
+/// unbounded scan. `max_context_bytes` has no upper ceiling: the recall path
+/// bounds the rendered block to the conversation budget at request time.
 #[test]
 fn out_of_range_numbers_are_typed_errors_naming_the_field_and_range() {
     let cases: &[(&str, &str)] = &[
@@ -32,7 +33,6 @@ fn out_of_range_numbers_are_typed_errors_naming_the_field_and_range() {
         ("max_claims_per_contract", "0"),
         ("max_claims_per_contract", "101"),
         ("max_context_bytes", "1023"),
-        ("max_context_bytes", "28673"),
     ];
     for (field, value) in cases {
         let toml = format!("[memory]\n{field} = {value}\n");
@@ -51,46 +51,25 @@ fn out_of_range_numbers_are_typed_errors_naming_the_field_and_range() {
     }
 }
 
-/// `max_context_bytes` is clamped below the agent message budget: a setting above
-/// the ceiling is a typed error naming both the configured value and the maximum,
-/// not a silent clamp. A user who wrote the old 256 KiB should learn
-/// it is impossible, not have it quietly become something else.
+/// `max_context_bytes` has no upper ceiling: a setting far above the former cap
+/// is accepted, not refused. The recall path bounds the rendered block to the
+/// conversation byte budget at request time, so a large setting is clamped by
+/// what the budget actually holds rather than rejected up front.
 #[test]
-fn max_context_bytes_above_the_ceiling_names_the_value_and_the_maximum() {
-    let config = ConfigFile::from_toml("[memory]\nmax_context_bytes = 262144\n").unwrap();
-    let error =
-        resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config)).unwrap_err();
-    let rendered = format!("{error:?}");
-    assert!(
-        rendered.contains("262144"),
-        "error must name the configured value: {rendered}"
-    );
-    assert!(
-        rendered.contains("28672"),
-        "error must name the maximum (the ceiling): {rendered}"
-    );
-    assert!(
-        matches!(
-            error,
-            ConfigError::MemoryRange {
-                field: "max_context_bytes",
-                value: 262144,
-                max: 28672,
-                ..
-            }
-        ),
-        "expected MemoryRange naming the configured value and the ceiling: {rendered}"
-    );
+fn max_context_bytes_has_no_upper_ceiling() {
+    let config = ConfigFile::from_toml("[memory]\nmax_context_bytes = 1048576\n").unwrap();
+    let resolved = resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config))
+        .expect("a large max_context_bytes is accepted");
+    assert_eq!(resolved.memory.max_context_bytes, 1_048_576);
 }
 
-/// `max_context_bytes` at the ceiling is accepted: the boundary is
-/// inclusive, only values above it are refused.
+/// A value at the floor is accepted: the lower bound is inclusive.
 #[test]
-fn max_context_bytes_at_the_ceiling_is_accepted() {
-    let config = ConfigFile::from_toml("[memory]\nmax_context_bytes = 28672\n").unwrap();
+fn max_context_bytes_at_the_floor_is_accepted() {
+    let config = ConfigFile::from_toml("[memory]\nmax_context_bytes = 1024\n").unwrap();
     let resolved = resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config))
-        .expect("the ceiling is accepted");
-    assert_eq!(resolved.memory.max_context_bytes, 28672);
+        .expect("the floor is accepted");
+    assert_eq!(resolved.memory.max_context_bytes, 1024);
 }
 
 /// An unknown mode string is a typed error naming the accepted values.
@@ -184,8 +163,11 @@ fn a_fully_set_memory_section_round_trips() {
     assert_eq!(resolved.memory.max_context_bytes, 28672);
 }
 
-/// The lower and upper bounds are inclusive at both ends — the boundary values
-/// resolve, only the values just outside are rejected.
+/// The numeric bounds are inclusive: the boundary values resolve, only the
+/// values just outside are rejected. `max_contracts` and `max_claims_per_contract`
+/// have upper bounds; `max_context_bytes` has only a floor (the recall path
+/// bounds the rendered block to the conversation budget), so a value above the
+/// former ceiling resolves too.
 #[test]
 fn the_numeric_bounds_are_inclusive_at_both_ends() {
     let config = ConfigFile::from_toml(
@@ -208,7 +190,7 @@ fn the_numeric_bounds_are_inclusive_at_both_ends() {
          mode = 'assisted'\n\
          max_contracts = 50\n\
          max_claims_per_contract = 100\n\
-         max_context_bytes = 28672\n",
+         max_context_bytes = 1048576\n",
     )
     .unwrap();
     let resolved =
@@ -216,5 +198,5 @@ fn the_numeric_bounds_are_inclusive_at_both_ends() {
     assert_eq!(resolved.memory.mode, MemoryMode::Assisted);
     assert_eq!(resolved.memory.max_contracts, 50);
     assert_eq!(resolved.memory.max_claims_per_contract, 100);
-    assert_eq!(resolved.memory.max_context_bytes, 28672);
+    assert_eq!(resolved.memory.max_context_bytes, 1_048_576);
 }

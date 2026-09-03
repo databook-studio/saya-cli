@@ -124,6 +124,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // reasoning is progress, and a future change cannot silence the
         // catch-all to pass one and break the other.
         AgentEvent::ReasoningText { .. } => return None,
+        AgentEvent::AnswerDesignated { sql } => TerminalEvent::AnswerDesignated { sql },
         AgentEvent::Complete => TerminalEvent::Complete,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
@@ -523,6 +524,29 @@ mod tests {
         assert!(
             !matches!(complete, TerminalEvent::NotImplemented { .. }),
             "Complete must not fall through to the catch-all: {complete:?}"
+        );
+    }
+
+    /// The designated answering SQL reaches the NDJSON stream under its own type
+    /// tag so a harness can pair the prose answer with its query, and the text
+    /// adapter stays silent (the SQL was already shown when the query ran).
+    #[test]
+    fn answer_designated_reaches_ndjson_and_stays_silent_in_text() {
+        let event = AgentEvent::answer_designated("SELECT count(*) FROM t");
+        let terminal = terminal_event(event).expect("designation renders headlessly");
+        let json = render_event(&terminal, RenderFormat::Ndjson);
+        assert!(
+            json.stdout.contains(r#""event":"answer_designated""#),
+            "ndjson must tag the designation: {json:?}"
+        );
+        assert!(
+            json.stdout.contains("SELECT count(*) FROM t"),
+            "ndjson must carry the SQL: {json:?}"
+        );
+        let text = render_event(&terminal, RenderFormat::Text);
+        assert!(
+            text.stdout.is_empty(),
+            "the text adapter must not echo the designation: {text:?}"
         );
     }
 }
