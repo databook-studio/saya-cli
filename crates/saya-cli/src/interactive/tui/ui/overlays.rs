@@ -76,6 +76,7 @@ pub(super) fn draw_help(frame: &mut Frame<'_>, screen: Rect) {
         "↑ / ↓        history (input)  ·  overlay navigation",
         "Ctrl+R       search input history  ·  Ctrl+F  find in transcript",
         "PageUp/Dn    scroll transcript",
+        "Ctrl+,/.     scroll a wide result table ←/→  ·  Ctrl+P  pin first col",
         "Ctrl+A/E     start/end of line  ·  Ctrl+W/U  delete word/line",
         "Ctrl+C       cancel request / clear · twice to exit",
         "Esc          cancel a running request",
