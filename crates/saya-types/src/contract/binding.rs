@@ -213,6 +213,8 @@ mod tests {
                     nullable: true,
                 })
                 .collect(),
+            primary_key: vec![],
+            foreign_keys: vec![],
         }
     }
 
@@ -956,8 +958,14 @@ mod tests {
     }
 
     fn arb_table() -> impl Strategy<Value = Table> {
-        (arb_col_name(), prop::collection::vec(arb_column(), 0..10))
-            .prop_map(|(name, columns)| Table { name, columns })
+        (arb_col_name(), prop::collection::vec(arb_column(), 0..10)).prop_map(|(name, columns)| {
+            Table {
+                name,
+                columns,
+                primary_key: vec![],
+                foreign_keys: vec![],
+            }
+        })
     }
 
     fn arb_column_requirement() -> impl Strategy<Value = ColumnRequirement> {
