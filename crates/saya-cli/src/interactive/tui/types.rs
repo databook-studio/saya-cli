@@ -176,6 +176,19 @@ pub(crate) struct LastQuery {
     pub(crate) connection: Option<String>,
 }
 
+/// Presentation state for wide result tables. This is view state: the
+/// transcript block text stays the full, untruncated table (what copy and
+/// persistence see), and these fields only change how a table is painted.
+/// `h_offset` is the first column index shown in the scroll region;
+/// `pin_first` holds column 0 in place while the rest scroll; `columns`
+/// restricts the view to named columns (`None` shows all).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WideTableView {
+    pub(crate) h_offset: usize,
+    pub(crate) pin_first: bool,
+    pub(crate) columns: Option<Vec<String>>,
+}
+
 /// Interactive application state.
 pub(crate) struct App {
     pub(crate) input: InputBuffer,
@@ -209,6 +222,9 @@ pub(crate) struct App {
     )>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
+    /// Horizontal-scroll / column-selection state for wide result tables.
+    /// Lives on the view, never on the transcript data.
+    pub(crate) wide_table: WideTableView,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) state_db: SqliteStateStore,
     pub(crate) should_quit: bool,

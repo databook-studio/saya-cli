@@ -4,11 +4,13 @@ mod query;
 mod shared;
 #[cfg(test)]
 mod tests;
+mod wide;
 
 use saya_types::QueryResult;
 
 pub(crate) use markdown::format_markdown_tables;
 pub(crate) use query::format_table;
+pub(crate) use wide::{clip_table_block, column_names};
 
 /// Renders an EXPLAIN result as readable plan text WITHOUT the box-table's 40-char
 /// column cap. A single-column plan (PostgreSQL/DuckDB, one plan line per row) prints

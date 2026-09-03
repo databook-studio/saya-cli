@@ -197,6 +197,12 @@ pub(crate) fn run(
                     app.request.started = None;
                     app.request.activity = None;
                     sql_task::complete(&task, event, &mut app.transcript, &mut app.last_query);
+                    // A new result table starts at its first column so the
+                    // view does not inherit a scroll position from an earlier,
+                    // differently-shaped table.
+                    if matches!(task.followup, sql_task::Followup::Sql { .. }) {
+                        app.wide_table.h_offset = 0;
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -243,6 +249,7 @@ pub(crate) fn run(
                 Dispatch::Handled => app.reload_at_refs(state),
                 Dispatch::Agent(prompt) => app.start_agent(prompt, state),
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
+                Dispatch::SetColumns(arg) => app.set_visible_columns(arg),
                 Dispatch::SqlTask(task) => {
                     // One SQL command in flight at a time. The queued-prompt
                     // gate (`!is_busy()`, which now covers SQL tasks) is the
