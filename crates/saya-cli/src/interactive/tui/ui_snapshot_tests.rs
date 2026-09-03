@@ -57,6 +57,7 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 max_output_tokens: 4096,
                 context_byte_budget: 256 * 1024,
                 show_thinking: false,
+                retry_delays_ms: vec![250, 500, 1000],
             },
             max_rows: 100,
             read_only: true,

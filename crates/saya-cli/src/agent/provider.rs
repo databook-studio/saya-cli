@@ -12,7 +12,14 @@ pub(crate) fn build(
         .with_temperature(config.temperature)
         .with_timeout(std::time::Duration::from_secs(config.timeout_seconds))
         .with_idle_timeout(std::time::Duration::from_secs(config.idle_timeout_seconds))
-        .with_max_output_tokens(config.max_output_tokens);
+        .with_max_output_tokens(config.max_output_tokens)
+        .with_retry_delays(
+            config
+                .retry_delays_ms
+                .iter()
+                .map(|ms| std::time::Duration::from_millis(*ms))
+                .collect(),
+        );
     match config.provider {
         AiProvider::Ollama => Ok(Box::new(OllamaProvider::new(settings)?)),
         AiProvider::Openai | AiProvider::OpenaiCompatible => {
