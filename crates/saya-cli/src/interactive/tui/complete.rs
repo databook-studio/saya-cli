@@ -146,7 +146,7 @@ mod tests {
     fn test_slash_only() {
         let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
         assert_eq!((start, end), (0, 1));
-        assert_eq!(candidates.len(), 31); // 29 commands + `/approve-all` + `/thinking`
+        assert_eq!(candidates.len(), 32); // 30 commands + /approve-all + /thinking
         assert_eq!(candidates[0].value, "/connect");
         // The description is the single-source one from slash::help, sharpened
         // to carry the /connect vs /include contrast (one replaces the
@@ -162,13 +162,14 @@ mod tests {
         let (start, end, candidates) = slash_candidates("/co", &profiles()).unwrap();
         assert_eq!((start, end), (0, 3));
         let values: Vec<_> = candidates.iter().map(|c| c.value.as_str()).collect();
-        // "co" prefixes connect, connections, contracts, contract, confirm;
-        // all tie on score, so the stable sort keeps registry order.
+        // "co" prefixes connect, connections, columns, contracts, contract,
+        // confirm; all tie on score, so the stable sort keeps registry order.
         assert_eq!(
             values,
             vec![
                 "/connect",
                 "/connections",
+                "/columns",
                 "/contracts",
                 "/contract",
                 "/confirm",
@@ -187,6 +188,7 @@ mod tests {
             vec![
                 "/connect",
                 "/connections",
+                "/columns",
                 "/contracts",
                 "/contract",
                 "/confirm",
