@@ -143,6 +143,8 @@ fn object(identity: &ProfileIdentity, name: &str) -> DatabaseObjectRef {
 fn orders_schema(identity: &ProfileIdentity) -> (ProfileIdentity, SchemaTree) {
     let table = Table {
         name: "orders".into(),
+        primary_key: vec![],
+        foreign_keys: vec![],
         columns: vec![
             Column {
                 name: "id".into(),
@@ -208,6 +210,8 @@ async fn remember_candidate_default_time_column(
 fn orders_table() -> Table {
     Table {
         name: "orders".into(),
+        primary_key: vec![],
+        foreign_keys: vec![],
         columns: vec![
             Column {
                 name: "id".into(),
@@ -1266,6 +1270,8 @@ fn table_named_with(name: &str, cols: &[(&str, &str, bool)]) -> Table {
                 nullable: *nullable,
             })
             .collect(),
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -2735,6 +2741,8 @@ async fn claims_dropped_by_the_per_object_bound_are_counted() {
                 name: "public".into(),
                 tables: vec![Table {
                     name: "orders".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: cols,
                 }],
             }],

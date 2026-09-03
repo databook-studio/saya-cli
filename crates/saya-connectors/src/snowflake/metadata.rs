@@ -9,6 +9,13 @@ use crate::DatabaseConnector;
 const PAGE: usize = 5000;
 const MAX_COLUMNS: usize = 200_000;
 
+/// Inspects a Snowflake database schema and returns a [`SchemaTree`].
+///
+/// Foreign keys are deliberately not extracted. Snowflake exposes them through
+/// `SHOW IMPORTED KEYS` and account-usage views, but neither can be validated
+/// without a live account, and a guessed query here would ship wrong joins.
+/// Leaving tables without foreign keys is the honest state until extraction
+/// is implemented behind a test that runs against a real Snowflake account.
 pub(crate) async fn schema(connector: &SnowflakeConnector) -> Result<SchemaTree, ConnectionError> {
     let database = connector
         .context
@@ -67,7 +74,12 @@ pub(crate) async fn schema(connector: &SnowflakeConnector) -> Result<SchemaTree,
                 name: schema.into(),
                 tables: tables
                     .into_iter()
-                    .map(|(name, columns)| Table { name, columns })
+                    .map(|(name, columns)| Table {
+                        name,
+                        columns,
+                        primary_key: vec![],
+                        foreign_keys: vec![],
+                    })
                     .collect(),
             }],
         }],

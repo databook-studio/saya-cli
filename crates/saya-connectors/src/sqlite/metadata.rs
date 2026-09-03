@@ -1,16 +1,23 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use saya_types::{Column, ConnectionError, Database, Schema, SchemaTree, Table};
+use saya_types::{Column, ConnectionError, Database, ForeignKey, Schema, SchemaTree, Table};
 use sqlx::Row;
 use tokio::time::timeout;
 
 use super::{SqliteConnector, errors};
+
+/// Foreign-key rows grouped per table, then per constraint id as
+/// `PRAGMA foreign_key_list` reports it: the local columns, the referenced
+/// table, and the referenced columns.
+type TableConstraints = HashMap<String, BTreeMap<i64, (Vec<String>, String, Vec<String>)>>;
 
 const TABLE_LIST_SQL: &str = r#"SELECT name, wr FROM pragma_table_list WHERE schema = 'main'"#;
 
 const PK_INDEX_SQL: &str = r#"SELECT DISTINCT s.name FROM sqlite_schema AS s, pragma_index_list(s.name) AS i WHERE s.type = 'table' AND i.origin = 'pk'"#;
 
 const SCHEMA_SQL: &str = r#"SELECT s.name, x.name, x.type, x."notnull", x.pk FROM sqlite_schema AS s, pragma_table_xinfo(s.name, 'main') AS x WHERE s.type IN ('table','view') AND s.name NOT LIKE 'sqlite_%' ORDER BY s.name, x.cid"#;
+
+const FK_SQL: &str = r#"SELECT s.name AS tbl, f.id AS fk_id, f.seq AS fk_seq, f."table" AS ref_tbl, f."from" AS from_col, f."to" AS to_col FROM sqlite_schema AS s, pragma_foreign_key_list(s.name) AS f WHERE s.type = 'table' AND s.name NOT LIKE 'sqlite_%' ORDER BY s.name, f.id, f.seq"#;
 
 struct RawColumn {
     name: String,
@@ -61,6 +68,8 @@ pub(crate) async fn schema(c: &SqliteConnector) -> Result<SchemaTree, Connection
         pk_index_set.insert(name);
     }
 
+    let mut fk_map = load_foreign_keys(c).await?;
+
     let rows = timeout(c.query_timeout, sqlx::query(SCHEMA_SQL).fetch_all(&c.pool))
         .await
         .map_err(|_| ConnectionError::schema_failed("SQLite schema discovery timed out"))?
@@ -84,11 +93,13 @@ pub(crate) async fn schema(c: &SqliteConnector) -> Result<SchemaTree, Connection
                 current_raw_columns.push(col);
             }
             Some(name) => {
+                let foreign_keys = fk_map.remove(&name).unwrap_or_default();
                 tables.push(build_table(
                     name,
                     std::mem::take(&mut current_raw_columns),
                     &wr_map,
                     &pk_index_set,
+                    foreign_keys,
                 ));
                 current_table_name = Some(table_name);
                 current_raw_columns.push(col);
@@ -101,11 +112,13 @@ pub(crate) async fn schema(c: &SqliteConnector) -> Result<SchemaTree, Connection
     }
 
     if let Some(name) = current_table_name {
+        let foreign_keys = fk_map.remove(&name).unwrap_or_default();
         tables.push(build_table(
             name,
             current_raw_columns,
             &wr_map,
             &pk_index_set,
+            foreign_keys,
         ));
     }
 
@@ -125,10 +138,22 @@ fn build_table(
     raw_columns: Vec<RawColumn>,
     wr_map: &HashMap<String, bool>,
     pk_index_set: &HashSet<String>,
+    foreign_keys: Vec<ForeignKey>,
 ) -> Table {
     let without_rowid = wr_map.get(&name).copied().unwrap_or(false);
     let has_pk_index = pk_index_set.contains(&name);
     let pk_column_count = raw_columns.iter().filter(|c| c.pk > 0).count();
+
+    // The pragma reports primary-key membership as a 1-based ordinal on each
+    // column, so sorting by it preserves a composite key's column order —
+    // the order a writer needs to match when joining on the whole key.
+    let mut primary_key: Vec<(i64, String)> = raw_columns
+        .iter()
+        .filter(|c| c.pk > 0)
+        .map(|c| (c.pk, c.name.clone()))
+        .collect();
+    primary_key.sort_by_key(|(ord, _)| *ord);
+    let primary_key: Vec<String> = primary_key.into_iter().map(|(_, name)| name).collect();
 
     let columns = raw_columns
         .into_iter()
@@ -147,5 +172,58 @@ fn build_table(
         })
         .collect();
 
-    Table { name, columns }
+    Table {
+        name,
+        columns,
+        primary_key,
+        foreign_keys,
+    }
+}
+
+/// One round trip returning every foreign key on every table, rather than a
+/// query per table — a wide schema would otherwise pay one round trip per
+/// table and trip the discovery timeout. `pragma_foreign_key_list` exposed as
+/// a table-valued function joins against `sqlite_schema` to do that in a
+/// single statement; `id` groups a (possibly composite) constraint and `seq`
+/// orders the columns within it.
+async fn load_foreign_keys(
+    c: &SqliteConnector,
+) -> Result<HashMap<String, Vec<ForeignKey>>, ConnectionError> {
+    let rows = timeout(c.query_timeout, sqlx::query(FK_SQL).fetch_all(&c.pool))
+        .await
+        .map_err(|_| ConnectionError::schema_failed("SQLite schema discovery timed out"))?
+        .map_err(errors::schema)?;
+
+    let mut by_table: TableConstraints = HashMap::new();
+    for row in rows {
+        let table: String = row.try_get("tbl").map_err(errors::row)?;
+        let fk_id: i64 = row.try_get("fk_id").map_err(errors::row)?;
+        let referenced_table: String = row.try_get("ref_tbl").map_err(errors::row)?;
+        let from_col: String = row.try_get("from_col").map_err(errors::row)?;
+        let to_col: String = row.try_get("to_col").map_err(errors::row)?;
+        let entry = by_table
+            .entry(table)
+            .or_default()
+            .entry(fk_id)
+            .or_insert_with(|| (Vec::new(), referenced_table, Vec::new()));
+        entry.0.push(from_col);
+        entry.2.push(to_col);
+    }
+
+    let mut map: HashMap<String, Vec<ForeignKey>> = HashMap::new();
+    for (table, by_id) in by_table {
+        let foreign_keys: Vec<ForeignKey> = by_id
+            .into_values()
+            .map(
+                |(columns, referenced_table, referenced_columns)| ForeignKey {
+                    columns,
+                    referenced_schema: None,
+                    referenced_table,
+                    referenced_columns,
+                },
+            )
+            .collect();
+        map.insert(table, foreign_keys);
+    }
+    Ok(map)
 }

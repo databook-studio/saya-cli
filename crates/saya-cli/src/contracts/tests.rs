@@ -96,6 +96,8 @@ fn table(cols: &[(&str, &str, bool)]) -> Table {
                 nullable: *nullable,
             })
             .collect(),
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -110,6 +112,8 @@ fn schema_tree_for(tables: &[(&str, Table)]) -> SchemaTree {
                     .map(|(name, t)| Table {
                         name: (*name).into(),
                         columns: t.columns.clone(),
+                        primary_key: t.primary_key.clone(),
+                        foreign_keys: t.foreign_keys.clone(),
                     })
                     .collect(),
             }],
@@ -131,6 +135,8 @@ fn schema_tree_for_owned(tables: &[(String, Table)]) -> SchemaTree {
                     .map(|(name, t)| Table {
                         name: name.clone(),
                         columns: t.columns.clone(),
+                        primary_key: t.primary_key.clone(),
+                        foreign_keys: t.foreign_keys.clone(),
                     })
                     .collect(),
             }],

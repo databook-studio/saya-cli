@@ -21,4 +21,4 @@ pub use dialect::SqlDialect;
 pub use error::ConnectionError;
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
 pub use query::{QueryRequest, QueryResult};
-pub use schema::{Column, Database, Schema, SchemaTree, Table};
+pub use schema::{Column, Database, ForeignKey, Schema, SchemaTree, Table};

@@ -46,6 +46,8 @@ fn schema(table: &str) -> SchemaTree {
                         data_type: "INTEGER".into(),
                         nullable: false,
                     }],
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                 }],
             }],
         }],
