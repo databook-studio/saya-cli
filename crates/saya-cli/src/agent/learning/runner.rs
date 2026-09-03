@@ -126,7 +126,8 @@ pub(crate) async fn run_extraction(
         return ExtractionOutcome::ok(Vec::new(), usage);
     }
 
-    let resolved = resolve_proposals(extracted, &record.object_table, registry).await;
+    let resolved =
+        resolve_proposals(extracted, &record.prompt, &record.object_table, registry).await;
 
     let filtered = filter_anti_self_reinforcement(resolved, &receipt.supplied);
     if filtered.is_empty() {
@@ -380,6 +381,81 @@ mod tests {
             .await
             .expect("items listed");
         assert_eq!(items.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The model proposes facts about the columns the turn record showed it,
+    /// and that list can carry SELECT aliases no table owns. Only the claim
+    /// naming a column the object actually has may reach the store.
+    #[tokio::test]
+    async fn run_extraction_stores_only_column_claims_the_object_actually_has() {
+        let identity = test_identity("analytics");
+        let registry = test_registry("analytics", &identity);
+        let root = temp_root("phantom_column");
+        let store = SqliteStateStore::new(root.join("state.sqlite3"));
+        let receipt = RecallReceipt::ran_empty(false);
+
+        let mut object_table = TurnObjectTable::new();
+        let t0 = object_table
+            .register(
+                "analytics",
+                "raw.orders",
+                &["status".into(), "late_orders".into()],
+            )
+            .expect("t0 registered");
+
+        let record = TurnRecord {
+            prompt: "which orders are late".into(),
+            assistant_answer: "late orders are those shipped after the required date".into(),
+            object_table,
+            user_corrections: Vec::new(),
+            override_findings: Vec::new(),
+            supplied_claims: Vec::new(),
+        };
+
+        let json_payload = format!(
+            r#"{{"proposals": [
+                {{"object_id": "{t0}", "slot": "column:late_orders.role", "value": "measure", "origin": "assistant_inferred"}},
+                {{"object_id": "{t0}", "slot": "column:status.description", "value": "the order state", "origin": "assistant_inferred"}}
+            ]}}"#
+        );
+
+        let provider = StaticExtractionProvider {
+            response_text: json_payload,
+            calls: Mutex::new(0),
+        };
+
+        let outcome = run_extraction(
+            &provider,
+            "test-model",
+            &record,
+            &registry,
+            &store,
+            &receipt,
+        )
+        .await;
+        let res = outcome.dtos.expect("extraction succeeds");
+
+        assert_eq!(res.len(), 1, "only the claim on the real column is stored");
+        assert_eq!(res[0].column.as_deref(), Some("status"));
+        assert_eq!(res[0].kind, "column_description");
+
+        let items = store
+            .knowledge_for_profile(&identity)
+            .await
+            .expect("items listed");
+        assert_eq!(
+            items.len(),
+            1,
+            "the phantom column claim never reaches the store"
+        );
+        assert_eq!(
+            items[0].slot,
+            saya_types::KnowledgeSlot::ColumnDescription {
+                column: "status".into()
+            }
+        );
 
         let _ = fs::remove_dir_all(root);
     }
