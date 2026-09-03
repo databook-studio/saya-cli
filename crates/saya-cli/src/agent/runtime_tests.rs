@@ -25,6 +25,7 @@ use saya_agent::{
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
+    ThemeChoice,
 };
 use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -240,6 +241,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
+            ui_theme: ThemeChoice::Auto,
             memory,
             ignored_project_overrides: Vec::new(),
         },
