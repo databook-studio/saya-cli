@@ -174,11 +174,10 @@ async fn test_sqlite_contract_full() {
         "Mutating query must be rejected by safety policy"
     );
 
-    // 5. cancel() returns Unsupported
-    assert!(matches!(
-        connector.cancel().await,
-        Err(ConnectionError::Unsupported(_))
-    ));
+    // 5. cancel() is supported: SQLite is interruptible through the progress
+    // handler, so asking a connector with nothing running to cancel succeeds
+    // and leaves it usable.
+    assert!(connector.cancel().await.is_ok());
 
     drop(connector);
     drop(temp_dir);
