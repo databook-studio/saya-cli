@@ -24,7 +24,7 @@ use clap::Parser;
 pub use app::run;
 pub use cli::{
     ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
-    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg,
+    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg, ThemeArg,
 };
 pub use commands::{capture_output_start, capture_output_take, run_contracts};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};

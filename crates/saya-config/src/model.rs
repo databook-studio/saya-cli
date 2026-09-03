@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use saya_types::{DatabaseProfile, SecretRef};
 use serde::Deserialize;
 
-use crate::{AiProvider, ColorChoice, ConfigError, MemoryMode, OutputFormat, RedactedDiagnostics};
+use crate::{
+    AiProvider, ColorChoice, ConfigError, MemoryMode, OutputFormat, RedactedDiagnostics,
+    ThemeChoice,
+};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -17,6 +20,8 @@ pub struct ConfigFile {
     pub output: OutputFile,
     #[serde(default)]
     pub memory: MemoryFile,
+    #[serde(default)]
+    pub ui: UiFile,
 }
 
 impl ConfigFile {
@@ -136,6 +141,14 @@ pub struct RunFile {
 pub struct OutputFile {
     pub format: Option<OutputFormat>,
     pub color: Option<ColorChoice>,
+}
+
+/// The `[ui]` section: presentation settings that affect how the TUI paints,
+/// not what it does. `theme` selects the colour palette.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiFile {
+    pub theme: Option<ThemeChoice>,
 }
 
 /// The `[memory]` section.
