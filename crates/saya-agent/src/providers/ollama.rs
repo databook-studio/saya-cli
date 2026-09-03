@@ -37,7 +37,8 @@ impl ChatProvider for OllamaProvider {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
-        let body: OllamaRequest = ollama_request(request);
+        let body: OllamaRequest =
+            ollama_request(request).with_temperature(Some(self.settings.temperature));
         let base = self
             .settings
             .base_url
