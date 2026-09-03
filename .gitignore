@@ -25,3 +25,4 @@
 # insta writes these beside a failing snapshot; they are review artefacts, never committed
 *.snap.new
 .bench/
+vendor/
