@@ -44,7 +44,20 @@ Analyze the user conversation, executed actions, and assistant response to extra
    - "table.default_time": The column name to use as default time dimension.
    - "column:<column_name>.description": Purpose or business definition of a specific column.
    - "column:<column_name>.role": One of ["identifier", "dimension", "measure", "timestamp", "sensitive"].
-5. A directive claim ("table.grain", "table.default_time", "column:<column_name>.role")
+   - "relation.join_rule": A join condition the user taught for this table, often narrower than a
+     declared foreign key (an extra predicate, a soft-delete filter) or crossing tables with no
+     declared constraint at all. `value` is the full join condition (e.g.
+     "orders.customer_id = customers.id, and only where customers.is_active"). `target` is the
+     qualified name of the joined table (e.g. "analytics.public.customers"). `local_columns` and
+     `target_columns` are the paired equi-join keys on the local and target tables (omit both only
+     when the rule is a predicate-only join no constraint describes). Do NOT refuse a rule that
+     contradicts a declared foreign key — the user's rule may legitimately narrow or override it.
+   - "metric.definition": A business metric defined over this table. `name` is the metric's handle
+     (e.g. "mrr"). `value` is the formula (e.g. "SUM(subscription_amount) WHERE status = 'active'").
+     `columns` is the underlying columns the metric is built from, so a later schema change can tell
+     when the metric's columns disappear.
+5. A directive claim ("table.grain", "table.default_time", "column:<column_name>.role",
+   "relation.join_rule", "metric.definition")
    carries a `reason`: the one-sentence justification a user gave for it — *why* the
    claim holds, not *what* it says. When the user states a justification for a
    directive in the same statement ("use return_date — a rental only counts once it
@@ -70,9 +83,31 @@ Analyze the user conversation, executed actions, and assistant response to extra
       "reason": "an order only completes when it ships, not when it is placed",
       "origin": "user_explicit",
       "confidence": 1.0
+    }},
+    {{
+      "object_id": "T0",
+      "slot": "relation.join_rule",
+      "value": "orders.customer_id = customers.id, and only where customers.is_active",
+      "target": "analytics.public.customers",
+      "local_columns": ["customer_id"],
+      "target_columns": ["id"],
+      "reason": "only active customers count toward an order",
+      "origin": "user_explicit",
+      "confidence": 1.0
+    }},
+    {{
+      "object_id": "T0",
+      "slot": "metric.definition",
+      "name": "mrr",
+      "value": "SUM(subscription_amount) WHERE status = 'active'",
+      "columns": ["subscription_amount", "status"],
+      "origin": "assistant_inferred",
+      "confidence": 0.9
     }}
   ]
 }}
+`target`, `local_columns`, `target_columns`, `name`, and `columns` are optional fields used only
+by the slots above that need them; omit them for every other slot.
 If no new knowledge was asserted or discovered, return {{"proposals": []}}."#
     );
 
@@ -213,5 +248,42 @@ mod tests {
         assert!(system.contains("table.default_time"));
         // The credential prohibition on the reason survives.
         assert!(system.contains("never put passwords, SQL, or credentials in it"));
+    }
+
+    /// The prompt must enumerate the multi-field slots and tell the model which
+    /// optional fields carry their structured parts, or the model has no way to
+    /// propose them.
+    #[test]
+    fn test_extraction_prompt_enumerates_join_rule_and_metric_slots() {
+        let table = TurnObjectTable::new();
+        let record = TurnRecord {
+            prompt: String::new(),
+            assistant_answer: String::new(),
+            object_table: table,
+            user_corrections: Vec::new(),
+            override_findings: Vec::new(),
+            supplied_claims: Vec::new(),
+        };
+        let req = build_extraction_prompt(&record, "m");
+        let system = &req.messages[0].content;
+
+        assert!(system.contains("relation.join_rule"));
+        assert!(system.contains("metric.definition"));
+        // The optional fields the structured slots read are named in the schema.
+        assert!(system.contains("\"target\""));
+        assert!(system.contains("\"local_columns\""));
+        assert!(system.contains("\"target_columns\""));
+        assert!(system.contains("\"name\""));
+        assert!(system.contains("\"columns\""));
+        // A rule that contradicts a declared foreign key may be legitimate, so
+        // the prompt must not instruct the model to refuse one. The text wraps
+        // across lines in the source, so assert the two halves separately.
+        assert!(
+            system.contains("Do NOT refuse a rule that"),
+            "prompt must not tell the model to refuse a contradicting join rule"
+        );
+        assert!(system.contains("contradicts a declared foreign key"));
+        // Both new slots are named as directive slots that carry a reason.
+        assert!(system.contains("\"relation.join_rule\", \"metric.definition\""));
     }
 }
