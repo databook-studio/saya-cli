@@ -61,6 +61,8 @@ fn describe(claim: &ProposedClaimDto) -> String {
         ("default_time_column", _) => format!("{value} as the default time column"),
         ("column_role", Some(column)) => format!("{column} as {value}"),
         ("column_description", Some(column)) => format!("{column} described as \"{value}\""),
+        ("join_rule", _) => format!("the join rule \"{value}\""),
+        ("metric_definition", _) => format!("the metric \"{value}\""),
         // An unrecognised kind, or a column-scoped kind arriving without its
         // column, is not describable here. Silence beats a half-formed line.
         _ => String::new(),

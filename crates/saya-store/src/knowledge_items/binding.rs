@@ -16,7 +16,9 @@ pub(crate) fn slot_matches_payload(slot: &KnowledgeSlot, payload: &ClaimPayload)
         (KnowledgeSlot::TableDescription, ClaimPayload::TableDescription { .. })
         | (KnowledgeSlot::TableAlias, ClaimPayload::TableAlias { .. })
         | (KnowledgeSlot::TableGrain, ClaimPayload::TableGrain { .. })
-        | (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { .. }) => true,
+        | (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { .. })
+        | (KnowledgeSlot::RelationJoinRule, ClaimPayload::JoinRule { .. })
+        | (KnowledgeSlot::MetricDefinition, ClaimPayload::MetricDefinition { .. }) => true,
         (
             KnowledgeSlot::ColumnDescription { column: slot_col },
             ClaimPayload::ColumnDescription { column, .. },
@@ -126,5 +128,61 @@ mod tests {
                 "{slot} should not match relationship"
             );
         }
+    }
+
+    #[test]
+    fn join_rule_and_metric_match_their_slots() {
+        let join = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id",
+            None,
+        )
+        .unwrap();
+        assert!(slot_matches_payload(
+            &KnowledgeSlot::RelationJoinRule,
+            &join
+        ));
+        let metric = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into()],
+            None,
+        )
+        .unwrap();
+        assert!(slot_matches_payload(
+            &KnowledgeSlot::MetricDefinition,
+            &metric
+        ));
+    }
+
+    #[test]
+    fn join_rule_and_metric_mismatch_other_slots() {
+        let join = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id",
+            None,
+        )
+        .unwrap();
+        assert!(!slot_matches_payload(&KnowledgeSlot::TableGrain, &join));
+        assert!(!slot_matches_payload(
+            &KnowledgeSlot::MetricDefinition,
+            &join
+        ));
+        let metric = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into()],
+            None,
+        )
+        .unwrap();
+        assert!(!slot_matches_payload(&KnowledgeSlot::TableGrain, &metric));
+        assert!(!slot_matches_payload(
+            &KnowledgeSlot::RelationJoinRule,
+            &metric
+        ));
     }
 }

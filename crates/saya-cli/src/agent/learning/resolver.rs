@@ -184,10 +184,6 @@ fn validate_binding_columns(
     object: &DatabaseObjectRef,
     binding: &SchemaBinding,
 ) -> Result<(), ResolutionError> {
-    let SchemaBinding::Column { column, .. } = binding else {
-        return Ok(());
-    };
-
     // The object was resolved from this very tree, so the lookup cannot miss;
     // a miss is treated as the resolution failure it would mean.
     let Some(table) = schema_tree.find_table(object.catalog(), object.schema(), object.object())
@@ -195,17 +191,36 @@ fn validate_binding_columns(
         return Err(ResolutionError::UnresolvableObject(object.qualified_name()));
     };
 
-    let exists = table
-        .columns
-        .iter()
-        .any(|c| c.name.eq_ignore_ascii_case(column));
-    if !exists {
-        return Err(ResolutionError::UnknownColumn(
-            object.qualified_name(),
-            column.clone(),
-        ));
+    let missing =
+        |column: &str| ResolutionError::UnknownColumn(object.qualified_name(), column.to_string());
+
+    match binding {
+        // A table-level fact names no column, so there is nothing to refuse.
+        SchemaBinding::Table => Ok(()),
+        SchemaBinding::Column { column, .. } => {
+            let exists = table
+                .columns
+                .iter()
+                .any(|c| c.name.eq_ignore_ascii_case(column));
+            if exists { Ok(()) } else { Err(missing(column)) }
+        }
+        // A multi-column fact (a join rule's local keys, a metric's underlying
+        // columns) is refused when any one of its columns is absent: a fact
+        // about a column that does not exist would be stored as if it were
+        // real, and the schema — not the observation — decides existence.
+        SchemaBinding::Columns { columns } => {
+            for column in columns {
+                if !table
+                    .columns
+                    .iter()
+                    .any(|c| c.name.eq_ignore_ascii_case(column))
+                {
+                    return Err(missing(column));
+                }
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 /// Resolves an object name (1-, 2-, or 3-part) against a profile's real `SchemaTree`.
