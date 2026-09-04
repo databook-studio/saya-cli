@@ -145,6 +145,19 @@ pub(super) const CLICKHOUSE_POLICY: BackendPolicy = BackendPolicy {
     deny_format_clause: true,
 };
 
+// BigQuery's `EXTERNAL_QUERY` runs a query against an external Cloud SQL
+// database over a federated connection — a read-only session has no business
+// opening another database, so it is denied wherever it appears. The
+// statement-level destructive surface (DML, DDL, scripting) is closed by the
+// allow-list catch-all, which rejects anything that is not a single read.
+const BIGQUERY_DENIED_FUNCTIONS: &[&str] = &["external_query"];
+
+pub(super) const BIGQUERY_POLICY: BackendPolicy = BackendPolicy {
+    denied_functions: BIGQUERY_DENIED_FUNCTIONS,
+    denied_prefixes: &[],
+    deny_format_clause: false,
+};
+
 /// True when any identifier part of a *function* reference matches a denied
 /// name or prefix. Applied to scalar function calls, table functions in `FROM`
 /// (a `Table` factor that carries call arguments), and `LATERAL`/function

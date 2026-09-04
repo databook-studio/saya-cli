@@ -4,15 +4,15 @@ use std::ops::ControlFlow;
 use sqlparser::{
     ast::{Expr, Query, SetExpr, Statement, Visit, Visitor},
     dialect::{
-        ClickHouseDialect, Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
-        SnowflakeDialect,
+        BigQueryDialect, ClickHouseDialect, Dialect, DuckDbDialect, MySqlDialect,
+        PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
     },
     parser::Parser,
 };
 
 use super::read_only_policy::{
-    BackendPolicy, CLICKHOUSE_POLICY, DUCKDB_POLICY, MYSQL_POLICY, POSTGRES_POLICY,
-    SNOWFLAKE_POLICY, SQLITE_POLICY, denied_function, denied_relation,
+    BIGQUERY_POLICY, BackendPolicy, CLICKHOUSE_POLICY, DUCKDB_POLICY, MYSQL_POLICY,
+    POSTGRES_POLICY, SNOWFLAKE_POLICY, SQLITE_POLICY, denied_function, denied_relation,
 };
 use super::reject::{Rejection, kind, rejected};
 
@@ -27,6 +27,7 @@ pub(super) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
         SqlDialect::Snowflake => &SnowflakeDialect,
         SqlDialect::Sqlite => &SQLiteDialect {},
         SqlDialect::ClickHouse => &ClickHouseDialect {},
+        SqlDialect::BigQuery => &BigQueryDialect,
         // `SqlDialect` is `#[non_exhaustive]`. A dialect added later must be
         // wired in explicitly; until then parse as Postgres (the broadest of the
         // five) so the safety layer still rejects or accepts based on syntax.
@@ -85,6 +86,15 @@ pub fn prepare_clickhouse_sql(sql: &str, max_rows: usize) -> Result<String, Conn
         max_rows,
         parser_dialect(SqlDialect::ClickHouse),
         &CLICKHOUSE_POLICY,
+    )
+}
+
+pub fn prepare_bigquery_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::BigQuery),
+        &BIGQUERY_POLICY,
     )
 }
 

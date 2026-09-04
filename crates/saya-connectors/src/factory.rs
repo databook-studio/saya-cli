@@ -9,6 +9,7 @@ use crate::{
     DatabaseConnector, DuckDbConnector, MySqlConnector, PostgresConnector, SqliteConnector,
 };
 
+mod bigquery_factory;
 mod clickhouse_factory;
 mod snowflake_factory;
 
@@ -117,6 +118,7 @@ pub async fn build_connector_with_prompt(
         DatabaseProfile::ClickHouse { .. } => {
             clickhouse_factory::build(profile, resolver, settings)
         }
+        DatabaseProfile::BigQuery { .. } => bigquery_factory::build(profile, resolver, settings),
     }
 }
 
