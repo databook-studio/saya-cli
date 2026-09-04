@@ -138,5 +138,6 @@ fn profile_type(profile: &DatabaseProfile) -> &'static str {
         DatabaseProfile::DuckDb { .. } => "duckdb",
         DatabaseProfile::Sqlite { .. } => "sqlite",
         DatabaseProfile::Snowflake { .. } => "snowflake",
+        DatabaseProfile::ClickHouse { .. } => "clickhouse",
     }
 }
