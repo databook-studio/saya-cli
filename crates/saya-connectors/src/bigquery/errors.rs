@@ -42,7 +42,15 @@ pub(crate) fn body(error: Error) -> ConnectionError {
 
 pub(crate) fn query_status(status: StatusCode) -> ConnectionError {
     match status.as_u16() {
-        401 | 403 => ConnectionError::authentication_failed("BigQuery authentication failed"),
+        401 => ConnectionError::authentication_failed("BigQuery authentication failed"),
+        // The credential authenticated; it lacks the scope or the IAM
+        // permission. Naming that sends the reader to the service account's
+        // roles rather than to the key.
+        403 => ConnectionError::authentication_failed(
+            "BigQuery denied the request: the service account lacks permission \
+             (it needs roles/bigquery.jobUser to run queries and \
+             roles/bigquery.dataViewer to read the data)",
+        ),
         _ => ConnectionError::query_failed("BigQuery query failed"),
     }
 }
@@ -64,6 +72,18 @@ mod tests {
                 ConnectionError::AuthenticationFailed(_)
             ));
         }
+    }
+
+    #[test]
+    fn forbidden_is_distinct_from_unauthorized() {
+        // Both are authentication failures, but the remedy differs: 401 means
+        // the credential did not authenticate, 403 means it did and lacks the
+        // scope or IAM permission. One shared message sent a reader hunting a
+        // bad key when the key was fine.
+        let unauthorized = query_status(StatusCode::from_u16(401).unwrap()).to_string();
+        let forbidden = query_status(StatusCode::from_u16(403).unwrap()).to_string();
+        assert_ne!(unauthorized, forbidden);
+        assert!(forbidden.contains("permission"), "unhelpful: {forbidden}");
     }
 
     #[test]
