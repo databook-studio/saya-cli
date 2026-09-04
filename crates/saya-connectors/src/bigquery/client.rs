@@ -49,6 +49,13 @@ impl BigQueryConnector {
                 "invalid BigQuery project id",
             ));
         }
+        if let Some(name) = dataset.as_deref()
+            && !super::dataset::is_valid(name)
+        {
+            return Err(ConnectionError::invalid_configuration(
+                "invalid BigQuery dataset: expected `dataset` or `project.dataset`",
+            ));
+        }
         let service_account = parse_service_account(&key_json).map_err(|_| errors::config())?;
         let timeout = Duration::from_secs(settings.query_timeout_seconds.max(1));
         let client = Client::builder()
