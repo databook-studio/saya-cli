@@ -33,7 +33,7 @@ async fn login_flow(
         .map_err(|_| errors::auth())?;
     let port = listener.local_addr().map_err(|_| errors::auth())?.port();
     let request = json!({"data": {
-        "ACCOUNT_NAME": connector.account_identifier,
+        "ACCOUNT_NAME": connector.account,
         "LOGIN_NAME": connector.user,
         "AUTHENTICATOR": "externalbrowser",
         "BROWSER_MODE_REDIRECT_PORT": port,
@@ -64,7 +64,7 @@ async fn login_flow(
     (connector.browser_opener)(url).map_err(|_| errors::auth())?;
     let token = sso_callback::capture_token(&listener, connector.sso_timeout).await?;
     let mut data = json!({
-        "ACCOUNT_NAME": connector.account_identifier,
+        "ACCOUNT_NAME": connector.account,
         "LOGIN_NAME": connector.user,
         "PASSWORD": null,
         "TOKEN": token,

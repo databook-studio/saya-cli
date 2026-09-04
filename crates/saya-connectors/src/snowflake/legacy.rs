@@ -17,7 +17,7 @@ pub(crate) async fn login(connector: &SnowflakeConnector) -> Result<String, Conn
         _ => return Err(errors::auth()),
     };
     let url = format!("{}/session/v1/login-request", connector.origin);
-    let mut data = json!({"LOGIN_NAME": connector.user, "PASSWORD": password, "ACCOUNT_NAME": connector.account_identifier});
+    let mut data = json!({"LOGIN_NAME": connector.user, "PASSWORD": password, "ACCOUNT_NAME": connector.account});
     data.as_object_mut()
         .unwrap()
         .extend(context::fields(&connector.context));
