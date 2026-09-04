@@ -33,6 +33,20 @@ const DEFAULT_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1000];
 /// sleeping is this count times 60s.
 const MAX_RETRY_DELAYS: usize = 8;
 
+/// Default independent agent attempts per question. `1` is today's single-run
+/// behaviour, so a user who sets nothing changes nothing in cost or latency.
+const DEFAULT_CANDIDATES: usize = 1;
+
+/// Smallest accepted `[run] candidates`. Zero is meaningless — zero attempts
+/// answer nothing — so it is rejected rather than silently clamped to one.
+const MIN_CANDIDATES: usize = 1;
+
+/// Most independent agent attempts a config may request. Each candidate is a
+/// full agent run (model calls and database queries), so an unbounded value
+/// would let a typo start hundreds of runs and multiply a user's bill. Sixteen
+/// leaves room to opt into a wider search while keeping the worst case bounded.
+const MAX_CANDIDATES: usize = 16;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {
     pub profile_name: Option<String>,
@@ -41,6 +55,10 @@ pub struct ResolvedConfig {
     pub max_rows: usize,
     pub read_only: bool,
     pub max_iterations: usize,
+    /// Independent agent attempts per question. Defaults to `1` (today's
+    /// single-run behaviour); each extra candidate is a full additional agent
+    /// run. Bounded to `1..=16` at resolve time. Nothing reads this yet.
+    pub candidates: usize,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
@@ -133,6 +151,8 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .clone()
         .unwrap_or_else(|| DEFAULT_RETRY_DELAYS_MS.to_vec());
     require_retry_delays(&retry_delays_ms)?;
+    let candidates = file.run.candidates.unwrap_or(DEFAULT_CANDIDATES);
+    require_candidates(candidates)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
@@ -153,6 +173,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
         max_iterations: file.run.max_iterations.unwrap_or(12),
+        candidates,
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
@@ -191,6 +212,24 @@ fn require_retry_delays(value: &[u64]) -> Result<(), ConfigError> {
             field: "retry_delays_ms",
             value: value.len(),
             max: MAX_RETRY_DELAYS,
+        })
+    }
+}
+
+/// Rejects a `[run] candidates` outside `MIN_CANDIDATES..=MAX_CANDIDATES`.
+/// Zero is meaningless (zero attempts answer nothing) and an unbounded value
+/// would let a typo start hundreds of full agent runs, multiplying a user's
+/// model spend. The accepted range is reported, not just one bound, matching
+/// the `[memory]` range-check style. Sibling to `require_retry_delays`.
+fn require_candidates(value: usize) -> Result<(), ConfigError> {
+    if (MIN_CANDIDATES..=MAX_CANDIDATES).contains(&value) {
+        Ok(())
+    } else {
+        Err(ConfigError::SettingOutOfRange {
+            field: "candidates",
+            value,
+            min: MIN_CANDIDATES,
+            max: MAX_CANDIDATES,
         })
     }
 }

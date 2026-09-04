@@ -43,6 +43,10 @@ pub struct GlobalOptions {
     /// Override the configured row cap for query results.
     #[arg(long, value_name = "N", global = true)]
     pub max_rows: Option<usize>,
+    /// Answer with the best of N independent attempts (default 1). Each attempt
+    /// is a full agent run, so N attempts cost roughly N times as much.
+    #[arg(long, value_name = "N", global = true)]
+    pub candidates: Option<usize>,
     /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,

@@ -21,6 +21,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(run.read_only);
     apply!(run.max_rows);
     apply!(run.max_iterations);
+    apply!(run.candidates);
     apply!(run.query_timeout_seconds);
     apply!(output.format);
     apply!(output.color);
@@ -68,6 +69,12 @@ pub(crate) fn apply_env(
         parse_value,
     )?;
     apply_parsed(
+        &mut file.run.candidates,
+        env,
+        "SAYA_CANDIDATES",
+        parse_value,
+    )?;
+    apply_parsed(
         &mut file.run.query_timeout_seconds,
         env,
         "SAYA_QUERY_TIMEOUT_SECONDS",
@@ -94,6 +101,9 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
     }
     if cli.max_rows.is_some() {
         file.run.max_rows = cli.max_rows;
+    }
+    if cli.candidates.is_some() {
+        file.run.candidates = cli.candidates;
     }
     if cli.show_thinking.is_some() {
         file.ai.show_thinking = cli.show_thinking;
