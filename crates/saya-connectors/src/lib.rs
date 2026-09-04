@@ -13,6 +13,7 @@ mod postgres;
 mod safety;
 mod snowflake;
 mod sqlite;
+mod verify;
 
 pub use bigquery::BigQueryConnector;
 pub use clickhouse::ClickHouseConnector;
@@ -27,6 +28,7 @@ pub use safety::{
 };
 pub use snowflake::SnowflakeConnector;
 pub use sqlite::SqliteConnector;
+pub use verify::{FanoutProbe, fanout_probe};
 
 /// Engine-neutral contract implemented by every SAYA database driver.
 #[async_trait]
