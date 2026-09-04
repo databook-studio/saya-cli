@@ -1,3 +1,5 @@
+#[allow(dead_code)] // candidate-decision surface, not yet wired into the agent loop
+pub(crate) mod decide;
 pub(crate) mod extraction_trace;
 pub(crate) mod knowledge_event;
 pub(crate) mod learning;
