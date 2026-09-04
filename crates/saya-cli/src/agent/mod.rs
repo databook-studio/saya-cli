@@ -1,4 +1,8 @@
-#[allow(dead_code)] // candidate-decision surface, not yet wired into the agent loop
+// `Decision.fanout` is part of the decision contract (exercised by the decide
+// tests) but not yet consumed by the production caller; the rest of the module
+// is wired in via `candidates`.
+pub(crate) mod candidates;
+#[allow(dead_code)]
 pub(crate) mod decide;
 pub(crate) mod extraction_trace;
 pub(crate) mod knowledge_event;

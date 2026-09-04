@@ -1,5 +1,5 @@
 use crate::{
-    agent::runtime::{self, PromptOverrides},
+    agent::runtime::PromptOverrides,
     config::runtime::RuntimeConfig,
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
@@ -32,7 +32,7 @@ pub(super) async fn ask(
     }
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
-    let work = runtime::run_prompt_with_sink(
+    let work = crate::agent::candidates::run_with_candidates(
         runtime,
         &prompt,
         approval,
@@ -47,6 +47,7 @@ pub(super) async fn ask(
         Some(state_db.clone()),
         None,
         None,
+        runtime.resolved.candidates,
     );
     tokio::pin!(work);
     match tokio::select! {
