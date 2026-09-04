@@ -6,8 +6,8 @@
 //! [`KnowledgeItem`], so a caller never joins to learn "what does SAYA know
 //! about this object".
 //!
-//! `value_json` reuses [`ClaimPayload`]'s serialisation: the six slots that
-//! exist map one-to-one onto `ClaimPayload` variants, so one validation path
+//! `value_json` reuses [`ClaimPayload`]'s serialisation: each knowledge slot
+//! maps one-to-one onto a `ClaimPayload` variant, so one validation path
 //! (the `claim_payload` constructors that reject control characters, length,
 //! and bad names) keeps oversized and structured text out of the rendered
 //! context block. A `relationship` payload has no slot; the repository refuses
