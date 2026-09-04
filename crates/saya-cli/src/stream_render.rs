@@ -125,6 +125,23 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // catch-all to pass one and break the other.
         AgentEvent::ReasoningText { .. } => return None,
         AgentEvent::AnswerDesignated { sql } => TerminalEvent::AnswerDesignated { sql },
+        AgentEvent::ConsensusDecided {
+            sql,
+            attempts,
+            voted,
+            votes,
+            margin,
+            tied,
+            probe_broke_tie,
+        } => TerminalEvent::ConsensusDecided {
+            sql,
+            attempts,
+            voted,
+            votes,
+            margin,
+            tied,
+            probe_broke_tie,
+        },
         AgentEvent::Complete => TerminalEvent::Complete,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
@@ -547,6 +564,60 @@ mod tests {
         assert!(
             text.stdout.is_empty(),
             "the text adapter must not echo the designation: {text:?}"
+        );
+    }
+
+    /// The consensus decision reaches the NDJSON stream under its own type tag
+    /// (so a harness can read the vote tallies) and prints a text line naming
+    /// the believed query — never falling through to the `unrecognized agent
+    /// event` catch-all. Carries the SQL only; no result rows.
+    #[test]
+    fn consensus_decided_reaches_ndjson_and_names_the_winner_in_text() {
+        let event = AgentEvent::consensus_decided(
+            Some("SELECT count(*) FROM t".into()),
+            3,
+            3,
+            3,
+            3,
+            false,
+            false,
+        );
+        let terminal = terminal_event(event).expect("consensus renders headlessly");
+        assert!(
+            !matches!(terminal, TerminalEvent::NotImplemented { .. }),
+            "ConsensusDecided must not fall through to the catch-all: {terminal:?}"
+        );
+        let json = render_event(&terminal, RenderFormat::Ndjson);
+        assert!(
+            json.stdout.contains(r#""event":"consensus_decided""#),
+            "ndjson must tag the consensus: {json:?}"
+        );
+        assert!(
+            json.stdout.contains("SELECT count(*) FROM t"),
+            "ndjson must carry the winning SQL, not result rows: {json:?}"
+        );
+        assert!(
+            json.stdout.contains(r#""attempts":3"#) && json.stdout.contains(r#""votes":3"#),
+            "ndjson must carry the tallies: {json:?}"
+        );
+        let text = render_event(&terminal, RenderFormat::Text);
+        assert!(
+            text.stdout
+                .contains("consensus · 3 attempts, 3 voted, 3 agreed"),
+            "the text adapter names the tallies: {text:?}"
+        );
+        assert!(
+            text.stdout.contains("believing: SELECT count(*) FROM t"),
+            "the text adapter names the believed query: {text:?}"
+        );
+
+        // A tie with no winner names the disagreement honestly, not as a guess.
+        let tied = AgentEvent::consensus_decided(None, 3, 3, 1, 0, true, false);
+        let tied_terminal = terminal_event(tied).expect("renders");
+        let tied_text = render_event(&tied_terminal, RenderFormat::Text);
+        assert!(
+            tied_text.stdout.contains("tied, no winner"),
+            "a tie with no winner says so: {tied_text:?}"
         );
     }
 }
