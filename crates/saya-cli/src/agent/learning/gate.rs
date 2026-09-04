@@ -103,6 +103,8 @@ pub(crate) fn contains_assertion_intent(prompt: &str) -> bool {
         "dimension",
         "measure",
         "sensitive",
+        "join",
+        "metric",
     ];
     PATTERNS.iter().any(|&p| lower.contains(p))
 }

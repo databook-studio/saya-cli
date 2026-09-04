@@ -147,6 +147,8 @@ pub(crate) fn claim_reason(payload: &ClaimPayload) -> Option<&str> {
         ClaimPayload::DefaultTimeColumn { reason, .. } => reason.as_deref(),
         ClaimPayload::TableGrain { reason, .. } => reason.as_deref(),
         ClaimPayload::ColumnRole { reason, .. } => reason.as_deref(),
+        ClaimPayload::JoinRule { reason, .. } => reason.as_deref(),
+        ClaimPayload::MetricDefinition { reason, .. } => reason.as_deref(),
         _ => None,
     }
 }
@@ -170,6 +172,14 @@ pub(crate) fn claim_value(payload: &ClaimPayload) -> (Option<String>, String) {
             (Some(column.clone()), role.as_str().to_string())
         }
         ClaimPayload::DefaultTimeColumn { column, .. } => (None, column.clone()),
+        // The join condition is the fact; the target table it names lives in
+        // the payload and is not a column on the local object.
+        ClaimPayload::JoinRule { condition, .. } => (None, condition.clone()),
+        // A metric shows as `name = definition` so the line names which metric
+        // the formula belongs to, not just the formula in isolation.
+        ClaimPayload::MetricDefinition {
+            name, definition, ..
+        } => (None, format!("{name} = {definition}")),
         // `Relationship` is not exposed on the CLI yet; a future
         // variant is handled here too. No value leaks for an unknown shape.
         _ => (None, String::new()),
