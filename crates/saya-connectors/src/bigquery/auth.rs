@@ -12,9 +12,14 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use tokio::time::Instant;
 
-/// Read-only BigQuery access. The OAuth scope is a second read-only bound: even
-/// a leaked token cannot write, on top of the SQL safety layer's allow-list.
-pub(crate) const SCOPE: &str = "https://www.googleapis.com/auth/bigquery.readonly";
+/// BigQuery access. This is the narrowest scope that can still run a query:
+/// `jobs.query` creates a job, and `bigquery.readonly` — which covers reading
+/// data and metadata only — refuses job creation with 403
+/// ACCESS_TOKEN_SCOPE_INSUFFICIENT. Read-only is enforced where it belongs:
+/// the SQL safety layer narrows every statement to a read, and the deployment
+/// grants the service account a read-only IAM role (`roles/bigquery.jobUser`
+/// plus `roles/bigquery.dataViewer`), which no token scope can widen.
+pub(crate) const SCOPE: &str = "https://www.googleapis.com/auth/bigquery";
 const LIFETIME: u64 = 3600;
 
 /// A parsed service-account key. Holds the private key material, so it
@@ -148,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn jwt_carries_readonly_scope_and_google_claims() {
+    fn jwt_carries_query_scope_and_google_claims() {
         let account = account();
         let token = jwt(&account).unwrap();
         let values = claims(&token);
@@ -197,5 +202,16 @@ mod tests {
             expires_at: Instant::now() - Duration::from_secs(1),
         };
         assert!(!stale.is_current());
+    }
+
+    #[test]
+    fn scope_permits_creating_query_jobs() {
+        // Running a query is `jobs.query`, which creates a job. The narrower
+        // `bigquery.readonly` scope covers reading data and metadata but not
+        // job creation: Google answers every query with 403
+        // ACCESS_TOKEN_SCOPE_INSUFFICIENT, so the connector cannot run at all.
+        // Read-only is enforced by the SQL safety layer and by the IAM role the
+        // deployment grants the service account, not by this scope.
+        assert_eq!(SCOPE, "https://www.googleapis.com/auth/bigquery");
     }
 }

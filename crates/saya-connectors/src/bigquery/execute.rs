@@ -2,6 +2,7 @@ use saya_types::{ConnectionError, QueryRequest, QueryResult};
 use serde_json::Value;
 
 use super::BigQueryConnector;
+use super::diagnose;
 use super::errors;
 use super::request::{dry_run_body, parse_result, query_body};
 
@@ -28,7 +29,9 @@ pub(crate) async fn query(
         )
         .await?;
     if !response.status().is_success() {
-        return Err(errors::query_status(response.status()));
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(diagnose::query_failure(status, &body));
     }
     let value: Value = response.json().await.map_err(errors::body)?;
     Ok(parse_result(value, request.max_rows, request.sql))
@@ -63,7 +66,9 @@ async fn refuse_if_over_budget(
         )
         .await?;
     if !response.status().is_success() {
-        return Err(errors::query_status(response.status()));
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(diagnose::query_failure(status, &body));
     }
     let value: Value = response.json().await.map_err(errors::body)?;
     let estimate = value
