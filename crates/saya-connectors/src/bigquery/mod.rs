@@ -1,5 +1,6 @@
 mod auth;
 mod client;
+mod diagnose;
 mod errors;
 mod execute;
 mod metadata;
