@@ -17,11 +17,18 @@ pub(crate) async fn capture_token(
                 sso_callback_request::read(&mut stream),
             )
             .await;
-            let token = request.ok().and_then(Result::ok).flatten();
-            if let Some(token) = token {
-                let _ =
-                    sso_callback_request::reply(&mut stream, 200, "Authentication complete").await;
-                return Ok(token);
+            match request.ok().and_then(Result::ok).flatten() {
+                Some(sso_callback_request::Callback::Token(token)) => {
+                    let _ =
+                        sso_callback_request::reply(&mut stream, 200, "Authentication complete")
+                            .await;
+                    return Ok(token);
+                }
+                Some(sso_callback_request::Callback::Preflight) => {
+                    let _ = sso_callback_request::reply_preflight(&mut stream).await;
+                    continue;
+                }
+                None => {}
             }
             let _ =
                 sso_callback_request::reply(&mut stream, 400, "Authentication request rejected")
