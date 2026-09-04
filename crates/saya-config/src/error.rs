@@ -48,4 +48,16 @@ pub enum ConfigError {
         value: usize,
         max: usize,
     },
+    /// A non-memory setting must fall inside an inclusive range with both a
+    /// meaningful floor and ceiling (e.g. `[run] candidates`). Sibling to
+    /// [`ConfigError::SettingBelowMinimum`] and [`ConfigError::SettingAboveMaximum`]
+    /// for settings where zero is meaningless and an unbounded value would be
+    /// unsafe — so the accepted range, not just one bound, is reported.
+    #[error("setting {field} = {value} must be within {min}..={max}")]
+    SettingOutOfRange {
+        field: &'static str,
+        value: usize,
+        min: usize,
+        max: usize,
+    },
 }

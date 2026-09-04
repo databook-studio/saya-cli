@@ -133,6 +133,13 @@ pub struct RunFile {
     pub read_only: Option<bool>,
     pub max_rows: Option<usize>,
     pub max_iterations: Option<usize>,
+    /// Independent agent attempts per question. The resolved default is `1`,
+    /// which is today's single-run behaviour — a user who sets nothing changes
+    /// nothing. Each additional candidate is another full agent run (model
+    /// calls and database queries), so this multiplies cost roughly linearly.
+    /// Bounded at resolve time; the selection logic that consumes it is a
+    /// separate task and nothing reads this yet.
+    pub candidates: Option<usize>,
     pub query_timeout_seconds: Option<u64>,
 }
 
