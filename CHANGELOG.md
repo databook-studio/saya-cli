@@ -7,6 +7,10 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Fixed
 
+- **Dependency and CI action updates.** The duckdb pin moves to 1.10505.0 with
+  the decode migration that release requires, and the pinned CI actions move
+  forward. These supersede the Dependabot pull requests that proposed them.
+
 - **Snowflake sign-in works on regional and privatelink accounts.** The
   account name sent during authentication carried the full identifier the
   deployment is reached on, while the identity provider matches the bare
