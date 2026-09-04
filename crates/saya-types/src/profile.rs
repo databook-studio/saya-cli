@@ -72,6 +72,16 @@ pub enum DatabaseProfile {
         schema: Option<String>,
         role: Option<String>,
     },
+    #[serde(rename = "clickhouse")]
+    ClickHouse {
+        host: String,
+        port: Option<u16>,
+        database: Option<String>,
+        user: Option<String>,
+        password: Option<SecretRef>,
+        #[serde(default)]
+        secure: Option<bool>,
+    },
 }
 
 const fn default_true() -> bool {
@@ -118,6 +128,7 @@ impl DatabaseProfile {
             Self::DuckDb { .. } => SqlDialect::DuckDb,
             Self::Sqlite { .. } => SqlDialect::Sqlite,
             Self::Snowflake { .. } => SqlDialect::Snowflake,
+            Self::ClickHouse { .. } => SqlDialect::ClickHouse,
         }
     }
 }
