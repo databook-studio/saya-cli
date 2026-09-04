@@ -33,10 +33,10 @@ async fn table_names(
     connector: &BigQueryConnector,
     dataset: &str,
 ) -> Result<Vec<String>, ConnectionError> {
+    let (project, dataset) = super::dataset::split(dataset, &connector.project);
     let sql = format!(
         "SELECT table_name FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES` \
          ORDER BY table_name LIMIT {PAGE}",
-        project = connector.project,
     );
     let output = connector
         .execute(saya_types::QueryRequest::new(sql, PAGE))
@@ -59,6 +59,7 @@ async fn columns(
     connector: &BigQueryConnector,
     dataset: &str,
 ) -> Result<Vec<(String, Column)>, ConnectionError> {
+    let (project, dataset) = super::dataset::split(dataset, &connector.project);
     let mut rows = Vec::new();
     let mut offset: usize = 0;
     loop {
@@ -67,7 +68,6 @@ async fn columns(
              FROM `{project}.{dataset}.INFORMATION_SCHEMA.COLUMNS` \
              ORDER BY table_name, ordinal_position \
              LIMIT {PAGE} OFFSET {offset}",
-            project = connector.project,
         );
         let output = connector
             .execute(saya_types::QueryRequest::new(sql, PAGE))
@@ -134,9 +134,10 @@ fn build_tree(
             foreign_keys: vec![],
         })
         .collect();
+    let (project, dataset) = super::dataset::split(dataset, &connector.project);
     SchemaTree {
         databases: vec![Database {
-            name: connector.project.clone(),
+            name: project.into(),
             schemas: vec![Schema {
                 name: dataset.into(),
                 tables: built_tables,
@@ -206,6 +207,22 @@ mod tests {
         assert!(orders.columns[1].nullable);
         let empty = tables.iter().find(|t| t.name == "empty_view").unwrap();
         assert!(empty.columns.is_empty());
+    }
+
+    #[test]
+    fn qualified_dataset_is_named_by_its_owning_project() {
+        // The agent writes SQL from these names. Reporting the billing project
+        // as the database would send it to `my-proj.bigquery-public-data...`,
+        // which resolves to nothing.
+        let connector = connector("my-proj");
+        let tree = build_tree(
+            &connector,
+            "bigquery-public-data.usa_names",
+            vec!["usa_1910_2013".into()],
+            vec![],
+        );
+        assert_eq!(tree.databases[0].name, "bigquery-public-data");
+        assert_eq!(tree.databases[0].schemas[0].name, "usa_names");
     }
 
     #[test]
