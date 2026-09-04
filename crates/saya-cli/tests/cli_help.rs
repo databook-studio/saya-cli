@@ -194,3 +194,21 @@ fn approve_all_help_states_scope_consent_and_per_item_reporting() {
         other => panic!("expected Contracts ApproveAll, got {other:?}"),
     }
 }
+
+/// `--candidates` parses into `GlobalOptions.candidates`, and its `--help`
+/// text warns that each candidate is a full agent run — the one-line cost
+/// note that stops a user from quietly multiplying their bill. Pins both the
+/// surface and the wiring so the flag is not reintroduced as "advertised but
+/// unread", the regression `config show`'s `--resolved`/`--redacted` once had.
+#[test]
+fn candidates_flag_parses_and_help_warns_about_cost() {
+    let parsed = Cli::try_parse_from(["saya", "--candidates", "3"]).expect("--candidates parses");
+    assert_eq!(parsed.options.candidates, Some(3));
+
+    let help = Cli::command().render_help().to_string();
+    assert!(help.contains("--candidates"), "help lists the flag: {help}");
+    assert!(
+        help.contains("full agent run"),
+        "help must warn that each candidate is a full agent run: {help}"
+    );
+}

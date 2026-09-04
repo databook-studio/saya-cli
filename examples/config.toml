@@ -11,6 +11,7 @@ api_key = { env = "SAYA_API_KEY" }
 read_only = true
 max_rows = 1000
 max_iterations = 12
+candidates = 1
 query_timeout_seconds = 60
 
 [output]
