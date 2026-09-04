@@ -124,7 +124,7 @@ def load_jobs(suites):
 
 def parse_ndjson(text):
     """Completed statements in order, plus the one nominated as the answer."""
-    completed, pending, designated, attempts = [], None, None, 0
+    completed, pending, designated, attempts, consensus = [], None, None, 0, None
     for line in text.split("\n"):
         line = line.strip()
         if not line.startswith("{"):
@@ -142,7 +142,14 @@ def parse_ndjson(text):
             pending = None
         elif kind == "answer_designated":
             designated = ev.get("sql")
-    return completed, designated, attempts
+        elif kind == "consensus_decided":
+            # With several attempts there is one `answer_designated` per
+            # attempt, so the last one is whichever attempt finished last —
+            # not the answer the attempts agreed on. When consensus ran, its
+            # verdict is the answer, and `sql` is absent when they disagreed.
+            consensus = ev
+            designated = ev.get("sql")
+    return completed, designated, attempts, consensus
 
 
 def question_text(item):
@@ -162,7 +169,7 @@ def emit(record):
             f.write(json.dumps(record) + "\n")
 
 
-def run_unit(job, done, timeout, plan):
+def run_unit(job, done, timeout, plan, candidates=1):
     suite, db, items = job
     todo = [it for it in items if it["_key"] not in done]
     if not todo:
@@ -190,6 +197,8 @@ def run_unit(job, done, timeout, plan):
         cmd = [binary(), "ask", "--config", config[0], "--connections", config[1],
                "--profile", primary, "--non-interactive",
                "--approval-mode", "read-only", "--format", "ndjson"]
+        if candidates > 1:
+            cmd += ["--candidates", str(candidates)]
         for e in extras:
             cmd += ["--include-profile", e]
         cmd.append(question_text(it))
@@ -205,7 +214,7 @@ def run_unit(job, done, timeout, plan):
                 text, timed_out = proc.stdout + proc.stderr, False
             except subprocess.TimeoutExpired:
                 text, timed_out = "", True
-            queries, designated, attempts = parse_ndjson(text)
+            queries, designated, attempts, consensus = parse_ndjson(text)
             if queries or '"event":"error"' not in text or attempt == 2:
                 break
             time.sleep(5 * (attempt + 1))
@@ -219,10 +228,11 @@ def run_unit(job, done, timeout, plan):
               "timed_out": timed_out, "attempts": attempts,
               "provider_retries": attempt, "n_queries": len(queries),
               "queries": queries, "designated": designated,
+              "consensus": consensus,
               "dbfile": it.get("_path") or (
                   f"{CORPUS}/spider_data/database/{db}/{db}.sqlite"
                   if suite == "v1" else None),
-              "had_doc": bool(it.get("_doc")),
+              "had_doc": bool(it.get("_doc")), "candidates": candidates,
               "item": {k: it[k] for k in ("question", "query", "instance_id")
                        if k in it}})
     return len(todo)
@@ -251,7 +261,8 @@ def cmd_run(args):
     print(f"{len(jobs)} database units, {total} questions, {len(done)} already done")
     started = time.time()
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = [ex.submit(run_unit, j, done, args.timeout, plan) for j in jobs]
+        futures = [ex.submit(run_unit, j, done, args.timeout, plan, args.candidates)
+                   for j in jobs]
         for i, fut in enumerate(futures, 1):
             ran = fut.result()
             print(f"  [{i}/{len(jobs)}] {jobs[i-1][0]:<8} {jobs[i-1][1][:26]:<27} "
@@ -481,6 +492,9 @@ def main():
     r.add_argument("--suite", choices=("all",) + SUITES, default="all")
     r.add_argument("--workers", type=int, default=8)
     r.add_argument("--timeout", type=int, default=600)
+    r.add_argument("--candidates", type=int, default=1,
+                   help="answer with the best of N independent attempts; N>1 "
+                        "costs roughly N times as much")
     r.add_argument("--limit-per-db", type=int, default=0,
                    help="cap questions per database — for a quick smoke run")
     r.set_defaults(fn=cmd_run)
