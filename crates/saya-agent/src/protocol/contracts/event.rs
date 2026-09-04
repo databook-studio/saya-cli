@@ -115,6 +115,27 @@ pub enum AgentEvent {
     AnswerDesignated {
         sql: String,
     },
+    /// The consensus decision over multiple candidate attempts — emitted once,
+    /// after all attempts, whenever more than one attempt ran (including when
+    /// there is no winner, because "the attempts disagreed" is the most
+    /// interesting thing a reader can learn and hiding it would misrepresent a
+    /// guess as a consensus). Carries the winning SQL (or `None` when the
+    /// attempts did not agree and no evidence broke the tie) and the vote
+    /// tallies. SQL text only, never result rows — mirroring `AnswerDesignated`.
+    ConsensusDecided {
+        /// The winning attempt's SQL, or `None` when no agreement/evidence
+        /// picked a winner.
+        sql: Option<String>,
+        attempts: usize,
+        /// How many produced a result that could vote.
+        voted: usize,
+        votes: usize,
+        /// Leading votes minus runner-up; `0` when tied.
+        margin: usize,
+        tied: bool,
+        /// True when a tie was resolved by fan-out evidence, not by votes.
+        probe_broke_tie: bool,
+    },
 }
 
 /// Why post-turn extraction was skipped after the gate admitted it
@@ -200,5 +221,28 @@ impl AgentEvent {
     /// flagged as the answering query. Emitted once, at the terminal turn.
     pub fn answer_designated(sql: impl Into<String>) -> Self {
         Self::AnswerDesignated { sql: sql.into() }
+    }
+
+    /// Builds the `ConsensusDecided` event carrying the winning SQL (or `None`
+    /// when no winner emerged) and the vote tallies. Emitted once, after all
+    /// attempts, whenever more than one attempt ran.
+    pub fn consensus_decided(
+        sql: Option<String>,
+        attempts: usize,
+        voted: usize,
+        votes: usize,
+        margin: usize,
+        tied: bool,
+        probe_broke_tie: bool,
+    ) -> Self {
+        Self::ConsensusDecided {
+            sql,
+            attempts,
+            voted,
+            votes,
+            margin,
+            tied,
+            probe_broke_tie,
+        }
     }
 }
