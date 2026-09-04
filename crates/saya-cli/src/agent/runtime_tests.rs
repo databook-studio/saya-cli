@@ -238,6 +238,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
             max_rows: 100,
             read_only: true,
             max_iterations: 4,
+            candidates: 1,
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
