@@ -184,6 +184,10 @@ fn profile_secrets(profile: &DatabaseProfile) -> Vec<&saya_types::SecretRef> {
         } => password.iter().chain(ssl_ca.iter()).collect(),
         DatabaseProfile::DuckDb { .. } | DatabaseProfile::Sqlite { .. } => Vec::new(),
         DatabaseProfile::ClickHouse { password, .. } => password.iter().collect(),
+        DatabaseProfile::BigQuery {
+            service_account_key,
+            ..
+        } => std::iter::once(service_account_key).collect(),
         DatabaseProfile::Snowflake {
             private_key,
             password,

@@ -13,6 +13,8 @@ pub enum SqlDialect {
     Sqlite,
     #[serde(rename = "clickhouse")]
     ClickHouse,
+    #[serde(rename = "bigquery")]
+    BigQuery,
 }
 
 impl SqlDialect {
@@ -26,6 +28,7 @@ impl SqlDialect {
         match self {
             Self::Postgres | Self::DuckDb | Self::Snowflake => "catalog.schema.object",
             Self::Mysql | Self::ClickHouse => "database.object",
+            Self::BigQuery => "project.dataset.table",
             Self::Sqlite => "object",
         }
     }
@@ -36,7 +39,7 @@ impl SqlDialect {
     /// the form is what the model is told, the depth is what it is shown.
     pub const fn sql_name_parts(self) -> usize {
         match self {
-            Self::Postgres | Self::DuckDb | Self::Snowflake => 3,
+            Self::Postgres | Self::DuckDb | Self::Snowflake | Self::BigQuery => 3,
             Self::Mysql | Self::ClickHouse => 2,
             Self::Sqlite => 1,
         }
@@ -50,6 +53,7 @@ impl SqlDialect {
             Self::Snowflake => "snowflake",
             Self::Sqlite => "sqlite",
             Self::ClickHouse => "clickhouse",
+            Self::BigQuery => "bigquery",
         }
     }
 }
