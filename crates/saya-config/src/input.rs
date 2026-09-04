@@ -10,6 +10,7 @@ pub struct CliOverrides {
     pub model: Option<String>,
     pub allow_data_sharing: Option<bool>,
     pub max_rows: Option<usize>,
+    pub candidates: Option<usize>,
     pub show_thinking: Option<bool>,
     pub theme: Option<ThemeChoice>,
     /// Explicitly trust security-critical settings from the project layer's

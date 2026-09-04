@@ -122,6 +122,7 @@ pub fn load_with_sources(
                 options.allow_data_sharing.then_some(true)
             },
             max_rows: options.max_rows,
+            candidates: options.candidates,
             show_thinking: if options.show_thinking {
                 Some(true)
             } else {
