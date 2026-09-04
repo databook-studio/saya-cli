@@ -21,6 +21,8 @@ Each item occupies a **slot** — the position it fills for that object:
 | `table.default_time` | `created_at` | **one** |
 | `column:<name>.description` | the account's billing tier | several |
 | `column:<name>.role` | `identifier`, `dimension`, `measure`, `timestamp`, `sensitive` | **one** |
+| `relation.join_rule` | `orders.customer_id = customers.id, and only where customers.is_active` | several |
+| `metric.definition` | `mrr = SUM(subscription_amount) WHERE status = 'active'` | several |
 
 Single-valued slots hold exactly one value. Telling SAYA a new grain for a table replaces the old
 one; it does not accumulate a second opinion for something to arbitrate later. The database enforces
@@ -187,6 +189,8 @@ An item depends only on what it actually uses:
 | description, alias, grain | the object existing |
 | default time column | that column existing, and still being a time column |
 | column description, column role | that column existing |
+| join rule | the local join keys existing (the table, when the rule has no keys) |
+| metric definition | the underlying columns existing (the table, when the metric names none) |
 
 So a colleague adding an unrelated column does **not** disturb a fact that never referred to it. That
 matters more than it sounds: a memory feature that flags everything after every migration gets

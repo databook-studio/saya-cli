@@ -72,6 +72,37 @@ pub enum ClaimPayload {
         target_columns: Vec<String>,
         cardinality: Cardinality,
     },
+    /// A join condition the user taught, stored against the local table. The
+    /// joined table is `target` (a qualified name in the same profile as the
+    /// claim's object); `local_columns` and `target_columns` are the paired
+    /// equi-join keys (both empty when the rule is a predicate-only join no
+    /// declared constraint describes). `condition` is the full join condition
+    /// as free text — it carries the extra predicate or soft-delete filter a
+    /// real join adds on top of the keys, and is the only field a model or user
+    /// could paste a credential into, so `blanked` empties it.
+    #[non_exhaustive]
+    JoinRule {
+        target: String,
+        local_columns: Vec<String>,
+        target_columns: Vec<String>,
+        condition: String,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    /// A business metric defined over the table the claim is stored against.
+    /// `name` is the metric's handle, `definition` the formula as free text,
+    /// and `columns` the underlying columns the binding tracks so the fact is
+    /// invalidated when one of them disappears. `definition` is the
+    /// secret-bearing field; `name` and `columns` are structural identity a
+    /// tombstone keeps.
+    #[non_exhaustive]
+    MetricDefinition {
+        name: String,
+        definition: String,
+        columns: Vec<String>,
+        #[serde(default)]
+        reason: Option<String>,
+    },
 }
 
 /// Validates an optional reason on a directive claim. A reason is free text a
@@ -104,6 +135,8 @@ impl ClaimPayload {
             Self::ColumnRole { .. } => "column_role",
             Self::DefaultTimeColumn { .. } => "default_time_column",
             Self::Relationship { .. } => "relationship",
+            Self::JoinRule { .. } => "join_rule",
+            Self::MetricDefinition { .. } => "metric_definition",
         }
     }
 
@@ -119,6 +152,14 @@ impl ClaimPayload {
             Self::Relationship { local_columns, .. } => {
                 local_columns.iter().map(|s| s.as_str()).collect()
             }
+            // The local join keys live on the table the claim is stored
+            // against, so they are the columns a drift check can validate. The
+            // target columns belong to a different table and are not tracked
+            // here.
+            Self::JoinRule { local_columns, .. } => {
+                local_columns.iter().map(|s| s.as_str()).collect()
+            }
+            Self::MetricDefinition { columns, .. } => columns.iter().map(|s| s.as_str()).collect(),
         }
     }
 
@@ -168,6 +209,37 @@ impl ClaimPayload {
             },
             Self::DefaultTimeColumn { column, .. } => Self::DefaultTimeColumn {
                 column: column.clone(),
+                reason: None,
+            },
+            // `condition` is the free-text body a user or model could paste a
+            // credential into, so it is emptied; `reason` is free text too. The
+            // target and the join keys are structural identity — column names
+            // and a qualified target, reconstructable and not a secret-bearing
+            // channel — so a tombstone keeps them.
+            Self::JoinRule {
+                target,
+                local_columns,
+                target_columns,
+                ..
+            } => Self::JoinRule {
+                target: target.clone(),
+                local_columns: local_columns.clone(),
+                target_columns: target_columns.clone(),
+                condition: String::new(),
+                reason: None,
+            },
+            // `definition` is the free-text formula; `name` and `columns` are
+            // the structural identity of which metric on which columns, so a
+            // tombstone keeps them and the row stays a meaningful marker.
+            Self::MetricDefinition {
+                name,
+                definition: _,
+                columns,
+                ..
+            } => Self::MetricDefinition {
+                name: name.clone(),
+                definition: String::new(),
+                columns: columns.clone(),
                 reason: None,
             },
             // Unreachable via the store (no slot names a relationship), so this
@@ -303,6 +375,74 @@ impl ClaimPayload {
             local_columns,
             target_columns,
             cardinality,
+        })
+    }
+
+    /// Builds a `JoinRule` payload. The target is a qualified name in the same
+    /// profile as the claim's object. Both column lists may be empty — a join
+    /// can cross tables with no declared constraint, so the rule may carry only
+    /// the free-text `condition` — but when either list is non-empty the two
+    /// must pair positionally and each name is validated. The condition is the
+    /// full join condition as bounded, control-char-free text; the optional
+    /// reason is validated the way a directive claim's reason is.
+    pub fn join_rule(
+        target: impl Into<String>,
+        local_columns: Vec<String>,
+        target_columns: Vec<String>,
+        condition: impl Into<String>,
+        reason: Option<&str>,
+    ) -> Result<Self, ContractError> {
+        let target = target.into();
+        validate_name(&target)?;
+        let condition = condition.into();
+        validate_text(&condition)?;
+        if local_columns.len() != target_columns.len() {
+            return Err(ContractError::ColumnCountMismatch);
+        }
+        if local_columns.len() > MAX_REFERENCED_COLUMNS {
+            return Err(ContractError::TooManyColumns);
+        }
+        for col in local_columns.iter().chain(target_columns.iter()) {
+            validate_name(col)?;
+        }
+        let reason = validate_reason(reason)?;
+        Ok(Self::JoinRule {
+            target,
+            local_columns,
+            target_columns,
+            condition,
+            reason,
+        })
+    }
+
+    /// Builds a `MetricDefinition` payload. The name is a short handle
+    /// (validated as a name), the definition is the formula as bounded,
+    /// control-char-free text, and `columns` are the underlying columns the
+    /// binding tracks. `columns` may be empty — a metric with no column
+    /// references binds to the table existing — but each named column is
+    /// validated and the count is bounded.
+    pub fn metric_definition(
+        name: impl Into<String>,
+        definition: impl Into<String>,
+        columns: Vec<String>,
+        reason: Option<&str>,
+    ) -> Result<Self, ContractError> {
+        let name = name.into();
+        validate_name(&name)?;
+        let definition = definition.into();
+        validate_text(&definition)?;
+        if columns.len() > MAX_REFERENCED_COLUMNS {
+            return Err(ContractError::TooManyColumns);
+        }
+        for col in columns.iter() {
+            validate_name(col)?;
+        }
+        let reason = validate_reason(reason)?;
+        Ok(Self::MetricDefinition {
+            name,
+            definition,
+            columns,
+            reason,
         })
     }
 }
@@ -564,6 +704,277 @@ mod tests {
     }
 
     #[test]
+    fn join_rule_rejects_empty_or_bad_condition_and_target() {
+        // The condition is the free-text body; an empty one carries no fact.
+        assert!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec!["customer_id".into()],
+                vec!["id".into()],
+                "",
+                None
+            )
+            .is_err()
+        );
+        // A control character in the condition is rejected, not scrubbed.
+        assert!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec!["customer_id".into()],
+                vec!["id".into()],
+                "join\nhere",
+                None
+            )
+            .is_err()
+        );
+        // An empty target names no relation.
+        assert!(
+            ClaimPayload::join_rule(
+                "",
+                vec!["customer_id".into()],
+                vec!["id".into()],
+                "orders.customer_id = customers.id",
+                None
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn join_rule_pairs_columns_and_bounds_the_count() {
+        // Mismatched lengths break the positional pairing a join key list needs.
+        assert_eq!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec!["a".into(), "b".into()],
+                vec!["x".into()],
+                "cond",
+                None
+            )
+            .unwrap_err(),
+            ContractError::ColumnCountMismatch
+        );
+        // Both lists may be empty — a predicate-only join with no declared keys.
+        assert!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec![],
+                vec![],
+                "orders joins customers where customers.is_active",
+                None
+            )
+            .is_ok()
+        );
+        // A bad column name is rejected.
+        assert!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec!["".into()],
+                vec!["id".into()],
+                "cond",
+                None
+            )
+            .is_err()
+        );
+        // The column count is bounded.
+        let many: Vec<String> = (0..=MAX_REFERENCED_COLUMNS)
+            .map(|i| format!("c{i}"))
+            .collect();
+        assert_eq!(
+            ClaimPayload::join_rule("catalog.public.customers", many.clone(), many, "cond", None)
+                .unwrap_err(),
+            ContractError::TooManyColumns
+        );
+    }
+
+    #[test]
+    fn join_rule_carries_an_optional_reason() {
+        let none = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id",
+            None,
+        )
+        .unwrap();
+        assert!(matches!(none, ClaimPayload::JoinRule { reason: None, .. }));
+        let with = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id",
+            Some("only active customers count"),
+        )
+        .unwrap();
+        assert!(matches!(
+            with,
+            ClaimPayload::JoinRule { reason: Some(r), .. } if r == "only active customers count"
+        ));
+    }
+
+    #[test]
+    fn metric_definition_rejects_empty_name_and_definition() {
+        assert!(ClaimPayload::metric_definition("", "SUM(amount)", vec![], None).is_err());
+        assert!(ClaimPayload::metric_definition("mrr", "", vec![], None).is_err());
+        assert!(ClaimPayload::metric_definition("mrr", "SUM(amount)\n", vec![], None).is_err());
+    }
+
+    #[test]
+    fn metric_definition_bounds_and_validates_columns() {
+        assert!(
+            ClaimPayload::metric_definition("mrr", "SUM(amount)", vec!["".into()], None).is_err()
+        );
+        let many: Vec<String> = (0..=MAX_REFERENCED_COLUMNS)
+            .map(|i| format!("c{i}"))
+            .collect();
+        assert_eq!(
+            ClaimPayload::metric_definition("mrr", "SUM(amount)", many, None).unwrap_err(),
+            ContractError::TooManyColumns
+        );
+        // An empty column list is allowed: a metric with no column references
+        // binds to the table existing.
+        assert!(ClaimPayload::metric_definition("count", "COUNT(*)", vec![], None).is_ok());
+    }
+
+    #[test]
+    fn metric_definition_carries_an_optional_reason() {
+        let none = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into()],
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            none,
+            ClaimPayload::MetricDefinition { reason: None, .. }
+        ));
+        let with = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into()],
+            Some("recurring revenue only"),
+        )
+        .unwrap();
+        assert!(matches!(
+            with,
+            ClaimPayload::MetricDefinition { reason: Some(r), .. } if r == "recurring revenue only"
+        ));
+    }
+
+    /// A join rule or metric written before the reason field exists must decode
+    /// with `reason: None`, not fail — a decode failure on the read path would
+    /// take out a user's entire memory. The JSON is hand-written to prove the
+    /// old shape loads, not just that the current serializer round-trips.
+    #[test]
+    fn old_join_rule_and_metric_without_reason_decode_as_none() {
+        let old_join = r#"{"kind":"join_rule","target":"catalog.public.customers","local_columns":["customer_id"],"target_columns":["id"],"condition":"orders.customer_id = customers.id"}"#;
+        let p: ClaimPayload = serde_json::from_str(old_join).unwrap();
+        assert!(matches!(
+            p,
+            ClaimPayload::JoinRule { ref target, ref condition, ref reason, .. }
+                if target == "catalog.public.customers"
+                    && condition == "orders.customer_id = customers.id"
+                    && reason.is_none()
+        ));
+
+        let old_metric = r#"{"kind":"metric_definition","name":"mrr","definition":"SUM(subscription_amount) WHERE status = 'active'","columns":["subscription_amount","status"]}"#;
+        let p: ClaimPayload = serde_json::from_str(old_metric).unwrap();
+        assert!(matches!(
+            p,
+            ClaimPayload::MetricDefinition { ref name, ref definition, ref columns, ref reason }
+                if name == "mrr"
+                    && definition == "SUM(subscription_amount) WHERE status = 'active'"
+                    && columns.as_slice() == ["subscription_amount", "status"]
+                    && reason.is_none()
+        ));
+    }
+
+    #[test]
+    fn join_rule_and_metric_serde_round_trip() {
+        let join = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id and customers.is_active",
+            Some("only active customers count"),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&join).unwrap();
+        let back: ClaimPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(join, back);
+
+        let metric = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into(), "status".into()],
+            Some("recurring revenue only"),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&metric).unwrap();
+        let back: ClaimPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(metric, back);
+    }
+
+    #[test]
+    fn blanked_empties_join_rule_condition_but_keeps_keys_and_target() {
+        let join = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id and customers.is_active",
+            Some("only active customers count"),
+        )
+        .unwrap();
+        let blanked = join.blanked();
+        assert!(matches!(
+            blanked,
+            ClaimPayload::JoinRule {
+                ref target,
+                ref local_columns,
+                ref target_columns,
+                ref condition,
+                ref reason,
+            } if target == "catalog.public.customers"
+                && local_columns.as_slice() == ["customer_id"]
+                && target_columns.as_slice() == ["id"]
+                && condition.is_empty()
+                && reason.is_none()
+        ));
+        // The blanked payload round-trips through serde so a later read decodes.
+        let json = serde_json::to_string(&blanked).unwrap();
+        let back: ClaimPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, blanked);
+    }
+
+    #[test]
+    fn blanked_empties_metric_definition_but_keeps_name_and_columns() {
+        let metric = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into(), "status".into()],
+            Some("recurring revenue only"),
+        )
+        .unwrap();
+        let blanked = metric.blanked();
+        assert!(matches!(
+            blanked,
+            ClaimPayload::MetricDefinition {
+                ref name,
+                ref definition,
+                ref columns,
+                ref reason,
+            } if name == "mrr"
+                && definition.is_empty()
+                && columns.as_slice() == ["subscription_amount", "status"]
+                && reason.is_none()
+        ));
+        let json = serde_json::to_string(&blanked).unwrap();
+        let back: ClaimPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, blanked);
+    }
+
+    #[test]
     fn kind_discriminator() {
         let target = make_target();
         assert_eq!(
@@ -602,6 +1013,29 @@ mod tests {
             .unwrap()
             .kind(),
             "relationship"
+        );
+        assert_eq!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec!["customer_id".into()],
+                vec!["id".into()],
+                "orders.customer_id = customers.id",
+                None
+            )
+            .unwrap()
+            .kind(),
+            "join_rule"
+        );
+        assert_eq!(
+            ClaimPayload::metric_definition(
+                "mrr",
+                "SUM(subscription_amount) WHERE status = 'active'",
+                vec!["subscription_amount".into(), "status".into()],
+                None
+            )
+            .unwrap()
+            .kind(),
+            "metric_definition"
         );
     }
 
@@ -654,6 +1088,45 @@ mod tests {
             .unwrap()
             .referenced_columns(),
             vec!["local_a", "local_b"]
+        );
+        // A join rule depends on its local join keys — the columns on the
+        // table the claim is stored against — never the target's columns.
+        assert_eq!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec!["customer_id".into(), "tenant_id".into()],
+                vec!["id".into(), "tenant".into()],
+                "orders.customer_id = customers.id",
+                None
+            )
+            .unwrap()
+            .referenced_columns(),
+            vec!["customer_id", "tenant_id"]
+        );
+        // A predicate-only join with no equi-join keys depends on nothing the
+        // local table's columns can name, so its referenced columns are empty.
+        assert!(
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec![],
+                vec![],
+                "orders joins customers where customers.is_active",
+                None
+            )
+            .unwrap()
+            .referenced_columns()
+            .is_empty()
+        );
+        assert_eq!(
+            ClaimPayload::metric_definition(
+                "mrr",
+                "SUM(subscription_amount) WHERE status = 'active'",
+                vec!["subscription_amount".into(), "status".into()],
+                None
+            )
+            .unwrap()
+            .referenced_columns(),
+            vec!["subscription_amount", "status"]
         );
     }
 
@@ -758,6 +1231,21 @@ mod tests {
             ClaimPayload::column_description("c", "d").unwrap(),
             ClaimPayload::column_role("c", ColumnRole::Measure, None).unwrap(),
             ClaimPayload::default_time_column("c", None).unwrap(),
+            ClaimPayload::join_rule(
+                "catalog.public.customers",
+                vec!["customer_id".into()],
+                vec!["id".into()],
+                "orders.customer_id = customers.id",
+                None,
+            )
+            .unwrap(),
+            ClaimPayload::metric_definition(
+                "mrr",
+                "SUM(subscription_amount) WHERE status = 'active'",
+                vec!["subscription_amount".into()],
+                None,
+            )
+            .unwrap(),
         ] {
             let blanked = payload.blanked();
             assert_eq!(blanked.kind(), payload.kind(), "blanked keeps the variant");
@@ -1124,6 +1612,90 @@ mod property_tests {
                         | ContractError::TooManyColumns
                         | ContractError::EmptyName | ContractError::NameTooLong
                         | ContractError::ControlCharacter),
+                    "unexpected error: {e:?}"
+                ),
+            }
+        }
+
+        /// `join_rule`: the target, the column lists and the condition
+        /// round-trip, every stored field is control-char-free, and the
+        /// count/length/name/condition errors are typed. Generates up to a few
+        /// columns per side; both lists may be empty (a predicate-only join).
+        #[test]
+        fn join_rule_total(
+            target in col_name(),
+            locals in prop::collection::vec(col_name(), 0..=4),
+            targets in prop::collection::vec(col_name(), 0..=4),
+            condition in text(),
+        ) {
+            match ClaimPayload::join_rule(
+                &target,
+                locals.clone(),
+                targets.clone(),
+                &condition,
+                None,
+            ) {
+                Ok(ClaimPayload::JoinRule {
+                    target: t,
+                    local_columns,
+                    target_columns,
+                    condition: c,
+                    ..
+                }) => {
+                    for col in local_columns.iter().chain(target_columns.iter()) {
+                        prop_assert!(!has_control(col), "control char in join column: {col:?}");
+                    }
+                    prop_assert!(!has_control(&t));
+                    prop_assert!(!has_control(&c));
+                    prop_assert_eq!(&t, &target);
+                    prop_assert_eq!(&c, &condition);
+                    prop_assert_eq!(&local_columns, &locals);
+                    prop_assert_eq!(&target_columns, &targets);
+                }
+                Ok(other) => prop_assert!(false, "wrong variant: {other:?}"),
+                Err(e) => prop_assert!(
+                    matches!(e,
+                        ContractError::EmptyText | ContractError::TextTooLong
+                        | ContractError::ControlCharacter
+                        | ContractError::EmptyName | ContractError::NameTooLong
+                        | ContractError::ColumnCountMismatch | ContractError::TooManyColumns),
+                    "unexpected error: {e:?}"
+                ),
+            }
+        }
+
+        /// `metric_definition`: the name, definition and columns round-trip,
+        /// every stored field is control-char-free, and the name/condition/
+        /// column errors are typed. The column list may be empty.
+        #[test]
+        fn metric_definition_total(
+            name in col_name(),
+            definition in text(),
+            columns in prop::collection::vec(col_name(), 0..=4),
+        ) {
+            match ClaimPayload::metric_definition(&name, &definition, columns.clone(), None) {
+                Ok(ClaimPayload::MetricDefinition {
+                    name: n,
+                    definition: d,
+                    columns: cols,
+                    ..
+                }) => {
+                    for col in cols.iter() {
+                        prop_assert!(!has_control(col), "control char in metric column: {col:?}");
+                    }
+                    prop_assert!(!has_control(&n));
+                    prop_assert!(!has_control(&d));
+                    prop_assert_eq!(&n, &name);
+                    prop_assert_eq!(&d, &definition);
+                    prop_assert_eq!(&cols, &columns);
+                }
+                Ok(other) => prop_assert!(false, "wrong variant: {other:?}"),
+                Err(e) => prop_assert!(
+                    matches!(e,
+                        ContractError::EmptyText | ContractError::TextTooLong
+                        | ContractError::ControlCharacter
+                        | ContractError::EmptyName | ContractError::NameTooLong
+                        | ContractError::TooManyColumns),
                     "unexpected error: {e:?}"
                 ),
             }
