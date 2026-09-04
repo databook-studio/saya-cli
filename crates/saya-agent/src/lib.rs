@@ -1,11 +1,14 @@
 //! Agent contracts for SAYA CLI.
 
 mod agent_entry;
+mod consensus;
 mod history;
 mod history_context;
 mod loop_runner;
 mod protocol;
 mod providers;
+
+pub use consensus::{Candidate, Consensus, fingerprint, tally};
 
 pub use agent_entry::run_agent;
 pub use history::turn_bytes;
