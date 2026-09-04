@@ -17,9 +17,10 @@ use super::read_only_policy::{
 use super::reject::{Rejection, kind, rejected};
 
 /// The single place that maps a [`SqlDialect`] to the `sqlparser` dialect the
-/// safety layer parses with. Shared by the read-only `prepare_*` functions and
-/// by object/column extraction so the two never drift apart.
-pub(super) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
+/// safety layer parses with. Shared by the read-only `prepare_*` functions,
+/// by object/column extraction, and by the fan-out probe builder so all three
+/// parse with the same dialect and never drift apart.
+pub(crate) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
     match dialect {
         SqlDialect::Postgres => &PostgreSqlDialect {},
         SqlDialect::Mysql => &MySqlDialect {},
