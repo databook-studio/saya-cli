@@ -91,6 +91,22 @@ pub fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Path) -> 
                 &format!("{secure:?}"),
             ],
         ),
+        DatabaseProfile::BigQuery {
+            project,
+            dataset,
+            location,
+            max_bytes_billed,
+            ..
+        } => fields(
+            &mut hash,
+            [
+                "bigquery",
+                project,
+                &format!("{dataset:?}"),
+                &format!("{location:?}"),
+                &format!("{max_bytes_billed:?}"),
+            ],
+        ),
     }
     let digest = hash.finalize();
     let mut value = String::from("p-");
