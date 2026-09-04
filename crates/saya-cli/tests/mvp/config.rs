@@ -411,3 +411,24 @@ fn doctor_exits_zero_when_setup_can_work() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+/// `--candidates` reaches the resolved config end to end: the flag is wired
+/// into `CliOverrides` and then into `ResolvedConfig.candidates`, not just
+/// accepted and discarded. Guards against the "advertised but unread"
+/// regression this crate's `config show` flags once had.
+#[test]
+fn candidates_flag_reaches_the_resolved_config() {
+    let root = test_root("saya-cli-candidates-wiring");
+    let loaded = saya_cli::load_with_sources(
+        &saya_cli::GlobalOptions {
+            candidates: Some(3),
+            ..Default::default()
+        },
+        &root,
+        &root,
+        std::collections::BTreeMap::new(),
+    )
+    .expect("resolution succeeds");
+    assert_eq!(loaded.resolved.candidates, 3);
+    let _ = fs::remove_dir_all(&root);
+}
