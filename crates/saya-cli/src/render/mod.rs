@@ -112,6 +112,20 @@ pub enum TerminalEvent {
     AnswerDesignated {
         sql: String,
     },
+    /// The consensus decision over multiple candidate attempts — emitted once,
+    /// after all attempts, whenever more than one attempt ran. Carries the
+    /// winning SQL (or `None` when the attempts disagreed with no tie-break)
+    /// and the vote tallies. Text is shaped inline; JSON/NDJSON fall out of the
+    /// serde derive.
+    ConsensusDecided {
+        sql: Option<String>,
+        attempts: usize,
+        voted: usize,
+        votes: usize,
+        margin: usize,
+        tied: bool,
+        probe_broke_tie: bool,
+    },
     Result {
         message: String,
     },
@@ -241,6 +255,25 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: String::new(),
             stderr: String::new(),
         },
+        TerminalEvent::ConsensusDecided {
+            sql,
+            attempts,
+            voted,
+            votes,
+            margin: _,
+            tied,
+            probe_broke_tie,
+        } => Rendered {
+            stdout: consensus_text(
+                sql.as_deref(),
+                *attempts,
+                *voted,
+                *votes,
+                *tied,
+                *probe_broke_tie,
+            ),
+            stderr: String::new(),
+        },
         TerminalEvent::Result { message } => Rendered {
             stdout: format!("{message}\n"),
             stderr: String::new(),
@@ -319,6 +352,33 @@ fn display_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(value) => value.clone(),
         value => value.to_string(),
+    }
+}
+
+/// Shapes the `ConsensusDecided` line: how many attempts ran, how many voted,
+/// and — when there is a winner — which SQL is believed. The line trails the
+/// answer, naming the picked query so a reader knows which attempt's prose to
+/// trust. No result rows; SQL text only, like `AnswerDesignated`.
+fn consensus_text(
+    sql: Option<&str>,
+    attempts: usize,
+    voted: usize,
+    votes: usize,
+    tied: bool,
+    probe_broke_tie: bool,
+) -> String {
+    let head = format!("consensus · {attempts} attempts, {voted} voted, {votes} agreed");
+    match sql {
+        Some(sql) => {
+            let how = if probe_broke_tie {
+                "tie broken by evidence"
+            } else {
+                "agreed"
+            };
+            format!("{head} · {how}, believing: {sql}\n")
+        }
+        None if tied => format!("{head} · tied, no winner\n"),
+        None => format!("{head} · no winner\n"),
     }
 }
 
