@@ -9,6 +9,7 @@ use crate::{
     DatabaseConnector, DuckDbConnector, MySqlConnector, PostgresConnector, SqliteConnector,
 };
 
+mod clickhouse_factory;
 mod snowflake_factory;
 
 /// Runtime limits shared by connector instances created for one command.
@@ -112,6 +113,9 @@ pub async fn build_connector_with_prompt(
         }
         DatabaseProfile::Snowflake { .. } => {
             snowflake_factory::build(profile, resolver, settings, can_prompt)
+        }
+        DatabaseProfile::ClickHouse { .. } => {
+            clickhouse_factory::build(profile, resolver, settings)
         }
     }
 }

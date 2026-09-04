@@ -4,14 +4,15 @@ use std::ops::ControlFlow;
 use sqlparser::{
     ast::{Expr, Query, SetExpr, Statement, Visit, Visitor},
     dialect::{
-        Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
+        ClickHouseDialect, Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
+        SnowflakeDialect,
     },
     parser::Parser,
 };
 
 use super::read_only_policy::{
-    BackendPolicy, DUCKDB_POLICY, MYSQL_POLICY, POSTGRES_POLICY, SNOWFLAKE_POLICY, SQLITE_POLICY,
-    denied_function, denied_relation,
+    BackendPolicy, CLICKHOUSE_POLICY, DUCKDB_POLICY, MYSQL_POLICY, POSTGRES_POLICY,
+    SNOWFLAKE_POLICY, SQLITE_POLICY, denied_function, denied_relation,
 };
 use super::reject::{Rejection, kind, rejected};
 
@@ -25,6 +26,7 @@ pub(super) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
         SqlDialect::DuckDb => &DuckDbDialect,
         SqlDialect::Snowflake => &SnowflakeDialect,
         SqlDialect::Sqlite => &SQLiteDialect {},
+        SqlDialect::ClickHouse => &ClickHouseDialect {},
         // `SqlDialect` is `#[non_exhaustive]`. A dialect added later must be
         // wired in explicitly; until then parse as Postgres (the broadest of the
         // five) so the safety layer still rejects or accepts based on syntax.
@@ -77,6 +79,15 @@ pub fn prepare_sqlite_sql(sql: &str, max_rows: usize) -> Result<String, Connecti
     )
 }
 
+pub fn prepare_clickhouse_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::ClickHouse),
+        &CLICKHOUSE_POLICY,
+    )
+}
+
 fn prepare(
     sql: &str,
     max_rows: usize,
@@ -103,6 +114,9 @@ fn prepare(
     }
     allowed(&statements[0]).map_err(rejected)?;
     if let Some(query) = statement_query(&mut statements[0]) {
+        if policy.deny_format_clause && query.format_clause.is_some() {
+            return Err(rejected(Rejection::FormatClause));
+        }
         cap(query, max_rows);
     }
     Ok(statements.remove(0).to_string())

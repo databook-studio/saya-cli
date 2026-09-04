@@ -11,6 +11,8 @@ pub enum SqlDialect {
     DuckDb,
     Snowflake,
     Sqlite,
+    #[serde(rename = "clickhouse")]
+    ClickHouse,
 }
 
 impl SqlDialect {
@@ -23,7 +25,7 @@ impl SqlDialect {
     pub const fn qualified_name_form(self) -> &'static str {
         match self {
             Self::Postgres | Self::DuckDb | Self::Snowflake => "catalog.schema.object",
-            Self::Mysql => "database.object",
+            Self::Mysql | Self::ClickHouse => "database.object",
             Self::Sqlite => "object",
         }
     }
@@ -35,7 +37,7 @@ impl SqlDialect {
     pub const fn sql_name_parts(self) -> usize {
         match self {
             Self::Postgres | Self::DuckDb | Self::Snowflake => 3,
-            Self::Mysql => 2,
+            Self::Mysql | Self::ClickHouse => 2,
             Self::Sqlite => 1,
         }
     }
@@ -47,6 +49,7 @@ impl SqlDialect {
             Self::DuckDb => "duckdb",
             Self::Snowflake => "snowflake",
             Self::Sqlite => "sqlite",
+            Self::ClickHouse => "clickhouse",
         }
     }
 }
