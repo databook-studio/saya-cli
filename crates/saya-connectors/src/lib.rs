@@ -28,7 +28,7 @@ pub use safety::{
 };
 pub use snowflake::SnowflakeConnector;
 pub use sqlite::SqliteConnector;
-pub use verify::{FanoutProbe, fanout_probe};
+pub use verify::{FanoutProbe, fanout_probe, has_top_level_order_by};
 
 /// Engine-neutral contract implemented by every SAYA database driver.
 #[async_trait]
