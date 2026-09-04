@@ -180,6 +180,8 @@ fn slot_for(payload: &ClaimPayload) -> KnowledgeSlot {
         ClaimPayload::ColumnRole { column, .. } => KnowledgeSlot::ColumnRole {
             column: column.clone(),
         },
+        ClaimPayload::JoinRule { .. } => KnowledgeSlot::RelationJoinRule,
+        ClaimPayload::MetricDefinition { .. } => KnowledgeSlot::MetricDefinition,
         _ => panic!("no slot for payload {:?}", payload),
     }
 }
