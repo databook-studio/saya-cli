@@ -73,6 +73,24 @@ pub fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Path) -> 
                 &format!("{role:?}"),
             ],
         ),
+        DatabaseProfile::ClickHouse {
+            host,
+            port,
+            database,
+            user,
+            secure,
+            ..
+        } => fields(
+            &mut hash,
+            [
+                "clickhouse",
+                host,
+                &format!("{database:?}"),
+                &format!("{user:?}"),
+                &format!("{port:?}"),
+                &format!("{secure:?}"),
+            ],
+        ),
     }
     let digest = hash.finalize();
     let mut value = String::from("p-");
