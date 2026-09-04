@@ -11,6 +11,30 @@ All notable changes to SAYA CLI are recorded here. This project follows
   the decode migration that release requires, and the pinned CI actions move
   forward. These supersede the Dependabot pull requests that proposed them.
 
+- **BigQuery can run a query at all.** Every statement failed with
+  "authentication failed". The credential was valid and the token exchange
+  succeeded; the query came back `ACCESS_TOKEN_SCOPE_INSUFFICIENT`, because
+  running a query creates a job and the `bigquery.readonly` scope permits
+  reading data and metadata but not job creation. The connector now requests
+  the scope that can run queries. Read-only is unchanged where it is actually
+  enforced — the SQL safety layer still refuses every write, and the service
+  account's IAM role is the bound no token scope can widen.
+- **BigQuery failures say what was wrong.** A missing table, an unrecognised
+  column and a table that requires a partition filter all reported the same
+  "BigQuery query failed", leaving the agent nothing to correct against; 401
+  and 403 also shared one message, which sent a reader hunting a bad key when
+  the key was fine and the permission was not. Failures whose reason code
+  describes the submitted statement now carry Google's message, an
+  unanticipated reason stays redacted, and authentication responses never echo
+  the body.
+- **BigQuery reads a public dataset's schema.** Discovery looked for
+  `INFORMATION_SCHEMA` in the project that pays for the query, so it could
+  describe only that project's own datasets. A dataset may now be written as
+  `project.dataset`, and the owning project is used both for the lookup and in
+  the reported schema. The dataset name is also validated when the connector is
+  built — it is formatted into that statement, and previously anything at all
+  was accepted.
+
 - **Snowflake sign-in works on regional and privatelink accounts.** The
   account name sent during authentication carried the full identifier the
   deployment is reached on, while the identity provider matches the bare
