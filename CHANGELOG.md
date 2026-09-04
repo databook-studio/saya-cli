@@ -7,6 +7,17 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Fixed
 
+- **Snowflake sign-in works on regional and privatelink accounts.** The
+  account name sent during authentication carried the full identifier the
+  deployment is reached on, while the identity provider matches the bare
+  account — so SAML failed with "matching user is not found" on exactly those
+  accounts. The browser callback also refused the CORS preflight that precedes
+  a cross-origin token post, which stalled sign-in with no token arriving.
+- **DuckDB values added by newer releases no longer break the build or the
+  row.** Geometry reads as hex like any other blob and 128-bit unsigned
+  integers keep their digits as text, and a kind this build has never seen
+  renders visibly rather than claiming the column was empty.
+
 - **SQLite can do arithmetic again.** `sqrt`, `pow`, `ceil`, `floor`, `mod`,
   the logarithms and the whole trigonometric family were unavailable on SQLite
   profiles — 19 of 23 standard functions — because the bundled build was not
