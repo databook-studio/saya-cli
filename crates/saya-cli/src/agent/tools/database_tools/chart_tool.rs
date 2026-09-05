@@ -19,7 +19,7 @@ impl DatabaseTools {
             .connector
             .execute(saya_types::QueryRequest::new(sql, self.max_rows))
             .await
-            .map_err(|_| ToolError::QueryFailed)?;
+            .map_err(|error| ToolError::QueryFailedDetail(error.to_string()))?;
 
         let mut spec = crate::chart::suggest_spec(&result);
         if let Some(kind) = arguments
