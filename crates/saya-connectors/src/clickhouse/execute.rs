@@ -1,7 +1,7 @@
 use saya_types::{ConnectionError, QueryRequest, QueryResult};
 use serde_json::Value;
 
-use super::{ClickHouseConnector, errors};
+use super::{ClickHouseConnector, diagnose, errors};
 use crate::common::{MAX_RESULT_BYTES, cap_cell, value_bytes};
 
 pub(crate) async fn query(
@@ -11,7 +11,10 @@ pub(crate) async fn query(
     let sql = crate::prepare_clickhouse_sql(&request.sql, request.max_rows)?;
     let response = connector.post(&sql, request.max_rows).await?;
     if !response.status().is_success() {
-        return Err(errors::query_status(response.status()));
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = response.text().await.unwrap_or_default();
+        return Err(diagnose::query_failure(status, &headers, &body));
     }
     let value: Value = response.json().await.map_err(errors::body)?;
     Ok(parse_result(value, request.max_rows, request.sql))
