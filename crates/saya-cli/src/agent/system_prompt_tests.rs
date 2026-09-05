@@ -322,3 +322,58 @@ fn multi_connection_prompt_also_guides_giving_up() {
         "multi-connection prompt must also coach giving up: {prompt}"
     );
 }
+
+/// The single largest class of benchmark failures was the right numbers in the
+/// wrong presentation, so the assembled prompt must brief the model on the
+/// shape of an answer. The contract is a section in its own right, pushed
+/// unconditionally alongside [`WORKING_GUIDANCE`].
+#[test]
+fn assembled_prompt_contains_the_answer_contract() {
+    let prompt = assemble_system_prompt(&single_registry("main"), None, MemoryMode::Off, false)
+        .expect("a prompt");
+    assert!(
+        prompt.contains(ANSWER_CONTRACT),
+        "the answer contract must be part of every prompt: {prompt}"
+    );
+}
+
+/// The contract governs how the model writes any answer, so it is neither a
+/// memory concern nor a multi-connection concern: it must appear in every
+/// assembled prompt regardless of how many databases are connected or whether
+/// memory is on, reachable, or off.
+#[test]
+fn answer_contract_present_regardless_of_connections_and_memory() {
+    let cases: [(ConnectionRegistry, MemoryMode, bool); 6] = [
+        (single_registry("main"), MemoryMode::Off, false),
+        (single_registry("main"), MemoryMode::Assisted, true),
+        (single_registry("main"), MemoryMode::Assisted, false),
+        (multi_registry(), MemoryMode::Off, false),
+        (multi_registry(), MemoryMode::Assisted, true),
+        (multi_registry(), MemoryMode::Off, true),
+    ];
+    for (reg, mode, reachable) in cases {
+        let prompt =
+            assemble_system_prompt(&reg, None, mode, reachable).expect("a prompt for this case");
+        assert!(
+            prompt.contains(ANSWER_CONTRACT),
+            "answer contract missing for memory {}, reachable {reachable}: {prompt}",
+            mode.as_str(),
+        );
+    }
+}
+
+/// Stated ceiling on the answer-contract section. The contract rides on every
+/// request, so its length is a real cost; this number keeps the section from
+/// growing unbounded later. A new clause that crosses it must either tighten
+/// the wording or raise the ceiling deliberately.
+const ANSWER_CONTRACT_MAX_BYTES: usize = 1200;
+
+#[test]
+fn answer_contract_section_stays_under_documented_ceiling() {
+    assert!(
+        ANSWER_CONTRACT.len() <= ANSWER_CONTRACT_MAX_BYTES,
+        "answer contract is {} bytes; the stated ceiling is {}",
+        ANSWER_CONTRACT.len(),
+        ANSWER_CONTRACT_MAX_BYTES,
+    );
+}
