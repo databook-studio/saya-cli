@@ -76,14 +76,13 @@ pub(crate) async fn run_prompt_with_inputs(
 
     let system_prompt = super::system_prompt::assemble_system_prompt(
         &registry,
-        last_sql.as_deref(),
         runtime.resolved.memory.mode,
         super::system_prompt::memory_reachable(state_db.is_some(), allow_query_data),
     );
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let memory = &runtime.resolved.memory;
     let recall_mode = super::learning::recall_mode_for(memory.mode);
-    let (context_blocks, receipt) = match recall_mode {
+    let (mut context_blocks, receipt) = match recall_mode {
         None => (
             Vec::new(),
             crate::contracts::RecallReceipt::configured_off(),
@@ -106,6 +105,16 @@ pub(crate) async fn run_prompt_with_inputs(
             .await
         }
     };
+    // The last-SQL hint rides the user turn beside the recall context block —
+    // never the system prompt, where it would change on every follow-up that
+    // ran SQL and forfeit the provider's prefix cache. Placed after the recall
+    // block so it sits adjacent to the user's question.
+    if let Some(hint) = last_sql
+        .as_deref()
+        .and_then(super::system_prompt::last_sql_hint_block)
+    {
+        context_blocks.push(hint);
+    }
     sink.emit(knowledge_supplied_event(&receipt)).await;
     let receipt = Arc::new(receipt);
     let learning = super::learning::LearningSetup::from(memory.mode);
