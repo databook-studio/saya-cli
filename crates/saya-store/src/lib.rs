@@ -91,10 +91,34 @@ pub struct RedactedTurn {
     pub tools: Vec<RedactedToolMetadata>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct RedactedToolMetadata {
     pub name: String,
     pub status: String,
+    /// The tool-call arguments serialized to JSON exactly as the model sent
+    /// them — for a SQL tool, `{"sql": "...", ...}`, so the statement the agent
+    /// ran is persisted here. The SQL text is already user-visible in the
+    /// transcript and on the `--format ndjson` event stream, so persisting it
+    /// discloses nothing new; [`FsSessionStore::save`] redacts
+    /// credential-shaped substrings in it the same way it redacts a user turn.
+    /// Result rows are never stored — only [`Self::result_shape`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub arguments: String,
+    /// The value-free shape of a query result: row count and column names.
+    /// `None` for a tool that produced no row-shaped result (a denied call, a
+    /// non-query tool, or a failed query). Carries no cell values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_shape: Option<RedactedToolResultShape>,
+}
+
+/// The value-free shape of a query result persisted per tool call: the row
+/// count and the column names. Built by the agent's `result_shape_of` from a
+/// result's `row_count` and `columns` keys alone — `rows` is never read — so a
+/// planted cell value cannot reach a session file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct RedactedToolResultShape {
+    pub row_count: u64,
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
