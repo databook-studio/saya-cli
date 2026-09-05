@@ -140,3 +140,38 @@ fn legacy_messages_migrate_to_one_safe_turn() {
     assert_eq!(state.provider_history().len(), 2);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// An older session file written before the `arguments` and `result_shape`
+/// fields existed still loads: the new fields are `#[serde(default)]`, so a
+/// tool record carrying only `name` and `status` deserializes with empty
+/// arguments and a `None` shape. Old and new session files interoperate.
+#[test]
+fn an_old_session_file_without_the_new_tool_fields_still_loads() {
+    let root = std::env::temp_dir().join(format!("saya-old-tool-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("old.json"),
+        r#"{"version":2,"id":"old","profile_names":["analytics"],"turns":[{"user":"q","assistant":"a","database_derived":true,"tools":[{"name":"bounded_sql_query","status":"completed"}]}],"messages":[]}"#,
+    )
+    .unwrap();
+    let state = load_session(
+        &FsSessionStore::new(&root),
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    let tool = &state.turns[0].tools[0];
+    assert_eq!(tool.name, "bounded_sql_query");
+    assert_eq!(tool.status, "completed");
+    assert_eq!(tool.arguments, "", "missing arguments default to empty");
+    assert!(
+        tool.result_shape.is_none(),
+        "missing result_shape defaults to None"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

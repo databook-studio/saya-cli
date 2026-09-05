@@ -4,7 +4,7 @@
 //! loop) or `false` when the sequential path ran (the caller proceeds to the
 //! intra-loop context trim).
 
-use super::{check_cancelled, emit, failed_statements, output, tools};
+use super::{check_cancelled, emit, failed_statements, output, tool_record, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
     ChatMessage, ToolDefinition, ToolExecutor,
@@ -70,6 +70,10 @@ pub(super) async fn run_turn_tools(
                 true,
                 summary,
             );
+            // Read the value-free shape before `tool_message` takes ownership
+            // of `result`: only `row_count` and `columns` are read, so no cell
+            // value is copied.
+            let result_shape = tool_record::result_shape_of(&result);
             let (message, truncated) =
                 tools::tool_message(call.id.clone(), result, limits.context_byte_budget);
             tool_metadata.push(crate::ToolMetadata {
@@ -80,6 +84,8 @@ pub(super) async fn run_turn_tools(
                     "completed"
                 }
                 .into(),
+                arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
+                result_shape,
             });
             messages.push(message);
             check_cancelled(cancellation)?;
@@ -115,6 +121,8 @@ pub(super) async fn run_turn_tools(
             tool_metadata.push(crate::ToolMetadata {
                 name: call.name.clone(),
                 status: "failed".into(),
+                arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
+                result_shape: None,
             });
             let (message, _) = tools::tool_message(
                 call.id,
@@ -148,6 +156,8 @@ pub(super) async fn run_turn_tools(
             tool_metadata.push(crate::ToolMetadata {
                 name: call.name.clone(),
                 status: "failed".into(),
+                arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
+                result_shape: None,
             });
             let (message, _) = tools::tool_message(call.id, result, limits.context_byte_budget);
             messages.push(message);
@@ -192,6 +202,12 @@ pub(super) async fn run_turn_tools(
         // Capture the SQL before `execute` moves `call.arguments`; only SQL
         // statements are tracked for repeat refusal and salvage nomination.
         let sql = failed_statements::sql_of(&call).map(str::to_owned);
+        // Capture the serialized arguments before `execute` moves
+        // `call.arguments` — the persisted record carries what the model sent
+        // (the statement for a SQL tool), and the value-free result shape is
+        // read from `result` after the call resolves. Cell values never reach
+        // either; `result_shape_of` reads only `row_count` and `columns`.
+        let arguments_json = serde_json::to_string(&call.arguments).unwrap_or_default();
         let (result, summary) = if executed {
             check_cancelled(cancellation)?;
             // Indicates a database-row-producing query tool ran.
@@ -240,6 +256,8 @@ pub(super) async fn run_turn_tools(
                 "denied"
             }
             .into(),
+            arguments: arguments_json,
+            result_shape: tool_record::result_shape_of(&result),
         });
         let (message, truncated) = tools::tool_message(call.id, result, limits.context_byte_budget);
         messages.push(message);
