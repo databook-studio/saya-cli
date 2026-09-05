@@ -90,6 +90,34 @@ impl DatabaseTools {
                 },
             });
             tools.push(ToolDefinition {
+                name: "result_shape".into(),
+                description: "Run one bounded read-only SQL query and return its SHAPE only — \
+                    the row count, whether the row cap was hit, and the column names with a \
+                    type label — and never any row values. Use this instead of \
+                    bounded_sql_query when you only need to know whether a query worked, \
+                    roughly how many rows it returned, and what columns came back; it costs \
+                    far less context than fetching the rows. Read `truncated` first: when it \
+                    is true, `row_count` is a floor and not the real total, so a capped count \
+                    read as the true count leads to a false conclusion."
+                    .into(),
+                read_only: true,
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "connection": connection_prop.clone(),
+                        "sql": { "type": "string" }
+                    },
+                    "required": ["sql"],
+                    "additionalProperties": false
+                }),
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: true,
+                    local_state: LocalStateEffect::None,
+                },
+            });
+            tools.push(ToolDefinition {
                 name: "render_chart".into(),
                 description: "Visualize the results of a SQL query as an interactive chart the user can open \
                     in their browser. Call this whenever the user asks to chart, plot, graph, or visualize \
@@ -167,6 +195,7 @@ pub(super) fn validate_arguments(
         "schema_discovery" => (&["connection"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
         "bounded_sql_query_all" => (&["sql"][..], true),
+        "result_shape" => (&["connection", "sql"][..], true),
         "render_chart" => (
             &["connection", "sql", "chart_type", "x", "y", "title"][..],
             true,
