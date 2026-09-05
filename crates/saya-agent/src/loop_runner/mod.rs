@@ -1,3 +1,4 @@
+mod compaction;
 mod designation;
 mod failed_statements;
 mod output;
@@ -179,7 +180,7 @@ pub async fn run_agent_with_sink(
             .await;
         }
         tool_count = projected_tool_calls;
-        let batch_ran = turn_tools::run_turn_tools(
+        turn_tools::run_turn_tools(
             tools,
             assistant,
             &definitions,
@@ -195,17 +196,10 @@ pub async fn run_agent_with_sink(
             &mut last_successful_sql,
         )
         .await?;
-        if batch_ran {
-            continue;
-        }
         // Intra-loop context budget: the pre-loop trim bounds history, but
-        // assistant turns and tool results accumulate here. Trim the oldest
-        // tool-result pairs (the assistant turn that issued each call plus its
-        // `tool` message) until the conversation fits, keeping the newest
-        // context — the same recency policy the pre-loop path uses. A single
-        // result is already capped at construction, so this resolves
-        // accumulation; if trimming everything still leaves the newest result
-        // over budget, truncate it rather than aborting the whole run.
+        // assistant turns and tool results accumulate here. Trim every turn —
+        // batch (parallel) and sequential alike — so the byte budget binds
+        // unconditionally, never just on the turns a single call ran.
         output::trim_to_budget(&mut messages, limits.context_byte_budget);
     }
 }
