@@ -230,7 +230,10 @@ def run_unit(job, done, timeout, plan, candidates=1):
     # on discovery. The corpus lives inside the repository, and saya walks up
     # for a project-level `.saya/` — which this repository has, and which would
     # otherwise win over SAYA_CONFIG_HOME and hide every generated profile.
-    config = [f"{HOME}/saya/config.toml", f"{HOME}/saya/connections.toml"]
+    # SAYA_BENCH_CONFIG selects an alternative config file so an arm can vary a
+    # model setting (sampling temperature, say) without disturbing the corpus.
+    config = [os.environ.get("SAYA_BENCH_CONFIG", f"{HOME}/saya/config.toml"),
+              f"{HOME}/saya/connections.toml"]
 
     for it in todo:
         cmd = [binary(), "ask", "--config", config[0], "--connections", config[1],
@@ -251,8 +254,14 @@ def run_unit(job, done, timeout, plan, candidates=1):
                 proc = subprocess.run(cmd, capture_output=True, text=True,
                                       env=env, cwd=CORPUS, timeout=timeout)
                 text, timed_out = proc.stdout + proc.stderr, False
-            except subprocess.TimeoutExpired:
-                text, timed_out = "", True
+            except subprocess.TimeoutExpired as expired:
+                # The partial output is on the exception, and discarding it made
+                # every timeout unattributable: the raw stream was overwritten
+                # with "" and the row then reported `n_queries: 0`, which reads
+                # as "the agent ran nothing" when it had in fact been working
+                # until the wall clock killed it. Keep what it managed to say.
+                text = (expired.stdout or "") + (expired.stderr or "")
+                timed_out = True
             queries, designated, attempts, consensus = parse_ndjson(text)
             if queries or '"event":"error"' not in text or attempt == 2:
                 break
