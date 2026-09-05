@@ -12,6 +12,7 @@ mod dispatch;
 mod fan_out;
 mod observations;
 mod recorder;
+mod result_shape;
 // A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
 // runtime drains it after the loop to emit one `KnowledgeOverridden` event.
 mod override_log;
