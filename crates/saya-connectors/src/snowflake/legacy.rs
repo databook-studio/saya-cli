@@ -3,7 +3,7 @@ use saya_types::{ConnectionError, QueryRequest, QueryResult};
 use serde_json::{Value, json};
 use tokio::time::timeout;
 
-use super::{auth, client::SnowflakeConnector, context, errors, legacy_chunks, sso};
+use super::{auth, client::SnowflakeConnector, context, diagnose, errors, legacy_chunks, sso};
 
 pub(crate) async fn login(connector: &SnowflakeConnector) -> Result<String, ConnectionError> {
     let password = match &connector.auth {
@@ -86,7 +86,7 @@ pub(crate) async fn execute(
             continue;
         }
         if !status.is_success() || value.get("success").and_then(Value::as_bool) == Some(false) {
-            return Err(errors::query());
+            return Err(diagnose::query_failure(&value));
         }
         return legacy_chunks::collect(connector, value, request.max_rows, request.sql).await;
     }
