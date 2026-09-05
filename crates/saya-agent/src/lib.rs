@@ -11,7 +11,7 @@ mod providers;
 pub use consensus::{Candidate, Consensus, fingerprint, tally};
 
 pub use agent_entry::run_agent;
-pub use history::turn_bytes;
+pub use history::{build_messages, turn_bytes};
 pub use loop_runner::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, budgets_from_env,
     run_agent_with_sink,
