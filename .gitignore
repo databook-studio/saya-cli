@@ -29,3 +29,7 @@
 *.snap.new
 .bench/
 vendor/
+
+# Python bytecode from the benchmark harness — embeds absolute source paths.
+__pycache__/
+*.py[cod]
