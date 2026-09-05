@@ -1,8 +1,8 @@
 //! Executes the tool calls of one assistant turn — concurrently when every
 //! call is valid and auto-runnable, otherwise sequentially with approval
-//! gating. Returns `true` when the batch path ran (the caller continues the
-//! loop) or `false` when the sequential path ran (the caller proceeds to the
-//! intra-loop context trim).
+//! gating. The caller trims the intra-loop context budget after either path
+//! returns; this function no longer signals which path ran, because both
+//! paths feed the same trim.
 
 use super::{check_cancelled, emit, failed_statements, output, tools};
 use crate::{
@@ -25,7 +25,7 @@ pub(super) async fn run_turn_tools(
     tool_metadata: &mut Vec<crate::ToolMetadata>,
     failed: &mut failed_statements::FailedStatements,
     last_successful_sql: &mut Option<String>,
-) -> Result<bool, AgentError> {
+) -> Result<(), AgentError> {
     // When every call in the message is valid and auto-runnable, the
     // calls are independent: run them concurrently instead of paying
     // their latency sequentially. `auto_runnable` is the single policy
@@ -93,7 +93,7 @@ pub(super) async fn run_turn_tools(
             )
             .await;
         }
-        return Ok(true);
+        return Ok(());
     }
     for call in assistant.tool_calls {
         if let Some(reason) = tools::invalid_reason(&call, definitions) {
@@ -256,5 +256,5 @@ pub(super) async fn run_turn_tools(
             .await;
         }
     }
-    Ok(false)
+    Ok(())
 }
