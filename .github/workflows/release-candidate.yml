@@ -22,6 +22,10 @@ jobs:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     env:
+      # Serialized like the CI verify job: the release runners build the whole
+      # workspace plus a bundled DuckDB, and parallel codegen has exhausted
+      # their memory before.
+      CARGO_BUILD_JOBS: "1"
       CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
       fail-fast: false

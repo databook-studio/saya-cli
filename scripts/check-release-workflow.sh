@@ -6,6 +6,10 @@ WORKFLOW="$ROOT_DIR/.github/workflows/release-candidate.yml"
 CI_WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
 
 ruby -ryaml - "$WORKFLOW" <<'RUBY'
+# Read as UTF-8 whatever the caller's locale: the workflows contain em dashes,
+# and a US-ASCII default makes every regex match on their text raise.
+Encoding.default_external = Encoding::UTF_8
+Encoding.default_internal = Encoding::UTF_8
 path = ARGV.fetch(0)
 workflow = YAML.load_file(path)
 trigger = workflow["on"] || workflow[true]
@@ -35,8 +39,8 @@ raise "offline release command" if text.include?("--offline")
 end
 {
   "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" => "v7",
-  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" => "v4",
-  "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" => "v4",
+  "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" => "v7.0.1",
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" => "v8.0.1",
   "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" => "stable",
 }.each do |action, version|
   raise "missing pinned #{action}" unless text.include?("#{action} # #{version}")
@@ -45,13 +49,23 @@ puts "release workflow structure and Windows sidecar contract valid"
 RUBY
 
 ruby -ryaml - "$CI_WORKFLOW" "$ROOT_DIR/Cargo.toml" "$ROOT_DIR/Cargo.lock" "$ROOT_DIR" <<'RUBY'
+# Read as UTF-8 whatever the caller's locale: the workflows contain em dashes,
+# and a US-ASCII default makes every regex match on their text raise.
+Encoding.default_external = Encoding::UTF_8
+Encoding.default_internal = Encoding::UTF_8
 workflow_path, manifest_path, lock_path, root_dir = ARGV
 workflow = YAML.load_file(workflow_path)
 text = File.read(workflow_path)
 checkout = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7"
 toolchain = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable"
-raise "CI does not pin checkout v7" unless text.scan(checkout).length == 4
-raise "CI does not pin rust-toolchain" unless text.scan(toolchain).length == 3
+# Assert every use is pinned rather than counting uses: the guard exists to stop
+# an unpinned action reaching CI, and a magic number goes stale the moment a job
+# is added — which is exactly how this check came to fail.
+uses_checkout = text.scan(%r{actions/checkout@\S+}).length
+raise "CI has an unpinned checkout" unless uses_checkout.positive? && text.scan(checkout).length == uses_checkout
+uses_toolchain = text.scan(%r{dtolnay/rust-toolchain@\S+}).length
+pinned_toolchain = text.scan(%r{dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4}).length
+raise "CI has an unpinned rust-toolchain" unless uses_toolchain.positive? && pinned_toolchain == uses_toolchain
 raise "CI matrix does not include Windows" unless workflow.dig("jobs", "verify", "strategy", "matrix", "os").include?("windows-latest")
 resource_env = workflow.dig("jobs", "verify", "env")
 raise "CI build jobs are not serialized" unless resource_env["CARGO_BUILD_JOBS"] == "1"
@@ -81,10 +95,10 @@ raise "MSRV toolchain is not exactly 1.88.0" unless msrv_action&.dig("with", "to
 raise "MSRV action is not pinned" unless msrv_action["uses"].end_with?("4cda84d5c5c54efe2404f9d843567869ab1699d4")
 commands = msrv.fetch("steps").map { |step| step["run"] }.compact
 raise "MSRV workspace check missing" unless commands == ["cargo check --workspace --locked"]
-pin = 'duckdb = { version = "=1.10504.0", features = ["bundled", "chrono", "serde_json", "uuid"] }'
+pin = 'duckdb = { version = "=1.10505.0", features = ["bundled", "chrono", "serde_json", "uuid"] }'
 raise "workspace DuckDB pin or bundled features changed" unless manifest.include?(pin)
 locked = File.read(lock_path).scan(/\[\[package\]\]\nname = "(duckdb|libduckdb-sys)"\nversion = "([^"]+)"/)
-expected = [["duckdb", "1.10504.0"], ["libduckdb-sys", "1.10504.0"]]
+expected = [["duckdb", "1.10505.0"], ["libduckdb-sys", "1.10505.0"]]
 raise "DuckDB crates are not locked as a matched pair" unless locked.sort == expected.sort
 config_paths = %w[.cargo/config .cargo/config.toml].map { |path| File.join(root_dir, path) }.select { |path| File.file?(path) }
 cpp_inputs = [[workflow_path, text]] + config_paths.map { |path| [path, File.read(path)] }
