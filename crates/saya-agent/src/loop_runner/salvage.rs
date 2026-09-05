@@ -18,6 +18,11 @@ const SALVAGE_INSTRUCTION: &str = "You have no further tool calls available. Usi
 /// already done. The returned output is marked [`AgentOutput::truncated`]. If
 /// the final call itself fails, its error is returned unchanged — the run does
 /// not invent an answer and does not swallow the provider failure.
+///
+/// When the model never designated an answer (it hit the budget first), the
+/// output's `answer_sql` is the last statement that completed successfully —
+/// the best available answer from work already done — or `None` when nothing
+/// succeeded. A failed statement is never nominated.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn salvage(
     provider: &dyn ChatProvider,
@@ -31,6 +36,7 @@ pub(super) async fn salvage(
     usage: &mut TokenUsage,
     used_bounded_sql_query: bool,
     tool_metadata: Vec<crate::ToolMetadata>,
+    best_successful_sql: Option<String>,
 ) -> Result<AgentOutput, AgentError> {
     for call in pending {
         let (message, _) = tools::tool_message(
@@ -55,6 +61,12 @@ pub(super) async fn salvage(
     );
     sum_reported(&mut usage.reasoning_tokens, turn_usage.reasoning_tokens);
     emit(events, sink, AgentEvent::Complete).await;
+    // When the run ended because a budget ran out rather than by the model
+    // finishing, surface the best available answer if the model never nominated
+    // one. Prefer the last statement that completed successfully — never a
+    // failed one (only successes are tracked) — so a wrong nomination is not
+    // invented. If nothing succeeded, nominate nothing: an absent answer is
+    // better than a wrong one.
     Ok(AgentOutput {
         answer: assistant.content,
         events: std::mem::take(events),
@@ -63,6 +75,6 @@ pub(super) async fn salvage(
         usage: *usage,
         learning_usage: None,
         truncated: true,
-        answer_sql: None,
+        answer_sql: best_successful_sql,
     })
 }
