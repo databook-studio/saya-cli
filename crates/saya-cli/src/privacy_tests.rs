@@ -208,6 +208,7 @@ fn clear_removes_canonical_turns_and_visible_messages() {
         vec![ToolMetadata {
             name: "bounded_sql_query".into(),
             status: "completed".into(),
+            ..Default::default()
         }],
     );
     assert!(state.provider_history().len() == 2);
@@ -227,6 +228,7 @@ fn canonical_redacted_turns_do_not_duplicate_legacy_messages_or_tool_payloads() 
         vec![ToolMetadata {
             name: "bounded_sql_query".into(),
             status: "completed".into(),
+            ..Default::default()
         }],
     );
     let saved = state.redacted();
