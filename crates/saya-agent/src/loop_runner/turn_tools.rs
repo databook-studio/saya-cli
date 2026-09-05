@@ -4,7 +4,7 @@
 //! loop) or `false` when the sequential path ran (the caller proceeds to the
 //! intra-loop context trim).
 
-use super::{check_cancelled, emit, output, tools};
+use super::{check_cancelled, emit, failed_statements, output, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
     ChatMessage, ToolDefinition, ToolExecutor,
@@ -23,6 +23,8 @@ pub(super) async fn run_turn_tools(
     messages: &mut Vec<ChatMessage>,
     used_bounded_sql_query: &mut bool,
     tool_metadata: &mut Vec<crate::ToolMetadata>,
+    failed: &mut failed_statements::FailedStatements,
+    last_successful_sql: &mut Option<String>,
 ) -> Result<bool, AgentError> {
     // When every call in the message is valid and auto-runnable, the
     // calls are independent: run them concurrently instead of paying
@@ -36,6 +38,7 @@ pub(super) async fn run_turn_tools(
                     .iter()
                     .find(|definition| definition.name == call.name)
                     .is_some_and(|definition| tools::auto_runnable(definition, limits))
+                && !failed_statements::is_repeat(failed, call)
         });
     if batch_parallel {
         check_cancelled(cancellation)?;
@@ -59,6 +62,14 @@ pub(super) async fn run_turn_tools(
         }
         let results = tools::execute_batch(tools, &assistant.tool_calls.clone(), definitions).await;
         for (call, (result, summary)) in assistant.tool_calls.iter().zip(results) {
+            failed_statements::record_outcome(
+                failed,
+                last_successful_sql,
+                failed_statements::sql_of(call),
+                &result,
+                true,
+                summary,
+            );
             let (message, truncated) =
                 tools::tool_message(call.id.clone(), result, limits.context_byte_budget);
             tool_metadata.push(crate::ToolMetadata {
@@ -122,6 +133,35 @@ pub(super) async fn run_turn_tools(
             .await;
             continue;
         }
+        // A byte-identical repeat of a statement that already failed in this
+        // run is refused rather than re-executed: the failure is deterministic
+        // at parse/safety time, so re-running it wastes the turn (the benchmark
+        // saw one statement re-sent 384 times). Feed the prior error back as
+        // the tool result so the model has the information it needs to change
+        // approach. This does not fail the turn — the point is to return
+        // signal cheaply, not to abort.
+        if let Some(sql) = failed_statements::sql_of(&call)
+            && let Some(prior) = failed.prior_error(sql)
+        {
+            check_cancelled(cancellation)?;
+            let (result, summary) = failed_statements::refuse_repeat(prior);
+            tool_metadata.push(crate::ToolMetadata {
+                name: call.name.clone(),
+                status: "failed".into(),
+            });
+            let (message, _) = tools::tool_message(call.id, result, limits.context_byte_budget);
+            messages.push(message);
+            emit(
+                events,
+                sink,
+                AgentEvent::ToolCompleted {
+                    name: call.name,
+                    summary: summary.into(),
+                },
+            )
+            .await;
+            continue;
+        }
         check_cancelled(cancellation)?;
         emit(
             events,
@@ -149,6 +189,9 @@ pub(super) async fn run_turn_tools(
         let candidate_denied = tools::candidate_denied(definition, limits);
         let side_effect_denied = tools::external_side_effect_gated(definition);
         let executed = approved && !candidate_denied && !side_effect_denied;
+        // Capture the SQL before `execute` moves `call.arguments`; only SQL
+        // statements are tracked for repeat refusal and salvage nomination.
+        let sql = failed_statements::sql_of(&call).map(str::to_owned);
         let (result, summary) = if executed {
             check_cancelled(cancellation)?;
             // Indicates a database-row-producing query tool ran.
@@ -177,6 +220,14 @@ pub(super) async fn run_turn_tools(
                 "read-only database tool denied",
             )
         };
+        failed_statements::record_outcome(
+            failed,
+            last_successful_sql,
+            sql.as_deref(),
+            &result,
+            executed,
+            summary,
+        );
         tool_metadata.push(crate::ToolMetadata {
             name: call.name.clone(),
             status: if executed {
