@@ -36,9 +36,17 @@ pub fn fanout_probe(sql: &str, dialect: SqlDialect) -> Option<FanoutProbe> {
         Statement::Query(q) => q,
         _ => return None,
     };
-    if query.with.is_some() {
+    if query.with.as_ref().is_some_and(|w| w.recursive) {
         return None;
     }
+    // A non-recursive `WITH` clause is carried verbatim into both emitted
+    // statements (computed before `body` is moved out). Identical CTE
+    // definitions keep the two row counts comparable: the only difference
+    // between them remains the joins.
+    let with_prefix = query
+        .with
+        .as_ref()
+        .map_or(String::new(), |w| format!("{w} "));
     let select = match *query.body {
         SetExpr::Select(s) => s,
         _ => return None,
@@ -66,8 +74,11 @@ pub fn fanout_probe(sql: &str, dialect: SqlDialect) -> Option<FanoutProbe> {
         .as_ref()
         .map_or(String::new(), |w| format!(" WHERE {w}"));
     Some(FanoutProbe {
-        joined_rows: format!("SELECT COUNT(*) AS n FROM {from}{where_clause}"),
-        base_rows: format!("SELECT COUNT(*) AS n FROM {}{where_clause}", from.relation),
+        joined_rows: format!("{with_prefix}SELECT COUNT(*) AS n FROM {from}{where_clause}"),
+        base_rows: format!(
+            "{with_prefix}SELECT COUNT(*) AS n FROM {}{where_clause}",
+            from.relation
+        ),
     })
 }
 
