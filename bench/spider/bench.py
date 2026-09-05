@@ -37,8 +37,12 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(ROOT, "..", ".."))
 CORPUS = os.path.join(REPO, ".bench", "spider")
 OUT = os.path.join(CORPUS, "results")
-RESULTS = os.path.join(OUT, "results.ndjson")
-SCORED = os.path.join(OUT, "scored.ndjson")
+# One results file per arm. Two arms that differ only in a setting must not
+# share a file: the resume logic keys on the question, so the second arm would
+# skip every question the first already answered and silently measure nothing.
+ARM = os.environ.get("SAYA_BENCH_ARM", "default")
+RESULTS = os.path.join(OUT, f"results-{ARM}.ndjson")
+SCORED = os.path.join(OUT, f"scored-{ARM}.ndjson")
 HOME = os.path.join(CORPUS, "home")
 GOLD_URL = ("https://raw.githubusercontent.com/xlang-ai/Spider2/main/"
             "spider2-lite/evaluation_suite/gold/exec_result")
@@ -49,6 +53,41 @@ LABEL = {"v1": "Spider 1.0 dev (SQLite)",
          "v2bq": "Spider 2.0-lite (BigQuery)"}
 
 sys.path.insert(0, CORPUS)          # evaluate_utils.py is fetched by setup.py
+
+
+def _stub_cloud_sdks():
+    """Let the benchmark's comparator import without the cloud SDKs.
+
+    `evaluate_utils.py` imports the BigQuery and Snowflake clients at module
+    scope for the benchmark's own runner, but the only thing used here —
+    `compare_multi_pandas_table` — is pure pandas. Left alone the import
+    raises, the scorer swallows it as a failed comparison, and a whole suite
+    reports 0% while looking like a genuine result.
+
+    Stubbing keeps their file pristine, so an upstream edit cannot silently
+    defeat a text patch. Only these names are stubbed: anything else missing
+    should fail loudly rather than be papered over.
+    """
+    import types
+    absent = ("google", "google.cloud", "google.cloud.bigquery",
+              "snowflake", "snowflake.connector")
+    for name in absent:
+        try:
+            __import__(name)
+            continue                      # really installed; leave it alone
+        except ImportError:
+            pass
+        module = types.ModuleType(name)
+        module.__path__ = []
+        module.__getattr__ = lambda _attribute: None   # any symbol, unused
+        sys.modules.setdefault(name, module)
+    for parent, child in (("google", "cloud"), ("google.cloud", "bigquery"),
+                          ("snowflake", "connector")):
+        if parent in sys.modules and f"{parent}.{child}" in sys.modules:
+            setattr(sys.modules[parent], child, sys.modules[f"{parent}.{child}"])
+
+
+_stub_cloud_sdks()
 
 
 def binary():
@@ -174,7 +213,7 @@ def run_unit(job, done, timeout, plan, candidates=1):
     todo = [it for it in items if it["_key"] not in done]
     if not todo:
         return 0
-    work = os.path.join(OUT, suite, db)
+    work = os.path.join(OUT, ARM, suite, db)
     os.makedirs(work, exist_ok=True)
     env = dict(os.environ, SAYA_CONFIG_HOME=HOME,
                SAYA_STATE_DB=f"{work}/state.db",
