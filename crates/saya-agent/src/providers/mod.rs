@@ -123,13 +123,21 @@ mod context_block_tests {
     #[test]
     fn anthropic_request_keeps_context_block_out_of_system_field() {
         let body = anthropic_request::build_body(request(messages()), 1024, None);
-        // Anthropic hoists system-role messages into the top-level `system` string.
+        // Anthropic hoists system-role messages into the top-level `system`
+        // array of text blocks; the invariant is that none of those blocks'
+        // text carries the context-block body or wrapper.
+        let system_text: String = body["system"]
+            .as_array()
+            .expect("system is an array of blocks")
+            .iter()
+            .map(|b| b["text"].as_str().unwrap_or(""))
+            .collect();
         assert!(
-            !body["system"].as_str().unwrap_or("").contains(BODY),
+            !system_text.contains(BODY),
             "context block body leaked into the Anthropic system field"
         );
         assert!(
-            !body["system"].as_str().unwrap_or("").contains(CONTEXT_OPEN),
+            !system_text.contains(CONTEXT_OPEN),
             "context wrapper leaked into the Anthropic system field"
         );
         // The block body is in a user message, inside the wrapper.
