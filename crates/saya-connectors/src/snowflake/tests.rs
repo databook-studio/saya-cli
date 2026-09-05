@@ -430,6 +430,50 @@ async fn v2_errors_timeout_and_partition_failures_are_redacted_and_clear_active(
 }
 
 #[tokio::test]
+async fn v2_sql_compilation_error_names_the_missing_object() {
+    let (origin, _) = server(vec![Reply::status(
+        "422 Unprocessable Content",
+        json!({
+            "code": "002003",
+            "message": "SQL compilation error:\nObject 'ORDRS' does not exist or not authorized.",
+            "success": false
+        }),
+    )])
+    .await;
+    let mut item = connector(Auth::Keypair(keypair()));
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT * FROM ordrs", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ORDRS"), "object name dropped: {error}");
+    assert!(error.contains("does not exist"), "opaque: {error}");
+}
+
+#[tokio::test]
+async fn v2_conversion_error_does_not_leak_row_value() {
+    let (origin, _) = server(vec![Reply::status(
+        "422 Unprocessable Content",
+        json!({
+            "code": "100038",
+            "message": "Numeric value '4111-1111-1111-1111' is not recognized",
+            "success": false
+        }),
+    )])
+    .await;
+    let mut item = connector(Auth::Keypair(keypair()));
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("4111"), "row value leaked: {error}");
+    assert_eq!(error, "query failed: Snowflake query failed");
+}
+
+#[tokio::test]
 async fn cancellation_uses_uuid_endpoint_and_rejects_invalid_or_timed_out_handles() {
     let (origin, seen) = server(vec![Reply::json(json!({"ok":true}))]).await;
     let mut item = connector(Auth::Keypair(keypair()));
@@ -664,6 +708,50 @@ async fn legacy_login_and_query_failures_are_generic_and_secret_free() {
         assert!(!error.contains(marker));
         assert!(!error.contains("password-sentinel"));
     }
+}
+
+#[tokio::test]
+async fn legacy_sql_compilation_error_names_the_object() {
+    let login = Reply::json(json!({"success":true,"data":{"token":"session"}}));
+    let query = Reply::json(json!({
+        "success": false,
+        "data": {
+            "code": "001003",
+            "message": "SQL compilation error: syntax error line 1 at position 0 unexpected 'SELCT'."
+        }
+    }));
+    let (origin, _) = server(vec![login, query]).await;
+    let mut item = connector(userpass());
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("syntax error"), "opaque: {error}");
+    assert!(error.contains("SELCT"), "opaque: {error}");
+}
+
+#[tokio::test]
+async fn legacy_conversion_error_does_not_leak_row_value() {
+    let login = Reply::json(json!({"success":true,"data":{"token":"session"}}));
+    let query = Reply::json(json!({
+        "success": false,
+        "data": {
+            "code": "100038",
+            "message": "Numeric value '4111-1111-1111-1111' is not recognized"
+        }
+    }));
+    let (origin, _) = server(vec![login, query]).await;
+    let mut item = connector(userpass());
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("4111"), "row value leaked: {error}");
+    assert_eq!(error, "query failed: Snowflake query failed");
 }
 
 #[tokio::test]
