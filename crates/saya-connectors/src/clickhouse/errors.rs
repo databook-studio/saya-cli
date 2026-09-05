@@ -56,6 +56,7 @@ pub(crate) fn connect_status(status: StatusCode) -> ConnectionError {
 pub(crate) fn query_status(status: StatusCode) -> ConnectionError {
     match status.as_u16() {
         401 | 403 => ConnectionError::authentication_failed("ClickHouse authentication failed"),
+        s if s >= 500 => ConnectionError::connection_failed("ClickHouse server error"),
         _ => ConnectionError::query_failed("ClickHouse query failed"),
     }
 }
@@ -88,7 +89,10 @@ mod tests {
     }
 
     #[test]
-    fn other_statuses_map_to_connection_or_query_failed() {
+    fn client_statuses_map_to_query_failed_and_server_statuses_to_connection_failed() {
+        // A 4xx is a SQL fault the caller may be able to repair; a 5xx is a
+        // server fault that is not about the SQL, so it stops reading as a
+        // query failure and surfaces as a connection-level problem instead.
         let server = StatusCode::from_u16(500).unwrap();
         assert!(matches!(
             connect_status(server),
@@ -96,8 +100,10 @@ mod tests {
         ));
         assert!(matches!(
             query_status(server),
-            ConnectionError::QueryFailed(_)
+            ConnectionError::ConnectionFailed(_)
         ));
+        let query_text = query_status(server).to_string();
+        assert!(query_text.contains("server error"), "opaque: {query_text}");
 
         let not_found = StatusCode::from_u16(404).unwrap();
         assert!(matches!(
