@@ -3,9 +3,79 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## 0.3.3 — 2026-09-03
+## 0.3.3 — 2026-09-06
+
+### Added
+
+- **`--candidates N`** answers with the best of N independent attempts, choosing
+  between them by what their queries *return* rather than what their SQL says.
+  Defaults to 1 — today's behaviour exactly, at no extra cost — because each
+  extra attempt is another full agent run. Measured on a 135-question benchmark,
+  three attempts agreed on 95% of questions, so the setting is unlikely to earn
+  its cost on a well-constrained question; it exists for the ones that are not.
+
+- **`result_shape`** runs a query and returns only its row count, whether the
+  row cap was hit, and the column names and types — never a cell value. Learning
+  that a filter matched nothing or that a join multiplied the rows should not
+  cost a thousand rows of context.
+
+- **`column_health`** reports nulls, null percentage, distinct values and zero
+  counts per column, with no values. It exists because a question once answered
+  "10,912 deliveries per day" for one driver: a date function returned NULL for
+  every row, so every driver collapsed into one group and a per-day average
+  silently became a lifetime total. Nothing errored and nothing warned.
+
+- **`join_check`** reports whether a join multiplies or drops rows before the
+  answer depends on it. A join on a non-unique key inflates every SUM and AVG
+  over the other side, and the query still succeeds and still looks plausible.
+
+- **Sessions record what actually ran.** A saved session now carries each tool
+  call — the statement, whether it succeeded, and the *shape* of its result.
+  Row values are never stored. Previously nothing durable held the SQL, so a
+  resumed session could not show what it had done.
+
+### Changed
+
+- **The agent is told what an answer should look like.** Reading every failure
+  of a 135-question benchmark, a quarter had the right numbers and the wrong
+  presentation: working columns left in, rounded values, reformatted dates, a
+  whole ranking returned where one row was asked for. The prompt now states the
+  contract — the columns asked for and no others, no rounding, ISO dates, "the
+  highest" means that row, answer every quantity the question names, and keep
+  rows tied at a cut-off.
+
+- **The dialect is the connected engine's, whatever the schema says.** A SQLite
+  file restored from a PostgreSQL dump still declares `jsonb` and `point`; the
+  model read those types, wrote PostgreSQL syntax, and every statement was
+  rejected. The prompt now says which engine it is actually talking to.
 
 ### Fixed
+
+- **A statement that already failed is not run again.** One question re-sent a
+  byte-identical failing query 384 times over ten minutes, each rejected in
+  under a millisecond, until the time budget ended the run. A repeat is now
+  refused and the earlier error handed back instead, so the turn carries what is
+  needed to change approach. A run that exhausts its budget also nominates its
+  best answer rather than ending on whatever happened to run last.
+
+- **Failed queries say what was wrong.** PostgreSQL, MySQL, DuckDB, Snowflake
+  and ClickHouse reported every failure as "query failed", so a missing table, an
+  unrecognised column and a syntax error were indistinguishable and the agent had
+  nothing to correct against. Each now names the fault when it describes the
+  submitted statement — DuckDB even passes on its "did you mean …?" suggestions.
+  Faults that would echo stored data, such as a failed type conversion or a
+  constraint violation, stay redacted deliberately.
+
+- **Prompt caching works.** saya reported a cache hit rate while never asking
+  the provider to create a cache entry. It now marks the stable prefix, and the
+  previous query's text moved off the system prompt — it changed on every
+  follow-up, which discarded the cached prefix each turn. Long conversations are
+  now compacted once rather than trimmed every turn, and the context budget is
+  enforced on turns that run several tools at once, which it previously was not.
+
+- **Charts report why a query failed** instead of discarding the reason.
+
+### Fixed — earlier this cycle
 
 - **Dependency and CI action updates.** The duckdb pin moves to 1.10505.0 with
   the decode migration that release requires, and the pinned CI actions move
