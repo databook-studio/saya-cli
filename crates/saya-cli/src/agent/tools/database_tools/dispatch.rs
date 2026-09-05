@@ -34,7 +34,12 @@ impl DatabaseTools {
         validate_arguments(name, &arguments)?;
         if matches!(
             name,
-            "bounded_sql_query" | "bounded_sql_query_all" | "render_chart" | "result_shape"
+            "bounded_sql_query"
+                | "bounded_sql_query_all"
+                | "render_chart"
+                | "result_shape"
+                | "column_health"
+                | "join_check"
         ) && !self.allow_query_data
         {
             // The data-sharing gate refuses a query tool before it touches a
@@ -111,6 +116,40 @@ impl DatabaseTools {
                     // a query so the objects it touched are still credited as
                     // evidence, reading row_count/truncated from the shape when
                     // it succeeded.
+                    log.record_query(
+                        name,
+                        sql,
+                        entry.dialect,
+                        entry.profile_id.as_deref(),
+                        result.as_ref().ok(),
+                    );
+                }
+                result
+            }
+            "column_health" => {
+                let sql = arguments
+                    .get("sql")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or(ToolError::InvalidQueryArguments)?;
+                let result = self.column_health(entry, sql).await;
+                if let Some(log) = &self.observations {
+                    log.record_query(
+                        name,
+                        sql,
+                        entry.dialect,
+                        entry.profile_id.as_deref(),
+                        result.as_ref().ok(),
+                    );
+                }
+                result
+            }
+            "join_check" => {
+                let sql = arguments
+                    .get("sql")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or(ToolError::InvalidQueryArguments)?;
+                let result = self.join_check(entry, sql).await;
+                if let Some(log) = &self.observations {
                     log.record_query(
                         name,
                         sql,
