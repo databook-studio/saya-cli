@@ -10,6 +10,9 @@ pub(crate) mod learning;
 pub(crate) mod profile;
 pub(crate) mod provider;
 pub(crate) mod recall_context;
+#[allow(dead_code)]
+// mechanism only — not yet wired into the agent loop; a later change decides when it runs
+pub(crate) mod roundtrip;
 pub(crate) mod runtime;
 pub(crate) mod state_tools;
 pub(crate) mod system_prompt;
