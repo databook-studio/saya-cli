@@ -6,7 +6,12 @@ use super::sql_format::{collapse_whitespace, format_sql};
 /// for the fan-out tool), or `None` for tools with nothing worth showing.
 pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Option<String> {
     match name {
-        "bounded_sql_query" | "bounded_sql_query_all" | "render_chart" | "result_shape" => {
+        "bounded_sql_query"
+        | "bounded_sql_query_all"
+        | "render_chart"
+        | "result_shape"
+        | "column_health"
+        | "join_check" => {
             let sql = arguments.get("sql").and_then(serde_json::Value::as_str)?;
             let sql = collapse_whitespace(sql);
             if sql.is_empty() {
@@ -49,7 +54,12 @@ pub(crate) struct SqlCall {
 /// or when there is no non-empty `sql` argument.
 pub(crate) fn sql_tool_call(name: &str, arguments: &serde_json::Value) -> Option<SqlCall> {
     match name {
-        "bounded_sql_query" | "bounded_sql_query_all" | "render_chart" | "result_shape" => {
+        "bounded_sql_query"
+        | "bounded_sql_query_all"
+        | "render_chart"
+        | "result_shape"
+        | "column_health"
+        | "join_check" => {
             let raw = arguments.get("sql").and_then(serde_json::Value::as_str)?;
             let sql = format_sql(raw);
             if sql.is_empty() {
