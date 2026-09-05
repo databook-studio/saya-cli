@@ -83,8 +83,18 @@ struct OpenAiRequest {
     /// Sampling temperature (configurable via `[ai].temperature`, default 0.1).
     /// Lower keeps answers concise and deterministic (fewer tokens/loops).
     temperature: f32,
-    /// Stable key derived from the system prompt so a caching gateway can reuse
-    /// the prompt prefix across turns instead of reprocessing it each time.
+    /// Stable key derived from the **system message** so a caching gateway can
+    /// reuse the prompt prefix across turns instead of reprocessing it each time.
+    ///
+    /// The key is the FNV-1a hash of the system message content. The system
+    /// message is **session-stable by construction**: it is the fixed SAYA system
+    /// prompt plus the assembled extra (connection descriptions, memory
+    /// briefing, engine/dialect guidance, working guidance, answer contract) —
+    /// all of which depend only on the session's connections and memory mode,
+    /// never on a single turn. The per-turn last-SQL hint lives on the **user**
+    /// turn (as a context block), so it never perturbs this key. Two requests
+    /// that differ only in the user turn — a new question, a refined SQL hint —
+    /// therefore share a key and let the gateway reuse the cached system prefix.
     #[serde(skip_serializing_if = "Option::is_none")]
     prompt_cache_key: Option<String>,
     /// Ask the gateway for token counts on a trailing usage-only chunk.
@@ -118,6 +128,10 @@ struct StreamOptions {
 
 impl OpenAiRequest {
     fn from_request(request: ChatRequest, temperature: f32) -> Self {
+        // The cache key derives from the system message — the session-stable
+        // prefix a gateway caches. See `prompt_cache_key` for why the system
+        // message is stable across turns (the per-turn SQL hint rides the user
+        // turn, never the system message).
         let prompt_cache_key = request
             .messages
             .iter()
@@ -248,5 +262,77 @@ mod tests {
             !json.contains("reasoning_effort"),
             "default effort must not carry reasoning_effort: {json}"
         );
+    }
+
+    /// The cache key derives from the session-stable system message, so two
+    /// requests that differ only in the last user message share a key and let a
+    /// caching gateway reuse the cached prefix — the property the prompt cache
+    /// depends on. The per-turn SQL hint rides the user turn (a context block),
+    /// so a new question or refined hint never perturbs the key.
+    #[test]
+    fn prompt_cache_key_is_stable_across_requests_differing_only_in_last_user_message() {
+        let system = ChatMessage::text("system", "SAYA system prompt (session-stable)");
+        let req_a = OpenAiRequest::from_request(
+            ChatRequest::new(
+                "test-model",
+                vec![system.clone(), ChatMessage::text("user", "first question")],
+            ),
+            0.1,
+        );
+        let req_b = OpenAiRequest::from_request(
+            ChatRequest::new(
+                "test-model",
+                vec![
+                    system.clone(),
+                    ChatMessage::text("user", "follow-up question"),
+                ],
+            ),
+            0.1,
+        );
+        assert_eq!(
+            req_a.prompt_cache_key, req_b.prompt_cache_key,
+            "requests differing only in the user turn must share a cache key"
+        );
+        assert!(
+            req_a.prompt_cache_key.is_some(),
+            "a request with a system message must produce a cache key"
+        );
+    }
+
+    /// The cache key is sensitive to the system message: a different
+    /// session-stable system prompt yields a different key, so a gateway does
+    /// not cross-share prefixes between sessions with different connections or
+    /// memory mode.
+    #[test]
+    fn prompt_cache_key_changes_when_the_system_message_changes() {
+        let a = OpenAiRequest::from_request(
+            ChatRequest::new(
+                "test-model",
+                vec![ChatMessage::text("system", "system prompt A")],
+            ),
+            0.1,
+        );
+        let b = OpenAiRequest::from_request(
+            ChatRequest::new(
+                "test-model",
+                vec![ChatMessage::text("system", "system prompt B")],
+            ),
+            0.1,
+        );
+        assert_ne!(
+            a.prompt_cache_key, b.prompt_cache_key,
+            "different system messages must yield different cache keys"
+        );
+    }
+
+    /// A request with no system message carries no cache key: there is no
+    /// session-stable prefix for a gateway to cache.
+    #[test]
+    fn prompt_cache_key_is_none_without_a_system_message() {
+        let body = OpenAiRequest::from_request(
+            ChatRequest::new("test-model", vec![ChatMessage::text("user", "hi")]),
+            0.1,
+        );
+        assert!(body.prompt_cache_key.is_none());
     }
 }
