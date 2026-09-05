@@ -1,5 +1,6 @@
 mod client;
 mod decode;
+mod errors;
 mod execute;
 mod metadata;
 

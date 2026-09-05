@@ -3,6 +3,7 @@ mod browser;
 mod cancellation;
 mod client;
 mod context;
+mod diagnose;
 mod errors;
 mod legacy;
 mod legacy_chunks;
