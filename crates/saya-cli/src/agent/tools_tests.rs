@@ -423,6 +423,7 @@ fn every_tool_declares_its_local_state_effect() {
         ("schema_discovery", LocalStateEffect::None),
         ("bounded_sql_query", LocalStateEffect::None),
         ("bounded_sql_query_all", LocalStateEffect::None),
+        ("result_shape", LocalStateEffect::None),
         ("render_chart", LocalStateEffect::None),
         ("contract_search", LocalStateEffect::Read),
         ("contract_read", LocalStateEffect::Read),
@@ -491,6 +492,17 @@ fn tool_call_detail_surfaces_the_sql() {
     )
     .unwrap();
     assert!(detail.contains("all connected databases"), "got: {detail}");
+
+    // result_shape is a SQL tool like bounded_sql_query, so its SQL surfaces too.
+    let detail = tool_call_detail(
+        "result_shape",
+        &serde_json::json!({"sql": "SELECT 1", "connection": "warehouse"}),
+    )
+    .unwrap();
+    assert!(
+        detail.contains("SELECT 1") && detail.contains("@warehouse"),
+        "got: {detail}"
+    );
 
     // Tools without a query expose no detail.
     assert!(tool_call_detail("schema_discovery", &serde_json::json!({})).is_none());

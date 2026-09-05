@@ -38,3 +38,7 @@ mod format_tests;
 #[cfg(test)]
 #[path = "tools/observations_tests.rs"]
 mod observations_tests;
+
+#[cfg(test)]
+#[path = "tools/result_shape_tests.rs"]
+mod result_shape_tests;
