@@ -1,4 +1,5 @@
 mod designation;
+mod failed_statements;
 mod output;
 mod receive;
 mod salvage;
@@ -48,6 +49,13 @@ pub async fn run_agent_with_sink(
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
     let mut turn_count = 0;
+    // Statements that failed during this run, so a byte-identical
+    // re-submission is refused rather than re-executed (loop invariant for the
+    // "do not repeat a failed query" advice the model does not always obey).
+    let mut failed = failed_statements::FailedStatements::new();
+    // The last statement that completed successfully, so a run that exhausts its
+    // budget without nominating can still surface its best available answer.
+    let mut last_successful_sql: Option<String> = None;
     loop {
         check_cancelled(&cancellation)?;
         if let Some(max_turns) = limits.max_turns
@@ -65,6 +73,7 @@ pub async fn run_agent_with_sink(
                 &mut usage,
                 used_bounded_sql_query,
                 tool_metadata,
+                last_successful_sql,
             )
             .await;
         }
@@ -165,6 +174,7 @@ pub async fn run_agent_with_sink(
                 &mut usage,
                 used_bounded_sql_query,
                 tool_metadata,
+                last_successful_sql,
             )
             .await;
         }
@@ -181,6 +191,8 @@ pub async fn run_agent_with_sink(
             &mut messages,
             &mut used_bounded_sql_query,
             &mut tool_metadata,
+            &mut failed,
+            &mut last_successful_sql,
         )
         .await?;
         if batch_ran {
