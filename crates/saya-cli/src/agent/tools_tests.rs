@@ -446,6 +446,8 @@ fn every_tool_declares_its_local_state_effect() {
         ("bounded_sql_query", LocalStateEffect::None),
         ("bounded_sql_query_all", LocalStateEffect::None),
         ("result_shape", LocalStateEffect::None),
+        ("column_health", LocalStateEffect::None),
+        ("join_check", LocalStateEffect::None),
         ("render_chart", LocalStateEffect::None),
         ("contract_search", LocalStateEffect::Read),
         ("contract_read", LocalStateEffect::Read),

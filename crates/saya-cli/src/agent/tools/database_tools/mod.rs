@@ -7,9 +7,11 @@ use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
 
 mod chart_tool;
+mod column_health;
 mod definitions;
 mod dispatch;
 mod fan_out;
+mod join_check;
 mod observations;
 mod recorder;
 mod result_shape;
