@@ -13,7 +13,7 @@ mod tool;
 pub use approval::{AllowReadOnlyApproval, ApprovalDecider};
 pub use chat::{
     AgentRequest, ChatMessage, ChatRequest, ChatResponse, ContextBlock, ReasoningEffort,
-    ResponseFormat, ToolCall, ToolMetadata,
+    ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,
 };
 pub use error::{ProviderError, ToolError};
 pub use event::{AgentEvent, LearningSkipReason};
