@@ -3,6 +3,7 @@ mod failed_statements;
 mod output;
 mod receive;
 mod salvage;
+mod tool_record;
 mod tools;
 mod turn_tools;
 

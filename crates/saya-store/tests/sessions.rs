@@ -25,6 +25,7 @@ fn filesystem_store_round_trips_redacted_sessions_and_recovers_corruption() {
             tools: vec![RedactedToolMetadata {
                 name: "bounded_sql_query".into(),
                 status: "completed".into(),
+                ..Default::default()
             }],
         }],
         ..Default::default()
