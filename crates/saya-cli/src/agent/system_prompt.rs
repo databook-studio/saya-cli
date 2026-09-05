@@ -1,6 +1,9 @@
-//! System prompt assembly for agent turns — brief the model on its context and memory.
+//! System prompt assembly and per-turn context for agent turns — brief the
+//! model on its context and memory, and carry the last-SQL hint on the user
+//! turn (never the system prompt, where it would perturb the prefix cache).
 
 use crate::connection::ConnectionRegistry;
+use saya_agent::ContextBlock;
 use saya_config::MemoryMode;
 
 /// Memory briefing prompt included when assisted memory mode is active.
@@ -18,16 +21,55 @@ pub(crate) fn memory_section(mode: MemoryMode) -> Option<&'static str> {
     }
 }
 
-/// Names the engine a single connection queries. `describe_context` stays
-/// silent for one connection, so without this the model is never told it is
-/// writing SQLite (or PostgreSQL, …) and pays a rejected query to find out.
-/// With several connections the engines are already named by
-/// `describe_context`, so this returns `None` to avoid restating them.
-fn engine_section(registry: &ConnectionRegistry) -> Option<String> {
-    let dialects: Vec<_> = registry.dialects().collect();
-    match dialects.as_slice() {
-        [dialect] => Some(format!("You are querying a {} database.", dialect.as_str())),
-        _ => None,
+/// How the connected engines want an object named in SQL, plus the dialect
+/// statement that names each engine and pins the SQL dialect.
+///
+/// Schema discovery reports every engine as catalog → schema → table, because
+/// that is what a durable fact binds to. SQLite has no such depth in SQL: shown
+/// `db.main.singer`, a model writes exactly that and the statement is rejected,
+/// costing a round trip on nearly every question before it retries unqualified.
+/// So each engine is told the fullest name it actually accepts — and no more.
+///
+/// The same section states the engine plainly and warns that the declared
+/// column types may come from another engine. Benchmark evidence: one SQLite
+/// database was a PostgreSQL dump, so its DDL still declared `jsonb`, `point`
+/// and `timestamp with time zone`; schema discovery reported those declared
+/// types, the model wrote Postgres syntax (`city->>'en'`, `coordinates[0]`),
+/// and SQLite rejected every statement. The prompt must say the SQL dialect is
+/// the connected engine's, whatever the DDL says — one or two sentences, on
+/// every request. With several connections the engines are listed, so the
+/// warning is worded per connected engine.
+fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
+    let mut forms: Vec<(&str, &str)> = Vec::new();
+    for dialect in registry.dialects() {
+        let entry = (dialect.as_str(), dialect.qualified_name_form());
+        if !forms.contains(&entry) {
+            forms.push(entry);
+        }
+    }
+    match forms.as_slice() {
+        [] => None,
+        [(engine, form)] => Some(format!(
+            "The SQL dialect is {engine}'s, whatever the DDL says — the declared column \
+             types in this database may come from another engine. Name objects as `{form}` \
+             when writing SQL — the fullest form this engine accepts; an under-qualified \
+             name cannot be recorded against a real object and an over-qualified one is a \
+             syntax error."
+        )),
+        many => {
+            let list = many
+                .iter()
+                .map(|(engine, form)| format!("- {engine}: `{form}`"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(format!(
+                "Name objects with the fullest form the target engine accepts, and no more \
+                 — an under-qualified name cannot be recorded against a real object, and an \
+                 over-qualified one is a syntax error:\n{list}\nThe SQL dialect is the \
+                 connected engine's, whatever the DDL says — the declared column types in a \
+                 database may come from another engine."
+            ))
+        }
     }
 }
 
@@ -74,44 +116,10 @@ pub(crate) fn memory_reachable(has_state_store: bool, allow_query_data: bool) ->
     has_state_store && allow_query_data
 }
 
-/// How the connected engines want an object named in SQL.
-///
-/// Schema discovery reports every engine as catalog → schema → table, because
-/// that is what a durable fact binds to. SQLite has no such depth in SQL: shown
-/// `db.main.singer`, a model writes exactly that and the statement is rejected,
-/// costing a round trip on nearly every question before it retries unqualified.
-/// So each engine is told the fullest name it actually accepts — and no more.
-fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
-    let mut forms: Vec<(&str, &str)> = Vec::new();
-    for dialect in registry.dialects() {
-        let entry = (dialect.as_str(), dialect.qualified_name_form());
-        if !forms.contains(&entry) {
-            forms.push(entry);
-        }
-    }
-    match forms.as_slice() {
-        [] => None,
-        [(_, form)] => Some(format!(
-            "Name objects as `{form}` when writing SQL — the fullest form this engine \
-             accepts. An under-qualified name cannot be recorded against a real object, \
-             and an over-qualified one is a syntax error."
-        )),
-        many => {
-            let list = many
-                .iter()
-                .map(|(engine, form)| format!("- {engine}: `{form}`"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            Some(format!(
-                "Name objects with the fullest form the target engine accepts, and no \
-                 more — an under-qualified name cannot be recorded against a real object, \
-                 and an over-qualified one is a syntax error:\n{list}"
-            ))
-        }
-    }
-}
-
-/// Hint for adapting the most recent executed SQL query.
+/// Hint prose for adapting the most recent executed SQL query. Carried on the
+/// user turn as a [`ContextBlock`] body (see [`last_sql_hint_block`]) — never in
+/// the system prompt, where it would change on every follow-up that ran SQL and
+/// forfeit the provider's prefix cache.
 fn last_sql_hint(sql: &str) -> String {
     format!(
         "For context, the most recent SQL you ran was:\n{sql}\n\nIf the user's request \
@@ -120,11 +128,37 @@ fn last_sql_hint(sql: &str) -> String {
     )
 }
 
-/// Assembles the complete system prompt from connection registry context,
-/// memory briefing (if assisted), and optional last-SQL hint.
+/// Label for the last-SQL hint context block, which rides the user turn beside
+/// the recall context block.
+pub(crate) const LAST_SQL_BLOCK_LABEL: &str = "last-sql";
+
+/// Builds the user-turn context block carrying the most recent SQL, so the
+/// model can adapt it without the hint polluting the session-stable system
+/// prompt. Returns `None` for empty/whitespace SQL. The body is untrusted data
+/// rendered into the user turn by `saya_agent::build_messages` (quoted,
+/// labelled, escaped) — never the system message.
+pub(crate) fn last_sql_hint_block(sql: &str) -> Option<ContextBlock> {
+    if sql.trim().is_empty() {
+        return None;
+    }
+    Some(ContextBlock {
+        label: LAST_SQL_BLOCK_LABEL.to_string(),
+        body: last_sql_hint(sql),
+        truncated: false,
+    })
+}
+
+/// Assembles the system prompt for a turn from connection registry context,
+/// the memory briefing (if assisted and reachable), working guidance, the answer
+/// contract, and the engine naming/dialect section.
+///
+/// This is **session-stable**: the same connections, memory mode, and reachability
+/// produce a byte-identical system prompt across turns. The per-turn last-SQL
+/// hint is deliberately absent — it rides the user turn as a context block (see
+/// [`last_sql_hint_block`]) so it never perturbs the system block a provider's
+/// prefix cache is keyed on.
 pub(crate) fn assemble_system_prompt(
     registry: &ConnectionRegistry,
-    last_sql: Option<&str>,
     memory_mode: MemoryMode,
     memory_reachable: bool,
 ) -> Option<String> {
@@ -134,10 +168,6 @@ pub(crate) fn assemble_system_prompt(
     } else {
         None
     };
-    let hint = match last_sql {
-        Some(sql) if !sql.trim().is_empty() => Some(last_sql_hint(sql)),
-        _ => None,
-    };
 
     let mut sections = Vec::new();
     if let Some(b) = base {
@@ -146,20 +176,15 @@ pub(crate) fn assemble_system_prompt(
     if let Some(m) = memory {
         sections.push(m.to_string());
     }
-    if let Some(engine) = engine_section(registry) {
-        sections.push(engine);
-    }
     sections.push(WORKING_GUIDANCE.to_string());
     sections.push(ANSWER_CONTRACT.to_string());
     // Independent of memory mode: schema discovery hands the model a
     // catalog/schema/table tree for every engine, including the ones whose SQL
     // has no such depth, so without this the model writes back the shape it was
-    // shown and the statement is rejected.
+    // shown and the statement is rejected. This section also names the engine
+    // and pins the dialect (declared types may come from another engine).
     if let Some(n) = naming_section(registry) {
         sections.push(n);
-    }
-    if let Some(h) = hint {
-        sections.push(h);
     }
 
     if sections.is_empty() {
