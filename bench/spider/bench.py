@@ -260,7 +260,16 @@ def run_unit(job, done, timeout, plan, candidates=1):
                 # with "" and the row then reported `n_queries: 0`, which reads
                 # as "the agent ran nothing" when it had in fact been working
                 # until the wall clock killed it. Keep what it managed to say.
-                text = (expired.stdout or "") + (expired.stderr or "")
+                # `TimeoutExpired` carries the streams as BYTES even when the
+                # call asked for text, so decode before joining — concatenating
+                # them with a str raises, the exception escapes, and the
+                # question is dropped from the results entirely.
+                def _text(stream):
+                    if stream is None:
+                        return ""
+                    return stream.decode("utf-8", "replace") if isinstance(stream, bytes) else stream
+
+                text = _text(expired.stdout) + _text(expired.stderr)
                 timed_out = True
             queries, designated, attempts, consensus = parse_ndjson(text)
             if queries or '"event":"error"' not in text or attempt == 2:
