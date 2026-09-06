@@ -112,8 +112,8 @@ pub(crate) struct RecallRequest<'a> {
     ///
     /// Request-scoped by construction: the field lives on the request, which
     /// is built and consumed once per recall and then dropped, so an admission
-    /// cannot survive the turn it was made for (spec C §4 — one turn,
-    /// in-memory). Selection honours the exception only for a live `Pending`
+    /// cannot survive the turn it was made for. Selection honours the exception
+    /// only for a live `Pending`
     /// item — a non-pending id here is a no-op, because
     /// [`use_candidate_once`] refuses to mint an admission for anything but a
     /// live candidate, so a dismissed or active id never reaches a request.

@@ -4,7 +4,7 @@
 //! slots map one-to-one onto six payload variants. The repository refuses a
 //! payload filed under the wrong slot — and a `relationship` payload, which no
 //! slot names — as `CardinalityMismatch`, before anything is written. This is
-//! the one place that mapping lives, so the adopting slice cannot silently file
+//! the one place that mapping lives, so a caller cannot silently file
 //! a `TableAlias` under `table.grain` and have it render as a grain.
 
 use saya_types::{ClaimPayload, KnowledgeSlot};
@@ -16,7 +16,9 @@ pub(crate) fn slot_matches_payload(slot: &KnowledgeSlot, payload: &ClaimPayload)
         (KnowledgeSlot::TableDescription, ClaimPayload::TableDescription { .. })
         | (KnowledgeSlot::TableAlias, ClaimPayload::TableAlias { .. })
         | (KnowledgeSlot::TableGrain, ClaimPayload::TableGrain { .. })
-        | (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { .. }) => true,
+        | (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { .. })
+        | (KnowledgeSlot::RelationJoinRule, ClaimPayload::JoinRule { .. })
+        | (KnowledgeSlot::MetricDefinition, ClaimPayload::MetricDefinition { .. }) => true,
         (
             KnowledgeSlot::ColumnDescription { column: slot_col },
             ClaimPayload::ColumnDescription { column, .. },
@@ -126,5 +128,61 @@ mod tests {
                 "{slot} should not match relationship"
             );
         }
+    }
+
+    #[test]
+    fn join_rule_and_metric_match_their_slots() {
+        let join = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id",
+            None,
+        )
+        .unwrap();
+        assert!(slot_matches_payload(
+            &KnowledgeSlot::RelationJoinRule,
+            &join
+        ));
+        let metric = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into()],
+            None,
+        )
+        .unwrap();
+        assert!(slot_matches_payload(
+            &KnowledgeSlot::MetricDefinition,
+            &metric
+        ));
+    }
+
+    #[test]
+    fn join_rule_and_metric_mismatch_other_slots() {
+        let join = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id",
+            None,
+        )
+        .unwrap();
+        assert!(!slot_matches_payload(&KnowledgeSlot::TableGrain, &join));
+        assert!(!slot_matches_payload(
+            &KnowledgeSlot::MetricDefinition,
+            &join
+        ));
+        let metric = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into()],
+            None,
+        )
+        .unwrap();
+        assert!(!slot_matches_payload(&KnowledgeSlot::TableGrain, &metric));
+        assert!(!slot_matches_payload(
+            &KnowledgeSlot::RelationJoinRule,
+            &metric
+        ));
     }
 }

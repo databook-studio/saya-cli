@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{AiProvider, ConfigFile, ConnectionsFile};
+use crate::{AiProvider, ConfigFile, ConnectionsFile, ThemeChoice};
 
 /// Command-line values which have the highest configuration precedence.
 #[derive(Debug, Clone, Default)]
@@ -10,6 +10,9 @@ pub struct CliOverrides {
     pub model: Option<String>,
     pub allow_data_sharing: Option<bool>,
     pub max_rows: Option<usize>,
+    pub candidates: Option<usize>,
+    pub show_thinking: Option<bool>,
+    pub theme: Option<ThemeChoice>,
     /// Explicitly trust security-critical settings from the project layer's
     /// `.saya/config.toml` (`ai.base_url`, `ai.api_key`,
     /// `ai.allow_data_sharing`, `run.read_only`). Off by default because a

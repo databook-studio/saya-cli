@@ -5,19 +5,20 @@
 use super::runtime::RuntimeConfig;
 use saya_config::{AiProvider, MapSecretResolver, SecretResolver};
 use saya_types::DatabaseProfile;
+use url::Url;
 
 /// A doctor diagnosis: the report lines and whether the setup can plausibly run
 /// a query. `can_run_query` is false when nothing is configured or the selected
 /// profile cannot connect (an unresolved secret); warnings stay true here, so a
 /// missing cloud API key or an ignored project override does not by itself make
-/// doctor fail. See S18 Q4.
+/// doctor fail.
 pub(crate) struct DoctorReport {
     pub(crate) lines: Vec<String>,
     pub(crate) can_run_query: bool,
 }
 
 impl DoctorReport {
-    /// Q4: 0 when the setup can run a query, 3 (connection/config) when it cannot.
+    /// 0 when the setup can run a query, 3 (connection/config) when it cannot.
     pub(crate) fn exit_code(&self) -> i32 {
         if self.can_run_query { 0 } else { 3 }
     }
@@ -58,7 +59,7 @@ pub(crate) fn summary(runtime: &RuntimeConfig) -> String {
 
 /// Actionable next steps. The factual lines above stay; this only adds. A first
 /// run that "ends somewhere" needs doctor to say what to do, not just that
-/// something is missing — see S18 deliverable 4.
+/// something is missing.
 fn advice_lines(runtime: &RuntimeConfig, selected_unresolved: bool) -> Vec<String> {
     let mut advice: Vec<String> = Vec::new();
     if runtime.config_path.is_none() && runtime.connections_path.is_none() {
@@ -182,6 +183,11 @@ fn profile_secrets(profile: &DatabaseProfile) -> Vec<&saya_types::SecretRef> {
             password, ssl_ca, ..
         } => password.iter().chain(ssl_ca.iter()).collect(),
         DatabaseProfile::DuckDb { .. } | DatabaseProfile::Sqlite { .. } => Vec::new(),
+        DatabaseProfile::ClickHouse { password, .. } => password.iter().collect(),
+        DatabaseProfile::BigQuery {
+            service_account_key,
+            ..
+        } => std::iter::once(service_account_key).collect(),
         DatabaseProfile::Snowflake {
             private_key,
             password,
@@ -214,19 +220,29 @@ fn provider_endpoint(provider: AiProvider, base_url: Option<&str>) -> Option<(St
         .map(|(_, host, port)| ((*host).to_string(), *port))
 }
 
-/// Minimal `scheme://host[:port]` extraction without pulling in a URL crate.
-/// A string without a scheme is not treated as a host.
+/// Host/port the AI provider would be contacted on, parsed from `base_url`
+/// with `url::Url`. Returns `None` when there is no usable endpoint: a string
+/// without a scheme is not an endpoint, a `mailto:`-style URL carries no host,
+/// and an empty authority has no host to probe. The port defaults from the
+/// scheme (`https` => 443, `http` => 80); schemes with no known default are not
+/// probed. IPv6 hosts are returned without their brackets, matching the display
+/// shape of the `probe:` line.
 fn parse_host_port(url: &str) -> Option<(String, u16)> {
+    // `Url::parse` is lenient about an empty authority: for a special scheme it
+    // folds a leading path segment into the host ("http:///path" => host
+    // "path"), which would have doctor probe a string that is not a host. A URL
+    // whose authority is empty is therefore rejected from the raw input before
+    // parsing, so `Url::parse` is only reached when there is a host to extract.
     let scheme_end = url.find("://")?;
-    let is_tls = url[..scheme_end].eq_ignore_ascii_case("https");
-    let after_scheme = &url[scheme_end + 3..];
-    let authority = after_scheme.split(['/', '?', '#']).next()?;
-    let authority = authority.rsplit('@').next()?;
-    if let Some((host, port)) = authority.rsplit_once(':') {
-        let trimmed = host.trim_matches(|character| character == '[' || character == ']');
-        return Some((trimmed.to_string(), port.parse().ok()?));
+    let authority_start = scheme_end + 3;
+    let first = url.as_bytes().get(authority_start).copied()?;
+    if matches!(first, b'/' | b'?' | b'#') {
+        return None;
     }
-    Some((authority.to_string(), if is_tls { 443 } else { 80 }))
+    let parsed = Url::parse(url).ok()?;
+    let host = parsed.host_str()?.trim_matches(|c| c == '[' || c == ']');
+    let port = parsed.port_or_known_default()?;
+    Some((host.to_string(), port))
 }
 
 /// What doctor says about the AI side before any network I/O.
@@ -292,6 +308,67 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("unauthenticated")));
         let lines = provider_lines(AiProvider::Anthropic, None, true);
         assert!(!lines.iter().any(|line| line.contains("unauthenticated")));
+    }
+
+    #[test]
+    fn parse_host_port_extracts_a_plain_https_host_and_port() {
+        assert_eq!(
+            parse_host_port("https://api.openai.com:5432"),
+            Some(("api.openai.com".into(), 5432))
+        );
+    }
+
+    #[test]
+    fn parse_host_port_strips_userinfo_before_host_and_port() {
+        // The authority after the last `@` is what is probed; a password or
+        // username never reaches the host/port split.
+        assert_eq!(
+            parse_host_port("https://user:pass@host:5432"),
+            Some(("host".into(), 5432))
+        );
+        // Userinfo in front of an IPv6 literal with no explicit port still
+        // resolves to the host and the scheme's default port.
+        assert_eq!(
+            parse_host_port("https://user:pass@[::1]"),
+            Some(("::1".into(), 443))
+        );
+    }
+
+    #[test]
+    fn parse_host_port_handles_ipv6_literals() {
+        assert_eq!(
+            parse_host_port("http://[::1]:5432"),
+            Some(("::1".into(), 5432))
+        );
+        // No port: the scheme's default port is used so the host is still probed.
+        assert_eq!(
+            parse_host_port("https://[2001:db8::1]"),
+            Some(("2001:db8::1".into(), 443))
+        );
+    }
+
+    #[test]
+    fn parse_host_port_rejects_strings_without_a_scheme() {
+        // A bare hostname or host:port is not an endpoint; callers rely on None
+        // here so doctor reports "no endpoint to check" instead of probing one.
+        assert_eq!(parse_host_port("api.openai.com"), None);
+        assert_eq!(parse_host_port("localhost:11434"), None);
+        assert_eq!(parse_host_port("not a url"), None);
+    }
+
+    #[test]
+    fn parse_host_port_rejects_an_empty_authority() {
+        // `http:///path` has no host; probing it would dial an empty address.
+        assert_eq!(parse_host_port("http:///path"), None);
+    }
+
+    #[test]
+    fn provider_lines_probe_an_ipv6_endpoint_without_an_explicit_port() {
+        let lines = provider_lines(AiProvider::Ollama, Some("http://[::1]"), true);
+        assert!(
+            lines.iter().any(|line| line.contains("probe: ::1:80")),
+            "doctor should probe the IPv6 endpoint on the http default port: {lines:?}"
+        );
     }
 }
 

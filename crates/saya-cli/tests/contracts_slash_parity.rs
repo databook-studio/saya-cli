@@ -202,7 +202,7 @@ async fn contracts_list_slash_and_headless_agree_on_claim_ids_and_order() {
 
 // ---------------------------------------------------------------------------
 // 2. /contracts <t> (and its /contract alias) and `saya contracts show <t>`
-//    produce the same contract. S13 merged `/contracts` and `/contract` into one
+//    produce the same contract. A later change merged `/contracts` and `/contract` into one
 //    command whose optional argument selects the operation; this asserts the
 //    merged spelling translates to the same `Show` the headless parser builds,
 //    and that the kept `/contract` alias produces byte-identical output.
@@ -654,7 +654,7 @@ async fn remember_too_few_args_reports_usage_without_panicking() {
 
 // ---------------------------------------------------------------------------
 // 9. An unopenable store. Parity with the headless path is what matters here
-//    (spec §2, the rule this slice enforces). Every assertion here compares
+//    Every assertion here compares
 //    against the headless result rather than a hardcoded code — a parity test
 //    that pins an exit value stops testing parity the moment the shared
 //    behaviour changes. `/contract`,

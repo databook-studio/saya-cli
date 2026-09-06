@@ -602,7 +602,7 @@ async fn decide_confirm_on_candidate_confirms_and_on_confirmed_conflicts() {
 
     let candidate_id = seed_candidate(&store, &runtime, "orders").await;
     // The full stored id is a prefix of itself, so `decide` resolves it to
-    // exactly one claim (spec invariant 1a).
+    // exactly one claim.
     let prefix = candidate_id.as_str().to_string();
 
     // 1. Pending → Active: the candidate is confirmed.
@@ -1148,6 +1148,8 @@ fn orders_table() -> Table {
             data_type: "bigint".into(),
             nullable: false,
         }],
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -1389,6 +1391,8 @@ async fn remember_column_claim_against_cached_schema_snapshots_real_type() {
                 name: "public".into(),
                 tables: vec![Table {
                     name: "orders".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![Column {
                         name: "id".into(),
                         data_type: "bigint".into(),
@@ -1727,6 +1731,8 @@ async fn seed_drifted_active_claim(
                 name: "public".into(),
                 tables: vec![Table {
                     name: table.into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![Column {
                         name: "id".into(),
                         data_type: "bigint".into(),
@@ -1836,8 +1842,8 @@ async fn queue_distinguishes_candidate_from_stale_in_output() {
 }
 
 // ---------------------------------------------------------------------------
-// S12 evidence — the `decide` command covers every capability `review` had, so
-// retiring `review` loses nothing. Two differences matter (spec invariant 1):
+// the `decide` command covers every capability `review` had, so
+// retiring `review` loses nothing. Two differences matter:
 //   (a) `review` took a full claim id; `decide` takes a prefix with a
 //       `MIN_PREFIX_LEN` floor. A full-length id is a prefix of itself, so it
 //       must resolve to exactly one claim.
@@ -1849,7 +1855,7 @@ async fn queue_distinguishes_candidate_from_stale_in_output() {
 // ---------------------------------------------------------------------------
 
 /// `decide` accepts a full-length claim id as a prefix of itself and resolves
-/// it to exactly one claim (spec invariant 1a). `review` took the full id;
+/// it to exactly one claim. `review` took the full id;
 /// `decide` takes a prefix — a full id is the degenerate prefix that matches
 /// only itself.
 #[tokio::test]
@@ -2081,7 +2087,7 @@ async fn decide_refuses_an_ambiguous_prefix_at_runtime_not_parse_time() {
 }
 
 // ---------------------------------------------------------------------------
-// S12 — the retired `review` subcommand is gone, and its replacement `decide`
+// the retired `review` subcommand is gone, and its replacement `decide`
 // is what `--help` advertises. `review` was undocumented (never in `docs/`) and
 // nothing routes to it but the CLI and a pass-through TUI arm; `decide` covers
 // every capability it had (proven above). The illegal `--confirm --reject`
@@ -2089,8 +2095,8 @@ async fn decide_refuses_an_ambiguous_prefix_at_runtime_not_parse_time() {
 // single `--decision` ValueEnum clap rejects at parse time.
 // ---------------------------------------------------------------------------
 
-/// `saya contracts review …` no longer parses: the subcommand is gone (S12 Q1,
-/// outright removal). clap reports an unrecognized subcommand rather than
+/// `saya contracts review …` no longer parses: the subcommand is gone. clap
+/// reports an unrecognized subcommand rather than
 /// reaching the runtime `AmbiguousReview` path the old `review` had.
 #[test]
 fn review_subcommand_no_longer_parses() {

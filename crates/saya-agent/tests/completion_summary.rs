@@ -8,7 +8,7 @@
 //!
 //! These drive `run_agent_with_sink` with a mock provider that issues one tool
 //! call, a mock executor, and a recording sink, then assert the `ToolCompleted`
-//! summary for the read-only and write directions (spec P2d §5.5).
+//! summary for the read-only and write directions.
 
 use async_trait::async_trait;
 use saya_agent::{
@@ -175,8 +175,7 @@ fn completed_summary(events: &[AgentEvent]) -> Option<&str> {
     })
 }
 
-/// A read-only tool that succeeds reports a "read-only" completion (spec P2d
-/// §5.5: the read-only direction).
+/// A read-only tool that succeeds reports a "read-only" completion.
 #[tokio::test]
 async fn read_only_tool_reports_read_only_completion() {
     let events = run_one(read_only_tool(), &OkExecutor).await;
@@ -192,7 +191,7 @@ async fn read_only_tool_reports_read_only_completion() {
 }
 
 /// A write tool that succeeds reports a "local-state write" completion, *not*
-/// "read-only" — the fix at the heart of §4 (spec P2d §5.5: the write direction).
+/// "read-only" — the fix at the heart of §4.
 #[tokio::test]
 async fn write_tool_does_not_report_read_only_completion() {
     let events = run_one(write_tool(), &OkExecutor).await;

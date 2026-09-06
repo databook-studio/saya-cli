@@ -4,7 +4,7 @@
 //! through the `ToolExecutor` surface the agent uses, against a real
 //! `SqliteStateStore`. They assert the privacy gate, the store-failure
 //! degradation, the absence of the opaque identity, and the `ToolDefinition`
-//! invariants — see .claude/specs/spec-2b3a-agent-contract-tools.md §4.
+//! invariants — see.claude/specs/spec-2b3a-agent-contract-tools.md §4.
 
 use super::*;
 use async_trait::async_trait;
@@ -107,6 +107,8 @@ fn current_table(object: &DatabaseObjectRef) -> Table {
             data_type: "bigint".into(),
             nullable: false,
         }],
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -178,6 +180,8 @@ fn slot_for(payload: &ClaimPayload) -> KnowledgeSlot {
         ClaimPayload::ColumnRole { column, .. } => KnowledgeSlot::ColumnRole {
             column: column.clone(),
         },
+        ClaimPayload::JoinRule { .. } => KnowledgeSlot::RelationJoinRule,
+        ClaimPayload::MetricDefinition { .. } => KnowledgeSlot::MetricDefinition,
         _ => panic!("no slot for payload {:?}", payload),
     }
 }
@@ -294,7 +298,7 @@ async fn contract_read_returns_one_contract_and_rejects_malformed_table() {
     );
 
     // A malformed table is a typed tool error, not a panic or an untyped string.
-    // `ToolError` (in saya-agent, untouchable from this slice) has no variant that
+    // `ToolError` (in saya-agent) has no variant that
     // names the expected form, so the form is named in the tool description the
     // model reads; the typed error is `InvalidQueryArguments` (SPEC REVIEW 2b-3a).
     let err = tools
@@ -625,6 +629,8 @@ async fn contract_read_truncates_claims_past_the_bound_and_says_so() {
                 name: obj.schema().to_string(),
                 tables: vec![Table {
                     name: obj.object().to_string(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: (0..5)
                         .map(|col| Column {
                             name: format!("c{col}"),
@@ -725,6 +731,8 @@ async fn contract_search_drops_a_stale_claim_and_says_so() {
                 name: obj.schema().to_string(),
                 tables: vec![Table {
                     name: obj.object().to_string(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![Column {
                         name: "id".into(),
                         data_type: "bigint".into(),

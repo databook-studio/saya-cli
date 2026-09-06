@@ -38,3 +38,15 @@ mod format_tests;
 #[cfg(test)]
 #[path = "tools/observations_tests.rs"]
 mod observations_tests;
+
+#[cfg(test)]
+#[path = "tools/result_shape_tests.rs"]
+mod result_shape_tests;
+
+#[cfg(test)]
+#[path = "tools/column_health_tests.rs"]
+mod column_health_tests;
+
+#[cfg(test)]
+#[path = "tools/join_check_tests.rs"]
+mod join_check_tests;

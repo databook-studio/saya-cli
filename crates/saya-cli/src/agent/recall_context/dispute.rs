@@ -3,8 +3,7 @@
 //! recall (2b-1) already detects conflicts and returns them on the contract;
 //! this module turns that typed `Vec<ContractConflict>` into the in-band marks
 //! and the per-contract summary the model reads. It consumes detection
-//! unchanged — it never drops, ranks, or resolves between conflicting claims
-//! (spec 5e §2, ADR 0002 §3).
+//! unchanged — it never drops, ranks, or resolves between conflicting claims.
 //!
 //! Presentation-only, like the rest of `recall_context`: no claim ids reach the
 //! body. The summary names the disputed kind and how many claims dispute it —
@@ -19,7 +18,7 @@ use std::fmt::Write;
 /// for every undisputed claim. Mirrors the authority markers in `render`: a
 /// reader scanning claim lines cannot miss it. `claim_line` gives a disputed
 /// claim this marker *instead of* `[confirmed] `, so a disagreement never reads
-/// as a settled instruction (spec P2a §3, 5e §1).
+/// as a settled instruction.
 pub(super) const DISPUTE_MARKER: &str = "[disputed] ";
 
 /// The ids of every claim that participates in any conflict on this contract.

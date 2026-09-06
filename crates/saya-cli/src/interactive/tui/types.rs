@@ -5,12 +5,83 @@ use super::complete::Candidate;
 use super::history::History;
 use super::input::InputBuffer;
 use super::transcript::Transcript;
+use super::usage_totals::UsageTotals;
 use crate::config::runtime::RuntimeConfig;
+use saya_agent::TokenUsage;
 use saya_store::{RedactedSession, SqliteStateStore};
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
+
+/// Session-wide token usage accumulator. Sums every field the usage-accounting
+/// slice widened `TokenUsage` with, kept in two labelled totals: the answering
+/// call and the post-turn extraction (learning) call. The `Option` fields are
+/// tracked with a "was this ever reported?" flag so a cache hit rate over
+/// unreported data renders as **unknown**, never 0% — absent is not zero.
+///
+/// In-memory only: the `SessionState` field carrying this is `#[serde(skip)]`,
+/// so it never enters a persisted session file. `/clear` resets it, matching
+/// the conversation reset.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SessionUsage {
+    pub(crate) answering: UsageTotals,
+    pub(crate) learning: UsageTotals,
+    /// Whether any extraction call reported usage. A provider that reported
+    /// nothing (`None`) leaves this false so the learning section is omitted
+    /// entirely — absent is not zero, and the section would otherwise show a
+    /// misleading row of zeros.
+    pub(crate) learning_reported: bool,
+}
+
+impl SessionUsage {
+    /// Folds one answering turn's usage into the answering total. A silent
+    /// provider produces an all-zero `TokenUsage`, which the accumulator skips
+    /// so a usage-less turn adds nothing.
+    pub(crate) fn record(&mut self, usage: &TokenUsage) {
+        self.answering.record(usage);
+    }
+
+    /// Folds one extraction call's usage into the learning total. `None` (the
+    /// provider reported nothing) skips entirely — absent is not zero, and
+    /// must stay distinguishable from a reported zero, which is recorded as a
+    /// counted call with zero tokens.
+    pub(crate) fn record_learning(&mut self, usage: Option<TokenUsage>) {
+        if let Some(usage) = usage {
+            self.learning_reported = true;
+            self.learning.record_call(&usage);
+        }
+    }
+
+    /// Renders the session usage breakdown for `/usage`. The answering section
+    /// is shown whenever there were answering turns; the learning section
+    /// appears only when an extraction call reported usage, so a session with
+    /// learning disabled renders exactly what it did before the learning total
+    /// existed. Each section states the hit-rate formula so a rate over a
+    /// merged denominator is never implied.
+    pub(crate) fn render(&self) -> String {
+        let answering_empty = self.answering.turns == 0;
+        let learning_empty = !self.learning_reported;
+        if answering_empty && learning_empty {
+            return "No token usage reported yet this session.".into();
+        }
+        let mut out = String::new();
+        if !answering_empty {
+            out.push_str(&self.answering.render_section("Session token usage"));
+        }
+        if !learning_empty {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(&self.learning.render_section("Learning call"));
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+#[path = "types_tests.rs"]
+mod tests;
 
 /// Largest number of text rows the input box grows to before it stops expanding.
 pub(crate) const MAX_INPUT_ROWS: usize = 6;
@@ -105,6 +176,19 @@ pub(crate) struct LastQuery {
     pub(crate) connection: Option<String>,
 }
 
+/// Presentation state for wide result tables. This is view state: the
+/// transcript block text stays the full, untruncated table (what copy and
+/// persistence see), and these fields only change how a table is painted.
+/// `h_offset` is the first column index shown in the scroll region;
+/// `pin_first` holds column 0 in place while the rest scroll; `columns`
+/// restricts the view to named columns (`None` shows all).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WideTableView {
+    pub(crate) h_offset: usize,
+    pub(crate) pin_first: bool,
+    pub(crate) columns: Option<Vec<String>>,
+}
+
 /// Interactive application state.
 pub(crate) struct App {
     pub(crate) input: InputBuffer,
@@ -138,6 +222,9 @@ pub(crate) struct App {
     )>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
+    /// Horizontal-scroll / column-selection state for wide result tables.
+    /// Lives on the view, never on the transcript data.
+    pub(crate) wide_table: WideTableView,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) state_db: SqliteStateStore,
     pub(crate) should_quit: bool,

@@ -54,4 +54,8 @@ brand-guidelines (`github.com/anthropics/skills`).
 | Inline `code` in answers | Code blue `#7fb5d6` |
 | Selection-mode badge | Iris bg, black text |
 
-Tuned for dark terminals (the common case); the hues stay legible on light backgrounds too.
+Tuned for dark terminals (the common case). A light palette lives beside it
+behind the same accessors — selected via `[ui] theme = "light"` or
+`--theme light` — with deeper hues that keep the same semantic mapping
+(iris accent, blue user, warm-gray secondary, green/amber/red status) legible
+on a light ground. `auto` honours `COLORFGBG` and falls back to dark.

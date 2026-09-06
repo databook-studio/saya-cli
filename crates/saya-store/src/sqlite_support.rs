@@ -12,7 +12,13 @@ pub(crate) fn prepare_path(path: &Path) -> Result<(), StoreError> {
         .unwrap_or_else(|| Path::new("."));
     #[cfg(unix)]
     let existed = parent.exists();
-    fs::create_dir_all(parent).map_err(|_| StoreError::Unavailable)?;
+    // A directory that cannot be created here can never be created: a parent
+    // component is a regular file, the filesystem denies access, or it is
+    // read-only. That is a permanent condition, not the transient write-lock
+    // contention `Unavailable` exists for, so it is reported as `OpenFailed`
+    // and the opener fails fast instead of retrying an unopenable path for the
+    // full busy ceiling.
+    fs::create_dir_all(parent).map_err(|_| StoreError::OpenFailed)?;
     #[cfg(unix)]
     if !existed {
         set_mode(parent, 0o700)?;

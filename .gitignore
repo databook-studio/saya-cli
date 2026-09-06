@@ -21,6 +21,18 @@
 /.cursor/
 /.claude/
 /docs/standards/
+# Per-vertical 101 guides for agents working in this tree — internal
+# methodology like the standards above, and regenerated rather than reviewed.
+/docs/verticals/
 
 # insta writes these beside a failing snapshot; they are review artefacts, never committed
 *.snap.new
+.bench/
+vendor/
+# Third-party sources pulled in for reading while working on a driver.
+# They take no part in the build — cargo fetches dependencies itself.
+vendor-src/
+
+# Python bytecode from the benchmark harness — embeds absolute source paths.
+__pycache__/
+*.py[cod]

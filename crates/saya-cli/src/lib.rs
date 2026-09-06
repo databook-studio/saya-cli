@@ -5,7 +5,7 @@ mod cli;
 mod commands;
 mod config;
 mod connection;
-#[allow(dead_code)] // contract ops surface for the adapter slices (2b-2/3/4) not yet wired in
+#[allow(dead_code)] // contract ops surface, not yet wired into an adapter
 mod contracts;
 mod interactive;
 mod render;
@@ -24,7 +24,7 @@ use clap::Parser;
 pub use app::run;
 pub use cli::{
     ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
-    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg,
+    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg, ThemeArg,
 };
 pub use commands::{capture_output_start, capture_output_take, run_contracts};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};

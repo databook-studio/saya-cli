@@ -176,6 +176,8 @@ mod tests {
                     nullable: *nullable,
                 })
                 .collect(),
+            primary_key: vec![],
+            foreign_keys: vec![],
         }
     }
 
@@ -453,6 +455,8 @@ mod tests {
         );
         let absent_table = schema_with(saya_types::Table {
             name: "other".into(),
+            primary_key: vec![],
+            foreign_keys: vec![],
             columns: vec![Column {
                 name: "id".into(),
                 data_type: "bigint".into(),

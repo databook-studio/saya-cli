@@ -119,6 +119,17 @@ impl ConnectionRegistry {
             .map(|(name, _)| name)
     }
 
+    /// The dialect of every connection, in registration order.
+    ///
+    /// Callers that must phrase something per engine — SQL naming rules, for
+    /// one — need this even when `describe_context` stays silent because there
+    /// is only a single connection.
+    pub(crate) fn dialects(&self) -> impl Iterator<Item = SqlDialect> + '_ {
+        self.names
+            .iter()
+            .filter_map(|name| self.map.get(name).map(|entry| entry.dialect))
+    }
+
     /// System-prompt addendum listing every connection and its dialect, instructing the
     /// model to pass the `connection` argument and inspect each database separately then
     /// combine findings. Returns None when there is <= 1 connection (no navigation needed).

@@ -14,7 +14,10 @@ fn json_owned(value: DuckValue) -> Value {
         DuckValue::SmallInt(value) => Value::from(value),
         DuckValue::Int(value) => Value::from(value),
         DuckValue::BigInt(value) => Value::from(value),
+        // JSON numbers cannot hold 128 bits without losing precision, so both
+        // wide integers travel as their decimal text.
         DuckValue::HugeInt(value) => Value::String(value.to_string()),
+        DuckValue::UHugeInt(value) => Value::String(value.to_string()),
         DuckValue::UTinyInt(value) => Value::from(value),
         DuckValue::USmallInt(value) => Value::from(value),
         DuckValue::UInt(value) => Value::from(value),
@@ -23,7 +26,10 @@ fn json_owned(value: DuckValue) -> Value {
         DuckValue::Double(value) => Value::from(value),
         DuckValue::Decimal(value) => Value::String(value.to_string()),
         DuckValue::Text(value) | DuckValue::Enum(value) => Value::String(value),
-        DuckValue::Blob(value) => {
+        // Geometry arrives as well-known binary, which has no JSON form; hex
+        // matches how a blob is rendered so a caller reads bytes the same way
+        // whichever column they came from.
+        DuckValue::Blob(value) | DuckValue::Geometry(value) => {
             Value::String(value.iter().map(|byte| format!("{byte:02x}")).collect())
         }
         DuckValue::Date32(value) => Value::String(date(value)),
@@ -52,6 +58,11 @@ fn json_owned(value: DuckValue) -> Value {
                 .collect(),
         ),
         DuckValue::Union(value) => json_owned(*value),
+        // `duckdb::types::Value` is non-exhaustive, so a release can add a
+        // kind this build has never seen. Rendering its debug form keeps the
+        // row readable and visibly unrecognised, where a null would claim the
+        // column was empty and a panic would lose the whole query.
+        other => Value::String(format!("{other:?}")),
     }
 }
 
@@ -88,5 +99,41 @@ fn nanos(unit: TimeUnit, value: i64) -> i128 {
         TimeUnit::Millisecond => i128::from(value) * 1_000_000,
         TimeUnit::Microsecond => i128::from(value) * 1_000,
         TimeUnit::Nanosecond => i128::from(value),
+    }
+}
+
+#[cfg(test)]
+mod new_variant_tests {
+    use super::json_owned;
+    use duckdb::types::Value as DuckValue;
+    use serde_json::Value;
+
+    /// Both 128-bit integers exceed what a JSON number holds exactly, so they
+    /// travel as decimal text rather than silently losing their low bits.
+    #[test]
+    fn wide_integers_keep_their_digits() {
+        assert_eq!(
+            json_owned(DuckValue::UHugeInt(u128::MAX)),
+            Value::String(u128::MAX.to_string())
+        );
+        assert_eq!(
+            json_owned(DuckValue::HugeInt(i128::MIN)),
+            Value::String(i128::MIN.to_string())
+        );
+    }
+
+    /// Geometry is well-known binary. It reads as hex like any other blob, so
+    /// a caller decodes bytes the same way whichever column produced them.
+    #[test]
+    fn geometry_reads_as_hex_like_a_blob() {
+        let bytes = vec![0x00_u8, 0x01, 0xff];
+        assert_eq!(
+            json_owned(DuckValue::Geometry(bytes.clone())),
+            json_owned(DuckValue::Blob(bytes))
+        );
+        assert_eq!(
+            json_owned(DuckValue::Geometry(vec![0x0a, 0xb0])),
+            Value::String("0ab0".into())
+        );
     }
 }

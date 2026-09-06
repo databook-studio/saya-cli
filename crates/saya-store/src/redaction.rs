@@ -66,13 +66,13 @@ fn redact_urls(value: &str) -> String {
 /// from the knowledge-admission gate so transcripts get the same coverage.
 ///
 /// Three holes closed here vs. the `dd3d110` version:
-/// - a header is matched anywhere in a line (invariant 2), not only at the
+/// - a header is matched anywhere in a line, not only at the
 ///   start — pasted `curl -H '...'` is the real shape;
-/// - a header value is redacted to end of line (invariant 3), and the
+/// - a header value is redacted to end of line, and the
 ///   `[redacted]` marker keeps its closing bracket when the line continues;
 /// - a private-key block with a `BEGIN` and no `END` — the truncated case that
 ///   byte-capped transcripts make the *expected* one — is redacted to the end
-///   of the buffer rather than emitted verbatim (invariant 1).
+///   of the buffer rather than emitted verbatim.
 fn redact_headers_and_keys(value: &str) -> String {
     const HEADERS: [&str; 5] = [
         "authorization:",
@@ -83,9 +83,9 @@ fn redact_headers_and_keys(value: &str) -> String {
     ];
 
     // First pass: credential headers, line by line. A header is matched
-    // wherever the `name:` shape appears in the line (invariant 2), but the
+    // wherever the `name:` shape appears in the line, but the
     // colon is what distinguishes it from the bare word in a SQL comment
-    // (invariant 4). Only the earliest match matters: redacting its value to
+    //. Only the earliest match matters: redacting its value to
     // end of line consumes the rest of the line, so any later header name in
     // the same line is swallowed with it.
     let mut output = String::new();
@@ -110,7 +110,7 @@ fn redact_headers_and_keys(value: &str) -> String {
     // Second pass: PEM private-key blocks. A block is the region from a
     // `-----BEGIN` line through the following `-----END` line (end-of-line on
     // the END marker). If no END marker follows the BEGIN, the block runs to
-    // the end of the buffer (invariant 1) — a redactor fails closed.
+    // the end of the buffer — a redactor fails closed.
     let mut final_output = String::new();
     let mut cursor = 0;
     while let Some(begin) = find_ignore_ascii_case(&output[cursor..], "-----begin") {
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn truncated_private_key_emits_nothing_after_begin_marker() {
-        // Invariant 1 specifically: a PEM block with a PRIVATE KEY BEGIN and no
+        // Specifically: a PEM block with a PRIVATE KEY BEGIN and no
         // closing marker leaks nothing after the BEGIN marker.
         let pem = "before\n-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIEowSECRET\ntail-without-end";
         let out = redact(pem);
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn certificate_blocks_and_authorization_prose_stay_intact() {
-        // Invariant 4: non-secret content is never destroyed.
+        // Non-secret content is never destroyed.
         let cert = "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----";
         assert_eq!(redact(cert), cert);
         assert_eq!(

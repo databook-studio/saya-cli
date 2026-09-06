@@ -1,0 +1,10 @@
+# SQLite's maths functions — sqrt, pow, ceil, floor, mod, the logarithms and the
+# trigonometric family — exist only when SQLite is compiled with
+# SQLITE_ENABLE_MATH_FUNCTIONS, and the bundled build sqlx links does not set it.
+# Without this a distance, a rate or a rounding boundary fails on a SQLite
+# profile while working on PostgreSQL, so the engine a profile happens to point
+# at silently changes which questions can be answered.
+#
+# libsqlite3-sys reads this at build time and re-runs when it changes.
+[env]
+LIBSQLITE3_FLAGS = "-DSQLITE_ENABLE_MATH_FUNCTIONS"

@@ -8,7 +8,7 @@
 //!
 //! Decisions recorded in the SPEC REVIEW:
 //! - **Stale claims are included, plainly labelled** — excluding would discard
-//!   the query-shaping signal this slice exists to deliver.
+//!   the query-shaping signal this module exists to deliver.
 //! - **Schemas are the store-cached tree** per profile, not a live `connector`
 //!   round-trip — recall must not add a connection call on every prompt.
 //! - **Identities come from the registry** (profiles that actually connected),
@@ -22,7 +22,7 @@ mod render;
 // The single source of truth for the short rendered value a claim shows. The
 // prompt body and the recall receipt read it inside this module; the propose
 // tool reuses it so a `KnowledgeProposed` event names the same value a later
-// recall would, never a divergent one (spec P2d).
+// recall would, never a divergent one.
 pub(crate) use render::claim_value;
 
 use crate::connection::ConnectionRegistry;
@@ -38,7 +38,7 @@ use saya_types::{DatabaseObjectRef, ProfileIdentity};
 pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 
 /// Builds the context blocks for a prompt from recalled contracts, and a
-/// [`RecallReceipt`] naming exactly which claims reached the block (spec P1a).
+/// [`RecallReceipt`] naming exactly which claims reached the block.
 ///
 /// `allow_database_context == false` skips recall entirely — the store is not
 /// queried (§3.1: not querying is both cheaper and a stronger guarantee) and the
@@ -62,6 +62,7 @@ pub(crate) const BLOCK_LABEL: &str = "database-contracts";
 /// never consumes the bytes the prompt needs: [`bound_body`] drops contracts from
 /// the end (least-relevant first) until the rendered block fits, and if even the
 /// first contract does not fit it is omitted and the block is marked truncated.
+#[allow(clippy::too_many_arguments)] // each arg is a distinct, named input; grouping would obscure the call sites
 pub(crate) async fn recall_context_blocks(
     prompt: &str,
     system_prompt: Option<&str>,
@@ -70,6 +71,7 @@ pub(crate) async fn recall_context_blocks(
     bounds: RecallBounds,
     registry: &ConnectionRegistry,
     state_db: Option<&SqliteStateStore>,
+    byte_budget: usize,
 ) -> (Vec<ContextBlock>, RecallReceipt) {
     // §3.1: skip recall entirely when database context is off. Not querying is
     // both cheaper and a stronger guarantee than querying and discarding. The
@@ -106,7 +108,7 @@ pub(crate) async fn recall_context_blocks(
         bounds,
         recall_mode,
         // No candidate is admitted per-claim yet — the prompt-recall caller has
-        // no `use_candidate_once` path this slice (the `/queue` wiring is a later
+        // no `use_candidate_once` path yet (the `/queue` wiring is a later
         // slice). `None` keeps today's behaviour: the mode alone decides.
         admit_candidate: None,
         // This block is shown to the model, so a contract computed `Stale` is
@@ -136,6 +138,7 @@ pub(crate) async fn recall_context_blocks(
         system_prompt,
         prompt,
         bounds.max_bytes,
+        byte_budget,
     );
     // Claims the bounds dropped: the count-bound drops `recall` already counted
     // in `excluded_by_count_bounds`, plus the whole contracts the byte bound

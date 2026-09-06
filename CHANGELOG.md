@@ -3,7 +3,380 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.4.0 — 2026-09-06
+
+Not 0.3.3: this release changes two library-crate contracts, listed under
+**Changed (breaking, for users of the library crates)** below. Nothing changes
+for users of the `saya` binary.
+
+### Added
+
+- **`--candidates N`** answers with the best of N independent attempts, choosing
+  between them by what their queries *return* rather than what their SQL says.
+  Defaults to 1 — today's behaviour exactly, at no extra cost — because each
+  extra attempt is another full agent run. Measured on a 135-question benchmark,
+  three attempts agreed on 95% of questions, so the setting is unlikely to earn
+  its cost on a well-constrained question; it exists for the ones that are not.
+
+- **`result_shape`** runs a query and returns only its row count, whether the
+  row cap was hit, and the column names and types — never a cell value. Learning
+  that a filter matched nothing or that a join multiplied the rows should not
+  cost a thousand rows of context.
+
+- **`column_health`** reports nulls, null percentage, distinct values and zero
+  counts per column, with no values. It exists because a question once answered
+  "10,912 deliveries per day" for one driver: a date function returned NULL for
+  every row, so every driver collapsed into one group and a per-day average
+  silently became a lifetime total. Nothing errored and nothing warned.
+
+- **`join_check`** reports whether a join multiplies or drops rows before the
+  answer depends on it. A join on a non-unique key inflates every SUM and AVG
+  over the other side, and the query still succeeds and still looks plausible.
+
+- **Sessions record what actually ran.** A saved session now carries each tool
+  call — the statement, whether it succeeded, and the *shape* of its result.
+  Row values are never stored. Previously nothing durable held the SQL, so a
+  resumed session could not show what it had done.
+
+### Changed
+
+- **The agent is told what an answer should look like.** Reading every failure
+  of a 135-question benchmark, a quarter had the right numbers and the wrong
+  presentation: working columns left in, rounded values, reformatted dates, a
+  whole ranking returned where one row was asked for. The prompt now states the
+  contract — the columns asked for and no others, no rounding, ISO dates, "the
+  highest" means that row, answer every quantity the question names, and keep
+  rows tied at a cut-off.
+
+- **The dialect is the connected engine's, whatever the schema says.** A SQLite
+  file restored from a PostgreSQL dump still declares `jsonb` and `point`; the
+  model read those types, wrote PostgreSQL syntax, and every statement was
+  rejected. The prompt now says which engine it is actually talking to.
+
+### Fixed
+
+- **A statement that already failed is not run again.** One question re-sent a
+  byte-identical failing query 384 times over ten minutes, each rejected in
+  under a millisecond, until the time budget ended the run. A repeat is now
+  refused and the earlier error handed back instead, so the turn carries what is
+  needed to change approach. A run that exhausts its budget also nominates its
+  best answer rather than ending on whatever happened to run last.
+
+- **Failed queries say what was wrong.** PostgreSQL, MySQL, DuckDB, Snowflake
+  and ClickHouse reported every failure as "query failed", so a missing table, an
+  unrecognised column and a syntax error were indistinguishable and the agent had
+  nothing to correct against. Each now names the fault when it describes the
+  submitted statement — DuckDB even passes on its "did you mean …?" suggestions.
+  Faults that would echo stored data, such as a failed type conversion or a
+  constraint violation, stay redacted deliberately.
+
+- **Prompt caching works.** saya reported a cache hit rate while never asking
+  the provider to create a cache entry. It now marks the stable prefix, and the
+  previous query's text moved off the system prompt — it changed on every
+  follow-up, which discarded the cached prefix each turn. Long conversations are
+  now compacted once rather than trimmed every turn, and the context budget is
+  enforced on turns that run several tools at once, which it previously was not.
+
+- **Charts report why a query failed** instead of discarding the reason.
+
+### Fixed — earlier this cycle
+
+- **Dependency and CI action updates.** The duckdb pin moves to 1.10505.0 with
+  the decode migration that release requires, and the pinned CI actions move
+  forward. These supersede the Dependabot pull requests that proposed them.
+
+- **BigQuery can run a query at all.** Every statement failed with
+  "authentication failed". The credential was valid and the token exchange
+  succeeded; the query came back `ACCESS_TOKEN_SCOPE_INSUFFICIENT`, because
+  running a query creates a job and the `bigquery.readonly` scope permits
+  reading data and metadata but not job creation. The connector now requests
+  the scope that can run queries. Read-only is unchanged where it is actually
+  enforced — the SQL safety layer still refuses every write, and the service
+  account's IAM role is the bound no token scope can widen.
+- **BigQuery failures say what was wrong.** A missing table, an unrecognised
+  column and a table that requires a partition filter all reported the same
+  "BigQuery query failed", leaving the agent nothing to correct against; 401
+  and 403 also shared one message, which sent a reader hunting a bad key when
+  the key was fine and the permission was not. Failures whose reason code
+  describes the submitted statement now carry Google's message, an
+  unanticipated reason stays redacted, and authentication responses never echo
+  the body.
+- **BigQuery reads a public dataset's schema.** Discovery looked for
+  `INFORMATION_SCHEMA` in the project that pays for the query, so it could
+  describe only that project's own datasets. A dataset may now be written as
+  `project.dataset`, and the owning project is used both for the lookup and in
+  the reported schema. The dataset name is also validated when the connector is
+  built — it is formatted into that statement, and previously anything at all
+  was accepted.
+
+- **Snowflake sign-in works on regional and privatelink accounts.** The
+  account name sent during authentication carried the full identifier the
+  deployment is reached on, while the identity provider matches the bare
+  account — so SAML failed with "matching user is not found" on exactly those
+  accounts. The browser callback also refused the CORS preflight that precedes
+  a cross-origin token post, which stalled sign-in with no token arriving.
+- **DuckDB values added by newer releases no longer break the build or the
+  row.** Geometry reads as hex like any other blob and 128-bit unsigned
+  integers keep their digits as text, and a kind this build has never seen
+  renders visibly rather than claiming the column was empty.
+
+- **SQLite can do arithmetic again.** `sqrt`, `pow`, `ceil`, `floor`, `mod`,
+  the logarithms and the whole trigonometric family were unavailable on SQLite
+  profiles — 19 of 23 standard functions — because the bundled build was not
+  compiled with `SQLITE_ENABLE_MATH_FUNCTIONS`. Any question involving a
+  distance, a rate or a rounding boundary failed on SQLite while working on
+  PostgreSQL, so the engine a profile happened to point at silently decided
+  which questions could be answered. The released binaries and any build from
+  the repository carry the flag; installing from crates.io needs
+  `LIBSQLITE3_FLAGS=-DSQLITE_ENABLE_MATH_FUNCTIONS`, because a Cargo config
+  cannot reach a build the user starts elsewhere. The README says so.
+- **A failed SQLite query says what was wrong with it.** Every failure reported
+  the same "SQLite query failed", so a missing function, a misspelt table and a
+  typo were indistinguishable and the agent retried blind. Failures that name
+  something absent from the SQL — an unknown function, table or column, or an
+  ambiguous column — now say which name and what kind. Only that recognised set
+  is reported: the identifier came from the caller's own SQL and discloses
+  nothing about stored rows, and any other failure keeps the redacted wording.
+- **Schema discovery names tables the way the engine will accept them.** Every
+  database was reported to the model as `catalog.schema.table`, including
+  SQLite, which parses neither part, and MySQL, which has no separate schema.
+  Shown a name its own engine rejects, the model wrote it back and the
+  statement failed — measured on 87% of questions in a SQLite benchmark, each
+  costing a wasted round trip before it retried unqualified. Keys now carry the
+  depth the engine accepts, and fall back to the full name if that would make
+  two tables collide. The same rule is stated in the system prompt, for every
+  engine and regardless of memory mode.
+
+- **Assisted memory no longer records facts about columns that do not exist.**
+  Observed columns are gathered from result sets and SQL text, so a SELECT
+  alias — or a column belonging to the other side of a join — could be stored
+  as a fact about a table that never had it, then recalled later as if it were
+  real. A measured corpus held three such claims against one table. The
+  resolver now refuses a claim whose column the resolved table does not have.
+- **A model can no longer confirm its own inference.** A proposal reports
+  whether it came from the user, and a self-reported user origin was enough to
+  write a confirmed, binding claim. In a 119-fact corpus the only two confirmed
+  claims were the model's own reasoning labelled as the user's words.
+  Confirmation now requires the turn to show an assertion; without one the
+  proposal is still recorded, as the inference it is.
+
+### Changed (breaking, for users of the library crates)
+
+- **`ChatRequest`, `ChatResponse` and `TokenUsage` are now `#[non_exhaustive]`,
+  and are built through constructors.** These three types gained fields in this
+  release — three on `TokenUsage`, two each on the others — and every addition
+  broke struct-literal construction in any crate outside `saya-agent`. Marking
+  them stops that recurring: fields may be added from now on without breaking a
+  downstream build. The enums beside them were already `#[non_exhaustive]`; the
+  structs were not, which was an oversight rather than a decision.
+
+  Construct them with `ChatRequest::new(model, messages)`,
+  `ChatResponse::new(message)` and `TokenUsage::new(input, output)`, then attach
+  the optional parts: `with_tools`, `with_response_format`,
+  `with_reasoning_effort` on a request, and `with_cached_input`,
+  `with_cache_creation`, `with_reasoning` on usage. The usage builders take
+  `Option<u64>` so a call site still says plainly whether a count was reported
+  at all — `None` is "the provider did not say", which is not `Some(0)`.
+  Reading these types is unchanged; only construction moves.
+
+### Added
+
+- **Show the model's chain-of-thought on demand.** A new `[ai] show_thinking`
+  setting (default off), a `--show-thinking` flag, and a `/thinking` slash
+  command toggle the display of the model's reasoning in the transcript. It
+  arrives once per provider round-trip rather than token by token, so on a turn
+  that calls tools it appears in installments, before each call. Off by
+  default: thinking is verbose (measured at ~2x the answer length) and restates
+  database contents in prose, so a user who did not ask for it never sees it. When on, reasoning renders as a dimmed block visually
+  subordinate to the answer — never mistakable for it — using the existing
+  secondary style. What is shown is never stored: reasoning lives on the
+  per-call `ChatResponse` and the in-memory `ReasoningText` event, neither of
+  which has a field on the persisted `SessionLine` or `RedactedTurn`, so a
+  session saved while thinking is on contains none of it. `Ctrl+B` (copy
+  transcript) and `Ctrl+Y` (copy last answer) exclude thinking blocks — the
+  clipboard is a channel off-screen, and model prose that may restate row
+  values belongs on screen to the person already reading the answer, not on
+  the system clipboard; `/help thinking` names this, and names the one path
+  that is not filtered: selection mode (`Ctrl+O`) hands the screen to the
+  terminal, whose own drag-select cannot be filtered, so entering it while
+  reasoning is visible says so. The `/thinking` toggle
+  affects only subsequent turns: reasoning from earlier turns was not retained
+  and cannot be re-rendered. `show_thinking` is not security-critical — it
+  renders locally to the person who already sees the answer and cannot
+  exfiltrate anything the answer does not already show — so the project layer
+  may set it without `--trust-project-config`. The headless renderer stays
+  silent for reasoning events (a pipe has no transcript), and a content event
+  still reaches the loud path so the silence is not a blanket one.
+
+- **`ChatRequest` carries a `reasoning_effort` the extraction call sets to
+  `Minimal`, alongside the JSON mode it already set.** This is the honest lever
+  for "think less" — ask for it directly rather than suppressing reasoning as a
+  side effect of the response shape. The two are separate: `response_format` is
+  the answer's form, `reasoning_effort` is how hard to think. The extraction call
+  sets both, because the JSON shape is the only mechanism measured to actually
+  cut the chain-of-thought on the gateway in use, while the effort hint is the
+  correct lever that other endpoints honour; dropping JSON mode would silently
+  restore the multi-second waits, so the mechanism that works stays and the
+  correct lever is added alongside it. Support for the effort hint is
+  endpoint-dependent and frequently a no-op: against the configured gateway
+  (`glm-5.2`), `reasoning_effort: "minimal"` produced 223 reasoning tokens
+  against a 270-token baseline — the hint was accepted and ignored. saya reports
+  what it asked for, never that the effort was applied; whether the model
+  complied is only knowable from the reported reasoning tokens. The main agent
+  loop is unchanged: it sends nothing, leaving effort to the endpoint, so a
+  self-hosted gateway operator's own configuration wins and the main loop keeps
+  real reasoning. Each provider translates the variant it honours — OpenAI's
+  `reasoning_effort` string, Ollama's `think` boolean, Anthropic's and Gemini's
+  thinking token budgets — or drops it; a provider with no equivalent still
+  works.
+
+- **`/usage` counts the learning call, labelled apart from the answer.** Every
+  turn makes two provider calls: the one that answers, and the extraction call
+  that decides what to remember. Only the first was counted, so the session
+  total silently omitted a call you paid for — and because extraction is
+  invisible in the transcript, nothing else would have revealed the omission. A
+  total that quietly leaves something out makes every number beside it suspect.
+  The two are reported separately rather than merged, since the point is to see
+  what learning costs. A provider that reports no usage for the extraction call
+  still adds nothing to the total and stays distinguishable from one that
+  reported zeros; a timed-out extraction reports whatever the provider billed
+  rather than nothing at all.
+
+- **`contracts approve-all` approves the whole review queue — and reports
+  every item it refused.** Candidates were only ever confirmable one at a time
+  (`contracts decide --confirm <prefix>`), and a measured store held 26
+  pending candidates the user had been told about 26 times without acting —
+  the gap was the action, not the notice. The batch approves the same bounded
+  queue `contracts queue` shows (default limit 50, `--limit` overrides, clamped
+  to 200; the active profile by default, `--profile` to name another) and sends
+  **every** candidate through the same per-item validation the single-item
+  confirm applies, so a batch is expected to be a mixture: an item dismissed
+  between the queue read and the sweep is refused as a conflict, and a
+  candidate whose object the cached schema can no longer vet is refused rather
+  than rubber-stamped. Nothing is hidden and nothing is rolled back: the queue
+  is printed first on every path, then each approval and each refusal is
+  reported by claim id with the reason it was refused, and the summary names
+  both counts. Without `--yes` the command prints the queue and approves
+  nothing (the same deny-by-default `--non-interactive` applies to approvals),
+  so a script cannot bulk-confirm by accident; with `--yes` the sweep runs.
+  Exits 0 when anything was approved (or nothing was waiting) and 2 when every
+  item was refused. A partial batch is a success by design — approving 22 of
+  26 and naming the 4 refusals is the correct outcome. Slash surface:
+  `/approve-all [--yes] [limit]`. The recall receipt now also points at the
+  action the learn path already named: unconfirmed claims render as
+  `(N unconfirmed — review with /queue)`, and a recall that found nothing (or
+  found only confirmed claims) stays silent as before.
+
+### Added — earlier this cycle
+
+- **`/usage` shows session token totals and a cache hit rate that can say
+  "unknown".** The TUI printed one line per turn — `9828 tokens in · 1082
+  tokens out` — never accumulated, never showing cache or reasoning spend, and
+  nothing for the second provider call (extraction) that also spends tokens. A
+  session that ran twenty turns gave you twenty numbers and no total. `/usage`
+  now sums every field S21 added (input, output, reasoning, cached input, cache
+  creation) across the session and shows the cache hit rate as
+  `Σcached / Σinput` — a ratio of sums, not a mean of per-turn rates, stated in
+  the command's help text and in the breakdown itself so a reader knows what
+  the number is. A field no provider reported renders as `—`; the hit rate
+  renders as `unknown` when no turn reported cached tokens, never `0%`. This is
+  why S21 made the fields `Option`: a provider that omits `cached_tokens` is
+  not reporting a cache miss, and a rate computed over a missing denominator is
+  unknown, not zero. The per-turn line stays; `/usage` is the breakdown.
+
+### Added — earlier this cycle
+
+- **The model's chain-of-thought is captured — and cannot be persisted.** A
+  reasoning model's thinking was generated, billed, and dropped on the floor:
+  `glm-5.2` returns a `reasoning_content` field on every response, including
+  "reply with the single word: ok", and saya never read it. It is now parsed
+  into a new `ProviderEvent::ReasoningDelta`, accumulated per turn under the
+  same `MAX_STREAM_BYTES` bound as content (a hostile endpoint cannot stream
+  unbounded "thinking" into memory), and carried on `ChatResponse.reasoning`
+  as `Option<String>`. Four providers parse it: OpenAI-compatible
+  `delta.reasoning_content` (with `reasoning` as an alias — providers differ on
+  the spelling), Anthropic `thinking_delta.thinking` and the `thinking`
+  content block, Gemini parts marked `thought: true`, Ollama `message.thinking`.
+  A provider that reports no reasoning leaves it `None`, no error, no behaviour
+  change. The field lives on `ChatResponse` — transport for one call — and
+  **never** on `ChatMessage`, which is what gets replayed to the provider as
+  history and what session persistence is shaped around. With no reasoning
+  field on `ChatMessage`, "reasoning is never written to a session file" and
+  "reasoning is never replayed as history" are structural: there is nothing for
+  a session writer or history builder to copy. Capture is unconditional; the
+  `show_thinking` toggle that gates *display* is a later slice. This slice ends
+  when reasoning reaches `ChatResponse`.
+
+- **The model's chain-of-thought is carried across the crate boundary — and
+  still cannot be persisted, and still is not displayed.** The prior slice
+  captured reasoning on `ChatResponse.reasoning` inside `saya-agent` and bound
+  it to a turn-local it dropped. This slice forwards that dropped value onto
+  the event stream as a new `AgentEvent::ReasoningText { text }`, mirroring
+  `AssistantText` (one event per turn, the accumulated string), so the CLI
+  *can* reach the thinking. It crosses a renderer that has turned three prior
+  events into `Not implemented: unrecognized agent event` printed under a
+  correct answer in the headless `saya ask` path, each time with a green
+  suite (`KnowledgeLearningSkipped`, `KnowledgeProposed`,
+  `KnowledgeLearningStarted`): `terminal_event` renders `ReasoningText` to
+  `None` — silent, not an error — and a test pins both that and that a content
+  event still reaches the loud path, so the fix is not a blanket silence. This
+  is the one case where "renders to nothing" is a scope decision (display is
+  the next slice) rather than a nature-of-the-event decision (reasoning is
+  content, not progress); the comment names that so a future reader does not
+  conclude reasoning is progress. The TUI accepts the event and pushes nothing
+  to its transcript — display, and the `show_thinking` / `--show-thinking` /
+  `/thinking` toggle that gates it, is the next slice. The non-persistence
+  guarantee survives the crossing: reasoning lives on `ChatResponse` and on the
+  in-memory `ReasoningText` event, never on `ChatMessage`, so a session
+  (`SessionLine` / `RedactedTurn`, role + content only) and the replayed
+  provider history have nowhere to copy it — a test pins that a session
+  persisted after a reasoning turn contains none of it. A provider that reports
+  no reasoning emits nothing, byte-identical to today.
+
+- **The extraction call's token spend is no longer invisible.** The
+
+- **The extraction call's token spend is no longer invisible.** The
+  non-streaming `complete()` path now carries the usage a provider reports on
+  the returned `ChatResponse`, instead of dropping it. Three of four providers
+  (OpenAI, Anthropic, Ollama) already route `complete()` through `collect()`,
+  which drove `stream()` and threw the `Usage` event away; `collect()` now
+  threads the last usage event through. Gemini overrides `complete()` and
+  bypasses the stream, so its parsed `usageMetadata` is threaded directly. The
+  field is `Option<TokenUsage>`: `None` means the provider reported nothing,
+  distinct from `Some(TokenUsage::default())` — a silent provider is not
+  mistaken for a free one (absent is not zero, as in the prior slice). The
+  `let _ = usage(&body);` discard in the Gemini parser is gone; that parsing now
+  earns its keep. Nothing displays this yet — session totals and `/usage` are
+  the next slice; this one ends when `complete()` returns the numbers.
+
+- **Token usage can report what it does not know.** `TokenUsage` gains three
+  optional fields — `cached_input_tokens`, `cache_creation_input_tokens`, and
+  `reasoning_tokens` — parsed from each provider's wire shape (OpenAI
+  `prompt_tokens_details.cached_tokens` / `completion_tokens_details.reasoning_tokens`,
+  Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, Gemini
+  `cachedContentTokenCount` / `thoughtsTokenCount`). A provider that omits a
+  number leaves it `None`, distinct from a reported `0`: a cache hit rate over
+  unknown data is unknown, not 0%. `reasoning_tokens` is documented per field as
+  inclusive of `output_tokens` on OpenAI but separate on Gemini, so a later
+  display layer does not double-count. The two existing counters keep their type
+  and meaning, and `TokenUsage` stays `Copy`. Nothing displays these yet — that
+  is the next slice.
+
+### Changed — read this before upgrading
+
+- **The wait after an answer is shorter, because the extractor stops paying for
+  reasoning it throws away.** Post-turn extraction — the second provider call
+  that decides what to remember — ran on a reasoning model that emitted
+  thousands of chain-of-thought tokens before a ~500-token JSON answer, none of
+  which saya reads. On `glm-5.2` through the Vivanti gateway the same call that
+  took 8s (and could run to 25s) now requests JSON mode and returns in roughly
+  a second, with the same proposals. JSON mode is set for the extraction call
+  only: a turn that answers in prose still answers in prose. The OpenAI and
+  Ollama providers translate the intent; Anthropic and Gemini ignore it (the
+  prompt already asks for JSON and the fence-stripper still handles wrapped
+  output), so a provider that cannot honour it degrades to today's behaviour
+  rather than erroring. The 25s timeout stays — it guards a provider that
+  ignores the hint, not a problem this fixes.
 
 ## 0.3.2 — 2026-08-31 — first run, and an owl
 

@@ -31,6 +31,8 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("approvals", "Set approval policy for tool execution"),
     ("schema", "Inspect or refresh database schema"),
     ("doctor", "Diagnose config: secrets, provider endpoint"),
+    ("usage", "Show session token usage and cache hit rate"),
+    ("thinking", "Toggle display of the model's chain-of-thought"),
     ("sql", "Run a raw SQL query against the active profile"),
     ("export", "Export the last query result as CSV or JSON"),
     ("chart", "Render the last query as an HTML chart"),
@@ -42,6 +44,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "Browse saved sessions; opens a picker in the TUI",
     ),
     ("resume", "Resume a saved session by id"),
+    ("columns", "Choose which columns wide result tables show"),
     ("contracts", "List contracts, or show one object's contract"),
     ("contract", "Alias for /contracts"),
     ("remember", "Store a confirmed contract claim"),
@@ -49,6 +52,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("queue", "Show pending candidate claims awaiting review"),
     ("confirm", "Confirm a pending candidate claim by id prefix"),
     ("reject", "Reject a pending candidate claim by id prefix"),
+    (
+        "approve-all",
+        "Approve the whole review queue (needs --yes)",
+    ),
     ("help", "Show help for slash commands"),
     ("exit", "Exit the REPL"),
     ("quit", "Exit the REPL"),
@@ -124,6 +131,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("export", "/export <path>"),
             ("chart", "/chart [type] [path]"),
             ("explain", "/explain [sql]"),
+            ("columns", "/columns [name,name,… | all]"),
         ],
     ),
     (
@@ -134,6 +142,8 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("sessions", "/sessions"),
             ("resume", "/resume <id>"),
             ("doctor", "/doctor"),
+            ("usage", "/usage"),
+            ("thinking", "/thinking [on|off]"),
             ("help", "/help [command]"),
             ("exit", "/exit  (alias /quit)"),
         ],
@@ -147,6 +157,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("queue", "/queue [limit]"),
             ("confirm", "/confirm <prefix>"),
             ("reject", "/reject <prefix>"),
+            ("approve-all", "/approve-all [--yes] [limit]"),
         ],
     ),
 ];
@@ -192,6 +203,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "explain" => Some(
             "explain [sql] — show the query plan (EXPLAIN) for the given SQL, or the last query if omitted",
         ),
+        "columns" => Some(
+            "columns [name,name,… | all] — choose which columns wide result tables show in the TUI. Names match column headers (case-insensitive); unmatched names are ignored, and a filter that matches nothing falls back to all columns. /columns or /columns all resets. The full table is still copied by Ctrl+Y/Ctrl+B; this only changes what is painted. Example: /columns id, total   or   /columns all",
+        ),
         "clear" => Some("clear — clear the conversation and context. Example: /clear"),
         "history" => Some("history — list saved sessions as text. Example: /history"),
         "sessions" => {
@@ -200,11 +214,17 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "doctor" => Some(
             "doctor — diagnose configuration: secrets resolve? provider endpoint? Example: /doctor",
         ),
+        "usage" => Some(
+            "usage — show session token usage: input, output, reasoning, cached input, cache creation, and the cache hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a mean of per-turn rates). Fields the provider did not report show —; the hit rate shows 'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
+        ),
+        "thinking" => Some(
+            "thinking [on|off] — toggle display of the model's chain-of-thought in the transcript. Off by default: thinking is verbose (often longer than the answer) and restates database contents in prose. With no argument, toggles; with on/off, sets explicitly. Display only — reasoning is never written to a saved session, and the copy keys (Ctrl+Y, Ctrl+B) leave it out. Selection mode (Ctrl+O) hands the screen to your terminal, so a mouse drag can still copy thinking that is visible. Example: /thinking on",
+        ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
         "contracts" => Some(
             "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",
         ),
-        // `/contract` is a silent alias of the merged `/contracts` command (S13),
+        // `/contract` is a silent alias of the merged `/contracts` command,
         // so `/help contract` returns the same help rather than "no help".
         "contract" => Some(
             "contract [catalog.schema.object] — alias for /contracts: list every recalled contract, or show one object's contract when you name it. Example: /contract analytics.public.orders",
@@ -223,6 +243,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "reject" => Some(
             "reject <claim-id-prefix> — reject the claim named by its short id prefix. Example: /reject ki-a86a3f",
+        ),
+        "approve-all" => Some(
+            "approve-all [--yes] [limit] — approve every candidate in the review queue: the same set /queue shows. Each candidate still gets the per-item validation /confirm applies, so some may be refused; every approval and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /approve-all --yes",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",
@@ -296,7 +319,7 @@ mod tests {
         );
     }
 
-    /// S17 deliverable 1 — the *before* state. Today's `/help` listing is a
+    /// Today's `/help` listing is a
     /// wall of bare syntax: five lines of commands with no description, and
     /// only the last line says what anything does. This test pins that defect
     /// by name, so the report can show what changed. It asserts the inverse of
@@ -325,7 +348,7 @@ mod tests {
         );
     }
 
-    /// S17 invariant 2 — `/connect` and `/include` sit beside each other in the
+    /// `/connect` and `/include` sit beside each other in the
     /// listing and must read as a contrast: one replaces the active profile, the
     /// other adds a secondary. A user should be able to tell which is which
     /// without running `/help connect` and `/help include` separately.
@@ -356,7 +379,7 @@ mod tests {
         );
     }
 
-    /// S17 invariant 3 — there is one source of description text. The popup in
+    /// There is one source of description text. The popup in
     /// `complete.rs` and the `/help` listing here must not be two hand-maintained
     /// copies. The popup reads its descriptions from this module's
     /// [`COMMAND_DESCRIPTIONS`]; this test proves that single source covers
@@ -385,7 +408,36 @@ mod tests {
         }
     }
 
-    /// S17 — the listing groups commands under short headings, so 28 described
+    /// `/columns` is a slash command, so it needs a `/help` entry, a listing
+    /// line, and a description shared with the popup — and the help must say
+    /// that copy still yields the full table (the view filter is paint-only).
+    #[test]
+    fn columns_has_help_listing_and_copy_guarantee() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"columns"),
+            "columns is registered"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/columns [name,name,… | all]"),
+            "listing shows the /columns usage: {listing}"
+        );
+        let help = command_help("columns").expect("columns has help");
+        assert!(
+            help.contains("which columns"),
+            "/columns help names what it selects: {help}"
+        );
+        assert!(
+            help.contains("Ctrl+Y"),
+            "/columns help must say copy still yields the full table: {help}"
+        );
+        assert!(
+            description_for("columns").is_some(),
+            "columns has a popup description"
+        );
+    }
+
+    /// the listing groups commands under short headings, so 28 described
     /// commands stay scannable and `/connect` lands beside `/include` under one
     /// heading. Grouping is presentation only; it adds, renames, and removes
     /// nothing.
@@ -407,7 +459,7 @@ mod tests {
         }
     }
 
-    /// S13: the merged `/contracts` command has one help entry covering both
+    /// the merged `/contracts` command has one help entry covering both
     /// forms, and the optional argument that selects the operation is obvious —
     /// the `[…]` bracket, the prose ("or … when you name it"), and both examples.
     /// `/contract` stays documented so `/help contract` does not say "no help".

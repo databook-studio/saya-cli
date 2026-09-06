@@ -5,7 +5,7 @@ use saya_types::{ConnectionError, QueryRequest, QueryResult};
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout};
 
-use super::{auth, client::SnowflakeConnector, errors, result, status_url};
+use super::{auth, client::SnowflakeConnector, diagnose, errors, result, status_url};
 
 pub(crate) async fn execute(
     connector: &SnowflakeConnector,
@@ -66,7 +66,7 @@ async fn send(
         return Err(if status == StatusCode::UNAUTHORIZED {
             errors::auth()
         } else {
-            errors::query()
+            diagnose::query_failure(&value)
         });
     }
     Ok((status, value))
