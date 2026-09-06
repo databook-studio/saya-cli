@@ -28,10 +28,11 @@ mod stream_events;
 mod table;
 mod terminal;
 mod transcript;
-mod types;
+pub(super) mod types;
 mod ui;
 #[cfg(test)]
 mod ui_snapshot_tests;
+mod usage_totals;
 
 use super::session_state::SessionState;
 use crate::config::runtime::RuntimeConfig;
@@ -66,6 +67,10 @@ pub(crate) fn run(
         choice,
         std::io::stdout().is_terminal(),
         std::env::var_os("NO_COLOR").is_some(),
+    ));
+    ui::theme::set_theme(ui::theme::resolve_theme(
+        runtime.resolved.ui_theme,
+        std::env::var("COLORFGBG").ok().as_deref(),
     ));
     let profiles = runtime
         .connections
@@ -196,6 +201,12 @@ pub(crate) fn run(
                     app.request.started = None;
                     app.request.activity = None;
                     sql_task::complete(&task, event, &mut app.transcript, &mut app.last_query);
+                    // A new result table starts at its first column so the
+                    // view does not inherit a scroll position from an earlier,
+                    // differently-shaped table.
+                    if matches!(task.followup, sql_task::Followup::Sql { .. }) {
+                        app.wide_table.h_offset = 0;
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -212,7 +223,7 @@ pub(crate) fn run(
 
         // Advance the spinner while anything is in flight. `is_busy()` covers both an
         // agent stream and a direct-SQL command, so the status bar shows a
-        // spinner while a query runs too (invariant 1). `drain_stream` is only
+        // spinner while a query runs too. `drain_stream` is only
         // meaningful for an agent stream — a SQL task has no channel messages —
         // so it is gated on the stream itself.
         if app.is_busy() {
@@ -242,6 +253,7 @@ pub(crate) fn run(
                 Dispatch::Handled => app.reload_at_refs(state),
                 Dispatch::Agent(prompt) => app.start_agent(prompt, state),
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
+                Dispatch::SetColumns(arg) => app.set_visible_columns(arg),
                 Dispatch::SqlTask(task) => {
                     // One SQL command in flight at a time. The queued-prompt
                     // gate (`!is_busy()`, which now covers SQL tasks) is the
@@ -249,14 +261,14 @@ pub(crate) fn run(
                     // runs is held until the first finishes. This guard is the
                     // backstop — should a SqlTask reach the handler while one
                     // is already running, refuse rather than silently drop the
-                    // first result (invariant 2).
+                    // first result.
                     match app.admit_second_sql() {
                         application::SecondSqlDecision::Start => {
                             let started = std::time::Instant::now();
                             // Share the existing `Arc<RuntimeConfig>` instead of
                             // deep-cloning the whole config (resolved plaintext
                             // secrets included) onto a detached thread per
-                            // command (invariant 3).
+                            // command.
                             app.sql_task = Some((
                                 sql_task::spawn(Arc::clone(&app.runtime), task.clone()),
                                 task,
@@ -264,7 +276,7 @@ pub(crate) fn run(
                             ));
                             // Reuse the agent status fields so the status bar
                             // (which reads them) shows "running query Ns" with
-                            // a spinner while the query runs (invariant 1). A
+                            // a spinner while the query runs. A
                             // SQL task and an agent stream never run
                             // concurrently — the gate prevents dispatch while
                             // either is busy — so these fields are free to reuse.

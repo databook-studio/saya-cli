@@ -1,7 +1,7 @@
 use saya_types::DatabaseProfile;
 
 use crate::{
-    AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput,
+    AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput, ThemeChoice,
     layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
     profile_env::overlay_database_environment,
@@ -10,16 +10,42 @@ use crate::{
 const DEFAULT_MODEL: &str = "qwen2.5-coder:14b";
 
 /// Default conversation byte budget: the 256 KiB the agent loop used before
-/// this setting existed (Invariant 1 — a user with no setting changes nothing).
+/// this setting existed (a user with no setting changes nothing).
 const DEFAULT_CONTEXT_BYTE_BUDGET: usize = 256 * 1024;
 
 /// Smallest accepted `[ai] context_byte_budget`. Below this the budget is too
 /// small to hold a system prompt and a single turn, so the loop would trim away
 /// useful context on every turn — a budget of 0 trims the conversation to
 /// nothing. Matched against the existing `[memory]` range-check style rather
-/// than a silent clamp (Invariant 3). No upper bound: a user with a large
+/// than a silent clamp. No upper bound: a user with a large
 /// context window may raise it freely, which is the point of making it settable.
 const MIN_CONTEXT_BYTE_BUDGET: usize = 1024;
+
+/// Default provider retry backoff in milliseconds: three sleeps before the
+/// provider gives up. A user who sets nothing gets these.
+const DEFAULT_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1000];
+
+/// Most provider retries a config-supplied schedule may request. Each retry
+/// repeats a full failing request, so an unbounded list turns one provider
+/// failure into many; this bounds that cost while leaving room to widen beyond
+/// the three-entry default for a slow or rate-limited gateway. Each sleep is
+/// also capped at 60s by the provider HTTP layer, so worst-case backoff
+/// sleeping is this count times 60s.
+const MAX_RETRY_DELAYS: usize = 8;
+
+/// Default independent agent attempts per question. `1` is today's single-run
+/// behaviour, so a user who sets nothing changes nothing in cost or latency.
+const DEFAULT_CANDIDATES: usize = 1;
+
+/// Smallest accepted `[run] candidates`. Zero is meaningless — zero attempts
+/// answer nothing — so it is rejected rather than silently clamped to one.
+const MIN_CANDIDATES: usize = 1;
+
+/// Most independent agent attempts a config may request. Each candidate is a
+/// full agent run (model calls and database queries), so an unbounded value
+/// would let a typo start hundreds of runs and multiply a user's bill. Sixteen
+/// leaves room to opt into a wider search while keeping the worst case bounded.
+const MAX_CANDIDATES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {
@@ -29,9 +55,14 @@ pub struct ResolvedConfig {
     pub max_rows: usize,
     pub read_only: bool,
     pub max_iterations: usize,
+    /// Independent agent attempts per question. Defaults to `1` (today's
+    /// single-run behaviour); each extra candidate is a full additional agent
+    /// run. Bounded to `1..=16` at resolve time. Nothing reads this yet.
+    pub candidates: usize,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
+    pub ui_theme: ThemeChoice,
     pub memory: ResolvedMemory,
     /// Security-critical setting names (`ai.base_url`, `run.read_only`, …)
     /// that the project layer tried to override and were ignored. Empty when
@@ -54,10 +85,16 @@ pub struct ResolvedAi {
     pub idle_timeout_seconds: u64,
     /// Per-response output-token ceiling requested from the provider.
     pub max_output_tokens: u32,
+    /// Provider retry backoff in milliseconds, tried in order before the
+    /// provider gives up. An empty list means one attempt with no sleeps.
+    pub retry_delays_ms: Vec<u64>,
     /// Ceiling on the approximate byte size of the conversation the agent loop
     /// assembles. The loop trims under it instead of aborting, so a user on a
     /// model with a large context window can raise it to keep more history.
     pub context_byte_budget: usize,
+    /// Show the model's chain-of-thought in the transcript. Off by default;
+    /// display only — reasoning is never persisted regardless of this setting.
+    pub show_thinking: bool,
 }
 
 pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
@@ -108,6 +145,14 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .context_byte_budget
         .unwrap_or(DEFAULT_CONTEXT_BYTE_BUDGET);
     require_context_byte_budget(context_byte_budget)?;
+    let retry_delays_ms = file
+        .ai
+        .retry_delays_ms
+        .clone()
+        .unwrap_or_else(|| DEFAULT_RETRY_DELAYS_MS.to_vec());
+    require_retry_delays(&retry_delays_ms)?;
+    let candidates = file.run.candidates.unwrap_or(DEFAULT_CANDIDATES);
+    require_candidates(candidates)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
@@ -122,20 +167,24 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
             idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
             max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
             context_byte_budget,
+            show_thinking: file.ai.show_thinking.unwrap_or(false),
+            retry_delays_ms,
         },
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
         max_iterations: file.run.max_iterations.unwrap_or(12),
+        candidates,
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
+        ui_theme: file.ui.theme.unwrap_or(ThemeChoice::Auto),
         memory,
         ignored_project_overrides,
     })
 }
 
 /// Rejects an `[ai] context_byte_budget` below the floor with a typed error
-/// (Invariant 3), matching the `[memory]` range-check style. The upper end is
+///, matching the `[memory]` range-check style. The upper end is
 /// unbounded: a user may raise the budget to fit a larger context window, which
 /// is the reason the setting exists, so no ceiling is enforced here.
 fn require_context_byte_budget(value: usize) -> Result<(), ConfigError> {
@@ -146,6 +195,41 @@ fn require_context_byte_budget(value: usize) -> Result<(), ConfigError> {
             field: "context_byte_budget",
             value,
             min: MIN_CONTEXT_BYTE_BUDGET,
+        })
+    }
+}
+
+/// Rejects an `[ai] retry_delays_ms` schedule longer than `MAX_RETRY_DELAYS`.
+/// An empty list is allowed — it means "do not retry" (one attempt, no
+/// sleeps), which is a valid choice. Sibling to `require_context_byte_budget`
+/// in style: a typed error at resolve time rather than a silent clamp at the
+/// point of use.
+fn require_retry_delays(value: &[u64]) -> Result<(), ConfigError> {
+    if value.len() <= MAX_RETRY_DELAYS {
+        Ok(())
+    } else {
+        Err(ConfigError::SettingAboveMaximum {
+            field: "retry_delays_ms",
+            value: value.len(),
+            max: MAX_RETRY_DELAYS,
+        })
+    }
+}
+
+/// Rejects a `[run] candidates` outside `MIN_CANDIDATES..=MAX_CANDIDATES`.
+/// Zero is meaningless (zero attempts answer nothing) and an unbounded value
+/// would let a typo start hundreds of full agent runs, multiplying a user's
+/// model spend. The accepted range is reported, not just one bound, matching
+/// the `[memory]` range-check style. Sibling to `require_retry_delays`.
+fn require_candidates(value: usize) -> Result<(), ConfigError> {
+    if (MIN_CANDIDATES..=MAX_CANDIDATES).contains(&value) {
+        Ok(())
+    } else {
+        Err(ConfigError::SettingOutOfRange {
+            field: "candidates",
+            value,
+            min: MIN_CANDIDATES,
+            max: MAX_CANDIDATES,
         })
     }
 }

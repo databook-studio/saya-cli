@@ -22,11 +22,11 @@ use crate::contract::identity::validate_name;
 /// Bound on every multi-valued slot. Multi-valued slots render into the
 /// recall context block, so an unbounded list is a context-budget problem.
 /// Four keeps the worst case modest: four `table.description` values at
-/// `MAX_TEXT_CHARS` (1024) each is ~4 KB, a small slice of the 32 KB
-/// `MAX_MESSAGE_BYTES` whole-message budget; aliases are short names and
-/// negligible at four. Four is large enough that a table is never forced to
-/// drop a legitimate second alias or clarification, and small enough that a
-/// runaway list cannot crowd out the question the context is meant to help.
+/// `MAX_TEXT_CHARS` (1024) each is ~4 KB, a small slice of the conversation
+/// byte budget; aliases are short names and negligible at four. Four is large
+/// enough that a table is never forced to drop a legitimate second alias or
+/// clarification, and small enough that a runaway list cannot crowd out the
+/// question the context is meant to help.
 pub const MAX_MULTI_SLOT_VALUES: usize = 4;
 
 /// The position a piece of knowledge occupies on a database object.
@@ -45,8 +45,21 @@ pub enum KnowledgeSlot {
     TableAlias,
     TableGrain,
     TableDefaultTime,
-    ColumnDescription { column: String },
-    ColumnRole { column: String },
+    ColumnDescription {
+        column: String,
+    },
+    ColumnRole {
+        column: String,
+    },
+    /// A join condition the user taught, scoped to the local table the claim
+    /// is stored against. The joined table is carried in the payload, so the
+    /// slot itself is table-level: one table can join many targets, and several
+    /// rules for the same target coexist as alternatives.
+    RelationJoinRule,
+    /// A business metric defined over the table the claim is stored against.
+    /// The metric's underlying columns are carried in the payload so the
+    /// binding can invalidate the fact when one of them disappears.
+    MetricDefinition,
 }
 
 impl KnowledgeSlot {
@@ -65,6 +78,8 @@ impl KnowledgeSlot {
                 format!("column:{column}.description")
             }
             Self::ColumnRole { column } => format!("column:{column}.role"),
+            Self::RelationJoinRule => "relation.join_rule".to_owned(),
+            Self::MetricDefinition => "metric.definition".to_owned(),
         }
     }
 
@@ -80,6 +95,8 @@ impl KnowledgeSlot {
             "table.alias" => Some(Self::TableAlias),
             "table.grain" => Some(Self::TableGrain),
             "table.default_time" => Some(Self::TableDefaultTime),
+            "relation.join_rule" => Some(Self::RelationJoinRule),
+            "metric.definition" => Some(Self::MetricDefinition),
             _ => {
                 let rest = value.strip_prefix("column:")?;
                 if let Some(col) = rest.strip_suffix(".description") {
@@ -112,6 +129,11 @@ impl KnowledgeSlot {
             Self::TableGrain | Self::TableDefaultTime | Self::ColumnRole { .. } => {
                 SlotCardinality::Single
             }
+            // A table joins many targets, and a table carries many metrics;
+            // distinct values are distinct rows, refused past the bound.
+            Self::RelationJoinRule | Self::MetricDefinition => SlotCardinality::Multi {
+                max: MAX_MULTI_SLOT_VALUES,
+            },
         }
     }
 
@@ -211,6 +233,8 @@ mod tests {
             KnowledgeSlot::ColumnRole {
                 column: "x.role".into(),
             },
+            KnowledgeSlot::RelationJoinRule,
+            KnowledgeSlot::MetricDefinition,
         ];
         for slot in slots {
             let s = slot.as_str();
@@ -234,10 +258,36 @@ mod tests {
             KnowledgeSlot::TableDescription,
             KnowledgeSlot::TableAlias,
             KnowledgeSlot::ColumnDescription { column: "c".into() },
+            KnowledgeSlot::RelationJoinRule,
+            KnowledgeSlot::MetricDefinition,
         ] {
             assert!(!multi.cardinality().is_single());
             assert_eq!(multi.cardinality().max(), MAX_MULTI_SLOT_VALUES);
         }
+    }
+
+    /// The relation and metric slots are table-level: they carry no column, and a
+    /// table admits several of each (a table joins many targets and carries
+    /// many metrics), so they are multi-valued rather than single.
+    #[test]
+    fn relation_and_metric_slots_are_table_scoped_and_multi() {
+        for slot in [
+            KnowledgeSlot::RelationJoinRule,
+            KnowledgeSlot::MetricDefinition,
+        ] {
+            assert_eq!(slot.column(), None, "{slot} is table-scoped");
+            assert!(!slot.cardinality().is_single(), "{slot} is multi-valued");
+            assert_eq!(slot.cardinality().max(), MAX_MULTI_SLOT_VALUES);
+        }
+        // The wire spellings round-trip and stay distinct from every other slot.
+        assert_eq!(
+            KnowledgeSlot::RelationJoinRule.as_str(),
+            "relation.join_rule"
+        );
+        assert_eq!(
+            KnowledgeSlot::MetricDefinition.as_str(),
+            "metric.definition"
+        );
     }
 
     /// Two column-scoped slots for different columns are different slots
@@ -300,6 +350,11 @@ mod tests {
         assert_eq!(KnowledgeSlot::parse("table.description.extra"), None);
         assert_eq!(KnowledgeSlot::parse(""), None);
         assert_eq!(KnowledgeSlot::parse("not_a_slot"), None);
+        // A known slot family with an unknown member is still rejected, not
+        // guessed: a misspelled relation or metric kind yields None.
+        assert_eq!(KnowledgeSlot::parse("relation.bogus"), None);
+        assert_eq!(KnowledgeSlot::parse("metric.bogus"), None);
+        assert_eq!(KnowledgeSlot::parse("relation.join_rule.extra"), None);
     }
 
     /// Hard constraint (the one the task says it checks hardest): appending a

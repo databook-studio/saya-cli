@@ -92,6 +92,8 @@ impl DatabaseConnector for SchemaConnector {
                     name: "public".into(),
                     tables: vec![Table {
                         name: self.table.into(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![],
                     }],
                 }],

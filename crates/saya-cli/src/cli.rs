@@ -43,6 +43,10 @@ pub struct GlobalOptions {
     /// Override the configured row cap for query results.
     #[arg(long, value_name = "N", global = true)]
     pub max_rows: Option<usize>,
+    /// Answer with the best of N independent attempts (default 1). Each attempt
+    /// is a full agent run, so N attempts cost roughly N times as much.
+    #[arg(long, value_name = "N", global = true)]
+    pub candidates: Option<usize>,
     /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
@@ -80,6 +84,15 @@ pub struct GlobalOptions {
     /// Disable colored output (overrides the detected terminal capability).
     #[arg(long, global = true)]
     pub no_color: bool,
+    /// Colour palette for the TUI: `dark`, `light`, or `auto` (honour
+    /// `COLORFGBG`, falling back to dark when the terminal reports nothing).
+    #[arg(long, value_enum, default_value_t = ThemeArg::Auto, global = true)]
+    pub theme: ThemeArg,
+    /// Show the model's chain-of-thought in the transcript as it streams.
+    /// Off by default: thinking is verbose and restates database contents in
+    /// prose. Display only — reasoning is never persisted to a session file.
+    #[arg(long, global = true)]
+    pub show_thinking: bool,
     /// Print extraction-trace diagnostics: why a learned fact was or was not
     /// recorded after a turn (the "memory didn't record" gate).
     #[arg(long, short, global = true)]
@@ -92,6 +105,26 @@ pub enum FormatArg {
     Text,
     Json,
     Ndjson,
+}
+
+/// CLI mirror of the `[ui] theme` config setting, parsed by clap from
+/// `--theme <dark|light|auto>`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ThemeArg {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+impl ThemeArg {
+    pub fn to_choice(self) -> saya_config::ThemeChoice {
+        match self {
+            Self::Auto => saya_config::ThemeChoice::Auto,
+            Self::Dark => saya_config::ThemeChoice::Dark,
+            Self::Light => saya_config::ThemeChoice::Light,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -260,6 +293,35 @@ pub enum ContractsCommand {
         /// Profile whose claim to decide; defaults to the active profile.
         #[arg(long)]
         profile: Option<String>,
+    },
+    /// Confirm every candidate claim in the review queue — the same bounded
+    /// set `contracts queue` shows. Every candidate still goes through the
+    /// per-item validation `contracts decide --confirm` applies, so a batch is
+    /// expected to be a mixture: an item dismissed since it was queued, or one
+    /// whose object the cached schema can no longer vet, is refused. Every
+    /// approved item and every refusal (with its reason) is reported by claim
+    /// id; approved items are never rolled back. Exits 0 when anything was
+    /// approved (or nothing was waiting) and 2 when every item was refused.
+    /// Without `--yes` the queue is printed and nothing is approved.
+    //
+    // Implementation note, deliberately not a doc comment: clap prints doc
+    // comments verbatim in `--help`, so anything here is user-facing. This
+    // variant routes through the same `confirm()` the single-item decide path
+    // uses — the batch adds no validation and removes none.
+    ApproveAll {
+        /// Profile whose queue to approve; defaults to the active profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Maximum candidates to approve. Clamped to 200, exactly like
+        /// `contracts queue` — this approves the queue you were shown, not the
+        /// whole archive.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Approve. Without it the command prints the queue and approves
+        /// nothing (the same deny-by-default the `--non-interactive` approval
+        /// policy applies); with it the per-item sweep runs and reports.
+        #[arg(long)]
+        yes: bool,
     },
     /// Tombstone a claim so recall stops surfacing it.
     Forget {

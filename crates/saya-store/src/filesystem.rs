@@ -62,6 +62,18 @@ impl SessionStore for FsSessionStore {
         for turn in &mut session.turns {
             turn.user = redact(&turn.user);
             turn.assistant = redact(&turn.assistant);
+            // The tool-call arguments carry the SQL the agent ran. That text is
+            // already user-visible in the transcript and on the `--format
+            // ndjson` event stream, so persisting it discloses nothing new;
+            // redaction here is the same defense-in-depth applied to user and
+            // assistant turns — it scrubs credential-shaped substrings (a
+            // `password=` literal in a pasted query, a `postgres://u:p@host`
+            // connection string) should one ever appear in a statement. The
+            // result shape (`row_count`, column names) carries no cell values
+            // and needs no redaction.
+            for tool in &mut turn.tools {
+                tool.arguments = redact(&tool.arguments);
+            }
         }
         let path = self.path(&session.id)?;
         let temp = path.with_extension("json.tmp");

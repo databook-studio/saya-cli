@@ -43,7 +43,7 @@ pub(crate) enum ContractOpError {
     ColumnGone,
     /// [`use_candidate_once`] was called on a claim that is not a live candidate.
     /// Confirmed is refused too — already admissible by the mode, so a silent
-    /// success would let a caller believe it did something it did not (spec C §5.5).
+    /// success would let a caller believe it did something it did not.
     #[error("the claim is not a live candidate; only an unconfirmed candidate may be used once")]
     NotACandidate,
 }
@@ -55,7 +55,9 @@ impl From<StoreError> for ContractOpError {
             StoreError::Conflict => Self::Conflict,
             StoreError::Invalid => Self::Invalid,
             StoreError::LimitExceeded => Self::Limit,
-            StoreError::Unavailable | StoreError::VersionUnsupported => Self::Unavailable,
+            StoreError::Unavailable | StoreError::VersionUnsupported | StoreError::OpenFailed => {
+                Self::Unavailable
+            }
             // StoreError is #[non_exhaustive]; a future variant is a store
             // problem the adapter cannot route around, so it degrades to
             // Unavailable rather than becoming an unhandled case.

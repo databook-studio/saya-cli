@@ -72,6 +72,40 @@ pub enum DatabaseProfile {
         schema: Option<String>,
         role: Option<String>,
     },
+    #[serde(rename = "clickhouse")]
+    ClickHouse {
+        host: String,
+        port: Option<u16>,
+        database: Option<String>,
+        user: Option<String>,
+        password: Option<SecretRef>,
+        #[serde(default)]
+        secure: Option<bool>,
+    },
+    #[serde(rename = "bigquery")]
+    BigQuery {
+        /// GCP project id whose datasets the connector reads. BigQuery job
+        /// paths are scoped to a project, so this is required even though the
+        /// service account may name another.
+        project: String,
+        /// Default dataset for schema discovery and unqualified table names.
+        /// Schema discovery is scoped to one dataset at a time.
+        #[serde(default)]
+        dataset: Option<String>,
+        /// Job location such as `US` or `EU`. When unset the connector lets the
+        /// API choose, which works for single-region datasets in the default
+        /// location.
+        #[serde(default)]
+        location: Option<String>,
+        /// Per-job byte cap. BigQuery bills by bytes scanned, so this bounds
+        /// the cost of any one query. When unset the connector applies a
+        /// conservative default.
+        #[serde(default)]
+        max_bytes_billed: Option<u64>,
+        /// Service-account JSON key file contents. Read from a secret
+        /// reference, never a literal, like every other connector's password.
+        service_account_key: SecretRef,
+    },
 }
 
 const fn default_true() -> bool {
@@ -118,6 +152,8 @@ impl DatabaseProfile {
             Self::DuckDb { .. } => SqlDialect::DuckDb,
             Self::Sqlite { .. } => SqlDialect::Sqlite,
             Self::Snowflake { .. } => SqlDialect::Snowflake,
+            Self::ClickHouse { .. } => SqlDialect::ClickHouse,
+            Self::BigQuery { .. } => SqlDialect::BigQuery,
         }
     }
 }

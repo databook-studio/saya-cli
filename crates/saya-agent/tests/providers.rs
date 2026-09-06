@@ -106,10 +106,8 @@ fn read_request(stream: &mut TcpStream) -> String {
 }
 
 fn request() -> ChatRequest {
-    ChatRequest {
-        model: "test-model".into(),
-        messages: vec![ChatMessage::text("user", "hello")],
-        tools: vec![ToolDefinition {
+    ChatRequest::new("test-model", vec![ChatMessage::text("user", "hello")]).with_tools(vec![
+        ToolDefinition {
             name: "schema_discovery".into(),
             description: "schema".into(),
             read_only: true,
@@ -120,8 +118,8 @@ fn request() -> ChatRequest {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
-        }],
-    }
+        },
+    ])
 }
 fn openai(base: String) -> OpenAiCompatibleProvider {
     OpenAiCompatibleProvider::new(
@@ -438,6 +436,27 @@ async fn drain(stream: &mut saya_agent::ProviderStream) -> Vec<saya_agent::Provi
     seen
 }
 
+/// Collects every `ReasoningDelta` a stream emits, plus the `Done` sentinel.
+/// the per-provider reasoning tests assert reasoning is
+/// captured when present and absent when the wire carries none. This drain
+/// keeps the reasoning events the general `drain` drops on the floor.
+async fn drain_reasoning(
+    stream: &mut saya_agent::ProviderStream,
+) -> Vec<saya_agent::ProviderEvent> {
+    let mut seen = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            event @ saya_agent::ProviderEvent::ReasoningDelta(_) => seen.push(event),
+            saya_agent::ProviderEvent::Done => {
+                seen.push(saya_agent::ProviderEvent::Done);
+                break;
+            }
+            _ => {}
+        }
+    }
+    seen
+}
+
 #[tokio::test]
 async fn anthropic_stream_surfaces_cumulative_token_usage() {
     use saya_agent::{AnthropicProvider, ProviderEvent, TokenUsage};
@@ -460,7 +479,7 @@ async fn anthropic_stream_surfaces_cumulative_token_usage() {
     handle.join().unwrap();
     let position = events
         .iter()
-        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage { input_tokens: 12, output_tokens: 34 }))
+        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage::new(12, 34)))
         .expect("usage event with both counters must arrive");
     assert!(
         matches!(events[position + 1], ProviderEvent::Done),
@@ -505,10 +524,7 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
         .unwrap();
     let events = drain(&mut stream).await;
     handle2.join().unwrap();
-    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
-        input_tokens: 5,
-        output_tokens: 6
-    })));
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage::new(5, 6))));
 }
 
 #[tokio::test]
@@ -528,10 +544,7 @@ async fn ollama_stream_surfaces_eval_counts() {
         .unwrap();
     let events = drain(&mut stream).await;
     handle.join().unwrap();
-    assert!(events.contains(&ProviderEvent::Usage(TokenUsage {
-        input_tokens: 9,
-        output_tokens: 11
-    })));
+    assert!(events.contains(&ProviderEvent::Usage(TokenUsage::new(9, 11))));
 }
 
 #[tokio::test]
@@ -586,4 +599,208 @@ async fn unreachable_provider_error_names_the_endpoint() {
     let error = provider.complete(request()).await.unwrap_err().to_string();
     assert!(error.contains("127.0.0.1:1"), "{error}");
     assert!(error.contains("base_url"), "{error}");
+}
+
+// --- reasoning capture, one test per provider (present → captured) -------
+
+/// `delta.reasoning_content` is parsed into a
+/// `ReasoningDelta` event, which `collect()` threads onto `ChatResponse.reasoning`.
+/// The chain-of-thought is captured even though no user toggle asked for it
+/// (capture is unconditional).
+#[tokio::test]
+async fn openai_stream_captures_reasoning_content() {
+    use saya_agent::ProviderEvent;
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"I considered the time column\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n",
+        ],
+    }]);
+    let provider = openai(base);
+    let response = provider.complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    assert_eq!(
+        response.reasoning.as_deref(),
+        Some("I considered the time column"),
+        "delta.reasoning_content must reach ChatResponse.reasoning"
+    );
+
+    // Re-run the stream directly to observe the ReasoningDelta event.
+    let (base2, _, handle2) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ],
+    }]);
+    let provider = OpenAiCompatibleProvider::new(
+        ProviderSettings::new("test-model", Some(format!("{base2}/v1"))),
+        Some("k"),
+    )
+    .unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain_reasoning(&mut stream).await;
+    handle2.join().unwrap();
+    assert!(
+        events.contains(&ProviderEvent::ReasoningDelta("thinking".into())),
+        "ReasoningDelta event must be emitted: {events:?}"
+    );
+}
+
+/// a stream with no `reasoning_content`
+/// leaves `ChatResponse.reasoning` `None` — no error, no behaviour change
+///.
+#[tokio::test]
+async fn openai_stream_without_reasoning_leaves_it_none() {
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ],
+    }]);
+    let response = openai(base).complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    assert_eq!(response.reasoning, None);
+}
+
+/// `thinking_delta.thinking` is parsed
+/// into a `ReasoningDelta` event and threaded onto `ChatResponse.reasoning`.
+#[tokio::test]
+async fn anthropic_stream_captures_thinking_delta() {
+    use saya_agent::{AnthropicProvider, ProviderEvent};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"the column is nullable\"}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ],
+    }]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let response = provider.complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    assert_eq!(
+        response.reasoning.as_deref(),
+        Some("the column is nullable"),
+        "thinking_delta.thinking must reach ChatResponse.reasoning"
+    );
+
+    // Observe the ReasoningDelta event directly.
+    let (base2, _, handle2) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"t\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ],
+    }]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base2)), Some("k")).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain_reasoning(&mut stream).await;
+    handle2.join().unwrap();
+    assert!(
+        events.contains(&ProviderEvent::ReasoningDelta("t".into())),
+        "thinking_delta must emit a ReasoningDelta: {events:?}"
+    );
+}
+
+/// a stream with no `thinking` block
+/// leaves `ChatResponse.reasoning` `None` — reasoning not reported, no error.
+#[tokio::test]
+async fn anthropic_stream_without_thinking_leaves_reasoning_none() {
+    use saya_agent::AnthropicProvider;
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ],
+    }]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let response = provider.complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    assert_eq!(response.reasoning, None);
+}
+
+/// `message.thinking` is parsed into a
+/// `ReasoningDelta` and threaded onto `ChatResponse.reasoning`.
+#[tokio::test]
+async fn ollama_stream_captures_thinking() {
+    use saya_agent::{OllamaProvider, ProviderEvent};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"content\":\"\",\"thinking\":\"I considered the schema\"},\"done\":false}\n",
+            "{\"message\":{\"content\":\"ok\"},\"done\":false}\n",
+            "{\"done\":true,\"prompt_eval_count\":9,\"eval_count\":11}\n",
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let response = provider.complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    assert_eq!(
+        response.reasoning.as_deref(),
+        Some("I considered the schema"),
+        "message.thinking must reach ChatResponse.reasoning"
+    );
+
+    // Observe the ReasoningDelta event directly.
+    let (base2, _, handle2) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"thinking\":\"t\"},\"done\":false}\n",
+            "{\"message\":{\"content\":\"ok\"},\"done\":false}\n",
+            "{\"done\":true,\"prompt_eval_count\":9,\"eval_count\":11}\n",
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base2))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain_reasoning(&mut stream).await;
+    handle2.join().unwrap();
+    assert!(
+        events.contains(&ProviderEvent::ReasoningDelta("t".into())),
+        "message.thinking must emit a ReasoningDelta: {events:?}"
+    );
+}
+
+/// a chunk with no `thinking` leaves
+/// `ChatResponse.reasoning` `None`.
+#[tokio::test]
+async fn ollama_stream_without_thinking_leaves_reasoning_none() {
+    use saya_agent::OllamaProvider;
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"content\":\"ok\"},\"done\":false}\n",
+            "{\"done\":true,\"prompt_eval_count\":9,\"eval_count\":11}\n",
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let response = provider.complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.content, "ok");
+    assert_eq!(response.reasoning, None);
 }

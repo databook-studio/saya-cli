@@ -68,10 +68,8 @@ fn read_request(stream: &mut TcpStream) -> String {
 }
 
 fn request() -> ChatRequest {
-    ChatRequest {
-        model: "claude-x".into(),
-        messages: vec![ChatMessage::text("user", "hello")],
-        tools: vec![ToolDefinition {
+    ChatRequest::new("claude-x", vec![ChatMessage::text("user", "hello")]).with_tools(vec![
+        ToolDefinition {
             name: "schema_discovery".into(),
             description: "schema".into(),
             read_only: true,
@@ -82,8 +80,8 @@ fn request() -> ChatRequest {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
-        }],
-    }
+        },
+    ])
 }
 
 fn anthropic(base: String) -> AnthropicProvider {

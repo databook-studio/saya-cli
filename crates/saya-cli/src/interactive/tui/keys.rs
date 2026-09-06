@@ -38,6 +38,12 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         KeyCode::Char('b') if ctrl_mod => return app.copy_transcript(),
         KeyCode::Char('r') if ctrl_mod => return app.open_search(SearchKind::History),
         KeyCode::Char('f') if ctrl_mod => return app.open_search(SearchKind::Transcript),
+        // Wide-table view: scroll left/right one column and pin the first. These
+        // are view-only and never collide with input editing (the comma/period
+        // only act as chords with Ctrl).
+        KeyCode::Char(',') if ctrl_mod => return app.scroll_table_left(),
+        KeyCode::Char('.') if ctrl_mod => return app.scroll_table_right(),
+        KeyCode::Char('p') if ctrl_mod => return app.toggle_pin_first_column(),
         KeyCode::F(2) => return app.toggle_selection_mode(),
         KeyCode::F(3) => return app.copy_last_answer(),
         KeyCode::F(4) => return app.copy_transcript(),

@@ -98,7 +98,7 @@ pub(crate) fn osc52_copy<W: Write>(writer: &mut W, text: &str) -> io::Result<()>
     }
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-    // OSC 52 form: ESC ] 52 ; c ; <base64> BEL — `c` targets the clipboard.
+    // OSC 52 form: ESC ] 52; c; <base64> BEL — `c` targets the clipboard.
     write!(writer, "\x1b]52;c;{encoded}\x07")?;
     writer.flush()
 }

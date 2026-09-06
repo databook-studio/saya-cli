@@ -1,4 +1,4 @@
-//! Tests for the `KnowledgeSupplied` event — spec P1b.
+//! Tests for the `KnowledgeSupplied` event.
 //!
 //! Two layers:
 //! - **The pure mapping** [`crate::agent::knowledge_event::knowledge_supplied_event`] — the
@@ -25,6 +25,7 @@ use saya_agent::{
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
+    ThemeChoice,
 };
 use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -147,6 +148,8 @@ fn orders_table() -> Table {
                 nullable: false,
             },
         ],
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -229,13 +232,17 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
                 idle_timeout_seconds: 90,
                 max_output_tokens: 4096,
                 context_byte_budget: 256 * 1024,
+                show_thinking: false,
+                retry_delays_ms: vec![250, 500, 1000],
             },
             max_rows: 100,
             read_only: true,
             max_iterations: 4,
+            candidates: 1,
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
+            ui_theme: ThemeChoice::Auto,
             memory,
             ignored_project_overrides: Vec::new(),
         },
@@ -299,9 +306,10 @@ impl ChatProvider for AnswerProvider {
     }
     async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.log.lock().unwrap().push("provider");
-        Ok(ChatResponse {
-            message: ChatMessage::text("assistant", self.answer),
-        })
+        Ok(ChatResponse::new(ChatMessage::text(
+            "assistant",
+            self.answer,
+        )))
     }
 }
 
@@ -356,6 +364,8 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -406,7 +416,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
 // ===========================================================================
 // Test 2: the event is emitted BEFORE any provider request. Asserted against
 // the sink's event sequence AND a shared log the provider writes at call time,
-// not merely that the event appears (the bug this slice prevents is emitting
+// not merely that the event appears (the bug being prevented is emitting
 // after the answer).
 // ===========================================================================
 
@@ -455,6 +465,8 @@ async fn knowledge_supplied_precedes_the_provider_request() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -674,6 +686,8 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -851,9 +865,7 @@ impl ChatProvider for TurnAndExtractionProvider {
             if idx < self.turn_steps.len() {
                 Ok(self.turn_steps[idx].clone())
             } else {
-                Ok(ChatResponse {
-                    message: ChatMessage::text("assistant", "done"),
-                })
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
             }
         }
     }
@@ -885,38 +897,34 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table contains customer orders.",
-                    ),
-                },
-            ],
-            extraction_response: Ok(ChatResponse {
-                message: ChatMessage::text(
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
                     "assistant",
-                    r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
-                ),
-            }),
+                    "The orders table contains customer orders.",
+                )),
+            ],
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
+            ))),
             extraction_calls: Mutex::new(0),
         }),
         registry: registry_for("analytics", &identity),
@@ -958,7 +966,7 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
         assert_eq!(proposed[0].object, "catalog.public.orders");
         assert_eq!(proposed[0].kind, "table_alias");
         assert_eq!(proposed[0].value, "orders");
-        // The user explicitly asserted the alias, so per spec F Chunk 3 +
+        // The user explicitly asserted the alias, so
         // `ClaimOrigin::may_confirm_directly` the proposal lands `Active`, which
         // the DTO reports as `Confirmed` — a user assertion is the act of
         // confirmation, not a candidate pending it.
@@ -1003,31 +1011,29 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table was inspected successfully.",
-                    ),
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
+                    "assistant",
+                    "The orders table was inspected successfully.",
+                )),
             ],
             extraction_response: Err(ProviderError::configuration("http 500 error")),
             extraction_calls: Mutex::new(0),
@@ -1083,28 +1089,25 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
     let provider = Arc::new(TurnAndExtractionProvider {
         turn_step: Mutex::new(0),
         turn_steps: vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({
-                            "connection": "analytics",
-                            "sql": "SELECT id, status FROM catalog.public.orders",
-                        }),
-                    }],
-                    tool_call_id: None,
-                },
-            },
-            ChatResponse {
-                message: ChatMessage::text("assistant", "query completed"),
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({
+                        "connection": "analytics",
+                        "sql": "SELECT id, status FROM catalog.public.orders",
+                    }),
+                }],
+                tool_call_id: None,
+            }),
+            ChatResponse::new(ChatMessage::text("assistant", "query completed")),
         ],
-        extraction_response: Ok(ChatResponse {
-            message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
-        }),
+        extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+            "assistant",
+            r#"{"proposals": []}"#,
+        ))),
         extraction_calls: Mutex::new(0),
     });
 
@@ -1131,6 +1134,8 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SharedProvider(provider.clone())),
         registry: registry_for("analytics", &identity),
@@ -1223,28 +1228,26 @@ async fn test_anti_self_reinforcement_end_to_end() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, created_at FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                },
-                ChatResponse {
-                    message: ChatMessage::text("assistant", "Order dates checked."),
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, created_at FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text("assistant", "Order dates checked.")),
             ],
             // The model re-infers the *same* default-time claim recall already
             // supplied (`default_time_column=created_at` → slot `table.default_time`,
@@ -1252,12 +1255,10 @@ async fn test_anti_self_reinforcement_end_to_end() {
             // drops it as an exact duplicate of the supplied claim — the property
             // this test exists for. A different-slot inference would NOT be dropped,
             // so the fixture must duplicate the supplied slot+value to exercise it.
-            extraction_response: Ok(ChatResponse {
-                message: ChatMessage::text(
-                    "assistant",
-                    r#"{"proposals": [{"object_id": "T0", "slot": "table.default_time", "value": "created_at", "origin": "assistant_inferred"}]}"#,
-                ),
-            }),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.default_time", "value": "created_at", "origin": "assistant_inferred"}]}"#,
+            ))),
             extraction_calls: Mutex::new(0),
         }),
         registry: registry_for("analytics", &identity),
@@ -1325,6 +1326,8 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -1390,6 +1393,8 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
         registry: registry_for("analytics", &identity),
@@ -1477,22 +1482,18 @@ impl ChatProvider for QueryProvider {
         let mut calls = self.calls.lock().unwrap();
         if *calls == 0 {
             *calls = 1;
-            Ok(ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({ "sql": self.sql }),
-                    }],
-                    tool_call_id: None,
-                },
-            })
+            Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({ "sql": self.sql }),
+                }],
+                tool_call_id: None,
+            }))
         } else {
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-            })
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
         }
     }
 }
@@ -1527,6 +1528,8 @@ async fn a1_turn_setup(
                 name: "public".into(),
                 tables: vec![Table {
                     name: "orders".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: vec![
                         Column {
                             name: "id".into(),
@@ -1583,6 +1586,8 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
             sql: OVERRIDE_SQL,
@@ -1652,6 +1657,8 @@ async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
             sql: honoring_sql,
@@ -1710,6 +1717,8 @@ async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
             sql: unparseable_sql,
@@ -1769,6 +1778,8 @@ async fn a_candidate_claim_contradicted_emits_nothing() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
             sql: OVERRIDE_SQL,
@@ -1836,6 +1847,8 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
             sql: OVERRIDE_SQL,
@@ -1915,9 +1928,10 @@ impl ChatProvider for SleepingExtractionProvider {
                 super::super::learning::EXTRACTION_TIMEOUT + std::time::Duration::from_secs(1),
             )
             .await;
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", r#"{"proposals": []}"#),
-            })
+            Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": []}"#,
+            )))
         } else {
             let mut step = self.turn_step.lock().unwrap();
             let idx = *step;
@@ -1925,9 +1939,7 @@ impl ChatProvider for SleepingExtractionProvider {
             if idx < self.turn_steps.len() {
                 Ok(self.turn_steps[idx].clone())
             } else {
-                Ok(ChatResponse {
-                    message: ChatMessage::text("assistant", "done"),
-                })
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
             }
         }
     }
@@ -1961,31 +1973,29 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SleepingExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table contains customer orders.",
-                    ),
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
+                    "assistant",
+                    "The orders table contains customer orders.",
+                )),
             ],
             extraction_calls: Mutex::new(0),
         }),
@@ -2056,9 +2066,7 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         // A trivial turn with no tool call and a short answer: the gate would
         // decline (no object activity, <15-char answer). Memory is Off, so the
         // extraction block is never entered regardless — proving the silent path.
-        turn_steps: vec![ChatResponse {
-            message: ChatMessage::text("assistant", "ok"),
-        }],
+        turn_steps: vec![ChatResponse::new(ChatMessage::text("assistant", "ok"))],
         extraction_calls: Mutex::new(0),
     });
     struct SharedProvider(Arc<SleepingExtractionProvider>);
@@ -2083,6 +2091,8 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SharedProvider(provider.clone())),
         registry: registry_for("analytics", &identity),
@@ -2160,31 +2170,29 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
             context_byte_budget: 256 * 1024,
+            show_thinking: false,
+            retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
             turn_step: Mutex::new(0),
             turn_steps: vec![
-                ChatResponse {
-                    message: ChatMessage {
-                        role: "assistant".into(),
-                        content: String::new(),
-                        tool_calls: vec![ToolCall {
-                            id: "call-1".into(),
-                            name: "bounded_sql_query".into(),
-                            arguments: serde_json::json!({
-                                "connection": "analytics",
-                                "sql": "SELECT id, status FROM catalog.public.orders",
-                            }),
-                        }],
-                        tool_call_id: None,
-                    },
-                },
-                ChatResponse {
-                    message: ChatMessage::text(
-                        "assistant",
-                        "The orders table was inspected successfully.",
-                    ),
-                },
+                ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                }),
+                ChatResponse::new(ChatMessage::text(
+                    "assistant",
+                    "The orders table was inspected successfully.",
+                )),
             ],
             extraction_response: Err(ProviderError::configuration("http 500 error")),
             extraction_calls: Mutex::new(0),

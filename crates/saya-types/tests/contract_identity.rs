@@ -22,6 +22,8 @@ fn valid_table() -> Table {
             data_type: "bigint".into(),
             nullable: false,
         }],
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -133,6 +135,8 @@ fn make_table(columns: Vec<(&str, &str, bool)>) -> Table {
                 nullable,
             })
             .collect(),
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 

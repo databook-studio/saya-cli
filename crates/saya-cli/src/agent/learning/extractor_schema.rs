@@ -1,4 +1,4 @@
-//! Schema definitions and DTOs for structured extraction — spec F Chunk 2.
+//! Schema definitions and DTOs for structured extraction.
 //!
 //! Defines `ExtractedProposal`, `ProposalOrigin`, `ExtractionError`, and wire representations
 //! for LLM-based knowledge extraction.
@@ -101,6 +101,30 @@ pub struct RawProposalJson {
     pub origin: String,
     #[serde(default = "default_confidence")]
     pub confidence: Option<f32>,
+    /// The qualified name of the joined table, for a `relation.join_rule`
+    /// proposal. The target lives in the same profile as the object the
+    /// proposal is filed against; the harness does not resolve or validate it
+    /// against the schema, only stores it. `None` for every other slot.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// The local join keys, for a `relation.join_rule` proposal. May be empty
+    /// for a predicate-only join. `None` for every other slot.
+    #[serde(default)]
+    pub local_columns: Option<Vec<String>>,
+    /// The target join keys, for a `relation.join_rule` proposal, paired
+    /// positionally with `local_columns`. `None` for every other slot.
+    #[serde(default)]
+    pub target_columns: Option<Vec<String>>,
+    /// The metric's name, for a `metric.definition` proposal. `None` for every
+    /// other slot.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The underlying columns a `metric.definition` (or a `relation.join_rule`)
+    /// depends on. For a metric these are the columns its formula is built
+    /// from; the harness binds the fact to them so it is invalidated when one
+    /// disappears. `None` for slots that take a single `value`.
+    #[serde(default)]
+    pub columns: Option<Vec<String>>,
 }
 
 #[allow(dead_code)]
@@ -138,19 +162,24 @@ pub fn is_sensitive_or_credential_value(val: &str) -> bool {
     patterns.iter().any(|&p| lower.contains(p))
 }
 
-/// Parses slot and value (with an optional reason) into a validated
-/// `ClaimPayload`. The reason is forwarded to the directive constructors only
-/// — a reason on a description or alias is dropped, since those constructors
-/// accept none. A reason that fails `validate_text` (too long, control chars)
-/// fails the whole payload rather than being silently dropped: a model that
-/// emits an oversized reason should not have it stored truncated.
+/// Parses a raw proposal into a validated `ClaimPayload`. The reason is
+/// forwarded to the directive constructors only — a reason on a description or
+/// alias is dropped, since those constructors accept none. A reason that fails
+/// `validate_text` (too long, control chars) fails the whole payload rather
+/// than being silently dropped: a model that emits an oversized reason should
+/// not have it stored truncated.
+///
+/// The multi-field slots take more than a `value`: a `relation.join_rule`
+/// carries its target table and join keys, and a `metric.definition` carries
+/// its name and underlying columns. Those arrive on the optional fields of
+/// [`RawProposalJson`]; a missing required field (a join rule with no target, a
+/// metric with no name) is a typed error rather than a guess.
 #[allow(dead_code)]
 pub fn build_claim_payload(
     slot: &KnowledgeSlot,
-    raw_value: &str,
-    reason: Option<&str>,
+    raw: &RawProposalJson,
 ) -> Result<ClaimPayload, ExtractionError> {
-    let clean = raw_value.trim();
+    let clean = raw.value.trim();
     if clean.is_empty() {
         return Err(ExtractionError::InvalidPayload("empty value".into()));
     }
@@ -159,6 +188,7 @@ pub fn build_claim_payload(
             "sensitive credential detected".into(),
         ));
     }
+    let reason = raw.reason.as_deref();
 
     match slot {
         KnowledgeSlot::TableDescription => ClaimPayload::table_description(clean)
@@ -180,8 +210,34 @@ pub fn build_claim_payload(
             ClaimPayload::column_role(column, role, reason)
                 .map_err(|e| ExtractionError::InvalidPayload(e.to_string()))
         }
+        KnowledgeSlot::RelationJoinRule => {
+            let target = required_field(raw.target.as_deref(), "join rule target")?;
+            let local_columns = raw.local_columns.clone().unwrap_or_default();
+            let target_columns = raw.target_columns.clone().unwrap_or_default();
+            ClaimPayload::join_rule(target, local_columns, target_columns, clean, reason)
+                .map_err(|e| ExtractionError::InvalidPayload(e.to_string()))
+        }
+        KnowledgeSlot::MetricDefinition => {
+            let name = required_field(raw.name.as_deref(), "metric name")?;
+            let columns = raw.columns.clone().unwrap_or_default();
+            ClaimPayload::metric_definition(name, clean, columns, reason)
+                .map_err(|e| ExtractionError::InvalidPayload(e.to_string()))
+        }
+        // `KnowledgeSlot` is non-exhaustive; a slot this build does not know
+        // how to build a payload for is rejected rather than guessed.
         _ => Err(ExtractionError::InvalidPayload(format!(
             "unsupported slot '{slot}'"
         ))),
     }
+}
+
+/// A required optional field from the raw proposal, trimmed and rejected when
+/// absent or blank. Used for the fields a multi-field slot cannot omit (a join
+/// rule's target, a metric's name) so the proposal fails closed rather than
+/// filing a half-formed fact.
+fn required_field(value: Option<&str>, what: &str) -> Result<String, ExtractionError> {
+    let trimmed = value.map(str::trim).filter(|s| !s.is_empty());
+    trimmed
+        .map(str::to_string)
+        .ok_or_else(|| ExtractionError::InvalidPayload(format!("missing {what}")))
 }

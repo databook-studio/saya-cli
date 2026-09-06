@@ -105,6 +105,8 @@ mod tests {
                     nullable,
                 })
                 .collect(),
+            primary_key: vec![],
+            foreign_keys: vec![],
         }
     }
 
@@ -245,6 +247,8 @@ mod property_tests {
                     nullable,
                 })
                 .collect(),
+            primary_key: vec![],
+            foreign_keys: vec![],
         }
     }
 
@@ -271,6 +275,8 @@ mod property_tests {
             Table {
                 name: "t".into(),
                 columns,
+                primary_key: vec![],
+                foreign_keys: vec![],
             }
         })
     }

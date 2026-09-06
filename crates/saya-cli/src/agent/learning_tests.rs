@@ -1,4 +1,4 @@
-//! Tests for the single-knob `[memory]` wiring — spec E.
+//! Tests for the single-knob `[memory]` wiring.
 //!
 //! Two layers are exercised:
 //! - The pure translations in [`super`] (`recall_mode_for`, `bounds_from`,
@@ -144,22 +144,18 @@ impl ChatProvider for OneThenDoneProvider {
         let mut calls = self.calls.lock().unwrap();
         if *calls == 0 {
             *calls = 1;
-            Ok(ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({"sql": ONE_QUERY_SQL}),
-                    }],
-                    tool_call_id: None,
-                },
-            })
+            Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql": ONE_QUERY_SQL}),
+                }],
+                tool_call_id: None,
+            }))
         } else {
-            Ok(ChatResponse {
-                message: ChatMessage::text("assistant", "done"),
-            })
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
         }
     }
 }
@@ -188,8 +184,8 @@ async fn run_one_turn(mode: MemoryMode) -> (SqliteStateStore, ProfileIdentity, P
         setup.observations.clone(),
     );
     let limits = AgentLimits {
-        max_turns: 4,
-        max_tool_calls: 8,
+        max_turns: Some(4),
+        max_tool_calls: Some(8),
         permit_candidate_writes: setup.permit_candidate_writes,
         ..saya_agent::AgentLimits::default()
     };

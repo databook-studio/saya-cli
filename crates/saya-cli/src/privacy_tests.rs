@@ -48,9 +48,7 @@ fn request() -> AgentRequest {
 }
 
 fn text_response(value: &str) -> ChatResponse {
-    ChatResponse {
-        message: ChatMessage::text("assistant", value),
-    }
+    ChatResponse::new(ChatMessage::text("assistant", value))
 }
 
 #[tokio::test]
@@ -89,18 +87,16 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = MockProvider {
         responses: Mutex::new(vec![
-            ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({"sql":"select 1"}),
-                    }],
-                    tool_call_id: None,
-                },
-            },
+            ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql":"select 1"}),
+                }],
+                tool_call_id: None,
+            }),
             text_response("done"),
         ]),
         requests: requests.clone(),
@@ -175,6 +171,8 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         idle_timeout_seconds: 90,
         max_output_tokens: 4096,
         context_byte_budget: 256 * 1024,
+        show_thinking: false,
+        retry_delays_ms: vec![250, 500, 1000],
     };
     let to_openai = crate::agent::runtime::PromptOverrides {
         provider: Some(saya_config::AiProvider::OpenaiCompatible),
@@ -210,6 +208,7 @@ fn clear_removes_canonical_turns_and_visible_messages() {
         vec![ToolMetadata {
             name: "bounded_sql_query".into(),
             status: "completed".into(),
+            ..Default::default()
         }],
     );
     assert!(state.provider_history().len() == 2);
@@ -229,6 +228,7 @@ fn canonical_redacted_turns_do_not_duplicate_legacy_messages_or_tool_payloads() 
         vec![ToolMetadata {
             name: "bounded_sql_query".into(),
             status: "completed".into(),
+            ..Default::default()
         }],
     );
     let saved = state.redacted();

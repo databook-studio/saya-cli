@@ -1,8 +1,8 @@
-//! A typed receipt for what a recall **supplied** to the model — spec P1a.
+//! A typed receipt for what a recall **supplied** to the model.
 //!
 //! This is a contract, not presentation: it carries data and IDs only, mirrors
 //! the doc style of [`super::view`], and lives here (not in a render module) for
-//! the same reason [`RecallOutcome`] does — the adapter slice that renders it is
+//! the same reason [`RecallOutcome`] does — the adapter that renders it is
 //! a later slice. Nothing displays it yet; P1b consumes it. See
 //! `.claude/specs/spec-p1a-recall-receipt.md`.
 //!

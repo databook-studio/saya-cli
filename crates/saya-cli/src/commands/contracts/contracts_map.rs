@@ -102,8 +102,27 @@ pub(crate) fn render_payload(
             Some(column.clone()),
             reason.clone(),
         ),
+        ClaimPayload::JoinRule {
+            condition, reason, ..
+        } => (
+            payload.kind().into(),
+            condition.clone(),
+            None,
+            reason.clone(),
+        ),
+        ClaimPayload::MetricDefinition {
+            name,
+            definition,
+            reason,
+            ..
+        } => (
+            payload.kind().into(),
+            format!("{name} = {definition}"),
+            None,
+            reason.clone(),
+        ),
         // `ClaimPayload` is `#[non_exhaustive]`; `Relationship` is not exposed on
-        // the CLI in this slice and any future variant is handled here too. Both
+        // the CLI yet, and any future variant is handled here too. Both
         // render a stable kind with no value, leaking neither the target object
         // nor any payload field.
         _ => (payload.kind().into(), String::new(), None, None),

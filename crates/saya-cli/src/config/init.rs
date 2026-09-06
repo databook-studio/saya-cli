@@ -18,6 +18,11 @@ temperature = 0.1
 [run]
 read_only = true
 max_rows = 1000
+
+[ui]
+# TUI colour palette: dark, light, or auto (auto honours COLORFGBG and
+# falls back to dark). The --theme flag overrides this for one invocation.
+theme = "auto"
 "#;
 
 const CONNECTIONS_TEMPLATE: &str = r#"[profiles.analytics]

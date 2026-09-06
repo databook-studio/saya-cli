@@ -180,6 +180,40 @@ fn is_reason_revision(new: &ClaimPayload, old: &ClaimPayload) -> bool {
                 ..
             },
         ) => c1 == c2 && rl1 == rl2 && rr1.is_some() && rr1 != rr2,
+        (
+            P::JoinRule {
+                target: t1,
+                local_columns: l1,
+                target_columns: g1,
+                condition: cd1,
+                reason: r1,
+                ..
+            },
+            P::JoinRule {
+                target: t2,
+                local_columns: l2,
+                target_columns: g2,
+                condition: cd2,
+                reason: r2,
+                ..
+            },
+        ) => t1 == t2 && l1 == l2 && g1 == g2 && cd1 == cd2 && r1.is_some() && r1 != r2,
+        (
+            P::MetricDefinition {
+                name: n1,
+                definition: d1,
+                columns: c1,
+                reason: r1,
+                ..
+            },
+            P::MetricDefinition {
+                name: n2,
+                definition: d2,
+                columns: c2,
+                reason: r2,
+                ..
+            },
+        ) => n1 == n2 && d1 == d2 && c1 == c2 && r1.is_some() && r1 != r2,
         // Different kinds, or a non-directive kind, never carry a reason to
         // revise — not a revision.
         _ => false,

@@ -2,13 +2,13 @@ use saya_types::{ConnectionError, QueryRequest, QueryResult};
 use serde_json::Value;
 use tokio::time::timeout;
 
-use super::{DuckDbConnector, decode::json_value};
+use super::{DuckDbConnector, decode::json_value, errors};
 
 pub(crate) async fn ping(connector: &DuckDbConnector) -> Result<(), ConnectionError> {
     run(connector, Operation::Connection, |connection| {
         connection
             .execute_batch("SELECT 1")
-            .map_err(connection_error)
+            .map_err(errors::connection)
     })
     .await
 }
@@ -21,15 +21,15 @@ pub(crate) async fn query(
     let original_sql = request.sql;
     let max_rows = request.max_rows;
     run(connector, Operation::Query, move |connection| {
-        let mut statement = connection.prepare(&sql).map_err(error)?;
-        let mut rows = statement.query([]).map_err(error)?;
+        let mut statement = connection.prepare(&sql).map_err(errors::query)?;
+        let mut rows = statement.query([]).map_err(errors::query)?;
         let columns = rows
             .as_ref()
             .map(|statement| statement.column_names())
             .unwrap_or_default();
         let mut values = Vec::new();
         let mut result_bytes = 0;
-        while let Some(row) = rows.next().map_err(error)? {
+        while let Some(row) = rows.next().map_err(errors::decode)? {
             if values.len() == max_rows {
                 return Ok(QueryResult {
                     columns,
@@ -42,7 +42,7 @@ pub(crate) async fn query(
             let cells: Vec<_> = (0..columns.len())
                 .map(|index| row.get_ref(index).map(json_value))
                 .collect::<Result<_, _>>()
-                .map_err(error)?;
+                .map_err(errors::decode)?;
             let mut row_values = Vec::with_capacity(cells.len());
             for cell in cells {
                 // Same per-cell and total-byte budgets as the other backends:
@@ -97,14 +97,6 @@ pub(crate) async fn run<T: Send + 'static>(
             Err(operation.failed("timed out"))
         }
     }
-}
-
-fn error(_: duckdb::Error) -> ConnectionError {
-    ConnectionError::query_failed("DuckDB query failed")
-}
-
-fn connection_error(_: duckdb::Error) -> ConnectionError {
-    ConnectionError::connection_failed("DuckDB connection failed")
 }
 
 #[derive(Clone, Copy)]

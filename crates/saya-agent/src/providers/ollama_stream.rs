@@ -137,6 +137,10 @@ impl State {
                 self.pending
                     .push_back(ProviderEvent::TextDelta(message.content));
             }
+            if !message.thinking.is_empty() {
+                self.pending
+                    .push_back(ProviderEvent::ReasoningDelta(message.thinking));
+            }
             for (index, call) in message.tool_calls.into_iter().enumerate() {
                 let arguments = match call.function.arguments {
                     serde_json::Value::String(value) => value,

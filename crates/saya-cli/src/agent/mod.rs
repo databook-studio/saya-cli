@@ -1,9 +1,18 @@
+// `Decision.fanout` is part of the decision contract (exercised by the decide
+// tests) but not yet consumed by the production caller; the rest of the module
+// is wired in via `candidates`.
+pub(crate) mod candidates;
+#[allow(dead_code)]
+pub(crate) mod decide;
 pub(crate) mod extraction_trace;
 pub(crate) mod knowledge_event;
 pub(crate) mod learning;
 pub(crate) mod profile;
 pub(crate) mod provider;
 pub(crate) mod recall_context;
+#[allow(dead_code)]
+// mechanism only — not yet wired into the agent loop; a later change decides when it runs
+pub(crate) mod roundtrip;
 pub(crate) mod runtime;
 pub(crate) mod state_tools;
 pub(crate) mod system_prompt;

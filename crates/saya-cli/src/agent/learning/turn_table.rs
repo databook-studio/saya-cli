@@ -1,4 +1,4 @@
-//! Turn-scoped object table and identifier mapping — spec F Chunk 1.
+//! Turn-scoped object table and identifier mapping.
 //!
 //! Provides `TurnObjectId` (`T0..Tn`) and `TurnObjectTable` to map turn-scoped
 //! identifiers to concrete database objects (Safety Property 2).
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[allow(dead_code)]
 pub const MAX_TURN_OBJECTS: usize = 10;
 
-/// A turn-scoped object identifier (`T0`, `T1`, ...) presented to the extractor.
+/// A turn-scoped object identifier (`T0`, `T1`,...) presented to the extractor.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct TurnObjectId(String);

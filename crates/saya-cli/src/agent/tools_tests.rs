@@ -31,6 +31,8 @@ impl DatabaseConnector for FakeConnector {
                     name: "public".into(),
                     tables: vec![Table {
                         name: self.table_name.clone(),
+                        primary_key: vec![],
+                        foreign_keys: vec![],
                         columns: vec![],
                     }],
                 }],
@@ -408,6 +410,28 @@ fn definitions_preserve_the_read_only_and_approval_contract() {
     assert!(all.parameters["properties"].get("connection").is_none());
 }
 
+/// `designate_answer` nominates the statement that answered the question, not
+/// an exploratory probe. Two questions nominated nothing at all and one
+/// nominated a probe in the benchmark; the description must say plainly that a
+/// probe is never the answering query.
+#[test]
+fn designate_answer_description_forbids_an_exploratory_probe() {
+    let tools = DatabaseTools::definitions(true, false, false);
+    let designate = tools
+        .iter()
+        .find(|tool| tool.name == "designate_answer")
+        .expect("designate_answer must be registered when query data is allowed");
+    let description = &designate.description;
+    assert!(
+        description.contains("never an exploratory probe"),
+        "the description must plainly forbid nominating a probe: {description}"
+    );
+    assert!(
+        description.contains("the statement that produced the answer"),
+        "the description must name the answering statement: {description}"
+    );
+}
+
 /// Spec 3a §2 / 3c: every existing tool declares the expected `local_state`.
 /// This is the test that fails when someone adds a tool without saying what
 /// local state it touches. With query data and a state store but candidate
@@ -421,6 +445,9 @@ fn every_tool_declares_its_local_state_effect() {
         ("schema_discovery", LocalStateEffect::None),
         ("bounded_sql_query", LocalStateEffect::None),
         ("bounded_sql_query_all", LocalStateEffect::None),
+        ("result_shape", LocalStateEffect::None),
+        ("column_health", LocalStateEffect::None),
+        ("join_check", LocalStateEffect::None),
         ("render_chart", LocalStateEffect::None),
         ("contract_search", LocalStateEffect::Read),
         ("contract_read", LocalStateEffect::Read),
@@ -489,6 +516,17 @@ fn tool_call_detail_surfaces_the_sql() {
     )
     .unwrap();
     assert!(detail.contains("all connected databases"), "got: {detail}");
+
+    // result_shape is a SQL tool like bounded_sql_query, so its SQL surfaces too.
+    let detail = tool_call_detail(
+        "result_shape",
+        &serde_json::json!({"sql": "SELECT 1", "connection": "warehouse"}),
+    )
+    .unwrap();
+    assert!(
+        detail.contains("SELECT 1") && detail.contains("@warehouse"),
+        "got: {detail}"
+    );
 
     // Tools without a query expose no detail.
     assert!(tool_call_detail("schema_discovery", &serde_json::json!({})).is_none());

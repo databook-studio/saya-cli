@@ -68,25 +68,25 @@ fn read_request(stream: &mut TcpStream) -> String {
 }
 
 fn request() -> ChatRequest {
-    ChatRequest {
-        model: "gemini-x".into(),
-        messages: vec![
+    ChatRequest::new(
+        "gemini-x",
+        vec![
             ChatMessage::text("system", "system prompt"),
             ChatMessage::text("user", "hello"),
         ],
-        tools: vec![ToolDefinition {
-            name: "schema_discovery".into(),
-            description: "schema".into(),
-            read_only: true,
-            parameters: serde_json::json!({"type":"object"}),
-            effect: ToolEffect {
-                database_data: false,
-                external_side_effect: false,
-                requires_approval: false,
-                local_state: LocalStateEffect::None,
-            },
-        }],
-    }
+    )
+    .with_tools(vec![ToolDefinition {
+        name: "schema_discovery".into(),
+        description: "schema".into(),
+        read_only: true,
+        parameters: serde_json::json!({"type":"object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::None,
+        },
+    }])
 }
 
 fn gemini(base: String) -> GeminiProvider {

@@ -14,6 +14,7 @@ pub(super) enum Rejection {
     Denied(String),
     RowCap,
     LockingClause,
+    FormatClause,
 }
 
 pub(super) fn rejected(reason: Rejection) -> ConnectionError {
@@ -34,6 +35,9 @@ pub(super) fn rejected(reason: Rejection) -> ConnectionError {
         Rejection::RowCap => "the row limit must be at least 1".to_string(),
         Rejection::LockingClause => {
             "FOR UPDATE/FOR SHARE takes row locks; a plain SELECT is required".to_string()
+        }
+        Rejection::FormatClause => {
+            "the FORMAT clause is reserved for the connector's own wire format; remove it from the query".to_string()
         }
     };
     ConnectionError::query_failed(format!(

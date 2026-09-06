@@ -4,27 +4,31 @@ use std::ops::ControlFlow;
 use sqlparser::{
     ast::{Expr, Query, SetExpr, Statement, Visit, Visitor},
     dialect::{
-        Dialect, DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
+        BigQueryDialect, ClickHouseDialect, Dialect, DuckDbDialect, MySqlDialect,
+        PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
     },
     parser::Parser,
 };
 
 use super::read_only_policy::{
-    BackendPolicy, DUCKDB_POLICY, MYSQL_POLICY, POSTGRES_POLICY, SNOWFLAKE_POLICY, SQLITE_POLICY,
-    denied_function, denied_relation,
+    BIGQUERY_POLICY, BackendPolicy, CLICKHOUSE_POLICY, DUCKDB_POLICY, MYSQL_POLICY,
+    POSTGRES_POLICY, SNOWFLAKE_POLICY, SQLITE_POLICY, denied_function, denied_relation,
 };
 use super::reject::{Rejection, kind, rejected};
 
 /// The single place that maps a [`SqlDialect`] to the `sqlparser` dialect the
-/// safety layer parses with. Shared by the read-only `prepare_*` functions and
-/// by object/column extraction so the two never drift apart.
-pub(super) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
+/// safety layer parses with. Shared by the read-only `prepare_*` functions,
+/// by object/column extraction, and by the fan-out probe builder so all three
+/// parse with the same dialect and never drift apart.
+pub(crate) fn parser_dialect(dialect: SqlDialect) -> &'static dyn Dialect {
     match dialect {
         SqlDialect::Postgres => &PostgreSqlDialect {},
         SqlDialect::Mysql => &MySqlDialect {},
         SqlDialect::DuckDb => &DuckDbDialect,
         SqlDialect::Snowflake => &SnowflakeDialect,
         SqlDialect::Sqlite => &SQLiteDialect {},
+        SqlDialect::ClickHouse => &ClickHouseDialect {},
+        SqlDialect::BigQuery => &BigQueryDialect,
         // `SqlDialect` is `#[non_exhaustive]`. A dialect added later must be
         // wired in explicitly; until then parse as Postgres (the broadest of the
         // five) so the safety layer still rejects or accepts based on syntax.
@@ -77,6 +81,24 @@ pub fn prepare_sqlite_sql(sql: &str, max_rows: usize) -> Result<String, Connecti
     )
 }
 
+pub fn prepare_clickhouse_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::ClickHouse),
+        &CLICKHOUSE_POLICY,
+    )
+}
+
+pub fn prepare_bigquery_sql(sql: &str, max_rows: usize) -> Result<String, ConnectionError> {
+    prepare(
+        sql,
+        max_rows,
+        parser_dialect(SqlDialect::BigQuery),
+        &BIGQUERY_POLICY,
+    )
+}
+
 fn prepare(
     sql: &str,
     max_rows: usize,
@@ -103,6 +125,9 @@ fn prepare(
     }
     allowed(&statements[0]).map_err(rejected)?;
     if let Some(query) = statement_query(&mut statements[0]) {
+        if policy.deny_format_clause && query.format_clause.is_some() {
+            return Err(rejected(Rejection::FormatClause));
+        }
         cap(query, max_rows);
     }
     Ok(statements.remove(0).to_string())
@@ -253,7 +278,7 @@ impl Visitor for Guard<'_> {
         match factor {
             // A table *function* in `FROM` (`SELECT * FROM pg_read_file(...)`)
             // carries arguments. Per-part matching makes schema qualification
-            // (`pg_catalog.pg_read_file`) no help — invariant 1.
+            // (`pg_catalog.pg_read_file`) no help.
             TableFactor::Table {
                 name,
                 args: Some(_),

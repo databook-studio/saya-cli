@@ -35,7 +35,7 @@ pub(super) fn run_init(
         Ok(cwd) if project => config::init::create_project_files(&cwd),
         Ok(cwd) => {
             // Default: the trusted user layer, so a following command does not
-            // warn (S18 invariant 1). Q2: if a project config already exists,
+            // warn. If a project config already exists,
             // append a one-line hint (not a migration) — folded into the result
             // message so the structured --format envelopes stay on stdout and
             // stderr stays empty.
@@ -56,7 +56,7 @@ pub(super) fn run_init(
 /// If the cwd already has a `.saya/config.toml`, say so once. The default
 /// `config init` writes the trusted user layer; the existing project config
 /// stays untrusted, and a user who meant to refresh it has `--project` and
-/// `saya config doctor` to reach for. (S18 Q2 — a hint, not a migration.)
+/// `saya config doctor` to reach for.
 fn notice_existing_project_config(mut message: String, cwd: &std::path::Path) -> String {
     if cwd.join(".saya/config.toml").exists() {
         message.push_str(

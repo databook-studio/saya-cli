@@ -111,12 +111,7 @@ impl State {
             let chunk: Chunk =
                 serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
             if let Some(usage) = chunk.usage {
-                if let Some(input) = usage.prompt_tokens {
-                    self.usage.input_tokens = input;
-                }
-                if let Some(output) = usage.completion_tokens {
-                    self.usage.output_tokens = output;
-                }
+                apply_usage(&mut self.usage, &usage);
                 self.pending.push_back(ProviderEvent::Usage(self.usage));
             }
             let Some(choice) = chunk.choices.into_iter().next() else {
@@ -143,6 +138,12 @@ impl State {
             {
                 self.content = true;
                 self.pending.push_back(ProviderEvent::TextDelta(text));
+            }
+            if let Some(reasoning) = choice.delta.reasoning_content
+                && !reasoning.is_empty()
+            {
+                self.pending
+                    .push_back(ProviderEvent::ReasoningDelta(reasoning));
             }
             for call in choice.delta.tool_calls {
                 self.tools.push(
@@ -178,4 +179,84 @@ fn boundary(value: &[u8]) -> Option<(usize, usize)> {
                 .position(|part| part == b"\n\n")
                 .map(|i| (i, 2))
         })
+}
+
+/// Folds an OpenAI usage chunk into the running totals for one response. The
+/// two existing counters are overwritten when present (OpenAI reports them
+/// cumulatively on the trailing chunk); the cache/reasoning detail fields are
+/// carried through as `Option`, so a reported `0` stays `Some(0)` and an
+/// omitted field stays `None`.
+fn apply_usage(accumulated: &mut TokenUsage, usage: &super::openai_chunks::Usage) {
+    if let Some(input) = usage.prompt_tokens {
+        accumulated.input_tokens = input;
+    }
+    if let Some(output) = usage.completion_tokens {
+        accumulated.output_tokens = output;
+    }
+    accumulated.cached_input_tokens = usage
+        .prompt_tokens_details
+        .as_ref()
+        .and_then(|details| details.cached_tokens);
+    accumulated.reasoning_tokens = usage
+        .completion_tokens_details
+        .as_ref()
+        .and_then(|details| details.reasoning_tokens);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TokenUsage, apply_usage};
+    use serde_json::json;
+
+    /// Deliverable 4 (OpenAI mapping, with): a usage chunk with detail objects
+    /// populates `cached_input_tokens` and `reasoning_tokens` on the running
+    /// total.
+    #[test]
+    fn apply_usage_populates_cache_and_reasoning() {
+        let mut accumulated = TokenUsage::default();
+        let usage: super::super::openai_chunks::Usage = serde_json::from_value(json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {"cached_tokens": 90},
+            "completion_tokens_details": {"reasoning_tokens": 270}
+        }))
+        .expect("parses");
+        apply_usage(&mut accumulated, &usage);
+        assert_eq!(accumulated.input_tokens, 100);
+        assert_eq!(accumulated.output_tokens, 200);
+        assert_eq!(accumulated.cached_input_tokens, Some(90));
+        assert_eq!(accumulated.reasoning_tokens, Some(270));
+        assert_eq!(accumulated.cache_creation_input_tokens, None);
+    }
+
+    /// Deliverable 4 (OpenAI mapping, without): a usage chunk with no detail
+    /// objects leaves the new fields `None` and does not clobber a previously
+    /// reported cache hit — the trailing chunk for one response carries the
+    /// final numbers, but detail absence is an honest `None`, not a reset.
+    #[test]
+    fn apply_usage_without_details_leaves_new_fields_none() {
+        let mut accumulated = TokenUsage::default();
+        let usage: super::super::openai_chunks::Usage =
+            serde_json::from_value(json!({"prompt_tokens": 5, "completion_tokens": 6}))
+                .expect("parses");
+        apply_usage(&mut accumulated, &usage);
+        assert_eq!(accumulated.input_tokens, 5);
+        assert_eq!(accumulated.output_tokens, 6);
+        assert_eq!(accumulated.cached_input_tokens, None);
+        assert_eq!(accumulated.reasoning_tokens, None);
+    }
+
+    /// Deliverable 5 (OpenAI mapping): a reported `cached_tokens: 0` flows
+    /// through as `Some(0)`, never collapsed to `None`.
+    #[test]
+    fn apply_usage_reports_zero_cache_as_some_zero() {
+        let mut accumulated = TokenUsage::default();
+        let usage: super::super::openai_chunks::Usage = serde_json::from_value(json!({
+            "prompt_tokens": 10,
+            "prompt_tokens_details": {"cached_tokens": 0}
+        }))
+        .expect("parses");
+        apply_usage(&mut accumulated, &usage);
+        assert_eq!(accumulated.cached_input_tokens, Some(0));
+    }
 }
