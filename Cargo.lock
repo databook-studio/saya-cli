@@ -2974,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "saya-agent"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2989,7 +2989,7 @@ dependencies = [
 
 [[package]]
 name = "saya-cli"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "saya-config"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "saya-types",
  "serde",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "saya-connectors"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3057,7 +3057,7 @@ dependencies = [
 
 [[package]]
 name = "saya-store"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "saya-types",
@@ -3071,7 +3071,7 @@ dependencies = [
 
 [[package]]
 name = "saya-types"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "proptest",
  "serde",
