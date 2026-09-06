@@ -23,6 +23,11 @@ use sqlparser::ast::ObjectName;
 pub(super) struct BackendPolicy {
     pub denied_functions: &'static [&'static str],
     pub denied_prefixes: &'static [&'static str],
+    /// Reject statements carrying this engine's `FORMAT` clause. The connector
+    /// owns the wire format it parses, so a user-supplied `FORMAT` would either
+    /// be ignored (losing the connector's format) or collide with the one the
+    /// connector appends.
+    pub deny_format_clause: bool,
 }
 
 const COMMON_DENIED_FUNCTIONS: &[&str] = &["nextval", "setval"];
@@ -45,6 +50,22 @@ const SNOWFLAKE_DENIED_FUNCTIONS: &[&str] =
     &["get_presigned_url", "build_scoped_file_url", "directory"];
 
 const SNOWFLAKE_DENIED_PREFIXES: &[&str] = &["@", "system$"];
+
+// ClickHouse table functions that reach outside the server: arbitrary HTTP/S3
+// endpoints, remote servers, the local filesystem, or other databases. Each
+// is a server-side data source a read-only session has no business opening —
+// an SSRF or local-file-read vector — so they are denied wherever they appear.
+const CLICKHOUSE_DENIED_FUNCTIONS: &[&str] = &[
+    "url",
+    "s3",
+    "remote",
+    "mysql",
+    "postgresql",
+    "file",
+    "hdfs",
+    "odbc",
+    "jdbc",
+];
 
 const POSTGRES_DENIED_FUNCTIONS: &[&str] = &[
     "set_config",
@@ -91,26 +112,50 @@ const MYSQL_DENIED_FUNCTIONS: &[&str] = &[
 pub(super) const POSTGRES_POLICY: BackendPolicy = BackendPolicy {
     denied_functions: POSTGRES_DENIED_FUNCTIONS,
     denied_prefixes: POSTGRES_DENIED_PREFIXES,
+    deny_format_clause: false,
 };
 
 pub(super) const MYSQL_POLICY: BackendPolicy = BackendPolicy {
     denied_functions: MYSQL_DENIED_FUNCTIONS,
     denied_prefixes: &[],
+    deny_format_clause: false,
 };
 
 pub(super) const DUCKDB_POLICY: BackendPolicy = BackendPolicy {
     denied_functions: DUCKDB_DENIED_FUNCTIONS,
     denied_prefixes: &[],
+    deny_format_clause: false,
 };
 
 pub(super) const SQLITE_POLICY: BackendPolicy = BackendPolicy {
     denied_functions: SQLITE_DENIED_FUNCTIONS,
     denied_prefixes: &[],
+    deny_format_clause: false,
 };
 
 pub(super) const SNOWFLAKE_POLICY: BackendPolicy = BackendPolicy {
     denied_functions: SNOWFLAKE_DENIED_FUNCTIONS,
     denied_prefixes: SNOWFLAKE_DENIED_PREFIXES,
+    deny_format_clause: false,
+};
+
+pub(super) const CLICKHOUSE_POLICY: BackendPolicy = BackendPolicy {
+    denied_functions: CLICKHOUSE_DENIED_FUNCTIONS,
+    denied_prefixes: &[],
+    deny_format_clause: true,
+};
+
+// BigQuery's `EXTERNAL_QUERY` runs a query against an external Cloud SQL
+// database over a federated connection — a read-only session has no business
+// opening another database, so it is denied wherever it appears. The
+// statement-level destructive surface (DML, DDL, scripting) is closed by the
+// allow-list catch-all, which rejects anything that is not a single read.
+const BIGQUERY_DENIED_FUNCTIONS: &[&str] = &["external_query"];
+
+pub(super) const BIGQUERY_POLICY: BackendPolicy = BackendPolicy {
+    denied_functions: BIGQUERY_DENIED_FUNCTIONS,
+    denied_prefixes: &[],
+    deny_format_clause: false,
 };
 
 /// True when any identifier part of a *function* reference matches a denied

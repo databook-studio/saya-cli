@@ -12,7 +12,19 @@ impl App {
     pub(crate) fn toggle_selection_mode(&mut self) {
         self.overlays.selection_mode = !self.overlays.selection_mode;
         let message = if self.overlays.selection_mode {
-            "Selection mode on — drag to select and copy with your terminal. Ctrl+O to resume scrolling."
+            // The copy keys filter thinking out; the terminal's own drag-select
+            // cannot be filtered, so say so while the reasoning is on screen
+            // rather than let the narrower guarantee read as a general one.
+            if self
+                .transcript
+                .blocks()
+                .iter()
+                .any(|block| block.kind == BlockKind::Thinking)
+            {
+                "Selection mode on — drag to select and copy with your terminal. Thinking is on screen and your terminal can copy it. Ctrl+O to resume scrolling."
+            } else {
+                "Selection mode on — drag to select and copy with your terminal. Ctrl+O to resume scrolling."
+            }
         } else {
             "Selection mode off — mouse wheel scrolls again."
         };
@@ -43,6 +55,13 @@ impl App {
     }
 
     /// Queues the whole transcript for the clipboard (F4).
+    ///
+    /// The model's chain-of-thought is excluded: it restates row values and
+    /// column contents in prose, and the clipboard is a channel off-screen —
+    /// putting model reasoning that may restate database contents on the system
+    /// clipboard is a sharper exposure than showing it on screen to the person
+    /// already reading the answer. `/help thinking` names this so it is not a
+    /// surprise.
     pub(crate) fn copy_transcript(&mut self) {
         if self.clipboard_copy.is_some() || self.pending_clipboard.is_some() {
             self.transcript
@@ -53,6 +72,7 @@ impl App {
             .transcript
             .blocks()
             .iter()
+            .filter(|block| block.kind != BlockKind::Thinking)
             .map(|block| block.text.as_str())
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -183,5 +203,107 @@ impl App {
         self.transcript.push(BlockKind::User, line.clone());
         self.transcript.scroll_to_bottom();
         self.pending = Some(line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interactive::tui::application::tests_support::idle_app;
+
+    /// Copying the transcript excludes the model's chain-of-thought. Reasoning
+    /// restates row values and column contents in prose, and the clipboard is a
+    /// channel off-screen — putting it on the system clipboard is a sharper
+    /// exposure than showing it to the person already reading the answer. The
+    /// user and assistant blocks are copied; the thinking block is not.
+    #[test]
+    fn copy_transcript_excludes_thinking_blocks() {
+        let mut app = idle_app();
+        app.transcript.push(BlockKind::User, "what is the answer");
+        app.transcript.push(
+            BlockKind::Thinking,
+            "the secret chain-of-thought about row values",
+        );
+        app.transcript
+            .push(BlockKind::Assistant, "the answer is 42");
+
+        app.copy_transcript();
+        let copied = app.pending_clipboard.expect("transcript was queued");
+        assert!(
+            copied.contains("the answer is 42"),
+            "assistant text must be copied: {copied}"
+        );
+        assert!(
+            copied.contains("what is the answer"),
+            "user text must be copied: {copied}"
+        );
+        assert!(
+            !copied.contains("the secret chain-of-thought about row values"),
+            "thinking must not reach the clipboard: {copied}"
+        );
+    }
+
+    /// `copy_last_answer` finds the assistant block, not a thinking block, so the
+    /// chain-of-thought never reaches the clipboard even when it is the most
+    /// recent block.
+    #[test]
+    fn copy_last_answer_skips_thinking_blocks() {
+        let mut app = idle_app();
+        app.transcript
+            .push(BlockKind::Assistant, "the answer is 42");
+        app.transcript
+            .push(BlockKind::Thinking, "the secret chain-of-thought");
+
+        app.copy_last_answer();
+        let copied = app.pending_clipboard.expect("answer was queued");
+        assert_eq!(copied, "the answer is 42");
+    }
+
+    /// The copy keys filter thinking out, but selection mode hands the screen
+    /// to the terminal, whose drag-select cannot be filtered. When reasoning is
+    /// visible the notice has to say so — otherwise the narrower guarantee the
+    /// help text makes about `Ctrl+B` reads as a general one.
+    #[test]
+    fn selection_mode_says_the_terminal_can_copy_visible_thinking() {
+        let mut app = idle_app();
+        app.transcript
+            .push(BlockKind::Thinking, "chain-of-thought about row values");
+        app.toggle_selection_mode();
+
+        let notice = app
+            .transcript
+            .blocks()
+            .iter()
+            .rev()
+            .find(|b| b.kind == BlockKind::System)
+            .expect("a selection-mode notice");
+        assert!(
+            notice.text.contains("Thinking is on screen"),
+            "the notice must name the exposure while thinking is visible: {}",
+            notice.text
+        );
+    }
+
+    /// With no reasoning on screen there is nothing extra to warn about, and a
+    /// standing warning would train the user to ignore it.
+    #[test]
+    fn selection_mode_stays_quiet_about_thinking_when_none_is_shown() {
+        let mut app = idle_app();
+        app.transcript
+            .push(BlockKind::Assistant, "the answer is 42");
+        app.toggle_selection_mode();
+
+        let notice = app
+            .transcript
+            .blocks()
+            .iter()
+            .rev()
+            .find(|b| b.kind == BlockKind::System)
+            .expect("a selection-mode notice");
+        assert!(
+            !notice.text.contains("Thinking"),
+            "no thinking is shown, so the notice must not mention it: {}",
+            notice.text
+        );
     }
 }

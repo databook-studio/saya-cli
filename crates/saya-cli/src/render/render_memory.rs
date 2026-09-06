@@ -1,4 +1,4 @@
-//! Text shaping for [`AgentEvent::KnowledgeSupplied`] — spec P1c.
+//! Text shaping for [`AgentEvent::KnowledgeSupplied`].
 //!
 //! The wording here is a correctness constraint, not style: the line names
 //! **claims** (never *facts*) and says **supplied** (never *applied* or *used*).
@@ -63,7 +63,15 @@ pub(crate) fn knowledge_supplied_text(
                 if total == 1 { "" } else { "s" }
             ));
             if unconfirmed > 0 {
-                out.push_str(&format!(" ({unconfirmed} unconfirmed)"));
+                // the recall path points at the same next step the learn
+                // path does (`unconfirmed, review with /queue`). A measured
+                // store held 26 unconfirmed claims the user was told about
+                // without being told where to act on them; the pointer rides
+                // the unconfirmed count so a recall that found nothing — or
+                // found only confirmed claims — stays silent (spec §4).
+                out.push_str(&format!(
+                    " ({unconfirmed} unconfirmed — review with /queue)"
+                ));
             }
             if dropped_by_bounds > 0 {
                 out.push_str(&format!(" · {dropped_by_bounds} more dropped by bounds"));
@@ -113,7 +121,7 @@ fn contract_header(contract: &SuppliedContractDto) -> String {
 /// word — with an explicit `unconfirmed` mark when the status is not `Confirmed`
 /// (spec §4: unconfirmed claims are marked wherever claims are shown). The id
 /// prefix is shown here so a user can act on the claim from the turn that just
-/// displayed it, without finding and copying a 64-character id (spec D).
+/// displayed it, without finding and copying a 64-character id.
 fn claim_line(claim: &SuppliedClaimDto) -> String {
     let id = abbreviate_id(claim.claim_id.as_str());
     let kind = claim.kind.as_str();
@@ -191,7 +199,7 @@ fn finding_line(finding: &OverrideFindingDto) -> String {
 }
 
 /// Shapes the text line for one [`AgentEvent::KnowledgeLearningSkipped`]
-/// event (spec packet-54), for any adapter that prints it. Trails the answer —
+/// event, for any adapter that prints it. Trails the answer —
 /// the runtime emits it after the loop — so it lands below the assistant text,
 /// where "and I did not learn from this turn" belongs.
 ///
@@ -328,9 +336,10 @@ mod tests {
             )],
             0,
         );
-        // The compact header counts the unconfirmed claim.
+        // The compact header counts the unconfirmed claim and points at the review
+        // queue — the same next step the learn path names.
         assert!(
-            text.contains("memory supplied · 2 claims (1 unconfirmed)"),
+            text.contains("memory supplied · 2 claims (1 unconfirmed — review with /queue)"),
             "{text}"
         );
         // The candidate's line carries the explicit unconfirmed mark; the
@@ -343,6 +352,36 @@ mod tests {
             text.contains("default_time_column  created_at  col:created_at  confirmed\n"),
             "{text}"
         );
+    }
+
+    /// The `/queue` pointer rides only the unconfirmed count. A
+    /// recall that supplied only confirmed claims must not nag, and the pre-existing
+    /// silence rule stands — a `Ran`-and-found-nothing recall renders nothing at
+    /// all (spec §4), so there is no pointer when there is nothing to point at.
+    #[test]
+    fn the_queue_pointer_rides_only_the_unconfirmed_count() {
+        let confirmed_only = knowledge_supplied_text(
+            ran(false),
+            &[contract(
+                "analytics",
+                "catalog.public.orders",
+                "current",
+                vec![claim(
+                    "c-1",
+                    "table_alias",
+                    "orders",
+                    None,
+                    ClaimStatus::Confirmed,
+                )],
+            )],
+            0,
+        );
+        assert!(
+            confirmed_only.contains("1 claim") && !confirmed_only.contains("/queue"),
+            "no pointer when everything is confirmed: {confirmed_only}"
+        );
+        // The silence rule still holds: found nothing, dropped nothing → empty.
+        assert_eq!(knowledge_supplied_text(ran(false), &[], 0), "");
     }
 
     /// A non-zero dropped count is shown on the header (spec §5 / §4).
@@ -451,7 +490,7 @@ mod tests {
         assert!(json.contains("supplied"), "{json}");
     }
 
-    /// Each claim line shows the short claim-id prefix (spec D): it is the
+    /// Each claim line shows the short claim-id prefix: it is the
     /// reference a user types into `/confirm`/`/reject`/`/use` to act on the
     /// claim from this turn. The full 64-char id never appears — the prefix is
     /// the reference, and `abbreviate_id` keeps it to the same width
@@ -498,15 +537,14 @@ mod tests {
         }
     }
 
-    /// Empty findings render nothing (spec A1 §3: "if it returns nothing, say
-    /// nothing").
+    /// Empty findings render nothing.
     #[test]
     fn no_findings_render_nothing() {
         assert_eq!(knowledge_overridden_text(&[]), "");
     }
 
     /// One finding renders the header and one line that names the referenced
-    /// column and what the claim specified (spec A1 §6).
+    /// column and what the claim specified.
     #[test]
     fn one_finding_names_the_referenced_column_and_the_specified_value() {
         let text = knowledge_overridden_text(&[override_finding(

@@ -149,6 +149,18 @@ impl State {
                                 json: String::new(),
                             },
                         );
+                    } else if cb_type == "thinking" {
+                        // A `thinking` content block can carry its initial text
+                        // inline on `content_block_start` (the model-I/O design "whole"
+                        // spelling). Emit it as reasoning; the subsequent
+                        // `thinking_delta`s append to it.
+                        if let Some(thinking) = json["content_block"]["thinking"]
+                            .as_str()
+                            .filter(|text| !text.is_empty())
+                        {
+                            self.pending
+                                .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
+                        }
                     }
                 }
                 "content_block_delta" => {
@@ -165,6 +177,16 @@ impl State {
                             .ok_or(ProviderError::InvalidResponse)?;
                         self.pending
                             .push_back(ProviderEvent::TextDelta(text.to_string()));
+                    } else if delta_type == "thinking_delta" {
+                        // The streamed reasoning increment. Forwarded as a
+                        // `ReasoningDelta` for `collect()` to accumulate.
+                        let thinking = json["delta"]["thinking"]
+                            .as_str()
+                            .ok_or(ProviderError::InvalidResponse)?;
+                        if !thinking.is_empty() {
+                            self.pending
+                                .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
+                        }
                     } else if delta_type == "input_json_delta" {
                         let partial = json["delta"]["partial_json"]
                             .as_str()
@@ -199,14 +221,14 @@ impl State {
                     break;
                 }
                 "message_start" => {
-                    if let Some(input) = json["message"]["usage"]["input_tokens"].as_u64() {
-                        self.usage.input_tokens = input;
+                    let usage = &json["message"]["usage"];
+                    if apply_usage(&mut self.usage, usage) {
                         self.pending.push_back(ProviderEvent::Usage(self.usage));
                     }
                 }
                 "message_delta" => {
-                    if let Some(output) = json["usage"]["output_tokens"].as_u64() {
-                        self.usage.output_tokens = output;
+                    let usage = &json["usage"];
+                    if apply_usage(&mut self.usage, usage) {
                         self.pending.push_back(ProviderEvent::Usage(self.usage));
                     }
                 }
@@ -238,4 +260,98 @@ fn boundary(value: &[u8]) -> Option<(usize, usize)> {
                 .position(|part| part == b"\n\n")
                 .map(|i| (i, 2))
         })
+}
+
+/// Folds an Anthropic `usage` object (from `message_start` or `message_delta`)
+/// into the running totals for one response. Anthropic reports two cache
+/// numbers that bill differently and are kept distinct: reads
+/// (`cache_read_input_tokens`, inclusive of `input_tokens`) and creation
+/// (`cache_creation_input_tokens`, also inclusive of `input_tokens`). Returns
+/// whether anything was reported, so the caller only emits a `Usage` event when
+/// the object actually carried counts. A reported `0` stays `Some(0)`; an
+/// omitted field stays `None` (absent is not zero).
+fn apply_usage(accumulated: &mut TokenUsage, usage: &serde_json::Value) -> bool {
+    let mut changed = false;
+    if let Some(input) = usage["input_tokens"].as_u64() {
+        accumulated.input_tokens = input;
+        changed = true;
+    }
+    if let Some(output) = usage["output_tokens"].as_u64() {
+        accumulated.output_tokens = output;
+        changed = true;
+    }
+    if let Some(cached) = usage["cache_read_input_tokens"].as_u64() {
+        accumulated.cached_input_tokens = Some(cached);
+        changed = true;
+    }
+    if let Some(created) = usage["cache_creation_input_tokens"].as_u64() {
+        accumulated.cache_creation_input_tokens = Some(created);
+        changed = true;
+    }
+    changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TokenUsage, apply_usage};
+    use serde_json::json;
+
+    /// Deliverable 4 (Anthropic, with): a `message_start` usage object
+    /// carrying both cache numbers populates the two cache fields (distinct,
+    /// because reads and creation bill differently).
+    #[test]
+    fn message_start_with_cache_fields_populates_both() {
+        let mut accumulated = TokenUsage::default();
+        let usage = json!({
+            "input_tokens": 100,
+            "cache_read_input_tokens": 90,
+            "cache_creation_input_tokens": 10
+        });
+        assert!(apply_usage(&mut accumulated, &usage));
+        assert_eq!(accumulated.input_tokens, 100);
+        assert_eq!(accumulated.cached_input_tokens, Some(90));
+        assert_eq!(accumulated.cache_creation_input_tokens, Some(10));
+        assert_eq!(accumulated.reasoning_tokens, None);
+    }
+
+    /// Deliverable 4 (Anthropic, without): a usage object with only the
+    /// existing counters leaves the cache fields `None`. The cache numbers
+    /// appear only on `message_start`; a `message_delta` carrying only
+    /// `output_tokens` must not zero out a previously reported cache read.
+    #[test]
+    fn usage_without_cache_fields_leaves_them_none() {
+        let mut accumulated = TokenUsage {
+            input_tokens: 100,
+            cached_input_tokens: Some(90),
+            ..Default::default()
+        };
+        let usage = json!({"output_tokens": 34});
+        assert!(apply_usage(&mut accumulated, &usage));
+        assert_eq!(accumulated.output_tokens, 34);
+        // The earlier cache read survives; `message_delta` did not report it.
+        assert_eq!(accumulated.cached_input_tokens, Some(90));
+        assert_eq!(accumulated.cache_creation_input_tokens, None);
+    }
+
+    /// Deliverable 5 (Anthropic): a reported `cache_read_input_tokens: 0` (a
+    /// cache that was created but read nothing) stays `Some(0)`, not `None`.
+    #[test]
+    fn reported_zero_cache_read_is_some_zero() {
+        let mut accumulated = TokenUsage::default();
+        let usage = json!({"input_tokens": 10, "cache_read_input_tokens": 0});
+        apply_usage(&mut accumulated, &usage);
+        assert_eq!(accumulated.cached_input_tokens, Some(0));
+    }
+
+    /// An empty usage object reports nothing: no `Usage` event should fire, so
+    /// the helper returns false and leaves the accumulator untouched.
+    #[test]
+    fn empty_usage_object_reports_nothing() {
+        let mut accumulated = TokenUsage {
+            input_tokens: 7,
+            ..Default::default()
+        };
+        assert!(!apply_usage(&mut accumulated, &json!({})));
+        assert_eq!(accumulated.input_tokens, 7);
+    }
 }

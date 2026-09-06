@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::{ColorChoice, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig};
+use crate::{ColorChoice, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig, ThemeChoice};
 
 /// A display-safe view of what a config *file* declares; references are
 /// retained, values are not.
@@ -42,9 +42,11 @@ pub struct RedactedDiagnostics {
     pub read_only: Option<bool>,
     pub max_rows: Option<usize>,
     pub max_iterations: Option<usize>,
+    pub candidates: Option<usize>,
     pub query_timeout_seconds: Option<u64>,
     pub output_format: Option<OutputFormat>,
     pub output_color: Option<ColorChoice>,
+    pub ui_theme: Option<ThemeChoice>,
     pub memory_mode: Option<MemoryMode>,
     pub memory_max_contracts: Option<u32>,
     pub memory_max_claims_per_contract: Option<u32>,
@@ -70,9 +72,11 @@ pub struct ResolvedDiagnostics {
     pub max_rows: usize,
     pub read_only: bool,
     pub max_iterations: usize,
+    pub candidates: usize,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
+    pub ui_theme: ThemeChoice,
     pub memory_mode: MemoryMode,
     pub memory_max_contracts: u32,
     pub memory_max_claims_per_contract: u32,
@@ -92,9 +96,11 @@ impl RedactedDiagnostics {
             read_only: file.run.read_only,
             max_rows: file.run.max_rows,
             max_iterations: file.run.max_iterations,
+            candidates: file.run.candidates,
             query_timeout_seconds: file.run.query_timeout_seconds,
             output_format: file.output.format,
             output_color: file.output.color,
+            ui_theme: file.ui.theme,
             memory_mode: file.memory.mode,
             memory_max_contracts: file.memory.max_contracts,
             memory_max_claims_per_contract: file.memory.max_claims_per_contract,
@@ -120,9 +126,11 @@ impl ResolvedConfig {
             max_rows: self.max_rows,
             read_only: self.read_only,
             max_iterations: self.max_iterations,
+            candidates: self.candidates,
             query_timeout_seconds: self.query_timeout_seconds,
             output_format: self.output_format,
             output_color: self.output_color,
+            ui_theme: self.ui_theme,
             memory_mode: self.memory.mode,
             memory_max_contracts: self.memory.max_contracts,
             memory_max_claims_per_contract: self.memory.max_claims_per_contract,

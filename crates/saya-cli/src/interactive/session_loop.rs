@@ -34,6 +34,10 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         state.approval_mode = config::runtime::approval_name(&cli.options)?;
         state.included_profiles = cli.options.include_profiles.clone();
     }
+    // Always derived, including on a resumed session: the toggle is a display
+    // preference that is never persisted, so a resumed session deserializes it
+    // as off and would otherwise ignore both the config setting and the flag.
+    state.show_thinking = runtime.resolved.ai.show_thinking || cli.options.show_thinking;
     // Reflect the configured default profile so the status bar and @-references
     // match the database the agent actually queries.
     if state.profile.is_none() {
@@ -146,7 +150,15 @@ fn handle_line(
                         output.used_bounded_sql_query,
                         output.tool_metadata.clone(),
                     );
-                    SessionAction::Agent(output)
+                    // Feed the session accumulator so /usage is honest in
+                    // headless mode too (the TUI does this in drain_stream).
+                    state.usage.record(&output.usage);
+                    // Fold the extraction call's usage into the learning total
+                    // before the output moves into the action. `None` (no
+                    // extraction or no response) records nothing, so a session
+                    // with learning disabled is unaffected.
+                    state.usage.record_learning(output.learning_usage);
+                    SessionAction::Agent(*output)
                 }
                 Ok(PromptResult::Cancelled) => SessionAction::Cancelled,
                 Err(error) => SessionAction::Error(error.to_string()),

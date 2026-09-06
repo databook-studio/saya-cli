@@ -1,4 +1,4 @@
-//! Proposal resolution and schema binding derivation — spec F Chunk 3 / Chunk 2.
+//! Proposal resolution and schema binding derivation / Chunk 2.
 //!
 //! Maps extracted turn-scoped proposals (`T0..Tn`) back to fully-resolved
 //! `DatabaseObjectRef`s and derives structural `SchemaBinding`s from the
@@ -7,6 +7,7 @@
 //! real `SchemaTree` (never fabricated with "default").
 
 use crate::agent::learning::extractor_schema::{ExtractedProposal, ProposalOrigin};
+use crate::agent::learning::gate::contains_assertion_intent;
 use crate::agent::learning::profile_catalog::{ProfileCatalog, ProfileLookupError};
 use crate::agent::learning::turn_table::{TurnObjectId, TurnObjectTable};
 use crate::connection::ConnectionRegistry;
@@ -63,6 +64,8 @@ pub enum ResolutionError {
     UnresolvableObject(String),
     #[error("object reference '{0}' is ambiguous in profile schema")]
     AmbiguousObject(String),
+    #[error("object '{0}' has no column '{1}'")]
+    UnknownColumn(String, String),
     #[error("failed to derive schema binding for slot and payload")]
     InvalidSchemaBinding,
 }
@@ -74,17 +77,23 @@ pub enum ResolutionError {
 /// 3. Inspects the connection's real `SchemaTree` to resolve under-qualified references
 ///    without fabricating missing catalog or schema names.
 /// 4. Derives `SchemaBinding` from `(slot, value)`; returns `Err` if invalid.
-/// 5. Maps origin:
+/// 5. Refuses a proposal whose schema binding names a column the resolved object
+///    does not have (`ResolutionError::UnknownColumn`).
+/// 6. Maps origin:
 ///    - `ProposalOrigin::UserExplicit` -> `(KnowledgeState::Active, ClaimOrigin::UserExplicit)`
+///      when the turn prompt shows an assertion (`contains_assertion_intent`); without
+///      that corroboration the proposal resolves like any inference
+///      (`Pending`, `ClaimOrigin::AssistantInferred`)
 ///    - `ProposalOrigin::AssistantInferred` -> `(KnowledgeState::Pending, ClaimOrigin::AssistantInferred)`
 #[allow(dead_code)]
 pub async fn resolve_proposal(
     extracted: ExtractedProposal,
+    prompt: &str,
     table: &TurnObjectTable,
     registry: &ConnectionRegistry,
 ) -> Result<ResolvedProposal, ResolutionError> {
     let mut catalog = ProfileCatalog::new();
-    resolve_with_catalog(extracted, table, registry, &mut catalog).await
+    resolve_with_catalog(extracted, prompt, table, registry, &mut catalog).await
 }
 
 /// Resolves every proposal from one turn, reading each profile's schema once.
@@ -93,13 +102,15 @@ pub async fn resolve_proposal(
 /// returned vector may be shorter than the input.
 pub(crate) async fn resolve_proposals(
     extracted: Vec<ExtractedProposal>,
+    prompt: &str,
     table: &TurnObjectTable,
     registry: &ConnectionRegistry,
 ) -> Vec<ResolvedProposal> {
     let mut catalog = ProfileCatalog::new();
     let mut resolved = Vec::with_capacity(extracted.len());
     for proposal in extracted {
-        if let Ok(one) = resolve_with_catalog(proposal, table, registry, &mut catalog).await {
+        if let Ok(one) = resolve_with_catalog(proposal, prompt, table, registry, &mut catalog).await
+        {
             resolved.push(one);
         }
     }
@@ -108,6 +119,7 @@ pub(crate) async fn resolve_proposals(
 
 async fn resolve_with_catalog(
     extracted: ExtractedProposal,
+    prompt: &str,
     table: &TurnObjectTable,
     registry: &ConnectionRegistry,
     catalog: &mut ProfileCatalog,
@@ -126,8 +138,21 @@ async fn resolve_with_catalog(
     let schema_binding = SchemaBinding::derive(&extracted.slot, &extracted.value)
         .ok_or(ResolutionError::InvalidSchemaBinding)?;
 
+    validate_binding_columns(&facts.schema, &object, &schema_binding)?;
+
     let (state, source) = match extracted.origin {
-        ProposalOrigin::UserExplicit => (KnowledgeState::Active, ClaimOrigin::UserExplicit),
+        ProposalOrigin::UserExplicit => {
+            if contains_assertion_intent(prompt) {
+                (KnowledgeState::Active, ClaimOrigin::UserExplicit)
+            } else {
+                // The origin comes from the model's output, so an assertion the
+                // turn does not show is uncorroborated: the proposal resolves
+                // like any inference rather than confirming itself, and the
+                // stored claim must not carry a user provenance that never
+                // happened.
+                (KnowledgeState::Pending, ClaimOrigin::AssistantInferred)
+            }
+        }
         ProposalOrigin::AssistantInferred => {
             (KnowledgeState::Pending, ClaimOrigin::AssistantInferred)
         }
@@ -142,6 +167,60 @@ async fn resolve_with_catalog(
         state,
         schema_binding,
     })
+}
+
+/// Refuses a proposal whose schema binding names a column the resolved object
+/// does not have.
+///
+/// Observed columns come from result sets and SQL text, where a SELECT alias
+/// referenced in ORDER BY or HAVING and a join's output columns can both end
+/// up attributed to a table that never owned them. A fact about a column that
+/// does not exist would be stored as if it were real, so the schema — not the
+/// observation — decides existence. Only presence is checked here: a semantic
+/// type mismatch is a staleness question for the validity reconciler, not a
+/// reason to refuse a fact on a dynamically typed backend.
+fn validate_binding_columns(
+    schema_tree: &SchemaTree,
+    object: &DatabaseObjectRef,
+    binding: &SchemaBinding,
+) -> Result<(), ResolutionError> {
+    // The object was resolved from this very tree, so the lookup cannot miss;
+    // a miss is treated as the resolution failure it would mean.
+    let Some(table) = schema_tree.find_table(object.catalog(), object.schema(), object.object())
+    else {
+        return Err(ResolutionError::UnresolvableObject(object.qualified_name()));
+    };
+
+    let missing =
+        |column: &str| ResolutionError::UnknownColumn(object.qualified_name(), column.to_string());
+
+    match binding {
+        // A table-level fact names no column, so there is nothing to refuse.
+        SchemaBinding::Table => Ok(()),
+        SchemaBinding::Column { column, .. } => {
+            let exists = table
+                .columns
+                .iter()
+                .any(|c| c.name.eq_ignore_ascii_case(column));
+            if exists { Ok(()) } else { Err(missing(column)) }
+        }
+        // A multi-column fact (a join rule's local keys, a metric's underlying
+        // columns) is refused when any one of its columns is absent: a fact
+        // about a column that does not exist would be stored as if it were
+        // real, and the schema — not the observation — decides existence.
+        SchemaBinding::Columns { columns } => {
+            for column in columns {
+                if !table
+                    .columns
+                    .iter()
+                    .any(|c| c.name.eq_ignore_ascii_case(column))
+                {
+                    return Err(missing(column));
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Resolves an object name (1-, 2-, or 3-part) against a profile's real `SchemaTree`.

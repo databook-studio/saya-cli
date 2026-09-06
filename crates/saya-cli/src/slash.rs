@@ -9,7 +9,7 @@ pub(crate) mod registry;
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // still resolves after the help text moved to `help.rs`.
 pub(crate) use help::help_for;
-// S17: the one-line description per command is the single source shared by the
+// the one-line description per command is the single source shared by the
 // `/help` listing and the completion popup (`interactive::tui::complete`), so
 // the two surfaces cannot drift. `description_for` is read by the popup in
 // production; `COMMAND_DESCRIPTIONS` is only needed by tests that assert the
@@ -41,6 +41,9 @@ pub enum SlashCommand {
     History,
     Sessions,
     Resume(String),
+    /// Choose which columns wide result tables show in the TUI:
+    /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
+    Columns(Option<String>),
     /// A contract slash command (`/contracts`, `/contract`, `/remember`,
     /// `/forget`), already translated to the same `ContractsCommand` the
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
@@ -48,6 +51,10 @@ pub enum SlashCommand {
     Contracts(ContractsCommand),
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
+    /// Show session token usage totals and cache hit rate.
+    Usage,
+    /// Toggle display of the model's chain-of-thought in the transcript.
+    Thinking(Option<bool>),
     Help(Option<String>),
     Exit,
 }
@@ -107,12 +114,16 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "history" => SlashCommand::History,
         "sessions" => SlashCommand::Sessions,
         "resume" => SlashCommand::Resume(required()?),
+        "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
         "doctor" => SlashCommand::Doctor,
-        "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject" => {
+        "usage" => SlashCommand::Usage,
+        "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
+        "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject"
+        | "approve-all" => {
             // The contract slash adapters: translate to the same
             // `ContractsCommand` the headless parser produces and hand it to the
             // shared dispatcher. No second parsing or DTO mapping lives here.
-            // `confirm`/`reject` (spec D) translate to `ContractsCommand::Decide`.
+            // `confirm`/`reject` translate to `ContractsCommand::Decide`.
             return contracts::parse_contract_command(name, &arg)
                 .map(|maybe| maybe.map(SlashCommand::Contracts));
         }
@@ -136,7 +147,7 @@ fn parse_bool(value: &str) -> Result<Option<bool>, SlashParseError> {
     match value {
         "on" | "true" | "enable" => Ok(Some(true)),
         "off" | "false" | "disable" => Ok(Some(false)),
-        _ => Err(SlashParseError("privacy expects on or off".into())),
+        _ => Err(SlashParseError("expected on or off".into())),
     }
 }
 
@@ -262,6 +273,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_columns_command() {
+        assert_eq!(
+            parse_slash_command("/columns"),
+            Ok(Some(SlashCommand::Columns(None)))
+        );
+        assert_eq!(
+            parse_slash_command("/columns id, total"),
+            Ok(Some(SlashCommand::Columns(Some("id, total".into()))))
+        );
+        assert_eq!(
+            parse_slash_command("/columns all"),
+            Ok(Some(SlashCommand::Columns(Some("all".into()))))
+        );
+    }
+
+    #[test]
     fn test_unknown_command_suggestion() {
         let err = parse_slash_command("/conect prod").unwrap_err();
         assert!(
@@ -283,9 +310,9 @@ mod tests {
         );
     }
 
-    /// `/history` and `/sessions` are both still known commands (S11 keeps
-    /// `/history` as an explicit alias of `/sessions`), and `exit`/`quit` are a
-    /// deliberate conventional alias pair. Invariant 4: the typo suggester
+    /// `/history` and `/sessions` are both still known commands, and
+    /// `exit`/`quit` are a
+    /// deliberate conventional alias pair. The typo suggester
     /// must still resolve anything it resolved before for names that still
     /// exist — so a near-miss on each lands on the kept name, never on a
     /// removed one.

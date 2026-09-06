@@ -1,13 +1,31 @@
+mod compaction;
+mod designation;
+mod failed_statements;
 mod output;
 mod receive;
+mod salvage;
+mod tool_record;
 mod tools;
+mod turn_tools;
 
 use crate::{
     AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
     TokenUsage, ToolDefinition, ToolExecutor,
 };
 
-pub use output::{AgentError, AgentLimits, AgentOutput};
+pub use output::{AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, budgets_from_env};
+
+/// Add a turn's optional count into a run total without inventing data.
+///
+/// A turn that reported nothing leaves the total untouched, and the total stays
+/// `None` until some turn reports — so a provider that never reports cache reads
+/// stays distinguishable from one reporting a cold cache. Folding `None` in as
+/// zero would collapse that distinction and make an unreported rate render as 0%.
+fn sum_reported(total: &mut Option<u64>, turn: Option<u64>) {
+    if let Some(count) = turn {
+        *total = Some(total.unwrap_or(0) + count);
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_agent_with_sink(
@@ -25,15 +43,44 @@ pub async fn run_agent_with_sink(
         &request.context_blocks,
         &request.prompt,
         &request.history,
+        limits.context_byte_budget,
     )?;
     let mut events = Vec::new();
     let mut tool_count = 0;
     let mut used_bounded_sql_query = false;
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
-    for _ in 0..limits.max_turns {
+    let mut turn_count = 0;
+    // Statements that failed during this run, so a byte-identical
+    // re-submission is refused rather than re-executed (loop invariant for the
+    // "do not repeat a failed query" advice the model does not always obey).
+    let mut failed = failed_statements::FailedStatements::new();
+    // The last statement that completed successfully, so a run that exhausts its
+    // budget without nominating can still surface its best available answer.
+    let mut last_successful_sql: Option<String> = None;
+    loop {
         check_cancelled(&cancellation)?;
-        let (assistant, turn_usage) = receive::receive(
+        if let Some(max_turns) = limits.max_turns
+            && turn_count >= max_turns
+        {
+            return salvage::salvage(
+                provider,
+                &request.model,
+                &mut messages,
+                &[],
+                limits.context_byte_budget,
+                sink,
+                &cancellation,
+                &mut events,
+                &mut usage,
+                used_bounded_sql_query,
+                tool_metadata,
+                last_successful_sql,
+            )
+            .await;
+        }
+        turn_count += 1;
+        let (assistant, turn_usage, reasoning) = receive::receive(
             provider,
             &request.model,
             &messages,
@@ -46,7 +93,56 @@ pub async fn run_agent_with_sink(
         // Providers report cumulative counts per response; sum across turns.
         usage.input_tokens += turn_usage.input_tokens;
         usage.output_tokens += turn_usage.output_tokens;
+        sum_reported(
+            &mut usage.cached_input_tokens,
+            turn_usage.cached_input_tokens,
+        );
+        sum_reported(
+            &mut usage.cache_creation_input_tokens,
+            turn_usage.cache_creation_input_tokens,
+        );
+        sum_reported(&mut usage.reasoning_tokens, turn_usage.reasoning_tokens);
+        // Forward the turn's captured chain-of-thought onto the event stream as
+        // one `ReasoningText` event — the provider layer puts it on `ChatResponse.reasoning`
+        // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate
+        // boundary so the CLI *can* reach it; whether to display it is the CLI's call.
+        // This is the only way reasoning leaves `saya-agent`: it is NOT pushed
+        // onto `messages` — `assistant` (a `ChatMessage`) is what gets replayed
+        // to the provider as history, and `ChatMessage` has no reasoning field,
+        // so reasoning cannot leak into the next turn's request. `None` (a
+        // provider that reported no reasoning) emits nothing — byte-identical
+        // to today.
+        if let Some(text) = reasoning
+            && !text.is_empty()
+        {
+            emit(&mut events, sink, AgentEvent::reasoning_text(text)).await;
+        }
         messages.push(assistant.clone());
+        // The model designates the SQL that answers the question by calling
+        // `designate_answer` in its terminal turn, alongside the prose answer.
+        // That ends the run: the prose is the answer, the SQL is carried on
+        // the output and an event, and no tool is executed. Optional — a turn
+        // without the call falls through to the normal terminal below.
+        if let Some(sql) = designation::designation_from(&assistant) {
+            emit(
+                &mut events,
+                sink,
+                AgentEvent::answer_designated(sql.clone()),
+            )
+            .await;
+            check_cancelled(&cancellation)?;
+            emit(&mut events, sink, AgentEvent::Complete).await;
+            return Ok(AgentOutput {
+                answer: assistant.content,
+                events,
+                used_bounded_sql_query,
+                tool_metadata,
+                usage,
+                learning_usage: None,
+                truncated: false,
+                answer_sql: Some(sql),
+            });
+        }
         if assistant.tool_calls.is_empty() {
             check_cancelled(&cancellation)?;
             emit(&mut events, sink, AgentEvent::Complete).await;
@@ -56,215 +152,57 @@ pub async fn run_agent_with_sink(
                 used_bounded_sql_query,
                 tool_metadata,
                 usage,
+                learning_usage: None,
+                truncated: false,
+                answer_sql: None,
             });
         }
-        // When every call in the message is valid and auto-runnable, the
-        // calls are independent: run them concurrently instead of paying
-        // their latency sequentially. `auto_runnable` is the single policy
-        // for "may this run with no questions asked"; the sequential path
-        // below applies the same gates, so the two cannot drift.
-        let batch_parallel = assistant.tool_calls.len() > 1
-            && assistant.tool_calls.iter().all(|call| {
-                tools::invalid_reason(call, &definitions).is_none()
-                    && definitions
-                        .iter()
-                        .find(|definition| definition.name == call.name)
-                        .is_some_and(|definition| tools::auto_runnable(definition, &limits))
-            });
-        if batch_parallel {
-            tool_count += assistant.tool_calls.len();
-            if tool_count > limits.max_tool_calls {
-                return Err(AgentError::Limit("tool calls"));
-            }
-            check_cancelled(&cancellation)?;
-            for call in &assistant.tool_calls {
-                emit(
-                    &mut events,
-                    sink,
-                    AgentEvent::ToolRequested {
-                        name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                    },
-                )
-                .await;
-                if definitions
-                    .iter()
-                    .find(|definition| definition.name == call.name)
-                    .is_some_and(|definition| definition.effect.database_data)
-                {
-                    used_bounded_sql_query = true;
-                }
-            }
-            let results =
-                tools::execute_batch(tools, &assistant.tool_calls.clone(), &definitions).await;
-            for (call, (result, summary)) in assistant.tool_calls.iter().zip(results) {
-                let (message, truncated) =
-                    tools::tool_message(call.id.clone(), result, limits.context_byte_budget);
-                tool_metadata.push(crate::ToolMetadata {
-                    name: call.name.clone(),
-                    status: if summary.contains("failed") {
-                        "failed"
-                    } else {
-                        "completed"
-                    }
-                    .into(),
-                });
-                messages.push(message);
-                check_cancelled(&cancellation)?;
-                emit(
-                    &mut events,
-                    sink,
-                    AgentEvent::ToolCompleted {
-                        name: call.name.clone(),
-                        summary: output::completion_summary(summary, truncated),
-                    },
-                )
-                .await;
-            }
-            continue;
-        }
-        for call in assistant.tool_calls {
-            if let Some(reason) = tools::invalid_reason(&call, &definitions) {
-                if call.id.trim().is_empty() {
-                    return Err(AgentError::InvalidToolCall);
-                }
-                tool_count += 1;
-                if tool_count > limits.max_tool_calls {
-                    return Err(AgentError::Limit("tool calls"));
-                }
-                check_cancelled(&cancellation)?;
-                emit(
-                    &mut events,
-                    sink,
-                    AgentEvent::ToolRequested {
-                        name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                    },
-                )
-                .await;
-                // Feed the problem back as the tool result so the model can
-                // retry with a valid call on its next turn.
-                tool_metadata.push(crate::ToolMetadata {
-                    name: call.name.clone(),
-                    status: "failed".into(),
-                });
-                let (message, _) = tools::tool_message(
-                    call.id,
-                    serde_json::json!({"error": reason}),
-                    limits.context_byte_budget,
-                );
-                messages.push(message);
-                emit(
-                    &mut events,
-                    sink,
-                    AgentEvent::ToolCompleted {
-                        name: call.name,
-                        summary: "tool call failed validation".into(),
-                    },
-                )
-                .await;
-                continue;
-            }
-            tool_count += 1;
-            if tool_count > limits.max_tool_calls {
-                return Err(AgentError::Limit("tool calls"));
-            }
-            check_cancelled(&cancellation)?;
-            emit(
-                &mut events,
+        // The tool-call ceiling is a whole-run total checked once per turn,
+        // before any of the turn's calls run: if this turn would cross it, the
+        // run stops rather than executing a partial batch.
+        let projected_tool_calls = tool_count + assistant.tool_calls.len();
+        if let Some(max_tool_calls) = limits.max_tool_calls
+            && projected_tool_calls > max_tool_calls
+        {
+            return salvage::salvage(
+                provider,
+                &request.model,
+                &mut messages,
+                &assistant.tool_calls,
+                limits.context_byte_budget,
                 sink,
-                AgentEvent::ToolRequested {
-                    name: call.name.clone(),
-                    arguments: call.arguments.clone(),
-                },
+                &cancellation,
+                &mut events,
+                &mut usage,
+                used_bounded_sql_query,
+                tool_metadata,
+                last_successful_sql,
             )
             .await;
-            let definition = definitions
-                .iter()
-                .find(|tool| tool.name == call.name)
-                .expect("validated");
-            let approved = !definition.effect.requires_approval
-                || approval.approve(definition, &call.arguments).await;
-            // Apply the same policy the batch path consults (`auto_runnable`),
-            // split into its gates so the denial can name which one refused.
-            // `requires_approval` was already resolved into `approved`, so a
-            // tool that needed approval and got it still runs; the remaining
-            // gates bind whether or not approval was granted. This is the one
-            // place the sequential path decides auto-run — keeping it here in
-            // terms of the shared gates means a gate added to `tools.rs`
-            // cannot apply to the batch path and not this one.
-            let candidate_denied = tools::candidate_denied(definition, &limits);
-            let side_effect_denied = tools::external_side_effect_gated(definition);
-            let executed = approved && !candidate_denied && !side_effect_denied;
-            let (result, summary) = if executed {
-                check_cancelled(&cancellation)?;
-                // Indicates a database-row-producing query tool ran.
-                if definition.effect.database_data {
-                    used_bounded_sql_query = true;
-                }
-                tools::execute(tools, &call.name, call.arguments, definition.read_only).await
-            } else {
-                emit(
-                    &mut events,
-                    sink,
-                    AgentEvent::ToolDenied {
-                        name: call.name.clone(),
-                        reason: if side_effect_denied {
-                            "external side effect requires approval".into()
-                        } else if candidate_denied {
-                            "candidate writes are not permitted".into()
-                        } else {
-                            "approval was not granted".into()
-                        },
-                    },
-                )
-                .await;
-                (
-                    serde_json::json!({"error":"tool call denied by approval policy"}),
-                    "read-only database tool denied",
-                )
-            };
-            tool_metadata.push(crate::ToolMetadata {
-                name: call.name.clone(),
-                status: if executed {
-                    if summary.contains("failed") {
-                        "failed"
-                    } else {
-                        "completed"
-                    }
-                } else {
-                    "denied"
-                }
-                .into(),
-            });
-            let (message, truncated) =
-                tools::tool_message(call.id, result, limits.context_byte_budget);
-            messages.push(message);
-            if executed {
-                check_cancelled(&cancellation)?;
-                emit(
-                    &mut events,
-                    sink,
-                    AgentEvent::ToolCompleted {
-                        name: call.name,
-                        summary: output::completion_summary(summary, truncated),
-                    },
-                )
-                .await;
-            }
         }
+        tool_count = projected_tool_calls;
+        turn_tools::run_turn_tools(
+            tools,
+            assistant,
+            &definitions,
+            &limits,
+            approval,
+            sink,
+            &cancellation,
+            &mut events,
+            &mut messages,
+            &mut used_bounded_sql_query,
+            &mut tool_metadata,
+            &mut failed,
+            &mut last_successful_sql,
+        )
+        .await?;
         // Intra-loop context budget: the pre-loop trim bounds history, but
-        // assistant turns and tool results accumulate here. Trim the oldest
-        // tool-result pairs (the assistant turn that issued each call plus its
-        // `tool` message) until the conversation fits, keeping the newest
-        // context — the same recency policy the pre-loop path uses. A single
-        // result is already capped at construction, so this resolves
-        // accumulation; if trimming everything still leaves the newest result
-        // over budget, truncate it rather than aborting the whole run (S4
-        // invariant 1: one result must never kill the run by itself).
+        // assistant turns and tool results accumulate here. Trim every turn —
+        // batch (parallel) and sequential alike — so the byte budget binds
+        // unconditionally, never just on the turns a single call ran.
         output::trim_to_budget(&mut messages, limits.context_byte_budget);
     }
-    Err(AgentError::Limit("turns"))
 }
 
 pub(super) async fn emit(

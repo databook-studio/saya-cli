@@ -96,6 +96,8 @@ mod tests {
                         tables: vec![
                             Table {
                                 name: "orders".to_string(),
+                                primary_key: vec![],
+                                foreign_keys: vec![],
                                 columns: vec![
                                     Column {
                                         name: "id".to_string(),
@@ -111,6 +113,8 @@ mod tests {
                             },
                             Table {
                                 name: "users".to_string(),
+                                primary_key: vec![],
+                                foreign_keys: vec![],
                                 columns: vec![Column {
                                     name: "id".to_string(),
                                     data_type: "int".to_string(),
@@ -126,6 +130,8 @@ mod tests {
                         name: "public".to_string(),
                         tables: vec![Table {
                             name: "orders".to_string(),
+                            primary_key: vec![],
+                            foreign_keys: vec![],
                             columns: vec![Column {
                                 name: "id".to_string(),
                                 data_type: "int".to_string(),

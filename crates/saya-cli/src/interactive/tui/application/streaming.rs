@@ -76,7 +76,7 @@ impl App {
                         }
                         _ => {}
                     }
-                    apply_event(&mut self.transcript, event);
+                    apply_event(&mut self.transcript, event, state.show_thinking);
                 }
                 StreamMsg::ApprovalRequest {
                     tool,
@@ -108,6 +108,16 @@ impl App {
                                     ),
                                 );
                             }
+                            // Accumulate into the session total. `record`
+                            // applies the same zero-guard, so a
+                            // silent provider's all-zero usage adds nothing.
+                            state.usage.record(usage);
+                            // Fold the extraction call's usage into a separate
+                            // learning total. `learning_usage` is `None` when
+                            // no extraction ran or it produced no response, so
+                            // a session with learning disabled records nothing
+                            // here — the answering total is unchanged.
+                            state.usage.record_learning(output.learning_usage);
                         }
                         Err(error) => self.transcript.push(BlockKind::Error, error),
                     }

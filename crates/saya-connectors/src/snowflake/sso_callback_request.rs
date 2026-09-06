@@ -10,7 +10,18 @@ use super::{errors, sso_form};
 const MAX_HEADERS: usize = 16 * 1024;
 const MAX_BODY: usize = 8 * 1024;
 
-pub(crate) async fn read(stream: &mut TcpStream) -> Result<Option<String>, ConnectionError> {
+/// What a request on the callback listener turned out to be.
+pub(crate) enum Callback {
+    /// The token the browser delivered.
+    Token(String),
+    /// A CORS preflight. The browser asks before posting the token
+    /// cross-origin from the Snowflake callback page, and abandons the post if
+    /// the question is refused — so this is answered and the listener keeps
+    /// waiting for the request it precedes.
+    Preflight,
+}
+
+pub(crate) async fn read(stream: &mut TcpStream) -> Result<Option<Callback>, ConnectionError> {
     let mut bytes = Vec::new();
     let header_end = loop {
         let mut chunk = [0_u8; 2048];
@@ -98,12 +109,24 @@ pub(crate) async fn read(stream: &mut TcpStream) -> Result<Option<String>, Conne
         }
     }
     let body = &bytes[header_len..header_len + body_len];
+    if method == "OPTIONS" {
+        return Ok(Some(Callback::Preflight));
+    }
     match method.as_str() {
         "GET" => sso_form::token(target.split_once('?').map(|(_, value)| value).unwrap_or("")),
         "POST" => sso_form::token(std::str::from_utf8(body).map_err(|_| errors::auth())?),
         _ => Err(errors::auth()),
     }
-    .map(Some)
+    .map(|token| Some(Callback::Token(token)))
+}
+
+/// Answers a preflight so the browser proceeds with the request it precedes.
+/// The listener is a loopback endpoint that only ever hands back a token it
+/// was given, so permitting the origin costs nothing a page could not already
+/// do by posting directly.
+pub(crate) async fn reply_preflight(stream: &mut TcpStream) -> Result<(), ()> {
+    let response = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    stream.write_all(response.as_bytes()).await.map_err(|_| ())
 }
 
 pub(crate) async fn reply(stream: &mut TcpStream, status: u16, message: &str) -> Result<(), ()> {

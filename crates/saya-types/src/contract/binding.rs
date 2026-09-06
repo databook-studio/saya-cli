@@ -70,6 +70,14 @@ pub enum SchemaBinding {
         #[serde(default)]
         requirement: ColumnRequirement,
     },
+    /// Depends on each named column existing, with any data type. Used by a
+    /// fact that rests on several columns at once — a join rule's local keys,
+    /// a metric's underlying columns — so the fact is invalid the moment any
+    /// one of them disappears, and undisturbed by an unrelated column changing.
+    /// A semantic type requirement is not recorded here: a join key or a
+    /// metric's column set is too varied for a single structural type check,
+    /// and disappearance is the failure that matters.
+    Columns { columns: Vec<String> },
 }
 
 impl SchemaBinding {
@@ -119,6 +127,30 @@ impl SchemaBinding {
                     requirement,
                 })
             }
+            // A join rule depends on its local join keys — the columns on the
+            // table the claim is stored against. A rule with no keys (a
+            // predicate-only join no declared constraint describes) can name no
+            // column to depend on, so it falls back to the table existing.
+            (KnowledgeSlot::RelationJoinRule, ClaimPayload::JoinRule { local_columns, .. }) => {
+                if local_columns.is_empty() {
+                    Some(Self::Table)
+                } else {
+                    Some(Self::Columns {
+                        columns: local_columns.clone(),
+                    })
+                }
+            }
+            // A metric depends on the columns its definition is built from; a
+            // metric with no column references binds to the table existing.
+            (KnowledgeSlot::MetricDefinition, ClaimPayload::MetricDefinition { columns, .. }) => {
+                if columns.is_empty() {
+                    Some(Self::Table)
+                } else {
+                    Some(Self::Columns {
+                        columns: columns.clone(),
+                    })
+                }
+            }
             _ => None,
         }
     }
@@ -160,6 +192,22 @@ impl SchemaBinding {
                         }
                     }
                 }
+            }
+            // Every named column must exist; one missing makes the fact
+            // invalid. Matching is case-insensitive, the convention the column
+            // binding and the fingerprint use, so a renamed-only-column still
+            // resolves and is detected as a change rather than as absence.
+            Self::Columns { columns } => {
+                for column in columns {
+                    if !table
+                        .columns
+                        .iter()
+                        .any(|c| c.name.eq_ignore_ascii_case(column))
+                    {
+                        return BindingValidity::Invalid;
+                    }
+                }
+                BindingValidity::Valid
             }
         }
     }
@@ -213,6 +261,8 @@ mod tests {
                     nullable: true,
                 })
                 .collect(),
+            primary_key: vec![],
+            foreign_keys: vec![],
         }
     }
 
@@ -376,6 +426,9 @@ mod tests {
             SchemaBinding::Column {
                 column: "total_amount".to_string(),
                 requirement: ColumnRequirement::Numeric,
+            },
+            SchemaBinding::Columns {
+                columns: vec!["customer_id".to_string(), "tenant_id".to_string()],
             },
         ];
 
@@ -689,6 +742,115 @@ mod tests {
         }
     }
 
+    /// A join rule with local join keys derives a `Columns` binding on those
+    /// keys; a predicate-only rule with no keys derives a `Table` binding.
+    #[test]
+    fn test_derive_join_rule() {
+        let keyed = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            SchemaBinding::derive(&KnowledgeSlot::RelationJoinRule, &keyed),
+            Some(SchemaBinding::Columns {
+                columns: vec!["customer_id".into()]
+            })
+        );
+        let predicate_only = ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec![],
+            vec![],
+            "orders joins customers where customers.is_active",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            SchemaBinding::derive(&KnowledgeSlot::RelationJoinRule, &predicate_only),
+            Some(SchemaBinding::Table)
+        );
+    }
+
+    /// A metric with underlying columns derives a `Columns` binding on them; a
+    /// metric with no column references derives a `Table` binding.
+    #[test]
+    fn test_derive_metric_definition() {
+        let with_cols = ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into(), "status".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            SchemaBinding::derive(&KnowledgeSlot::MetricDefinition, &with_cols),
+            Some(SchemaBinding::Columns {
+                columns: vec!["subscription_amount".into(), "status".into()]
+            })
+        );
+        let no_cols = ClaimPayload::metric_definition("count", "COUNT(*)", vec![], None).unwrap();
+        assert_eq!(
+            SchemaBinding::derive(&KnowledgeSlot::MetricDefinition, &no_cols),
+            Some(SchemaBinding::Table)
+        );
+    }
+
+    /// A `Columns` binding is valid while every named column exists, invalid
+    /// the moment any one is dropped, and undisturbed by an unrelated column
+    /// changing — the same no-crying-wolf property the single-column binding
+    /// has, generalised to a set.
+    #[test]
+    fn test_columns_binding_validates_existence() {
+        let binding = SchemaBinding::Columns {
+            columns: vec!["customer_id".into(), "tenant_id".into()],
+        };
+        let table = make_table(
+            "orders",
+            &[
+                ("customer_id", "int"),
+                ("tenant_id", "int"),
+                ("note", "text"),
+            ],
+        );
+        assert_eq!(binding.validate(&table), BindingValidity::Valid);
+
+        // Dropping an unrelated column leaves the binding valid.
+        let dropped_unrelated =
+            make_table("orders", &[("customer_id", "int"), ("tenant_id", "int")]);
+        assert_eq!(binding.validate(&dropped_unrelated), BindingValidity::Valid);
+
+        // Dropping one of the bound columns invalidates the fact.
+        let dropped_one = make_table("orders", &[("customer_id", "int"), ("note", "text")]);
+        assert_eq!(binding.validate(&dropped_one), BindingValidity::Invalid);
+
+        // Retyping a bound column does not invalidate a `Columns` binding: the
+        // fact depends on the column existing, not on its type, so a join key
+        // widening from int to bigint stays valid.
+        let retyped = make_table("orders", &[("customer_id", "bigint"), ("tenant_id", "int")]);
+        assert_eq!(binding.validate(&retyped), BindingValidity::Valid);
+
+        // Matching is case-insensitive, like the single-column binding.
+        let upper = make_table("orders", &[("CUSTOMER_ID", "int"), ("TENANT_ID", "int")]);
+        assert_eq!(binding.validate(&upper), BindingValidity::Valid);
+    }
+
+    #[test]
+    fn test_columns_binding_serde_round_trip() {
+        let binding = SchemaBinding::Columns {
+            columns: vec!["customer_id".into(), "tenant_id".into()],
+        };
+        let json = serde_json::to_string(&binding).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"columns","columns":["customer_id","tenant_id"]}"#
+        );
+        let back: SchemaBinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, binding);
+    }
+
     /// Spec Test 6: Derived binding end-to-end validation over live tables.
     #[test]
     fn test_derived_binding_end_to_end_validation() {
@@ -956,8 +1118,14 @@ mod tests {
     }
 
     fn arb_table() -> impl Strategy<Value = Table> {
-        (arb_col_name(), prop::collection::vec(arb_column(), 0..10))
-            .prop_map(|(name, columns)| Table { name, columns })
+        (arb_col_name(), prop::collection::vec(arb_column(), 0..10)).prop_map(|(name, columns)| {
+            Table {
+                name,
+                columns,
+                primary_key: vec![],
+                foreign_keys: vec![],
+            }
+        })
     }
 
     fn arb_column_requirement() -> impl Strategy<Value = ColumnRequirement> {
@@ -976,7 +1144,9 @@ mod tests {
                     column,
                     requirement,
                 }
-            })
+            }),
+            prop::collection::vec(arb_col_name(), 1..=4)
+                .prop_map(|columns| SchemaBinding::Columns { columns }),
         ]
     }
 
@@ -991,9 +1161,20 @@ mod tests {
             new_col_type in arb_data_type(),
             new_col_nullable in any::<bool>(),
         ) {
-            // Ensure the new column name is distinct from what the binding depends upon
-            if let SchemaBinding::Column { ref column, .. } = binding {
-                prop_assume!(!new_col_name.eq_ignore_ascii_case(column));
+            // Ensure the new column name is distinct from what the binding depends
+            // upon, for both the single-column and the multi-column shapes. Adding
+            // a column that matches a missing bound column would repair the
+            // binding (Invalid -> Valid), which is the opposite of "unrelated".
+            match &binding {
+                SchemaBinding::Column { column, .. } => {
+                    prop_assume!(!new_col_name.eq_ignore_ascii_case(column));
+                }
+                SchemaBinding::Columns { columns } => {
+                    for c in columns {
+                        prop_assume!(!new_col_name.eq_ignore_ascii_case(c));
+                    }
+                }
+                SchemaBinding::Table => {}
             }
 
             let initial_verdict = binding.validate(&table);

@@ -1,4 +1,4 @@
-//! Structured extraction response parser and candidate validation — spec F Chunk 2.
+//! Structured extraction response parser and candidate validation.
 //!
 //! Parses LLM extraction JSON outputs, rejects hallucinated object IDs (Safety Property 2),
 //! enforces maximum proposal limits (Safety Property 3), and sanitizes credentials.
@@ -47,7 +47,7 @@ fn convert_raw_proposal(
     table.get_by_id(&object_id)?;
 
     let slot = KnowledgeSlot::parse(&raw.slot)?;
-    let value = build_claim_payload(&slot, &raw.value, raw.reason.as_deref()).ok()?;
+    let value = build_claim_payload(&slot, &raw).ok()?;
 
     let origin = ProposalOrigin::parse(&raw.origin).unwrap_or(ProposalOrigin::AssistantInferred);
     let confidence = raw.confidence.unwrap_or(0.8).clamp(0.0, 1.0);
@@ -61,7 +61,7 @@ fn convert_raw_proposal(
     })
 }
 
-/// Strips markdown fences (e.g. ````json ... ````) from the LLM output.
+/// Strips markdown fences (e.g. ````json... ````) from the LLM output.
 #[allow(dead_code)]
 fn strip_markdown_fences(raw: &str) -> &str {
     let trimmed = raw.trim();
@@ -291,6 +291,153 @@ mod tests {
             ExtractionError::JsonParse(_) => (),
             other => panic!("Expected JsonParse error, got {other:?}"),
         }
+    }
+
+    /// JSON mode returns bare JSON (no fence); the default
+    /// path returns ```` ```json ````-wrapped output. Not every provider honours
+    /// the JSON hint, so the stripper stays and both shapes must parse.
+    #[test]
+    fn test_parse_handles_bare_json() {
+        let table = setup_test_table();
+        let bare = r#"{"proposals": [
+            {
+                "object_id": "T0",
+                "slot": "table.grain",
+                "value": "one row per order",
+                "origin": "user_explicit"
+            }
+        ]}"#;
+
+        let res = parse_extraction_response(bare, &table).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].object_id, TurnObjectId::new(0));
+    }
+
+    /// The stripper itself handles bare JSON, the ```json fence, and a bare ```
+    /// fence — the three shapes a provider that ignores the JSON hint can still
+    /// return. Both fences collapse to the same inner JSON; bare passes through.
+    #[test]
+    fn strip_markdown_fences_handles_bare_and_both_fence_flavors() {
+        let bare = r#"  {"proposals": []}  "#;
+        assert_eq!(strip_markdown_fences(bare), r#"{"proposals": []}"#);
+
+        let json_fence = "```json\n{\"proposals\": []}\n```";
+        assert_eq!(strip_markdown_fences(json_fence), r#"{"proposals": []}"#);
+
+        let plain_fence = "```\n{\"proposals\": []}\n```";
+        assert_eq!(strip_markdown_fences(plain_fence), r#"{"proposals": []}"#);
+    }
+
+    #[test]
+    fn test_parse_builds_a_join_rule_from_structured_fields() {
+        // A join rule arrives as the condition in `value` plus the target and
+        // the paired join keys on the optional fields; the parser assembles
+        // them into one `JoinRule` payload filed against the local object.
+        let table = setup_test_table();
+        let json = r#"{
+            "proposals": [
+                {
+                    "object_id": "T0",
+                    "slot": "relation.join_rule",
+                    "value": "orders.customer_id = customers.id, and only where customers.is_active",
+                    "target": "analytics.public.customers",
+                    "local_columns": ["customer_id"],
+                    "target_columns": ["id"],
+                    "reason": "only active customers count toward an order",
+                    "origin": "user_explicit",
+                    "confidence": 1.0
+                }
+            ]
+        }"#;
+        let res = parse_extraction_response(json, &table).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].slot, KnowledgeSlot::RelationJoinRule);
+        assert_eq!(
+            res[0].value,
+            ClaimPayload::join_rule(
+                "analytics.public.customers",
+                vec!["customer_id".into()],
+                vec!["id".into()],
+                "orders.customer_id = customers.id, and only where customers.is_active",
+                Some("only active customers count toward an order"),
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_builds_a_metric_definition_from_structured_fields() {
+        let table = setup_test_table();
+        let json = r#"{
+            "proposals": [
+                {
+                    "object_id": "T0",
+                    "slot": "metric.definition",
+                    "name": "mrr",
+                    "value": "SUM(subscription_amount) WHERE status = 'active'",
+                    "columns": ["subscription_amount", "status"],
+                    "reason": "recurring revenue only",
+                    "origin": "assistant_inferred",
+                    "confidence": 0.9
+                }
+            ]
+        }"#;
+        let res = parse_extraction_response(json, &table).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].slot, KnowledgeSlot::MetricDefinition);
+        assert_eq!(
+            res[0].value,
+            ClaimPayload::metric_definition(
+                "mrr",
+                "SUM(subscription_amount) WHERE status = 'active'",
+                vec!["subscription_amount".into(), "status".into()],
+                Some("recurring revenue only"),
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_drops_a_join_rule_without_a_target() {
+        // A join rule with no target names no relation; the proposal is dropped
+        // rather than filed as a half-formed fact.
+        let table = setup_test_table();
+        let json = r#"{
+            "proposals": [
+                {
+                    "object_id": "T0",
+                    "slot": "relation.join_rule",
+                    "value": "orders joins customers on is_active",
+                    "origin": "assistant_inferred"
+                }
+            ]
+        }"#;
+        let res = parse_extraction_response(json, &table).unwrap();
+        assert!(
+            res.is_empty(),
+            "a join rule without a target must be dropped"
+        );
+    }
+
+    #[test]
+    fn test_parse_drops_a_metric_definition_without_a_name() {
+        let table = setup_test_table();
+        let json = r#"{
+            "proposals": [
+                {
+                    "object_id": "T0",
+                    "slot": "metric.definition",
+                    "value": "SUM(subscription_amount) WHERE status = 'active'",
+                    "columns": ["subscription_amount"],
+                    "origin": "assistant_inferred"
+                }
+            ]
+        }"#;
+        let res = parse_extraction_response(json, &table).unwrap();
+        assert!(
+            res.is_empty(),
+            "a metric definition without a name must be dropped"
+        );
     }
 
     #[test]

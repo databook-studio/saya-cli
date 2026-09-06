@@ -284,7 +284,7 @@ impl ApprovalDecider for DenyApproval {
     }
 }
 
-/// Q1 (S8): a tool that declares `external_side_effect` *without* also
+/// A tool that declares `external_side_effect` *without* also
 /// declaring `requires_approval` is a misconfiguration the policy refuses to
 /// auto-run, rather than trusting the author to set both. The refusal surfaces
 /// as a `ToolDenied` event with a reason naming the side effect, and the tool
@@ -352,7 +352,7 @@ async fn external_side_effect_without_approval_is_refused_not_auto_run() {
     );
 }
 
-/// Q1 control (S8): the external-side-effect gate must NOT double-deny a tool
+/// The external-side-effect gate must NOT double-deny a tool
 /// that also requires approval and was approved — that is `render_chart`'s
 /// shape (`external_side_effect: true, requires_approval: true`). Approval is
 /// the real gate there; when granted, the tool runs. This preserves today's
@@ -409,7 +409,7 @@ async fn external_side_effect_with_approval_runs_when_approved() {
     );
 }
 
-/// Q1 control (S8): the same `render_chart`-shaped tool is still denied when
+/// The same `render_chart`-shaped tool is still denied when
 /// approval is refused — the approval gate is the binding one, and the
 /// external-side-effect gate does not replace it.
 #[tokio::test]

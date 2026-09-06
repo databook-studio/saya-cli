@@ -430,6 +430,50 @@ async fn v2_errors_timeout_and_partition_failures_are_redacted_and_clear_active(
 }
 
 #[tokio::test]
+async fn v2_sql_compilation_error_names_the_missing_object() {
+    let (origin, _) = server(vec![Reply::status(
+        "422 Unprocessable Content",
+        json!({
+            "code": "002003",
+            "message": "SQL compilation error:\nObject 'ORDRS' does not exist or not authorized.",
+            "success": false
+        }),
+    )])
+    .await;
+    let mut item = connector(Auth::Keypair(keypair()));
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT * FROM ordrs", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ORDRS"), "object name dropped: {error}");
+    assert!(error.contains("does not exist"), "opaque: {error}");
+}
+
+#[tokio::test]
+async fn v2_conversion_error_does_not_leak_row_value() {
+    let (origin, _) = server(vec![Reply::status(
+        "422 Unprocessable Content",
+        json!({
+            "code": "100038",
+            "message": "Numeric value '4111-1111-1111-1111' is not recognized",
+            "success": false
+        }),
+    )])
+    .await;
+    let mut item = connector(Auth::Keypair(keypair()));
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("4111"), "row value leaked: {error}");
+    assert_eq!(error, "query failed: Snowflake query failed");
+}
+
+#[tokio::test]
 async fn cancellation_uses_uuid_endpoint_and_rejects_invalid_or_timed_out_handles() {
     let (origin, seen) = server(vec![Reply::json(json!({"ok":true}))]).await;
     let mut item = connector(Auth::Keypair(keypair()));
@@ -664,6 +708,50 @@ async fn legacy_login_and_query_failures_are_generic_and_secret_free() {
         assert!(!error.contains(marker));
         assert!(!error.contains("password-sentinel"));
     }
+}
+
+#[tokio::test]
+async fn legacy_sql_compilation_error_names_the_object() {
+    let login = Reply::json(json!({"success":true,"data":{"token":"session"}}));
+    let query = Reply::json(json!({
+        "success": false,
+        "data": {
+            "code": "001003",
+            "message": "SQL compilation error: syntax error line 1 at position 0 unexpected 'SELCT'."
+        }
+    }));
+    let (origin, _) = server(vec![login, query]).await;
+    let mut item = connector(userpass());
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("syntax error"), "opaque: {error}");
+    assert!(error.contains("SELCT"), "opaque: {error}");
+}
+
+#[tokio::test]
+async fn legacy_conversion_error_does_not_leak_row_value() {
+    let login = Reply::json(json!({"success":true,"data":{"token":"session"}}));
+    let query = Reply::json(json!({
+        "success": false,
+        "data": {
+            "code": "100038",
+            "message": "Numeric value '4111-1111-1111-1111' is not recognized"
+        }
+    }));
+    let (origin, _) = server(vec![login, query]).await;
+    let mut item = connector(userpass());
+    item.origin = origin;
+    let error = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("4111"), "row value leaked: {error}");
+    assert_eq!(error, "query failed: Snowflake query failed");
 }
 
 #[tokio::test]
@@ -951,4 +1039,101 @@ async fn external_browser_login_exchange_failure_is_generic_and_redacted() {
 fn malformed_chunks_and_secrets_do_not_surface_values() {
     let error = super::result::chunk_rows("secret").unwrap_err();
     assert!(!error.to_string().contains("secret"));
+}
+
+/// Snowflake maps a SAML assertion by the base account name, while the host
+/// carries the region and any privatelink suffix. Sending the full host as
+/// `ACCOUNT_NAME` makes the IdP lookup fail on exactly the accounts that need
+/// it, and a plain identifier hides that because there the base name and the
+/// host are the same string.
+#[tokio::test]
+async fn account_name_is_the_base_account_not_the_regional_host() {
+    let _serial = browser_test_guard().await;
+    let (origin, seen) = sso_fixture_server().await;
+    // Built from the regional identifier a privatelink deployment is reached
+    // on, so the base account has to be derived rather than assumed.
+    let mut item = SnowflakeConnector::new(
+        "acct.ap-southeast-2.privatelink".into(),
+        "user".into(),
+        Auth::ExternalBrowser(ExternalBrowser {
+            enabled: true,
+            token: Arc::new(Mutex::new(None)),
+        }),
+        Context {
+            warehouse: None,
+            database: None,
+            schema: None,
+            role: None,
+        },
+        ConnectorOptions {
+            query_timeout_seconds: 2,
+            max_connections: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    item.origin = origin;
+    item.browser_opener = record_browser_opener;
+    item.sso_timeout = Duration::from_secs(2);
+
+    let _ = item
+        .execute(saya_types::QueryRequest::new("SELECT 1", 1))
+        .await;
+
+    let requests = seen.lock().await;
+    let authenticator = requests
+        .iter()
+        .find(|item| item.starts_with("POST /session/authenticator-request"))
+        .expect("an authenticator request");
+    let body: Value = serde_json::from_str(request_body(authenticator)).unwrap();
+    assert_eq!(
+        body["data"]["ACCOUNT_NAME"], "acct",
+        "the IdP matches the bare account, not the host it was reached on"
+    );
+}
+
+/// A browser sends a CORS preflight before posting the token cross-origin from
+/// the Snowflake callback page. Answering it with a rejection makes the browser
+/// abandon the post, so sign-in stalls with no token ever arriving. The
+/// preflight is answered and the listener keeps waiting for the real request.
+#[tokio::test]
+async fn callback_answers_a_cors_preflight_and_keeps_waiting() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let sender = tokio::spawn(async move {
+        let mut preflight = TcpStream::connect(address).await.unwrap();
+        preflight
+            .write_all(
+                b"OPTIONS /callback HTTP/1.1\r\nHost: localhost\r\nOrigin: https://acct.snowflakecomputing.com\r\nAccess-Control-Request-Method: POST\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut answer = String::new();
+        preflight.read_to_string(&mut answer).await.unwrap();
+        sleep(Duration::from_millis(5)).await;
+
+        let body = "token=after-preflight";
+        let mut post = TcpStream::connect(address).await.unwrap();
+        post.write_all(format!("POST /callback HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes())
+            .await
+            .unwrap();
+        answer
+    });
+
+    let token = super::sso_callback::capture_token(&listener, Duration::from_secs(2))
+        .await
+        .unwrap();
+    let answer = sender.await.unwrap();
+
+    assert!(
+        answer.starts_with("HTTP/1.1 200"),
+        "a preflight must be answered, not rejected: {answer}"
+    );
+    assert!(
+        answer
+            .to_ascii_lowercase()
+            .contains("access-control-allow-origin"),
+        "the answer must carry the allow headers the browser is asking for: {answer}"
+    );
+    assert_eq!(token, "after-preflight");
 }

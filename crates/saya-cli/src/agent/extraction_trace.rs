@@ -1,7 +1,6 @@
-//! Stderr tracing for the post-turn extraction boundary (spec packet-54 open
-//! question).
+//! Stderr tracing for the post-turn extraction boundary.
 //!
-//! Until this slice there was zero visibility into the only path that writes
+//! Without this there is no visibility into the only path that writes
 //! memory — no log, no receipt, no counter — and two reviews were misled by the
 //! rendered `memory learned ·` line as a result. This module is the durable
 //! win: a one-line stderr trace at the `run_extraction` boundary, off by

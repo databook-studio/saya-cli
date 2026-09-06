@@ -4,7 +4,7 @@
 //! fields directly and bypass the validated constructors — exactly the
 //! "validated constructor beside a publicly-constructible variant" the security
 //! standard warns about. This impl routes deserialization through the
-//! constructors, so a `{"kind":"timezone","value":"SELECT ..."}` row is refused
+//! constructors, so a `{"kind":"timezone","value":"SELECT..."}` row is refused
 //! by the *type*, not only by the store's admission gate. That is the spec's
 //! "make it unrepresentable, not filtered" rule, enforced on every construction
 //! path, not just the obvious one.

@@ -73,6 +73,40 @@ pub fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Path) -> 
                 &format!("{role:?}"),
             ],
         ),
+        DatabaseProfile::ClickHouse {
+            host,
+            port,
+            database,
+            user,
+            secure,
+            ..
+        } => fields(
+            &mut hash,
+            [
+                "clickhouse",
+                host,
+                &format!("{database:?}"),
+                &format!("{user:?}"),
+                &format!("{port:?}"),
+                &format!("{secure:?}"),
+            ],
+        ),
+        DatabaseProfile::BigQuery {
+            project,
+            dataset,
+            location,
+            max_bytes_billed,
+            ..
+        } => fields(
+            &mut hash,
+            [
+                "bigquery",
+                project,
+                &format!("{dataset:?}"),
+                &format!("{location:?}"),
+                &format!("{max_bytes_billed:?}"),
+            ],
+        ),
     }
     let digest = hash.finalize();
     let mut value = String::from("p-");

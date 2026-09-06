@@ -126,9 +126,11 @@ pub(crate) fn slot_for_payload(payload: &ClaimPayload) -> Option<KnowledgeSlot> 
         ClaimPayload::ColumnRole { column, .. } => Some(KnowledgeSlot::ColumnRole {
             column: column.clone(),
         }),
-        // `Relationship` and any future variant are not slot-bound on the
-        // `remember` path; `build_payload` never produces them, so a caller that
-        // reaches one has a payload it cannot file.
+        ClaimPayload::JoinRule { .. } => Some(KnowledgeSlot::RelationJoinRule),
+        ClaimPayload::MetricDefinition { .. } => Some(KnowledgeSlot::MetricDefinition),
+        // `Relationship` is not slot-bound on the `remember` path;
+        // `build_payload` never produces it, so a caller that reaches one has a
+        // payload it cannot file.
         _ => None,
     }
 }

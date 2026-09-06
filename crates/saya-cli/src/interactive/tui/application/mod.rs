@@ -4,6 +4,7 @@ mod input_actions;
 mod picker;
 mod search;
 mod streaming;
+mod wide_table;
 
 use super::history::History;
 use super::input::InputBuffer;
@@ -44,6 +45,7 @@ impl App {
             sql_task: None,
             pending_session_save: None,
             last_query: None,
+            wide_table: Default::default(),
             runtime,
             state_db,
             should_quit: false,
@@ -88,7 +90,7 @@ impl App {
     /// in `pending` and dispatches only after the first finishes (both results
     /// report). This guard is the backstop: should a `SqlTask` ever reach the
     /// dispatch handler while one is already running, it is refused with a
-    /// message instead of replacing the first receiver (invariant 2).
+    /// message instead of replacing the first receiver.
     pub(crate) fn admit_second_sql(&self) -> SecondSqlDecision {
         if self.sql_task.is_some() {
             SecondSqlDecision::Reject(
@@ -103,7 +105,7 @@ impl App {
     /// The worker thread is not joined and the connector has no cancellation
     /// token wired here, so the query keeps running **server-side**; its result
     /// lands on a dropped channel and is discarded. The message says exactly
-    /// that — it never claims the query was cancelled. (Q1, option 2.)
+    /// that — it never claims the query was cancelled.
     pub(crate) fn detach_sql_task(&mut self) {
         if let Some((_, _, started)) = self.sql_task.take() {
             // Release the status fields the bar reused while the query ran.
@@ -157,6 +159,7 @@ pub(crate) mod tests_support {
             session_save: None,
             pending_session_save: None,
             last_query: None,
+            wide_table: Default::default(),
             runtime: Arc::new(unused_runtime()),
             state_db: SqliteStateStore::new(PathBuf::new()),
             should_quit: false,
@@ -187,7 +190,7 @@ pub(crate) mod tests_support {
     pub(crate) fn unused_runtime() -> RuntimeConfig {
         use saya_config::{
             AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi,
-            ResolvedConfig, ResolvedMemory,
+            ResolvedConfig, ResolvedMemory, ThemeChoice,
         };
         RuntimeConfig {
             resolved: ResolvedConfig {
@@ -204,13 +207,17 @@ pub(crate) mod tests_support {
                     idle_timeout_seconds: 90,
                     max_output_tokens: 4096,
                     context_byte_budget: 256 * 1024,
+                    show_thinking: false,
+                    retry_delays_ms: vec![250, 500, 1000],
                 },
                 max_rows: 100,
                 read_only: true,
                 max_iterations: 4,
+                candidates: 1,
                 query_timeout_seconds: 5,
                 output_format: OutputFormat::Text,
                 output_color: ColorChoice::Auto,
+                ui_theme: ThemeChoice::Auto,
                 memory: ResolvedMemory {
                     mode: MemoryMode::Off,
                     max_contracts: 5,
@@ -290,7 +297,7 @@ mod tests {
 
     /// Backstop guard: should a `SqlTask` reach the dispatch handler while one
     /// is already running, it is refused (first preserved, message shown) —
-    /// never a silent replacement (invariant 2).
+    /// never a silent replacement.
     #[test]
     fn second_sql_command_at_the_handler_is_rejected_not_silently_dropped() {
         let mut app = idle_app();
@@ -354,7 +361,7 @@ mod tests {
         assert!(app.transcript.blocks().is_empty());
     }
 
-    /// Invariant 1: a running direct-SQL command is visible. The status bar
+    /// A running direct-SQL command is visible. The status bar
     /// must render a spinner and a "running query" label while a query is in
     /// flight, so the user can tell "working" from "hung". Renders through the
     /// real `ui::draw` (the same path the snapshot tests use) onto a

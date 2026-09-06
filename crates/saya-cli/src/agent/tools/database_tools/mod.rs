@@ -7,11 +7,14 @@ use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
 
 mod chart_tool;
+mod column_health;
 mod definitions;
 mod dispatch;
 mod fan_out;
+mod join_check;
 mod observations;
 mod recorder;
+mod result_shape;
 // A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
 // runtime drains it after the loop to emit one `KnowledgeOverridden` event.
 mod override_log;
@@ -24,7 +27,7 @@ pub(crate) use observations::{
     DrainedObservations, ObservationLog, ObservationOutcome, ToolObservation,
 };
 // `OverrideLog` types the `override_log` field; re-exported so the runtime can
-// drain it to emit one `KnowledgeOverridden` event (spec A1).
+// drain it to emit one `KnowledgeOverridden` event.
 pub(crate) use override_log::OverrideLog;
 
 /// Agent tools for inspecting and querying configured database connections.
@@ -48,11 +51,11 @@ pub(crate) struct DatabaseTools {
     pub(super) supplied_objects: Vec<String>,
     /// The turn's recall receipt, shared with the override detector. `None` in
     /// tests that drive the executor without a receipt; an absent receipt means
-    /// no detection — never a guess (spec A1 §3). An `Arc` so the runtime and the
+    /// no detection — never a guess. An `Arc` so the runtime and the
     /// tools share one reference.
     pub(super) recall_receipt: Option<Arc<RecallReceipt>>,
     /// Request-scoped log of override findings, drained by the runtime to emit
-    /// one `KnowledgeOverridden` event (spec A1). `None` in tests; an absent log
+    /// one `KnowledgeOverridden` event. `None` in tests; an absent log
     /// means no event, never a side effect. An `Arc` so the runtime can drain
     /// after the tools consume their clone.
     pub(super) override_log: Option<Arc<OverrideLog>>,

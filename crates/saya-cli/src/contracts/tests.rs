@@ -4,12 +4,12 @@
 //! recall, validity, conflict detection, and the review wrappers. They are
 //! in-crate (not under `tests/`) because the surface is `pub(crate)` — the
 //! operations layer returns typed data for saya-cli's own adapters, not for
-//! external consumers. See the spec at .claude/specs/spec-2b1-contract-operations.md.
+//! external consumers. See the spec at.claude/specs/spec-2b1-contract-operations.md.
 
 use super::{
     ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
-    RecallRequest, RememberOutcome, RetrievalPolicy, SchemaAvailability, confirm, conflicts_for,
-    forget, recall, reject, remember, resolve_prefix, show, use_candidate_once,
+    RecallRequest, RememberOutcome, RetrievalPolicy, SchemaAvailability, approve_all, confirm,
+    conflicts_for, forget, recall, reject, remember, resolve_prefix, show, use_candidate_once,
 };
 use saya_store::{ForgetReason, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -96,6 +96,8 @@ fn table(cols: &[(&str, &str, bool)]) -> Table {
                 nullable: *nullable,
             })
             .collect(),
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -110,6 +112,8 @@ fn schema_tree_for(tables: &[(&str, Table)]) -> SchemaTree {
                     .map(|(name, t)| Table {
                         name: (*name).into(),
                         columns: t.columns.clone(),
+                        primary_key: t.primary_key.clone(),
+                        foreign_keys: t.foreign_keys.clone(),
                     })
                     .collect(),
             }],
@@ -131,6 +135,8 @@ fn schema_tree_for_owned(tables: &[(String, Table)]) -> SchemaTree {
                     .map(|(name, t)| Table {
                         name: name.clone(),
                         columns: t.columns.clone(),
+                        primary_key: t.primary_key.clone(),
+                        foreign_keys: t.foreign_keys.clone(),
                     })
                     .collect(),
             }],
@@ -195,6 +201,8 @@ fn slot_for(payload: &ClaimPayload) -> KnowledgeSlot {
         ClaimPayload::ColumnRole { column, .. } => KnowledgeSlot::ColumnRole {
             column: column.clone(),
         },
+        ClaimPayload::JoinRule { .. } => KnowledgeSlot::RelationJoinRule,
+        ClaimPayload::MetricDefinition { .. } => KnowledgeSlot::MetricDefinition,
         _ => panic!("no slot for payload {:?}", payload),
     }
 }
@@ -1543,7 +1551,7 @@ async fn recall_for_model_counts_a_stale_exclusion() {
 }
 
 // ---------------------------------------------------------------------------
-// P2: bulk store reads — recall over many objects.
+// Bulk store reads — recall over many objects.
 //
 // The N+1 fix moved recall and the queue from one store round trip per object
 // to a bounded number per profile. What remains here is the property the bulk
@@ -2032,7 +2040,7 @@ async fn confirming_a_stale_claim_names_the_missing_column_and_the_repair() {
 }
 
 // ---------------------------------------------------------------------------
-// P0: term matching must bridge an ordinary English plural to the singular
+// Term matching must bridge an ordinary English plural to the singular
 // object it names. A user asks "how many rentals…" for the table `rental`;
 // `rentals` is longer than `rental` so it can never be a substring of the
 // qualified name, and a confirmed claim about that table never reached the
@@ -2529,7 +2537,7 @@ async fn use_candidate_once_admits_it_within_the_scope() {
     // The render layer marks a claim `[candidate — unconfirmed]` solely from
     // `status == Candidate`, so this is the property that keeps an admitted
     // candidate indistinguishable-from-nothing-special in the prompt: being
-    // chosen for one turn confers no authority (spec C §3). If this read
+    // chosen for one turn confers no authority. If this read
     // `Confirmed`, the admission would have silently promoted it.
     let stored_admitted = with.contracts[0]
         .claims
@@ -2852,6 +2860,381 @@ async fn remember_single_slot_different_value_replaces_and_names_previous() {
         }
         other => panic!("expected Duplicate with Dismissed state, got {other:?}"),
     }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// approve the whole queue, and report every item it refused.
+//
+// `approve_all` is the batch entry beside `confirm`: it takes the ids of the
+// bounded queue the user was shown and runs each one through `confirm()`
+// unchanged. A mixed batch is the expected shape — a `Dismissed` item is
+// refused as `Conflict` (an item dismissed between the queue read and the
+// sweep, e.g. by another session, must be reported, not skipped) — and the
+// successes must persist despite the refusals: a partial batch is a success,
+// never a rollback.
+// ---------------------------------------------------------------------------
+
+/// a mixed batch — one `Pending` that confirms and one
+/// `Dismissed` that is refused as `Conflict` — asserts the confirmation
+/// persisted AND the refusal was reported per-item. An all-success batch
+/// proves nothing about the reporting or the partial-success invariants.
+#[tokio::test]
+async fn approve_all_reports_a_mixed_batch_and_persists_the_successes() {
+    let root = temp_root("approve_mixed");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+
+    // One candidate still waiting when the sweep reaches it...
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let live_id = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
+    //...and one that was Pending when the queue was read but was dismissed
+    // before its turn (another session rejected it). The batch must go through
+    // `confirm()` for it and surface the refusal, not hide it.
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_description("old note").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let gone_id = item_id_for(&store, &obj, &KnowledgeSlot::TableDescription).await;
+    store
+        .update_knowledge_item_state(gone_id.as_str(), KnowledgeState::Dismissed)
+        .await
+        .expect("item dismissed");
+
+    let outcomes = approve_all(&store, &[live_id.clone(), gone_id.clone()]).await;
+
+    assert_eq!(outcomes.len(), 2, "every queued item reports an outcome");
+
+    // The survivor confirmed — and the confirmation persisted.
+    let (_, live_result) = outcomes
+        .iter()
+        .find(|(id, _)| id == &live_id)
+        .expect("live item reported");
+    let claim = live_result.as_ref().expect("pending candidate confirmed");
+    assert_eq!(claim.status, ClaimStatus::Confirmed);
+    assert_eq!(
+        item_state(&store, &live_id).await,
+        KnowledgeState::Active,
+        "the confirmation persisted despite the sibling refusal"
+    );
+
+    // The dismissed item refused as Conflict — reported per-item, not
+    // aggregated away, and left Dismissed (not revived).
+    let (_, gone_result) = outcomes
+        .iter()
+        .find(|(id, _)| id == &gone_id)
+        .expect("dismissed item reported");
+    assert_eq!(
+        gone_result.as_ref().unwrap_err(),
+        &ContractOpError::Conflict,
+        "a dismissed item is refused and the refusal is reported"
+    );
+    assert_eq!(
+        item_state(&store, &gone_id).await,
+        KnowledgeState::Dismissed,
+        "the refusal changed nothing"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// an empty queue is a clean no-op — an empty outcome, not
+/// an error — and nothing outside the named set is touched (scope is explicit).
+#[tokio::test]
+async fn approve_all_on_an_empty_queue_is_a_clean_noop() {
+    let root = temp_root("approve_empty");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    // A candidate that is NOT in the set — it must be untouched afterwards.
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::table_alias("orders").unwrap(),
+        KnowledgeState::Pending,
+    )
+    .await;
+    let untouched = item_id_for(&store, &obj, &KnowledgeSlot::TableAlias).await;
+
+    let outcomes = approve_all(&store, &[]).await;
+
+    assert!(
+        outcomes.is_empty(),
+        "an empty queue is a clean no-op, not an error"
+    );
+    assert_eq!(
+        item_state(&store, &untouched).await,
+        KnowledgeState::Pending,
+        "nothing outside the named set is touched"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// The two new slots: a join rule and a metric definition survive store,
+// recall and render, and the binding invalidates a metric when one of its
+// underlying columns disappears.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn join_rule_and_metric_survive_store_recall_and_render() {
+    let root = temp_root("join_metric_recall");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    let schema = schema_tree_for(&[(
+        "orders",
+        table(&[
+            ("id", "bigint", false),
+            ("customer_id", "int", false),
+            ("subscription_amount", "numeric", false),
+            ("status", "text", false),
+        ]),
+    )]);
+
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id and customers.is_active",
+            None,
+        )
+        .unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into(), "status".into()],
+            None,
+        )
+        .unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
+
+    let outcome = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(schema))],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(outcome.contracts.len(), 1);
+    let claims = &outcome.contracts[0].claims;
+    assert_eq!(claims.len(), 2, "both new kinds survive recall");
+
+    // Each new kind renders a value through the single source the prompt and
+    // the receipt read, so a slot the store keeps is never silent at render.
+    let join = claims
+        .iter()
+        .find(|c| matches!(c.value, ClaimPayload::JoinRule { .. }))
+        .expect("join rule recalled");
+    let (col, val) = crate::agent::recall_context::claim_value(&join.value);
+    assert_eq!(col, None);
+    assert_eq!(
+        val,
+        "orders.customer_id = customers.id and customers.is_active"
+    );
+
+    let metric = claims
+        .iter()
+        .find(|c| matches!(c.value, ClaimPayload::MetricDefinition { .. }))
+        .expect("metric recalled");
+    let (col, val) = crate::agent::recall_context::claim_value(&metric.value);
+    assert_eq!(col, None);
+    assert_eq!(
+        val,
+        "mrr = SUM(subscription_amount) WHERE status = 'active'"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A metric whose underlying column disappears is invalidated by its binding
+/// and dropped from model recall — the binding is what lets validity notice
+/// the metric's columns are gone, the reason the metric binds to a column set
+/// rather than to the table alone.
+#[tokio::test]
+async fn metric_is_invalid_when_its_underlying_column_disappears() {
+    let root = temp_root("metric_drift");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::metric_definition(
+            "mrr",
+            "SUM(subscription_amount) WHERE status = 'active'",
+            vec!["subscription_amount".into(), "status".into()],
+            None,
+        )
+        .unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
+
+    // The live schema dropped `subscription_amount`, one of the metric's bound
+    // columns, so the `Columns` binding reads Invalid.
+    let drifted = schema_tree_for(&[(
+        "orders",
+        table(&[("id", "bigint", false), ("status", "text", false)]),
+    )]);
+    let outcome = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(drifted))],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        outcome.contracts.len(),
+        0,
+        "a metric whose underlying column is gone is dropped for the model"
+    );
+    assert!(
+        outcome.diagnostics.excluded_by_schema >= 1,
+        "the drifted metric is counted as excluded: {:?}",
+        outcome.diagnostics
+    );
+
+    // Against the unchanged schema the metric is still current and recalled.
+    let current = schema_tree_for(&[(
+        "orders",
+        table(&[
+            ("id", "bigint", false),
+            ("subscription_amount", "numeric", false),
+            ("status", "text", false),
+        ]),
+    )]);
+    let outcome = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(current))],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(outcome.contracts.len(), 1);
+    assert!(
+        outcome.contracts[0]
+            .claims
+            .iter()
+            .any(|c| matches!(c.value, ClaimPayload::MetricDefinition { .. }))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A join rule whose local join key disappears is invalidated by its binding;
+/// a rule with no join keys binds to the table existing and stays current even
+/// when an unrelated column changes.
+#[tokio::test]
+async fn join_rule_invalidated_by_a_dropped_key_not_by_an_unrelated_change() {
+    let root = temp_root("join_drift");
+    let db = root.join("state.sqlite3");
+    let store = store_at(&db).await;
+
+    let p = profile_a();
+    let obj = object_ref(&p, "orders");
+    put_item(
+        &store,
+        &obj,
+        ClaimPayload::join_rule(
+            "catalog.public.customers",
+            vec!["customer_id".into()],
+            vec!["id".into()],
+            "orders.customer_id = customers.id and customers.is_active",
+            None,
+        )
+        .unwrap(),
+        KnowledgeState::Active,
+    )
+    .await;
+
+    // Dropping the bound local key `customer_id` invalidates the rule.
+    let dropped_key = schema_tree_for(&[("orders", table(&[("id", "bigint", false)]))]);
+    let outcome = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(dropped_key))],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        outcome.contracts.len(),
+        0,
+        "a join rule whose local key is gone is dropped for the model"
+    );
+
+    // Adding an unrelated column keeps the rule current.
+    let with_unrelated = schema_tree_for(&[(
+        "orders",
+        table(&[
+            ("id", "bigint", false),
+            ("customer_id", "int", false),
+            ("note", "text", true),
+        ]),
+    )]);
+    let outcome = recall(
+        &store,
+        recall_request(
+            std::slice::from_ref(&p),
+            &[(p.clone(), avail(with_unrelated))],
+            &["orders".to_string()],
+            true,
+            RecallBounds::defaults(),
+        ),
+    )
+    .await;
+    assert_eq!(outcome.contracts.len(), 1);
+    assert!(
+        outcome.contracts[0]
+            .claims
+            .iter()
+            .any(|c| matches!(c.value, ClaimPayload::JoinRule { .. }))
+    );
 
     let _ = fs::remove_dir_all(root);
 }

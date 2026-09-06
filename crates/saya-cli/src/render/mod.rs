@@ -73,7 +73,7 @@ pub enum TerminalEvent {
         reason: String,
     },
     /// What memory **supplied** to the turn, emitted once before the provider
-    /// call (spec P1c). Carries the outcome, the supplied contracts (claim DTOs,
+    /// call. Carries the outcome, the supplied contracts (claim DTOs,
     /// no opaque identity), and the count the bounds dropped. Text is shaped in
     /// [`render_memory`]; JSON/NDJSON fall out of the serde derive.
     KnowledgeSupplied {
@@ -89,7 +89,7 @@ pub enum TerminalEvent {
     KnowledgeLearned {
         claim: ProposedClaimDto,
     },
-    /// A confirmed claim the turn's SQL **contradicted** (spec A1). Emitted at
+    /// A confirmed claim the turn's SQL **contradicted**. Emitted at
     /// most once per turn, after the loop, carrying every finding the detector
     /// raised. The finding says the SQL **referenced** columns, never that it
     /// **used** them — the extractor cannot prove role. Text is shaped in
@@ -98,13 +98,34 @@ pub enum TerminalEvent {
         findings: Vec<OverrideFindingDto>,
     },
     /// Post-turn extraction was skipped after the turn succeeded — no memory
-    /// was recorded, and the line says so (spec packet-54). Trails the answer.
+    /// was recorded, and the line says so. Trails the answer.
     /// Text is shaped in [`render_memory`]; JSON/NDJSON fall out of the serde
     /// derive.
     KnowledgeLearningSkipped {
         reason: LearningSkipReason,
     },
     Complete,
+    /// The SQL the model designated as the answering query for the turn.
+    /// Carried on the NDJSON stream so a harness can pair the answer with its
+    /// query; silent in the text adapter, where the SQL was already shown when
+    /// the query ran.
+    AnswerDesignated {
+        sql: String,
+    },
+    /// The consensus decision over multiple candidate attempts — emitted once,
+    /// after all attempts, whenever more than one attempt ran. Carries the
+    /// winning SQL (or `None` when the attempts disagreed with no tie-break)
+    /// and the vote tallies. Text is shaped inline; JSON/NDJSON fall out of the
+    /// serde derive.
+    ConsensusDecided {
+        sql: Option<String>,
+        attempts: usize,
+        voted: usize,
+        votes: usize,
+        margin: usize,
+        tied: bool,
+        probe_broke_tie: bool,
+    },
     Result {
         message: String,
     },
@@ -230,6 +251,29 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: "\n".into(),
             stderr: String::new(),
         },
+        TerminalEvent::AnswerDesignated { .. } => Rendered {
+            stdout: String::new(),
+            stderr: String::new(),
+        },
+        TerminalEvent::ConsensusDecided {
+            sql,
+            attempts,
+            voted,
+            votes,
+            margin: _,
+            tied,
+            probe_broke_tie,
+        } => Rendered {
+            stdout: consensus_text(
+                sql.as_deref(),
+                *attempts,
+                *voted,
+                *votes,
+                *tied,
+                *probe_broke_tie,
+            ),
+            stderr: String::new(),
+        },
         TerminalEvent::Result { message } => Rendered {
             stdout: format!("{message}\n"),
             stderr: String::new(),
@@ -308,6 +352,33 @@ fn display_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(value) => value.clone(),
         value => value.to_string(),
+    }
+}
+
+/// Shapes the `ConsensusDecided` line: how many attempts ran, how many voted,
+/// and — when there is a winner — which SQL is believed. The line trails the
+/// answer, naming the picked query so a reader knows which attempt's prose to
+/// trust. No result rows; SQL text only, like `AnswerDesignated`.
+fn consensus_text(
+    sql: Option<&str>,
+    attempts: usize,
+    voted: usize,
+    votes: usize,
+    tied: bool,
+    probe_broke_tie: bool,
+) -> String {
+    let head = format!("consensus · {attempts} attempts, {voted} voted, {votes} agreed");
+    match sql {
+        Some(sql) => {
+            let how = if probe_broke_tie {
+                "tie broken by evidence"
+            } else {
+                "agreed"
+            };
+            format!("{head} · {how}, believing: {sql}\n")
+        }
+        None if tied => format!("{head} · tied, no winner\n"),
+        None => format!("{head} · no winner\n"),
     }
 }
 

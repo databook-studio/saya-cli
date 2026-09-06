@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(active, None);
     }
 
-    /// Invariant 4: cancelling with nothing in flight is a successful no-op.
+    /// Cancelling with nothing in flight is a successful no-op.
     #[test]
     fn claim_with_nothing_in_flight_is_a_no_op() {
         let mut active: Option<u64> = None;

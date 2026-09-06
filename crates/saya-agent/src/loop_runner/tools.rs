@@ -65,7 +65,7 @@ pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -
 /// the tool's *declared* `read_only`, not its name. A write tool (`read_only:
 /// false`, e.g. one that persists a candidate claim) must not read as a
 /// "read-only" completion — that would be a false statement in the feature whose
-/// pitch is that it does not overstate what it knows (spec P2d §4). The summary
+/// pitch is that it does not overstate what it knows. The summary
 /// drives `tool_metadata.status` via a `contains("failed")` check, so every
 /// failure string keeps the substring "failed".
 pub(super) async fn execute(

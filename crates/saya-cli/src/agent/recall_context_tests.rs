@@ -11,7 +11,7 @@
 use super::*;
 use crate::contracts::{RecallBounds, RecallMode};
 use async_trait::async_trait;
-use saya_agent::{MAX_HISTORY_BYTES, turn_bytes};
+use saya_agent::turn_bytes;
 use saya_connectors::DatabaseConnector;
 use saya_store::{SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -26,6 +26,35 @@ use std::{
 };
 
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
+
+/// The conversation byte budget these recall tests build against — the same role
+/// the loop's `context_byte_budget` plays in production.
+const RECALL_BYTE_BUDGET: usize = 32 * 1024;
+
+/// Drives [`recall_context_blocks`] with a fixed byte budget so the tests do not
+/// each repeat the budget argument. The budget is the loop's
+/// `context_byte_budget`, which bounds the rendered block alongside the prompt.
+async fn recall_blocks(
+    prompt: &str,
+    system_prompt: Option<&str>,
+    allow_database_context: bool,
+    recall_mode: RecallMode,
+    bounds: RecallBounds,
+    registry: &ConnectionRegistry,
+    state_db: Option<&SqliteStateStore>,
+) -> (Vec<ContextBlock>, RecallReceipt) {
+    recall_context_blocks(
+        prompt,
+        system_prompt,
+        allow_database_context,
+        recall_mode,
+        bounds,
+        registry,
+        state_db,
+        RECALL_BYTE_BUDGET,
+    )
+    .await
+}
 
 // ---------------------------------------------------------------------------
 // harness
@@ -114,6 +143,8 @@ fn object(identity: &ProfileIdentity, name: &str) -> DatabaseObjectRef {
 fn orders_schema(identity: &ProfileIdentity) -> (ProfileIdentity, SchemaTree) {
     let table = Table {
         name: "orders".into(),
+        primary_key: vec![],
+        foreign_keys: vec![],
         columns: vec![
             Column {
                 name: "id".into(),
@@ -179,6 +210,8 @@ async fn remember_candidate_default_time_column(
 fn orders_table() -> Table {
     Table {
         name: "orders".into(),
+        primary_key: vec![],
+        foreign_keys: vec![],
         columns: vec![
             Column {
                 name: "id".into(),
@@ -270,6 +303,8 @@ fn slot_for(payload: &ClaimPayload) -> KnowledgeSlot {
         ClaimPayload::ColumnRole { column, .. } => KnowledgeSlot::ColumnRole {
             column: column.clone(),
         },
+        ClaimPayload::JoinRule { .. } => KnowledgeSlot::RelationJoinRule,
+        ClaimPayload::MetricDefinition { .. } => KnowledgeSlot::MetricDefinition,
         _ => panic!("no slot for payload {:?}", payload),
     }
 }
@@ -313,7 +348,7 @@ async fn acceptance_remembered_time_column_reaches_one_block_not_system_prompt()
     seed_orders_with_created_at(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -357,7 +392,7 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
     let (obj, _fp) = seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (before, _receipt) = recall_context_blocks(
+    let (before, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -385,7 +420,7 @@ async fn forgetting_the_claim_makes_the_block_disappear() {
         .await
         .expect("item dismissed");
 
-    let (after, _receipt) = recall_context_blocks(
+    let (after, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -419,7 +454,7 @@ async fn candidate_claim_never_appears_in_block() {
     remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -450,7 +485,7 @@ async fn privacy_off_produces_no_block_and_does_not_query_store() {
     let store = SqliteStateStore::new(&bad_path);
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         false,
@@ -489,7 +524,7 @@ async fn explicit_ref_selects_object_without_term_match() {
 
     let registry = registry_for("analytics", &identity);
     // No term matches "obscure_table_name"; only the explicit @ref does.
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "summarize @catalog.public.obscure_table_name",
         None,
         true,
@@ -518,7 +553,7 @@ async fn prompt_matching_nothing_produces_no_block() {
     let (obj, fp) = seed_orders_with_created_at(&store, &identity).await;
     let _ = (obj, fp);
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "completely unrelated zzztop words",
         None,
         true,
@@ -545,7 +580,7 @@ async fn unopenable_store_produces_no_block_and_no_error() {
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -572,7 +607,7 @@ async fn opaque_identity_appears_nowhere_in_block() {
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -623,7 +658,7 @@ async fn injection_text_reaches_body_unmodified() {
     .await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -684,7 +719,7 @@ async fn stale_claim_is_excluded_from_the_model_block() {
     remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -763,7 +798,7 @@ async fn needs_review_claim_still_reaches_the_model_labelled() {
         .unwrap();
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -830,7 +865,7 @@ async fn needs_review_from_a_non_current_fingerprint_still_reaches_the_model_lab
     .await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -878,7 +913,7 @@ async fn no_profiles_produces_no_block() {
             profile_id: None,
         },
     );
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -900,7 +935,7 @@ async fn empty_prompt_produces_no_block() {
     let store = store_at(&db, &identity).await;
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "   ",
         None,
         true,
@@ -937,7 +972,7 @@ async fn recall_truncation_flags_the_block() {
         remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
     }
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -961,7 +996,7 @@ async fn no_state_db_produces_no_block() {
     let root = temp_root("no_store");
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -992,7 +1027,7 @@ async fn claim_text_lives_only_in_block_body_not_describe_context() {
     let store = store_at(&db, &identity).await;
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1058,7 +1093,7 @@ async fn remember_confirmed_alias(
 
 /// recall = include-candidates: the candidate reaches the block, and the body
 /// marks it unconfirmed so the model cannot read it as an established fact
-/// (spec 4b §1, test 3). The confirmed alias is unmarked.
+///. The confirmed alias is unmarked.
 #[tokio::test]
 async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
     let root = temp_root("include_candidates");
@@ -1068,7 +1103,7 @@ async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
     seed_orders_confirmed_and_candidate(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1101,7 +1136,7 @@ async fn include_candidates_admits_candidate_plainly_labelled_unconfirmed() {
 }
 
 /// recall = confirmed: the candidate is excluded — today's behaviour, unchanged
-/// (spec 4b §1, test 4). Only the confirmed alias reaches the block, and it
+///. Only the confirmed alias reaches the block, and it
 /// carries no candidate marker.
 #[tokio::test]
 async fn confirmed_excludes_candidates_unchanged_behaviour() {
@@ -1112,7 +1147,7 @@ async fn confirmed_excludes_candidates_unchanged_behaviour() {
     seed_orders_confirmed_and_candidate(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1140,7 +1175,7 @@ async fn confirmed_excludes_candidates_unchanged_behaviour() {
 }
 
 /// Bounds from config are honoured: lowering `max_contracts` (max_objects) to 1
-/// returns exactly one contract even when two match (spec 4b §1, test 5).
+/// returns exactly one contract even when two match.
 #[tokio::test]
 async fn bounds_from_config_lowering_max_contracts_returns_one_contract() {
     let root = temp_root("bounds_one");
@@ -1159,7 +1194,7 @@ async fn bounds_from_config_lowering_max_contracts_returns_one_contract() {
         remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
     }
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -1237,6 +1272,8 @@ fn table_named_with(name: &str, cols: &[(&str, &str, bool)]) -> Table {
                 nullable: *nullable,
             })
             .collect(),
+        primary_key: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -1279,8 +1316,7 @@ fn many_orders_schema(identity: &ProfileIdentity, count: usize) -> (ProfileIdent
 // ---------------------------------------------------------------------------
 
 /// Two confirmed `TableGrain` claims on one object: both reach the block, both
-/// are marked as disputed in-band, and the block names the disputed kind once
-/// (spec 5e §3 test 1).
+/// are marked as disputed in-band, and the block names the disputed kind once.
 ///
 /// D-3 NOTE: `table_grain` is a single-valued slot, so two confirmed grains
 /// cannot coexist in `knowledge_items` — the second `put` replaces the first.
@@ -1350,7 +1386,7 @@ async fn conflicting_grains_both_appear_marked_and_kind_named() {
 }
 
 /// The block carries an instruction that the model must not choose between the
-/// conflicting claims silently (spec 5e §3 test 2). See the D-3 NOTE on
+/// conflicting claims silently. See the D-3 NOTE on
 /// `conflicting_grains_both_appear_marked_and_kind_named`: the store cannot
 /// hold two confirmed grains, so this renders a directly-constructed contract.
 #[tokio::test]
@@ -1401,7 +1437,7 @@ async fn conflict_block_instructs_not_to_choose_silently() {
 
 /// A contract with no conflict renders a deterministic shape: the P2a stanza
 /// directive, then the `[confirmed]`-marked claim, and **no** dispute marker or
-/// do-not-choose instruction (spec 5e §3 test 3, updated for P2a).
+/// do-not-choose instruction.
 ///
 /// What this test guarded before P2a, and what it guards now:
 ///
@@ -1410,7 +1446,7 @@ async fn conflict_block_instructs_not_to_choose_silently() {
 ///   visible text. That property is **deliberately given up** in P2a: a
 ///   confirmed claim now binds, so it gains a stanza directive and a
 ///   `[confirmed]` marker. Asserting the old bytes would defend the bug this
-///   slice exists to fix (spec P2a §1, §4).
+///   slice exists to fix.
 /// - **Now:** the invariant that survives is narrower and still fully
 ///   guarded here — a *clean* contract (no conflict) carries **no** dispute
 ///   marker and **no** do-not-choose instruction. The exact bytes are pinned
@@ -1539,7 +1575,7 @@ async fn a_directive_claim_with_no_reason_renders_no_reason_line() {
 
 /// A conflict does not suppress the object's other, non-disputed claims: a
 /// confirmed alias on the same object as two conflicting grains still appears
-/// and carries no dispute marker (spec 5e §3 test 4).
+/// and carries no dispute marker.
 #[tokio::test]
 async fn conflict_does_not_suppress_non_disputed_claims() {
     use crate::contracts::{ContractClaim, ContractConflict, RetrievedContract};
@@ -1602,7 +1638,7 @@ async fn conflict_does_not_suppress_non_disputed_claims() {
 
 /// Conflict and candidate marking compose: under `include-candidates`, a
 /// contract can carry both a disputed confirmed pair and an admitted candidate,
-/// and both markers appear in the same block (spec 5e §3 test 5). A candidate
+/// and both markers appear in the same block. A candidate
 /// can never itself be disputed — `is_recallable` is `Confirmed` only, so
 /// conflict detection never names a candidate id (SPEC REVIEW) — but the two
 /// in-band markers coexist on different lines.
@@ -1668,8 +1704,7 @@ async fn conflict_and_candidate_markers_compose_in_one_block() {
 }
 
 /// The opaque profile identity still appears nowhere in a conflict block: the
-/// dispute summary names the kind and count, never the identity (spec 5e §3
-/// test 6).
+/// dispute summary names the kind and count, never the identity.
 #[tokio::test]
 async fn opaque_identity_appears_nowhere_in_conflict_block() {
     use crate::contracts::{ContractClaim, ContractConflict, RetrievedContract};
@@ -1742,7 +1777,7 @@ async fn confirmed_claim_renders_with_directive_and_marker() {
     seed_orders_with_created_at(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1794,7 +1829,7 @@ async fn candidate_claim_does_not_read_as_binding_and_keeps_its_marker() {
     remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1832,7 +1867,7 @@ async fn confirmed_and_candidate_in_one_stanza_remain_distinguishable() {
     seed_orders_confirmed_and_candidate(&store, &identity).await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -1866,7 +1901,7 @@ async fn confirmed_and_candidate_in_one_stanza_remain_distinguishable() {
 
 /// D4d: a disputed confirmed claim does NOT read as binding. Two
 /// contradictory confirmed `table_grain` claims both carry `[disputed] ` and
-/// NOT `[confirmed] ` — the dispute marker wins precedence (Deliverable 2), so
+/// NOT `[confirmed] ` — the dispute marker wins precedence, so
 /// a disagreement is never presented as a settled instruction.
 #[tokio::test]
 async fn disputed_confirmed_claim_does_not_read_as_binding() {
@@ -1994,7 +2029,7 @@ async fn byte_budget_holds_at_caps_with_directive_present() {
     }
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2035,8 +2070,8 @@ async fn byte_budget_holds_at_caps_with_directive_present() {
     // measured with the same accounting build_messages enforces.
     let turn = turn_bytes(None, std::slice::from_ref(block), "orders");
     assert!(
-        turn <= MAX_HISTORY_BYTES,
-        "turn fits the message budget: {turn} <= {MAX_HISTORY_BYTES}"
+        turn <= RECALL_BYTE_BUDGET,
+        "turn fits the conversation budget: {turn} <= {RECALL_BYTE_BUDGET}"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -2067,7 +2102,7 @@ async fn missing_cache_entry_keeps_the_claim_labelled_not_muted_as_stale() {
     remember_confirmed_default_time_column(&store, &obj, &fp, "created_at").await;
 
     let registry = registry_for("analytics", &identity);
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2164,7 +2199,7 @@ async fn a_single_oversized_claim_is_omitted_and_the_block_is_marked_truncated()
         max_claims_per_object: 12,
         max_bytes: 512,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2245,7 +2280,7 @@ async fn five_objects_with_oversized_claims_do_not_admit_five_unbounded_claims()
         max_claims_per_object: 12,
         max_bytes: 2300,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2262,8 +2297,8 @@ async fn five_objects_with_oversized_claims_do_not_admit_five_unbounded_claims()
         "the rendered body must be within the byte budget: {}",
         block.body.len()
     );
-    // ...and it does not carry five claims — the bound dropped the excess. Each
-    // object's header line is `catalog.public.ordersN  [current]  ...`; count
+    //...and it does not carry five claims — the bound dropped the excess. Each
+    // object's header line is `catalog.public.ordersN  [current]...`; count
     // them to assert how many stanzas survived.
     let stanza_count = block.body.matches("[current]").count();
     assert!(
@@ -2354,7 +2389,7 @@ async fn the_byte_bound_measures_the_rendered_block_not_the_payload() {
         max_claims_per_object: 12,
         max_bytes: between,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2384,7 +2419,7 @@ async fn the_byte_bound_measures_the_rendered_block_not_the_payload() {
         max_claims_per_object: 12,
         max_bytes: rendered_stanza.len() + 64,
     };
-    let (blocks, _receipt) = recall_context_blocks(
+    let (blocks, _receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2453,7 +2488,7 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
     // A short prompt: the whole message budget is available for context, so all
     // five contracts fit (their ~5.5 KiB is well under the 16 KiB configured cap
     // and the ~32 KiB message budget).
-    let (short_blocks, _receipt) = recall_context_blocks(
+    let (short_blocks, _receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2475,7 +2510,7 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
     // request still builds — `turn_bytes` (the exact size `build_messages`
     // enforces) stays under the message budget.
     let long_prompt = format!("orders {}", "x".repeat(30_000));
-    let (long_blocks, _receipt) = recall_context_blocks(
+    let (long_blocks, _receipt) = recall_blocks(
         &long_prompt,
         None,
         true,
@@ -2499,8 +2534,8 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
     // long prompt, and the system message together stay under the message budget.
     let turn = turn_bytes(None, std::slice::from_ref(block), &long_prompt);
     assert!(
-        turn <= MAX_HISTORY_BYTES,
-        "context must not consume the budget the prompt needs: turn={turn} budget={MAX_HISTORY_BYTES}"
+        turn <= RECALL_BYTE_BUDGET,
+        "context must not consume the budget the prompt needs: turn={turn} budget={RECALL_BYTE_BUDGET}"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -2511,7 +2546,7 @@ async fn a_long_prompt_leaves_less_for_context_and_the_request_still_builds() {
 // These assert on the `RecallReceipt` returned beside the blocks. The receipt
 // names what recall **supplied** to the prompt (the claims whose rendered lines
 // reached the block), never what the model **used** — see the type docs in
-// `contracts/receipt.rs`. Nothing renders it yet (P1b).
+// `contracts/receipt.rs`. Nothing renders it yet.
 // ===========================================================================
 
 /// Seeds the orders table's cached schema and two confirmed claims on it: a
@@ -2580,7 +2615,7 @@ async fn a_turn_supplying_two_claims_names_exactly_those_two_in_the_receipt() {
     let (_obj, time_id, alias_id) = seed_two_confirmed_claims(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2652,7 +2687,7 @@ async fn claims_dropped_by_the_object_count_bound_are_counted() {
     }
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2708,6 +2743,8 @@ async fn claims_dropped_by_the_per_object_bound_are_counted() {
                 name: "public".into(),
                 tables: vec![Table {
                     name: "orders".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
                     columns: cols,
                 }],
             }],
@@ -2742,7 +2779,7 @@ async fn claims_dropped_by_the_per_object_bound_are_counted() {
         max_claims_per_object: 3,
         max_bytes: 16384,
     };
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2809,7 +2846,7 @@ async fn claims_dropped_by_the_byte_bound_are_counted() {
         max_claims_per_object: 12,
         max_bytes: 2300,
     };
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders",
         None,
         true,
@@ -2838,7 +2875,7 @@ async fn claims_dropped_by_the_byte_bound_are_counted() {
 /// "recall ran and found nothing". The privacy-gate-closed path returns a
 /// `PrivacyGateClosed` receipt; a prompt that matches nothing returns a `Ran` receipt
 /// with empty `supplied`. The two must not be confusable. (The `recall = off`
-/// arm is a runtime concern producing `ConfiguredOff`; this slice's
+/// arm is a runtime concern producing `ConfiguredOff`; this module's
 /// `recall_context_blocks` is never called with recall off, so it cannot observe it —
 /// but the `PrivacyGateClosed` variant it constructs is distinct from `ConfiguredOff`
 /// and `Ran`.)
@@ -2855,7 +2892,7 @@ async fn skipped_is_distinguishable_from_ran_and_found_nothing() {
     let unopenable = SqliteStateStore::new(&bad_path);
     let identity = identity_for("analytics");
     let registry = registry_for("analytics", &identity);
-    let (_blocks, skipped) = recall_context_blocks(
+    let (_blocks, skipped) = recall_blocks(
         "orders by month",
         None,
         false, // privacy gate closed
@@ -2878,7 +2915,7 @@ async fn skipped_is_distinguishable_from_ran_and_found_nothing() {
     let (obj, fp) = seed_orders_with_created_at(&store2, &identity).await;
     let _ = (obj, fp);
     let registry2 = registry_for("analytics", &identity);
-    let (_blocks, ran_empty) = recall_context_blocks(
+    let (_blocks, ran_empty) = recall_blocks(
         "completely unrelated zzztop words",
         None,
         true,
@@ -2926,7 +2963,7 @@ async fn a_candidate_claims_status_survives_into_the_receipt() {
     remember_candidate_default_time_column(&store, &obj, &fp, "created_at").await;
     let registry = registry_for("analytics", &identity);
 
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2962,7 +2999,7 @@ async fn store_unavailable_yields_a_receipt_not_an_error() {
 
     // The turn completes: the call returns a receipt rather than panicking or
     // propagating an error.
-    let (blocks, receipt) = recall_context_blocks(
+    let (blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,
@@ -2997,7 +3034,7 @@ async fn no_opaque_profile_identity_value_appears_in_the_receipt() {
     seed_orders_with_created_at(&store, &identity).await;
     let registry = registry_for("analytics", &identity);
 
-    let (_blocks, receipt) = recall_context_blocks(
+    let (_blocks, receipt) = recall_blocks(
         "orders by month",
         None,
         true,

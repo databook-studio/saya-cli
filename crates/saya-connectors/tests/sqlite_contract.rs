@@ -1,5 +1,5 @@
 use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector};
-use saya_types::{ConnectionError, QueryRequest};
+use saya_types::{ConnectionError, ForeignKey, QueryRequest};
 use serde_json::Value;
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::path::Path;
@@ -174,11 +174,10 @@ async fn test_sqlite_contract_full() {
         "Mutating query must be rejected by safety policy"
     );
 
-    // 5. cancel() returns Unsupported
-    assert!(matches!(
-        connector.cancel().await,
-        Err(ConnectionError::Unsupported(_))
-    ));
+    // 5. cancel() is supported: SQLite is interruptible through the progress
+    // handler, so asking a connector with nothing running to cancel succeeds
+    // and leaves it usable.
+    assert!(connector.cancel().await.is_ok());
 
     drop(connector);
     drop(temp_dir);
@@ -669,6 +668,282 @@ async fn test_sqlite_result_level_byte_budget_end_to_end() {
         "Total byte size ({total_bytes}) must be bounded by MAX_RESULT_BYTES + one row ({})",
         MAX_RESULT_BYTES_LOCAL + one_row_approx
     );
+
+    drop(connector);
+    drop(temp_dir);
+}
+
+/// SQLite ships `sqrt`, `pow`, `ceil`, `floor`, `mod`, the logarithms and the
+/// trigonometric functions, but only when it is compiled with
+/// `SQLITE_ENABLE_MATH_FUNCTIONS` — the bundled build does not enable it by
+/// default. Without them any question involving a distance, a rate or a
+/// rounding boundary fails against a SQLite profile while working against a
+/// server engine, which is a difference the user never asked for.
+#[tokio::test]
+async fn sqlite_has_the_standard_maths_functions() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("maths.db");
+    create_test_fixture(&path).await;
+
+    let connector = SqliteConnector::open(&path, true, ConnectorOptions::default())
+        .await
+        .expect("fixture opens");
+    connector.connect().await.expect("connect");
+
+    for expression in [
+        "sqrt(4.0)",
+        "pow(2.0, 3.0)",
+        "ceil(1.2)",
+        "floor(1.8)",
+        "mod(5, 2)",
+        "exp(0.0)",
+        "ln(1.0)",
+        "log10(100.0)",
+        "sin(0.0)",
+        "cos(0.0)",
+        "acos(1.0)",
+        "asin(0.0)",
+        "atan(0.0)",
+        "atan2(0.0, 1.0)",
+        "radians(180.0)",
+        "degrees(0.0)",
+        "pi()",
+    ] {
+        let req = QueryRequest {
+            sql: format!("SELECT {expression} AS value"),
+            max_rows: 1,
+        };
+        let result = connector.execute(req).await;
+        assert!(
+            result.is_ok(),
+            "`{expression}` must be available to a SQLite profile, got {:?}",
+            result.err()
+        );
+    }
+}
+
+/// A query can fail because the SQL names something that is not there, and the
+/// agent writing that SQL is the one who has to fix it. Reporting only "SQLite
+/// query failed" leaves it guessing: a missing function, a misspelt table and a
+/// syntax error are indistinguishable, so it retries blind and burns its turn
+/// budget probing.
+///
+/// The identifiers echoed here come from the SQL the caller just wrote, not
+/// from any row, so naming them discloses nothing the caller did not already
+/// have. Anything the classifier does not recognise stays redacted.
+#[tokio::test]
+async fn a_failing_query_says_what_the_sql_got_wrong() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("errors.db");
+    create_test_fixture(&path).await;
+
+    let connector = SqliteConnector::open(&path, true, ConnectorOptions::default())
+        .await
+        .expect("fixture opens");
+    connector.connect().await.expect("connect");
+
+    for (sql, expected) in [
+        ("SELECT no_such_fn(1) AS v", "no_such_fn"),
+        ("SELECT * FROM not_a_table", "not_a_table"),
+        ("SELECT not_a_column FROM t", "not_a_column"),
+    ] {
+        let req = QueryRequest {
+            sql: sql.to_string(),
+            max_rows: 1,
+        };
+        let err = connector
+            .execute(req)
+            .await
+            .expect_err("the query must fail");
+        let text = err.to_string();
+        assert!(
+            text.contains(expected),
+            "the error must name `{expected}` so the caller can correct the SQL, got: {text}"
+        );
+    }
+}
+
+/// The classifier is an allowlist, not a pass-through: a failure it does not
+/// recognise keeps the redacted wording, so a driver message that might carry
+/// row values cannot reach the user through this path.
+#[tokio::test]
+async fn an_unrecognised_failure_stays_redacted() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("redacted.db");
+    create_test_fixture(&path).await;
+
+    let connector = SqliteConnector::open(&path, true, ConnectorOptions::default())
+        .await
+        .expect("fixture opens");
+    connector.connect().await.expect("connect");
+
+    // A write against a read-only connection: refused for a reason that is not
+    // about a name in the SQL, so nothing is echoed back.
+    let req = QueryRequest {
+        sql: "INSERT INTO t (id) VALUES (99)".to_string(),
+        max_rows: 1,
+    };
+    let err = connector
+        .execute(req)
+        .await
+        .expect_err("a write must fail on a read-only connection");
+    let text = err.to_string();
+    assert!(
+        !text.contains("99"),
+        "an unrecognised failure must not echo query content: {text}"
+    );
+}
+
+/// Builds the join graph the model otherwise has to guess at: a single-column
+/// reference, a composite reference, a self-reference, and a table with none.
+/// Every constraint must come back with its columns in declaration order,
+/// because positional pairing is the only thing distinguishing a composite
+/// `(a, b) -> (x, y)` from `(a, b) -> (y, x)`.
+async fn create_fk_fixture(path: &Path) {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true);
+    let pool = SqlitePool::connect_with(options).await.unwrap();
+
+    sqlx::query(
+        "CREATE TABLE customers (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL
+        );",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE orders (
+            id INTEGER PRIMARY KEY,
+            customer_id INTEGER NOT NULL,
+            placed_on TEXT,
+            FOREIGN KEY (customer_id) REFERENCES customers(id)
+        );",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE composite_parent (
+            a INTEGER,
+            b INTEGER,
+            PRIMARY KEY (a, b)
+        );",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE composite_child (
+            id INTEGER PRIMARY KEY,
+            a INTEGER,
+            b INTEGER,
+            FOREIGN KEY (a, b) REFERENCES composite_parent(a, b)
+        );",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE nodes (
+            id INTEGER PRIMARY KEY,
+            parent_id INTEGER,
+            label TEXT,
+            FOREIGN KEY (parent_id) REFERENCES nodes(id)
+        );",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("CREATE TABLE standalone (id INTEGER, note TEXT);")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    pool.close().await;
+}
+
+fn assert_fk(
+    actual: &[ForeignKey],
+    columns: &[&str],
+    referenced_table: &str,
+    referenced_columns: &[&str],
+) {
+    let matched = actual
+        .iter()
+        .find(|fk| fk.columns == columns)
+        .unwrap_or_else(|| panic!("no foreign key with local columns {columns:?}; got {actual:?}"));
+    assert_eq!(
+        matched.referenced_schema, None,
+        "SQLite foreign keys resolve within the same database"
+    );
+    assert_eq!(matched.referenced_table, referenced_table);
+    assert_eq!(matched.referenced_columns, referenced_columns);
+}
+
+#[tokio::test]
+async fn sqlite_discovers_foreign_keys_and_primary_keys() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let path = temp_dir.path().join("fk.db");
+    create_fk_fixture(&path).await;
+
+    let connector = SqliteConnector::open(&path, true, ConnectorOptions::default())
+        .await
+        .expect("fixture opens");
+    connector.connect().await.expect("connect");
+
+    let schema = connector.schema().await.expect("schema");
+    let main = &schema.databases[0].schemas[0];
+    let table = |name: &str| {
+        main.tables
+            .iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} table missing"))
+    };
+
+    // Single-column reference.
+    let orders = table("orders");
+    assert_eq!(orders.primary_key, vec!["id".to_string()]);
+    assert_eq!(orders.foreign_keys.len(), 1);
+    assert_fk(&orders.foreign_keys, &["customer_id"], "customers", &["id"]);
+
+    // Composite reference: columns must keep their declaration order.
+    let composite_child = table("composite_child");
+    assert_eq!(composite_child.primary_key, vec!["id".to_string()]);
+    assert_eq!(composite_child.foreign_keys.len(), 1);
+    assert_fk(
+        &composite_child.foreign_keys,
+        &["a", "b"],
+        "composite_parent",
+        &["a", "b"],
+    );
+    let composite_parent = table("composite_parent");
+    assert_eq!(
+        composite_parent.primary_key,
+        vec!["a".to_string(), "b".to_string()]
+    );
+
+    // Self-reference resolves to the same table name.
+    let nodes = table("nodes");
+    assert_eq!(nodes.primary_key, vec!["id".to_string()]);
+    assert_eq!(nodes.foreign_keys.len(), 1);
+    assert_fk(&nodes.foreign_keys, &["parent_id"], "nodes", &["id"]);
+
+    // A table with no constraints produces neither a primary key nor any FK.
+    let customers = table("customers");
+    assert_eq!(customers.primary_key, vec!["id".to_string()]);
+    assert!(customers.foreign_keys.is_empty());
+
+    let standalone = table("standalone");
+    assert!(standalone.primary_key.is_empty());
+    assert!(standalone.foreign_keys.is_empty());
 
     drop(connector);
     drop(temp_dir);

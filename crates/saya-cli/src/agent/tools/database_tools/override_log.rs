@@ -1,6 +1,6 @@
 //! Request-scoped log of the confirmed claims the turn's SQL contradicted —
 //! the data the runtime turns into one [`saya_agent::AgentEvent::KnowledgeOverridden`]
-//! after the agent loop (spec A1).
+//! after the agent loop.
 //!
 //! Collects only; nothing here is persisted, and nothing reaches a provider.
 //! The log records an [`OverrideFindingDto`] exactly when the detector
@@ -84,7 +84,7 @@ pub(super) fn override_dto(finding: OverrideFinding) -> OverrideFindingDto {
 
 impl DatabaseTools {
     /// Attaches the turn's recall receipt and the request-scoped override log
-    /// the detector records into (spec A1). Both are `None` in tests that do not
+    /// the detector records into. Both are `None` in tests that do not
     /// exercise detection; the production runtime sets both from the assembled
     /// receipt and a fresh log it drains after the loop.
     pub(crate) fn with_recall_receipt(
@@ -98,7 +98,7 @@ impl DatabaseTools {
     }
 
     /// Runs the override detector for one statement and records any findings
-    /// into the turn's override log (spec A1). Called from the query-tool
+    /// into the turn's override log. Called from the query-tool
     /// dispatch, where the statement text and dialect are known. Independent
     /// of the observation log: detection works with `learning = off`, because a
     /// confirmed claim being contradicted is a fact about the turn regardless of

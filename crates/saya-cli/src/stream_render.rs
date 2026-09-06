@@ -100,10 +100,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
             TerminalEvent::KnowledgeOverridden { findings }
         }
         // Extraction timed out or errored after the turn succeeded — surface it
-        // rather than fall through to the `unrecognized agent event` catch-all
-        // (spec packet-54 decision 4: an event with no renderer previously
-        // printed that, and repeating it would be worse than the bug being
-        // fixed).
+        // rather than fall through to the `unrecognized agent event` catch-all.
         AgentEvent::KnowledgeLearningSkipped { reason } => {
             TerminalEvent::KnowledgeLearningSkipped { reason }
         }
@@ -115,6 +112,36 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // no spinner to label. Dropped rather than rendered — not forgotten,
         // which is what the catch-all would make of it.
         AgentEvent::KnowledgeLearningStarted => return None,
+        // The model's chain-of-thought. This is the one case where rendering to
+        // nothing is a *scope* decision rather than a *nature-of-the-event*
+        // decision: reasoning is content (it mirrors `AssistantText`), so by its
+        // nature it would belong on the loud path below — but display belongs
+        // to the interactive transcript, not a pipe, and nothing is displayed
+        // by default. So it renders to `None` here, the same way a progress
+        // signal does, for a different reason. The tests pin both halves: this
+        // arm stays silent, and a content event (`AssistantText`, `Complete`)
+        // still reaches the loud path — so a future reader cannot conclude
+        // reasoning is progress, and a future change cannot silence the
+        // catch-all to pass one and break the other.
+        AgentEvent::ReasoningText { .. } => return None,
+        AgentEvent::AnswerDesignated { sql } => TerminalEvent::AnswerDesignated { sql },
+        AgentEvent::ConsensusDecided {
+            sql,
+            attempts,
+            voted,
+            votes,
+            margin,
+            tied,
+            probe_broke_tie,
+        } => TerminalEvent::ConsensusDecided {
+            sql,
+            attempts,
+            voted,
+            votes,
+            margin,
+            tied,
+            probe_broke_tie,
+        },
         AgentEvent::Complete => TerminalEvent::Complete,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
@@ -155,7 +182,7 @@ mod tests {
     }
 
     /// KnowledgeSupplied maps to a real TerminalEvent variant (not
-    /// NotImplemented) and renders through the text adapter (spec P1c §5).
+    /// NotImplemented) and renders through the text adapter.
     #[test]
     fn knowledge_supplied_renders_through_the_text_adapter() {
         let event = AgentEvent::knowledge_supplied(
@@ -174,12 +201,12 @@ mod tests {
             0,
         );
         let rendered = render_agent(event, RenderFormat::Text, &mut false);
-        // The compact header, the unconfirmed count, and the per-claim lines all
-        // reach stdout through the adapter.
+        // The compact header, the unconfirmed count (pointing at /queue),
+        // and the per-claim lines all reach stdout through the adapter.
         assert!(
             rendered
                 .stdout
-                .contains("memory supplied · 2 claims (1 unconfirmed)"),
+                .contains("memory supplied · 2 claims (1 unconfirmed — review with /queue)"),
             "{:?}",
             rendered.stdout
         );
@@ -345,7 +372,7 @@ mod tests {
     }
 
     /// KnowledgeOverridden maps to a real TerminalEvent variant (not
-    /// NotImplemented) and renders through the text adapter (spec A1 §3).
+    /// NotImplemented) and renders through the text adapter.
     #[test]
     fn knowledge_overridden_renders_through_the_text_adapter() {
         let event = AgentEvent::knowledge_overridden(vec![OverrideFindingDto {
@@ -474,6 +501,123 @@ mod tests {
         assert!(
             !matches!(complete, TerminalEvent::NotImplemented { .. }),
             "a known content event must not fall through to the catch-all"
+        );
+    }
+
+    /// `ReasoningText` carries content (chain-of-thought), so by its nature it
+    /// would reach the loud catch-all and print
+    /// `Not implemented: unrecognized agent event` under a correct answer in the
+    /// headless `saya ask` path — exactly the regression that shipped green
+    /// three times. The headless renderer displays nothing for reasoning: it is
+    /// a *scope* decision (display belongs to the interactive transcript, not a
+    /// pipe) rather than a *nature-of-the-event* decision (reasoning is content,
+    /// not progress). The assertion pins the scope choice so a future reader
+    /// cannot conclude reasoning is progress.
+    #[test]
+    fn reasoning_text_renders_to_nothing_in_the_headless_path() {
+        assert!(
+            terminal_event(AgentEvent::reasoning_text("I considered the time column")).is_none(),
+            "reasoning must not reach the headless renderer, and must not fall \
+             through to the `unrecognized agent event` catch-all"
+        );
+    }
+
+    /// The fix is not a blanket silence. `ReasoningText` renders to `None`, but
+    /// a content event the headless renderer *does* understand still reaches a
+    /// real `TerminalEvent` and never the `NotImplemented` catch-all. Without
+    /// this, silencing reasoning by widening the catch-all would pass the test
+    /// above and quietly break every other variant.
+    #[test]
+    fn silencing_reasoning_does_not_silence_a_content_event() {
+        // `AssistantText` is the variant `ReasoningText` mirrors — content, and
+        // the headless renderer must still surface it.
+        let text = terminal_event(AgentEvent::assistant_text("the answer")).expect("renders");
+        assert!(
+            matches!(text, TerminalEvent::AssistantText { .. }),
+            "a content event must reach a real TerminalEvent, not be silenced: {text:?}"
+        );
+        // And `Complete` — the other content-bearing terminator — still renders.
+        let complete = terminal_event(AgentEvent::complete()).expect("renders");
+        assert!(
+            !matches!(complete, TerminalEvent::NotImplemented { .. }),
+            "Complete must not fall through to the catch-all: {complete:?}"
+        );
+    }
+
+    /// The designated answering SQL reaches the NDJSON stream under its own type
+    /// tag so a harness can pair the prose answer with its query, and the text
+    /// adapter stays silent (the SQL was already shown when the query ran).
+    #[test]
+    fn answer_designated_reaches_ndjson_and_stays_silent_in_text() {
+        let event = AgentEvent::answer_designated("SELECT count(*) FROM t");
+        let terminal = terminal_event(event).expect("designation renders headlessly");
+        let json = render_event(&terminal, RenderFormat::Ndjson);
+        assert!(
+            json.stdout.contains(r#""event":"answer_designated""#),
+            "ndjson must tag the designation: {json:?}"
+        );
+        assert!(
+            json.stdout.contains("SELECT count(*) FROM t"),
+            "ndjson must carry the SQL: {json:?}"
+        );
+        let text = render_event(&terminal, RenderFormat::Text);
+        assert!(
+            text.stdout.is_empty(),
+            "the text adapter must not echo the designation: {text:?}"
+        );
+    }
+
+    /// The consensus decision reaches the NDJSON stream under its own type tag
+    /// (so a harness can read the vote tallies) and prints a text line naming
+    /// the believed query — never falling through to the `unrecognized agent
+    /// event` catch-all. Carries the SQL only; no result rows.
+    #[test]
+    fn consensus_decided_reaches_ndjson_and_names_the_winner_in_text() {
+        let event = AgentEvent::consensus_decided(
+            Some("SELECT count(*) FROM t".into()),
+            3,
+            3,
+            3,
+            3,
+            false,
+            false,
+        );
+        let terminal = terminal_event(event).expect("consensus renders headlessly");
+        assert!(
+            !matches!(terminal, TerminalEvent::NotImplemented { .. }),
+            "ConsensusDecided must not fall through to the catch-all: {terminal:?}"
+        );
+        let json = render_event(&terminal, RenderFormat::Ndjson);
+        assert!(
+            json.stdout.contains(r#""event":"consensus_decided""#),
+            "ndjson must tag the consensus: {json:?}"
+        );
+        assert!(
+            json.stdout.contains("SELECT count(*) FROM t"),
+            "ndjson must carry the winning SQL, not result rows: {json:?}"
+        );
+        assert!(
+            json.stdout.contains(r#""attempts":3"#) && json.stdout.contains(r#""votes":3"#),
+            "ndjson must carry the tallies: {json:?}"
+        );
+        let text = render_event(&terminal, RenderFormat::Text);
+        assert!(
+            text.stdout
+                .contains("consensus · 3 attempts, 3 voted, 3 agreed"),
+            "the text adapter names the tallies: {text:?}"
+        );
+        assert!(
+            text.stdout.contains("believing: SELECT count(*) FROM t"),
+            "the text adapter names the believed query: {text:?}"
+        );
+
+        // A tie with no winner names the disagreement honestly, not as a guess.
+        let tied = AgentEvent::consensus_decided(None, 3, 3, 1, 0, true, false);
+        let tied_terminal = terminal_event(tied).expect("renders");
+        let tied_text = render_event(&tied_terminal, RenderFormat::Text);
+        assert!(
+            tied_text.stdout.contains("tied, no winner"),
+            "a tie with no winner says so: {tied_text:?}"
         );
     }
 }

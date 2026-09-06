@@ -40,6 +40,13 @@ cargo binstall saya-cli                 # prebuilt binary, no compile
 cargo install saya-cli                  # from source (builds DuckDB; takes a few minutes)
 ```
 
+Building from crates.io needs one flag for SQLite's maths functions, which the
+released binaries already carry:
+
+```bash
+LIBSQLITE3_FLAGS=-DSQLITE_ENABLE_MATH_FUNCTIONS cargo install saya-cli
+```
+
 → [installation](docs/installation.md)
 
 ## Quick start
