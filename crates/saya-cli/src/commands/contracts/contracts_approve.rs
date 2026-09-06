@@ -315,7 +315,11 @@ mod tests {
             .expect("item present")
             .state;
         assert_eq!(state, KnowledgeState::Active);
-        std::fs::remove_dir_all(root).unwrap();
+        // Close the store before removing its directory: Windows refuses to
+        // delete a directory that still holds an open file, and the SQLite
+        // connection lives until the store is dropped.
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Without `--yes` the queue is printed and nothing is approved — the
@@ -358,7 +362,11 @@ mod tests {
             .expect("item present")
             .state;
         assert_eq!(state, KnowledgeState::Pending, "nothing was written");
-        std::fs::remove_dir_all(root).unwrap();
+        // Close the store before removing its directory: Windows refuses to
+        // delete a directory that still holds an open file, and the SQLite
+        // connection lives until the store is dropped.
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// An empty queue is a clean no-op: exit 0, one line, nothing approved
@@ -380,6 +388,10 @@ mod tests {
             out.contains("No candidates awaiting approval"),
             "clean no-op message: {out}"
         );
-        std::fs::remove_dir_all(root).unwrap();
+        // Close the store before removing its directory: Windows refuses to
+        // delete a directory that still holds an open file, and the SQLite
+        // connection lives until the store is dropped.
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 }
