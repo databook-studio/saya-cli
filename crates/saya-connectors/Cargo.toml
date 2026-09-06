@@ -1,6 +1,6 @@
 [package]
 name = "saya-connectors"
-version = "0.3.3"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,8 +9,8 @@ description = "Database connectors and read-only SQL safety for SAYA CLI (Postgr
 
 [dependencies]
 async-trait.workspace = true
-saya-config = { path = "../saya-config", version = "0.3.3" }
-saya-types = { path = "../saya-types", version = "0.3.3" }
+saya-config = { path = "../saya-config", version = "0.4.0" }
+saya-types = { path = "../saya-types", version = "0.4.0" }
 futures-util.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true
