@@ -119,6 +119,10 @@ pub struct AiFile {
     /// assembles and sends to the provider. The loop trims under it (oldest
     /// tool results dropped, newest truncated with a marker) rather than abort.
     pub context_byte_budget: Option<usize>,
+    /// The model's context window in tokens, as the user declares it. This is
+    /// how a model the built-in table does not know — a private gateway serving
+    /// a name of its own — gets a window at all. `None` defers to the table.
+    pub context_window_tokens: Option<u64>,
     /// Show the model's chain-of-thought in the transcript. Off by default:
     /// thinking is verbose (measured at ~2x the answer length) and restates
     /// database contents in prose, so a user who did not ask for it must not

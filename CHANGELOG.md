@@ -3,6 +3,25 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- **saya now knows how large a model's context window is.** Until now the only
+  bound on a conversation was `[ai] context_byte_budget`, a configured byte
+  ceiling with no relation to any model, so `glm-5.2` and a 32K-token local
+  model were treated identically and saya could not tell a 1M-token model from
+  a 32K-token one. A small built-in table maps published model names — GLM,
+  GPT, Claude, Gemini, and the common Ollama families, each entry carrying its
+  vendor source — to their documented window in tokens. The lookup is
+  exact-match and honest about what it does not know: a gateway-served model the
+  table has never heard of stays unknown rather than guessed at, because a wrong
+  window would either refuse work that would have succeeded or promise headroom
+  that does not exist. A new `[ai] context_window_tokens` setting declares the
+  window for a model the table will never list (a private gateway's own naming),
+  and a declared value wins over the table. Nothing blocks or truncates on the
+  answer yet — knowing a window and acting on it are separate changes.
+
 ## 0.4.1 — 2026-09-07
 
 ### Fixed

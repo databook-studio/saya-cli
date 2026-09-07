@@ -111,6 +111,28 @@ precedence.
 context_byte_budget = 524288   # 512 KiB; default is 256 KiB
 ```
 
+`context_window_tokens` declares the model's context window in tokens. saya
+keeps a small built-in table of published models — GLM, GPT, Claude, Gemini,
+and the common Ollama families — and looks a model up by exact name, so
+`glm-5.2` and `qwen2.5-coder:14b` resolve to their documented windows without
+any configuration. A model the table does not know stays **unknown**: most
+saya users run through a gateway serving models the table will never list, and
+guessing a window for one would either refuse work that would have succeeded or
+promise headroom that does not exist. Nothing blocks or truncates on this value
+yet; it establishes the fact that a later change can act on.
+
+For a gateway model the table will never hear of, declare the window yourself —
+a declared value wins over the table, because it says something about *your*
+endpoint that a published fact for the model name cannot:
+
+```toml
+[ai]
+model = "my-gateway-model"
+context_window_tokens = 1048576
+```
+
+A declared value of `0` is rejected as a typo. There is no upper bound.
+
 `config doctor` reports paths and selection. `config show` emits the resolved
 configuration as display-safe references and settings only. It never resolves
 or prints secret values — that is not optional and there is no flag to change

@@ -1,5 +1,6 @@
 //! Configuration contracts and resolution for SAYA CLI.
 
+mod context_window;
 mod diagnostics;
 mod env_file;
 mod error;
@@ -13,6 +14,7 @@ mod resolve;
 mod secret;
 mod values;
 
+pub use context_window::context_window_tokens;
 pub use diagnostics::{RedactedDiagnostics, ResolvedDiagnostics};
 pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
