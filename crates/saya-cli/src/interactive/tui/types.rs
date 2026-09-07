@@ -124,6 +124,11 @@ pub(crate) struct RequestState {
     pub(crate) started: Option<std::time::Instant>,
     pub(crate) activity: Option<String>,
     pub(crate) pending_approval: Option<PendingApproval>,
+    /// The last answering call's reported `input_tokens` this turn — the
+    /// freshest context-size figure the provider gave, and the numerator for
+    /// the footer's context utilisation. Cleared when the request ends so a
+    /// later turn never shows a stale figure.
+    pub(crate) last_answering_input: Option<u64>,
 }
 
 /// UI overlays and modal interaction state.

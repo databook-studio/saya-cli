@@ -4,8 +4,13 @@ use super::super::agent::{self, StreamMsg};
 use super::super::stream_events::apply_event;
 use super::super::transcript::BlockKind;
 use super::super::types::{App, LastQuery, PendingApproval};
+use super::super::usage_footer;
 use crate::interactive::session_state::SessionState;
-use saya_agent::AgentEvent;
+use saya_agent::{AgentEvent, UsageCall};
+
+#[cfg(test)]
+#[path = "streaming_tests.rs"]
+mod tests;
 
 impl App {
     /// Starts streaming an agent prompt on a background thread.
@@ -74,6 +79,16 @@ impl App {
                         AgentEvent::KnowledgeLearningStarted => {
                             self.request.activity = Some("learning".into());
                         }
+                        // The last answering call's input is the freshest context-size
+                        // figure the provider gave — the numerator for the
+                        // footer's utilisation. The extraction call's prompt
+                        // is not the conversation, so it never updates this.
+                        AgentEvent::Usage {
+                            call: UsageCall::Answer,
+                            usage,
+                        } => {
+                            self.request.last_answering_input = Some(usage.input_tokens);
+                        }
                         _ => {}
                     }
                     apply_event(&mut self.transcript, event, state.show_thinking);
@@ -99,19 +114,32 @@ impl App {
                                 output.tool_metadata.clone(),
                             );
                             let usage = &output.usage;
+                            // Accumulate into the session total before the
+                            // footer is built, so its session segment
+                            // includes the turn it reports. `record` applies
+                            // the same zero-guard as the push below, so a
+                            // silent provider's all-zero usage adds nothing.
+                            state.usage.record(usage);
                             if usage.input_tokens > 0 || usage.output_tokens > 0 {
+                                // The user-declared window is a fact about
+                                // this deployment and wins over the table;
+                                // otherwise the table answers for the live
+                                // model, and `None` for a model it does not
+                                // know stays absent in the footer.
+                                let window =
+                                    self.runtime.resolved.ai.context_window_tokens.or_else(|| {
+                                        saya_config::context_window_tokens(&state.model)
+                                    });
                                 self.transcript.push(
                                     BlockKind::System,
-                                    format!(
-                                        "{} tokens in · {} tokens out",
-                                        usage.input_tokens, usage.output_tokens
+                                    usage_footer::transcript_footer(
+                                        usage,
+                                        &state.usage.answering,
+                                        self.request.last_answering_input,
+                                        window,
                                     ),
                                 );
                             }
-                            // Accumulate into the session total. `record`
-                            // applies the same zero-guard, so a
-                            // silent provider's all-zero usage adds nothing.
-                            state.usage.record(usage);
                             // Fold the extraction call's usage into a separate
                             // learning total. `learning_usage` is `None` when
                             // no extraction ran or it produced no response, so
@@ -129,6 +157,10 @@ impl App {
             self.request.stream = None;
             self.request.started = None;
             self.request.activity = None;
+            // The numerator belongs to the turn that reported it; the next
+            // turn must not show this one's figure if the provider goes
+            // silent.
+            self.request.last_answering_input = None;
         }
         // No forced scroll: when the user is at the bottom the newest lines show
         // automatically; when they've scrolled up to read, streaming leaves them.
