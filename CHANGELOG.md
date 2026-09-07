@@ -34,6 +34,23 @@ All notable changes to SAYA CLI are recorded here. This project follows
   event — absence means "unknown", not zero, and an unreported cache figure
   serialises as `null` where a reported zero serialises as `0`.
 
+- **The Spider benchmark harness gains an opt-in session arm** (`bench.py run
+  --session`). The default arm ran every question as its own `saya ask` process
+  with no conversation behind it — an honest one-shot text-to-SQL reading, but
+  not the session-based product. `--session` measures the product instead: one
+  conversation per database, questions in the harness's fixed corpus order.
+  Because `saya ask` cannot carry a conversation (`--continue` is inert there),
+  the session arm drives the bare REPL per question, piping each prompt on
+  stdin as a single line with `--continue`, so every question joins the
+  conversation the previous question of that database saved. The default arm
+  is byte-for-byte unchanged, and the arms never share a results file, state
+  store, or session directory (session paths carry a `-session` suffix), with
+  a `mode` field on every row naming the arm that produced it. Ordering, the
+  session boundary, failure coupling, and resume semantics are decided and
+  documented in the module docstring; `--candidates N>1` is refused in session
+  mode because the session surface has no multi-attempt orchestration to back
+  the number the row would record.
+
 ### Changed
 
 - **The agent finishes the computation a question asks for.** Characterising all
