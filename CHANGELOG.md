@@ -7,6 +7,22 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+- **A release now fails — loudly — when the Homebrew tap does not serve it.**
+  The 0.4.0 release looked complete while `brew install` kept serving 0.3.2 for
+  a month: the tap-bump job failed one second in on an expired
+  `HOMEBREW_TAP_TOKEN`, and nothing a person actually looks at noticed. A new
+  `verify-tap` release job runs after the bump and checks the public tap
+  token-free via `scripts/check-homebrew-tap.sh` — the check must not need the
+  tap token, because a check gated on that token could never detect the token
+  being broken, which is the failure it exists to catch. It runs on the bump's
+  success *and* failure, reads the tap anonymously, and fails the release with a
+  message naming the served and expected versions when they disagree. When the
+  token is deliberately unset (the documented bump no-op), staleness downgrades
+  to a `::warning` instead of a failure, so a channel that was opted out of
+  never blocks a release. A network failure during the check fails with "could
+  not run" (a distinct exit code), never as staleness, so infrastructure noise
+  does not train people to ignore the check.
+
 - **saya now knows how large a model's context window is.** Until now the only
   bound on a conversation was `[ai] context_byte_budget`, a configured byte
   ceiling with no relation to any model, so `glm-5.2` and a 32K-token local
