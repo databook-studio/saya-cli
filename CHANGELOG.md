@@ -3,9 +3,27 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.4.1 — 2026-09-07
 
 ### Fixed
+
+- **A long question is no longer cut off as you type it.** The input box
+  truncated any line wider than the terminal, leaving the rest invisible and the
+  cursor pinned to the border, and it did not grow. Nothing was ever lost on
+  send — the whole buffer was always submitted — but a pasted question could not
+  be proofread or edited. Lines now wrap and the box grows with them. Wrapping
+  counts characters rather than display width, so a full-width CJK character
+  still misplaces the cursor by a column.
+  ([databook-studio/saya-cli#57])
+
+- **Memory extraction no longer fails on every turn against gateways that
+  reject `reasoning_effort: "minimal"`.** The extraction call asked for minimal
+  reasoning using a spelling some OpenAI-compatible endpoints reject outright
+  with HTTP 400 — a Fireworks-backed gateway among them — so nothing was ever
+  learned and the failure read as a generic, apparently transient error. The
+  OpenAI-family wire now omits the field for that variant, as it already did for
+  the default, and the endpoint's own configuration decides.
+  ([databook-studio/saya-cli#56])
 
 - **The status-bar indicator no longer tells you data is protected when it is
   being shared.** The interactive status line and the TUI status bar showed
