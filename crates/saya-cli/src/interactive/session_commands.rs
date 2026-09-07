@@ -102,13 +102,13 @@ impl SessionState {
                 if let Some(value) = value {
                     self.allow_data_sharing = value;
                 }
+                // Mirrors the status bar's `sharing:` segment so the two
+                // surfaces cannot tell a reader opposite things about the
+                // same state: `sharing:on` means row values are sent to the
+                // provider, `sharing:off` means they are not.
                 SessionAction::Message(format!(
                     "Cloud data sharing: {}",
-                    if self.allow_data_sharing {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }
+                    if self.allow_data_sharing { "on" } else { "off" }
                 ))
             }
             SlashCommand::Approvals(value) => {
