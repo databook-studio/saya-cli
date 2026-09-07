@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Runs and scores saya against Spider 1.0 and Spider 2.0-lite.
 
-    python bench/spider/bench.py run    [--suite all] [--workers 8]
-    python bench/spider/bench.py score
-    python bench/spider/bench.py report
+    python bench/spider/bench.py run    [--suite all] [--workers 8] [--session]
+    python bench/spider/bench.py score  [--session]
+    python bench/spider/bench.py report [--session]
 
 Run and score are separate because they fail for different reasons and take
 different lengths of time: a run is hours of model calls, scoring is minutes of
@@ -23,6 +23,60 @@ exploratory probe, so the two readings differ by a lot there and barely at all
 on Spider 1.0. Designation is saya's own protocol, not a Spider concept — any
 published figure has to say which reading it is.
 
+The session arm — `run --session`:
+
+By default every question is one independent `saya ask` process with no
+conversation behind it, which measures one-shot text-to-SQL. `--session` opts
+into measuring the session-based product instead: one conversation per
+database, questions in a fixed order, so each question sees the turns before
+it. The default path is untouched — this is an additional arm, not a
+replacement, and the two never share a results file, a state store, or a
+session directory (session-mode paths carry a `-session` suffix), so a row's
+`mode` field and the file it lands in both say which arm produced it.
+
+How the session is built. `saya ask --continue` cannot carry a conversation:
+`ask` runs one turn with empty history and never touches the session store;
+`--continue` and `--resume` are honoured only by the bare `saya` REPL. Session
+mode therefore spawns the bare REPL per question — one process, one turn —
+with the question piped on stdin as a single line and `--continue` set. Each
+process appends its turn to the session the previous process saved, so the
+questions of one database really do accumulate into one conversation. What
+this buys and what it costs, decided and recorded here:
+
+- Ordering: questions run in the harness's existing per-database corpus order,
+  the same order the default arm uses, so the arms differ only in the mode.
+- Boundary: one session per database. A session persists its profile and
+  attached profiles, so a suite-wide session would answer every later database
+  from the first one's connection — per database is the only correct boundary,
+  and it matches how the state store is keyed.
+- Failure coupling: no reset. An errored turn is not recorded into the
+  conversation, so a transport failure cannot poison later turns; a
+  successful-but-wrong turn can, and that is the product behaviour under
+  measurement. The raw per-question streams show where a database collapsed.
+- Resume: a session is saved after every completed turn, so a run that dies
+  mid-database resumes with `--continue` into the surviving conversation —
+  the interrupted turn is gone (it never completed) and its question is
+  re-asked, honestly labelled as a continuation. Whether to continue is
+  decided fresh before every question from what the store actually holds, so
+  a stretch of failed turns never leads the next row to claim continuity it
+  would not have (`session_continued: false`), and a turn that completed but
+  whose row was never written (a crash between turn and row) still counts,
+  because it really is in the conversation. One harness process per arm at a
+  time: two concurrent runs on the same arm would merge their questions into
+  one conversation while each claims its own continuity.
+
+Two restrictions, for honesty rather than capability. `--candidates` above 1
+is refused in session mode: the session surface has no multi-attempt
+orchestration, so a row claiming three candidates would lie. And questions
+are whitespace-folded to one line, because the session surface reads stdin
+line by line — only the reference documents Spider 2.0 attaches to 55
+questions carry newlines, and folding them keeps the words while losing the
+layout. Finally, continuity depends on saya's own privacy rule: turns that
+queried the database are fed back only when the arm's config sets
+`ai.allow_data_sharing` (the generated Spider config does; Spider corpora are
+public). With sharing off the session arm measures recall and the state store,
+not conversation — the run warns when it sees that.
+
 Environment:
 
     SAYA_AI_API_KEY   required — the model API key
@@ -30,7 +84,7 @@ Environment:
     SAYA_BQ_PROJECT   the project that runs and is billed for the jobs
     SAYA_BENCH_BIN    saya binary (default: target/release/saya)
 """
-import argparse, json, os, subprocess, sys, threading, time, urllib.request
+import argparse, json, os, re, subprocess, sys, threading, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +97,18 @@ OUT = os.path.join(CORPUS, "results")
 ARM = os.environ.get("SAYA_BENCH_ARM", "default")
 RESULTS = os.path.join(OUT, f"results-{ARM}.ndjson")
 SCORED = os.path.join(OUT, f"scored-{ARM}.ndjson")
+
+
+def results_path(session=False):
+    """The results file for an arm. Session mode gets its own file: two arms
+    that differ in any measured setting must not share one, because resume
+    skips keys already present and the second arm would silently measure
+    nothing. The suffix makes that sharing impossible to arrange by accident."""
+    return os.path.join(OUT, f"results-{ARM}{'-session' if session else ''}.ndjson")
+
+
+def scored_path(session=False):
+    return os.path.join(OUT, f"scored-{ARM}{'-session' if session else ''}.ndjson")
 HOME = os.path.join(CORPUS, "home")
 GOLD_URL = ("https://raw.githubusercontent.com/xlang-ai/Spider2/main/"
             "spider2-lite/evaluation_suite/gold/exec_result")
@@ -199,21 +265,104 @@ def question_text(item):
     return q
 
 
+def session_prompt(item):
+    """The question as one stdin line for the session surface.
+
+    The bare REPL reads input line by line, so a multi-line question would be
+    read as several turns. Whitespace is folded to single spaces, which only
+    the Spider 2.0 reference documents (55 questions) ever notice: the words
+    survive, the layout does not. A leading `/` and an empty fold are refused
+    rather than sent — the session surface would read the first as a slash
+    command and the second as nothing at all, and both would come back as a
+    row that looks like a model that gave up.
+    """
+    folded = " ".join(question_text(item).split())
+    if folded.startswith("/"):
+        raise ValueError(f"question {item.get('_key', '<unknown>')!r} starts "
+                         "with '/' and cannot be piped to the session surface")
+    if not folded:
+        raise ValueError(f"question {item.get('_key', '<unknown>')!r} is empty")
+    return folded
+
+
+def session_has_turns(sessions_dir):
+    """Does this unit's session directory hold a session with a recorded turn?
+
+    The store saves a session after every completed turn, so a file with
+    `turns` means a prior question really did complete here — the evidence
+    `--continue` needs. A file without turns (an attempt that errored before
+    anything completed) counts as no session: continuing it would be
+    indistinguishable from starting fresh. Corrupt files are skipped the same
+    way the store skips them, and `.tmp` sidecars are not sessions.
+    """
+    try:
+        files = sorted((os.path.getmtime(os.path.join(sessions_dir, f)), f)
+                       for f in os.listdir(sessions_dir) if f.endswith(".json"))
+    except OSError:
+        return False
+    for _, name in reversed(files):        # newest first, like the store does
+        try:
+            with open(os.path.join(sessions_dir, name)) as f:
+                return bool(json.load(f).get("turns"))
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 _lock = threading.Lock()
 
 
-def emit(record):
+def emit(record, results=None):
     with _lock:
-        with open(RESULTS, "a") as f:
+        with open(results or RESULTS, "a") as f:
             f.write(json.dumps(record) + "\n")
 
 
-def run_unit(job, done, timeout, plan, candidates=1):
+def question_command(bin_path, prompt, config, primary, extras, candidates=1):
+    """The independent arm's per-question command: one `saya ask` process,
+    no conversation behind it. Order of the flags is pinned by test."""
+    cmd = [bin_path, "ask", "--config", config[0], "--connections", config[1],
+           "--profile", primary, "--non-interactive",
+           "--approval-mode", "read-only", "--format", "ndjson"]
+    if candidates > 1:
+        cmd += ["--candidates", str(candidates)]
+    for e in extras:
+        cmd += ["--include-profile", e]
+    cmd.append(prompt)
+    return cmd
+
+
+def session_command(bin_path, config, primary, extras, continued=False):
+    """The session arm's per-question command: the bare REPL, one turn.
+
+    `--continue` joins the most recent session in the unit's session
+    directory — the conversation the previous question saved. It is passed
+    only when a session with turns is known to exist: with none, the REPL
+    exits with "requested session was not found". The REPL cannot prompt
+    (piped stdin implies no terminal) and takes no subcommand, so unlike the
+    independent arm there is no `--non-interactive` to pass.
+    """
+    cmd = [bin_path, "--config", config[0], "--connections", config[1],
+           "--profile", primary, "--approval-mode", "read-only",
+           "--format", "ndjson"]
+    for e in extras:
+        cmd += ["--include-profile", e]
+    if continued:
+        cmd.append("--continue")
+    return cmd
+
+
+def run_unit(job, done, timeout, plan, candidates=1, session=False,
+             results=None):
+    if session and results is None:
+        raise ValueError("session rows need their own results file — passing "
+                         "none would land them in the independent arm's file")
     suite, db, items = job
     todo = [it for it in items if it["_key"] not in done]
     if not todo:
         return 0
-    work = os.path.join(OUT, ARM, suite, db)
+    work = os.path.join(OUT, f"{ARM}{'-session' if session else ''}",
+                        suite, db)
     os.makedirs(work, exist_ok=True)
     env = dict(os.environ, SAYA_CONFIG_HOME=HOME,
                SAYA_STATE_DB=f"{work}/state.db",
@@ -235,24 +384,38 @@ def run_unit(job, done, timeout, plan, candidates=1):
     config = [os.environ.get("SAYA_BENCH_CONFIG", f"{HOME}/saya/config.toml"),
               f"{HOME}/saya/connections.toml"]
 
+    # Continuation is evidence-based, asked fresh before every question: the
+    # store saves a session after each completed turn, so `session_has_turns`
+    # answers exactly what `--continue` will find when the process starts. An
+    # errored turn saves a turns-less session and counts as no context, so a
+    # stretch of failed turns never leads the next question to claim
+    # continuity it would not have — and a completed turn that a row was
+    # never emitted for (a crash between turn and row) still counts, because
+    # it really is in the conversation.
+    sessions_dir = f"{work}/sessions"
     for it in todo:
-        cmd = [binary(), "ask", "--config", config[0], "--connections", config[1],
-               "--profile", primary, "--non-interactive",
-               "--approval-mode", "read-only", "--format", "ndjson"]
-        if candidates > 1:
-            cmd += ["--candidates", str(candidates)]
-        for e in extras:
-            cmd += ["--include-profile", e]
-        cmd.append(question_text(it))
+        if session:
+            continued = session_has_turns(sessions_dir)
+            cmd = session_command(binary(), config, primary, extras,
+                                  continued=continued)
+            stdin = session_prompt(it) + "\n"
+        else:
+            continued = False
+            cmd = question_command(binary(), question_text(it), config,
+                                   primary, extras, candidates)
+            stdin = None
         started = time.time()
         # A model gateway occasionally returns an invalid response. Over a run
         # this long that will happen, and scoring it as a miss would blame the
         # agent for the transport. Retry only when nothing ran at all, so a
-        # genuinely wrong answer never gets a second attempt.
+        # genuinely wrong answer never gets a second attempt. In session mode
+        # an errored turn leaves nothing in the conversation, so a retry asks
+        # the same question at the same point in it.
         for attempt in range(3):
             try:
                 proc = subprocess.run(cmd, capture_output=True, text=True,
-                                      env=env, cwd=CORPUS, timeout=timeout)
+                                      env=env, cwd=CORPUS, timeout=timeout,
+                                      input=stdin)
                 text, timed_out = proc.stdout + proc.stderr, False
             except subprocess.TimeoutExpired as expired:
                 # The partial output is on the exception, and discarding it made
@@ -272,6 +435,17 @@ def run_unit(job, done, timeout, plan, candidates=1):
                 text = _text(expired.stdout) + _text(expired.stderr)
                 timed_out = True
             queries, designated, attempts, consensus = parse_ndjson(text)
+            # A `--continue` spawn can still find no session — a race with
+            # another harness, or a session file that went corrupt between the
+            # probe and the spawn. Fall back to a fresh session rather than
+            # burning the retry budget on it, and mark the row honestly.
+            if (session and continued and attempt == 0 and not queries
+                    and '"event":"' not in text
+                    and "session was not found" in text):
+                continued = False
+                cmd = session_command(binary(), config, primary, extras,
+                                      continued=False)
+                continue
             if queries or '"event":"error"' not in text or attempt == 2:
                 break
             time.sleep(5 * (attempt + 1))
@@ -280,33 +454,92 @@ def run_unit(job, done, timeout, plan, candidates=1):
         # refused it, and that distinction decides whether a result is valid.
         with open(f"{work}/{it['_key'].split(':')[-1]}.ndjson", "w") as raw:
             raw.write(text)
-        emit({"suite": suite, "db": db, "key": it["_key"],
-              "seconds": round(time.time() - started, 1),
-              "timed_out": timed_out, "attempts": attempts,
-              "provider_retries": attempt, "n_queries": len(queries),
-              "queries": queries, "designated": designated,
-              "consensus": consensus,
-              "dbfile": it.get("_path") or (
-                  f"{CORPUS}/spider_data/database/{db}/{db}.sqlite"
-                  if suite == "v1" else None),
-              "had_doc": bool(it.get("_doc")), "candidates": candidates,
-              "item": {k: it[k] for k in ("question", "query", "instance_id")
-                       if k in it}})
+        record = {"suite": suite, "db": db, "key": it["_key"],
+                  "mode": "session" if session else "independent",
+                  "seconds": round(time.time() - started, 1),
+                  "timed_out": timed_out, "attempts": attempts,
+                  "provider_retries": attempt, "n_queries": len(queries),
+                  "queries": queries, "designated": designated,
+                  "consensus": consensus,
+                  "dbfile": it.get("_path") or (
+                      f"{CORPUS}/spider_data/database/{db}/{db}.sqlite"
+                      if suite == "v1" else None),
+                  "had_doc": bool(it.get("_doc")), "candidates": candidates,
+                  "item": {k: it[k] for k in ("question", "query", "instance_id")
+                           if k in it}}
+        if session:
+            record["session_continued"] = continued
+        emit(record, results)
     return len(todo)
 
 
+def warn_sharing(config_path):
+    """Session continuity rides on saya's privacy rule — say so when it is off.
+
+    Turns that queried the database are fed back to the provider only when
+    `ai.allow_data_sharing` is on (or the provider is local). With it off the
+    session arm still runs, but what it measures is recall and the state
+    store, not conversation — a difference that must be visible before a run
+    costs hours, not after. Comment lines don't count: a commented-out
+    setting is off, and warning on the commented form would be the same
+    false negative the search exists to prevent.
+    """
+    try:
+        text = open(config_path).read()
+    except OSError:
+        return
+    live = re.sub(r"#.*", "", text)
+    if not re.search(r"allow_data_sharing\s*=\s*true", live):
+        print(f"  ! session arm: {config_path} does not set "
+              "ai.allow_data_sharing = true — turns that queried the database "
+              "will not be fed back, so this arm measures recall and the "
+              "state store, not conversation continuity", flush=True)
+
+
+def _check_session_questions(jobs):
+    """Refuse a session run whose questions cannot be piped to the session
+    surface. Caught before anything is spent: a ValueError raised mid-unit
+    from a worker thread would otherwise surface only after every other unit
+    in the pool had finished, and the offending question would crash the run
+    again on every resume."""
+    bad = []
+    for _suite, _db, items in jobs:
+        for it in items:
+            try:
+                session_prompt(it)
+            except ValueError as error:
+                bad.append(str(error))
+    if bad:
+        sys.exit("session mode cannot send these questions: " + "; ".join(bad))
+
+
 def cmd_run(args):
+    if getattr(args, "session", False) and args.candidates > 1:
+        sys.exit("session mode runs one attempt per question — the session "
+                 "surface has no multi-attempt orchestration, so --candidates "
+                 "N>1 would record candidates it never ran. Use the default "
+                 "arm for --candidates.")
+    if ARM.endswith("-session"):
+        sys.exit("SAYA_BENCH_ARM names ending in '-session' are reserved — "
+                 "the session arm appends that suffix to the results file and "
+                 "work directories, and an arm that carries it would collide "
+                 "with the session arm of the same base name")
     if not os.environ.get("SAYA_AI_API_KEY"):
         sys.exit("SAYA_AI_API_KEY is not set")
     if not os.path.exists(binary()):
         sys.exit(f"no saya binary at {binary()} — cargo build --release")
+    session = bool(getattr(args, "session", False))
+    results = results_path(session)
+    if session:
+        warn_sharing(os.environ.get("SAYA_BENCH_CONFIG",
+                                    f"{HOME}/saya/config.toml"))
     os.makedirs(OUT, exist_ok=True)
     suites = SUITES if args.suite == "all" else (args.suite,)
     plan = ({} if not os.path.exists(f"{CORPUS}/bigquery_plan.json")
             else json.load(open(f"{CORPUS}/bigquery_plan.json")))
     done = set()
-    if os.path.exists(RESULTS):
-        for line in open(RESULTS):
+    if os.path.exists(results):
+        for line in open(results):
             try:
                 done.add(json.loads(line)["key"])
             except Exception:
@@ -314,17 +547,25 @@ def cmd_run(args):
     jobs = load_jobs(suites)
     if args.limit_per_db:
         jobs = [(s, db, items[: args.limit_per_db]) for s, db, items in jobs]
+    if session:
+        _check_session_questions(jobs)
     total = sum(len(j[2]) for j in jobs)
-    print(f"{len(jobs)} database units, {total} questions, {len(done)} already done")
+    summary = f"{len(jobs)} database units, {total} questions, {len(done)} already done"
+    if session:
+        print(f"session arm — one conversation per database: {summary} -> {results}")
+    else:
+        print(summary)
     started = time.time()
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = [ex.submit(run_unit, j, done, args.timeout, plan, args.candidates)
+        futures = [ex.submit(run_unit, j, done, args.timeout, plan,
+                             args.candidates, session, results)
                    for j in jobs]
         for i, fut in enumerate(futures, 1):
             ran = fut.result()
             print(f"  [{i}/{len(jobs)}] {jobs[i-1][0]:<8} {jobs[i-1][1][:26]:<27} "
                   f"ran {ran:>3}   {round((time.time()-started)/60):>3}m", flush=True)
-    print("run complete —  next: bench.py score")
+    print("run complete —  next: bench.py score"
+          + (" --session" if session else ""))
 
 
 # ----------------------------------------------------------------- scoring --
@@ -488,7 +729,8 @@ SCORERS = {"v1": score_v1, "v2local": score_v2local, "v2bq": score_v2bq}
 
 
 def cmd_score(args):
-    rows = [json.loads(l) for l in open(RESULTS) if l.strip()]
+    session = bool(getattr(args, "session", False))
+    rows = [json.loads(l) for l in open(results_path(session)) if l.strip()]
     latest = {r["key"]: r for r in rows}       # a resumed run may repeat a key
     scored = []
     for r in latest.values():
@@ -506,15 +748,15 @@ def cmd_score(args):
             des = last
         scored.append({**r, "match": last, "match_designated": des,
                        "designated_given": r["designated"] is not None})
-    with open(SCORED, "w") as f:
+    with open(scored_path(session), "w") as f:
         for s in scored:
             f.write(json.dumps(s) + "\n")
-    print(f"scored {len(scored)} questions -> {SCORED}")
+    print(f"scored {len(scored)} questions -> {scored_path(session)}")
     cmd_report(args)
 
 
-def cmd_report(_args):
-    rows = [json.loads(l) for l in open(SCORED) if l.strip()]
+def cmd_report(args):
+    rows = [json.loads(l) for l in open(scored_path(bool(getattr(args, "session", False)))) if l.strip()]
     print(f"\n{'suite':<32}{'n':>6}{'last':>9}{'designated':>13}"
           f"{'nominated':>11}{'no SQL':>8}{'timeout':>9}{'median':>8}")
     for suite in SUITES:
@@ -554,9 +796,19 @@ def main():
                         "costs roughly N times as much")
     r.add_argument("--limit-per-db", type=int, default=0,
                    help="cap questions per database — for a quick smoke run")
+    r.add_argument("--session", action="store_true",
+                   help="one conversation per database — questions continue "
+                        "the session the previous question saved (writes "
+                        "results-<arm>-session.ndjson)")
     r.set_defaults(fn=cmd_run)
-    sub.add_parser("score").set_defaults(fn=cmd_score)
-    sub.add_parser("report").set_defaults(fn=cmd_report)
+    s = sub.add_parser("score")
+    s.add_argument("--session", action="store_true",
+                   help="score the session arm's results file")
+    s.set_defaults(fn=cmd_score)
+    p = sub.add_parser("report")
+    p.add_argument("--session", action="store_true",
+                   help="report from the session arm's scored file")
+    p.set_defaults(fn=cmd_report)
     args = ap.parse_args()
     args.fn(args)
 
