@@ -122,9 +122,11 @@ pub enum ResponseFormat {
 
 /// How hard the caller wants the model to think. Provider-neutral intent —
 /// **not** an OpenAI wire spelling — so `saya-agent` stays provider-agnostic.
-/// Each provider translates the variant it honours (`Minimal` →
-/// `reasoning_effort: "minimal"` on OpenAI, `think: false` on Ollama, a token
-/// budget on Anthropic/Gemini) or drops it; a provider with no equivalent
+/// Each provider translates the variant it honours (`Low`/`Medium`/`High` →
+/// `reasoning_effort: "low"|"medium"|"high"` on OpenAI, which **drops
+/// `Minimal`** because the `"minimal"` spelling is not universally honoured —
+/// see [`crate::OpenAiCompatibleProvider`]; `Minimal` → `think: false` on Ollama, a
+/// token budget on Anthropic/Gemini) or drops it; a provider with no equivalent
 /// degrades to today's behaviour, never to an error. `Default` is the default
 /// and means *send nothing*: the main agent loop — which never sets this —
 /// leaves effort to the endpoint, so a self-hosted gateway operator's own

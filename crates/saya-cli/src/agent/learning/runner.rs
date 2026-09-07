@@ -103,12 +103,16 @@ pub(crate) async fn run_extraction(
     //
     // `Minimal` effort is the honest lever for the same goal — ask for less
     // thinking rather than suppressing it as a side effect of the JSON shape.
-    // Both are set together because the measurement shows the effort hint is a
-    // no-op on the gateway in use, while JSON mode demonstrably is not: dropping
-    // JSON mode would silently restore the multi-second waits, so the mechanism
-    // that works stays and the correct lever is added alongside it. Whether the
-    // model complied is only knowable from the reported reasoning tokens; saya
-    // reports what it asked for, never that the effort was applied.
+    // It is set on the `ChatRequest` so providers that translate it (Ollama's
+    // `think: false`, Anthropic/Gemini's token budget) honour the ask. The
+    // OpenAI-family wire, however, **drops** `Minimal`: the `"minimal"` spelling
+    // is not universally honoured (a Fireworks-backed gateway rejects it with
+    // HTTP 400, databook-studio/saya-cli#56), and the `ReasoningEffort` contract
+    // is that a provider which cannot honour a variant drops it, never errors.
+    // So on the OpenAI gateway this is effectively JSON-mode-only; the effort
+    // lever still works on the providers that translate it. Whether the model
+    // complied is only knowable from the reported reasoning tokens; saya reports
+    // what it asked for, never that the effort was applied.
     let request = request
         .with_response_format(ResponseFormat::JsonObject)
         .with_reasoning_effort(ReasoningEffort::Minimal);
@@ -501,12 +505,15 @@ mod tests {
     }
 
     /// The extraction request carries both JSON intent (`ResponseFormat::JsonObject`)
-    /// and the honest effort lever (`ReasoningEffort::Minimal`): JSON mode
-    /// demonstrably cuts the chain-of-thought on the gateway in use, and Minimal
-    /// is the correct lever that works on endpoints which honour it. Both are
-    /// set so dropping one cannot silently restore the multi-second waits. This
-    /// is the one call in saya that sets them — the main loop's request does not
-    /// (see `receive.rs`).
+    /// and the honest effort lever (`ReasoningEffort::Minimal`) on the
+    /// `ChatRequest` — the provider-neutral ask. This asserts the *request*, not
+    /// the wire: the OpenAI-family provider **drops** `Minimal` at the wire (see
+    /// `providers/openai.rs`), because the `"minimal"` spelling is not
+    /// universally honoured; Ollama/Anthropic/Gemini translate it. So this test
+    /// pins that the extraction call *asks* for minimal effort and JSON mode,
+    /// while the wire spelling each provider emits is pinned in `openai.rs`.
+    /// This is the one call in saya that sets them — the main loop's request
+    /// does not (see `receive.rs`).
     #[tokio::test]
     async fn run_extraction_sets_json_mode_and_minimal_effort_on_the_provider_request() {
         let identity = test_identity("analytics");
