@@ -107,8 +107,16 @@ struct OpenAiRequest {
     response_format: Option<ResponseFormatWire>,
     /// The OpenAI `reasoning_effort` spelling of [`ChatRequest::reasoning_effort`].
     /// Omitted for `Default` so the default path sends nothing and the endpoint's
-    /// own configuration wins; the wire spellings are the provider's own
-    /// (`minimal`/`low`/`medium`/`high`).
+    /// own configuration wins. Omitted for `Minimal` too: the `"minimal"` spelling
+    /// is the one variant outside the `{low, medium, high}` set that the
+    /// OpenAI-family wire spells, and it is not universally honoured — a
+    /// Fireworks-backed gateway rejects `reasoning_effort: "minimal"` with HTTP
+    /// 400 (databook-studio/saya-cli#56), which fails extraction every turn.
+    /// The `ReasoningEffort` contract is that a provider which cannot honour a
+    /// variant **drops it, never errors**, so `Minimal` is dropped on this wire
+    /// and the endpoint's own (lowest) effort configuration wins. The
+    /// `ChatRequest` still carries `Minimal`, so providers that do translate it
+    /// (Ollama's `think: false`, Anthropic/Gemini's token budget) are unaffected.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
 }
@@ -154,8 +162,7 @@ impl OpenAiRequest {
                 ResponseFormat::Text => None,
             },
             reasoning_effort: match request.reasoning_effort {
-                ReasoningEffort::Default => None,
-                ReasoningEffort::Minimal => Some("minimal"),
+                ReasoningEffort::Default | ReasoningEffort::Minimal => None,
                 ReasoningEffort::Low => Some("low"),
                 ReasoningEffort::Medium => Some("medium"),
                 ReasoningEffort::High => Some("high"),
@@ -233,18 +240,28 @@ mod tests {
         );
     }
 
-    /// A `Minimal` effort request carries OpenAI's `reasoning_effort: "minimal"`
-    /// spelling on the wire — the direct four-level mapping the provider offers.
+    /// `Minimal` is the one `reasoning_effort` value outside the
+    /// `{low, medium, high}` set that the OpenAI-family wire spells, and that
+    /// spelling is not universally honoured: a Fireworks-backed gateway rejects
+    /// `reasoning_effort: "minimal"` with HTTP 400 while accepting `low` and an
+    /// omitted field. The `ReasoningEffort` contract (see `chat.rs`) is that a
+    /// provider which cannot honour a variant **drops it, never errors** — so
+    /// the OpenAI wire must omit `reasoning_effort` for `Minimal`, the same as
+    /// `Default`. This is the regression test for the bug in
+    /// databook-studio/saya-cli#56: a `Minimal` extraction request no longer
+    /// hard-fails extraction every turn on a gateway that rejects the spelling.
+    /// It fails against the current code, which emits `"minimal"`.
     #[test]
-    fn minimal_effort_request_carries_reasoning_effort_on_wire() {
+    fn minimal_effort_request_omits_reasoning_effort_on_wire() {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::Text, ReasoningEffort::Minimal),
             0.1,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
-            json.contains(r#""reasoning_effort":"minimal""#),
-            "minimal effort must appear on the wire: {json}"
+            !json.contains("reasoning_effort"),
+            "minimal effort must not carry reasoning_effort on the OpenAI wire \
+             (gateways that reject 'minimal' would 400 every extraction call): {json}"
         );
     }
 
