@@ -118,6 +118,14 @@ fn empty_app() -> App {
     }
 }
 
+/// An `empty_app` with the input buffer pre-set, for cursor-mapping tests that
+/// need a non-empty input but no transcript turns.
+fn empty_app_with_text(text: &str) -> App {
+    let mut app = empty_app();
+    app.input.set_text(text);
+    app
+}
+
 /// A stable status bar: profile `analytics`, `ollama/qwen`, `read-only`
 /// approval, privacy on. The spinner/elapsed fields are not read when the app
 /// is idle, so this is the whole status strip.
@@ -198,6 +206,21 @@ fn render_buffer(app: &App, status: &StatusView, w: u16, h: u16) -> String {
         .draw(|frame| super::ui::draw(frame, app, status))
         .expect("draw completes");
     format!("{}", terminal.backend())
+}
+
+/// Draws `app` at `w×h` through the real `ui::draw` and returns the terminal
+/// cursor position the render path set with `set_cursor_position`, in
+/// `(x, y)` screen cells. This is the seam that pins the input-box cursor
+/// mapping end-to-end: a long input must place the cursor at the visual cell
+/// of the true insertion point, not pinned against the right border.
+fn render_cursor(app: &App, status: &StatusView, w: u16, h: u16) -> (u16, u16) {
+    let backend = ratatui::backend::TestBackend::new(w, h);
+    let mut terminal = ratatui::Terminal::new(backend).expect("test backend builds");
+    terminal
+        .draw(|frame| super::ui::draw(frame, app, status))
+        .expect("draw completes");
+    let pos = terminal.backend().cursor_position();
+    (pos.x, pos.y)
 }
 
 // --- Screen 1: a memory receipt above an answer. ----------------------------
@@ -520,4 +543,98 @@ fn copy_last_answer_does_not_grab_a_table_block() {
     app.copy_last_answer();
     let copied = app.pending_clipboard.expect("answer was queued");
     assert_eq!(copied, "the answer is here");
+}
+
+// --- Input box: wrap-aware cursor mapping through the real render path. -------
+//
+// These are the regression tests for the input-box truncation defect
+// (databook-studio/saya-cli#57). A question longer than the terminal width used
+// to render as one truncated row with the cursor pinned against the right
+// border. The fix wraps the line and maps the logical cursor to a visual
+// (row, col) against the inner width. Each test draws through the real
+// `ui::draw` and reads the cursor position back, so a mapping regression is
+// caught here rather than by eye.
+//
+// Layout at 40×24: the input box sits at the bottom. With a 1-row input the
+// box is 3 rows tall (1 text + 2 border), so its inner area is row 21, cols
+// 1..39 (inner width 38). A longer input grows the box upward.
+
+/// The inner width of the input box at a 40-column terminal: the box spans
+/// cols 0..40 with a rounded border, leaving 38 usable columns.
+const INPUT_INNER_WIDTH: usize = 38;
+
+/// A line exactly the inner width keeps the cursor on the single row at the
+/// column just past the text — no wrap, no spurious extra row, cursor not
+/// pinned against the border. (Spec test list item 1, rendered.)
+#[test]
+fn input_cursor_stays_on_one_row_for_an_exact_width_line() {
+    let mut app = empty_app();
+    // 38 chars: exactly the inner width at 40 columns.
+    app.input.set_text("a".repeat(INPUT_INNER_WIDTH));
+    let (x, _y) = render_cursor(&app, &fixed_status(), 40, 24);
+    // inner.x = 1; cursor col = 38 -> screen x = 1 + 38 = 39 (last inner cell).
+    assert_eq!(
+        x,
+        1 + INPUT_INNER_WIDTH as u16,
+        "exact-width line: cursor at the last inner column, not past the border"
+    );
+}
+
+/// A line one character over wraps to two visual rows and the cursor lands on
+/// the second row, at column 1 (after the wrapped char). This is the
+/// make-or-break case: the old path pinned the cursor against the right
+/// border; the wrap-aware path puts it on row 2. (Spec test list item 2,
+/// rendered — deliverable 1.)
+#[test]
+fn input_cursor_wraps_to_second_row_when_line_exceeds_width() {
+    let mut app = empty_app();
+    // 39 chars: one over the 38-col inner width -> 2 visual rows, cursor at end.
+    app.input.set_text("a".repeat(INPUT_INNER_WIDTH + 1));
+    let (x, y) = render_cursor(&app, &fixed_status(), 40, 24);
+    // inner.x = 1; the cursor is on the second visual row at col 1 (after the
+    // single wrapped 'a') -> screen x = 2. The old path put x at the border
+    // (40) because it used the logical column.
+    assert_eq!(
+        x, 2,
+        "one char over: cursor column is 2 (inner.x=1 + wrapped col=1), not the border"
+    );
+
+    // The box grew to hold the wrap: a 1-row input claims 1 visual row, a line
+    // one char over claims 2. Asserted through `input_rows` directly so it
+    // does not depend on the splash art that fills the empty transcript pane.
+    let two = empty_app_with_text(&"a".repeat(INPUT_INNER_WIDTH + 1));
+    let one = empty_app_with_text(&"a".repeat(INPUT_INNER_WIDTH));
+    assert_eq!(
+        two.input_rows(40),
+        2,
+        "a wrapped line grows the box to 2 visual rows"
+    );
+    assert_eq!(
+        one.input_rows(40),
+        1,
+        "an exact-width line keeps the box at 1 visual row"
+    );
+
+    // And the wrap is visible: the buffer shows two content rows of 'a's
+    // inside the box (the buffer view quotes each row, so match the inner
+    // border+content). This guards against a regression to one truncated row.
+    let buffer_two = render_buffer(&two, &fixed_status(), 40, 24);
+    let wrapped_rows = buffer_two.lines().filter(|l| l.contains("│a")).count();
+    assert!(
+        wrapped_rows >= 2,
+        "the wrapped line shows two content rows, not one truncated row:\n{buffer_two}"
+    );
+    let _ = (y, app);
+}
+
+/// Cursor at position 0 of an empty buffer: the placeholder path still parks
+/// the cursor at the inner top-left. (Spec test list item 4, rendered.)
+#[test]
+fn input_empty_buffer_cursor_at_origin() {
+    let app = empty_app();
+    let (x, y) = render_cursor(&app, &fixed_status(), 40, 24);
+    // inner.x = 1, inner.y = top inner row of the 3-row box.
+    assert_eq!(x, 1, "empty buffer: cursor at inner left");
+    // The box is the last 3 rows (21..24); inner top is row 22.
+    assert_eq!(y, 22, "empty buffer: cursor at inner top row");
 }

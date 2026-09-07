@@ -23,7 +23,7 @@ use status::draw_status;
 
 /// Draws one frame: transcript (fills), status bar, approval panel (when pending), input box, popup overlay.
 pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
-    let input_height = (app.input_rows() as u16) + 2;
+    let input_height = (app.input_rows(frame.area().width as usize) as u16) + 2;
     let approval_h = app
         .request
         .pending_approval

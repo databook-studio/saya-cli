@@ -11,6 +11,12 @@ use ratatui::{
 };
 
 /// Renders the bordered multi-line input box and positions the cursor.
+///
+/// Wrapping is pre-computed (char count, see the limitation note on
+/// [`crate::interactive::tui::input::wrap`]) and the `Paragraph` is rendered
+/// **without** `.wrap()`, so the pre-split visual lines are authoritative and
+/// the cursor — mapped from the same split — can never disagree with what is
+/// on screen.
 pub(super) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -32,20 +38,26 @@ pub(super) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
         frame.set_cursor_position((inner.x, inner.y));
         return;
     }
-    let visible_rows = (inner.height as usize).max(1);
-    let (cursor_line, cursor_col) = app.input.cursor_line_col();
-    let first = cursor_line.saturating_sub(visible_rows.saturating_sub(1));
-    let shown: Vec<Line> = app
+    let width = inner.width.max(1) as usize;
+    // Pre-split every logical line into visual lines so the Paragraph renders
+    // the wrap (it has no `.wrap()`) and the cursor shares the same breaks.
+    let visual: Vec<Line> = app
         .input
-        .lines()
+        .wrapped_lines(width)
         .into_iter()
-        .skip(first)
-        .map(highlight_input_line)
+        .map(|s| highlight_input_line(&s))
         .collect();
+    let (cur_row, cur_col) = app.input.cursor_visual(width);
+
+    let visible_rows = (inner.height as usize).max(1);
+    // Vertical scroll over visual rows: keep the cursor's row in view by
+    // starting the window at the row that shows it near the bottom.
+    let first = cur_row.saturating_sub(visible_rows.saturating_sub(1));
+    let shown: Vec<Line> = visual.into_iter().skip(first).collect();
     frame.render_widget(Paragraph::new(Text::from(shown)).block(block), area);
     frame.set_cursor_position((
-        inner.x + cursor_col as u16,
-        inner.y + (cursor_line - first) as u16,
+        inner.x + cur_col.min(width) as u16,
+        inner.y + (cur_row - first) as u16,
     ));
 }
 
