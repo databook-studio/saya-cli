@@ -221,3 +221,34 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: bash scripts/update-homebrew-formula.sh "${GITHUB_REF_NAME#v}"
+
+  verify-tap:
+    name: Verify tap serves the release
+    # The tap is the last mile of a release: until the tap's formula serves the
+    # tagged version, `brew install` quietly hands out the previous one (0.4.0
+    # shipped while the tap kept 0.3.2 for a month). So the check runs after the
+    # bump on success AND failure (!cancelled()) — a rejected token is exactly
+    # when the tap is stale — and reads the public tap with no token, because a
+    # check that required HOMEBREW_TAP_TOKEN could never detect that token
+    # being broken. If the bump was skipped (publish failed), there is nothing
+    # to verify and the primary failure stands alone.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !cancelled() }}
+    needs: [bump-homebrew]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify the tap serves the tagged version
+        if: needs.bump-homebrew.result != 'skipped'
+        env:
+          # Observes only *that* the token is configured, never its value: an
+          # unset token is the deliberate no-op (RELEASING.md), so a stale tap
+          # warns; a configured token makes staleness fail the release.
+          TAP_CHECK_WARN_ONLY: "${{ secrets.HOMEBREW_TAP_TOKEN != '' && '0' || '1' }}"
+        run: |
+          if [ "${{ needs.bump-homebrew.result }}" != "success" ]; then
+            echo "bump-homebrew finished with result '${{ needs.bump-homebrew.result }}' — the tap likely still serves the previous release." >&2
+          fi
+          bash scripts/check-homebrew-tap.sh "${GITHUB_REF_NAME#v}"
+      - name: Nothing to verify — the bump did not run
+        if: needs.bump-homebrew.result == 'skipped'
+        run: echo "bump-homebrew was skipped (the release publish failed or was skipped); the tap check has nothing to verify."

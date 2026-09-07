@@ -34,9 +34,20 @@ run in order:
    via `scripts/publish-crates.sh` (idempotent: skips already-published versions).
 5. **bump-homebrew** — regenerates the tap formula from the published
    `SHA256SUMS` via `scripts/update-homebrew-formula.sh` and pushes it to the tap.
+6. **verify-tap** — after the bump, checks that the public tap's formula serves
+   the tagged version via `scripts/check-homebrew-tap.sh`. The check needs no
+   token — the tap is public, and a check gated on `HOMEBREW_TAP_TOKEN` could
+   never detect that token being broken, which is the failure it guards against.
+   A stale tap fails the release with a message naming both versions; a network
+   failure during the check also fails, but reports "could not run" rather than
+   staleness.
 
 Jobs 4 and 5 no-op unless their secrets are configured, so a release never fails
-because a channel is not set up.
+because a channel is not set up. Job 6 honors that contract: with
+`HOMEBREW_TAP_TOKEN` unset it downgrades a stale tap to a `::warning`; with the
+token configured, a stale tap — including a bump that failed on a rejected token
+— fails the release, because `brew install` would otherwise silently serve the
+previous version.
 
 ## Required secrets
 
@@ -85,6 +96,8 @@ any channel. (crates.io / Homebrew jobs only run on real `v*` tags.)
   `CARGO_REGISTRY_TOKEN` in CI. `DRY_RUN=1` to verify only.
 - `scripts/update-homebrew-formula.sh X.Y.Z` — regenerate and push the tap
   formula from the release's `SHA256SUMS`. `DRY_RUN=1` to preview the diff.
+- `scripts/check-homebrew-tap.sh X.Y.Z` — verify the public tap serves `X.Y.Z`;
+  needs no token. `SAYA_TAP_FORMULA_FILE=<f>` to check a local formula.
 
 ### Recovering a partial publish
 
