@@ -171,6 +171,7 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         idle_timeout_seconds: 90,
         max_output_tokens: 4096,
         context_byte_budget: 256 * 1024,
+        context_window_tokens: None,
         show_thinking: false,
         retry_delays_ms: vec![250, 500, 1000],
     };

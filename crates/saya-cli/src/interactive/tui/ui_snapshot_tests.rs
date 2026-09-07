@@ -56,6 +56,7 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 idle_timeout_seconds: 90,
                 max_output_tokens: 4096,
                 context_byte_budget: 256 * 1024,
+                context_window_tokens: None,
                 show_thinking: false,
                 retry_delays_ms: vec![250, 500, 1000],
             },

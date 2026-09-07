@@ -92,6 +92,13 @@ pub struct ResolvedAi {
     /// assembles. The loop trims under it instead of aborting, so a user on a
     /// model with a large context window can raise it to keep more history.
     pub context_byte_budget: usize,
+    /// The model's context window in tokens, as the user declared it in
+    /// `[ai] context_window_tokens`. `None` is the normal case: the user did
+    /// not declare one, and the answer is whatever the built-in table says for
+    /// `model` (or nothing, for a model it does not know). Absent is not zero —
+    /// a declared value is a fact about this deployment; an undeclared one is
+    /// not a fact at all.
+    pub context_window_tokens: Option<u64>,
     /// Show the model's chain-of-thought in the transcript. Off by default;
     /// display only — reasoning is never persisted regardless of this setting.
     pub show_thinking: bool,
@@ -145,6 +152,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .context_byte_budget
         .unwrap_or(DEFAULT_CONTEXT_BYTE_BUDGET);
     require_context_byte_budget(context_byte_budget)?;
+    require_context_window_tokens(file.ai.context_window_tokens)?;
     let retry_delays_ms = file
         .ai
         .retry_delays_ms
@@ -167,6 +175,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
             idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
             max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
             context_byte_budget,
+            context_window_tokens: file.ai.context_window_tokens,
             show_thinking: file.ai.show_thinking.unwrap_or(false),
             retry_delays_ms,
         },
@@ -195,6 +204,24 @@ fn require_context_byte_budget(value: usize) -> Result<(), ConfigError> {
             field: "context_byte_budget",
             value,
             min: MIN_CONTEXT_BYTE_BUDGET,
+        })
+    }
+}
+
+/// Rejects a declared `[ai] context_window_tokens` of zero. A window of zero
+/// tokens is a typo, not a deployment: no model turns every prompt into a
+/// refusal. There is no upper bound — a user declaring their gateway's window
+/// is stating a fact saya has no other way to learn, and the largest published
+/// window today is a few million tokens, so any plausible ceiling would
+/// outlive its reason.
+fn require_context_window_tokens(value: Option<u64>) -> Result<(), ConfigError> {
+    if value.is_none_or(|tokens| tokens > 0) {
+        Ok(())
+    } else {
+        Err(ConfigError::SettingBelowMinimum {
+            field: "context_window_tokens",
+            value: value.unwrap_or_default() as usize,
+            min: 1,
         })
     }
 }
