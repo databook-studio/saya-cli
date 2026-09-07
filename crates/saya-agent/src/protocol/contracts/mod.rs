@@ -4,11 +4,14 @@
 //! per-concern submodules.
 
 mod approval;
+mod builders;
 mod chat;
 mod error;
 mod event;
 mod knowledge;
+mod learning;
 mod tool;
+mod usage;
 
 pub use approval::{AllowReadOnlyApproval, ApprovalDecider};
 pub use chat::{
@@ -16,11 +19,13 @@ pub use chat::{
     ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,
 };
 pub use error::{ProviderError, ToolError};
-pub use event::{AgentEvent, LearningSkipReason};
+pub use event::AgentEvent;
 pub use knowledge::{
     KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedClaimDto, SuppliedContractDto,
 };
+pub use learning::LearningSkipReason;
 pub use tool::{LocalStateEffect, ToolDefinition, ToolEffect, ToolExecutor};
+pub use usage::UsageCall;
 
 #[cfg(test)]
 mod tests {

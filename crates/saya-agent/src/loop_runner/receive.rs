@@ -1,7 +1,7 @@
 use super::{AgentError, check_cancelled, emit};
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
-    ProviderError, ProviderEvent, TokenUsage, ToolDefinition,
+    ProviderError, ProviderEvent, TokenUsage, ToolDefinition, UsageCall,
 };
 use futures_util::StreamExt;
 
@@ -42,7 +42,11 @@ pub(super) async fn receive(
         )
         .await?;
     let (mut content, mut calls, mut complete) = (String::new(), Vec::new(), false);
-    let mut usage = TokenUsage::default();
+    // `None` until the stream emits a `Usage` event, so a provider that reports
+    // nothing emits no usage event at all — absence means "unknown", not "this
+    // call cost nothing", and the last snapshot wins exactly as the response's
+    // own accumulator folds cumulative reports.
+    let mut usage = None;
     // `None` until the stream emits reasoning; accumulated under the same
     // `MAX_STREAM_BYTES` bound as content so a hostile endpoint cannot stream
     // unbounded "thinking" into memory.
@@ -69,12 +73,18 @@ pub(super) async fn receive(
                 accumulated.push_str(&text);
             }
             ProviderEvent::ToolCalls(value) => calls.extend(value),
-            ProviderEvent::Usage(counts) => usage = counts,
+            ProviderEvent::Usage(counts) => usage = Some(counts),
             ProviderEvent::Done => complete = true,
         }
     }
     if !complete || (content.trim().is_empty() && calls.is_empty()) {
         return Err(AgentError::Provider(ProviderError::InvalidResponse));
+    }
+    // The report crosses the boundary once per call that made one, named as an
+    // answering call so a consumer can keep it apart from the extraction call's
+    // report (emitted by the CLI runtime, which owns that call).
+    if let Some(counts) = usage {
+        emit(events, sink, AgentEvent::usage(UsageCall::Answer, counts)).await;
     }
     Ok((
         ChatMessage {
@@ -83,7 +93,7 @@ pub(super) async fn receive(
             tool_calls: calls,
             tool_call_id: None,
         },
-        usage,
+        usage.unwrap_or_default(),
         reasoning,
     ))
 }

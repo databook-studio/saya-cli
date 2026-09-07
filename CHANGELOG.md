@@ -22,6 +22,18 @@ All notable changes to SAYA CLI are recorded here. This project follows
   and a declared value wins over the table. Nothing blocks or truncates on the
   answer yet — knowing a window and acting on it are separate changes.
 
+- **`saya ask --format ndjson` now reports token and cache usage.** The stream
+  gains a `usage` event carrying the token counts the provider reported for a
+  call — one event per provider call, labelled `call: "answer"` for the
+  answering rounds and `call: "extraction"` for the post-turn learning call,
+  which is billed separately. A benchmark reading the stream can now compute a
+  cache hit rate (`Σcached / Σinput` over the answering calls) without
+  hand-probing the gateway; previously a 1,534-question run produced no usage
+  data at all. Nothing else about the stream changes: no existing field is
+  renamed or restructured, and a provider that reports no usage emits no `usage`
+  event — absence means "unknown", not zero, and an unreported cache figure
+  serialises as `null` where a reported zero serialises as `0`.
+
 ## 0.4.1 — 2026-09-07
 
 ### Fixed

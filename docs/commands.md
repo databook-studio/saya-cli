@@ -41,7 +41,14 @@ optional `connection` argument to its schema-inspection and query tools (with th
 `3`; provider/agent failures return `5`. JSON writes result envelopes to
 stdout and diagnostics to stderr; NDJSON uses one stable envelope per line.
 `ask` streams provider text deltas. Text output writes deltas immediately, while JSON and NDJSON
-write one valid stable JSON event envelope per delta. `/history` lists saved session IDs
+write one valid stable JSON event envelope per delta. When the provider reports token
+usage for a call, `ask` also emits a `usage` event carrying those counts — one per
+provider call, labelled `call: "answer"` for the answering rounds and
+`call: "extraction"` for the post-turn learning call, so a script can sum the answer's
+tokens separately from the learning call's and compute a cache hit rate over the answer
+alone. A provider that reports no usage emits no `usage` event at all: absence means
+"unknown", not zero, and an unreported cache figure serialises as `null` where a
+reported zero serialises as `0`. `/history` lists saved session IDs
 in recent-first order. The slash commands `/connect <profile>`, `/include <profile>`, and `/exclude <profile>` manage live database connections in interactive sessions: `/connect` sets the primary profile, `/include` adds secondary live read-only database connections (skipped if connection fails), and `/exclude` removes them. `/connect`, `/privacy`, `/model`, and
 `/provider` are per-session overrides used by the next prompt; supported
 providers are `ollama`, `openai`, `openai_compatible`, `anthropic`, and `gemini`.

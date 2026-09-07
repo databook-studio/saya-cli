@@ -931,6 +931,332 @@ async fn optional_usage_counts_survive_the_run_and_absent_stays_absent() {
     );
 }
 
+/// Usage reaches the event stream too: one `Usage` event per provider call
+/// that reported any, carrying **that call's** counts — not the run total, so a
+/// consumer can sum them and keep the answer's cost apart from anything else.
+#[tokio::test]
+async fn each_answering_call_reports_its_own_usage_on_the_stream() {
+    use saya_agent::{ProviderEvent, ProviderStream, TokenUsage, UsageCall};
+
+    struct UsageProvider {
+        turns: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for UsageProvider {
+        fn name(&self) -> &str {
+            "usage"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            panic!("loop must drive providers through stream()");
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            let mut turns = self.turns.lock().unwrap();
+            *turns += 1;
+            let turn = *turns;
+            drop(turns);
+            let events = if turn == 1 {
+                vec![
+                    Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }])),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(3, 7))),
+                    Ok(ProviderEvent::Done),
+                ]
+            } else {
+                vec![
+                    Ok(ProviderEvent::TextDelta("final answer".into())),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(5, 9))),
+                    Ok(ProviderEvent::Done),
+                ]
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &UsageProvider {
+            turns: std::sync::Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "final answer");
+    let events = captured.lock().unwrap();
+    let reported: Vec<(UsageCall, saya_agent::TokenUsage)> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Usage { call, usage } => Some((*call, *usage)),
+            _ => None,
+        })
+        .collect();
+    // One event per call, each carrying that call's own counts — a snapshot,
+    // never the running total (which is `8/16` and belongs to `AgentOutput`).
+    assert_eq!(
+        reported.len(),
+        2,
+        "one event per answering call: {events:?}"
+    );
+    assert_eq!(reported[0], (UsageCall::Answer, TokenUsage::new(3, 7)));
+    assert_eq!(reported[1], (UsageCall::Answer, TokenUsage::new(5, 9)));
+}
+
+/// A provider that reports no usage emits no usage event: absence on the
+/// stream means "unknown", and a fabricated `0/0` line would read as a free
+/// call the provider never accounted.
+#[tokio::test]
+async fn a_silent_provider_emits_no_usage_event() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &MockProvider {
+            responses: Mutex::new(vec![ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "the answer",
+            ))]),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "the answer");
+    let events = captured.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, AgentEvent::Usage { .. })),
+        "a silent provider must not produce a usage event: {events:?}"
+    );
+}
+
+/// The wire distinction the whole type exists for: a provider reporting zero
+/// cached tokens is saying something, and a provider reporting nothing is not.
+/// On the stream the reported zero survives as a number and the unreported
+/// serializes `null` — never folded into one another.
+#[tokio::test]
+async fn reported_zero_and_unreported_cached_tokens_stay_distinct_on_the_stream() {
+    use saya_agent::{ProviderEvent, ProviderStream, TokenUsage};
+
+    struct ZeroCacheProvider {
+        turns: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for ZeroCacheProvider {
+        fn name(&self) -> &str {
+            "zero-cache"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            panic!("loop must drive providers through stream()");
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            let mut turns = self.turns.lock().unwrap();
+            *turns += 1;
+            let turn = *turns;
+            drop(turns);
+            let usage = if turn == 1 {
+                // A cold cache, reported as a number.
+                TokenUsage::new(10, 5).with_cached_input(Some(0))
+            } else {
+                // No cache figure at all: the field stays absent.
+                TokenUsage::new(10, 5)
+            };
+            let events = if turn == 1 {
+                vec![
+                    Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }])),
+                    Ok(ProviderEvent::Usage(usage)),
+                    Ok(ProviderEvent::Done),
+                ]
+            } else {
+                vec![
+                    Ok(ProviderEvent::TextDelta("final answer".into())),
+                    Ok(ProviderEvent::Usage(usage)),
+                    Ok(ProviderEvent::Done),
+                ]
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    run_agent_with_sink(
+        &ZeroCacheProvider {
+            turns: std::sync::Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let events = captured.lock().unwrap();
+    let reported: Vec<saya_agent::TokenUsage> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Usage { usage, .. } => Some(*usage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reported.len(), 2, "one event per call: {events:?}");
+    assert_eq!(
+        reported[0].cached_input_tokens,
+        Some(0),
+        "a reported zero must survive the stream as a reported zero"
+    );
+    assert_eq!(
+        reported[1].cached_input_tokens, None,
+        "an unreported cache figure must stay absent, not become zero"
+    );
+    // And the serialised forms differ, which is the property a consumer reads.
+    assert_ne!(
+        serde_json::to_string(&reported[0]).unwrap(),
+        serde_json::to_string(&reported[1]).unwrap(),
+        "reported zero and unreported must not serialize identically"
+    );
+}
+
+/// A salvaged run's final call produces the answer the reader sees, so its
+/// usage reaches the stream as an answering call — the salvage path drives its
+/// last call through the same `receive` the loop uses.
+#[tokio::test]
+async fn salvage_final_call_reports_its_usage_on_the_stream() {
+    use saya_agent::{ProviderEvent, ProviderStream, TokenUsage, UsageCall};
+
+    struct SalvageUsageProvider {
+        turns: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for SalvageUsageProvider {
+        fn name(&self) -> &str {
+            "salvage-usage"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            panic!("loop must drive providers through stream()");
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            let turn = {
+                let mut turns = self.turns.lock().unwrap();
+                *turns += 1;
+                *turns
+            };
+            let events = if turn == 1 {
+                vec![
+                    Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({"sql":"select 1"}),
+                    }])),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(20, 4))),
+                    Ok(ProviderEvent::Done),
+                ]
+            } else {
+                // The salvage call: no tools, its own report.
+                vec![
+                    Ok(ProviderEvent::TextDelta("salvaged answer".into())),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(30, 6))),
+                    Ok(ProviderEvent::Done),
+                ]
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &SalvageUsageProvider {
+            turns: std::sync::Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_turns: Some(1),
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "salvaged answer");
+    assert!(output.truncated, "the run was salvaged, not completed");
+    let events = captured.lock().unwrap();
+    let reported: Vec<(UsageCall, u64)> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Usage { call, usage } => Some((*call, usage.input_tokens)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        reported,
+        vec![(UsageCall::Answer, 20), (UsageCall::Answer, 30)],
+        "the salvage call is an answering call and reports its usage: {events:?}"
+    );
+}
+
 /// The intra-loop context bound still binds, but it no longer aborts the run
 /// Runaway context is trimmed to fit rather than surfacing an
 /// opaque `Limit("context bytes")` after the query already ran. Each provider

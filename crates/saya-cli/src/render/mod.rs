@@ -1,5 +1,6 @@
 use saya_agent::{
-    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto, SuppliedContractDto,
+    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
+    SuppliedContractDto, TokenUsage, UsageCall,
 };
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
@@ -125,6 +126,16 @@ pub enum TerminalEvent {
         margin: usize,
         tied: bool,
         probe_broke_tie: bool,
+    },
+    /// The token counts one provider call reported (`AgentEvent::Usage`),
+    /// named by `call` so a consumer can keep the answering rounds' cost apart
+    /// from the extraction call's. Carried on the JSON/NDJSON stream for
+    /// machine consumers; the text adapter renders nothing, because the
+    /// interactive surfaces for it already exist (the per-turn token line and
+    /// `/usage`) and a pipe's reader has the answer above it.
+    Usage {
+        call: UsageCall,
+        usage: TokenUsage,
     },
     Result {
         message: String,
@@ -272,6 +283,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
                 *tied,
                 *probe_broke_tie,
             ),
+            stderr: String::new(),
+        },
+        TerminalEvent::Usage { .. } => Rendered {
+            stdout: String::new(),
             stderr: String::new(),
         },
         TerminalEvent::Result { message } => Rendered {

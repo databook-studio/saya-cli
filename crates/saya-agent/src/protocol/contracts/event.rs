@@ -1,9 +1,15 @@
-//! The agent event stream (`AgentEvent`) the loop emits across a turn, and the
-//! reasons post-turn learning was skipped.
+//! The agent event stream (`AgentEvent`) the loop emits across a turn. Its
+//! constructors live in `builders`; the reasons post-turn learning was skipped
+//! in `learning`.
 
 use serde::{Deserialize, Serialize};
 
-use super::{KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedContractDto};
+use crate::protocol::streaming::TokenUsage;
+
+use super::{
+    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
+    SuppliedContractDto, UsageCall,
+};
 
 // `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
 // `PartialEq` only.
@@ -107,6 +113,16 @@ pub enum AgentEvent {
         reason: LearningSkipReason,
     },
     Complete,
+    /// The token counts one provider call reported — one event per call that
+    /// reported any, named by `call` (every answering round is its own event;
+    /// the extraction call is a separate one). Emitted **only** when the
+    /// provider actually reported usage, so absence on the stream means
+    /// "unknown", not "cost nothing", and `usage` is carried verbatim: a
+    /// reported zero stays a number, an unreported one serializes `null`.
+    Usage {
+        call: UsageCall,
+        usage: TokenUsage,
+    },
     /// The model designated the SQL that answers the question — emitted once,
     /// at the terminal turn, so a headless reader can pair the prose answer
     /// with the query that produced it instead of guessing from the last query
@@ -136,113 +152,4 @@ pub enum AgentEvent {
         /// True when a tie was resolved by fan-out evidence, not by votes.
         probe_broke_tie: bool,
     },
-}
-
-/// Why post-turn extraction was skipped after the gate admitted it
-/// (`AgentEvent::KnowledgeLearningSkipped`, spec packet-54 decision 1). Two
-/// unexpected outcomes — a timeout and an error — each surface; a gate decline
-/// is silent and has no variant here. `#[non_exhaustive]` so a future cause
-/// (e.g. a bounded-cancel) can be added without breaking serialization.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum LearningSkipReason {
-    /// Extraction exceeded the post-turn timeout. The turn's answer is already
-    /// in hand; learning is bounded so a long hang never gates the prompt.
-    TimedOut,
-    /// The provider, parse, or ingest step errored. Distinct from a timeout so a
-    /// render can name the right thing without re-deriving the outcome.
-    Failed,
-}
-
-impl AgentEvent {
-    pub fn assistant_text(text: impl Into<String>) -> Self {
-        Self::AssistantText { text: text.into() }
-    }
-
-    /// Builds one chain-of-thought delta event, mirroring [`AgentEvent::assistant_text`].
-    /// The caller is `receive`, forwarding a `ProviderEvent::ReasoningDelta` so the
-    /// turn's thinking crosses the crate boundary the same way the answer does.
-    /// Display is gated elsewhere; this event carries the text, it does not
-    /// decide whether to show it.
-    pub fn reasoning_text(text: impl Into<String>) -> Self {
-        Self::ReasoningText { text: text.into() }
-    }
-
-    pub fn tool_requested(name: impl Into<String>, arguments: serde_json::Value) -> Self {
-        Self::ToolRequested {
-            name: name.into(),
-            arguments,
-        }
-    }
-
-    /// Builds the per-turn `KnowledgeSupplied` event from recall's outcome, the
-    /// supplied contracts, and the count the bounds dropped.
-    pub fn knowledge_supplied(
-        outcome: KnowledgeOutcome,
-        contracts: Vec<SuppliedContractDto>,
-        dropped_by_bounds: usize,
-    ) -> Self {
-        Self::KnowledgeSupplied {
-            outcome,
-            contracts,
-            dropped_by_bounds,
-        }
-    }
-
-    /// Builds the per-proposal `KnowledgeProposed` event for one persisted
-    /// candidate claim. The caller is the propose tool, at the `Stored` arm.
-    pub fn knowledge_proposed(claim: ProposedClaimDto) -> Self {
-        Self::KnowledgeProposed { claim }
-    }
-
-    /// Builds the per-turn `KnowledgeOverridden` event carrying every finding
-    /// the detector raised across the turn's statements. The caller is the
-    /// runtime, after the loop drains the override log; an empty `findings`
-    /// means the caller emits nothing.
-    pub fn knowledge_overridden(findings: Vec<OverrideFindingDto>) -> Self {
-        Self::KnowledgeOverridden { findings }
-    }
-
-    /// Builds the per-turn `KnowledgeLearningSkipped` event the runtime emits
-    /// when the gate admitted extraction but it then timed out or errored (spec
-    /// packet-54). The caller is the runtime, after the loop; a gate decline
-    /// never calls this — declining is silent, and only an unexpected failure
-    /// surfaces.
-    pub fn knowledge_learning_skipped(reason: LearningSkipReason) -> Self {
-        Self::KnowledgeLearningSkipped { reason }
-    }
-
-    pub fn complete() -> Self {
-        Self::Complete
-    }
-
-    /// Builds the terminal `AnswerDesignated` event carrying the SQL the model
-    /// flagged as the answering query. Emitted once, at the terminal turn.
-    pub fn answer_designated(sql: impl Into<String>) -> Self {
-        Self::AnswerDesignated { sql: sql.into() }
-    }
-
-    /// Builds the `ConsensusDecided` event carrying the winning SQL (or `None`
-    /// when no winner emerged) and the vote tallies. Emitted once, after all
-    /// attempts, whenever more than one attempt ran.
-    pub fn consensus_decided(
-        sql: Option<String>,
-        attempts: usize,
-        voted: usize,
-        votes: usize,
-        margin: usize,
-        tied: bool,
-        probe_broke_tie: bool,
-    ) -> Self {
-        Self::ConsensusDecided {
-            sql,
-            attempts,
-            voted,
-            votes,
-            margin,
-            tied,
-            probe_broke_tie,
-        }
-    }
 }
