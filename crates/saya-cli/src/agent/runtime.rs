@@ -226,6 +226,16 @@ pub(crate) async fn run_prompt_with_inputs(
                 // ingestion then failed (tokens may have been billed first).
                 Ok(outcome) => {
                     learning_usage = outcome.usage;
+                    // The extraction call's report crosses the stream named as
+                    // an extraction call, so a consumer can keep it apart from
+                    // the answering rounds' — it is billed separately and would
+                    // otherwise lower the cache hit rate computed over the
+                    // answer's calls. `None` (a provider that reported nothing,
+                    // or no response at all) emits nothing.
+                    if let Some(counts) = outcome.usage {
+                        sink.emit(AgentEvent::usage(saya_agent::UsageCall::Extraction, counts))
+                            .await;
+                    }
                     match outcome.dtos {
                         Ok(dtos) => {
                             trace_extraction(

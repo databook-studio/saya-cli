@@ -120,6 +120,13 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_t
                 transcript.push(BlockKind::Thinking, text);
             }
         }
+        // The token counts one provider call reported. Accepted and dropped:
+        // the transcript already shows a per-turn token line from the run
+        // output at `Done`, and `/usage` breaks the session down, so a block
+        // here would duplicate them. The event exists for the JSON/NDJSON
+        // boundary; it must not reach the catch-all and disappear silently
+        // into an error.
+        AgentEvent::Usage { .. } => {}
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
         }
