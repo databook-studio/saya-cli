@@ -383,7 +383,7 @@ mod tests {
             provider: "ollama".into(),
             model: "qwen".into(),
             approval_mode: "read-only".into(),
-            privacy_on: true,
+            sharing_on: true,
         };
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).expect("test backend builds");

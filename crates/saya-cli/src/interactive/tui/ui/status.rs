@@ -12,7 +12,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-/// Builds the coloured status-bar segments (profile, provider/model, approval, privacy),
+/// Builds the coloured status-bar segments (profile, provider/model, approval, sharing),
 /// each on the bar background so they blend into the strip.
 fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     let base = Style::default().bg(bg);
@@ -40,11 +40,11 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
             base.fg(approval_color),
         ),
         Span::styled(
-            format!("privacy:{}", if view.privacy_on { "on" } else { "off" }),
-            base.fg(if view.privacy_on {
-                success()
+            format!("sharing:{}", if view.sharing_on { "on" } else { "off" }),
+            base.fg(if view.sharing_on {
+                warning()
             } else {
-                secondary()
+                success()
             }),
         ),
     ]

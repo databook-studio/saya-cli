@@ -145,11 +145,13 @@ pub(super) fn user_color() -> Color {
 pub(super) fn secondary() -> Color {
     pick(Color::Rgb(168, 162, 154), Color::Rgb(107, 102, 96))
 }
-/// Status: success / safe (read-only approval, privacy on, passing checks).
+/// Status: success / safe (read-only approval, `sharing:off` — data stays
+/// local, passing checks).
 pub(super) fn success() -> Color {
     pick(Color::Rgb(127, 174, 107), Color::Rgb(61, 122, 53))
 }
-/// Status: caution (ask approval, approval-panel border).
+/// Status: caution (ask approval, approval-panel border, `sharing:on` — row
+/// values are being sent to the provider).
 pub(super) fn warning() -> Color {
     pick(Color::Rgb(224, 164, 88), Color::Rgb(154, 93, 18))
 }

@@ -3,6 +3,23 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Fixed
+
+- **The status-bar indicator no longer tells you data is protected when it is
+  being shared.** The interactive status line and the TUI status bar showed
+  `privacy:on` exactly when cloud data sharing was *enabled* — i.e. when row
+  values were being sent to the model provider — so a reader concluded the
+  opposite of what was happening. The segment is renamed `sharing:on` /
+  `sharing:off`, naming what is actually happening (`sharing:on` = row values
+  are sent to the provider) rather than a protection claim that a flipped label
+  could still be misread as. `sharing:on` is amber (caution: data is leaving
+  the machine); `sharing:off` is green (safe: data stays local). Enforcement is
+  unchanged — `query_data_allowed`, the CLI flags, and the config layering are
+  untouched. `/privacy` now reports `on`/`off` in the same vocabulary so the
+  two surfaces cannot disagree. ([databook-studio/saya-cli#59])
+
 ## 0.4.0 — 2026-09-06
 
 Not 0.3.3: this release changes two library-crate contracts, listed under

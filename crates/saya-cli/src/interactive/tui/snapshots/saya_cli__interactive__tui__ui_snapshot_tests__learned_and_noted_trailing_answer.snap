@@ -22,7 +22,7 @@ expression: buffer
 "                                                                                "
 "                                                                                "
 "                                                                                "
-" [analytics] ollama/qwen approval:read-only privacy:on  ·  ? for help           "
+" [analytics] ollama/qwen approval:read-only sharing:on  ·  ? for help           "
 "╭ saya ────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                   │"
 "╰──────────────────────────────────────────────────────────────────────────────╯"

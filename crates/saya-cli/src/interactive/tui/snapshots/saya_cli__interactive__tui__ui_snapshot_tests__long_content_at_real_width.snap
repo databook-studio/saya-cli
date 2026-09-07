@@ -28,7 +28,7 @@ expression: buffer
 "·     ki-lon…  table_description  Free-text notes captured by support agents during customer       ║"
 "· interactions including follow-up reminders, escalation flags, and the internal handling summary  ║"
 "· used by the tier-two team when triaging escalations, plus the resolved-action log  confirmed     ║"
-" [analytics] ollama/qwen approval:read-only privacy:on  ·  ? for help                               "
+" [analytics] ollama/qwen approval:read-only sharing:on  ·  ? for help                               "
 "╭ saya ────────────────────────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                                       │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"

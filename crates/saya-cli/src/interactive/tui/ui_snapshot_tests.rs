@@ -119,7 +119,7 @@ fn empty_app() -> App {
 }
 
 /// A stable status bar: profile `analytics`, `ollama/qwen`, `read-only`
-/// approval, privacy on. The spinner/elapsed fields are not read when the app
+/// approval, sharing on. The spinner/elapsed fields are not read when the app
 /// is idle, so this is the whole status strip.
 fn fixed_status() -> StatusView {
     StatusView {
@@ -128,7 +128,7 @@ fn fixed_status() -> StatusView {
         provider: "ollama".into(),
         model: "qwen".into(),
         approval_mode: "read-only".into(),
-        privacy_on: true,
+        sharing_on: true,
     }
 }
 

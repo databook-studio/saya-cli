@@ -68,7 +68,7 @@ pub struct GlobalOptions {
     /// Explicit env file with SAYA_* overrides (never implicit .env).
     #[arg(long, global = true)]
     pub env_file: Option<std::path::PathBuf>,
-    /// Enable cloud data sharing for this invocation (privacy:on), overriding any
+    /// Enable cloud data sharing for this invocation (sharing:on), overriding any
     /// config layer that disabled it.
     #[arg(long, global = true)]
     pub allow_data_sharing: bool,
