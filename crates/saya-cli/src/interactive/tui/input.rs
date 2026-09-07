@@ -6,6 +6,9 @@ pub(crate) struct InputBuffer {
     cursor: usize, // cursor position as a CHAR index in [0, char_count]
 }
 
+mod cursor;
+mod wrap;
+
 /// Helper function to convert a char index to a byte offset safely without panicking.
 #[allow(dead_code)]
 fn char_to_byte_idx(text: &str, char_idx: usize) -> usize {
@@ -220,6 +223,27 @@ impl InputBuffer {
             }
         }
         (line, col)
+    }
+
+    /// Visual lines of the whole buffer wrapped to `width` (one logical line
+    /// may produce several). See [`wrap::wrap_line`].
+    pub(crate) fn wrapped_lines(&self, width: usize) -> Vec<String> {
+        self.lines()
+            .into_iter()
+            .flat_map(|line| wrap::wrap_line(line, width))
+            .collect()
+    }
+
+    /// Visual `(row, col)` of the cursor against a wrap of `width` columns.
+    /// See [`cursor::cursor_visual`].
+    pub(crate) fn cursor_visual(&self, width: usize) -> (usize, usize) {
+        cursor::cursor_visual(&self.text, width, self.cursor)
+    }
+
+    /// Number of visual rows the buffer occupies when wrapped to `width`.
+    /// See [`wrap::visual_row_count`].
+    pub(crate) fn visual_row_count(&self, width: usize) -> usize {
+        wrap::visual_row_count(&self.text, width)
     }
 }
 

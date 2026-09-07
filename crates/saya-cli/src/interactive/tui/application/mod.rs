@@ -66,9 +66,13 @@ impl App {
         self.request.stream.is_some() || self.sql_task.is_some()
     }
 
-    /// Number of visible text rows the input box should show (clamped).
-    pub(crate) fn input_rows(&self) -> usize {
-        self.input.lines().len().clamp(1, MAX_INPUT_ROWS)
+    /// Number of visible text rows the input box should show when wrapped to
+    /// `width`, clamped to [`MAX_INPUT_ROWS`]. Counts **visual** rows — a long
+    /// single line wraps and grows the box — so the box tracks what the user
+    /// actually sees rather than the logical line count.
+    pub(crate) fn input_rows(&self, width: usize) -> usize {
+        let inner = width.saturating_sub(2).max(1);
+        self.input.visual_row_count(inner).clamp(1, MAX_INPUT_ROWS)
     }
 }
 
