@@ -3,6 +3,26 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Changed
+
+- **The agent finishes the computation a question asks for.** Characterising all
+  867 failures of a 1,534-question benchmark run found two classes where the
+  agent had the right pieces and stopped short: it handed back the operands of
+  a ratio or a percentage and left the division to the reader (113 questions),
+  and it answered a superlative — "which driver had the fastest lap" — with
+  every driver ordered by lap time instead of the one row the question named
+  (65 questions, 61 with a single-row answer). The answer contract now states
+  both rules directly: compute the ratio, the percentage, or the difference and
+  answer with that value; answer a superlative with its row and the value that
+  makes it so, not the ranking it came from, with every row tied with it still
+  part of the answer. The previous "the top one" wording is folded into the
+  superlative clause, which generalizes it. The contract stays under its stated
+  byte ceiling (978 of 1200), so the added attention cost is two lines, and no
+  SQL generation, tool, or loop behaviour changes — prompt text and its tests
+  only. ([databook-studio/saya-cli#61])
+
 ## 0.4.1 — 2026-09-07
 
 ### Fixed
