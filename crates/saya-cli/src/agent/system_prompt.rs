@@ -88,16 +88,19 @@ const WORKING_GUIDANCE: &str = "Discover the schema before you query it; multi-s
 /// proceed; this tells it how to present the result. Each clause fixes a
 /// measured class of benchmark failure where the numbers were right and the
 /// presentation was wrong: extra working columns, rounding the question never
-/// asked for, non-ISO dates, a ranking where a single row was asked for, one
-/// quantity answered where several were named, a measure word read loosely, a
-/// metric qualifier applied to the whole population, a tie broken to fit a
-/// limit, and a named period replaced by the rows that happened to appear.
-/// Plain rules, no examples — this text rides on every request.
+/// asked for, non-ISO dates, the operands of a computation handed back instead
+/// of the computation the question named, a superlative answered with the
+/// ranking it came from, one quantity answered where several were named, a
+/// measure word read loosely, a metric qualifier applied to the whole
+/// population, a tie broken to fit a limit, and a named period replaced by the
+/// rows that happened to appear. Plain rules, no examples — this text rides on
+/// every request.
 const ANSWER_CONTRACT: &str = "Answer the question exactly as asked:\n\
     - Return only the columns the question asks for; drop intermediate working columns.\n\
     - Do not round unless asked.\n\
     - Write dates as ISO YYYY-MM-DD.\n\
-    - \"The highest\" or \"the top one\" means that single row, not the ranking it came from.\n\
+    - If the question asks for a ratio, a percentage, or a difference, compute that value and answer with it — returning the operands alone stops one step short.\n\
+    - A superlative — \"the fastest\", \"the highest\", \"the top one\", \"the fewest\" — asks which one: answer with that row and the value that makes it so, not the ranking it came from. Every row tied with it is part of the answer.\n\
     - Answer every quantity the question names; if it asks for two things, answer both.\n\
     - Read measure words literally: \"volume\" is units, \"revenue\" is money.\n\
     - A qualifier on a metric is not a qualifier on the population — filter the metric, not the rows.\n\

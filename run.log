@@ -1,0 +1,69 @@
+All gates pass. Final state of the change:
+
+```text
+- If the question asks for a ratio, a percentage, or a difference, compute that value and
+  answer with it — returning the operands alone stops one step short.
+- A superlative — "the fastest", "the highest", "the top one", "the fewest" — asks which one:
+  answer with that row and the value that makes it so, not the ranking it came from.
+  Every row tied with it is part of the answer.
+```
+
+---
+
+## SPEC REVIEW
+
+**Defect**
+
+1. **`docs/standards/cli-application.md` does not exist.** The spec's "Read first" names it; the directory holds `architecture.md`, `rust-style.md`, `testing.md`, `workflow.md`, `security.md`, `README.md`. I read `testing.md` and `workflow.md` instead, which cover what this slice touches. Harmless to the change, but the pointer is dead for the next reader.
+
+**Gap**
+
+2. **The spec's superlative example set is direction-skewed and so is the contract's history.** Every existing anchor — "the highest", "the top one" — is a maximum. A minimum superlative ("the fewest", "the cheapest") is the same rule; leaving it unexampled invites the model to read the clause as about sorting descending. I added "the fewest" as one opposite-direction example. Worth ~15 bytes against a 198-byte headroom.
+
+3. **The test list's "the existing contract tests still pass unchanged" is satisfied, but one existing test would have caught a plausible wrong implementation and should be named.** `assembled_prompt_contains_the_answer_contract` pins the *entire* contract verbatim, so any wording change is automatically covered there; my new tests pin the *semantics* of the two new directives in the assembled prompt. No existing test needed to change.
+
+**Preference**
+
+4. The spec's deliverable 1 says "a failing test, added before the change". I honoured it literally (both tests red at `system_prompt_tests.rs:380` and `:403` before the contract moved), but two intermediate red→green cycles happened *inside* my own new tests while I aligned pinned strings to wording — the contract change itself was made once, under an already-red suite.
+
+**Open question — is a prompt clause the right mechanism? Answered plainly, not dodged.**
+
+Having read the code, I think the prompt change is worth making **and** insufficient, and the two are not in tension because they cost different things.
+
+- The clause is worth making because the failure is at the *presentation* boundary where the existing contract demonstrably does move behaviour: the 0.4.0 entry records that naming "the highest" / "the top one" with quotes moved the ranking class, and my rewrite keeps those exact quoted literals (I dropped them in a first draft and put them back — a model keys on examples, and this slice extends that measured clause rather than replacing it).
+- It is insufficient because the compute class is not a presentation slip; it is a *stopping* decision, and 113 failures happened under a prompt that already gestured at it. Instruction competes with the model's own momentum at the moment it has the operands on screen.
+
+The programmatic check the spec gestures at has a real seam: `designation_from` (`crates/saya-agent/src/loop_runner/designation.rs`) is where the answering SQL is named, and `result_shape` returns `row_count` and column names without values. A check shaped as *question carries a superlative word ∧ designated answer's row_count ≫ 1* has a strong prior behind it — **61 of the 65 superlative failures have a single-row answer** — but the plural case ("which drivers were eliminated") is legitimate multi-row output, and BIRD scored 209 correct-plus-extra-columns questions wrong, so an over-eager check manufactures the exact wrong-answer shape the invariant forbids. That check needs the design this slice deliberately defers, and it lives in `saya-agent`, which the "prompt text and its tests only" invariant fences off. So: prompt now, check as its own slice.
+
+**What I'd expect it to be worth, and how I'd measure it.** The two classes are 178 of 867 failures (11.6% of all 1,534 questions). Instruction-following converts a fraction, not the class; I'd expect **~1–3 points on BIRD** (0.435 → ~0.45–0.465), concentrated in the superlative class where the contract has quoted anchors and the 0.4.0 precedent. The harness already supports this: `SAYA_BENCH_ARM=answer-contract python bench/spider/bench.py run` writes a separate results file (the arm mechanism exists precisely so a second arm can't silently skip questions), then `score`, then **per-question diff against the default arm** classified into the two target classes. The per-question diff is the honest number — a recovering-178/losing-20 trade is visible there and invisible in an aggregate.
+
+---
+
+## What I changed
+
+- `crates/saya-cli/src/agent/system_prompt.rs` — two clauses strengthened in `ANSWER_CONTRACT`; doc comment updated to name the two measured classes. The old `"The highest" or "the top one"` line is folded into the superlative clause, which generalizes it and keeps its examples.
+- `crates/saya-cli/src/agent/system_prompt_tests.rs` — two tests pinning both directives in the **assembled prompt** (not just the constant), plus tie-guard and direction-coverage asserts; ceiling test unchanged.
+- `CHANGELOG.md` — `## Unreleased` entry following the house pattern (`0cfeae6` did the same).
+
+**Byte ceiling: not raised.** Contract measures **1002 bytes** (was 701) against `ANSWER_CONTRACT_MAX_BYTES = 1200` — 198 headroom. The invariant is honoured with the ceiling as it stands.
+
+**The withholding invariant, deliberately honoured in the wording.** "answer with that row **and the value that makes it so**" keeps the lap time beside the driver name — it does not push toward "return the narrowest possible output", and the compute clause says the operands *alone* are the failure, so showing operands beside the computed value is not prohibited. Nothing wider than those two targets is claimed.
+
+## What I did not do
+
+- **No programmatic shape check** — the open question; deferred by the spec's own scoping, and the seam it needs (`designation_from`) is outside this slice's invariant.
+- **No changes** to SQL generation, tools, the agent loop, `saya-config/src/`, `render/`, or `stream_render.rs`.
+- **Did not run the BIRD/Spider benchmark** — it needs `SAYA_AI_API_KEY` and hours of model calls; the measurement above is a proposal, not a result.
+- **No commit** — changes left in the working tree as instructed. `cargo audit` not run (no dependency changes).
+- Untracked `PROMPT.txt` and `run.log` predate this session; untouched.
+
+## Gate
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --check` | clean |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
+| `cargo test --workspace --locked` | **1720 passed, 0 failed**, exit 0 |
+| `cargo test --workspace --doc --locked` | 6 suites ok |
+
+Red-first evidence: both new tests failed at `system_prompt_tests.rs:380` / `:403` against the unchanged contract, 22 passed / 2 failed, before the contract was edited.
