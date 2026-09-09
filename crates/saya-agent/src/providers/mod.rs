@@ -59,6 +59,7 @@ mod context_block_tests {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            completion: None,
         }]
     }
 

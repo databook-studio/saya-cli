@@ -91,6 +91,7 @@ fn query_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        completion: None,
     }
 }
 

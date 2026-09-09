@@ -68,7 +68,7 @@ pub(super) async fn run_turn_tools(
                 failed_statements::sql_of(call),
                 &result,
                 true,
-                summary,
+                &summary,
             );
             // Read the value-free shape before `tool_message` takes ownership
             // of `result`: only `row_count` and `columns` are read, so no cell
@@ -94,7 +94,7 @@ pub(super) async fn run_turn_tools(
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name.clone(),
-                    summary: output::completion_summary(summary, truncated),
+                    summary: output::completion_summary(&summary, truncated),
                 },
             )
             .await;
@@ -214,7 +214,7 @@ pub(super) async fn run_turn_tools(
             if definition.effect.database_data {
                 *used_bounded_sql_query = true;
             }
-            tools::execute(tools, &call.name, call.arguments, definition.read_only).await
+            tools::execute(tools, &call.name, call.arguments, Some(definition)).await
         } else {
             emit(
                 events,
@@ -233,7 +233,7 @@ pub(super) async fn run_turn_tools(
             .await;
             (
                 serde_json::json!({"error":"tool call denied by approval policy"}),
-                "read-only database tool denied",
+                "read-only database tool denied".to_owned(),
             )
         };
         failed_statements::record_outcome(
@@ -242,7 +242,7 @@ pub(super) async fn run_turn_tools(
             sql.as_deref(),
             &result,
             executed,
-            summary,
+            &summary,
         );
         tool_metadata.push(crate::ToolMetadata {
             name: call.name.clone(),
@@ -268,7 +268,7 @@ pub(super) async fn run_turn_tools(
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name,
-                    summary: output::completion_summary(summary, truncated),
+                    summary: output::completion_summary(&summary, truncated),
                 },
             )
             .await;

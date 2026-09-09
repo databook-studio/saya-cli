@@ -61,6 +61,7 @@ pub(crate) fn definitions(allow_query_data: bool, has_state_store: bool) -> Vec<
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            completion: None,
         },
         ToolDefinition {
             name: "contract_read".into(),
@@ -90,6 +91,7 @@ pub(crate) fn definitions(allow_query_data: bool, has_state_store: bool) -> Vec<
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            completion: None,
         },
     ]
 }

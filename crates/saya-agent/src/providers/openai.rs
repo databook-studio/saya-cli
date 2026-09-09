@@ -202,6 +202,7 @@ mod tests {
                     requires_approval: false,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             }],
             response_format: format,
             reasoning_effort: effort,

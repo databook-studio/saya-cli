@@ -410,6 +410,28 @@ fn definitions_preserve_the_read_only_and_approval_contract() {
     assert!(all.parameters["properties"].get("connection").is_none());
 }
 
+/// `render_chart` writes a file and opens a browser, so it must not declare
+/// `read_only: true` — the flag feeds the completion summary, and a chart
+/// completion reading "read-only database tool completed" would be a false
+/// statement. It states its own completion instead.
+#[test]
+fn render_chart_declares_an_honest_effect() {
+    let tools = DatabaseTools::definitions(true, false, false);
+    let chart = tools
+        .iter()
+        .find(|tool| tool.name == "render_chart")
+        .expect("render_chart must be registered when query data is allowed");
+    assert!(
+        !chart.read_only,
+        "render_chart writes a file and spawns a browser; it is not read-only"
+    );
+    assert_eq!(
+        chart.completion.as_deref(),
+        Some("chart written and opened"),
+        "render_chart states what it did instead of a generic label"
+    );
+}
+
 /// `designate_answer` nominates the statement that answered the question, not
 /// an exploratory probe. Two questions nominated nothing at all and one
 /// nominated a probe in the benchmark; the description must say plainly that a
