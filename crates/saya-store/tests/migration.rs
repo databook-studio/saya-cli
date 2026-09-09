@@ -23,13 +23,13 @@ type AuditRow = (
 );
 
 #[tokio::test]
-async fn fresh_database_reaches_version_six() {
+async fn fresh_database_reaches_version_seven() {
     let root = temp_root("fresh");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 6);
+    assert_eq!(user_version(&db).await, 7);
     // Step 6 dropped the legacy `contract_*` tables; a fresh database has none.
     assert_eq!(contract_tables(&db).await.len(), 0);
     assert!(
@@ -41,6 +41,9 @@ async fn fresh_database_reaches_version_six() {
         table_exists(&db, "knowledge_items").await,
         "missing knowledge_items"
     );
+    // Step 7 adds the run-spine tables; a fresh database reaches them.
+    assert!(table_exists(&db, "runs").await, "missing runs");
+    assert!(table_exists(&db, "run_steps").await, "missing run_steps");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -52,7 +55,7 @@ async fn upgrade_from_version_one_preserves_data() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 6);
+    assert_eq!(user_version(&db).await, 7);
     // Step 6 drops the legacy tables even on a v1 upgrade path.
     assert_eq!(contract_tables(&db).await.len(), 0);
     let pool = read_pool(&db).await;
@@ -82,13 +85,11 @@ async fn upgrade_from_version_one_preserves_data() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A `user_version = 2` database upgrades to 6. Step 6 drops the legacy
+/// A `user_version = 2` database upgrades to 7. Step 6 drops the legacy
 /// `contract_*` tables, so the claim/object/evidence/event rows a v2 database
 /// held do not survive — they were never going to: nothing has shipped, and
-/// `knowledge_items` is the sole store. The original test asserted every
-/// contract row survived byte-for-byte; Chunk 5 made that intent obsolete, so
-/// the rewritten test asserts what the ladder *does* preserve across the
-/// upgrade: the `schema_cache`, `audit_log`, `user_preferences`, and
+/// `knowledge_items` is the sole store. What the ladder preserves across the
+/// upgrade is that the `schema_cache`, `audit_log`, `user_preferences`, and
 /// `knowledge_items` tables all exist on the migrated database, and every
 /// `contract_*` table is gone.
 #[tokio::test]
@@ -99,7 +100,7 @@ async fn upgrade_from_version_two_drops_contract_tables_keeps_survivors() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 6);
+    assert_eq!(user_version(&db).await, 7);
     assert!(
         table_exists(&db, "schema_cache").await,
         "schema_cache dropped"
@@ -118,7 +119,7 @@ async fn upgrade_from_version_two_drops_contract_tables_keeps_survivors() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A `user_version = 4` database — the latest before step 5 — upgrades to 6 and
+/// A `user_version = 4` database — the latest before step 5 — upgrades to 7 and
 /// gains `knowledge_items`. Step 6 then drops the legacy `contract_*` tables,
 /// so the claim a v4 database held is gone too; the surviving guarantee is the
 /// knowledge table arriving and the legacy ones leaving.
@@ -130,7 +131,7 @@ async fn upgrade_from_version_four_adds_knowledge_items_and_drops_contract_table
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 6);
+    assert_eq!(user_version(&db).await, 7);
     assert!(
         table_exists(&db, "knowledge_items").await,
         "upgrade did not add knowledge_items"
@@ -140,16 +141,69 @@ async fn upgrade_from_version_four_adds_knowledge_items_and_drops_contract_table
     let _ = fs::remove_dir_all(root);
 }
 
+/// A `user_version = 6` database — the latest before step 7 — upgrades to 7
+/// and gains the run-spine tables (`runs`, `run_steps`). A v6 database is one
+/// that migrated through step 6 before step 7 existed: fully migrated for its
+/// ladder, carrying no run tables. The test builds that state by migrating a
+/// fresh database and dropping the step-7 tables, which is the same table set
+/// a genuine v6 database held, then reopens and asserts the upgrade.
+#[tokio::test]
+async fn upgrade_from_version_six_adds_run_tables() {
+    let root = temp_root("upgrade-v6");
+    let db = root.join("state.sqlite3");
+    // Migrate to the current head, then rewind to v6 by removing the tables
+    // step 7 owns — the exact state a pre-step-7 database is in.
+    let store = SqliteStateStore::new(&db);
+    store.list_schema_metadata().await.unwrap();
+    store.close().await;
+    let pool = create_pool(&db).await;
+    sqlx::query("DROP TABLE IF EXISTS run_steps")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE IF EXISTS runs")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 6")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    assert_eq!(user_version(&db).await, 6);
+    assert!(!table_exists(&db, "runs").await, "runs should be absent");
+    // The upgrade re-adds the run tables and reaches version 7.
+    let reopened = SqliteStateStore::new(&db);
+    reopened.list_schema_metadata().await.unwrap();
+    reopened.close().await;
+    assert_eq!(user_version(&db).await, 7);
+    assert!(table_exists(&db, "runs").await, "upgrade did not add runs");
+    assert!(
+        table_exists(&db, "run_steps").await,
+        "upgrade did not add run_steps"
+    );
+    // Everything the v6 database held survives the upgrade.
+    assert!(
+        table_exists(&db, "knowledge_items").await,
+        "v6 upgrade dropped knowledge_items"
+    );
+    assert!(
+        table_exists(&db, "user_preferences").await,
+        "v6 upgrade dropped user_preferences"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 /// A version ahead of the highest step the migration knows about fails closed.
-/// Step 6 makes `user_version = 6` supported, so the future-version sentinel is
-/// now 7 — anything the running build cannot migrate *to* must be refused, not
+/// Step 7 makes `user_version = 7` supported, so the future-version sentinel is
+/// now 8 — anything the running build cannot migrate *to* must be refused, not
 /// silently rewritten under.
 #[tokio::test]
 async fn unknown_future_version_fails_closed() {
     let root = temp_root("future");
     let db = root.join("state.sqlite3");
     let pool = create_pool(&db).await;
-    sqlx::query("PRAGMA user_version = 7")
+    sqlx::query("PRAGMA user_version = 8")
         .execute(&pool)
         .await
         .unwrap();
@@ -170,11 +224,11 @@ async fn migration_is_idempotent() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 6);
+    assert_eq!(user_version(&db).await, 7);
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 6);
+    assert_eq!(user_version(&db).await, 7);
     let _ = fs::remove_dir_all(root);
 }
 
