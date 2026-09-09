@@ -3056,6 +3056,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "saya-harness"
+version = "0.4.1"
+dependencies = [
+ "libc",
+ "saya-types",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "saya-store"
 version = "0.4.1"
 dependencies = [

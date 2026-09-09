@@ -5,6 +5,7 @@ members = [
   "crates/saya-connectors",
   "crates/saya-agent",
   "crates/saya-store",
+  "crates/saya-harness",
   "crates/saya-cli",
 ]
 resolver = "3"
