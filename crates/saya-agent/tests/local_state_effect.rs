@@ -1,10 +1,11 @@
-//! Phase 3a: the loop's fail-closed guard for `WriteCandidate` tools.
+//! The loop's fail-closed guards for local-state-writing tools.
 //!
 //! A tool declaring `LocalStateEffect::WriteCandidate` must be *denied* (a
 //! `ToolDenied` event with a reason, the turn continuing) when the runner was
 //! not constructed with candidate writes permitted, and must run normally when
-//! the permission is on. Tools declaring `None` or `Read` are unaffected either
-//! way. See .claude/specs/spec-3a-local-state-effect.md §3–§4.
+//! the permission is on. `LocalStateEffect::WriteWorkspace` behaves the same
+//! way behind its own permission. Tools declaring `None` or `Read` are
+//! unaffected either way.
 
 use async_trait::async_trait;
 use saya_agent::{
@@ -97,6 +98,22 @@ fn candidate_tool() -> ToolDefinition {
             external_side_effect: false,
             requires_approval: false,
             local_state: LocalStateEffect::WriteCandidate,
+        },
+        completion: None,
+    }
+}
+
+fn workspace_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "workspace_write".into(),
+        description: "may write a file in the run workspace".into(),
+        read_only: false,
+        parameters: serde_json::json!({"type": "object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::WriteWorkspace,
         },
         completion: None,
     }
@@ -490,4 +507,112 @@ async fn external_side_effect_with_approval_is_denied_when_approval_refused() {
         reason.contains("approval"),
         "the reason must name approval as the refusing gate, got: {reason}"
     );
+}
+
+/// A `WriteWorkspace` tool is denied — not executed — when workspace writes
+/// are not permitted (the default), surfacing as a `ToolDenied` event whose
+/// reason names the workspace gate, and the turn continues to completion.
+/// Mirrors the `WriteCandidate` denial test above: the permit gate, not the
+/// approval decider, must be the thing that refuses (the tool does not require
+/// approval, so the decider is never consulted for it).
+#[tokio::test]
+async fn workspace_write_tool_is_denied_by_default_and_does_not_end_the_turn() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provider = OneCallProvider {
+        call: ToolCall {
+            id: "c1".into(),
+            name: "workspace_write".into(),
+            arguments: serde_json::json!({}),
+        },
+        turn: Mutex::new(0),
+    };
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let token = saya_agent::CancellationToken::new();
+    let output = run_agent_with_sink(
+        &provider,
+        &RecordingExecutor {
+            calls: calls.clone(),
+        },
+        request(),
+        vec![workspace_tool()],
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        token,
+    )
+    .await
+    .expect("denial is not a turn-ending error");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "the tool must not execute when workspace writes are not permitted"
+    );
+    let denied = events.lock().unwrap().iter().find_map(|event| match event {
+        AgentEvent::ToolDenied { name, reason } => Some((name.clone(), reason.clone())),
+        _ => None,
+    });
+    let (name, reason) = denied.expect("a ToolDenied event must be emitted");
+    assert_eq!(name, "workspace_write");
+    assert!(
+        reason.contains("workspace"),
+        "the denial must name the workspace gate, not approval, got: {reason}"
+    );
+    // The turn continued past the denial to a normal completion.
+    assert!(
+        output
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Complete)),
+        "the turn must complete, not end on the denial"
+    );
+    assert_eq!(output.tool_metadata[0].name, "workspace_write");
+    assert_eq!(output.tool_metadata[0].status, "denied");
+}
+
+/// The same `WriteWorkspace` tool executes normally when the permission is on.
+#[tokio::test]
+async fn workspace_write_tool_runs_when_workspace_writes_are_permitted() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provider = OneCallProvider {
+        call: ToolCall {
+            id: "c1".into(),
+            name: "workspace_write".into(),
+            arguments: serde_json::json!({}),
+        },
+        turn: Mutex::new(0),
+    };
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let token = saya_agent::CancellationToken::new();
+    let limits = AgentLimits {
+        permit_workspace_writes: true,
+        ..AgentLimits::default()
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &RecordingExecutor {
+            calls: calls.clone(),
+        },
+        request(),
+        vec![workspace_tool()],
+        limits,
+        &AllowReadOnlyApproval,
+        &sink,
+        token,
+    )
+    .await
+    .expect("run completes");
+    assert_eq!(&*calls.lock().unwrap(), &["workspace_write"]);
+    assert!(
+        !output
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolDenied { .. })),
+        "no denial when workspace writes are permitted"
+    );
+    assert_eq!(output.tool_metadata[0].status, "completed");
 }

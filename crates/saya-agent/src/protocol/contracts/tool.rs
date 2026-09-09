@@ -6,11 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use super::ToolError;
 
-/// What local state a tool may touch — contracts, the schema cache, anything
-/// persisted on the user's machine. Declared per tool so "may this tool write
-/// local state?" is a property the loop reads rather than something inferred
-/// from a tool's name. Phase 3a introduces the type; Phase 3c adds the first
-/// tool that declares `WriteCandidate`.
+/// What local state a tool may touch — contracts, the schema cache, run
+/// workspaces, anything persisted on the user's machine. Declared per tool so
+/// "may this tool write local state?" is a property the loop reads rather than
+/// something inferred from a tool's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -23,6 +22,12 @@ pub enum LocalStateEffect {
     /// May persist a *candidate* claim. Never a confirmed one — confirmation is a
     /// human action and has no tool.
     WriteCandidate,
+    /// May write files inside the run workspace (contained, atomic, never
+    /// executable). Gated like [`LocalStateEffect::WriteCandidate`]: the loop
+    /// refuses it unless the runner was constructed with workspace writes
+    /// permitted, so a registered write tool cannot write merely by being
+    /// registered.
+    WriteWorkspace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

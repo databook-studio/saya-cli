@@ -17,6 +17,11 @@ pub struct AgentLimits {
     /// Defaults to **not permitted**: a tool that can write a candidate claim
     /// must not start writing merely because it was registered.
     pub permit_candidate_writes: bool,
+    /// Whether the loop may execute tools that declare
+    /// [`LocalStateEffect::WriteWorkspace`](crate::LocalStateEffect::WriteWorkspace).
+    /// Defaults to **not permitted**: a tool that can write workspace files
+    /// must not start writing merely because it was registered.
+    pub permit_workspace_writes: bool,
     /// Ceiling on the approximate byte size of the conversation the loop has
     /// assembled (assistant turns plus tool results grow it past the pre-loop
     /// history budget). Breaching it trims the oldest tool-result groups
@@ -29,6 +34,7 @@ impl Default for AgentLimits {
             max_turns: None,
             max_tool_calls: None,
             permit_candidate_writes: false,
+            permit_workspace_writes: false,
             context_byte_budget: 256 * 1024,
         }
     }

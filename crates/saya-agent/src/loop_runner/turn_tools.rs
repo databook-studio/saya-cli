@@ -193,12 +193,15 @@ pub(super) async fn run_turn_tools(
         // `requires_approval` was already resolved into `approved`, so a
         // tool that needed approval and got it still runs; the remaining
         // gates bind whether or not approval was granted. This is the one
-        // place the sequential path decides auto-run — keeping it here in
-        // terms of the shared gates means a gate added to `tools.rs`
-        // cannot apply to the batch path and not this one.
+        // place the sequential path decides auto-run. It consults the shared
+        // gates *by name* rather than through `auto_runnable`, so a gate added
+        // to `tools.rs` does NOT reach this path on its own — it must be added
+        // here too. A `WriteWorkspace` tool in a single-call turn ran despite
+        // the permit being false until this line existed.
         let candidate_denied = tools::candidate_denied(definition, limits);
         let side_effect_denied = tools::external_side_effect_gated(definition);
-        let executed = approved && !candidate_denied && !side_effect_denied;
+        let workspace_denied = tools::workspace_write_denied(definition, limits);
+        let executed = approved && !candidate_denied && !side_effect_denied && !workspace_denied;
         // Capture the SQL before `execute` moves `call.arguments`; only SQL
         // statements are tracked for repeat refusal and salvage nomination.
         let sql = failed_statements::sql_of(&call).map(str::to_owned);
@@ -225,6 +228,8 @@ pub(super) async fn run_turn_tools(
                         "external side effect requires approval".into()
                     } else if candidate_denied {
                         "candidate writes are not permitted".into()
+                    } else if workspace_denied {
+                        "workspace writes are not permitted".into()
                     } else {
                         "approval was not granted".into()
                     },

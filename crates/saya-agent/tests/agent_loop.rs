@@ -719,6 +719,7 @@ async fn execute_batch_caps_simultaneous_concurrency() {
             max_tool_calls: Some(64),
             permit_candidate_writes: false,
             context_byte_budget: 1024 * 1024,
+            permit_workspace_writes: false,
         },
         &AllowReadOnlyApproval,
     );
@@ -1320,6 +1321,7 @@ async fn runaway_context_is_trimmed_not_aborted_and_the_bound_still_binds() {
             max_tool_calls: Some(64),
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
+            permit_workspace_writes: false,
         },
         &AllowReadOnlyApproval,
     )
@@ -1433,6 +1435,7 @@ async fn single_oversized_tool_result_does_not_abort_the_run() {
             max_tool_calls: Some(8),
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
+            permit_workspace_writes: false,
         },
         &AllowReadOnlyApproval,
     )

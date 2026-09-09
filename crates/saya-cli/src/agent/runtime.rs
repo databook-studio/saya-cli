@@ -152,6 +152,7 @@ pub(crate) async fn run_prompt_with_inputs(
         max_tool_calls: env_budgets.1,
         permit_candidate_writes: learning.permit_candidate_writes,
         context_byte_budget: runtime.resolved.ai.context_byte_budget,
+        permit_workspace_writes: false,
     };
     let mut output = run_agent_with_sink(
         &*provider,
