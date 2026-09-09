@@ -17,6 +17,8 @@ mod stream_render;
 mod privacy_tests;
 mod profile_identity;
 mod prompt_approval;
+#[cfg(test)]
+mod prompt_approval_tests;
 mod state_path;
 
 use clap::Parser;

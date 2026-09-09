@@ -1,4 +1,4 @@
-use saya_agent::ApprovalPolicy;
+use saya_agent::{ApprovalPolicy, ToolDefinition, read_only_permits};
 
 pub(crate) struct TerminalApproval {
     policy: ApprovalPolicy,
@@ -11,15 +11,22 @@ impl TerminalApproval {
     }
 }
 
+/// The prompt shown when an `Ask` approval needs the user: for tools whose call
+/// has a visible detail, that detail and the SQL sentence; for every other
+/// tool, a generic sentence naming the tool, so nothing is ever approved under
+/// a sentence it does not match.
+pub(crate) fn approval_prompt(tool: &ToolDefinition, arguments: &serde_json::Value) -> String {
+    match crate::agent::tools::tool_call_detail(&tool.name, arguments) {
+        Some(detail) => format!("  {detail}\nAllow bounded read-only SQL query? [y/N] "),
+        None => format!("Run tool `{}`? [y/N] ", tool.name),
+    }
+}
+
 #[async_trait::async_trait]
 impl saya_agent::ApprovalDecider for TerminalApproval {
-    async fn approve(
-        &self,
-        tool: &saya_agent::ToolDefinition,
-        arguments: &serde_json::Value,
-    ) -> bool {
+    async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
         match self.policy {
-            ApprovalPolicy::ReadOnly => true,
+            ApprovalPolicy::ReadOnly => read_only_permits(&tool.effect),
             ApprovalPolicy::Never => false,
             ApprovalPolicy::Ask if !self.can_prompt => false,
             ApprovalPolicy::Ask => {
@@ -27,11 +34,7 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                 if !io::stdin().is_terminal() {
                     return false;
                 }
-                // Show the exact SQL being approved when we can extract it.
-                if let Some(detail) = crate::agent::tools::tool_call_detail(&tool.name, arguments) {
-                    eprintln!("  {detail}");
-                }
-                eprint!("Allow bounded read-only SQL query? [y/N] ");
+                eprint!("{}", approval_prompt(tool, arguments));
                 let _ = io::stderr().flush();
                 let mut answer = String::new();
                 io::stdin().read_line(&mut answer).is_ok()

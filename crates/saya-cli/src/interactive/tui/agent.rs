@@ -7,7 +7,7 @@ use crate::config::runtime::RuntimeConfig;
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken,
-    ChatMessage, ToolDefinition,
+    ChatMessage, ToolDefinition, read_only_permits,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -47,8 +47,8 @@ impl AgentEventSink for ChannelSink {
 }
 
 /// Approval decider that honors the session's approval policy: `ReadOnly`
-/// auto-approves, `Never` auto-denies, and `Ask` prompts the UI (via the same
-/// channel) and waits for the user's y/n answer.
+/// auto-approves read-shaped tools only, `Never` auto-denies, and `Ask` prompts
+/// the UI (via the same channel) and waits for the user's y/n answer.
 struct ChannelApproval {
     tx: UnboundedSender<StreamMsg>,
     policy: ApprovalPolicy,
@@ -58,7 +58,7 @@ struct ChannelApproval {
 impl ApprovalDecider for ChannelApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
         match self.policy {
-            ApprovalPolicy::ReadOnly => return true,
+            ApprovalPolicy::ReadOnly => return read_only_permits(&tool.effect),
             ApprovalPolicy::Never => return false,
             ApprovalPolicy::Ask => {}
         }
