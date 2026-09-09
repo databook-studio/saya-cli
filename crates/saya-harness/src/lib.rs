@@ -7,6 +7,7 @@
 //! episodes arrives in later milestones; nothing here talks to databases or
 //! providers.
 
+pub mod engine;
 pub mod journal;
 pub mod lock;
 pub mod paths;
