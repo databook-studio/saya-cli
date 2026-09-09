@@ -5,6 +5,7 @@ mod dialect;
 mod error;
 mod profile;
 mod query;
+mod redaction;
 mod schema;
 
 pub use contract::{
@@ -21,4 +22,5 @@ pub use dialect::SqlDialect;
 pub use error::ConnectionError;
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
 pub use query::{QueryRequest, QueryResult};
+pub use redaction::redact;
 pub use schema::{Column, Database, ForeignKey, Schema, SchemaTree, Table};
