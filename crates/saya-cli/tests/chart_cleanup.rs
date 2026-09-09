@@ -51,7 +51,7 @@ fn clear_chart_temp_files() {
 
 /// Polls the accumulated stdout for the ndjson line reporting the tool call
 /// completed, which proves the chart file was actually written.
-fn wait_for_tool_completed(
+fn wait_for_tool_denied(
     buffer: &Arc<Mutex<String>>,
     stderr_text: &Arc<Mutex<String>>,
     tool: &str,
@@ -61,14 +61,14 @@ fn wait_for_tool_completed(
     loop {
         let seen = buffer.lock().unwrap();
         if seen.lines().any(|line| {
-            line.contains("\"event\":\"tool_completed\"") && line.contains(&format!("\"{tool}\""))
+            line.contains("\"event\":\"tool_denied\"") && line.contains(&format!("\"{tool}\""))
         }) {
             return;
         }
         drop(seen);
         assert!(
             Instant::now() < deadline,
-            "{tool} never completed; stdout so far:\n{}\nstderr so far:\n{}",
+            "{tool} was neither denied nor completed; stdout so far:\n{}\nstderr so far:\n{}",
             buffer.lock().unwrap(),
             stderr_text.lock().unwrap()
         );
@@ -77,7 +77,7 @@ fn wait_for_tool_completed(
 }
 
 #[test]
-fn chart_temp_files_are_removed_when_the_session_ends() {
+fn read_only_denies_render_chart_headlessly_and_nothing_is_written() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
 
@@ -218,19 +218,23 @@ fn chart_temp_files_are_removed_when_the_session_ends() {
         .unwrap();
     child.stdin.as_mut().unwrap().flush().unwrap();
 
-    // The tool has run (and the chart file exists) once its completion event
-    // reached the stream; only then is ending the session meaningful.
-    wait_for_tool_completed(
+    // `render_chart` writes a file and opens a browser, so it declares an
+    // external side effect — and read-only approval denies exactly that. This
+    // headless run therefore cannot produce a chart at all, which is the
+    // intended outcome of the M0-1 gate rather than a regression: a
+    // side-effecting tool must not auto-run without a person saying yes.
+    // Cleanup itself is covered directly by the unit tests in
+    // `chart/cleanup.rs`; what this end-to-end run pins is the denial.
+    wait_for_tool_denied(
         &accumulated,
         &stderr_accum,
         "render_chart",
         Duration::from_secs(30),
     );
     let written = chart_temp_files();
-    assert_eq!(
-        written.len(),
-        1,
-        "render_chart must have written exactly one temp chart; stdout:\n{}",
+    assert!(
+        written.is_empty(),
+        "a denied render_chart must not have written anything; stdout:\n{}",
         accumulated.lock().unwrap()
     );
 

@@ -19,6 +19,8 @@ fn definition(effect: ToolEffect) -> ToolDefinition {
         read_only: true,
         parameters: serde_json::json!({"type": "object"}),
         effect,
+        // The matrix is about effects, not completion wording.
+        completion: None,
     }
 }
 

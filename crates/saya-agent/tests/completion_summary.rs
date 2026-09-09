@@ -14,9 +14,9 @@
 
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval, ChatProvider,
-    ChatRequest, ChatResponse, LocalStateEffect, ToolCall, ToolDefinition, ToolEffect, ToolError,
-    ToolExecutor, run_agent_with_sink,
+    AgentEvent, AgentEventSink, AgentLimits, AgentRequest, ChatProvider, ChatRequest, ChatResponse,
+    LocalStateEffect, ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
+    run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
@@ -159,6 +159,20 @@ fn request() -> AgentRequest {
 
 /// Runs one turn issuing a call to `tool`, with writes permitted (so a
 /// `WriteCandidate` tool is executed, not denied), returning the sink's events.
+/// These tests are about the *completion text* a tool reports, not about who
+/// may run it. `AllowReadOnlyApproval` now denies side-effecting tools — which
+/// is correct, and would silently turn every case below into "the tool never
+/// ran" rather than a statement about summaries. Approving unconditionally
+/// keeps each test measuring the one thing it names.
+struct ApproveAll;
+
+#[async_trait::async_trait]
+impl saya_agent::ApprovalDecider for ApproveAll {
+    async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
+        true
+    }
+}
+
 async fn run_one(tool: ToolDefinition, executor: &dyn ToolExecutor) -> Vec<AgentEvent> {
     let events = Arc::new(Mutex::new(Vec::new()));
     let provider = OneCallProvider {
@@ -182,7 +196,7 @@ async fn run_one(tool: ToolDefinition, executor: &dyn ToolExecutor) -> Vec<Agent
         request(),
         vec![tool],
         limits,
-        &AllowReadOnlyApproval,
+        &ApproveAll,
         &sink,
         saya_agent::CancellationToken::new(),
     )
@@ -292,9 +306,10 @@ async fn custom_completion_failure_keeps_the_failed_substring() {
     );
 }
 
-/// `read_only` feeds only the completion labels, never the execution gates
-/// (auto-run keys on the declared effect). Two tools identical except
-/// `read_only` therefore execute identically without approval.
+/// `read_only` feeds only the completion labels, never the execution gates —
+/// gating keys on the declared *effect*, which is why an approver that permits
+/// the effect runs both shapes alike. Two tools identical except `read_only`
+/// therefore execute identically.
 #[tokio::test]
 async fn read_only_does_not_gate_execution() {
     for read_only in [true, false] {

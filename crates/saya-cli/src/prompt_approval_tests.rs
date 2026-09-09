@@ -19,6 +19,7 @@ fn side_effecting_tool() -> ToolDefinition {
             requires_approval: true,
             local_state: LocalStateEffect::None,
         },
+        completion: None,
     }
 }
 
