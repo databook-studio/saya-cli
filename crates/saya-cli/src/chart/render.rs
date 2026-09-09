@@ -1,5 +1,6 @@
 //! Chart.js HTML rendering.
 
+use saya_store::redact;
 use saya_types::QueryResult;
 
 use super::{ChartKind, ChartSpec, cell_to_f64, is_numeric_column, normalize_row};
@@ -30,12 +31,18 @@ fn escape_json_for_script(s: &str) -> String {
     out
 }
 
+/// Renders a cell as a plain string. Every cell string passes `redact()`
+/// before it is embedded in the chart HTML: the document is written to a temp
+/// file and opened in a browser, so secret-shaped material in a cell must not
+/// reach it verbatim (DESIGN §6.6). Numeric cells can only produce digits and
+/// punctuation, so the pass is a no-op for them.
 fn cell_to_string(value: &serde_json::Value) -> String {
-    match value {
+    let raw = match value {
         serde_json::Value::Null => String::new(),
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
-    }
+    };
+    redact(&raw)
 }
 
 /// Builds a self-contained HTML document string containing an interactive Chart.js chart.

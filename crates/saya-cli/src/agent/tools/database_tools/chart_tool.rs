@@ -52,6 +52,9 @@ impl DatabaseTools {
             .unwrap_or(0);
         let path = std::env::temp_dir().join(format!("saya-chart-{unique}.html"));
         crate::chart::write_html(&html, &path).map_err(ToolError::Chart)?;
+        // The path is session-scoped from here: the session teardown removes
+        // every chart file the tool wrote (DESIGN §6.6).
+        crate::chart::record_temp_chart(&path);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
