@@ -11,6 +11,7 @@ mod history;
 mod knowledge_items;
 mod migration;
 mod redaction;
+mod runs;
 mod schema_store;
 mod sqlite;
 mod sqlite_support;
@@ -24,6 +25,10 @@ pub use knowledge_items::{
     MAX_KNOWLEDGE_ITEM_BYTES, knowledge_item_id_for,
 };
 pub use redaction::redact;
+pub use runs::{
+    NewRun, RunBudgets, RunCapabilityFlags, RunRecord, RunStatus, RunStepRecord, RunStepStatus,
+    RunStore, RunSummary, RunUsage,
+};
 pub use sqlite::{OPEN_BUSY_CEILING, SqliteStateStore};
 pub use sqlite_support::state_sidecar_path;
 pub use state_contracts::{
