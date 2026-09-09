@@ -4,7 +4,10 @@ use super::{
     session_request::PromptResult,
     session_resume::{SessionDefaults, block_on, load_session},
 };
-use crate::{Cli, RenderFormat, RuntimeConfig, SessionState, config, slash::parse_slash_command};
+use crate::{
+    Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
+    slash::parse_slash_command,
+};
 use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
 use std::io::{self, IsTerminal, Write};
 
@@ -33,6 +36,11 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         state.allow_data_sharing = runtime.resolved.ai.allow_data_sharing;
         state.approval_mode = config::runtime::approval_name(&cli.options)?;
         state.included_profiles = cli.options.include_profiles.clone();
+    } else {
+        // A resumed session keeps its persisted settings, but an explicit
+        // `--approval-mode` overrides the persisted mode; without the flag,
+        // resume continuity keeps the persisted mode.
+        state.approval_mode = resume_approval_mode(&cli.options, &state.approval_mode)?;
     }
     // Always derived, including on a resumed session: the toggle is a display
     // preference that is never persisted, so a resumed session deserializes it
@@ -54,6 +62,20 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     run_plain_loop(terminal, &mut state, &runtime, &store, &state_db, format)?;
     block_on(store.save(state.redacted()))?;
     Ok(0)
+}
+
+/// The approval mode a resumed session runs under: an explicit
+/// `--approval-mode` overrides the persisted mode; without the flag the
+/// persisted mode is kept (resume continuity).
+pub(crate) fn resume_approval_mode(
+    options: &GlobalOptions,
+    persisted: &str,
+) -> Result<String, config::runtime::RuntimeError> {
+    if options.approval_mode.is_some() {
+        config::runtime::approval_name(options)
+    } else {
+        Ok(persisted.to_owned())
+    }
 }
 
 /// Reads lines from stdin without the rich editor, printing the status header
