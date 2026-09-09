@@ -81,6 +81,18 @@ impl Transcript {
         }
     }
 
+    /// Clears the text accumulated in the trailing block of `kind` — exactly
+    /// the block the next [`append_delta`] of that kind would extend — so a
+    /// re-streamed answer **replaces** what streamed so far instead of
+    /// appending (the `TurnReset` retry path). No-op when the trailing block
+    /// is not of `kind` (nothing streamed yet to discard).
+    pub(crate) fn reset_delta(&mut self, kind: BlockKind) {
+        if let Some(last) = self.blocks.last_mut().filter(|last| last.kind == kind) {
+            last.text.clear();
+            self.invalidate_cache();
+        }
+    }
+
     pub(crate) fn reformat_last(&mut self, kind: BlockKind, f: impl FnOnce(&str) -> String) {
         if let Some(block) = self.blocks.iter_mut().rev().find(|b| b.kind == kind) {
             block.text = f(&block.text);

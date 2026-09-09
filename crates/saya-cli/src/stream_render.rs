@@ -151,6 +151,11 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
             probe_broke_tie,
         },
         AgentEvent::Complete => TerminalEvent::Complete,
+        // The turn's provider stream failed mid-answer and the loop is
+        // retrying it. Carried under its own type tag so a machine consumer
+        // can replace the text it accumulated for this turn; the text adapter
+        // prints a notice (see `TerminalEvent::TurnReset`).
+        AgentEvent::TurnReset => TerminalEvent::TurnReset,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
         // it as an unimplemented event instead.
@@ -788,6 +793,65 @@ mod tests {
             !rendered.stdout.contains("not_implemented"),
             "{:?}",
             rendered.stdout
+        );
+    }
+
+    /// `TurnReset` maps to a real TerminalEvent variant (not the
+    /// NotImplemented catch-all) — a retry signal the renderer understands
+    /// must never print `unrecognized agent event`.
+    #[test]
+    fn turn_reset_renders_as_its_own_variant_not_the_catch_all() {
+        let terminal = terminal_event(AgentEvent::turn_reset()).expect("turn reset renders");
+        assert!(
+            matches!(terminal, TerminalEvent::TurnReset),
+            "must map to the dedicated variant: {terminal:?}"
+        );
+    }
+
+    /// The text adapter closes the open delta line and prints a notice, so a
+    /// restart mid-answer is legible rather than reading as the model
+    /// repeating itself; the retried deltas then start on a fresh line.
+    #[test]
+    fn turn_reset_closes_the_partial_answer_and_notes_the_retry_in_text() {
+        let mut open = false;
+        let _ = render_agent(
+            AgentEvent::assistant_text("The an"),
+            RenderFormat::Text,
+            &mut open,
+        );
+        assert!(open, "the partial answer leaves the delta line open");
+
+        let reset = render_agent(AgentEvent::turn_reset(), RenderFormat::Text, &mut open);
+        assert_eq!(
+            reset.stdout, "\nprovider stream interrupted — retrying\n",
+            "the open line closes and the notice prints on its own line"
+        );
+        assert!(!open, "the reset closes the delta line");
+
+        // The re-streamed answer starts a fresh line, not appended to the
+        // partial text the reset discarded.
+        let retried = render_agent(
+            AgentEvent::assistant_text("The answer is 42."),
+            RenderFormat::Text,
+            &mut open,
+        );
+        assert_eq!(retried.stdout, "The answer is 42.");
+        assert!(open);
+    }
+
+    /// The JSON/NDJSON adapter carries the reset under its type tag so a
+    /// machine consumer can replace accumulated text instead of appending.
+    #[test]
+    fn turn_reset_reaches_ndjson_under_its_type_tag() {
+        let terminal = terminal_event(AgentEvent::turn_reset()).expect("renders");
+        let json = render_event(&terminal, RenderFormat::Ndjson);
+        assert!(
+            json.stdout.contains(r#""event":"turn_reset""#),
+            "ndjson must tag the reset: {json:?}"
+        );
+        assert!(
+            !json.stdout.contains("not_implemented"),
+            "must not fall through to NotImplemented: {json:?}"
         );
     }
 }

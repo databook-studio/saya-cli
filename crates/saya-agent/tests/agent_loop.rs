@@ -2421,3 +2421,291 @@ async fn designate_answer_terminal_turn_carries_the_sql_and_emits_an_event() {
         "a turn without designation carries no SQL"
     );
 }
+
+/// A provider whose first stream drops mid-answer (partial deltas, the stream
+/// ends without `Done`) and whose retry succeeds. Drives the M1-7 contract:
+/// the run completes, the sink saw reset-then-full text and never duplicated
+/// text, and the retry re-sent the conversation exactly as it stood at turn
+/// start.
+struct DropThenAnswerProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for DropThenAnswerProvider {
+    fn name(&self) -> &str {
+        "drop-then-answer"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        let attempt = {
+            let mut requests = self.requests.lock().unwrap();
+            requests.push(request);
+            requests.len() - 1
+        };
+        let events = if attempt == 0 {
+            // The stream drops mid-answer: partial deltas, no `Done`.
+            vec![
+                Ok(ProviderEvent::TextDelta("The an".into())),
+                Ok(ProviderEvent::TextDelta("sw".into())),
+            ]
+        } else {
+            vec![
+                Ok(ProviderEvent::TextDelta("The answer is 42.".into())),
+                Ok(ProviderEvent::Done),
+            ]
+        };
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
+#[tokio::test]
+async fn dropped_stream_retries_the_turn_and_the_sink_saw_reset_then_full_text() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = DropThenAnswerProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run completes after the retried turn");
+    assert_eq!(
+        output.answer, "The answer is 42.",
+        "the retried answer is the run's answer"
+    );
+
+    // The sink saw reset-then-full text: the partial attempt's deltas came
+    // before the reset, the full retry after it — never concatenated.
+    let seen = events.lock().unwrap().clone();
+    let split = seen
+        .iter()
+        .position(|event| matches!(event, AgentEvent::TurnReset))
+        .expect("the sink saw a TurnReset before the retry");
+    let partial: String = seen[..split]
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::AssistantText { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    let full: String = seen[split + 1..]
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::AssistantText { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        partial, "The answ",
+        "the partial attempt's deltas came before the reset: {seen:?}"
+    );
+    assert_eq!(
+        full, "The answer is 42.",
+        "the retry re-emitted the full answer after the reset: {seen:?}"
+    );
+    assert_eq!(
+        seen.iter()
+            .filter(|event| matches!(event, AgentEvent::TurnReset))
+            .count(),
+        1,
+        "exactly one reset for one retry: {seen:?}"
+    );
+    // Folding the stream — append deltas, clear at resets — reproduces the
+    // answer exactly, so no text was ever duplicated.
+    let mut folded = String::new();
+    for event in &seen {
+        match event {
+            AgentEvent::AssistantText { text } => folded.push_str(text),
+            AgentEvent::TurnReset => folded.clear(),
+            _ => {}
+        }
+    }
+    assert_eq!(folded, "The answer is 42.", "no duplicated text: {seen:?}");
+
+    // The retry re-sent the conversation exactly as it stood at turn start —
+    // no partial assistant message entered it.
+    let captured = requests.lock().unwrap();
+    assert_eq!(
+        captured.len(),
+        2,
+        "one original attempt and one retry: {:?}",
+        captured
+            .iter()
+            .map(|r| r.messages.len())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        captured[1].messages, captured[0].messages,
+        "the retry request carries the turn-start conversation unchanged"
+    );
+    assert!(
+        !captured[1]
+            .messages
+            .iter()
+            .any(|message| message.content.contains("The answ")),
+        "the dropped attempt's partial text never entered the conversation"
+    );
+}
+
+/// Retries are bounded: a provider that drops every attempt exhausts the
+/// backoff schedule (one attempt plus the three scheduled sleeps) and then
+/// falls through to the existing error path, never looping forever.
+struct AlwaysDroppingProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for AlwaysDroppingProvider {
+    fn name(&self) -> &str {
+        "always-dropping"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![Ok(
+            ProviderEvent::TextDelta("partial".into()),
+        )])))
+    }
+}
+
+#[tokio::test]
+async fn exhausted_retries_fall_through_to_the_existing_error_path() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = AlwaysDroppingProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::InvalidResponse)
+        ),
+        "the exhausted schedule falls through to the existing error: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        4,
+        "bounded: one attempt plus the three scheduled retries"
+    );
+    let seen = events.lock().unwrap().clone();
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Complete)),
+        "an exhausted retry run never completes: {seen:?}"
+    );
+}
+
+/// A stream that **completes** (`Done`) but carries no usable response is not
+/// a mid-stream failure: the model answered nothing, and every retry would
+/// fail the same way, so it errors immediately after the one attempt instead
+/// of burning the backoff schedule.
+struct EmptyCompletionProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for EmptyCompletionProvider {
+    fn name(&self) -> &str {
+        "empty-completion"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            Ok(ProviderEvent::TextDelta(String::new())),
+            Ok(ProviderEvent::Done),
+        ])))
+    }
+}
+
+#[tokio::test]
+async fn a_completed_but_empty_response_errors_after_one_attempt() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = EmptyCompletionProvider {
+        requests: requests.clone(),
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::InvalidResponse)
+        ),
+        "the existing error path applies: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "a completed-but-empty response is not retried"
+    );
+}
+
+/// A sink that records nothing, for tests where the events are not under test.
+struct NoopSink;
+
+#[async_trait]
+impl AgentEventSink for NoopSink {
+    async fn emit(&self, _: AgentEvent) {}
+}

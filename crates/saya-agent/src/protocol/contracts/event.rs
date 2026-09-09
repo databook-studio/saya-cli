@@ -35,6 +35,16 @@ pub enum AgentEvent {
     ReasoningText {
         text: String,
     },
+    /// The provider stream for this turn failed mid-response (dropped, stalled,
+    /// incomplete, or over the `MAX_STREAM_BYTES` bound) and the loop is
+    /// retrying the turn with the conversation as it stood at the turn start.
+    /// Emitted once before each retried attempt, so a sink that has been
+    /// accumulating [`AgentEvent::AssistantText`] (and
+    /// [`AgentEvent::ReasoningText`]) deltas must **replace** the text emitted
+    /// so far for this turn, never append to it: the partial attempt's answer
+    /// is discarded, and the retried stream re-emits the full answer as fresh
+    /// deltas. Carries nothing — the replacement arrives as new deltas.
+    TurnReset,
     /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
     /// surfaced so the user can see exactly what will run before approving it.
     ToolRequested {

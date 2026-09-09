@@ -29,6 +29,11 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_t
             }
             transcript.append_delta(BlockKind::Assistant, &text);
         }
+        // The provider stream failed mid-answer and the loop is retrying the
+        // turn. The text streamed so far is discarded: clear the trailing
+        // assistant block (the one the next delta would extend) so the
+        // re-streamed answer replaces it instead of appending to it.
+        AgentEvent::TurnReset => transcript.reset_delta(BlockKind::Assistant),
         AgentEvent::ToolRequested { name, arguments } => {
             if let Some(call) = crate::agent::tools::sql_tool_call(&name, &arguments) {
                 let header = match &call.target {
@@ -297,6 +302,50 @@ mod tests {
         let block = last_block_text(&t).expect("a block was pushed");
         assert!(block.contains("analytics"), "profile name appears: {block}");
         assert!(!block.contains(fake_identity), "identity leaked: {block}");
+    }
+
+    /// A `TurnReset` (mid-stream failure, turn retrying) clears the assistant
+    /// text accumulated so far, so the re-streamed answer **replaces** it —
+    /// the transcript must never show the partial attempt concatenated with
+    /// the full retry.
+    #[test]
+    fn turn_reset_replaces_the_accumulated_answer_rather_than_appending() {
+        let mut t = Transcript::new();
+        apply_event(&mut t, AgentEvent::assistant_text("The an"), false);
+        apply_event(&mut t, AgentEvent::assistant_text("sw"), false);
+        assert_eq!(last_block_text(&t), Some("The answ"));
+
+        apply_event(&mut t, AgentEvent::turn_reset(), false);
+        apply_event(
+            &mut t,
+            AgentEvent::assistant_text("The answer is 42."),
+            false,
+        );
+        assert_eq!(
+            last_block_text(&t),
+            Some("The answer is 42."),
+            "the retried answer must replace the partial text, not append to it"
+        );
+        // The re-streamed answer stays a single assistant block.
+        assert_eq!(
+            t.blocks()
+                .iter()
+                .filter(|b| b.kind == BlockKind::Assistant)
+                .count(),
+            1
+        );
+    }
+
+    /// A reset with nothing streamed yet is a no-op: there is nothing to
+    /// discard, and the next answer still opens its own block.
+    #[test]
+    fn turn_reset_with_nothing_streamed_is_a_no_op() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::System, "memory off · recall disabled");
+        apply_event(&mut t, AgentEvent::turn_reset(), false);
+        assert_eq!(t.blocks().len(), 1, "nothing streamed → nothing to clear");
+        apply_event(&mut t, AgentEvent::assistant_text("the answer"), false);
+        assert_eq!(last_block_text(&t), Some("the answer"));
     }
 
     /// KnowledgeOverridden pushes a System block whose text names the referenced
