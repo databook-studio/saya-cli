@@ -324,5 +324,10 @@ pub(crate) fn run(
         }
     }
 
+    // Session teardown: remove the chart temp files this session wrote, before
+    // the terminal state is restored (DESIGN §6.6). The piped-REPL and error
+    // paths drain the same registry in `session_loop`.
+    crate::chart::cleanup_session_charts();
+
     Ok(0)
 }

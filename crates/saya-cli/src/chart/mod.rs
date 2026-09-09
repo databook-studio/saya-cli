@@ -1,5 +1,6 @@
 //! Generates self-contained interactive Chart.js HTML documents.
 
+mod cleanup;
 mod kind;
 mod render;
 mod spec;
@@ -7,6 +8,7 @@ mod spec;
 #[cfg(test)]
 use saya_types::QueryResult;
 
+pub(crate) use cleanup::{cleanup_session_charts, record_temp_chart};
 pub(crate) use kind::{ChartKind, ChartSpec};
 pub(crate) use render::render_html;
 pub(crate) use spec::suggest_spec;
@@ -202,6 +204,34 @@ mod chart_gen_tests {
             executed_sql: "SELECT length, AVG(rate) FROM film GROUP BY 1".to_string(),
         };
         assert_eq!(suggest_spec(&result).kind, ChartKind::Scatter);
+    }
+
+    // M0-4: chart HTML is written to a temp file a browser opens, so cell
+    // strings carrying secret-shaped material must not reach it verbatim.
+    #[test]
+    fn chart_html_redacts_secret_shaped_cell_values() {
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "value".to_string()],
+            rows: vec![json!(["api_key=sk-live-SENTINEL", 10]), json!(["safe", 20])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, value FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["value".to_string()],
+            title: None,
+        };
+        let html = render_html(&result, &spec).unwrap();
+        assert!(
+            html.contains("[redacted]"),
+            "secret-shaped cell value was not redacted"
+        );
+        assert!(
+            !html.contains("sk-live-SENTINEL"),
+            "secret leaked into chart HTML"
+        );
     }
 
     #[test]

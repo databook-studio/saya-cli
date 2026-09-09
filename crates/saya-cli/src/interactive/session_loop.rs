@@ -45,13 +45,18 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     }
     let terminal = io::stdin().is_terminal();
     if terminal {
-        // Interactive terminals get the full-screen TUI.
-        let code = super::tui::run(&runtime, &store, &state_db, format, &mut state)?;
+        // Interactive terminals get the full-screen TUI. Chart temp files are
+        // removed when the session ends, on the clean path and on error alike.
+        let outcome = super::tui::run(&runtime, &store, &state_db, format, &mut state);
+        crate::chart::cleanup_session_charts();
+        let code = outcome?;
         block_on(store.save(state.redacted()))?;
         return Ok(code);
     }
     // Piped / non-TTY input (scripts, CI) uses the headless line executor.
-    run_plain_loop(terminal, &mut state, &runtime, &store, &state_db, format)?;
+    let outcome = run_plain_loop(terminal, &mut state, &runtime, &store, &state_db, format);
+    crate::chart::cleanup_session_charts();
+    outcome?;
     block_on(store.save(state.redacted()))?;
     Ok(0)
 }
