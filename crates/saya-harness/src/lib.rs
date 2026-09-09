@@ -2,10 +2,12 @@
 //!
 //! A run is a persistent, resumable, budgeted, capability-scoped unit of
 //! delegated work. This crate owns its mechanics — where run directories
-//! live, how they are created, and how a single writer claims one. The
-//! engine that drives episodes arrives in later milestones; nothing here
-//! talks to databases or providers.
+//! live, how they are created, how a single writer claims one, and the
+//! append-only event journal a resume replays. The engine that drives
+//! episodes arrives in later milestones; nothing here talks to databases or
+//! providers.
 
+pub mod journal;
 pub mod lock;
 pub mod paths;
 pub mod run_dir;
@@ -33,6 +35,20 @@ pub enum HarnessError {
         context: String,
         #[source]
         source: std::io::Error,
+    },
+
+    /// A newline-terminated line in the run journal does not parse as a
+    /// `RunEvent` — corruption, or an event written by a build that knows
+    /// more variants than this one. Fails closed rather than guessed at.
+    #[error("run journal is corrupt: line {line} does not parse as a run event")]
+    JournalCorrupt { line: usize },
+
+    /// A run event could not be serialized for the journal. Unreachable for
+    /// the current event payloads; typed rather than panicked on.
+    #[error("run event could not be serialized for the journal: {source}")]
+    JournalEncode {
+        #[source]
+        source: serde_json::Error,
     },
 }
 

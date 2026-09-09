@@ -3061,6 +3061,7 @@ version = "0.4.1"
 dependencies = [
  "libc",
  "saya-types",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 
