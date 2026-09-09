@@ -2235,10 +2235,14 @@ async fn salvage_on_tool_call_budget_returns_best_answer_marked_truncated() {
     );
 }
 
-/// If the salvage call itself fails, the error surfaces — the run does not
-/// invent an answer and does not swallow the provider failure.
+/// A provider failure on the salvage call itself must not lose the work
+/// already done: the run's turns executed tools, gathered events, and billed
+/// usage before the cliff, and propagating the error would discard all of it.
+/// The run therefore degrades to a structured truncated result — truncated
+/// flag set, executed work preserved, and no answer invented — instead of
+/// erroring.
 #[tokio::test]
-async fn salvage_surfaces_error_when_the_final_call_itself_fails() {
+async fn salvage_failure_degrades_to_a_truncated_result_keeping_the_work_done() {
     struct FailOnSalvage {
         turn: Mutex<usize>,
     }
@@ -2275,12 +2279,13 @@ async fn salvage_surfaces_error_when_the_final_call_itself_fails() {
             }
         }
     }
-    let error = run_agent(
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent(
         &FailOnSalvage {
             turn: Mutex::new(0),
         },
         &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
+            calls: calls.clone(),
         },
         request(),
         definitions(),
@@ -2291,10 +2296,19 @@ async fn salvage_surfaces_error_when_the_final_call_itself_fails() {
         &AllowReadOnlyApproval,
     )
     .await
-    .unwrap_err();
+    .expect("a failed salvage call must not discard the work already done");
     assert!(
-        matches!(error, AgentError::Provider(_)),
-        "a failed salvage call must surface its error, got {error:?}"
+        output.truncated,
+        "a degraded salvage run must be marked truncated, got {output:?}"
+    );
+    assert!(
+        output.answer.is_empty(),
+        "the run must not invent an answer when the salvage call fails"
+    );
+    assert_eq!(
+        &*calls.lock().unwrap(),
+        &["schema_discovery"],
+        "the turn's executed work must be preserved, not lost"
     );
 }
 
