@@ -1,4 +1,5 @@
 use crate::{AgentLimits, ChatMessage, LocalStateEffect, ToolCall, ToolDefinition, ToolExecutor};
+use saya_types::redact;
 use serde_json::Value;
 
 /// Why a tool call cannot run as requested, or `None` when it is valid.
@@ -158,7 +159,8 @@ pub(super) async fn execute_batch(
 const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
 
 /// Builds the `tool`-role message for a result, truncating it to fit the
-/// conversation byte budget when a single result would otherwise exceed it.
+/// conversation byte budget when a single result would otherwise exceed it,
+/// and scrubbing secret-shaped material at the model-context boundary (D8).
 /// Returns the message plus whether truncation was applied so the caller can
 /// mark the completion summary — the model must not silently believe it saw a
 /// complete result.
@@ -168,9 +170,21 @@ const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
 /// it so one result can never, by itself, breach the budget and abort the run
 ///. `MAX_TOOL_MESSAGE_BYTES` is a separate, provider-facing
 /// hard ceiling kept well under any provider's per-message limit.
+///
+/// The scrub (M2-3b) is the D8 boundary rule: *every* tool result entering
+/// model context — SQL rows included — passes `redact()` after the byte cap,
+/// before the message reaches the provider, so secret-shaped material
+/// (`key=value`, credential headers, userinfo URLs, PEM blocks) cannot cross
+/// to the model. Ordinary values pass through unchanged. The scrub governs the
+/// model's context only: the event stream and `saya query` keep the raw bytes
+/// (the user's own data on their own machine), so an answer may quote
+/// `[redacted]` where the raw value once appeared. Redacting after the cap can
+/// grow the content past `cap` by at most the marker length per match; the
+/// cap is a budget bound, not a provider hard limit.
 pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (ChatMessage, bool) {
     let cap = byte_budget.min(MAX_TOOL_MESSAGE_BYTES);
     let (content, truncated) = bounded_json(&result, cap);
+    let content = redact(&content);
     (
         ChatMessage {
             role: "tool".into(),
