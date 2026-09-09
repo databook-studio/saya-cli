@@ -141,6 +141,83 @@ fn legacy_messages_migrate_to_one_safe_turn() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// M0-2: persist with `read-only`, resume with an explicit
+/// `--approval-mode never` — the flag must override the persisted mode
+/// instead of being silently ignored.
+#[test]
+fn resume_honors_an_explicit_approval_mode_override() {
+    let root = std::env::temp_dir().join(format!("saya-resume-override-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    super::block_on(store.save(RedactedSession {
+        version: saya_store::SESSION_VERSION,
+        id: "override".into(),
+        approval_mode: "read-only".into(),
+        ..Default::default()
+    }))
+    .unwrap();
+    let cli = Cli {
+        options: GlobalOptions {
+            continue_session: true,
+            approval_mode: Some("never".into()),
+            ..Default::default()
+        },
+        command: None,
+    };
+    let mut state = load_session(
+        &store,
+        &cli,
+        &SessionDefaults {
+            provider: "openai".into(),
+            model: "current-model".into(),
+            allow_data_sharing: true,
+            approval_mode: "never".into(),
+        },
+    )
+    .unwrap();
+    // Loading alone keeps resume continuity: the persisted mode stands...
+    assert_eq!(state.approval_mode, "read-only");
+    // ...and the loop's resume resolution lets the explicit flag win.
+    state.approval_mode =
+        super::super::session_loop::resume_approval_mode(&cli.options, &state.approval_mode)
+            .unwrap();
+    assert_eq!(state.approval_mode, "never");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// M0-2: resume without the flag keeps the persisted mode (resume
+/// continuity).
+#[test]
+fn resume_without_the_flag_keeps_the_persisted_mode() {
+    let root = std::env::temp_dir().join(format!("saya-resume-keep-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    super::block_on(store.save(RedactedSession {
+        version: saya_store::SESSION_VERSION,
+        id: "keep".into(),
+        approval_mode: "read-only".into(),
+        ..Default::default()
+    }))
+    .unwrap();
+    let cli = cli();
+    let mut state = load_session(
+        &store,
+        &cli,
+        &SessionDefaults {
+            provider: "openai".into(),
+            model: "current-model".into(),
+            allow_data_sharing: true,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(state.approval_mode, "read-only");
+    // The resume resolution without the flag keeps the persisted mode.
+    state.approval_mode =
+        super::super::session_loop::resume_approval_mode(&cli.options, &state.approval_mode)
+            .unwrap();
+    assert_eq!(state.approval_mode, "read-only");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// An older session file written before the `arguments` and `result_shape`
 /// fields existed still loads: the new fields are `#[serde(default)]`, so a
 /// tool record carrying only `name` and `status` deserializes with empty
