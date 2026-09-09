@@ -3060,8 +3060,10 @@ name = "saya-harness"
 version = "0.4.1"
 dependencies = [
  "libc",
+ "proptest",
  "saya-types",
  "serde_json",
+ "sha2",
  "thiserror 2.0.20",
 ]
 
