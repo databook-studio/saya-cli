@@ -80,6 +80,7 @@ fn request() -> ChatRequest {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            completion: None,
         },
     ])
 }

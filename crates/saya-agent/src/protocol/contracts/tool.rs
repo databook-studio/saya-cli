@@ -43,6 +43,16 @@ pub struct ToolDefinition {
     pub read_only: bool,
     pub parameters: serde_json::Value,
     pub effect: ToolEffect,
+    /// One-line summary the loop reports when this tool succeeds, overriding
+    /// the generic read-only/write wording — a tool whose action is neither
+    /// "read-only database" nor "local-state write" (e.g. one that writes a
+    /// file and opens a browser) states what it actually did. The failure
+    /// summary is derived from the same text and always keeps the substring
+    /// "failed", which the status derivation and the statement-outcome memory
+    /// key on. `#[serde(default)]` accepts serialized forms without the key;
+    /// skipping `None` keeps serialized definitions byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<String>,
 }
 
 #[async_trait]

@@ -96,6 +96,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: true,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            completion: None,
         },
         ToolDefinition {
             name: "bounded_sql_query_all".into(),
@@ -108,6 +109,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: true,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            completion: None,
         },
         ToolDefinition {
             name: "schema_discovery".into(),
@@ -120,6 +122,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: false,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            completion: None,
         },
     ]
 }
@@ -1660,6 +1663,7 @@ fn external_side_effect_without_approval_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: saya_agent::LocalStateEffect::None,
         },
+        completion: None,
     }
 }
 

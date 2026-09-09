@@ -61,38 +61,51 @@ pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -
         && !candidate_denied(definition, limits)
 }
 
+/// The completion summaries reported for a tool call, derived from the
+/// call's definition: the definition's own `completion` text when it
+/// declares one — a tool whose action is neither a read-only database read
+/// nor a local-state write (e.g. one that writes a file and opens a browser)
+/// states what it actually did — otherwise the generic wording keyed on the
+/// declared `read_only`. A write tool (`read_only: false`, e.g. one that
+/// persists a candidate claim) must not read as a "read-only" completion —
+/// that would be a false statement in the feature whose pitch is that it
+/// does not overstate what it knows. The failure summary always keeps the
+/// substring "failed": `tool_metadata.status` and the statement-outcome
+/// memory derive their failure signal from it. `None` (no definition found)
+/// falls back to the write wording, matching the pre-definition lookup
+/// behavior for a call whose definition is absent.
+pub(super) fn completion_summaries(definition: Option<&ToolDefinition>) -> (String, String) {
+    let read_only = definition.is_some_and(|definition| definition.read_only);
+    let (completed, failed) = if read_only {
+        (
+            "read-only database tool completed",
+            "read-only database tool failed",
+        )
+    } else {
+        ("local-state write completed", "local-state write failed")
+    };
+    match definition.and_then(|definition| definition.completion.as_deref()) {
+        Some(text) => (text.to_owned(), format!("failed to complete: {text}")),
+        None => (completed.to_owned(), failed.to_owned()),
+    }
+}
+
 /// Runs a tool and returns its result with a completion summary that reflects
-/// the tool's *declared* `read_only`, not its name. A write tool (`read_only:
-/// false`, e.g. one that persists a candidate claim) must not read as a
-/// "read-only" completion — that would be a false statement in the feature whose
-/// pitch is that it does not overstate what it knows. The summary
-/// drives `tool_metadata.status` via a `contains("failed")` check, so every
-/// failure string keeps the substring "failed".
+/// the tool's *declaration*, not its name (see [`completion_summaries`]). The
+/// summary drives `tool_metadata.status` via a `contains("failed")` check, so
+/// every failure string keeps the substring "failed".
 pub(super) async fn execute(
     tools: &dyn ToolExecutor,
     name: &str,
     arguments: Value,
-    read_only: bool,
-) -> (Value, &'static str) {
+    definition: Option<&ToolDefinition>,
+) -> (Value, String) {
+    let (completed, failed) = completion_summaries(definition);
     match tools.execute(name, arguments).await {
-        Ok(value) => (
-            value,
-            if read_only {
-                "read-only database tool completed"
-            } else {
-                "local-state write completed"
-            },
-        ),
+        Ok(value) => (value, completed),
         // The reason reaches the model so it can adjust (e.g. a
         // safety-layer rejection naming what is not allowed).
-        Err(error) => (
-            serde_json::json!({"error": error.to_string()}),
-            if read_only {
-                "read-only database tool failed"
-            } else {
-                "local-state write failed"
-            },
-        ),
+        Err(error) => (serde_json::json!({"error": error.to_string()}), failed),
     }
 }
 /// Executes already-validated, auto-runnable calls concurrently while
@@ -111,16 +124,15 @@ pub(super) async fn execute_batch(
     tools: &dyn ToolExecutor,
     calls: &[ToolCall],
     definitions: &[ToolDefinition],
-) -> Vec<(Value, &'static str)> {
+) -> Vec<(Value, String)> {
     use futures_util::{StreamExt, stream};
     let pending = calls.iter().map(|call| {
-        let read_only = definitions
+        let definition = definitions
             .iter()
-            .find(|definition| definition.name == call.name)
-            .is_some_and(|definition| definition.read_only);
+            .find(|definition| definition.name == call.name);
         let name = call.name.clone();
         let arguments = call.arguments.clone();
-        async move { execute(tools, &name, arguments, read_only).await }
+        async move { execute(tools, &name, arguments, definition).await }
     });
     stream::iter(pending)
         .buffered(MAX_CONCURRENT_TOOL_CALLS)

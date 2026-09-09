@@ -57,7 +57,9 @@ pub struct ResolvedConfig {
     pub max_iterations: usize,
     /// Independent agent attempts per question. Defaults to `1` (today's
     /// single-run behaviour); each extra candidate is a full additional agent
-    /// run. Bounded to `1..=16` at resolve time. Nothing reads this yet.
+    /// run. Bounded to `1..=16` at resolve time. Read by the `ask` command,
+    /// which runs one attempt per candidate and votes on their nominated SQL
+    /// (`crates/saya-cli/src/agent/candidates`).
     pub candidates: usize,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,

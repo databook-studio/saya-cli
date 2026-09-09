@@ -6,10 +6,11 @@ impl DatabaseTools {
     /// Returns available database tool definitions. Contract read tools are
     /// appended only when a state store is present **and** database context is
     /// allowed; when the privacy gate forbids database context they are hidden
-    /// rather than advertised as always-empty. `contract_propose`
-    /// is appended only when candidate writes are permitted **and** a store is
-    /// present **and** the gate is open — hidden, not advertised and
-    /// denied, matching the read-tool precedent.
+    /// rather than advertised as always-empty, matching the read-tool
+    /// precedent. `permit_candidate_writes` gates nothing here: no tool
+    /// declares `WriteCandidate` — proposals are extracted post-turn from the
+    /// bounded turn record — so the flag is accepted only to keep the call
+    /// sites unchanged.
     pub(crate) fn definitions(
         allow_query_data: bool,
         has_state_store: bool,
@@ -37,6 +38,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            completion: None,
         }];
         if allow_query_data {
             tools.push(ToolDefinition {
@@ -61,6 +63,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             });
             tools.push(ToolDefinition {
                 name: "bounded_sql_query_all".into(),
@@ -88,6 +91,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             });
             tools.push(ToolDefinition {
                 name: "result_shape".into(),
@@ -116,6 +120,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             });
             tools.push(ToolDefinition {
                 name: "column_health".into(),
@@ -146,6 +151,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             });
             tools.push(ToolDefinition {
                 name: "join_check".into(),
@@ -177,6 +183,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             });
             tools.push(ToolDefinition {
                 name: "render_chart".into(),
@@ -188,7 +195,7 @@ impl DatabaseTools {
                     numeric columns. Optionally name the x (label) column, the y (value) column(s), and a \
                     title. The chart is written to a file and opened; only the file path is returned."
                     .into(),
-                read_only: true,
+                read_only: false,
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -208,6 +215,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                completion: Some("chart written and opened".into()),
             });
             tools.push(ToolDefinition {
                 name: "designate_answer".into(),
@@ -233,6 +241,7 @@ impl DatabaseTools {
                     requires_approval: false,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             });
         }
         // Contract tools are a sibling concern (see `contract_tools`); they are
