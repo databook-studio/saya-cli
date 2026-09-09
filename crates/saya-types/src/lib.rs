@@ -5,11 +5,8 @@ mod dialect;
 mod error;
 mod profile;
 mod query;
-<<<<<<< HEAD
-mod run;
-=======
 mod redaction;
->>>>>>> impl/redaction
+mod run;
 mod schema;
 
 pub use contract::{
@@ -26,14 +23,11 @@ pub use dialect::SqlDialect;
 pub use error::ConnectionError;
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
 pub use query::{QueryRequest, QueryResult};
-<<<<<<< HEAD
+pub use redaction::redact;
 pub use run::{
     Budgets, Capabilities, Destination, EndpointBindings, FetchScope, MAX_BUDGET_ENDPOINTS,
     MAX_ENDPOINT_BINDINGS, MAX_FETCH_DESTINATIONS, MAX_GOAL_BYTES, MAX_OUTPUT_HINTS,
     MAX_PLAN_STEPS, MAX_RUNNER_PROGRAMS, OutputHint, PauseReason, RunContractError, RunEvent,
     RunFailureCode, RunId, RunPlan, RunSpec, RunnerScope, StepSpec,
 };
-=======
-pub use redaction::redact;
->>>>>>> impl/redaction
 pub use schema::{Column, Database, ForeignKey, Schema, SchemaTree, Table};
