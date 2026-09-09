@@ -46,19 +46,29 @@ pub(super) fn candidate_denied(definition: &ToolDefinition, limits: &AgentLimits
         && !limits.permit_candidate_writes
 }
 
+/// Whether the runner must refuse `definition` because it may write files in
+/// the run workspace and the run was not constructed with workspace writes
+/// permitted — fail closed by default, mirroring [`candidate_denied`].
+pub(super) fn workspace_write_denied(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
+    definition.effect.local_state == LocalStateEffect::WriteWorkspace
+        && !limits.permit_workspace_writes
+}
+
 /// May a call to `definition` run with no questions asked — the single
 /// policy the loop consults to decide auto-run. A call is auto-runnable only
 /// when it needs no approval, the policy does not gate its external side
-/// effect, and it is not a candidate write the runner refused. The batch path
-/// calls this to decide whether the calls in a message are independent enough
-/// to run concurrently; the sequential execution path applies the same gates
-/// (via [`external_side_effect_gated`] and [`candidate_denied`]) after
-/// resolving approval, so adding a gate here cannot apply to one path and not
-/// the other.
+/// effect, and it is not a local-state write the runner refused. The batch
+/// path calls this to decide whether the calls in a message are independent
+/// enough to run concurrently. The sequential execution path resolves
+/// approval and then re-applies the gates by name in `run_turn_tools`
+/// (currently [`external_side_effect_gated`] and [`candidate_denied`]) so the
+/// denial can name which one refused — a gate added here must be mirrored
+/// there, or it binds multi-call turns only.
 pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
     !definition.effect.requires_approval
         && !external_side_effect_gated(definition)
         && !candidate_denied(definition, limits)
+        && !workspace_write_denied(definition, limits)
 }
 
 /// The completion summaries reported for a tool call, derived from the
