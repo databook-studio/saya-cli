@@ -23,6 +23,14 @@ impl AgentEvent {
         Self::ReasoningText { text: text.into() }
     }
 
+    /// Builds the per-retry [`AgentEvent::TurnReset`] signal. The caller is
+    /// `receive`, immediately before a retried attempt after the previous
+    /// attempt's stream failed mid-response. Carries nothing: a sink must
+    /// discard the text it has accumulated for this turn.
+    pub fn turn_reset() -> Self {
+        Self::TurnReset
+    }
+
     pub fn tool_requested(name: impl Into<String>, arguments: serde_json::Value) -> Self {
         Self::ToolRequested {
             name: name.into(),

@@ -106,6 +106,14 @@ pub enum TerminalEvent {
         reason: LearningSkipReason,
     },
     Complete,
+    /// The provider stream failed mid-answer and the turn is being retried
+    /// (`AgentEvent::TurnReset`). The partial answer printed so far is
+    /// discarded; the retry re-streams the full answer. Carried on the
+    /// JSON/NDJSON stream under its own tag so a machine consumer can replace
+    /// the text it accumulated instead of appending; the text adapter prints a
+    /// one-line notice, because an answer that silently restarts mid-stream
+    /// would read as the model repeating itself.
+    TurnReset,
     /// The SQL the model designated as the answering query for the turn.
     /// Carried on the NDJSON stream so a harness can pair the answer with its
     /// query; silent in the text adapter, where the SQL was already shown when
@@ -260,6 +268,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::Complete => Rendered {
             stdout: "\n".into(),
+            stderr: String::new(),
+        },
+        TerminalEvent::TurnReset => Rendered {
+            stdout: "provider stream interrupted — retrying\n".into(),
             stderr: String::new(),
         },
         TerminalEvent::AnswerDesignated { .. } => Rendered {

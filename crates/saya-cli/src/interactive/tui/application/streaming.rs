@@ -72,6 +72,13 @@ impl App {
                         AgentEvent::AssistantText { .. } | AgentEvent::ToolCompleted { .. } => {
                             self.request.activity = None;
                         }
+                        // The failed attempt's partial answer was discarded
+                        // and the turn is retrying; the spinner falls back to
+                        // plain thinking instead of a stale tool label until
+                        // the re-streamed answer arrives.
+                        AgentEvent::TurnReset => {
+                            self.request.activity = None;
+                        }
                         // The answer has streamed but the turn is not over:
                         // extraction is a second provider call the loop awaits.
                         // Without this the status bar falls back to "thinking"

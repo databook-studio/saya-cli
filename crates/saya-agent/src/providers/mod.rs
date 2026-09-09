@@ -22,6 +22,9 @@ pub use gemini::GeminiProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAiCompatibleProvider;
 pub use settings::ProviderSettings;
+// The turn-level retry in `loop_runner::receive` shares the one default
+// backoff schedule the HTTP establishment path uses.
+pub(crate) use settings::default_retry_delays;
 
 #[cfg(test)]
 mod context_block_tests {
