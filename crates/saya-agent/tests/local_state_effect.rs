@@ -286,6 +286,18 @@ impl ApprovalDecider for DenyApproval {
     }
 }
 
+/// A decider that grants every call — the counterpart of `DenyApproval`, used
+/// where the point is the loop's gates *after* approval was granted, not the
+/// approval policy itself.
+struct AllowApproval;
+
+#[async_trait]
+impl ApprovalDecider for AllowApproval {
+    async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
+        true
+    }
+}
+
 /// A tool that declares `external_side_effect` *without* also
 /// declaring `requires_approval` is a misconfiguration the policy refuses to
 /// auto-run, rather than trusting the author to set both. The refusal surfaces
@@ -358,8 +370,9 @@ async fn external_side_effect_without_approval_is_refused_not_auto_run() {
 /// The external-side-effect gate must NOT double-deny a tool
 /// that also requires approval and was approved — that is `render_chart`'s
 /// shape (`external_side_effect: true, requires_approval: true`). Approval is
-/// the real gate there; when granted, the tool runs. This preserves today's
-/// behaviour for the only real tool that sets `external_side_effect`.
+/// the real gate there; when it is granted, the tool runs. Read-only
+/// approval's denial of such tools is pinned in `approval_matrix.rs`, so this
+/// uses a decider that grants.
 #[tokio::test]
 async fn external_side_effect_with_approval_runs_when_approved() {
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -396,7 +409,7 @@ async fn external_side_effect_with_approval_runs_when_approved() {
         request(),
         vec![render_chart],
         AgentLimits::default(),
-        &AllowReadOnlyApproval,
+        &AllowApproval,
         &sink,
         saya_agent::CancellationToken::new(),
     )

@@ -13,7 +13,7 @@ mod learning;
 mod tool;
 mod usage;
 
-pub use approval::{AllowReadOnlyApproval, ApprovalDecider};
+pub use approval::{AllowReadOnlyApproval, ApprovalDecider, read_only_permits};
 pub use chat::{
     AgentRequest, ChatMessage, ChatRequest, ChatResponse, ContextBlock, ReasoningEffort,
     ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,

@@ -22,7 +22,7 @@ pub use protocol::contracts::{
     ChatResponse, ContextBlock, KnowledgeOutcome, LearningSkipReason, LocalStateEffect,
     OverrideFindingDto, ProposedClaimDto, ProviderError, ReasoningEffort, ResponseFormat,
     SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolDefinition, ToolEffect, ToolError,
-    ToolExecutor, ToolMetadata, ToolResultShape, UsageCall,
+    ToolExecutor, ToolMetadata, ToolResultShape, UsageCall, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::streaming::{
