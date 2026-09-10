@@ -70,6 +70,30 @@ impl Journal {
     pub fn rebuild(&self) -> Result<JournalState, HarnessError> {
         Ok(replay(&self.read()?))
     }
+
+    /// Drops a torn trailing line — the half-written event a crash left —
+    /// so a resume's appends cannot concatenate onto it and turn a journal
+    /// that reads into one that corrupts. A whole-line journal is
+    /// untouched; the run lock must be held.
+    pub fn truncate_torn_tail(&self) -> Result<(), HarnessError> {
+        let raw = match fs::read_to_string(&self.path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(io_error("read run journal", &self.path, error)),
+        };
+        if raw.is_empty() || raw.ends_with('\n') {
+            return Ok(());
+        }
+        let keep = raw.rfind('\n').map_or(0, |index| index + 1);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.path)
+            .map_err(|error| io_error("truncate torn journal tail", &self.path, error))?;
+        file.write_all(&raw.as_bytes()[..keep])
+            .and_then(|()| file.sync_all())
+            .map_err(|error| io_error("truncate torn journal tail", &self.path, error))
+    }
 }
 
 /// The state a resume starts from, rebuilt by replaying the journal in
