@@ -253,7 +253,7 @@ async fn join_check_refuses_a_write_exactly_as_bounded_sql_query_does() {
 
 #[test]
 fn join_check_is_advertised_with_its_arguments_when_sharing_is_on() {
-    let tools = DatabaseTools::definitions(true, false, false);
+    let tools = DatabaseTools::definitions(true, false, false, false);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "join_check")
@@ -264,7 +264,7 @@ fn join_check_is_advertised_with_its_arguments_when_sharing_is_on() {
     assert!(tool.parameters["properties"]["connection"].is_object());
     assert!(tool.parameters["properties"]["sql"].is_object());
 
-    let hidden = DatabaseTools::definitions(false, false, false);
+    let hidden = DatabaseTools::definitions(false, false, false, false);
     assert!(
         !hidden.iter().any(|tool| tool.name == "join_check"),
         "join_check is not advertised when data sharing is off"

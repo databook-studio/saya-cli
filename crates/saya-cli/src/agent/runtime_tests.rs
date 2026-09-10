@@ -1412,7 +1412,7 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
 /// 4. Asserts contract_propose is absent from DatabaseTools::definitions(...).
 #[test]
 fn test_contract_propose_tool_not_advertised_to_model() {
-    let tools = super::tools::DatabaseTools::definitions(true, true, true);
+    let tools = super::tools::DatabaseTools::definitions(true, true, true, false);
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
     assert!(
         !names.contains(&"contract_propose"),

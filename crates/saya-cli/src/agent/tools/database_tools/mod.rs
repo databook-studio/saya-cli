@@ -23,6 +23,7 @@ mod workspace_glob;
 mod workspace_grep;
 mod workspace_list;
 mod workspace_read;
+mod workspace_write;
 
 // `ObservationLog` types the `observations` field; the observation records and
 // the drained log are re-exported so the agent runtime's learning wiring
@@ -50,6 +51,8 @@ pub(crate) use workspace_grep::{
 pub(crate) use workspace_list::WORKSPACE_LIST_MAX_ENTRIES;
 #[cfg(test)]
 pub(crate) use workspace_read::WORKSPACE_READ_MAX_BYTES;
+#[cfg(test)]
+pub(crate) use workspace_write::WORKSPACE_WRITE_MAX_BYTES;
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
@@ -263,7 +266,7 @@ mod tests {
 
     #[test]
     fn render_chart_requires_approval() {
-        let tools = DatabaseTools::definitions(true, false, false);
+        let tools = DatabaseTools::definitions(true, false, false, false);
         let chart_tool = tools
             .iter()
             .find(|tool| tool.name == "render_chart")

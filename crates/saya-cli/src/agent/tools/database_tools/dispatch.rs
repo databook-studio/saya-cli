@@ -33,15 +33,21 @@ impl DatabaseTools {
         }
         validate_arguments(name, &arguments)?;
         // The workspace tools are dispatched before connection resolution:
-        // they read the run's workspace directory, not a database, and a
-        // workspace-only run has no selected profile for `registry.resolve`
-        // to fail on. Like the contract tools they record NOTHING — an
-        // observation about a workspace file or path is not evidence about a
-        // database object.
-        if matches!(name, "workspace_read" | "workspace_list" | "glob" | "grep") {
+        // they read or write the run's workspace directory, not a database,
+        // and a workspace-only run has no selected profile for
+        // `registry.resolve` to fail on. Like the contract tools they record
+        // NOTHING — an observation about a workspace file or path is not
+        // evidence about a database object. (`workspace_write` reaches this
+        // routing only when the loop's permit gate already allowed it; the
+        // routing decides where it runs, never whether.)
+        if matches!(
+            name,
+            "workspace_read" | "workspace_list" | "workspace_write" | "glob" | "grep"
+        ) {
             return match name {
                 "workspace_read" => self.workspace_read(&arguments).await,
                 "workspace_list" => self.workspace_list(&arguments).await,
+                "workspace_write" => self.workspace_write(&arguments).await,
                 "glob" => self.workspace_glob(&arguments).await,
                 "grep" => self.workspace_grep(&arguments).await,
                 _ => Err(ToolError::UnsupportedTool),

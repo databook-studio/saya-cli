@@ -582,7 +582,7 @@ async fn grep_rejects_a_non_string_pattern_and_a_non_boolean_flag() {
 /// the generic read-only wording says "database", which these are not.
 #[test]
 fn workspace_search_definitions_are_read_shaped_and_always_advertised() {
-    let tools = DatabaseTools::definitions(false, false, false);
+    let tools = DatabaseTools::definitions(false, false, false, false);
     let completions = [
         ("workspace_list", "workspace directory listed"),
         ("glob", "workspace paths matched"),
