@@ -6,11 +6,16 @@
 //! and records lifecycle transitions into the journal and the store. The
 //! episode driver, resume and plan validation land on top of this.
 
+mod episode;
 mod sink;
 mod state;
 mod transitions;
 mod usage;
 
+pub use episode::{
+    EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest, EpisodeRun,
+    MAX_EPISODE_ATTEMPTS, ManifestBounds,
+};
 pub use sink::{EngineEventSink, EngineSinkError};
 pub use state::{RunState, RunTransition, RunTransitionError, transition};
 pub use transitions::TransitionEvent;
