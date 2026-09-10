@@ -69,4 +69,10 @@ pub enum ConfigError {
     /// offender inside a map.
     #[error("setting {field} has an invalid endpoint name {key:?}")]
     InvalidEndpointName { field: &'static str, key: String },
+    /// Two `[[ai.endpoints]]` entries in one configuration layer carry the
+    /// same name. Endpoints are keyed by name at resolution — a run binds a
+    /// role to a name — so a duplicate would make "which endpoint serves this
+    /// role" ambiguous. Rejected rather than resolved last-wins.
+    #[error("endpoint {0:?} is declared more than once in [ai.endpoints]; remove the duplicate")]
+    DuplicateEndpointName(String),
 }

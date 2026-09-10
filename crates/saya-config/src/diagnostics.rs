@@ -56,6 +56,9 @@ pub struct RedactedDiagnostics {
     pub memory_max_contracts: Option<u32>,
     pub memory_max_claims_per_contract: Option<u32>,
     pub memory_max_context_bytes: Option<u32>,
+    /// Declared `[[ai.endpoints]]`, keyed by name. `None` means the file did
+    /// not declare that field. Secrets stay references.
+    pub endpoints: BTreeMap<String, EndpointDiagnostics>,
 }
 
 /// A display-safe view of the *effective* runtime settings, with no resolved
@@ -90,6 +93,23 @@ pub struct ResolvedDiagnostics {
     pub memory_max_contracts: u32,
     pub memory_max_claims_per_contract: u32,
     pub memory_max_context_bytes: u32,
+    /// The resolved endpoint pool, keyed by name — always contains
+    /// `orchestrator`, the plain `[ai]` block fallback. Secrets stay
+    /// references: `api_key_reference` is the redacted label, never a value.
+    pub endpoints: BTreeMap<String, EndpointDiagnostics>,
+}
+
+/// One AI endpoint mirrored for display. `Option` means "not declared" in
+/// the file view and "resolved to none" in the resolved view; either way a
+/// secret appears only as its redacted reference label, never as a value —
+/// the same discipline as `api_key_reference` on the parent views.
+#[derive(Debug, Clone, Serialize)]
+pub struct EndpointDiagnostics {
+    pub name: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub api_key_reference: Option<String>,
 }
 
 impl RedactedDiagnostics {
@@ -118,6 +138,26 @@ impl RedactedDiagnostics {
             memory_max_contracts: file.memory.max_contracts,
             memory_max_claims_per_contract: file.memory.max_claims_per_contract,
             memory_max_context_bytes: file.memory.max_context_bytes,
+            endpoints: file
+                .ai
+                .endpoints
+                .iter()
+                .map(|endpoint| {
+                    (
+                        endpoint.name.clone(),
+                        EndpointDiagnostics {
+                            name: endpoint.name.clone(),
+                            provider: endpoint.provider.map(|value| value.as_str().into()),
+                            model: endpoint.model.clone(),
+                            base_url: endpoint.base_url.as_deref().map(redact_endpoint),
+                            api_key_reference: endpoint
+                                .api_key
+                                .as_ref()
+                                .map(|value| value.redacted_label()),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -152,6 +192,25 @@ impl ResolvedConfig {
             memory_max_contracts: self.memory.max_contracts,
             memory_max_claims_per_contract: self.memory.max_claims_per_contract,
             memory_max_context_bytes: self.memory.max_context_bytes,
+            endpoints: self
+                .endpoints
+                .iter()
+                .map(|(name, endpoint)| {
+                    (
+                        name.clone(),
+                        EndpointDiagnostics {
+                            name: endpoint.name.clone(),
+                            provider: Some(endpoint.provider.as_str().into()),
+                            model: Some(endpoint.model.clone()),
+                            base_url: endpoint.base_url.as_deref().map(redact_endpoint),
+                            api_key_reference: endpoint
+                                .api_key
+                                .as_ref()
+                                .map(|value| value.redacted_label()),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }

@@ -37,6 +37,25 @@ password = "hunter2"
 }
 
 #[test]
+fn inline_endpoint_api_key_error_names_the_endpoint_and_the_fix() {
+    let error =
+        ConfigFile::from_toml("[[ai.endpoints]]\nname = 'planner'\napi_key = 'sk-demo-123'\n")
+            .unwrap_err();
+    let text = error.to_string();
+    assert!(
+        text.contains("planner")
+            && text.contains("api_key")
+            && text.contains("{ env =")
+            && text.contains("not allowed"),
+        "error must name the endpoint, field, and fix: {text}"
+    );
+    assert!(
+        !text.contains("untagged enum"),
+        "raw serde noise must not leak: {text}"
+    );
+}
+
+#[test]
 fn reference_form_still_parses() {
     let config = ConfigFile::from_toml("[ai]\napi_key = { env = \"SAYA_API_KEY\" }\n").unwrap();
     assert!(config.ai.api_key.is_some());

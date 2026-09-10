@@ -81,6 +81,7 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 max_context_bytes: 16384,
             },
             ignored_project_overrides: Vec::new(),
+            endpoints: BTreeMap::new(),
         },
         connections: ConnectionsFile::default(),
         config_path: None,
