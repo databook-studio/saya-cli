@@ -7,6 +7,7 @@
 //! episode driver, resume and plan validation land on top of this.
 
 mod episode;
+mod plan;
 mod resume;
 mod sink;
 mod state;
@@ -16,6 +17,9 @@ mod usage;
 pub use episode::{
     EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest, EpisodeRun,
     MAX_EPISODE_ATTEMPTS, ManifestBounds,
+};
+pub use plan::{
+    MAX_PLAN_ATTEMPTS, PlanDriver, PlanError, PlanParseFailure, PlanRejection, PlanRequest,
 };
 pub use resume::{ResumeError, ResumeOutcome, ResumeRun, resume};
 pub use sink::{EngineEventSink, EngineSinkError};
