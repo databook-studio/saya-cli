@@ -236,6 +236,7 @@ pub(crate) mod tests_support {
                     max_context_bytes: 16384,
                 },
                 ignored_project_overrides: Vec::new(),
+                endpoints: BTreeMap::new(),
             },
             connections: ConnectionsFile::default(),
             config_path: None,

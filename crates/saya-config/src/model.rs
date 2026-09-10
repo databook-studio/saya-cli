@@ -85,6 +85,27 @@ fn inline_secret_hint(raw: &str) -> Option<String> {
                     }
                 }
             }
+            // Arrays of tables ([[ai.endpoints]]) hold per-entry secrets.
+            // The location must name *which* entry — an endpoint's `name`
+            // when present, its index otherwise — so the fix points at the
+            // right endpoint, not at the section as a whole.
+            if let Some(array) = val.as_array() {
+                for (index, element) in array.iter().enumerate() {
+                    let Some(entry) = element.as_table() else {
+                        continue;
+                    };
+                    for (key, val) in entry {
+                        if SECRET_KEYS.contains(&key.as_str()) && val.is_str() {
+                            let which = entry
+                                .get("name")
+                                .and_then(toml::Value::as_str)
+                                .map(|entry| format!("[{entry:?}]"))
+                                .unwrap_or_else(|| format!("[{index}]"));
+                            hits.push(format!("{section}.{name}{which}.{key}"));
+                        }
+                    }
+                }
+            }
         }
     }
     if hits.is_empty() {
@@ -131,6 +152,32 @@ pub struct AiFile {
     /// get it. Display only — reasoning is never persisted regardless of this
     /// setting.
     pub show_thinking: Option<bool>,
+    /// Named endpoints a run's roles can bind to (`[[ai.endpoints]]`). Empty
+    /// by default: an absent section changes nothing for anyone, and every
+    /// role keeps the plain `[ai]` block through the `orchestrator` fallback
+    /// at resolution.
+    #[serde(default)]
+    pub endpoints: Vec<EndpointFile>,
+}
+
+/// One `[[ai.endpoints]]` entry: a named endpoint a run's role can bind to.
+///
+/// The name is required — it is the key roles bind to. Unset fields inherit
+/// the plain `[ai]` block at resolution, so an endpoint only overrides what
+/// it declares (typically `base_url` and `api_key`); `name` never inherits.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndpointFile {
+    /// The run-scoped endpoint name. The same shape the run contracts use,
+    /// validated at resolution against `saya_types::is_name_shaped`.
+    pub name: String,
+    pub provider: Option<AiProvider>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    /// A reference (`{ env = ... }`), never an inline value — `SecretRef` is
+    /// an untagged enum, so an inline string fails to parse with the
+    /// `inline_secret_hint` diagnostic naming this endpoint.
+    pub api_key: Option<SecretRef>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

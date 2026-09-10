@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
+
 use saya_types::DatabaseProfile;
 
 use crate::{
     AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput, ThemeChoice,
+    endpoints::{ResolvedEndpoint, require_unique_endpoints, resolve_endpoints},
     jobs::{ResolvedJobs, require_max_iterations},
     layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
@@ -82,6 +85,13 @@ pub struct ResolvedConfig {
     /// that the project layer tried to override and were ignored. Empty when
     /// the project layer is trusted or set none of them.
     pub ignored_project_overrides: Vec<String>,
+    /// The named AI endpoints a run's roles bind to, keyed by run-scoped
+    /// name. Always contains `orchestrator`: the plain `[ai]` block whenever
+    /// no `[[ai.endpoints]]` entry is declared with that name, so an existing
+    /// config resolves the same pool it did before endpoints existed. An
+    /// endpoint's `api_key` stays a reference here; values are resolved only
+    /// at request time.
+    pub endpoints: BTreeMap<String, ResolvedEndpoint>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,10 +131,12 @@ pub struct ResolvedAi {
 pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let mut file = ConfigFile::default();
     if let Some(user) = input.user.as_ref() {
+        require_unique_endpoints(&user.ai.endpoints)?;
         merge(&mut file, user);
     }
     let protected = snapshot_protected(&file);
     if let Some(project) = input.project.as_ref() {
+        require_unique_endpoints(&project.ai.endpoints)?;
         merge(&mut file, project);
     }
     let ignored_project_overrides = if input.cli.trust_project_config {
@@ -178,24 +190,32 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let max_iterations = file.run.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
     require_max_iterations(max_iterations)?;
     let jobs = crate::jobs::resolve(&file.jobs, max_iterations as u64)?;
+    let ai = ResolvedAi {
+        provider: file.ai.provider.unwrap_or(AiProvider::Ollama),
+        model: file
+            .ai
+            .model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_MODEL.into()),
+        // Cloned, not moved: the endpoint map inherits these same fields as
+        // its fallback, and the file is read again by `resolve_endpoints`.
+        base_url: file.ai.base_url.clone(),
+        api_key: file.ai.api_key.clone(),
+        allow_data_sharing: file.ai.allow_data_sharing.unwrap_or(false),
+        temperature: file.ai.temperature.unwrap_or(0.1),
+        timeout_seconds: file.ai.timeout_seconds.unwrap_or(60),
+        idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
+        max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
+        context_byte_budget,
+        context_window_tokens: file.ai.context_window_tokens,
+        show_thinking: file.ai.show_thinking.unwrap_or(false),
+        retry_delays_ms,
+    };
+    let endpoints = resolve_endpoints(&file.ai, &ai)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
-        ai: ResolvedAi {
-            provider: file.ai.provider.unwrap_or(AiProvider::Ollama),
-            model: file.ai.model.unwrap_or_else(|| DEFAULT_MODEL.into()),
-            base_url: file.ai.base_url,
-            api_key: file.ai.api_key,
-            allow_data_sharing: file.ai.allow_data_sharing.unwrap_or(false),
-            temperature: file.ai.temperature.unwrap_or(0.1),
-            timeout_seconds: file.ai.timeout_seconds.unwrap_or(60),
-            idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
-            max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
-            context_byte_budget,
-            context_window_tokens: file.ai.context_window_tokens,
-            show_thinking: file.ai.show_thinking.unwrap_or(false),
-            retry_delays_ms,
-        },
+        ai,
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
         max_iterations,
@@ -207,6 +227,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         ui_theme: file.ui.theme.unwrap_or(ThemeChoice::Auto),
         memory,
         ignored_project_overrides,
+        endpoints,
     })
 }
 
