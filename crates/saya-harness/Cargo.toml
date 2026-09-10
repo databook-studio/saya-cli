@@ -12,15 +12,18 @@ saya-agent = { path = "../saya-agent", version = "0.4.1" }
 saya-store = { path = "../saya-store", version = "0.4.1" }
 saya-types = { path = "../saya-types", version = "0.4.1" }
 async-trait.workspace = true
+chrono.workspace = true
+duckdb.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sqlparser.workspace = true
 thiserror.workspace = true
-url.workspace = true
 tokio.workspace = true
+url.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
-duckdb.workspace = true
 proptest.workspace = true
+saya-connectors = { path = "../saya-connectors", version = "0.4.1" }

@@ -3,11 +3,13 @@
 //! A run is a persistent, resumable, budgeted, capability-scoped unit of
 //! delegated work. This crate owns its mechanics — where run directories
 //! live, how they are created, how a single writer claims one, and the
-//! append-only event journal a resume replays. The engine that drives
-//! episodes arrives in later milestones; nothing here talks to databases or
-//! providers. The fetch module (`fetch`) is the fail-closed decision of
-//! where a run may reach: the policy itself performs no network I/O, and the
-//! `http_fetch` tool it gates touches the wire only through that policy.
+//! append-only event journal a resume replays. The fetch module (`fetch`)
+//! is the fail-closed decision of where a run may reach: the policy itself
+//! performs no network I/O, and the `http_fetch` tool it gates touches the
+//! wire only through that policy. The one database surface the run engine
+//! holds is the run-scoped scratch database (`scratch`, ADR 0003): a
+//! different type with a different policy from every user-database
+//! connector, and never a `DatabaseConnector`.
 
 pub mod engine;
 pub mod fetch;
@@ -15,6 +17,7 @@ pub mod journal;
 pub mod lock;
 pub mod paths;
 pub mod run_dir;
+pub mod scratch;
 pub mod workspace;
 
 use std::path::Path;
