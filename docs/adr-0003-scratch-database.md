@@ -1,7 +1,8 @@
 # ADR 0003: The scratch database — the one writable SQL surface
 
-- Status: accepted. Reviewer sign-off on the narrowed hardening (decision 4) is recorded
-  in this ADR before `scratch_sql` merges — [plan](../plan/PLAN.md) §9, M4-0.
+- Status: accepted, amended 2026-09-10, signed off 2026-09-11. Decision 4 (the narrowed
+  hardening) was **withdrawn** by the M4-1 pinning; the sign-off below is on external access
+  off — see Amendments.
 - Date: 2026-09-10
 - Supersedes: nothing. Complements [ADR 0001](adr-0001-release-architecture.md) and
   [ADR 0002](adr-0002-memory-and-contract-trust-model.md).
@@ -252,6 +253,14 @@ unaffected, which is the capability the ADR was written to get.
 The narrowed-hardening review that decision 4 asked for is moot — there is nothing
 narrowed left to review. What M4-2 now needs sign-off on is the *ingestion* path that
 replaces `read_csv`.
+
+### 2026-09-11 — reviewer sign-off (M4-0's blocking condition)
+
+Signed off by the maintainer: **scratch opens with `enable_external_access(false)`**. The
+narrowed hardening of decision 4 is not adopted in any form; the measured all-or-nothing
+posture above is the decision. Corpus data reaches the scratch database through the workspace
+tools, which are already contained and already bounded, and not through DuckDB's own file
+readers. This satisfies the sign-off M4-0 made a blocking condition for M4-2.
 
 **Entry condition for M4-2, restated.** `scratch_sql` opens with external access off; its
 validator rejects any file-reading function outright rather than canonicalising a path
