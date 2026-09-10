@@ -216,7 +216,10 @@ impl Workspace {
     /// Validates `rel` and resolves it under the canonical root: argument
     /// validation, a component walk that refuses symlinks (creating missing
     /// directories only when `allow_create`), then the prefix check.
-    fn target(&self, rel: &str, allow_create: bool) -> Result<PathBuf, HarnessError> {
+    /// `pub(crate)` so the contained walk (`walk`) can re-run the exact same
+    /// check on every candidate it reports — the one validator, reused, not
+    /// re-derived.
+    pub(crate) fn target(&self, rel: &str, allow_create: bool) -> Result<PathBuf, HarnessError> {
         let comps = argument_components(rel)?;
         let mut path = self.root.clone();
         let mut depth = 0usize;
