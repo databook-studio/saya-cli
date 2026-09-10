@@ -54,3 +54,7 @@ mod join_check_tests;
 #[cfg(test)]
 #[path = "tools/workspace_read_tests.rs"]
 mod workspace_read_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_search_tests.rs"]
+mod workspace_search_tests;

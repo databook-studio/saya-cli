@@ -179,13 +179,6 @@ impl Workspace {
             .map_err(|error| io_error("list workspace directory", &dir, error))?;
         let mut entries = Vec::new();
         for entry in read {
-            if entries.len() > max_entries {
-                return Err(HarnessError::BoundsExceeded {
-                    path: rel.to_string(),
-                    found: entries.len() as u64,
-                    max: max_entries as u64,
-                });
-            }
             let entry = entry.map_err(|error| io_error("list workspace directory", &dir, error))?;
             let name = entry
                 .file_name()
@@ -208,6 +201,18 @@ impl Workspace {
             };
             let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
             entries.push(ListEntry { name, kind, size });
+            // Checked after the push, so the refusal fires when a directory
+            // holds MORE than `max_entries` entries — the (max+1)-th entry
+            // trips the bound with found > max, matching the search bounds
+            // and the walk's visited bound; a quietly shortened listing would
+            // read as the whole directory.
+            if entries.len() > max_entries {
+                return Err(HarnessError::BoundsExceeded {
+                    path: rel.to_string(),
+                    found: entries.len() as u64,
+                    max: max_entries as u64,
+                });
+            }
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(entries)

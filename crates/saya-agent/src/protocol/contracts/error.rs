@@ -37,6 +37,10 @@ pub enum ToolError {
     SqlNotString,
     #[error("invalid tool arguments: path must be a string")]
     PathNotString,
+    #[error("invalid tool arguments: pattern must be a string")]
+    PatternNotString,
+    #[error("invalid tool arguments: case_insensitive must be a boolean")]
+    CaseInsensitiveNotBool,
     #[error("no database profile is selected")]
     NoConnectionSelected,
     #[error("unknown connection \"{target}\"; available connections: {available}")]

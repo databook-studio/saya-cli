@@ -19,6 +19,9 @@ mod result_shape;
 // A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
 // runtime drains it after the loop to emit one `KnowledgeOverridden` event.
 mod override_log;
+mod workspace_glob;
+mod workspace_grep;
+mod workspace_list;
 mod workspace_read;
 
 // `ObservationLog` types the `observations` field; the observation records and
@@ -31,11 +34,20 @@ pub(crate) use observations::{
 // `OverrideLog` types the `override_log` field; re-exported so the runtime can
 // drain it to emit one `KnowledgeOverridden` event.
 pub(crate) use override_log::OverrideLog;
-// `WORKSPACE_READ_MAX_BYTES` types the `workspace_read` tool's read bound.
-// Re-exported for tests only, so the sibling test builds an oversized file
-// against the exact bound rather than a copy of it that can go stale. Gated
-// rather than `allow(unused_imports)`: the import genuinely is test-only, and
-// saying so is better than silencing the lint that noticed.
+// The workspace tool bounds type the workspace tools' harness arguments.
+// Re-exported for tests only, so the sibling tests build oversized files and
+// over-bound directories against the exact bounds rather than copies of them
+// that can go stale. Gated rather than `allow(unused_imports)`: the imports
+// genuinely are test-only, and saying so is better than silencing the lint
+// that noticed.
+#[cfg(test)]
+pub(crate) use workspace_glob::{WORKSPACE_GLOB_MAX_MATCHES, WORKSPACE_GLOB_MAX_VISITED};
+#[cfg(test)]
+pub(crate) use workspace_grep::{
+    WORKSPACE_GREP_MAX_LINE_BYTES, WORKSPACE_GREP_MAX_MATCHES, WORKSPACE_GREP_MAX_VISITED,
+};
+#[cfg(test)]
+pub(crate) use workspace_list::WORKSPACE_LIST_MAX_ENTRIES;
 #[cfg(test)]
 pub(crate) use workspace_read::WORKSPACE_READ_MAX_BYTES;
 
