@@ -33,5 +33,9 @@
 
 pub mod contain;
 pub mod manifest;
+pub mod pattern;
+pub mod search;
+pub mod walk;
 
 pub use contain::{EntryKind, ListEntry, ReadFile, Workspace};
+pub use search::{GlobMatch, GrepMatch, GrepOutcome};
