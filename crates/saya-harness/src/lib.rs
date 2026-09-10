@@ -5,8 +5,9 @@
 //! live, how they are created, how a single writer claims one, and the
 //! append-only event journal a resume replays. The engine that drives
 //! episodes arrives in later milestones; nothing here talks to databases or
-//! providers. The fetch egress policy (`fetch`) is the fail-closed decision
-//! of where a run may reach; it performs no network I/O itself.
+//! providers. The fetch module (`fetch`) is the fail-closed decision of
+//! where a run may reach: the policy itself performs no network I/O, and the
+//! `http_fetch` tool it gates touches the wire only through that policy.
 
 pub mod engine;
 pub mod fetch;
