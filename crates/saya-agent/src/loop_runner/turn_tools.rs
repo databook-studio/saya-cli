@@ -4,7 +4,7 @@
 //! returns; this function no longer signals which path ran, because both
 //! paths feed the same trim.
 
-use super::{check_cancelled, emit, failed_statements, output, tool_record, tools};
+use super::{check_cancelled, emit, failed_statements, failure_key, output, tool_record, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
     ChatMessage, ToolDefinition, ToolExecutor,
@@ -65,7 +65,7 @@ pub(super) async fn run_turn_tools(
             failed_statements::record_outcome(
                 failed,
                 last_successful_sql,
-                failed_statements::sql_of(call),
+                failure_key::key_of(call),
                 &result,
                 true,
                 &summary,
@@ -141,16 +141,17 @@ pub(super) async fn run_turn_tools(
             .await;
             continue;
         }
-        // A byte-identical repeat of a statement that already failed in this
-        // run is refused rather than re-executed: the failure is deterministic
-        // at parse/safety time, so re-running it wastes the turn (the benchmark
+        // A byte-identical repeat of a call that already failed in this run is
+        // refused rather than re-executed: the failure is deterministic at
+        // parse/safety time, so re-running it wastes the turn (the benchmark
         // saw one statement re-sent 384 times). Feed the prior error back as
         // the tool result so the model has the information it needs to change
         // approach. This does not fail the turn — the point is to return
-        // signal cheaply, not to abort.
-        if let Some(sql) = failed_statements::sql_of(&call)
-            && let Some(prior) = failed.prior_error(sql)
-        {
+        // signal cheaply, not to abort. The key is computed here, before
+        // `execute` below moves `call.arguments`, and reused for the outcome
+        // recording.
+        let key = failure_key::key_of(&call);
+        if let Some(prior) = failed.prior_error(&key) {
             check_cancelled(cancellation)?;
             let (result, summary) = failed_statements::refuse_repeat(prior);
             tool_metadata.push(crate::ToolMetadata {
@@ -202,9 +203,6 @@ pub(super) async fn run_turn_tools(
         let side_effect_denied = tools::external_side_effect_gated(definition);
         let workspace_denied = tools::workspace_write_denied(definition, limits);
         let executed = approved && !candidate_denied && !side_effect_denied && !workspace_denied;
-        // Capture the SQL before `execute` moves `call.arguments`; only SQL
-        // statements are tracked for repeat refusal and salvage nomination.
-        let sql = failed_statements::sql_of(&call).map(str::to_owned);
         // Capture the serialized arguments before `execute` moves
         // `call.arguments` — the persisted record carries what the model sent
         // (the statement for a SQL tool), and the value-free result shape is
@@ -244,7 +242,7 @@ pub(super) async fn run_turn_tools(
         failed_statements::record_outcome(
             failed,
             last_successful_sql,
-            sql.as_deref(),
+            key,
             &result,
             executed,
             &summary,

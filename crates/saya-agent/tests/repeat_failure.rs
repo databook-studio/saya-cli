@@ -1,9 +1,9 @@
-//! Loop invariant: a statement that already failed in this run is not
-//! re-executed, and a run that exhausts its budget surfaces its best available
-//! answer. These drive `run_agent_with_sink` end-to-end with a canned provider
-//! and a recording executor, asserting the observable contract: execution
-//! counts, the refusal message the model receives, and the nominated SQL on
-//! salvage.
+//! Loop invariant: a call that already failed in this run — a SQL statement
+//! or a non-SQL tool invocation — is not re-executed, and a run that
+//! exhausts its budget surfaces its best available answer. These drive
+//! `run_agent_with_sink` end-to-end with a canned provider and a recording
+//! executor, asserting the observable contract: execution counts, the
+//! refusal message the model receives, and the nominated SQL on salvage.
 //!
 //! The cap on remembered failures is pinned by an inline unit test in
 //! `loop_runner/failed_statements.rs` (it references the private
@@ -112,6 +112,43 @@ fn tool_turn(id: &str, sql: &str) -> ChatMessage {
     }
 }
 
+/// A non-SQL tool the executor can fail on demand. It needs no approval and
+/// declares no effects, so like the query tool it auto-runs; before the
+/// anti-repeat memory was generalized beyond `sql`, an identical failing
+/// call to it was never a repeat.
+fn program_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "run_program".into(),
+        description: "run a program".into(),
+        read_only: false,
+        parameters: serde_json::json!({"type":"object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::None,
+        },
+        completion: None,
+    }
+}
+
+fn program_call(id: &str, command: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: "run_program".into(),
+        arguments: serde_json::json!({"command": command}),
+    }
+}
+
+fn program_turn(id: &str, command: &str) -> ChatMessage {
+    ChatMessage {
+        role: "assistant".into(),
+        content: String::new(),
+        tool_calls: vec![program_call(id, command)],
+        tool_call_id: None,
+    }
+}
+
 fn request() -> AgentRequest {
     AgentRequest {
         prompt: "answer the question".into(),
@@ -130,6 +167,17 @@ async fn run(
     executor: ScriptedExecutor,
     limits: AgentLimits,
 ) -> (saya_agent::AgentOutput, Vec<String>, Vec<ChatRequest>) {
+    run_with_tools(responses, executor, limits, vec![query_tool()]).await
+}
+
+/// Like [`run`], but with explicit tool definitions — the non-SQL repeat
+/// tests register `run_program` instead of the query tool.
+async fn run_with_tools(
+    responses: Vec<ChatMessage>,
+    executor: ScriptedExecutor,
+    limits: AgentLimits,
+    definitions: Vec<ToolDefinition>,
+) -> (saya_agent::AgentOutput, Vec<String>, Vec<ChatRequest>) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = CannedProvider {
         responses: Mutex::new(responses),
@@ -139,7 +187,7 @@ async fn run(
         &provider,
         &executor,
         request(),
-        vec![query_tool()],
+        definitions,
         limits,
         &AllowReadOnlyApproval,
         &RecordingSink {
@@ -395,5 +443,72 @@ async fn the_batch_path_records_failures_so_a_later_repeat_is_refused() {
     assert!(
         refusal.contains("bad batch"),
         "the refusal must name the earlier batch error, got: {refusal}"
+    );
+}
+
+/// An identical failing non-SQL tool call is refused on its second attempt —
+/// the anti-repeat memory is not SQL-only. Against the code before the
+/// generalization the executor ran the identical failing call every turn,
+/// because a call with no `sql` argument was never a repeat.
+#[tokio::test]
+async fn an_identical_failing_non_sql_call_is_refused_on_the_second_attempt() {
+    let executor = ScriptedExecutor {
+        calls: Arc::new(Mutex::new(Vec::new())),
+        fail: true,
+        error: "program exited 1".into(),
+    };
+    let (output, calls, requests) = run_with_tools(
+        vec![
+            program_turn("c1", "make report"),
+            program_turn("c2", "make report"),
+            ChatMessage::text("assistant", "changed approach"),
+        ],
+        executor,
+        AgentLimits::default(),
+        vec![program_tool()],
+    )
+    .await;
+    assert_eq!(
+        output.answer, "changed approach",
+        "the run completes after the refusal"
+    );
+    assert_eq!(
+        calls.len(),
+        1,
+        "the identical failing tool call must execute once, not twice: {calls:?}"
+    );
+    let refusal = last_tool_message_containing(&requests, "already failed")
+        .expect("the refusal must reach the model as a tool message");
+    assert!(
+        refusal.contains("program exited 1"),
+        "the refusal must name the earlier error, got: {refusal}"
+    );
+}
+
+/// A different argument value for the same tool is NOT a repeat — the whole
+/// invocation (name and arguments) is the failure, so changed arguments are a
+/// genuine change of approach and must execute.
+#[tokio::test]
+async fn a_different_argument_for_the_same_non_sql_tool_is_executed() {
+    let executor = ScriptedExecutor {
+        calls: Arc::new(Mutex::new(Vec::new())),
+        fail: true,
+        error: "program exited 1".into(),
+    };
+    let (_output, calls, _requests) = run_with_tools(
+        vec![
+            program_turn("c1", "make report"),
+            program_turn("c2", "make clean"),
+            ChatMessage::text("assistant", "done"),
+        ],
+        executor,
+        AgentLimits::default(),
+        vec![program_tool()],
+    )
+    .await;
+    assert_eq!(
+        calls.len(),
+        2,
+        "different arguments are a different call and must execute: {calls:?}"
     );
 }

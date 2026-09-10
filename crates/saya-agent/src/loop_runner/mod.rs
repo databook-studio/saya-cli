@@ -1,6 +1,7 @@
 mod compaction;
 mod designation;
 mod failed_statements;
+mod failure_key;
 mod output;
 mod receive;
 mod salvage;
@@ -51,9 +52,11 @@ pub async fn run_agent_with_sink(
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
     let mut turn_count = 0;
-    // Statements that failed during this run, so a byte-identical
-    // re-submission is refused rather than re-executed (loop invariant for the
-    // "do not repeat a failed query" advice the model does not always obey).
+    // Calls that failed during this run — SQL statements keyed on the
+    // statement exactly as submitted, other tools on (tool, arguments) — so a
+    // byte-identical re-submission is refused rather than re-executed (loop
+    // invariant for the "do not repeat a failed call" advice the model does
+    // not always obey).
     let mut failed = failed_statements::FailedStatements::new();
     // The last statement that completed successfully, so a run that exhausts its
     // budget without nominating can still surface its best available answer.
