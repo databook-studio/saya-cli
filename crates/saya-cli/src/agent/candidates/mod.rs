@@ -17,6 +17,7 @@ mod orchestrate;
 
 use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
 use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
+use saya_harness::workspace::Workspace;
 use saya_store::SqliteStateStore;
 use std::future::Future;
 use std::pin::Pin;
@@ -57,6 +58,9 @@ pub(crate) async fn run_with_candidates(
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
+    // The run's contained workspace, when a run engine opened one. `None`
+    // leaves `workspace_read` denying with a typed error.
+    workspace: Option<Arc<Workspace>>,
     candidates: usize,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
@@ -72,6 +76,7 @@ pub(crate) async fn run_with_candidates(
             state_db,
             decider,
             last_sql,
+            workspace,
         )
         .await;
     }
@@ -87,6 +92,7 @@ pub(crate) async fn run_with_candidates(
         state_db,
         decider,
         last_sql,
+        workspace,
     );
     orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await
 }

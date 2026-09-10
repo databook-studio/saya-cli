@@ -386,6 +386,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
         Some(store),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -486,6 +487,7 @@ async fn knowledge_supplied_precedes_the_provider_request() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
+        None,
         None,
         None,
     )
@@ -708,6 +710,7 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
+        None,
         None,
         None,
     )
@@ -948,6 +951,7 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
         Some(store.clone()),
         None,
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1076,6 +1080,7 @@ async fn the_extraction_call_reports_its_usage_on_the_stream() {
         Some(store.clone()),
         None,
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1190,6 +1195,7 @@ async fn an_extraction_with_no_response_emits_no_usage_event() {
         Some(store.clone()),
         None,
         None,
+        None,
     )
     .await
     .expect("turn completes despite the extraction failure");
@@ -1275,6 +1281,7 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store.clone()),
+        None,
         None,
         None,
     )
@@ -1378,6 +1385,7 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store.clone()),
+        None,
         None,
         None,
     )
@@ -1502,6 +1510,7 @@ async fn test_anti_self_reinforcement_end_to_end() {
         Some(store.clone()),
         None,
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1574,6 +1583,7 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1637,6 +1647,7 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
+        None,
         None,
         None,
         None,
@@ -1838,6 +1849,7 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
         Some(store),
         None,
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1909,6 +1921,7 @@ async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
         Some(store),
         None,
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1968,6 +1981,7 @@ async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
+        None,
         None,
         None,
     )
@@ -2030,6 +2044,7 @@ async fn a_candidate_claim_contradicted_emits_nothing() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
+        None,
         None,
         None,
     )
@@ -2100,6 +2115,7 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
+        None,
         None,
         None,
     )
@@ -2248,6 +2264,7 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
         Some(store.clone()),
         None,
         None,
+        None,
     )
     .await
     .expect("turn completes despite extraction timeout (fail-soft)");
@@ -2345,6 +2362,7 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
+        None,
         None,
         None,
     )
@@ -2446,6 +2464,7 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
+        None,
         None,
         None,
     )

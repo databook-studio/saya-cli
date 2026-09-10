@@ -40,6 +40,43 @@ impl DatabaseTools {
             },
             completion: None,
         }];
+        // The workspace read is unconditional: it touches no database data, so
+        // the privacy gate does not hide it. When no workspace is attached —
+        // every path until the run engine passes one in — dispatch denies with
+        // a typed error rather than the definition advertising a dead tool
+        // silently succeeding. It states its own completion: the generic
+        // read-only wording says "database", which a workspace file read is
+        // not.
+        tools.push(ToolDefinition {
+            name: "workspace_read".into(),
+            description: "Read one file from this run's workspace — the contained \
+                directory holding this run's files. Pass `path` relative to the \
+                workspace root; absolute paths, `..` escapes, and symlinks are \
+                refused. Returns `content`, the file's full `size` in bytes, and \
+                `truncated`. Read `truncated` first: when it is true, `content` is \
+                only a prefix capped at the read bound — use `size` to judge how \
+                much was cut, and never present capped content as the whole file."
+                .into(),
+            read_only: true,
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to the workspace root."
+                    }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            effect: ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::Read,
+            },
+            completion: Some("workspace file read".into()),
+        });
         if allow_query_data {
             tools.push(ToolDefinition {
                 name: "bounded_sql_query".into(),
@@ -265,6 +302,7 @@ pub(super) fn validate_arguments(
     let object = arguments.as_object().ok_or(ToolError::ArgumentsNotObject)?;
     let (allowed, requires_sql) = match name {
         "schema_discovery" => (&["connection"][..], false),
+        "workspace_read" => (&["path"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
         "bounded_sql_query_all" => (&["sql"][..], true),
         "result_shape" => (&["connection", "sql"][..], true),
@@ -288,6 +326,9 @@ pub(super) fn validate_arguments(
     }
     if requires_sql && !object.get("sql").is_some_and(serde_json::Value::is_string) {
         return Err(ToolError::SqlNotString);
+    }
+    if name == "workspace_read" && !object.get("path").is_some_and(serde_json::Value::is_string) {
+        return Err(ToolError::PathNotString);
     }
     Ok(())
 }

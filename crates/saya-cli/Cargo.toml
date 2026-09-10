@@ -33,6 +33,7 @@ futures-util.workspace = true
 saya-agent = { path = "../saya-agent", version = "0.4.1" }
 saya-config = { path = "../saya-config", version = "0.4.1" }
 saya-connectors = { path = "../saya-connectors", version = "0.4.1" }
+saya-harness = { path = "../saya-harness", version = "0.4.1" }
 saya-store = { path = "../saya-store", version = "0.4.1" }
 saya-types = { path = "../saya-types", version = "0.4.1" }
 serde.workspace = true

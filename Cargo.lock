@@ -3005,6 +3005,7 @@ dependencies = [
  "saya-agent",
  "saya-config",
  "saya-connectors",
+ "saya-harness",
  "saya-store",
  "saya-types",
  "serde",
