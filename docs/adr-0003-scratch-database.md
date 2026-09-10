@@ -204,5 +204,55 @@ that amendment lands, this ADR describes intent, not verified behaviour.
 
 ## Amendments
 
-*(none yet — M4-1's pinning results are recorded here before M4-2 merges, together
-with the reviewer sign-off required by M4-0.)*
+### 2026-09-10 — M4-1 pinning: decision 4 is withdrawn
+
+`crates/saya-harness/tests/scratch_semantics.rs` ran the configuration against the
+bundled engine. Three of its claims held. Two did not, and one of those is a security
+finding that changes the decision rather than qualifying it.
+
+**Held.** ReadWrite creates a missing database file; it does not create missing parent
+directories; DDL and DML round-trip; `read_csv` on a local file works while external
+access is on; `lock_configuration` refuses `SET enable_external_access` in *both*
+directions after open; an `https://` URL is unreadable with no extension loaded.
+
+**Did not hold — file mode.** DuckDB creates the database file at **0644**, group- and
+world-readable. The run directory is 0700, so nothing reaches it today, but the file
+carries no protection of its own: whatever widens the run directory exposes every
+staged row. A `chmod` after create is the caller's job, and the ADR should not have
+assumed otherwise.
+
+**Did not hold — extensions, and this withdraws decision 4.** The claim was that
+`enable_autoload_extension(false)`, community-extension denial and `lock_configuration`
+keep extensions out while `enable_external_access(true)` lets corpus files load. All
+three miss:
+
+- `httpfs` is a **core** extension, so `allow_community_extensions = false` never
+  applies to it;
+- autoload governs *implicit* loading, not an explicit `INSTALL` or `LOAD`;
+- `lock_configuration` locks settings, and `INSTALL` is not a setting.
+
+Measured: `INSTALL httpfs` succeeds — reaching DuckDB's extension repository over the
+network to do it — `LOAD httpfs` succeeds, and the connection then makes outbound TCP
+connections. **That is an egress path that never crosses the fetch policy (M3-1).** A
+`scratch_sql` shipped on decision 4 would have made SSRF-by-SQL available to any run
+holding the `scratch` scope, with the fetch allowlist intact and bypassed. The
+discriminator is pinned as a test on the error *kind*: with external access on the read
+fails at the network layer, with it off the same statement fails at DuckDB's permission
+layer and never leaves the process.
+
+**Therefore decision 4 is withdrawn and the recorded fallback becomes the decision:
+`enable_external_access(false)`.** Measured, that refuses `INSTALL`, `LOAD`, an http
+read *and a local file read*, all at the permission layer — the flag is all-or-nothing;
+there is no "local files yes, network no" setting to reach for. So the fallback is not a
+milder decision 4, it is the whole of it: **no `read_csv` inside the engine at all**, and
+corpus loading happens outside it, through the workspace tools that are already
+contained and already bounded. DDL, DML and joins on the scratch file itself are
+unaffected, which is the capability the ADR was written to get.
+
+The narrowed-hardening review that decision 4 asked for is moot — there is nothing
+narrowed left to review. What M4-2 now needs sign-off on is the *ingestion* path that
+replaces `read_csv`.
+
+**Entry condition for M4-2, restated.** `scratch_sql` opens with external access off; its
+validator rejects any file-reading function outright rather than canonicalising a path
+argument; the property battery asserts the permission-layer refusal, not a path check.

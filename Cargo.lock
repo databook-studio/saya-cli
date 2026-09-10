@@ -3060,6 +3060,7 @@ dependencies = [
 name = "saya-harness"
 version = "0.4.1"
 dependencies = [
+ "duckdb",
  "libc",
  "proptest",
  "saya-types",
