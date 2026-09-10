@@ -10,6 +10,7 @@ use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, AgentRequest,
     ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, run_agent_with_sink,
 };
+use saya_harness::workspace::Workspace;
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
@@ -27,6 +28,9 @@ pub(crate) async fn run_prompt_with_sink(
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
+    // The run's contained workspace, when a run engine opened one. `None`
+    // leaves `workspace_read` denying with a typed error.
+    workspace: Option<Arc<Workspace>>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let inputs = prepare_turn(runtime, &overrides, can_prompt)
         .await
@@ -43,6 +47,7 @@ pub(crate) async fn run_prompt_with_sink(
         state_db,
         decider,
         last_sql,
+        workspace,
     )
     .await
 }
@@ -61,6 +66,9 @@ pub(crate) async fn run_prompt_with_inputs(
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
+    // The run's contained workspace, when a run engine opened one. `None`
+    // leaves `workspace_read` denying with a typed error.
+    workspace: Option<Arc<Workspace>>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = inputs.ai;
     let provider = inputs.provider;
@@ -129,7 +137,8 @@ pub(crate) async fn run_prompt_with_inputs(
         learning.observations,
     )
     .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect())
-    .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()));
+    .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()))
+    .with_workspace(workspace);
     let request = AgentRequest {
         prompt: prompt.into(),
         profile_names,

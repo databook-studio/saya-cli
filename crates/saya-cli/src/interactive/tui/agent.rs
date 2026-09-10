@@ -126,6 +126,7 @@ pub(crate) fn start(
             Some(state_db),
             Some(decider),
             last_sql,
+            None,
         ));
         let _ = tx.send(StreamMsg::Done(result.map_err(|error| error.to_string())));
     });

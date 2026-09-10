@@ -32,6 +32,15 @@ impl DatabaseTools {
             return self.execute_contract_tool(name, arguments).await;
         }
         validate_arguments(name, &arguments)?;
+        // The workspace tool is dispatched before connection resolution: it
+        // reads the run's workspace directory, not a database, and a
+        // workspace-only run has no selected profile for `registry.resolve` to
+        // fail on. Like the contract tools it records NOTHING — an observation
+        // about reading a workspace file is not evidence about a database
+        // object.
+        if name == "workspace_read" {
+            return self.workspace_read(&arguments).await;
+        }
         if matches!(
             name,
             "bounded_sql_query"

@@ -8,6 +8,7 @@ use super::AttemptRunner;
 use async_trait::async_trait;
 use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
+use saya_harness::workspace::Workspace;
 use saya_store::SqliteStateStore;
 use saya_types::{QueryRequest, QueryResult, SqlDialect};
 use std::future::Future;
@@ -93,6 +94,7 @@ pub(crate) struct LiveAttemptRunner<'a> {
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
+    workspace: Option<Arc<Workspace>>,
 }
 
 impl<'a> LiveAttemptRunner<'a> {
@@ -108,6 +110,7 @@ impl<'a> LiveAttemptRunner<'a> {
         state_db: Option<SqliteStateStore>,
         decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
         last_sql: Option<String>,
+        workspace: Option<Arc<Workspace>>,
     ) -> Self {
         Self {
             runtime,
@@ -120,6 +123,7 @@ impl<'a> LiveAttemptRunner<'a> {
             state_db,
             decider,
             last_sql,
+            workspace,
         }
     }
 }
@@ -139,6 +143,7 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
             self.state_db.clone(),
             self.decider.clone(),
             self.last_sql.clone(),
+            self.workspace.clone(),
         ))
     }
 }

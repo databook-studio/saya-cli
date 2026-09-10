@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use saya_harness::workspace::Workspace;
 use saya_store::SqliteStateStore;
 
 use crate::connection::ConnectionRegistry;
@@ -18,6 +19,7 @@ mod result_shape;
 // A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
 // runtime drains it after the loop to emit one `KnowledgeOverridden` event.
 mod override_log;
+mod workspace_read;
 
 // `ObservationLog` types the `observations` field; the observation records and
 // the drained log are re-exported so the agent runtime's learning wiring
@@ -29,6 +31,13 @@ pub(crate) use observations::{
 // `OverrideLog` types the `override_log` field; re-exported so the runtime can
 // drain it to emit one `KnowledgeOverridden` event.
 pub(crate) use override_log::OverrideLog;
+// `WORKSPACE_READ_MAX_BYTES` types the `workspace_read` tool's read bound.
+// Re-exported for tests only, so the sibling test builds an oversized file
+// against the exact bound rather than a copy of it that can go stale. Gated
+// rather than `allow(unused_imports)`: the import genuinely is test-only, and
+// saying so is better than silencing the lint that noticed.
+#[cfg(test)]
+pub(crate) use workspace_read::WORKSPACE_READ_MAX_BYTES;
 
 /// Agent tools for inspecting and querying configured database connections.
 pub(crate) struct DatabaseTools {
@@ -59,6 +68,13 @@ pub(crate) struct DatabaseTools {
     /// means no event, never a side effect. An `Arc` so the runtime can drain
     /// after the tools consume their clone.
     pub(super) override_log: Option<Arc<OverrideLog>>,
+    /// The run's contained workspace, the only file I/O a model-facing tool
+    /// reaches. Path resolution is delegated entirely to `Workspace::read` —
+    /// nothing here resolves a path itself. `None` (every current path, until
+    /// the run engine passes one in) leaves `workspace_read` denying with a
+    /// typed error: no workspace, no read. An `Arc` so the engine's handle and
+    /// the tools share one resolved root.
+    pub(super) workspace: Option<Arc<Workspace>>,
 }
 
 impl DatabaseTools {
@@ -97,6 +113,7 @@ impl DatabaseTools {
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
+            workspace: None,
         }
     }
 
@@ -121,6 +138,7 @@ impl DatabaseTools {
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
+            workspace: None,
         }
     }
 
@@ -145,6 +163,7 @@ impl DatabaseTools {
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
+            workspace: None,
         }
     }
 
@@ -161,6 +180,15 @@ impl DatabaseTools {
     /// Attaches the turn's supplied qualified object names (from `RecallReceipt::supplied`).
     pub(crate) fn with_supplied_objects(mut self, supplied_objects: Vec<String>) -> Self {
         self.supplied_objects = supplied_objects;
+        self
+    }
+
+    /// Attaches the run's contained workspace. `None` (every current caller,
+    /// until the run engine resolves and opens one) leaves `workspace_read`
+    /// denying with a typed error — the definition is advertised, the dispatch
+    /// refuses.
+    pub(crate) fn with_workspace(mut self, workspace: Option<Arc<Workspace>>) -> Self {
+        self.workspace = workspace;
         self
     }
 
@@ -183,6 +211,7 @@ impl DatabaseTools {
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
+            workspace: None,
         }
     }
 
@@ -206,6 +235,7 @@ impl DatabaseTools {
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
+            workspace: None,
         }
     }
 }

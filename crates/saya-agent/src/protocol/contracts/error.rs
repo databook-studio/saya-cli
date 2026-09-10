@@ -35,6 +35,8 @@ pub enum ToolError {
     ConnectionNotString,
     #[error("invalid tool arguments: sql must be a string")]
     SqlNotString,
+    #[error("invalid tool arguments: path must be a string")]
+    PathNotString,
     #[error("no database profile is selected")]
     NoConnectionSelected,
     #[error("unknown connection \"{target}\"; available connections: {available}")]
@@ -51,4 +53,11 @@ pub enum ToolError {
     SchemaDiscoveryFailed(String),
     #[error("{0}")]
     Chart(String),
+    #[error("no workspace is available in this run")]
+    WorkspaceUnavailable,
+    /// A workspace operation failed. The detail is the harness containment
+    /// error's own text — path resolution, symlink refusal, bounds — so the
+    /// model reads the real reason rather than a guess.
+    #[error("workspace read failed: {0}")]
+    Workspace(String),
 }

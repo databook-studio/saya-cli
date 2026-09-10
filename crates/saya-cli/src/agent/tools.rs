@@ -50,3 +50,7 @@ mod column_health_tests;
 #[cfg(test)]
 #[path = "tools/join_check_tests.rs"]
 mod join_check_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_read_tests.rs"]
+mod workspace_read_tests;
