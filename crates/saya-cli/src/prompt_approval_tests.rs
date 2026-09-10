@@ -24,7 +24,7 @@ fn side_effecting_tool() -> ToolDefinition {
 }
 
 fn database_tools() -> Vec<ToolDefinition> {
-    DatabaseTools::definitions(true, false, false)
+    DatabaseTools::definitions(true, false, false, false)
 }
 
 #[tokio::test]

@@ -366,13 +366,13 @@ async fn tool_execution_rejects_arguments_outside_its_schema() {
 
 #[test]
 fn definitions_include_fan_out_only_when_query_data_allowed() {
-    let with_data: Vec<String> = DatabaseTools::definitions(true, false, false)
+    let with_data: Vec<String> = DatabaseTools::definitions(true, false, false, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
     assert!(with_data.iter().any(|name| name == "bounded_sql_query_all"));
 
-    let without_data: Vec<String> = DatabaseTools::definitions(false, false, false)
+    let without_data: Vec<String> = DatabaseTools::definitions(false, false, false, false)
         .into_iter()
         .map(|tool| tool.name)
         .collect();
@@ -386,7 +386,7 @@ fn definitions_include_fan_out_only_when_query_data_allowed() {
 
 #[test]
 fn definitions_preserve_the_read_only_and_approval_contract() {
-    let tools = DatabaseTools::definitions(true, false, false);
+    let tools = DatabaseTools::definitions(true, false, false, false);
     let tool = |name: &str| tools.iter().find(|tool| tool.name == name).unwrap();
 
     let schema = tool("schema_discovery");
@@ -416,7 +416,7 @@ fn definitions_preserve_the_read_only_and_approval_contract() {
 /// statement. It states its own completion instead.
 #[test]
 fn render_chart_declares_an_honest_effect() {
-    let tools = DatabaseTools::definitions(true, false, false);
+    let tools = DatabaseTools::definitions(true, false, false, false);
     let chart = tools
         .iter()
         .find(|tool| tool.name == "render_chart")
@@ -438,7 +438,7 @@ fn render_chart_declares_an_honest_effect() {
 /// probe is never the answering query.
 #[test]
 fn designate_answer_description_forbids_an_exploratory_probe() {
-    let tools = DatabaseTools::definitions(true, false, false);
+    let tools = DatabaseTools::definitions(true, false, false, false);
     let designate = tools
         .iter()
         .find(|tool| tool.name == "designate_answer")
@@ -462,7 +462,7 @@ fn designate_answer_description_forbids_an_exploratory_probe() {
 fn every_tool_declares_its_local_state_effect() {
     use saya_agent::LocalStateEffect;
 
-    let tools = DatabaseTools::definitions(true, true, false);
+    let tools = DatabaseTools::definitions(true, true, false, false);
     let expected = [
         ("schema_discovery", LocalStateEffect::None),
         ("bounded_sql_query", LocalStateEffect::None),
@@ -497,7 +497,7 @@ fn every_tool_declares_its_local_state_effect() {
     // turn record, so learning no longer depends on the model volunteering a call.
     // Asserting the tool is *absent* is the point — if it reappears, two paths to
     // the same write exist again and the model has to choose between them.
-    let tools = DatabaseTools::definitions(true, true, true);
+    let tools = DatabaseTools::definitions(true, true, true, false);
     assert!(
         !tools.iter().any(|tool| tool.name == "contract_propose"),
         "contract_propose is retired; the harness owns proposals"

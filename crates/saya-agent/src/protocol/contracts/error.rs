@@ -37,6 +37,8 @@ pub enum ToolError {
     SqlNotString,
     #[error("invalid tool arguments: path must be a string")]
     PathNotString,
+    #[error("invalid tool arguments: content must be a string")]
+    ContentNotString,
     #[error("invalid tool arguments: pattern must be a string")]
     PatternNotString,
     #[error("invalid tool arguments: case_insensitive must be a boolean")]
@@ -59,9 +61,18 @@ pub enum ToolError {
     Chart(String),
     #[error("no workspace is available in this run")]
     WorkspaceUnavailable,
-    /// A workspace operation failed. The detail is the harness containment
+    /// A workspace read failed. The detail is the harness containment
     /// error's own text — path resolution, symlink refusal, bounds — so the
     /// model reads the real reason rather than a guess.
     #[error("workspace read failed: {0}")]
     Workspace(String),
+    /// A workspace write failed. The detail is the harness containment
+    /// error's own text, for the same reason [`ToolError::Workspace`] is.
+    #[error("workspace write failed: {0}")]
+    WorkspaceWrite(String),
+    /// The content argument of a workspace write exceeded the tool's byte
+    /// bound. Typed — and refused whole, never truncated: a partially
+    /// written file is worse than a refused one.
+    #[error("workspace write refused: content is over the {limit}-byte write bound")]
+    WorkspaceWriteTooLarge { limit: usize },
 }

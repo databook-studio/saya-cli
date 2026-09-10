@@ -10,11 +10,15 @@ impl DatabaseTools {
     /// precedent. `permit_candidate_writes` gates nothing here: no tool
     /// declares `WriteCandidate` — proposals are extracted post-turn from the
     /// bounded turn record — so the flag is accepted only to keep the call
-    /// sites unchanged.
+    /// sites unchanged. `permit_workspace_writes` gates `workspace_write` the
+    /// hidden-not-advertised way: a write tool the model can see but never use
+    /// wastes context and invites retries, so it is omitted until the run was
+    /// constructed with workspace writes permitted.
     pub(crate) fn definitions(
         allow_query_data: bool,
         has_state_store: bool,
         permit_candidate_writes: bool,
+        permit_workspace_writes: bool,
     ) -> Vec<ToolDefinition> {
         let connection_prop = serde_json::json!({
             "type": "string",
@@ -180,6 +184,51 @@ impl DatabaseTools {
             },
             completion: Some("workspace text searched".into()),
         });
+        // The workspace write is the first model-facing tool that writes
+        // anything, so it declares `WriteWorkspace` honestly: that declaration
+        // is what the loop's fail-closed gate keys on, and the scope approval
+        // plus the permit are the gate — there is deliberately no per-call
+        // prompt (D7). It is pushed only when workspace writes are permitted:
+        // advertised-but-unusable would waste context and invite retries, so
+        // the definition is hidden, not merely dead (D15 keeps `edit_file`
+        // absent — whole-file writes only).
+        if permit_workspace_writes {
+            tools.push(ToolDefinition {
+                name: "workspace_write".into(),
+                description: "Write one file into this run's workspace — the contained \
+                    directory holding this run's files. Pass `path` relative to the workspace \
+                    root and `content` as the full text to store; the file is written \
+                    atomically — replaced whole or not at all, never partially. Absolute \
+                    paths, `..` escapes, and symlinks are refused, content over the write \
+                    bound is refused whole, and existing files are replaced by the new \
+                    content. Returns the `path` and `bytes_written`."
+                    .into(),
+                read_only: false,
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path relative to the workspace root."
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The full text to store in the file, replacing \
+                                any previous content."
+                        }
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": false
+                }),
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::WriteWorkspace,
+                },
+                completion: Some("workspace file written".into()),
+            });
+        }
         if allow_query_data {
             tools.push(ToolDefinition {
                 name: "bounded_sql_query".into(),
@@ -407,6 +456,7 @@ pub(super) fn validate_arguments(
         "schema_discovery" => (&["connection"][..], false),
         "workspace_read" => (&["path"][..], false),
         "workspace_list" => (&["path"][..], false),
+        "workspace_write" => (&["path", "content"][..], false),
         "glob" => (&["pattern"][..], false),
         "grep" => (&["pattern", "case_insensitive"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
@@ -435,6 +485,19 @@ pub(super) fn validate_arguments(
     }
     if name == "workspace_read" && !object.get("path").is_some_and(serde_json::Value::is_string) {
         return Err(ToolError::PathNotString);
+    }
+    // Both `workspace_write` arguments are required strings; each names its
+    // own typed error so the model can fix the right one.
+    if name == "workspace_write" {
+        if !object.get("path").is_some_and(serde_json::Value::is_string) {
+            return Err(ToolError::PathNotString);
+        }
+        if !object
+            .get("content")
+            .is_some_and(serde_json::Value::is_string)
+        {
+            return Err(ToolError::ContentNotString);
+        }
     }
     // `workspace_list`'s path is optional — absent means the root — so only a
     // present non-string is rejected.

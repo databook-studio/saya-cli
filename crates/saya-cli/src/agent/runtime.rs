@@ -171,6 +171,7 @@ pub(crate) async fn run_prompt_with_inputs(
             allow_query_data,
             has_state_store,
             limits.permit_candidate_writes,
+            limits.permit_workspace_writes,
         ),
         limits,
         approver,
