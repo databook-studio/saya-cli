@@ -39,3 +39,10 @@ __pycache__/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Subagent scaffolding: a task packet, a run log, a gate log. These are written
+# into a worktree by the agent driving it and are never part of a change.
+# gate2.log reached the repo in 320c514 before this rule existed.
+/TASK.md
+/run.log
+/gate*.log
