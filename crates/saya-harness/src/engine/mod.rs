@@ -1,10 +1,17 @@
 //! The run engine.
 //!
-//! Only the state machine exists so far: a pure transition table over the run
-//! lifecycle, with no I/O and no async, so the legal shape of a run can be
-//! settled and tested before anything drives it. The episode driver, resume and
-//! the event sink land on top of this.
+//! The state machine is a pure transition table over the run lifecycle: no
+//! I/O, no async. The event sink is the engine's `AgentEventSink` — it
+//! counts usage across the run, enforces the wall-clock deadline per tick,
+//! and records lifecycle transitions into the journal and the store. The
+//! episode driver, resume and plan validation land on top of this.
 
+mod sink;
 mod state;
+mod transitions;
+mod usage;
 
+pub use sink::{EngineEventSink, EngineSinkError};
 pub use state::{RunState, RunTransition, RunTransitionError, transition};
+pub use transitions::TransitionEvent;
+pub use usage::UsageTotals;

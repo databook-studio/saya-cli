@@ -8,7 +8,10 @@ repository.workspace = true
 description = "Run engine for SAYA: run directories, paths, and the single-writer lock."
 
 [dependencies]
+saya-agent = { path = "../saya-agent", version = "0.4.1" }
+saya-store = { path = "../saya-store", version = "0.4.1" }
 saya-types = { path = "../saya-types", version = "0.4.1" }
+async-trait.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
@@ -20,3 +23,4 @@ libc = "0.2"
 [dev-dependencies]
 duckdb.workspace = true
 proptest.workspace = true
+tokio.workspace = true
