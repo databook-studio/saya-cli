@@ -81,7 +81,7 @@ pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -
 /// persists a candidate claim) must not read as a "read-only" completion —
 /// that would be a false statement in the feature whose pitch is that it
 /// does not overstate what it knows. The failure summary always keeps the
-/// substring "failed": `tool_metadata.status` and the statement-outcome
+/// substring "failed": `tool_metadata.status` and the call-outcome
 /// memory derive their failure signal from it. `None` (no definition found)
 /// falls back to the write wording, matching the pre-definition lookup
 /// behavior for a call whose definition is absent.

@@ -1,34 +1,44 @@
-//! The run's statement-outcome memory: which SQL statements have failed (so a
-//! byte-identical repeat is refused) and which succeeded last (so a budget
-//! that runs out can still nominate an answer). The system prompt already
-//! asks the model not to repeat a failed query; the model does not always obey,
-//! so the failure set is a loop invariant, not advice.
+//! The run's call-outcome memory: which tool calls have failed (so a
+//! byte-identical repeat is refused) and which SQL statement succeeded last
+//! (so a budget that runs out can still nominate an answer). The system
+//! prompt already asks the model not to repeat a failed query; the model
+//! does not always obey, so the failure set is a loop invariant, not advice.
 //!
-//! Statements are compared **exactly as submitted** — no whitespace or case
-//! normalisation. A model that changes the SQL at all has changed its approach;
-//! treating a genuine edit as a repeat would be far worse than missing one. A
-//! statement that *succeeded* is never tracked as a failure: re-running a
-//! successful query is legitimate (the model may re-confirm a result); only its
-//! most recent success is remembered, as the salvage nomination candidate.
+//! Failures are compared **exactly as submitted** — a SQL statement with no
+//! whitespace or case normalisation, any other tool with no argument
+//! coercion. A model that changes either at all has changed its approach;
+//! treating a genuine edit as a repeat would be far worse than missing one.
+//! (Canonicalising the *serialization* of a non-SQL call's arguments in
+//! `failure_key.rs` is not an exception: object key order is a construction
+//! detail of the value, not part of the model's approach, so two calls
+//! carrying the same keys in a different order are the same call.) A call
+//! that *succeeded* is never tracked as a failure: re-running it is
+//! legitimate (the model may re-confirm a result); only the most recent
+//! success is remembered, as the salvage nomination candidate — and only for
+//! SQL, the medium the nomination answers from.
 
+use super::failure_key::{CallKey, key_of};
 use crate::ToolCall;
 
-/// Cap on the number of remembered failed statements. A long, degenerate run
-/// cannot grow this without limit: once full, the oldest remembered failure is
-/// dropped before a new one is inserted (FIFO). The benchmark pathology was one
-/// statement repeated hundreds of times — a recent repeat is always caught, so
-/// the cap bounds only how far back the memory reaches, not whether the common
-/// case is caught. Most runs never approach it: a model that changes approach
-/// produces distinct statements, and a normal run that never repeats a failure
-/// records nothing here at all.
+/// Cap on the number of remembered failed calls. A long, degenerate run
+/// cannot grow this without limit: once full, the oldest remembered failure
+/// is dropped before a new one is inserted (FIFO). The benchmark pathology
+/// was one statement repeated hundreds of times — a recent repeat is always
+/// caught, so the cap bounds only how far back the memory reaches, not
+/// whether the common case is caught. Most runs never approach it: a model
+/// that changes approach produces distinct calls, and a normal run that
+/// never repeats a failure records nothing here at all.
 pub(super) const MAX_REMEMBERED_FAILURES: usize = 64;
 
-/// The set of SQL statements that have failed during this run, bounded at
-/// [`MAX_REMEMBERED_FAILURES`]. Keyed by the statement exactly as submitted;
-/// the value is the error the last attempt produced, so a refusal can name it.
+/// The set of calls that have failed during this run, bounded at
+/// [`MAX_REMEMBERED_FAILURES`]. Keyed by [`CallKey`] — the SQL statement
+/// exactly as submitted for a call carrying `sql`, the tool name plus
+/// canonically-serialized arguments for every other tool (`failure_key.rs`);
+/// the value is the error the last attempt produced, so a refusal can name
+/// it.
 #[derive(Debug, Default)]
 pub(super) struct FailedStatements {
-    entries: Vec<(String, String)>,
+    entries: Vec<(CallKey, String)>,
 }
 
 impl FailedStatements {
@@ -36,25 +46,25 @@ impl FailedStatements {
         Self::default()
     }
 
-    /// The error a prior identical statement produced, if this exact SQL was
-    /// tried and failed earlier in this run. `None` for a statement that never
+    /// The error a prior identical call produced, if this exact call was
+    /// tried and failed earlier in this run. `None` for a call that never
     /// failed (or whose failure was evicted by the cap).
-    pub(super) fn prior_error(&self, sql: &str) -> Option<&str> {
+    pub(super) fn prior_error(&self, key: &CallKey) -> Option<&str> {
         self.entries
             .iter()
-            .find_map(|(statement, error)| (statement == sql).then_some(error.as_str()))
+            .find_map(|(entry, error)| (entry == key).then_some(error.as_str()))
     }
 
-    /// Records that `sql` failed with `error`. Re-recording a statement already
-    /// remembered updates its error in place (the latest failure is the useful
-    /// one) without growing the set; a new statement, once the set is at
-    /// [`MAX_REMEMBERED_FAILURES`], evicts the oldest remembered failure before
-    /// inserting, so memory is bounded for a long run.
-    pub(super) fn record(&mut self, sql: &str, error: &str) {
+    /// Records that `key` failed with `error`. Re-recording a call already
+    /// remembered updates its error in place (the latest failure is the
+    /// useful one) without growing the set; a new call, once the set is at
+    /// [`MAX_REMEMBERED_FAILURES`], evicts the oldest remembered failure
+    /// before inserting, so memory is bounded for a long run.
+    pub(super) fn record(&mut self, key: CallKey, error: &str) {
         if let Some(entry) = self
             .entries
             .iter_mut()
-            .find(|(statement, _)| statement == sql)
+            .find(|(existing, _)| existing == &key)
         {
             entry.1 = error.to_owned();
             return;
@@ -62,7 +72,7 @@ impl FailedStatements {
         if self.entries.len() >= MAX_REMEMBERED_FAILURES {
             self.entries.remove(0);
         }
-        self.entries.push((sql.to_owned(), error.to_owned()));
+        self.entries.push((key, error.to_owned()));
     }
 }
 
@@ -79,19 +89,19 @@ pub(super) fn sql_of(call: &ToolCall) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
 }
 
-/// Whether `call` is a byte-identical repeat of a statement that already failed
-/// in this run. A call with no `sql` argument is never a repeat (there is no
-/// statement to track); a call whose `sql` matches a remembered failure is.
+/// Whether `call` is a byte-identical repeat of a call that already failed
+/// in this run: the same SQL statement for a call carrying `sql` (a different
+/// `connection` argument does not make a known-bad statement look fresh), or
+/// the same tool invocation — name and arguments — for every other tool.
 pub(super) fn is_repeat(failed: &FailedStatements, call: &ToolCall) -> bool {
-    sql_of(call)
-        .and_then(|sql| failed.prior_error(sql).map(|_| true))
-        .unwrap_or(false)
+    failed.prior_error(&key_of(call)).is_some()
 }
 
 /// The completion summary for a refused repeat, kept as a constant so the
 /// batch-path and sequential-path status derivations (`contains("failed")`)
-/// agree.
-pub(super) const REFUSAL_SUMMARY: &str = "statement already failed earlier in this run";
+/// agree. The wording names the *call* — statement or not — so it stays
+/// honest for a non-SQL tool.
+pub(super) const REFUSAL_SUMMARY: &str = "call already failed earlier in this run";
 
 /// The tool result and summary returned when a repeat of a known failure is
 /// refused. The result names the error the earlier attempt produced so the
@@ -99,28 +109,26 @@ pub(super) const REFUSAL_SUMMARY: &str = "statement already failed earlier in th
 /// `tool_metadata.status` (it contains "failed", so the status is "failed").
 pub(super) fn refuse_repeat(prior_error: &str) -> (serde_json::Value, &'static str) {
     (
-        serde_json::json!({"error": format!("statement already failed earlier in this run; it will fail again. Change your approach instead. Last error: {prior_error}")}),
+        serde_json::json!({"error": format!("this call already failed earlier in this run; it will fail again. Change your approach instead. Last error: {prior_error}")}),
         REFUSAL_SUMMARY,
     )
 }
 
 /// Records the outcome of an executed tool call into the run's failure memory
-/// and success tracker. A failed statement is remembered (so a byte-identical
-/// repeat is refused later) with the error it produced; a successful statement
-/// becomes the nomination candidate when a budget later runs out. Calls that
-/// were denied (not executed) and calls without a `sql` argument are no-ops —
-/// a denial is not an execution, and only SQL statements are tracked.
+/// and success tracker. A failed call is remembered under its [`CallKey`] (so
+/// a byte-identical repeat is refused later) with the error it produced; a
+/// successful *statement* becomes the nomination candidate when a budget
+/// later runs out, while a successful non-SQL call nominates nothing — the
+/// salvage answer is SQL. Calls that were denied (not executed) are no-ops: a
+/// denial is not an execution.
 pub(super) fn record_outcome(
     failed: &mut FailedStatements,
     last_successful_sql: &mut Option<String>,
-    sql: Option<&str>,
+    key: CallKey,
     result: &serde_json::Value,
     executed: bool,
     summary: &str,
 ) {
-    let Some(sql) = sql else {
-        return;
-    };
     if !executed {
         return;
     }
@@ -129,11 +137,11 @@ pub(super) fn record_outcome(
             .get("error")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
-        failed.record(sql, error);
-    } else {
+        failed.record(key, error);
+    } else if let CallKey::Sql(sql) = key {
         // The last statement that completed successfully is the best
         // available nomination when a budget runs out — most recent wins.
-        *last_successful_sql = Some(sql.to_owned());
+        *last_successful_sql = Some(sql);
     }
 }
 
@@ -144,31 +152,52 @@ mod tests {
     #[test]
     fn prior_error_is_none_for_an_unseen_statement() {
         let set = FailedStatements::new();
-        assert!(set.prior_error("SELECT 1").is_none());
+        assert!(set.prior_error(&CallKey::Sql("SELECT 1".into())).is_none());
     }
 
     #[test]
     fn record_then_prior_error_names_the_failure() {
         let mut set = FailedStatements::new();
-        set.record("SELECT 1", "syntax error near '1'");
-        assert_eq!(set.prior_error("SELECT 1"), Some("syntax error near '1'"));
+        set.record(CallKey::Sql("SELECT 1".into()), "syntax error near '1'");
+        assert_eq!(
+            set.prior_error(&CallKey::Sql("SELECT 1".into())),
+            Some("syntax error near '1'")
+        );
     }
 
     #[test]
     fn a_statement_differing_by_one_character_is_not_a_repeat() {
         let mut set = FailedStatements::new();
-        set.record("SELECT 1", "bad");
+        set.record(CallKey::Sql("SELECT 1".into()), "bad");
         // No normalisation: a one-character edit is a different statement.
-        assert!(set.prior_error("SELECT 2").is_none());
+        assert!(set.prior_error(&CallKey::Sql("SELECT 2".into())).is_none());
     }
 
     #[test]
     fn recording_the_same_statement_twice_keeps_the_latest_error() {
         let mut set = FailedStatements::new();
-        set.record("SELECT 1", "first error");
-        set.record("SELECT 1", "second error");
+        set.record(CallKey::Sql("SELECT 1".into()), "first error");
+        set.record(CallKey::Sql("SELECT 1".into()), "second error");
         // The most recent record wins so the refusal names the latest failure.
-        assert_eq!(set.prior_error("SELECT 1"), Some("second error"));
+        assert_eq!(
+            set.prior_error(&CallKey::Sql("SELECT 1".into())),
+            Some("second error")
+        );
+    }
+
+    /// A tool-call failure is remembered under its own key — and not under a
+    /// statement key that spells alike — so one memory holds both paths
+    /// without letting them collide.
+    #[test]
+    fn a_tool_call_failure_is_remembered_under_its_own_key() {
+        let mut set = FailedStatements::new();
+        let key = CallKey::ToolCall("run_program".into(), r#"{"command":"ls"}"#.into());
+        set.record(key.clone(), "exit 1");
+        assert_eq!(set.prior_error(&key), Some("exit 1"));
+        assert!(
+            set.prior_error(&CallKey::Sql(r#"{"command":"ls"}"#.into()))
+                .is_none()
+        );
     }
 
     /// The set is bounded at `MAX_REMEMBERED_FAILURES`: after recording the
@@ -179,22 +208,25 @@ mod tests {
     fn the_remembered_failure_set_is_bounded_at_its_documented_cap() {
         let mut set = FailedStatements::new();
         for index in 0..MAX_REMEMBERED_FAILURES {
-            set.record(&format!("SELECT {index}"), &format!("err {index}"));
+            set.record(
+                CallKey::Sql(format!("SELECT {index}")),
+                &format!("err {index}"),
+            );
         }
         assert_eq!(
-            set.prior_error("SELECT 0"),
+            set.prior_error(&CallKey::Sql("SELECT 0".into())),
             Some("err 0"),
             "before overflow the oldest entry is still remembered"
         );
         // One more evicts the oldest ("SELECT 0").
-        set.record("SELECT overflow", "err overflow");
+        set.record(CallKey::Sql("SELECT overflow".into()), "err overflow");
         assert_eq!(
-            set.prior_error("SELECT 0"),
+            set.prior_error(&CallKey::Sql("SELECT 0".into())),
             None,
             "the oldest entry is evicted once the cap is exceeded"
         );
         assert_eq!(
-            set.prior_error("SELECT overflow"),
+            set.prior_error(&CallKey::Sql("SELECT overflow".into())),
             Some("err overflow"),
             "the newest entry is remembered after the eviction"
         );
@@ -202,7 +234,7 @@ mod tests {
         let recent = format!("SELECT {}", MAX_REMEMBERED_FAILURES - 1);
         let recent_err = format!("err {}", MAX_REMEMBERED_FAILURES - 1);
         assert_eq!(
-            set.prior_error(&recent),
+            set.prior_error(&CallKey::Sql(recent)),
             Some(recent_err.as_str()),
             "a recent entry survives the eviction"
         );
