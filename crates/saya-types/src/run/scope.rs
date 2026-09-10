@@ -20,8 +20,10 @@ const MAX_HOST_CHARS: usize = 253;
 
 /// True when `name` has the shape a run-scoped name must have: non-empty,
 /// bounded, and free of control characters and whitespace. Roles, endpoint
-/// names, budget keys, and runner programs all share this shape.
-pub(crate) fn is_name_shaped(name: &str) -> bool {
+/// names, budget keys, and runner programs all share this shape. Exported so
+/// config resolution can reject a malformed `[jobs]` budget key at resolve
+/// time with this exact rule, instead of duplicating it.
+pub fn is_name_shaped(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= MAX_NAME_CHARS
         && !name.chars().any(|c| c.is_control() || c.is_whitespace())

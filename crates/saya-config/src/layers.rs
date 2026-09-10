@@ -24,6 +24,10 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(run.max_iterations);
     apply!(run.candidates);
     apply!(run.query_timeout_seconds);
+    apply!(jobs.wall_clock_seconds);
+    apply!(jobs.tokens_per_endpoint);
+    apply!(jobs.turns);
+    apply!(jobs.tool_calls);
     apply!(output.format);
     apply!(output.color);
     apply!(ui.theme);

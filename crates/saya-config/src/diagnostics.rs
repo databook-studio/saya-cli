@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::{ColorChoice, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig, ThemeChoice};
+use std::collections::BTreeMap;
 
 /// A display-safe view of what a config *file* declares; references are
 /// retained, values are not.
@@ -43,6 +44,10 @@ pub struct RedactedDiagnostics {
     pub max_rows: Option<usize>,
     pub max_iterations: Option<usize>,
     pub candidates: Option<usize>,
+    pub jobs_wall_clock_seconds: Option<u64>,
+    pub jobs_tokens_per_endpoint: Option<BTreeMap<String, u64>>,
+    pub jobs_turns: Option<u64>,
+    pub jobs_tool_calls: Option<u64>,
     pub query_timeout_seconds: Option<u64>,
     pub output_format: Option<OutputFormat>,
     pub output_color: Option<ColorChoice>,
@@ -73,6 +78,10 @@ pub struct ResolvedDiagnostics {
     pub read_only: bool,
     pub max_iterations: usize,
     pub candidates: usize,
+    pub jobs_wall_clock_seconds: Option<u64>,
+    pub jobs_tokens_per_endpoint: BTreeMap<String, u64>,
+    pub jobs_turns: u64,
+    pub jobs_tool_calls: Option<u64>,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
@@ -97,6 +106,10 @@ impl RedactedDiagnostics {
             max_rows: file.run.max_rows,
             max_iterations: file.run.max_iterations,
             candidates: file.run.candidates,
+            jobs_wall_clock_seconds: file.jobs.wall_clock_seconds,
+            jobs_tokens_per_endpoint: file.jobs.tokens_per_endpoint.clone(),
+            jobs_turns: file.jobs.turns,
+            jobs_tool_calls: file.jobs.tool_calls,
             query_timeout_seconds: file.run.query_timeout_seconds,
             output_format: file.output.format,
             output_color: file.output.color,
@@ -127,6 +140,10 @@ impl ResolvedConfig {
             read_only: self.read_only,
             max_iterations: self.max_iterations,
             candidates: self.candidates,
+            jobs_wall_clock_seconds: self.jobs.wall_clock_seconds,
+            jobs_tokens_per_endpoint: self.jobs.tokens_per_endpoint.clone(),
+            jobs_turns: self.jobs.turns,
+            jobs_tool_calls: self.jobs.tool_calls,
             query_timeout_seconds: self.query_timeout_seconds,
             output_format: self.output_format,
             output_color: self.output_color,

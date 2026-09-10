@@ -60,4 +60,13 @@ pub enum ConfigError {
         min: usize,
         max: usize,
     },
+    /// A map-valued setting carries a key that cannot name the thing it
+    /// keys — a `[jobs] tokens_per_endpoint` endpoint name that is empty,
+    /// carries whitespace or control characters, or exceeds the name bound.
+    /// That shape is what the run contracts reject at plan-validation time,
+    /// so it is caught at resolve time instead, far from the config mistake.
+    /// The key is carried because the field name alone cannot point at the
+    /// offender inside a map.
+    #[error("setting {field} has an invalid endpoint name {key:?}")]
+    InvalidEndpointName { field: &'static str, key: String },
 }
