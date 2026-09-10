@@ -17,7 +17,6 @@ use proptest::prelude::*;
 use saya_harness::{HarnessError, workspace::Workspace};
 
 const INSIDE: &[u8] = b"inside-sentinel";
-const INSIDE_B: &[u8] = b"inside-sentinel-b";
 const OUTSIDE: &[u8] = b"outside-sentinel-MUST-NOT-LEAK";
 
 /// Keeps a sandbox directory alive for the test and removes it afterwards.
