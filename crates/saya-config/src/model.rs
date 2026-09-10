@@ -17,6 +17,8 @@ pub struct ConfigFile {
     #[serde(default)]
     pub run: RunFile,
     #[serde(default)]
+    pub jobs: JobsFile,
+    #[serde(default)]
     pub output: OutputFile,
     #[serde(default)]
     pub memory: MemoryFile,
@@ -145,6 +147,29 @@ pub struct RunFile {
     /// separate task and nothing reads this yet.
     pub candidates: Option<usize>,
     pub query_timeout_seconds: Option<u64>,
+}
+
+/// The `[jobs]` section: the default budgets a *run* is declared with when
+/// the run's specification and each of its steps declare none. `ConfigFile`
+/// is `deny_unknown_fields`, so this section must be declared here before
+/// any config may carry it. Later items extend it with `runner` and `fetch`
+/// keys.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobsFile {
+    /// Default wall-clock ceiling for a run, in seconds. Absent: a run has
+    /// no wall-clock ceiling until the run itself declares one.
+    pub wall_clock_seconds: Option<u64>,
+    /// Default token ceilings keyed by run-scoped endpoint name — the same
+    /// per-endpoint shape the run contracts carry. Absent or empty: no
+    /// endpoint has a token ceiling.
+    pub tokens_per_endpoint: Option<BTreeMap<String, u64>>,
+    /// Default turn ceiling for a run's episodes. Absent falls back to
+    /// `[run] max_iterations` — see the resolution.
+    pub turns: Option<u64>,
+    /// Default ceiling on total tool calls across a run's episodes. Absent:
+    /// no ceiling.
+    pub tool_calls: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

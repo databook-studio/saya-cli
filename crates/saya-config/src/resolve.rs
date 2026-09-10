@@ -2,6 +2,7 @@ use saya_types::DatabaseProfile;
 
 use crate::{
     AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput, ThemeChoice,
+    jobs::{ResolvedJobs, require_max_iterations},
     layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
     profile_env::overlay_database_environment,
@@ -47,6 +48,11 @@ const MIN_CANDIDATES: usize = 1;
 /// leaves room to opt into a wider search while keeping the worst case bounded.
 const MAX_CANDIDATES: usize = 16;
 
+/// Default `[run] max_iterations`, and through it the default turn ceiling
+/// for a run's episodes: a run with nothing declared stops after twelve
+/// provider turns and salvages the best answer from the work done.
+const DEFAULT_MAX_ITERATIONS: usize = 12;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {
     pub profile_name: Option<String>,
@@ -61,6 +67,12 @@ pub struct ResolvedConfig {
     /// which runs one attempt per candidate and votes on their nominated SQL
     /// (`crates/saya-cli/src/agent/candidates`).
     pub candidates: usize,
+    /// The default budgets a run is declared with: `[jobs]` resolved against
+    /// `[run] max_iterations`, whose turn ceiling falls back to
+    /// `max_iterations` (plan G2 — that knob's first behavioural reader).
+    /// The engine layers RunSpec and step budgets over these per dimension;
+    /// there is deliberately no environment input to any of it (plan G3).
+    pub jobs: ResolvedJobs,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
@@ -163,6 +175,9 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     require_retry_delays(&retry_delays_ms)?;
     let candidates = file.run.candidates.unwrap_or(DEFAULT_CANDIDATES);
     require_candidates(candidates)?;
+    let max_iterations = file.run.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
+    require_max_iterations(max_iterations)?;
+    let jobs = crate::jobs::resolve(&file.jobs, max_iterations as u64)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
@@ -183,8 +198,9 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         },
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
-        max_iterations: file.run.max_iterations.unwrap_or(12),
+        max_iterations,
         candidates,
+        jobs,
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),

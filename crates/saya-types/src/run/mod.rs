@@ -18,7 +18,7 @@ pub use event::{PauseReason, RunEvent, RunFailureCode};
 pub use plan::{MAX_OUTPUT_HINTS, MAX_PLAN_STEPS, OutputHint, RunPlan, StepSpec};
 pub use scope::{
     Capabilities, Destination, EndpointBindings, FetchScope, MAX_ENDPOINT_BINDINGS,
-    MAX_FETCH_DESTINATIONS, MAX_RUNNER_PROGRAMS, RunnerScope,
+    MAX_FETCH_DESTINATIONS, MAX_RUNNER_PROGRAMS, RunnerScope, is_name_shaped,
 };
 pub use spec::{MAX_GOAL_BYTES, RunId, RunSpec};
 

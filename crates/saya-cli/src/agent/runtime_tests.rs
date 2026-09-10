@@ -24,8 +24,8 @@ use saya_agent::{
     SuppliedClaimDto, SuppliedContractDto, ToolCall,
 };
 use saya_config::{
-    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
-    ThemeChoice,
+    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedJobs,
+    ResolvedMemory, ThemeChoice,
 };
 use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -240,6 +240,12 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
             read_only: true,
             max_iterations: 4,
             candidates: 1,
+            jobs: ResolvedJobs {
+                wall_clock_seconds: None,
+                tokens_per_endpoint: BTreeMap::new(),
+                turns: 4,
+                tool_calls: None,
+            },
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
