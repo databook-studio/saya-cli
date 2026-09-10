@@ -512,9 +512,25 @@ fn concurrent_writes_leave_one_whole_content_never_a_mix() {
             }
         }));
     }
-    // Give the writers a moment, then sample the file while writes continue.
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    let observed = fs::read(ws.root().join("shared.txt")).unwrap();
+    // Sample the file while writes continue. Waiting a fixed 50ms for the
+    // first rename to land was the original shape and it failed on a loaded
+    // machine, where two threads had not finished an atomic write in that
+    // window — a timing assumption standing in for the condition the test
+    // actually needs, which is "a write has landed". Poll for that instead;
+    // the writers are still running when the read happens either way, which
+    // is the property under test.
+    let path = ws.root().join("shared.txt");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let observed = loop {
+        if let Ok(bytes) = fs::read(&path) {
+            break bytes;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no writer completed an atomic write within 30s"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
     stop.store(true, Ordering::Relaxed);
     for writer in writers {
         writer.join().unwrap();
