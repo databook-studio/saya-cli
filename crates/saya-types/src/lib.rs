@@ -23,7 +23,7 @@ pub use dialect::SqlDialect;
 pub use error::ConnectionError;
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
 pub use query::{QueryRequest, QueryResult};
-pub use redaction::redact;
+pub use redaction::{CREDENTIAL_ENV_PREFIX, redact};
 pub use run::{
     Budgets, Capabilities, Deliverable, DeliverableArtifact, Destination, EndpointBindings,
     FetchScope, MAX_BUDGET_ENDPOINTS, MAX_ENDPOINT_BINDINGS, MAX_FETCH_DESTINATIONS,
