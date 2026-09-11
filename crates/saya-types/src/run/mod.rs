@@ -15,7 +15,10 @@ pub(crate) mod spec;
 
 pub use budget::{Budgets, MAX_BUDGET_ENDPOINTS};
 pub use event::{PauseReason, RunEvent, RunFailureCode};
-pub use plan::{MAX_OUTPUT_HINTS, MAX_PLAN_STEPS, OutputHint, RunPlan, StepSpec};
+pub use plan::{
+    Deliverable, DeliverableArtifact, MAX_OUTPUT_HINTS, MAX_PLAN_STEPS, OutputHint, RunPlan,
+    StepSpec,
+};
 pub use scope::{
     Capabilities, Destination, EndpointBindings, FetchScope, MAX_ENDPOINT_BINDINGS,
     MAX_FETCH_DESTINATIONS, MAX_RUNNER_PROGRAMS, RunnerScope, is_name_shaped,
@@ -61,6 +64,9 @@ pub enum RunContractError {
 
     #[error("output hint is not a valid workspace artifact name")]
     InvalidOutputHint,
+
+    #[error("step {0} declares an expected output that is not a valid workspace artifact name")]
+    InvalidOutputHintName(usize),
 
     #[error("fetch scope must declare at least one destination")]
     EmptyDestinations,

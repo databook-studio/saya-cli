@@ -39,6 +39,44 @@ pub fn build(
     Ok(state.entries)
 }
 
+/// Resolves one named workspace file to a brief-shaped manifest entry —
+/// the same scan-then-no-follow-open-then-digest discipline the walk uses,
+/// for one file. A missing file and a refused name (a link, an escape, an
+/// over-bound file) are harness errors for the caller to classify; the
+/// entry carries the name as given, plus size and digest.
+pub fn entry(
+    ws: &Workspace,
+    rel: &str,
+    max_file_bytes: u64,
+) -> Result<ManifestEntry, HarnessError> {
+    let path = ws.target(rel, false)?;
+    let pre = fs::symlink_metadata(&path)
+        .map_err(|error| io_error("scan workspace file", &path, error))?;
+    if pre.file_type().is_symlink() {
+        return Err(HarnessError::SymlinkRefused {
+            path: rel.to_string(),
+        });
+    }
+    if !pre.is_file() {
+        return Err(HarnessError::NotRegularFile {
+            path: rel.to_string(),
+        });
+    }
+    if pre.len() > max_file_bytes {
+        return Err(HarnessError::BoundsExceeded {
+            path: rel.to_string(),
+            found: pre.len(),
+            max: max_file_bytes,
+        });
+    }
+    let digest = digest_file(ws, &path, &pre, rel, max_file_bytes)?;
+    Ok(ManifestEntry {
+        path: rel.to_string(),
+        size: pre.len(),
+        digest,
+    })
+}
+
 struct Walk<'a> {
     ws: &'a Workspace,
     max_files: usize,

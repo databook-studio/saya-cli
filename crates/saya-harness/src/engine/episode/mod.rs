@@ -18,6 +18,7 @@
 
 mod brief;
 mod contract;
+mod deliverables;
 mod retry;
 
 pub use contract::{
@@ -105,6 +106,19 @@ impl<'a> EpisodeDriver<'a> {
             retry::mark_started(&self.run, step).await?;
             match retry::drive_attempt(self, sink, plan, step, workspace).await {
                 Ok(_) => {
+                    // The step's declared deliverables become the artifact
+                    // manifest at completion: resolved against the workspace
+                    // and recorded just before the completion itself, so a
+                    // crash between the two leaves the step in flight — a
+                    // resume re-runs it rather than reporting a manifest for
+                    // a completion that never recorded. A refusal is a gate
+                    // error: never retried, never silent.
+                    let deliverables =
+                        deliverables::resolve(workspace, &plan.steps[step], &self.bounds)
+                            .map_err(|source| EpisodeError::Deliverables { step, source })?;
+                    if !deliverables.is_empty() {
+                        retry::record_deliverables(&self.run, step, deliverables)?;
+                    }
                     retry::mark_completed(&self.run, step).await?;
                     if step + 1 == plan.steps.len() {
                         sink.record(TransitionEvent::Complete)

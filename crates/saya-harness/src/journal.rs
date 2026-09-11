@@ -147,6 +147,10 @@ pub fn replay(events: &[RunEvent]) -> JournalState {
             RunEvent::StepFailed { step } => {
                 state.steps.insert(*step, StepState::Failed);
             }
+            // The deliverables manifest is not lifecycle and not step state:
+            // the `StepCompleted` recorded right after it carries the state.
+            // A journal ending here reads as a step still in flight.
+            RunEvent::Deliverables { .. } => {}
             RunEvent::Usage { .. } => {}
             _ => {}
         }
