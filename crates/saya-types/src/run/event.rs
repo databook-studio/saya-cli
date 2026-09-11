@@ -64,6 +64,15 @@ pub enum RunEvent {
         #[serde(default)]
         cache_creation_input_tokens: Option<u64>,
     },
+    /// The download wallet's consumed level — every byte the run's downloads
+    /// had claimed when the engine journaled this, including claims a failed
+    /// download kept (claims are never refunded). Journalled when the sink
+    /// observes the wallet grew past the level the journal already holds, so
+    /// the figure is the wallet's own arithmetic — definite, never absent —
+    /// and a level once recorded is never lowered. A resume seeds the wallet
+    /// from the highest level the record holds, which is what makes the
+    /// download budget bind the run, not each invocation.
+    DownloadedBytes { bytes: u64 },
 }
 
 /// Why a run paused. A paused run is resumable at the first incomplete step;

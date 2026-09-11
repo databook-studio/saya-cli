@@ -18,6 +18,7 @@ use crate::{
         transitions::TransitionEvent,
         usage::UsageTotals,
     },
+    fetch::DownloadBudget,
     journal::{Journal, JournalState, StepState, replay},
     lock::RunLock,
 };
@@ -51,12 +52,26 @@ pub async fn resume(
         .map_err(|source| ResumeError::Journal { source })?;
     // The repaired record, read once: the replay is the resume's authority
     // for where the run stood, and the same events seed the sink's usage
-    // totals, so the token ceiling measures the run's whole spend across
-    // invocations. Seeding rides the repaired view — the read happens after
-    // the torn tail was dropped — so a half-written usage line never counts.
+    // totals and the download wallet, so the token ceiling and the download
+    // budget both measure the run's whole spend across invocations. Seeding
+    // rides the repaired view — the read happens after the torn tail was
+    // dropped — so a half-written line never counts toward the carried
+    // spend, whichever budget it names.
     let events = journal
         .read()
         .map_err(|source| ResumeError::Journal { source })?;
+    // The download wallet the composition root armed is shared by clone
+    // with the fetch-capable steps' executors, so arming it here — before
+    // the sink takes over and before any step runs — arms every holder: the
+    // resumed run continues against the spend its journal already records
+    // instead of a fresh wallet, the same carry the usage seeding gives the
+    // token ceiling. The carry rides the repaired record — the read after
+    // the torn tail was dropped — so a half-written level never counts, and
+    // it happens before the sink is built, whose journaled-download
+    // baseline is the wallet's level at construction.
+    if let Some(budget) = &resumed.download_budget {
+        budget.carry(DownloadBudget::carried_from_journal(&events));
+    }
     let state = replay(&events);
     let initial = match position(&state) {
         Position::NoRun => return Ok(ResumeOutcome::NoRun),

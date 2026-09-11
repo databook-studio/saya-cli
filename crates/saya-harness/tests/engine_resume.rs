@@ -18,8 +18,13 @@
 //!    spend, never at a re-armed ceiling.
 //! 7. Seeding rides the repaired record: a torn usage line never counts
 //!    toward the carried spend.
+//! 8. The download budget binds the **run** the same way: a resumed run's
+//!    wallet is seeded from the download spend the journal records, so a
+//!    resumed download is refused what the record already holds the run
+//!    having spent, and the resumed claims record the level they reached.
 
 use std::{
+    collections::VecDeque,
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -28,7 +33,8 @@ use std::{
 use async_trait::async_trait;
 use saya_agent::{
     ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    ProviderError, TokenUsage, ToolDefinition, ToolError, ToolExecutor,
+    LocalStateEffect, ProviderError, TokenUsage, ToolCall, ToolDefinition, ToolEffect, ToolError,
+    ToolExecutor,
 };
 use saya_harness::HarnessError;
 use saya_harness::engine::{
@@ -36,6 +42,7 @@ use saya_harness::engine::{
     ManifestBounds, ResumeError, ResumeOutcome, ResumeRun, RunState, SinkBudgets, StepToolset,
     TransitionEvent, UsageTotals, resume,
 };
+use saya_harness::fetch::DownloadBudget;
 use saya_harness::journal::Journal;
 use saya_harness::lock::RunLock;
 use saya_harness::workspace::Workspace;
@@ -904,4 +911,307 @@ async fn a_torn_usage_line_never_counts_toward_the_carried_spend() {
         ]
     );
     assert_eq!(provider.count(), 1);
+}
+
+// --- the download budget's carry (the wallet, not the latch) ------------------
+
+/// A fetch-capable executor's stand-in: every call claims `bytes` against
+/// the shared wallet — the clone the step executors hold — and surfaces a
+/// refused claim as the typed tool error a download reports, so the model
+/// reads the real reason. The tool's name and shape are the stand-in's own;
+/// what it must share with the resume is the wallet, the sharing a
+/// fetch-capable run builds at assembly.
+struct Claiming {
+    wallet: DownloadBudget,
+    bytes: u64,
+}
+
+#[async_trait]
+impl ToolExecutor for Claiming {
+    async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        if self.wallet.claim(self.bytes) {
+            Ok(serde_json::json!({ "bytes": self.bytes }))
+        } else {
+            Err(ToolError::Fetch(
+                "the download budget is spent: the claim was refused".into(),
+            ))
+        }
+    }
+}
+
+/// One scripted provider turn (the engine episode tests' shape): a turn of
+/// tool calls, or a terminal prose answer.
+enum Turn {
+    Tools(Vec<ToolCall>),
+    Answer(&'static str),
+}
+
+/// A scripted `ChatProvider`: serves its turns in order. Responses carry no
+/// usage — the download budget is the budget under test, not the ceiling.
+struct ScriptProvider {
+    script: Mutex<VecDeque<Turn>>,
+}
+
+impl ScriptProvider {
+    fn new(script: Vec<Turn>) -> Self {
+        Self {
+            script: Mutex::new(script.into()),
+        }
+    }
+}
+
+#[async_trait]
+impl ChatProvider for ScriptProvider {
+    fn name(&self) -> &str {
+        "script"
+    }
+
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        match self.script.lock().unwrap().pop_front() {
+            Some(Turn::Answer(text)) => Ok(ChatResponse::new(ChatMessage::text("assistant", text))),
+            Some(Turn::Tools(calls)) => Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: calls,
+                tool_call_id: None,
+            })),
+            None => panic!("provider script exhausted"),
+        }
+    }
+}
+
+/// The stand-in download tool's definition: auto-runnable (no approval, no
+/// external side effect, no database data) so the loop's own gates are the
+/// only thing that can refuse it — the wallet's claim is what the test
+/// exercises, not the loop's.
+fn download_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "http_download".into(),
+        description: "the stand-in download tool".into(),
+        read_only: false,
+        parameters: serde_json::json!({"type": "object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::None,
+        },
+        completion: None,
+    }
+}
+
+fn tool_call(name: &str) -> ToolCall {
+    ToolCall {
+        id: "c-download".into(),
+        name: name.into(),
+        arguments: serde_json::json!({}),
+    }
+}
+
+/// The resume inputs for a run with an armed download wallet, shared by
+/// clone between this input and the resumed step's executor — the sharing a
+/// fetch-capable run builds, so the tool's claims and the sink's checks are
+/// one wallet. Every other input is the crashed run's own.
+fn download_inputs<'a>(
+    run: &'a CrashedRun,
+    provider: &'a ScriptProvider,
+    toolsets: &'a [StepToolset],
+    wallet: DownloadBudget,
+) -> ResumeRun<'a> {
+    ResumeRun {
+        run_id: run.run_id.clone(),
+        store: run.store.clone(),
+        plan: run.plan.clone(),
+        workspace: workspace(&run.root),
+        collaborators: EpisodeCollaborators {
+            provider,
+            approval: &run.stubs.approval,
+            toolsets,
+            cancellation: CancellationToken::default(),
+        },
+        request: request(),
+        bounds: bounds(),
+        wall_clock: None,
+        token_ceiling: None,
+        download_budget: Some(wallet),
+        journal_wire: None,
+        agent_stream: None,
+    }
+}
+
+/// The one that matters for the wallet: the download budget binds the
+/// **run**, not each invocation. A run pauses on its 100-byte wallet having
+/// claimed 97; a resume seeds the wallet the composition armed with the
+/// spend the journal records, so the resumed download's 40-byte claim is
+/// refused — a fresh wallet would have accepted it — and the refusal, the
+/// same latch, pauses the run again. Under the re-arm behaviour this
+/// replaces, the resumed invocation would have started from zero and spent
+/// a whole fresh wallet.
+#[tokio::test]
+async fn a_download_paused_run_resumed_without_a_fresh_wallet_continues_against_its_recorded_spend()
+{
+    let plan = RunPlan::new(vec![step("download the corpus")]).unwrap();
+    let run = crashed_run(
+        "download-resume",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::DownloadedBytes { bytes: 60 },
+            RunEvent::DownloadedBytes { bytes: 97 },
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted,
+            },
+        ],
+        RunStatus::Paused,
+        plan,
+    )
+    .await;
+    let wallet = DownloadBudget::new(100);
+    let provider = ScriptProvider::new(vec![
+        Turn::Tools(vec![tool_call("http_download")]),
+        Turn::Answer("done"),
+    ]);
+    let executor: Arc<dyn ToolExecutor> = Arc::new(Claiming {
+        wallet: wallet.clone(),
+        bytes: 40,
+    });
+    let toolsets = vec![StepToolset {
+        executor,
+        definitions: vec![download_definition()],
+    }];
+
+    let outcome = resume(
+        &run.run_dir,
+        download_inputs(&run, &provider, &toolsets, wallet.clone()),
+    )
+    .await;
+
+    // The machine refuses the paused run's completion — the same shape
+    // every mid-episode pause leaves.
+    let error = outcome.unwrap_err();
+    assert!(
+        matches!(error, ResumeError::Episode { .. }),
+        "the machine must refuse a paused run's completion: {error:?}"
+    );
+
+    // The wallet binds the run: the claimed 40 were refused against the 97
+    // the record holds, the refusal tripped the latch, and the run stands
+    // paused — not running on a fresh wallet.
+    assert_eq!(
+        wallet.consumed(),
+        97,
+        "the run's budget is spent, not a fresh one"
+    );
+    assert!(wallet.tripped(), "the refusal is the recorded event");
+    let recorded = run.store.get_run(&run.run_id).await.unwrap().unwrap();
+    assert_eq!(recorded.status, RunStatus::Paused);
+
+    // The journal: the first invocation's record, then the resume's — the
+    // step restarted, the refusal paused the run again, the episode ran to
+    // its natural end, and nothing was claimed (no level grew past 97).
+    assert_eq!(
+        run.journal(),
+        vec![
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::DownloadedBytes { bytes: 60 },
+            RunEvent::DownloadedBytes { bytes: 97 },
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted
+            },
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted
+            },
+            RunEvent::StepCompleted { step: 0 },
+        ],
+        "the resume must continue against the recorded spend, not a fresh wallet"
+    );
+}
+
+/// The carried headroom is real, and the resumed claims record the level
+/// they reached: the resumed download claims the three bytes the record
+/// leaves (97 of 100), the sink journals the level — 100, the carried 97
+/// plus this invocation's 3, never the claim's own 3 — and the next claim
+/// past the limit is refused, tripping the latch and pausing the run. The
+/// journaled level is what pins the whole chain: without the carry it would
+/// read 3, and a fresh baseline would have re-journaled the record's 97.
+#[tokio::test]
+async fn a_resumed_download_claims_the_carried_headroom_and_records_the_level_it_reached() {
+    let plan = RunPlan::new(vec![step("download the corpus")]).unwrap();
+    let run = crashed_run(
+        "download-headroom",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::DownloadedBytes { bytes: 60 },
+            RunEvent::DownloadedBytes { bytes: 97 },
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted,
+            },
+        ],
+        RunStatus::Paused,
+        plan,
+    )
+    .await;
+    let wallet = DownloadBudget::new(100);
+    let provider = ScriptProvider::new(vec![
+        Turn::Tools(vec![tool_call("http_download")]),
+        Turn::Tools(vec![tool_call("http_download")]),
+        Turn::Answer("done"),
+    ]);
+    let executor: Arc<dyn ToolExecutor> = Arc::new(Claiming {
+        wallet: wallet.clone(),
+        bytes: 3,
+    });
+    let toolsets = vec![StepToolset {
+        executor,
+        definitions: vec![download_definition()],
+    }];
+
+    let outcome = resume(
+        &run.run_dir,
+        download_inputs(&run, &provider, &toolsets, wallet.clone()),
+    )
+    .await;
+
+    let error = outcome.unwrap_err();
+    assert!(
+        matches!(error, ResumeError::Episode { .. }),
+        "the machine must refuse a paused run's completion: {error:?}"
+    );
+
+    // The headroom claim fit and was spent; the claim past the limit was
+    // refused and tripped the latch — the run's budget, not a fresh one.
+    assert_eq!(wallet.consumed(), 100, "the headroom the record leaves");
+    assert!(wallet.tripped(), "the claim past the limit is the refusal");
+    let recorded = run.store.get_run(&run.run_id).await.unwrap().unwrap();
+    assert_eq!(recorded.status, RunStatus::Paused);
+
+    // The journal: the resume journaled the level the wallet reached —
+    // 100, cumulative — and re-journaled nothing the record already held.
+    assert_eq!(
+        run.journal(),
+        vec![
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::DownloadedBytes { bytes: 60 },
+            RunEvent::DownloadedBytes { bytes: 97 },
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted
+            },
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::DownloadedBytes { bytes: 100 },
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted
+            },
+            RunEvent::StepCompleted { step: 0 },
+        ],
+        "the resumed claims must record the level they reached, past the \
+         carried spend, never the carried spend again"
+    );
 }

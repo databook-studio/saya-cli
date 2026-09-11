@@ -75,6 +75,16 @@ fn unreported_usage_renders_unknown_not_zero() {
     assert!(!text.contains("0"), "no zero is invented: {text}");
 }
 
+/// The download level's text line names the wallet's term — claimed, not
+/// downloaded-written: claims are never refunded, so the figure is the
+/// budget's own arithmetic — and states it as the running level it is.
+#[test]
+fn the_download_level_line_states_the_running_spend() {
+    let text = run_event_text(&RunEvent::DownloadedBytes { bytes: 97 });
+    assert!(text.contains("97"), "{text}");
+    assert!(text.ends_with('\n'), "line is newline-terminated");
+}
+
 /// A run whose journal holds no usage event renders no usage section —
 /// nothing reported is not the same claim as costing nothing.
 #[test]

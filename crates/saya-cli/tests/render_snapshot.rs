@@ -96,3 +96,9 @@ fn run_event_ndjson_usage_is_stable() {
     };
     insta::assert_snapshot!(render_run_event(&event, RenderFormat::Ndjson).stdout);
 }
+
+#[test]
+fn run_event_ndjson_downloaded_bytes_is_stable() {
+    let event = RunEvent::DownloadedBytes { bytes: 97 };
+    insta::assert_snapshot!(render_run_event(&event, RenderFormat::Ndjson).stdout);
+}

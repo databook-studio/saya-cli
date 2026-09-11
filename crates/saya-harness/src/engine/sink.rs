@@ -3,10 +3,11 @@
 //!
 //! The episode driver hands this sink to `run_agent_with_sink`; every event
 //! the loop emits passes through [`EngineEventSink::emit`], and each
-//! emission is a tick. The sink counts usage across the run, enforces the
-//! run's wall-clock deadline per tick, and records lifecycle transitions:
-//! each one advances the state machine, is appended to the run journal, and
-//! is mirrored to the state store.
+//! emission is a tick. The sink counts usage across the run, journals the
+//! download wallet's spend as it grows, enforces the run's wall-clock
+//! deadline per tick, and records lifecycle transitions: each one advances
+//! the state machine, is appended to the run journal, and is mirrored to
+//! the state store.
 //!
 //! Failure posture: when the store refuses a mirror while the run is
 //! mid-flight, the run **pauses** with a diagnostic — the journal records
@@ -90,6 +91,14 @@ pub struct EngineEventSink {
     download_budget: Option<DownloadBudget>,
     state: Mutex<RunState>,
     usage: Mutex<UsageTotals>,
+    /// The download level the journal already holds when this sink takes
+    /// over — the wallet's consumed figure at construction, which on a
+    /// resume is the level its record carries (the seeding `resume` did
+    /// before this sink was built) and on a fresh run is zero. Each tick
+    /// journals the wallet's growth past this level, so the sink records
+    /// only the spend it observed and never re-journals the level the
+    /// record already holds.
+    journaled_downloads: Mutex<u64>,
     diagnostic: Mutex<Option<Arc<EngineSinkError>>>,
     /// An optional downstream sink every agent event is forwarded to after
     /// usage folds in. The headless run wire (`saya-cli`) attaches one that
@@ -127,7 +136,10 @@ pub struct SinkBudgets {
     /// `consumed >= limit` threshold — the latch records the event that
     /// actually happened (a claim was refused), where a threshold would both
     /// pause an exact-fill run that was refused nothing and miss a refusal
-    /// that left unclaimable headroom below the limit.
+    /// that left unclaimable headroom below the limit. A resume hands the
+    /// wallet already carrying the spend its journal records — seeded by
+    /// `resume` before this sink takes over — so the check binds the run's
+    /// whole download spend, not this invocation's.
     pub download_budget: Option<DownloadBudget>,
     /// The spend the run's journal already records when this sink takes
     /// over — the seeding a resume does, so the token ceiling measures the
@@ -159,6 +171,11 @@ impl EngineEventSink {
         } = budgets;
         let now = clock();
         let deadline = wall_clock.map(|ceiling| now.checked_add(ceiling).unwrap_or(now));
+        let journaled_downloads = Mutex::new(
+            download_budget
+                .as_ref()
+                .map_or(0, |budget| budget.consumed()),
+        );
         Self {
             run_id,
             journal,
@@ -169,6 +186,7 @@ impl EngineEventSink {
             download_budget,
             state: Mutex::new(initial),
             usage: Mutex::new(carried_usage),
+            journaled_downloads,
             diagnostic: Mutex::new(None),
             agent_stream: None,
         }
@@ -252,9 +270,11 @@ impl EngineEventSink {
 #[async_trait]
 impl AgentEventSink for EngineEventSink {
     /// One event emission is one tick: usage folds into the run's totals and
-    /// is journaled as the run's durable per-endpoint record, then the
-    /// wall-clock deadline is checked. Counting precedes the check because
-    /// the tokens the event reports were already spent.
+    /// is journaled as the run's durable per-endpoint record, the download
+    /// wallet's spend is journaled when it has grown past the level the
+    /// record holds, and then the wall-clock deadline is checked. Counting
+    /// precedes the check because the tokens the event reports were already
+    /// spent.
     async fn emit(&self, event: AgentEvent) {
         if let AgentEvent::Usage { usage, .. } = &event {
             self.usage
@@ -263,10 +283,48 @@ impl AgentEventSink for EngineEventSink {
                 .fold(usage);
             self.journal_usage(usage);
         }
+        self.journal_downloads();
         if let Some(stream) = &self.agent_stream {
             stream.emit(event).await;
         }
         self.tick().await;
+    }
+}
+
+impl EngineEventSink {
+    /// Journals the download wallet's consumed level when it has grown past
+    /// the level the journal holds — the durable record a resume seeds the
+    /// wallet from, the same role the usage record plays for the token
+    /// ceiling. The wallet's arithmetic is first-party (the claim counter is
+    /// ours, never a provider's report), so the event carries a definite
+    /// figure — never absent, never a fabricated zero for spend that was
+    /// never claimed. The recorded levels are monotone, and the journal
+    /// holds the wallet's spend as far as the record goes: the bytes a
+    /// download claims between two ticks are journaled at the next one, so
+    /// what a crash can leave unrecorded is the in-flight attempt's claims —
+    /// the same residual the usage path accepts, which a restarted download
+    /// re-pays by claiming its remainder, never invents.
+    ///
+    /// A failed append is held as a diagnostic and the level is not
+    /// advanced, so the next tick retries it; emit has no error channel,
+    /// and the next transition's write fails loudly the same way.
+    fn journal_downloads(&self) {
+        let Some(budget) = &self.download_budget else {
+            return;
+        };
+        let level = budget.consumed();
+        let mut journaled = self
+            .journaled_downloads
+            .lock()
+            .expect("engine sink download journal lock");
+        if level <= *journaled {
+            return;
+        }
+        let event = RunEvent::DownloadedBytes { bytes: level };
+        match self.journal.append(&event) {
+            Ok(()) => *journaled = level,
+            Err(source) => self.hold_diagnostic(EngineSinkError::Journal { source }),
+        }
     }
 }
 

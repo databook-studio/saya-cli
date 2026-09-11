@@ -83,12 +83,15 @@ impl RunPanel {
             RunEvent::Completed | RunEvent::Failed { .. } | RunEvent::Cancelled => {
                 self.terminated = true;
             }
-            // Usage and deliverables ride the durable record; the lifecycle
-            // line is what the panel's status row is for.
+            // Usage, deliverables, and download levels ride the durable
+            // record; the lifecycle line is what the panel's status row is
+            // for.
             _ => {}
         }
         match &event {
-            RunEvent::Usage { .. } | RunEvent::Deliverables { .. } => {}
+            RunEvent::Usage { .. }
+            | RunEvent::Deliverables { .. }
+            | RunEvent::DownloadedBytes { .. } => {}
             other => {
                 self.status = crate::render_run::run_event_text(other)
                     .trim_end()
