@@ -76,6 +76,62 @@ also drives session-level read-only on connectors that support it. This is
 distinct from a profile's own `SAYA_DB_READ_ONLY`, which sets a file engine's
 (DuckDB/SQLite) access mode.
 
+`max_iterations` (default `12`) is the fallback turn ceiling for a run's
+episodes — the `[jobs]` `turns` key overrides it — and does not bound
+interactive `ask`. A zero is refused as a typo.
+
+The `[jobs]` table sets the default budgets a `saya run` is declared with when
+its specification and each of its steps declare none. Each key is optional and
+independent; the run pauses when a declared budget trips rather than silently
+stopping.
+
+```toml
+[jobs]
+turns = 40                # run-episode turn ceiling
+tool_calls = 25           # total tool calls across episodes
+wall_clock_seconds = 1800 # run wall-clock ceiling
+
+[jobs.tokens_per_endpoint]
+"local-ollama" = 200_000  # token ceiling per named endpoint
+```
+
+`turns` falls back to `[run] max_iterations`. `wall_clock_seconds` and
+`tool_calls` have no default: unset means no ceiling, and the run pauses when
+a declared budget trips rather than overrunning. `tokens_per_endpoint` is
+keyed by run-scoped endpoint name (the same shape `[[ai.endpoints]]` uses);
+more than eight keys, or a key outside the name shape, is a rejected config.
+With several ceilings declared, the tightest binds today.
+
+A zero on any budget is refused as a typo rather than clamped — zero turns or
+zero tool calls would pause a run before its first turn — with a typed error
+naming the field. There is no upper bound; the unlimited case is "leave it
+unset".
+
+`[jobs.fetch]` sets the download budgets the `http_download` tool spends
+from. Every key is optional and resolves to a conservative default, so a run
+is download-bounded even when nothing is declared:
+
+```toml
+[jobs.fetch]
+max_file_bytes = 268435456   # per file; default 256 MiB
+max_run_bytes = 1073741824   # whole run; default 1 GiB
+timeout_seconds = 60         # per request; default 60
+```
+
+A zero there is refused the same way. No `[jobs]` key has an environment
+override, deliberately: a run must be reproducible from its specification and
+config alone. Per-invocation overrides belong on the command line instead —
+`saya run --budget turns=40 --budget tokens.planner=100000` — whose known keys
+are `wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`, and
+`tokens.<endpoint>=<n>`; unset keys fall back to `[jobs]`, and a zero is
+refused as a typo there too.
+
+The project layer may set `[jobs]` without `--trust-project-config`: it is a
+cost control, not a security-critical setting. Layering is per key: a layer
+that declares a key replaces that key's whole value from the lower layers, so
+the `tokens_per_endpoint` map and the `[jobs.fetch]` sub-table are replaced
+wholesale rather than merged field-wise.
+
 The `[ui]` table sets the interactive TUI's colour palette:
 
 ```toml
@@ -132,6 +188,52 @@ context_window_tokens = 1048576
 ```
 
 A declared value of `0` is rejected as a typo. There is no upper bound.
+
+The `[[ai.endpoints]]` array declares the named endpoints a run's roles can
+bind to (`saya run --allow endpoint:<role>=<endpoint>`). Each entry is a delta
+over the plain `[ai]` block: a field the entry declares wins, an unset field
+inherits `[ai]`'s resolved value, and `name` never inherits. The resolved pool
+is keyed by name and always contains `orchestrator` — the plain `[ai]` block
+when no entry carries that name — so a config without the section changes
+nothing.
+
+```toml
+[ai]
+model = "qwen2.5-coder:14b"
+api_key = { env = "SAYA_API_KEY" }
+
+[[ai.endpoints]]
+name = "planner"
+base_url = "https://gateway.internal/v1"
+api_key = { env = "SAYA_PLANNER_KEY" }
+```
+
+`name` is required and must have the run-scoped name shape: non-empty, at most
+128 characters, no whitespace or control characters. Two entries with the same
+name in one file are a typed error, not last-wins; more than eight entries are
+rejected; an unknown key inside an entry is a parse error naming the key.
+Across layers, an entry whose name a trusted layer already declared overlays
+that endpoint field-wise — an absent field leaves the lower layer's value.
+Declaring an entry named `orchestrator` replaces the fallback. Endpoints have
+no environment variable or CLI flag of their own.
+
+`api_key` is a secret and must be a reference — `{ env = "SAYA_VAR" }` or
+`{ file = "..." }` — never an inline value. An inline string fails to parse
+with a diagnostic that names the endpoint (`ai.endpoints["planner"].api_key`),
+not just the section.
+
+The project layer's `.saya/config.toml` is a security boundary here, and so is
+a file supplied with `--config`, which occupies the same untrusted slot.
+Without `--trust-project-config` (or `SAYA_TRUST_PROJECT_CONFIG`) the project
+layer cannot add an endpoint name the trusted layers never declared — the
+*name set* is protected, because an endpoint they never declared is still an
+attacker-chosen destination — and it cannot change an existing endpoint's
+`base_url` or `api_key`, the two fields that decide where a request goes and
+which credential authenticates it. Reverted attempts are reported naming the
+endpoint (`ai.endpoints["planner"].base_url`); every command prints a one-line
+warning and `config doctor` lists which settings were ignored. An endpoint's
+`provider` and `model` are ordinary settings, like `[ai] model`: they name
+which model answers, not where the request goes.
 
 `config doctor` reports paths and selection. `config show` emits the resolved
 configuration as display-safe references and settings only. It never resolves
