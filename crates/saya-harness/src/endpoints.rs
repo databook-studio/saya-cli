@@ -144,10 +144,10 @@ pub fn write_run_configs(
     Ok(())
 }
 
-/// The env var a role's resolved key is injected under at launch — the
-/// single definition of the name, shared with the runner's spawn env.
+/// The env var a role's resolved key is injected under at launch, built
+/// under `saya_types::CREDENTIAL_ENV_PREFIX` — the constant `redact()` matches.
 pub fn endpoint_env_var(role: &str) -> String {
-    let mut var = String::from("SAYA_RUN_EP_");
+    let mut var = String::from(saya_types::CREDENTIAL_ENV_PREFIX);
     var.extend(role.chars().map(|c| match c {
         c if c.is_ascii_alphanumeric() => c.to_ascii_uppercase(),
         _ => '_',

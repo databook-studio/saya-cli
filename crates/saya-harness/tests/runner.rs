@@ -37,12 +37,13 @@ mod spawn_battery {
     };
 
     use saya_agent::ToolExecutor;
+    use saya_harness::endpoints::endpoint_env_var;
     use saya_harness::runner::sandbox::{RunSandbox, RunnerSpawn, SandboxProvision};
     use saya_harness::runner::{
         Credential, OutputRing, ProgramOutcome, RUN_PROGRAM_TOOL, RunProgram, RunnerError,
         StaticCredentialSource, refuse::validate_call,
     };
-    use saya_types::RunnerScope;
+    use saya_types::{CREDENTIAL_ENV_PREFIX, RunnerScope};
 
     /// The allowlisted runner program: the battery's compiled helper.
     const PROGRAM: &str = "saya-probe";
@@ -585,7 +586,12 @@ use std::time::Duration;
         use saya_types::SecretRef;
         Credential::new(
             "probe-endpoint",
-            "SAYA_PROBE_ENDPOINT_API_KEY",
+            // The real generated name (`SAYA_RUN_EP_PROBE_ENDPOINT`, via the
+            // same endpoint_env_var the run-config generator uses). The name
+            // matches none of the `key=value` markers, so this exercises the
+            // env-assignment redaction rule — a stand-in ending in API_KEY
+            // would pass for the wrong reason.
+            endpoint_env_var("probe-endpoint"),
             SecretRef::Env {
                 env: "SAYA_PROBE_SECRET_SOURCE".to_owned(),
             },
@@ -608,7 +614,9 @@ use std::time::Duration;
 
     /// Declared, sandboxed, referenced, redacted: the variable is in the
     /// child's actual environment, and the value is scrubbed from the
-    /// captured output the model reads (the `api_key=` marker redacts).
+    /// captured output the model reads (the `SAYA_RUN_EP_*` env-assignment
+    /// rule in `redact()` — the generated name matches no `key=value`
+    /// marker).
     #[tokio::test]
     async fn the_declared_credential_reaches_the_sandboxed_child() {
         let outcome = credentialed_tool()
@@ -617,7 +625,10 @@ use std::time::Duration;
             .expect("the run must complete");
         assert_eq!(outcome.exit_code, Some(0));
         assert!(
-            outcome.stdout.text.contains("SAYA_PROBE_ENDPOINT_API_KEY="),
+            outcome
+                .stdout
+                .text
+                .contains(&format!("{}PROBE_ENDPOINT=", CREDENTIAL_ENV_PREFIX)),
             "the declared credential must reach the child's actual env: {:?}",
             outcome.stdout.text
         );
@@ -639,7 +650,10 @@ use std::time::Duration;
             .await
             .expect("the run must complete");
         assert!(
-            !outcome.stdout.text.contains("SAYA_PROBE_ENDPOINT_API_KEY"),
+            !outcome
+                .stdout
+                .text
+                .contains(&format!("{CREDENTIAL_ENV_PREFIX}PROBE_ENDPOINT")),
             "an undeclared credential must be absent from the child's env: {:?}",
             outcome.stdout.text
         );
