@@ -103,9 +103,10 @@ granted, each step with the scopes it asks for, the declared budgets, and the
 workspace artifacts' digests as they stand. Only an explicit `y`/`yes`
 approves; a refusal exits `2`, and that run is not resumable — nothing was
 approved, so start a new run. Approve, and the episodes run without further
-prompts: the wall clock arms only at approval, read-shaped tools run, and
-anything needing an interactive decision or an external side effect is denied
-rather than asked about. One approval instead of one per tool call is what
+prompts: the wall clock arms only at approval, read-shaped tools run, the
+approved scopes' own plan-gated tools run in the steps that asked for them
+(scratch's `scratch_sql`), and anything needing an interactive decision or an
+external side effect is denied rather than asked about. One approval instead of one per tool call is what
 makes a long run usable and also what makes the approval matter, so the
 residual is stated here rather than buried: if users rubber-stamp plans, the
 security story leans on the sandbox, the bounds, and the sentinel tests.
@@ -113,8 +114,17 @@ Headless — piped input, CI, or `--non-interactive` — there is no ask at all:
 the `--allow` declaration is the approval, and a plan asking for scopes
 outside it is refused with exit `2`, naming the missing scopes.
 
-**Today exactly one scope binds: `workspace-write`.** The grammar also parses
-`scratch`, `fetch:<scheme>+<host>`, `runner:<program>` and
+**Today two scopes bind: `workspace-write` and `scratch`.** `scratch` gives
+the run one DuckDB file of its own, at `runs/<id>/scratch.duckdb`, reachable
+only through the `scratch_sql` tool, and only in the steps whose plan asked
+for scratch: DDL, DML and joins over the run's staged intermediate results,
+one statement per call, results capped at 50 rows. It holds nothing else:
+external access is off and locked at open, every file reader is refused, and
+it is not a connection to any registered database — the run's only writable
+SQL, and it dies with the run directory. Stage corpus data through the
+workspace tools first.
+
+The grammar also parses `fetch:<scheme>+<host>`, `runner:<program>` and
 `endpoint:<role>=<endpoint>`, and each is **refused with a usage error** that
 names what is missing, because no tool in a run's universe consumes them yet.
 They are refused rather than accepted-and-ignored on purpose: approving a

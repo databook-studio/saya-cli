@@ -17,8 +17,10 @@ use crate::config::runtime::RuntimeConfig;
 use crate::connection;
 use crate::prompt_approval::TerminalApproval;
 use saya_agent::ChatProvider;
+use saya_harness::scratch::ScratchSql;
 use saya_types::Budgets;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// How much workspace the episode brief's manifest walks: names, sizes,
 /// digests — never bulk contents. Conservative brief bounds, fixed here so
@@ -56,6 +58,10 @@ pub(super) fn bind_step_budgets(plan: saya_types::RunPlan, run: &Budgets) -> say
 pub(super) struct Pieces {
     pub(super) provider: Box<dyn ChatProvider>,
     pub(super) tools: Arc<DatabaseTools>,
+    /// The run's scratch database (ADR 0003), admitted once per run when the
+    /// run approved `scratch` — one file shared across every step toolset;
+    /// `None` opens nothing and nothing else may open the file.
+    pub(super) scratch: Option<Arc<ScratchSql>>,
     pub(super) decider: TerminalApproval,
     pub(super) model: String,
     pub(super) profile_names: Vec<String>,
@@ -64,13 +70,19 @@ pub(super) struct Pieces {
 
 /// Assembles the pieces. The model is the `orchestrator` endpoint's — the
 /// role every run has — resolved over the `[ai]` block exactly the way
-/// endpoint resolution layers it. `profile_override` is the host's active
-/// connection profile (what a nested child's `--profile` forwards); `None`
-/// keeps the resolved default. Errors are configuration or connection
-/// problems (exit-code class 3), reported as text for the caller to emit.
+/// endpoint resolution layers it. `run_root` is the claimed run directory
+/// (the scratch file's home, ADR 0003) and `scopes` the run's approved
+/// capabilities: the scratch database is admitted here, once per run, when
+/// — and only when — the run approved `scratch`. `profile_override` is the
+/// host's active connection profile (what a nested child's `--profile`
+/// forwards); `None` keeps the resolved default. Errors are configuration,
+/// connection, or admission problems (exit-code class 3), reported as text
+/// for the caller to emit.
 pub(super) async fn assemble(
     runtime: &RuntimeConfig,
     profile_override: Option<&String>,
+    run_root: &std::path::Path,
+    scopes: &saya_types::Capabilities,
     workspace: std::sync::Arc<saya_harness::workspace::Workspace>,
     approval: saya_agent::ApprovalPolicy,
 ) -> Result<Pieces, String> {
@@ -122,9 +134,23 @@ pub(super) async fn assemble(
         )
         .with_workspace(Some(workspace)),
     );
+    // Shared per run, admitted before anything runs (fail closed at start,
+    // never mid-flight): one scratch database when the run approved
+    // `scratch`, its per-statement timeout the run's resolved query
+    // timeout. The per-step toolsets put it behind the composites of the
+    // steps that asked for it; a step that did not ask never sees it.
+    let scratch =
+        ScratchSql::admit(run_root, scopes)
+            .map_err(|error| format!("scratch database could not be opened: {error}"))?
+            .map(|scratch| {
+                Arc::new(scratch.with_query_timeout(Duration::from_secs(
+                    runtime.resolved.query_timeout_seconds,
+                )))
+            });
     Ok(Pieces {
         provider,
         tools,
+        scratch,
         decider: TerminalApproval::new(approval, false),
         model: ai.model,
         profile_names,

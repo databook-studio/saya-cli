@@ -79,7 +79,15 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             );
         }
     };
-    let pieces = match assembly::assemble(runtime, host.profile, workspace.clone(), approval).await
+    let pieces = match assembly::assemble(
+        runtime,
+        host.profile,
+        run_dir.root(),
+        &spec.scopes,
+        workspace.clone(),
+        approval,
+    )
+    .await
     {
         Ok(pieces) => pieces,
         Err(message) => return exit::connection_failure(message, format),
@@ -131,12 +139,13 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     // The per-step toolsets are prebuilt from the bound plan, before the
     // approval gate: a toolset that cannot be built refuses the run before
     // it starts, never mid-flight (the same fail-closed discipline as
-    // scope parsing).
+    // scope parsing). Each is built from its step's capabilities — the
+    // thing the approval view shows — over the run's shared collaborators.
     let toolsets = tools::toolsets(
         &pieces.tools,
+        pieces.scratch.as_ref(),
         pieces.allow_query_data,
-        &spec.scopes,
-        plan.steps.len(),
+        &plan.steps,
     );
     if let Err(error) = files::persist_plan(run_dir.root(), &plan) {
         return exit::connection_failure(
