@@ -84,6 +84,11 @@ pub struct EngineEventSink {
     state: Mutex<RunState>,
     usage: Mutex<UsageTotals>,
     diagnostic: Mutex<Option<Arc<EngineSinkError>>>,
+    /// An optional downstream sink every agent event is forwarded to after
+    /// usage folds in. The headless run wire (`saya-cli`) attaches one that
+    /// renders the episode's events in the caller's format; the sink's own
+    /// accounting (usage totals, the wall-clock tick) is unchanged either way.
+    agent_stream: Option<Arc<dyn AgentEventSink>>,
 }
 
 impl EngineEventSink {
@@ -112,7 +117,16 @@ impl EngineEventSink {
             state: Mutex::new(initial),
             usage: Mutex::new(UsageTotals::default()),
             diagnostic: Mutex::new(None),
+            agent_stream: None,
         }
+    }
+
+    /// Attaches the downstream sink every agent event forwards to. Usage
+    /// accounting and the wall-clock tick are unaffected; the observer only
+    /// ever mirrors.
+    pub fn with_agent_stream(mut self, stream: Arc<dyn AgentEventSink>) -> Self {
+        self.agent_stream = Some(stream);
+        self
     }
 
     /// The run's state as the sink last advanced it.
@@ -193,6 +207,9 @@ impl AgentEventSink for EngineEventSink {
                 .lock()
                 .expect("engine sink usage lock")
                 .fold(usage);
+        }
+        if let Some(stream) = &self.agent_stream {
+            stream.emit(event).await;
         }
         self.tick().await;
     }

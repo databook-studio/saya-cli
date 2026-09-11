@@ -49,6 +49,21 @@ pub enum SlashCommand {
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
     /// hands it to the shared `run_contracts` dispatcher — no second parsing.
     Contracts(ContractsCommand),
+    /// `/run <tail>` — start or operate a headless run from the session. The
+    /// raw tail is handed to a nested `saya run` child process verbatim, whose
+    /// output passes through the parent's stdout/stderr unmangled (the
+    /// dual-tag hazard is documented where the child spawns,
+    /// `interactive::session_run`). The child's own CLI parser stays the
+    /// authority on `--allow`, `--budget`, and the `cancel`/`resume`/`show`
+    /// subcommands — the adapter parses nothing twice.
+    Run(String),
+    /// `/run cancel <id>` — record a run cancelled through the same engine
+    /// path `saya run cancel` uses, via the shared dispatcher.
+    RunCancel(String),
+    /// `/runs [id]` — list every run, or show one run when you name its id,
+    /// through the same read path the headless `saya run list|show` commands
+    /// use.
+    Runs(Option<String>),
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
     /// Show session token usage totals and cache hit rate.
@@ -121,12 +136,41 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject"
         | "approve-all" => {
             // The contract slash adapters: translate to the same
-            // `ContractsCommand` the headless parser produces and hand it to the
-            // shared dispatcher. No second parsing or DTO mapping lives here.
+            // `ContractsCommand` the headless parser produces and hand it to
+            // the shared dispatcher. No second parsing or DTO mapping lives here.
             // `confirm`/`reject` translate to `ContractsCommand::Decide`.
             return contracts::parse_contract_command(name, &arg)
                 .map(|maybe| maybe.map(SlashCommand::Contracts));
         }
+        "run" => {
+            // `/run` and `/run cancel <id>`. The subcommand word is matched
+            // first, exactly as the headless `saya run` CLI disambiguates:
+            // `saya run cancel <id>` is the Cancel subcommand, so a slash
+            // goal beginning with "cancel" needs the same treatment the
+            // headless grammar already gives it. Everything else is the
+            // nested-run tail, handed to the child verbatim.
+            let tail = arg.trim();
+            if tail.is_empty() {
+                return Err(SlashParseError(
+                    "run requires a goal and --allow scopes, e.g. \
+                     /run survey the data --allow workspace-write"
+                        .into(),
+                ));
+            }
+            let (head, rest) = tail.split_once(' ').unwrap_or((tail, ""));
+            if head == "cancel" {
+                let run_id = rest.trim();
+                if run_id.is_empty() {
+                    return Err(SlashParseError(
+                        "run cancel requires a run id: /run cancel <id>".into(),
+                    ));
+                }
+                SlashCommand::RunCancel(run_id.to_string())
+            } else {
+                SlashCommand::Run(tail.to_string())
+            }
+        }
+        "runs" => SlashCommand::Runs((!arg.is_empty()).then_some(arg)),
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "exit" | "quit" => SlashCommand::Exit,
         other => {
@@ -336,5 +380,46 @@ mod tests {
         // `quit` is a deliberate alias of `exit`; a near-miss still lands on a
         // known name (the suggester picks the closest, never a removed one).
         assert_eq!(registry::closest_command("exi"), Some("exit"));
+    }
+
+    /// `/run` keeps its tail verbatim — the nested child's parser is the
+    /// authority on it — and `/run cancel <id>` is the subcommand form, the
+    /// same disambiguation the headless `saya run` grammar gives.
+    #[test]
+    fn test_parse_run_and_run_cancel() {
+        assert_eq!(
+            parse_slash_command("/run survey the data --allow workspace-write"),
+            Ok(Some(SlashCommand::Run(
+                "survey the data --allow workspace-write".into()
+            )))
+        );
+        assert_eq!(
+            parse_slash_command("/run resume r-1"),
+            Ok(Some(SlashCommand::Run("resume r-1".into())))
+        );
+        assert_eq!(
+            parse_slash_command("/run cancel r-1"),
+            Ok(Some(SlashCommand::RunCancel("r-1".into())))
+        );
+        assert_eq!(
+            parse_slash_command("/run  cancel  r-1 "),
+            Ok(Some(SlashCommand::RunCancel("r-1".into())))
+        );
+        // A bare /run and a cancelless id are usage errors with guidance.
+        assert!(parse_slash_command("/run").is_err());
+        assert!(parse_slash_command("/run cancel").is_err());
+    }
+
+    /// `/runs` lists without an id and shows one with it.
+    #[test]
+    fn test_parse_runs() {
+        assert_eq!(
+            parse_slash_command("/runs"),
+            Ok(Some(SlashCommand::Runs(None)))
+        );
+        assert_eq!(
+            parse_slash_command("/runs r-1"),
+            Ok(Some(SlashCommand::Runs(Some("r-1".into()))))
+        );
     }
 }

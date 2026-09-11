@@ -166,6 +166,8 @@ impl CrashedRun {
             request: request(),
             bounds: bounds(),
             wall_clock: None,
+            journal_wire: None,
+            agent_stream: None,
         }
     }
 }

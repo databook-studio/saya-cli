@@ -239,6 +239,49 @@ fn handle_line(
         block_on(store.save(state.redacted()))?;
         return Ok(false);
     }
+    if let SessionAction::Runs(run_id) = action {
+        // `/runs [id]` reaches the same `reads.rs` path the headless
+        // `saya run list|show` commands use — the parity contract
+        // (tests/run_slash_parity.rs) pins the two adapters byte-identical.
+        let command = match run_id {
+            Some(run_id) => crate::cli::RunCommand::Show { run_id },
+            None => crate::cli::RunCommand::List,
+        };
+        let approval = state
+            .approval_mode
+            .parse()
+            .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
+        block_on(crate::commands::run_management(
+            command, runtime, format, approval, state_db,
+        ))?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
+    if let SessionAction::RunCancel(run_id) = action {
+        // `/run cancel <id>` is the same engine path `saya run cancel` uses —
+        // the shared dispatcher, not a second cancellation implementation.
+        let approval = state
+            .approval_mode
+            .parse()
+            .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
+        block_on(crate::commands::run_management(
+            crate::cli::RunCommand::Cancel { run_id },
+            runtime,
+            format,
+            approval,
+            state_db,
+        ))?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
+    if let SessionAction::Run(tail) = action {
+        // The nested run's stream passes through on the real stdout/stderr;
+        // see `session_run` for the passthrough rule. The child's own settle
+        // message is the outcome; the parent says nothing.
+        super::session_run::spawn_run_child(runtime, format, state, &tail)?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
     if let SessionAction::Resume(id) = action {
         let defaults = super::session_resume::SessionDefaults {
             provider: state.provider.clone(),

@@ -18,6 +18,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use saya_types::{RunEvent, redact};
@@ -28,10 +29,27 @@ use crate::{HarnessError, io_error};
 /// The journal file's name inside a run directory.
 pub const EVENTS_FILE: &str = "events.ndjson";
 
+/// An observer fired once per successfully appended event, with the event as
+/// journaled. The headless run wire (`saya-cli`) attaches one that renders
+/// the event onto the process's NDJSON stream, so the wire and the durable
+/// record are the same stream in the same order — the renderer cannot drift
+/// from the journal because it renders the journal's own write.
+pub type JournalWire = Arc<dyn Fn(&RunEvent) + Send + Sync>;
+
 /// The append-only event journal of one run.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Journal {
     path: PathBuf,
+    wire: Option<JournalWire>,
+}
+
+impl std::fmt::Debug for Journal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Journal")
+            .field("path", &self.path)
+            .field("wire", &self.wire.is_some())
+            .finish()
+    }
 }
 
 impl Journal {
@@ -40,11 +58,22 @@ impl Journal {
     pub fn open(run_dir: impl AsRef<Path>) -> Self {
         Self {
             path: run_dir.as_ref().join(EVENTS_FILE),
+            wire: None,
         }
     }
 
+    /// Attaches the observer every subsequent append notifies. Clones share
+    /// the observer, so a journal handed to several writers reports each
+    /// event exactly once.
+    pub fn with_wire(mut self, wire: JournalWire) -> Self {
+        self.wire = Some(wire);
+        self
+    }
+
     /// Appends one event as exactly one newline-terminated NDJSON line and
-    /// fsyncs it — the journal is the record a crash resume reads.
+    /// fsyncs it — the journal is the record a crash resume reads. A
+    /// successful append fires the observer (after the write, so an observer
+    /// never announces an event that failed to land).
     pub fn append(&self, event: &RunEvent) -> Result<(), HarnessError> {
         let line = serialize_redacted(event)?;
         let mut file = open_append(&self.path)?;
@@ -52,7 +81,11 @@ impl Journal {
             .and_then(|()| file.write_all(b"\n"))
             .map_err(|error| io_error("append run event to", &self.path, error))?;
         file.sync_all()
-            .map_err(|error| io_error("sync run journal", &self.path, error))
+            .map_err(|error| io_error("sync run journal", &self.path, error))?;
+        if let Some(wire) = &self.wire {
+            wire(event);
+        }
+        Ok(())
     }
 
     /// Every event in the journal, in write order. An absent journal is an

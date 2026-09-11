@@ -5,6 +5,7 @@ pub(crate) mod session_paths;
 mod session_prompt;
 mod session_request;
 mod session_resume;
+mod session_run;
 mod session_schema;
 mod session_sql;
 mod session_state;

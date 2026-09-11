@@ -11,6 +11,8 @@ use super::exit::Settled;
 use super::{assembly, exit, files};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+use crate::render_run;
+use crate::stream_render::TerminalSink;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun, PlanDriver,
@@ -24,6 +26,13 @@ use std::sync::Arc;
 
 /// Proposes and binds the plan, then drives every step. Everything here is
 /// covered by Ctrl-C.
+///
+/// The run wire is attached here, not rendered by hand: the journal carries
+/// the wire, so every lifecycle and step event is rendered from the journal's
+/// own write (in journal order, never duplicated), and the engine sink
+/// forwards the episode's agent events through today's `TerminalEvent`
+/// envelope in the caller's format. The two tags share the stream by design —
+/// see `crate::render_run` for why the benchmark's wire stays intact.
 pub(super) async fn drive(
     spec: &RunSpec,
     run_dir: saya_harness::run_dir::RunDir,
@@ -35,7 +44,7 @@ pub(super) async fn drive(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let run_id = spec.id.clone();
     let store: Arc<dyn RunStore> = Arc::new(state.clone());
-    let journal = Journal::open(run_dir.root());
+    let journal = render_run::wired_journal(Journal::open(run_dir.root()), format);
     let workspace = match Workspace::open(run_dir.workspace()) {
         Ok(workspace) => Arc::new(workspace),
         Err(error) => {
@@ -89,7 +98,8 @@ pub(super) async fn drive(
         store.clone(),
         spec.budgets.wall_clock,
         std::time::Instant::now,
-    );
+    )
+    .with_agent_stream(Arc::new(TerminalSink::new(format)));
     if let Err(error) = sink.record(TransitionEvent::Approve).await {
         return exit::connection_failure(
             format!("run approval could not be recorded: {error}"),

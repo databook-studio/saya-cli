@@ -8,10 +8,10 @@
 
 use std::collections::BTreeMap;
 
-use super::exit::pause_reason_text;
 use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+use crate::render_run;
 use saya_store::{RunStore, SqliteStateStore};
 use saya_types::{Deliverable, RunEvent};
 
@@ -70,47 +70,44 @@ pub(super) async fn show(
             format,
         );
     };
-    let mut text = format!(
-        "run {}\nstatus: {}{}\ncreated: {}\nupdated: {}",
-        record.id,
-        record.status.as_str(),
-        match (record.status, record.failure_code) {
-            (saya_store::RunStatus::Failed, Some(code)) => {
-                format!(" ({})", super::exit::failure_code_cause(code))
-            }
-            _ => String::new(),
-        },
-        record.created_unix_ms,
-        record.updated_unix_ms,
-    );
     // The spec is the approval's full shape; a missing file renders as its
-    // own line rather than failing the read.
-    if let Ok(spec) = super::files::load_spec(&dir) {
-        text.push_str(&format!("\ngoal: {}", spec.goal));
-        text.push_str(&format!("\nscopes: {}", describe_scopes(&spec.scopes)));
-    }
+    // own line rather than failing the read. The stanza's wording is the
+    // renderer's (`crate::render_run`) — the headless command and the `/runs`
+    // slash adapter render the same bytes because both end here.
+    let spec = super::files::load_spec(&dir).ok().map(|spec| {
+        let scopes = describe_scopes(&spec.scopes);
+        (spec.goal, scopes)
+    });
     let journal = journal_of(&dir)?;
-    if let Some(reason) = super::last_pause(&journal) {
-        text.push_str(&format!("\npaused: {}", pause_reason_text(reason)));
-    }
-    // The deliverables the run recorded at its steps' completions — the
-    // artifact manifests, last record per step. A run that declared none
-    // renders no section.
+    let paused = super::last_pause(&journal);
     let events = journal
         .read()
         .map_err(|error| format!("run journal could not be read: {error}"))?;
-    let lines = deliverable_lines(&events);
-    if !lines.is_empty() {
-        text.push_str("\ndeliverables:");
-        for line in lines {
-            text.push_str(&format!("\n{line}"));
-        }
-    }
+    let deliverables = deliverable_lines(&events);
+    let text = render_run::run_show_text(render_run::RunShowStanza {
+        id: record.id.as_str(),
+        status: record.status.as_str(),
+        failure_cause: match (record.status, record.failure_code) {
+            (saya_store::RunStatus::Failed, Some(code)) => {
+                Some(super::exit::failure_code_cause(code))
+            }
+            _ => None,
+        },
+        created_unix_ms: record.created_unix_ms,
+        updated_unix_ms: record.updated_unix_ms,
+        spec: spec
+            .as_ref()
+            .map(|(goal, scopes)| (goal.as_str(), scopes.as_str())),
+        paused,
+        deliverables: &deliverables,
+    });
     crate::commands::output::result(text, format)
 }
 
 /// Prints one run's journal: every lifecycle and step event, in write order,
-/// one NDJSON line each — the journal is already the wire format.
+/// one NDJSON line each — the journal is already the wire format. The lines
+/// are the renderer's one serde path (`crate::render_run::journal_line`),
+/// the same bytes the live run wire streams.
 pub(super) async fn log(
     raw_id: &str,
     _runtime: &RuntimeConfig,
@@ -144,37 +141,10 @@ pub(super) async fn log(
     }
     let lines = events
         .iter()
-        .map(|event| serde_json::to_string(event).unwrap_or_else(|_| format!("{event:?}")))
+        .map(render_run::journal_line)
         .collect::<Vec<_>>()
         .join("\n");
     crate::commands::output::result(lines, format)
-}
-
-/// The run's recorded deliverables — the last manifest per step, in step
-/// order: name, size, digest. A declared deliverable the step never
-/// produced is rendered missing, never silently dropped.
-fn deliverable_lines(events: &[RunEvent]) -> Vec<String> {
-    // Last record wins: a step re-driven by a resume appends a fresh
-    // manifest for its step.
-    let mut by_step: BTreeMap<usize, Vec<&Deliverable>> = BTreeMap::new();
-    for event in events {
-        if let RunEvent::Deliverables { step, entries } = event {
-            by_step.insert(*step, entries.iter().collect());
-        }
-    }
-    let mut lines = Vec::new();
-    for (step, entries) in &by_step {
-        for deliverable in entries {
-            match &deliverable.artifact {
-                Some(artifact) => lines.push(format!(
-                    "step {step}: {} ({} bytes, sha256 {})",
-                    deliverable.name, artifact.size, artifact.digest
-                )),
-                None => lines.push(format!("step {step}: {} missing", deliverable.name)),
-            }
-        }
-    }
-    lines
 }
 
 /// The scopes as the user declared them: booleans and named sets.
@@ -204,4 +174,28 @@ fn describe_scopes(caps: &saya_types::Capabilities) -> String {
     } else {
         names.join(", ")
     }
+}
+
+fn deliverable_lines(events: &[RunEvent]) -> Vec<String> {
+    // Last record wins: a step re-driven by a resume appends a fresh
+    // manifest for its step.
+    let mut by_step: BTreeMap<usize, Vec<&Deliverable>> = BTreeMap::new();
+    for event in events {
+        if let RunEvent::Deliverables { step, entries } = event {
+            by_step.insert(*step, entries.iter().collect());
+        }
+    }
+    let mut lines = Vec::new();
+    for (step, entries) in &by_step {
+        for deliverable in entries {
+            match &deliverable.artifact {
+                Some(artifact) => lines.push(format!(
+                    "step {step}: {} ({} bytes, sha256 {})",
+                    deliverable.name, artifact.size, artifact.digest
+                )),
+                None => lines.push(format!("step {step}: {} missing", deliverable.name)),
+            }
+        }
+    }
+    lines
 }

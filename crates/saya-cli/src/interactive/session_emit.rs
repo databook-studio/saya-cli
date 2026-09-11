@@ -25,6 +25,12 @@ pub(crate) fn emit_action(
         | SessionAction::Sql(_)
         | SessionAction::Contracts(_)
         | SessionAction::Resume(_)
+        // The `/run` family is intercepted in the session loop (it needs the
+        // runtime, and the nested run's output never passes through this
+        // seam); the arms keep the match exhaustive.
+        | SessionAction::Run(_)
+        | SessionAction::RunCancel(_)
+        | SessionAction::Runs(_)
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {

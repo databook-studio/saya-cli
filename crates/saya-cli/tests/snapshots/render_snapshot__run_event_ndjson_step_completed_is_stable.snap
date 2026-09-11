@@ -1,0 +1,5 @@
+---
+source: crates/saya-cli/tests/render_snapshot.rs
+expression: "render_run_event(&event, RenderFormat::Ndjson).stdout"
+---
+{"type":"step_completed","step":1}

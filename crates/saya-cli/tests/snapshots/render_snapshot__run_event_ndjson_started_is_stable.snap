@@ -1,0 +1,5 @@
+---
+source: crates/saya-cli/tests/render_snapshot.rs
+expression: "render_run_event(&RunEvent::RunStarted, RenderFormat::Ndjson).stdout"
+---
+{"type":"run_started"}
