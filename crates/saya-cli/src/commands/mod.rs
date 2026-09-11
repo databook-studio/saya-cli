@@ -6,6 +6,7 @@ mod contracts;
 mod output;
 mod query;
 mod query_input;
+mod run;
 mod state;
 
 use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
@@ -62,6 +63,26 @@ pub async fn run(
         }
         Command::Contracts { command } => {
             contracts::run_contracts(command, runtime, format, &state).await
+        }
+        Command::Run {
+            prompt,
+            allow,
+            budget,
+            command,
+        } => {
+            run::run_command(
+                run::RunInvocation {
+                    prompt,
+                    allow,
+                    budget,
+                    command,
+                },
+                runtime,
+                format,
+                approval,
+                &state,
+            )
+            .await
         }
         // Completions are handled in app::dispatch before the runtime loads;
         // reaching here is a programming error.
