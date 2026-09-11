@@ -88,11 +88,16 @@ pub struct ResumeRun<'a> {
     pub token_ceiling: Option<u64>,
     /// The run's download wallet, armed again so a resumed run keeps its
     /// declared download posture: the composition root hands the same
-    /// wallet it put behind the fetch-capable steps' executors, so a
-    /// resumed run cannot spend a second full budget. The token ceiling's
-    /// carry has no journal equivalent yet (the wiring plan's resume-carry
-    /// question); this field exists so the composition can thread the
-    /// wallet it built, and `None` keeps the check inert.
+    /// wallet it put behind the fetch-capable steps' executors, and
+    /// `resume` seeds it with the download spend the run's journal already
+    /// records — the same carry the token ceiling gets from its usage
+    /// record — so the budget binds the run, not each invocation: resuming
+    /// a run that already spent against the wallet continues against the
+    /// bytes already claimed, and a run already past its limit is refused
+    /// on its next download claim. The seed rides the repaired record and
+    /// never touches the trip latch: a carried level is not a refusal, and
+    /// the latch keeps recording only refusals that happened. `None` keeps
+    /// the check inert.
     pub download_budget: Option<DownloadBudget>,
     /// Optional observer every journaled event notifies — the headless run
     /// wire attaches one so a resumed run streams its journal as it writes

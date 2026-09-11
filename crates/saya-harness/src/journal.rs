@@ -144,7 +144,8 @@ pub struct JournalState {
     /// reads back as [`StepState::Started`].
     pub steps: BTreeMap<usize, StepState>,
     /// The journal's last lifecycle event — a pause's reason or a terminal
-    /// state lives here. Usage reports are deliberately not lifecycle.
+    /// state lives here. Usage reports and download levels are deliberately
+    /// not lifecycle.
     pub last: Option<RunEvent>,
 }
 
@@ -164,8 +165,12 @@ pub fn replay(events: &[RunEvent]) -> JournalState {
         // Every lifecycle event is a candidate for `last`, not only the ones
         // without a state-tracking arm of their own. Setting it inside the
         // catch-all meant a journal ending on StepStarted reported no last
-        // event at all — precisely the shape a resume reads.
-        if !matches!(event, RunEvent::Usage { .. }) {
+        // event at all — precisely the shape a resume reads. Usage reports
+        // and download levels are not lifecycle and never stand in for one.
+        if !matches!(
+            event,
+            RunEvent::Usage { .. } | RunEvent::DownloadedBytes { .. }
+        ) {
             state.last = Some(event.clone());
         }
         match event {
@@ -185,6 +190,10 @@ pub fn replay(events: &[RunEvent]) -> JournalState {
             // A journal ending here reads as a step still in flight.
             RunEvent::Deliverables { .. } => {}
             RunEvent::Usage { .. } => {}
+            // The download level is the wallet's spend, not lifecycle and
+            // not step state — it is the figure a resume seeds the wallet
+            // from, read separately from the replay.
+            RunEvent::DownloadedBytes { .. } => {}
             _ => {}
         }
     }

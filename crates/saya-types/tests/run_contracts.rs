@@ -630,6 +630,8 @@ fn every_event_variant_round_trips_through_serde() {
             cached_input_tokens: Some(60),
             cache_creation_input_tokens: None,
         },
+        RunEvent::DownloadedBytes { bytes: 0 },
+        RunEvent::DownloadedBytes { bytes: 97 },
     ];
     for event in events {
         let json = serde_json::to_string(&event).unwrap();
@@ -665,7 +667,8 @@ proptest! {
             RunFailureCode::Provider,
             RunFailureCode::ConnectionConfig,
         ]),
-        kind in prop::sample::select(vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        bytes in 0u64..1_000_000_000,
+        kind in prop::sample::select(vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
     ) {
         let event = match kind {
             0 => RunEvent::RunStarted,
@@ -684,6 +687,7 @@ proptest! {
             7 => RunEvent::Completed,
             8 => RunEvent::Failed { code },
             9 => RunEvent::Cancelled,
+            11 => RunEvent::DownloadedBytes { bytes },
             _ => RunEvent::Usage {
                 endpoint: endpoint.clone(),
                 tokens,

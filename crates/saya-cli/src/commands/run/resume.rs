@@ -151,9 +151,10 @@ async fn continue_run(
         bounds: super::assembly::manifest_bounds(),
         wall_clock: spec.budgets.wall_clock,
         token_ceiling: super::budget::token_ceiling(&spec.budgets),
-        // The same wallet the fetch-capable steps' executors hold, so a
-        // resumed run keeps its declared download posture. `None` when the
-        // run did not approve fetch — the check is inert.
+        // The same wallet the fetch-capable steps' executors hold; the engine's
+        // resume seeds it with the download spend the run's journal already
+        // records, so the budget binds the run, not each invocation. `None`
+        // when the run did not approve fetch — the check is inert.
         download_budget: pieces.fetch.as_ref().map(|fetch| fetch.budget.clone()),
         // The resumed run speaks the same wire a fresh run does: the journal
         // carries the event renderer, and the episode's agent events mirror

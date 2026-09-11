@@ -103,6 +103,9 @@ pub(crate) fn run_event_text(event: &RunEvent) -> String {
             count_text(*turns),
             count_text(*tool_calls),
         ),
+        RunEvent::DownloadedBytes { bytes } => {
+            format!("download · {} bytes claimed so far\n", bytes)
+        }
         // `RunEvent` is #[non_exhaustive]: a future variant this shaper does
         // not know about renders nothing rather than guess. Rendering never
         // fails the run.
