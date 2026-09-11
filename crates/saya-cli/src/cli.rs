@@ -180,16 +180,20 @@ pub enum Command {
     Run {
         /// The run's goal.
         prompt: Option<String>,
-        /// Approved capability scopes, comma-separated: `workspace-write`,
-        /// `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`,
-        /// `endpoint:<role>=<endpoint>`. A headless run refuses to start
-        /// without declared scopes — nothing runs unapproved.
+        /// Approved capability scopes, comma-separated. Today only
+        /// `workspace-write` binds; `none` states a deliberately read-only
+        /// run — the empty scope set. The grammar also parses `scratch`,
+        /// `fetch:<scheme>+<host>`, `runner:<program>`, and
+        /// `endpoint:<role>=<endpoint>`, and each is refused with a usage
+        /// error until the tool that consumes it is wired. A headless run
+        /// refuses to start without `--allow` — nothing runs unapproved.
         #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
         allow: Vec<String>,
         /// Budget overrides as KEY=VALUE: `wall-clock=<seconds>`,
-        /// `turns=<n>`, `tool-calls=<n>`, or `tokens.<endpoint>=<n>`.
-        /// Unset keys fall back to `[jobs]`; a zero ceiling is refused as a
-        /// typo, not clamped.
+        /// `turns=<n>`, `tool-calls=<n>`, or `tokens.orchestrator=<n>` —
+        /// the only token ceiling a run accepts, since every episode calls
+        /// the orchestrator endpoint. Unset keys fall back to `[jobs]`; a
+        /// zero ceiling is refused as a typo, not clamped.
         #[arg(long, value_name = "KEY=VALUE")]
         budget: Vec<String>,
         #[command(subcommand)]
@@ -376,7 +380,8 @@ pub enum RunCommand {
     },
     /// List every run, most recent first.
     List,
-    /// Show one run's status, scopes, budgets, and usage.
+    /// Show one run's status, goal, scopes, pause reason, and the
+    /// deliverables its steps recorded.
     Show {
         /// The id of the run to show.
         run_id: String,

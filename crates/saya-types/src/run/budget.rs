@@ -24,9 +24,10 @@ pub const MAX_BUDGET_ENDPOINTS: usize = 8;
 #[serde(default)]
 #[non_exhaustive]
 pub struct Budgets {
-    /// Wall-clock ceiling. The engine owns the clock and checks it per tick
-    /// and per episode end; it is the honest backstop where a provider
-    /// reports no usage.
+    /// Wall-clock ceiling. The engine owns the clock and checks it per tick —
+    /// each agent event emission is one tick (`EngineEventSink::tick` in
+    /// `saya-harness`); there is no additional episode-end check. It is the
+    /// honest backstop where a provider reports no usage.
     pub wall_clock: Option<Duration>,
     /// Token ceilings keyed by endpoint name, as bound in the run's endpoint
     /// bindings. An endpoint absent from the map has no ceiling.

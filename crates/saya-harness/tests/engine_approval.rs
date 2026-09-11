@@ -4,9 +4,11 @@
 //! 1. A planned run refuses to begin a step until the plan is approved, the
 //!    approval goes through the engine's `TransitionEvent` path once, and a
 //!    second approval is refused — approval is per plan, granted once.
-//! 2. A mid-run plan revision asking for a new scope re-enters approval
-//!    rather than inheriting the earlier plan's: the same approved set
-//!    refuses it, naming the missing scope; only an explicit widening binds.
+//! 2. A plan asking for a scope the approved set does not hold is refused
+//!    by the propose gate rather than silently binding it — the same
+//!    approved set refuses it, naming the missing scope; only an explicit
+//!    widening binds. The engine proposes once, before approval; there is
+//!    no separate mid-run revision flow, so this gate is the only one.
 //! 3. Approving the plan does not produce a per-tool-call prompt afterwards:
 //!    the steps complete with a tool that requires approval, and the
 //!    channel-mirroring decider never prompts.
@@ -361,26 +363,28 @@ async fn a_planned_run_refuses_to_begin_until_the_plan_is_approved_once() {
     let _ = fs::remove_dir_all(run.root);
 }
 
-/// A mid-run plan revision asking for a new scope re-enters approval rather
-/// than inheriting the earlier plan's approval: the same approved set
-/// refuses it, naming the missing scope; only an explicit widening binds.
+/// A plan asking for a scope the approved set does not hold is refused
+/// rather than inheriting anything: the same approved set refuses it,
+/// naming the missing scope; only an explicit widening binds. The engine
+/// proposes once, before approval — there is no mid-run revision flow —
+/// so this test drives the propose gate itself, twice.
 #[tokio::test]
-async fn a_mid_run_revision_asking_a_new_scope_re_enters_approval_rather_than_inheriting() {
+async fn a_reproposed_plan_asking_a_new_scope_is_refused_rather_than_inheriting() {
     let first = plan_json(&step_json(
         "write the report",
         r#"{"workspace_write": true}"#,
     ));
-    let revision = plan_json(&step_json(
+    let widening = plan_json(&step_json(
         "seed the scratch database",
         r#"{"scratch": true}"#,
     ));
-    // The first proposal binds on one answer; the revision is re-prompted to
-    // the bound; the widened proposal binds on one answer.
+    // The first proposal binds on one answer; the re-proposal is re-prompted
+    // to the bound; the widened proposal binds on one answer.
     let planner = ScriptedPlanner::new(vec![
         first,
-        revision.clone(),
-        revision.clone(),
-        revision,
+        widening.clone(),
+        widening.clone(),
+        widening,
         plan_json(&step_json(
             "seed the scratch database",
             r#"{"scratch": true}"#,
@@ -395,7 +399,8 @@ async fn a_mid_run_revision_asking_a_new_scope_re_enters_approval_rather_than_in
         .unwrap();
     assert_eq!(first_plan.steps.len(), 1, "the approved plan binds");
 
-    // Mid-run re-plan, same approved set: the new scope does not inherit.
+    // A re-proposal against the same approved set: the new scope does not
+    // inherit.
     let error = driver
         .propose(&approved, &Budgets::default())
         .await
@@ -408,14 +413,14 @@ async fn a_mid_run_revision_asking_a_new_scope_re_enters_approval_rather_than_in
                 last: PlanRejection::NeedsApproval { step: 0, scopes },
             } if scopes == &["scratch".to_string()]
         ),
-        "the revision must re-enter approval, naming the new scope: {error:?}"
+        "the refusal must name the new scope: {error:?}"
     );
 
-    // The user grants the new scope explicitly; the revision binds.
+    // The approval widens explicitly; the re-proposed plan binds.
     let mut granted = workspace_write_scopes();
     granted.scratch = true;
-    let revised = driver.propose(&granted, &Budgets::default()).await.unwrap();
-    assert!(revised.steps[0].capabilities.scratch);
+    let reproposed = driver.propose(&granted, &Budgets::default()).await.unwrap();
+    assert!(reproposed.steps[0].capabilities.scratch);
 }
 
 /// Approving the plan once does not produce a per-tool-call prompt
@@ -520,11 +525,11 @@ async fn approving_the_plan_once_does_not_prompt_per_tool_call() {
 /// root's message can say what was missing rather than refuse generically.
 #[tokio::test]
 async fn the_needs_approval_refusal_names_the_missing_scope() {
-    let revision = plan_json(&step_json(
+    let asking = plan_json(&step_json(
         "fetch the report",
         r#"{"fetch": {"destinations": [{"scheme": "https", "host": "example.com"}]}}"#,
     ));
-    let planner = ScriptedPlanner::new(vec![revision; 3]);
+    let planner = ScriptedPlanner::new(vec![asking; 3]);
     let driver = PlanDriver::new(&planner, planner_request("fetch"));
 
     let error = driver

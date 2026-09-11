@@ -16,6 +16,8 @@
 //!    missing scope.
 //! 7. On a real terminal the bound plan is approved once and the run
 //!    proceeds — no further interaction; a refusal refuses with exit 2.
+//! 8. `--allow none` states the empty scope set: a read-only run starts and
+//!    completes with no write capability approved.
 
 use std::{
     fs,
@@ -248,6 +250,82 @@ fn allow_with_an_unknown_scope_is_a_usage_error() {
         stderr(&output).contains("unknown scope"),
         "the error must name the refused scope: {}",
         stderr(&output)
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// A read-only run has an honest spelling: `--allow none` states the empty
+/// scope set and the run starts — no write capability is approved, which the
+/// persisted spec (the record a resume reloads) proves field by field, and
+/// the run completes through its ordinary lifecycle.
+#[test]
+fn allow_none_starts_a_read_only_run_that_approves_no_write_capability() {
+    let env = test_root("read-only");
+    let (address, _ready) = mock(vec![
+        Scripted {
+            body: plan_body(&["survey the schema"]),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: sse("survey complete"),
+            delay_ms: 0,
+        },
+    ]);
+    let started = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "none",
+            "survey the data quality",
+        ],
+        &address,
+    );
+    assert_eq!(
+        started.status.code(),
+        Some(0),
+        "a read-only run must start and complete; stderr: {}",
+        stderr(&started)
+    );
+    let mut entries = fs::read_dir(&env.runs)
+        .expect("the runs root exists")
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<PathBuf>>();
+    assert_eq!(entries.len(), 1, "exactly one run exists: {entries:?}");
+    let dir = entries.remove(0);
+    let spec: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("spec.json")).unwrap()).unwrap();
+    let scopes = &spec["scopes"];
+    assert_eq!(
+        scopes["workspace_write"],
+        serde_json::json!(false),
+        "no write capability may be approved: {scopes}"
+    );
+    assert_eq!(
+        scopes["scratch"],
+        serde_json::json!(false),
+        "no scratch capability may be approved: {scopes}"
+    );
+    assert!(
+        scopes["fetch"].is_null(),
+        "no fetch capability may be approved: {scopes}"
+    );
+    assert!(
+        scopes["runner"].is_null(),
+        "no runner capability may be approved: {scopes}"
+    );
+    assert_eq!(
+        scopes["endpoints"],
+        serde_json::json!({}),
+        "no endpoint binding may be approved: {scopes}"
+    );
+    // And the run really ran: the empty approval is a start, not a refusal.
+    let journal = fs::read_to_string(dir.join("events.ndjson")).unwrap();
+    assert!(
+        journal.contains("run_started") && journal.contains("\"completed\""),
+        "the read-only run started and completed: {journal}"
     );
     let _ = fs::remove_dir_all(&env.root);
 }
