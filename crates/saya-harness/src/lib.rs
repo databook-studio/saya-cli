@@ -11,6 +11,7 @@
 //! different type with a different policy from every user-database
 //! connector, and never a `DatabaseConnector`.
 
+pub mod endpoints;
 pub mod engine;
 pub mod fetch;
 pub mod journal;
