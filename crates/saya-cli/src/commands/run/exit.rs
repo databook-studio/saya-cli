@@ -8,7 +8,7 @@
 //! failure message names the layer that failed, never the raw payload.
 
 use crate::render::RenderFormat;
-use saya_types::{PauseReason, RunFailureCode, RunId};
+use saya_types::{RunFailureCode, RunId};
 
 /// Where a run ended, with its failure code when it failed by cause.
 pub(super) struct Settled {
@@ -49,13 +49,11 @@ pub(super) fn settle(
     }
 }
 
-/// A typed terminal cause becomes its message text.
+/// A typed terminal cause becomes its message text. The wording's one source
+/// is the run renderer (`crate::render_run`) — the exit message and the
+/// rendered `Failed` event line must not drift apart.
 pub(super) fn failure_code_cause(code: RunFailureCode) -> &'static str {
-    match code {
-        RunFailureCode::SafetyQuery => "the safety gate refused a query",
-        RunFailureCode::ConnectionConfig => "a connection or configuration problem",
-        _ => "the provider or agent layer failed",
-    }
+    crate::render_run::failure_code_cause(code)
 }
 
 /// A typed terminal cause's documented exit code.
@@ -64,18 +62,6 @@ pub(super) fn failure_code_exit(code: RunFailureCode) -> i32 {
         RunFailureCode::SafetyQuery => 4,
         RunFailureCode::ConnectionConfig => 3,
         _ => 5,
-    }
-}
-
-/// A pause reason's message text, for messages that name the cause.
-pub(super) fn pause_reason_text(reason: PauseReason) -> &'static str {
-    match reason {
-        PauseReason::BudgetExhausted => "a declared budget tripped",
-        PauseReason::WallClockExceeded => "the wall-clock budget tripped",
-        PauseReason::StepFailedAfterRetry => "a step kept failing past the bounded retries",
-        PauseReason::StoreUnavailable => "the state store became unavailable",
-        PauseReason::UserPaused => "the run was paused by the user",
-        _ => "the process holding the run died",
     }
 }
 

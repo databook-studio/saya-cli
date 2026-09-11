@@ -27,6 +27,18 @@ pub enum SessionAction {
     /// headless `saya contracts` parser produces. The loops hand it to the
     /// shared `run_contracts` dispatcher — no second parsing or DTO mapping.
     Contracts(ContractsCommand),
+    /// `/run <tail>` — spawn the nested `saya run` child with the raw tail
+    /// verbatim (`interactive::session_run` owns the spawn and the
+    /// stream-passthrough rule). Carrying the tail, not parsed parts, is the
+    /// point: the child's own CLI parser stays the authority.
+    Run(String),
+    /// `/run cancel <id>` — record a run cancelled through the shared
+    /// `run_management` dispatcher, the path `saya run cancel` uses.
+    RunCancel(String),
+    /// `/runs [id]` — list runs, or show one, through the shared
+    /// `run_management` dispatcher, so the slash rendering is the headless
+    /// rendering byte for byte.
+    Runs(Option<String>),
     Exit,
 }
 
@@ -160,6 +172,9 @@ impl SessionState {
                 SessionAction::Message(crate::slash::help_for(topic.as_deref()))
             }
             SlashCommand::Contracts(command) => SessionAction::Contracts(command),
+            SlashCommand::Run(args) => SessionAction::Run(args),
+            SlashCommand::RunCancel(run_id) => SessionAction::RunCancel(run_id),
+            SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

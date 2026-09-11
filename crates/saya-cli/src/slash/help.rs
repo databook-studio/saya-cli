@@ -56,6 +56,8 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "approve-all",
         "Approve the whole review queue (needs --yes)",
     ),
+    ("run", "Start or operate a headless run from the session"),
+    ("runs", "List runs, or show one run by id"),
     ("help", "Show help for slash commands"),
     ("exit", "Exit the REPL"),
     ("quit", "Exit the REPL"),
@@ -160,6 +162,13 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("approve-all", "/approve-all [--yes] [limit]"),
         ],
     ),
+    (
+        "Runs",
+        &[
+            ("run", "/run <goal…> --allow <scopes>"),
+            ("runs", "/runs [id]"),
+        ],
+    ),
 ];
 
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
@@ -246,6 +255,12 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "approve-all" => Some(
             "approve-all [--yes] [limit] — approve every candidate in the review queue: the same set /queue shows. Each candidate still gets the per-item validation /confirm applies, so some may be refused; every approval and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /approve-all --yes",
+        ),
+        "run" => Some(
+            "run <goal…> --allow <scopes> [--budget k=v…] — start a headless run from the session: the nested `saya run` streams its events and lands where the headless command lands (completed 0, paused 6 — resume it with /run resume <id> — cancelled 130). Scopes are the headless ones: workspace-write, scratch, fetch:<scheme>+<host>, runner:<program>, endpoint:<role>=<endpoint>. `/run cancel <id>` records a run cancelled the same way `saya run cancel` does; a run with a live holder refuses. Example: /run survey the data --allow workspace-write",
+        ),
+        "runs" => Some(
+            "runs [id] — list every run, most recent first, or show one run's status, goal, scopes, and pause reason when you name its id. Same rendering as `saya run list|show`. Example: /runs   or   /runs r1726820000000-1234",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",
@@ -457,6 +472,47 @@ mod tests {
                 "listing must have a {heading:?} heading on its own line, got:\n{summary}"
             );
         }
+    }
+
+    /// The `/run` family is wired at every hand-maintained touchpoint, not just
+    /// the parser: the registry, the description table (the popup's single
+    /// source), the `/help` listing, and the per-command help. A command that
+    /// parses but is absent from help is exactly the defect this test exists to
+    /// catch — a half-existing command.
+    #[test]
+    fn run_and_runs_are_registered_listed_and_described() {
+        for name in ["run", "runs"] {
+            assert!(
+                registry::KNOWN_COMMANDS.contains(&name),
+                "{name} is registered"
+            );
+            assert!(
+                description_for(name).is_some(),
+                "{name} has a popup description"
+            );
+            let help = command_help(name).expect("per-command help exists");
+            assert!(!help.is_empty(), "{name} help is not empty");
+        }
+        let listing = help_text();
+        assert!(
+            listing.contains("/run <goal…> --allow <scopes>"),
+            "the listing shows the /run usage: {listing}"
+        );
+        assert!(
+            listing.contains("/runs [id]"),
+            "the listing shows the /runs usage: {listing}"
+        );
+        // `/run cancel` is reachable and documented where a reader decides how to
+        // stop a run.
+        let run_help = command_help("run").expect("run has help");
+        assert!(
+            run_help.contains("/run cancel"),
+            "the /run help names the cancel form: {run_help}"
+        );
+        assert!(
+            run_help.contains("paused 6"),
+            "the /run help names the paused exit the headless scheme documents: {run_help}"
+        );
     }
 
     /// the merged `/contracts` command has one help entry covering both

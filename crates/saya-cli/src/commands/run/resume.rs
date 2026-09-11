@@ -11,6 +11,8 @@ use super::exit::{Settled, settle};
 use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+use crate::render_run;
+use crate::stream_render::TerminalSink;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_harness::engine::{
     EpisodeCollaborators, EpisodeRequest, ResumeRun, RunState, resume as engine_resume,
@@ -127,6 +129,12 @@ async fn continue_run(
         },
         bounds: super::assembly::manifest_bounds(),
         wall_clock: spec.budgets.wall_clock,
+        // The resumed run speaks the same wire a fresh run does: the journal
+        // carries the event renderer, and the episode's agent events mirror
+        // through today's `TerminalEvent` envelope. `engine_resume` opens its
+        // own journal from the run directory, so the wire rides the inputs.
+        journal_wire: Some(render_run::run_wire(format)),
+        agent_stream: Some(Arc::new(TerminalSink::new(format))),
     };
     match engine_resume(&dir, resumed).await {
         Ok(outcome) => match outcome {

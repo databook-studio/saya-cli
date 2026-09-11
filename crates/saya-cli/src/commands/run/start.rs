@@ -46,7 +46,7 @@ pub(super) async fn start(
         budgets.clone(),
     )
     .map_err(|error| format!("run spec refused: {error}"))?;
-    let (run_dir, lock) = match super::claim::claim(&run_id, state, &spec).await {
+    let (run_dir, lock) = match super::claim::claim(&run_id, state, &spec, format).await {
         Ok(claimed) => claimed,
         Err(message) => return super::claim::claim_failure(message, format),
     };

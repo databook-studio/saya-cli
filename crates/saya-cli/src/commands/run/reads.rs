@@ -6,10 +6,10 @@
 //! journal. Unknown ids fail cleanly with the contract-command precedent's
 //! usage code — never a panic, never an ignored scope.
 
-use super::exit::pause_reason_text;
 use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+use crate::render_run;
 use saya_store::{RunStore, SqliteStateStore};
 
 pub(super) async fn list(
@@ -67,34 +67,38 @@ pub(super) async fn show(
             format,
         );
     };
-    let mut text = format!(
-        "run {}\nstatus: {}{}\ncreated: {}\nupdated: {}",
-        record.id,
+    // The spec is the approval's full shape; a missing file renders as its
+    // own line rather than failing the read. The stanza's wording is the
+    // renderer's (`crate::render_run`) — the headless command and the `/runs`
+    // slash adapter render the same bytes because both end here.
+    let spec = super::files::load_spec(&dir).ok().map(|spec| {
+        let scopes = describe_scopes(&spec.scopes);
+        (spec.goal, scopes)
+    });
+    let journal = journal_of(&dir)?;
+    let paused = super::last_pause(&journal);
+    let text = render_run::run_show_text(
+        record.id.as_str(),
         record.status.as_str(),
         match (record.status, record.failure_code) {
             (saya_store::RunStatus::Failed, Some(code)) => {
-                format!(" ({})", super::exit::failure_code_cause(code))
+                Some(super::exit::failure_code_cause(code))
             }
-            _ => String::new(),
+            _ => None,
         },
         record.created_unix_ms,
         record.updated_unix_ms,
+        spec.as_ref()
+            .map(|(goal, scopes)| (goal.as_str(), scopes.as_str())),
+        paused,
     );
-    // The spec is the approval's full shape; a missing file renders as its
-    // own line rather than failing the read.
-    if let Ok(spec) = super::files::load_spec(&dir) {
-        text.push_str(&format!("\ngoal: {}", spec.goal));
-        text.push_str(&format!("\nscopes: {}", describe_scopes(&spec.scopes)));
-    }
-    let journal = journal_of(&dir)?;
-    if let Some(reason) = super::last_pause(&journal) {
-        text.push_str(&format!("\npaused: {}", pause_reason_text(reason)));
-    }
     crate::commands::output::result(text, format)
 }
 
 /// Prints one run's journal: every lifecycle and step event, in write order,
-/// one NDJSON line each — the journal is already the wire format.
+/// one NDJSON line each — the journal is already the wire format. The lines
+/// are the renderer's one serde path (`crate::render_run::journal_line`),
+/// the same bytes the live run wire streams.
 pub(super) async fn log(
     raw_id: &str,
     _runtime: &RuntimeConfig,
@@ -128,7 +132,7 @@ pub(super) async fn log(
     }
     let lines = events
         .iter()
-        .map(|event| serde_json::to_string(event).unwrap_or_else(|_| format!("{event:?}")))
+        .map(render_run::journal_line)
         .collect::<Vec<_>>()
         .join("\n");
     crate::commands::output::result(lines, format)

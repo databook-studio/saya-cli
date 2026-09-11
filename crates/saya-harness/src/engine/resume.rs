@@ -6,7 +6,7 @@
 mod contract;
 pub use contract::{ResumeError, ResumeOutcome, ResumeRun};
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use saya_types::{PauseReason, RunEvent};
 
@@ -41,7 +41,10 @@ pub async fn resume(
     // Single writer first: a live holder means another engine owns the run.
     let _lock = RunLock::acquire(run_dir.as_ref().join("lock"))
         .map_err(|source| ResumeError::Lock { source })?;
-    let journal = Journal::open(run_dir);
+    let journal = match &resumed.journal_wire {
+        Some(wire) => Journal::open(run_dir.as_ref()).with_wire(Arc::clone(wire)),
+        None => Journal::open(run_dir.as_ref()),
+    };
     journal
         .truncate_torn_tail()
         .map_err(|source| ResumeError::Journal { source })?;
@@ -64,6 +67,10 @@ pub async fn resume(
         resumed.wall_clock,
         std::time::Instant::now,
     );
+    let sink = match &resumed.agent_stream {
+        Some(stream) => sink.with_agent_stream(Arc::clone(stream)),
+        None => sink,
+    };
     match initial {
         // The process died mid-flight: record the death the journal could
         // not — a pause the next pickup owns — then resume, both through

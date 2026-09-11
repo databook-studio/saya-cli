@@ -9,6 +9,7 @@ mod connection;
 mod contracts;
 mod interactive;
 mod render;
+pub mod render_run;
 mod runtime_profile;
 mod slash;
 mod stream_render;
@@ -26,9 +27,9 @@ use clap::Parser;
 pub use app::run;
 pub use cli::{
     ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
-    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg, ThemeArg,
+    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg, RunCommand, ThemeArg,
 };
-pub use commands::{capture_output_start, capture_output_take, run_contracts};
+pub use commands::{capture_output_start, capture_output_take, run_contracts, run_management};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
@@ -37,6 +38,10 @@ pub use render::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView, RenderFormat,
     TerminalEvent, render_event,
 };
+// The run event renderer's public seam: the parity test renders `RunEvent`
+// lines with it, and `run_management` is the one dispatcher the slash
+// adapters and the headless `saya run` commands share.
+pub use render_run::render_run_event;
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state_path::resolve_state_db_path;
 

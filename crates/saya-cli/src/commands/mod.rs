@@ -15,6 +15,7 @@ use saya_store::SqliteStateStore;
 
 pub use contracts::run_contracts;
 pub use output::{capture_output_start, capture_output_take};
+pub use run::run_management;
 // Re-exported `pub(crate)` so the agent contract tools (2b-3a) reuse the single
 // all-zero "no schema observed" fingerprint rather than inventing a second one.
 pub(crate) use contracts::unobserved_fingerprint;

@@ -68,6 +68,32 @@ pub(super) async fn run_command(
     }
 }
 
+/// The management surface the slash adapters share with the headless
+/// `saya run` commands: one dispatcher onto the same `reads`/`cancel` paths,
+/// so `/runs <id>` and `saya run show <id>` cannot drift — they are the same
+/// call. No prompt, no scopes: a management read starts nothing.
+pub async fn run_management(
+    command: crate::cli::RunCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    approval: saya_agent::ApprovalPolicy,
+    state: &SqliteStateStore,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    run_command(
+        RunInvocation {
+            prompt: None,
+            allow: Vec::new(),
+            budget: Vec::new(),
+            command: Some(command),
+        },
+        runtime,
+        format,
+        approval,
+        state,
+    )
+    .await
+}
+
 /// The runs root: `SAYA_RUNS_DIR` when set, the platform data home otherwise.
 /// Resolved at call time, like every path the run surface touches.
 pub(super) fn runs_dir() -> PathBuf {

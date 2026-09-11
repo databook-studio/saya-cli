@@ -6,10 +6,11 @@
 
 use std::{sync::Arc, time::Duration};
 
+use saya_agent::AgentEventSink;
 use saya_store::RunStore;
 use saya_types::{RunId, RunPlan};
 
-use crate::{HarnessError, workspace::Workspace};
+use crate::{HarnessError, journal::JournalWire, workspace::Workspace};
 
 use crate::engine::episode::{EpisodeCollaborators, EpisodeError, EpisodeRequest, ManifestBounds};
 use crate::engine::sink::EngineSinkError;
@@ -77,4 +78,11 @@ pub struct ResumeRun<'a> {
     pub bounds: ManifestBounds,
     /// The run's declared wall-clock ceiling, armed again for the resumed steps.
     pub wall_clock: Option<Duration>,
+    /// Optional observer every journaled event notifies — the headless run
+    /// wire attaches one so a resumed run streams its journal as it writes
+    /// it. `None` renders nothing; the durable record is unaffected either way.
+    pub journal_wire: Option<JournalWire>,
+    /// Optional downstream sink the episode's agent events mirror to, in the
+    /// caller's format. `None` keeps the resume silent, as before.
+    pub agent_stream: Option<Arc<dyn AgentEventSink>>,
 }

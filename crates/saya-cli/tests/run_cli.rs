@@ -18,7 +18,7 @@ use std::{
     io::{Read, Write},
     net::TcpListener,
     path::PathBuf,
-    process::{Command as ProcessCommand, Output},
+    process::{Command as ProcessCommand, Output, Stdio},
     sync::Arc,
     sync::atomic::{AtomicBool, Ordering},
     thread,
@@ -422,6 +422,280 @@ fn list_and_show_render_a_run_and_an_unknown_id_fails_cleanly() {
         stderr(&unknown).contains("no run with id"),
         "the failure must say why: {}",
         stderr(&unknown)
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+// ---------------------------------------------------------------------------
+// The run wire (NDJSON): lifecycle `RunEvent` lines tagged "type", interleaved
+// with the episode events in today's `TerminalEvent` envelope tagged "event".
+// The stream is the journal itself — every line is one JSON object, and the
+// Spider benchmark harness (which reads `event` keys) sees nothing new to
+// trip over.
+// ---------------------------------------------------------------------------
+
+/// Parses `text` as one JSON object per line, every line, and returns the
+/// objects. A blank line is tolerated (an empty stream); a non-blank line
+/// that does not parse fails the test.
+fn json_lines(text: &str, label: &str) -> Vec<serde_json::Value> {
+    let mut objects = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|error| {
+            panic!("{label} line is not one JSON object: {line:?}: {error}")
+        });
+        assert!(
+            value.is_object(),
+            "{label} line must be one JSON object: {line:?}"
+        );
+        objects.push(value);
+    }
+    objects
+}
+
+/// Collects the `"type"` tags of the streamed `RunEvent` lines.
+fn type_tags(values: &[serde_json::Value]) -> Vec<&str> {
+    values
+        .iter()
+        .filter_map(|value| value.get("type").and_then(|tag| tag.as_str()))
+        .collect()
+}
+
+/// A paused run's NDJSON stream is one JSON object per line, every line —
+/// lifecycle lines tagged `"type"`, interleaved with the episode's events in
+/// the `TerminalEvent` envelope tagged `"event"`. The pause lands as a
+/// `paused` line naming its reason, and the terminal settle message is a JSON
+/// error line on stderr, never stray text.
+#[test]
+fn an_ndjson_run_stream_parses_as_one_json_object_per_line_when_paused() {
+    let env = test_root("ndjson-pause");
+    let (slow, _ready) = mock(vec![
+        Scripted {
+            body: plan_body(&["survey the workspace"]),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: sse("step answer"),
+            delay_ms: 2_500,
+        },
+    ]);
+    let output = saya(
+        &env,
+        &[
+            "--format",
+            "ndjson",
+            "--non-interactive",
+            "run",
+            "--allow",
+            "workspace-write",
+            "--budget",
+            "wall-clock=1",
+            "survey the data quality",
+        ],
+        &slow,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(6),
+        "the budget trips and the run pauses; stderr: {}",
+        stderr(&output)
+    );
+
+    // Every line, both streams, is one JSON object — nothing else is ever
+    // printed on the wire.
+    let out = json_lines(&stdout(&output), "stdout");
+    let _err = json_lines(&stderr(&output), "stderr");
+
+    // The lifecycle rode the wire in journal order.
+    let tags = type_tags(&out);
+    for expected in ["run_started", "plan_approved", "step_started", "paused"] {
+        assert!(
+            tags.contains(&expected),
+            "the stream must carry a {expected} line: {out:?}"
+        );
+    }
+    // The episode's events are present under today's envelope — the two tags
+    // share one stream by design, and the dual-tag stream stays one
+    // JSON object per line either way.
+    assert!(
+        out.iter()
+            .any(|value| value.get("event").and_then(|tag| tag.as_str()).is_some()),
+        "the episode events ride the TerminalEvent envelope: {out:?}"
+    );
+    let paused = out
+        .iter()
+        .find(|value| value.get("type").and_then(|tag| tag.as_str()) == Some("paused"))
+        .expect("a paused line");
+    assert_eq!(
+        paused.get("reason").and_then(|reason| reason.as_str()),
+        Some("wall_clock_exceeded"),
+        "the pause names its cause: {paused:?}"
+    );
+
+    // The resume speaks the same wire: every line is one JSON object, and the
+    // run it continues ends `completed` on the same stream.
+    let id = {
+        let listing = saya(&env, &["run", "list"], &slow);
+        newest_run_id(&listing)
+    };
+    let (fast, _fast_ready) = mock(vec![Scripted {
+        body: sse("remaining step answer"),
+        delay_ms: 0,
+    }]);
+    let resumed = saya(&env, &["--format", "ndjson", "run", "resume", &id], &fast);
+    assert_eq!(
+        resumed.status.code(),
+        Some(0),
+        "the resumed run completes; stderr: {}",
+        stderr(&resumed)
+    );
+    let resumed_lines = json_lines(&stdout(&resumed), "resumed stdout");
+    json_lines(&stderr(&resumed), "resumed stderr");
+    let resumed_tags = type_tags(&resumed_lines);
+    // The pause landed mid-episode, so the journal's step is already
+    // complete when the resume replays it: resume records the death pause and
+    // the completion the crash had left unwritten — the machine's own story.
+    assert!(
+        resumed_tags.contains(&"paused") && resumed_tags.contains(&"completed"),
+        "the resume carries its lifecycle to completion: {resumed_lines:?}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// A failing run's stream is one JSON object per line too: the bounded
+/// retries surface as step_failed lines, the pause is said out loud, and the
+/// failure message is a JSON error line on stderr — never stray text that a
+/// line-oriented consumer would choke on.
+#[test]
+fn an_ndjson_run_stream_stays_line_oriented_when_the_run_fails() {
+    let env = test_root("ndjson-fail");
+    // The plan binds, then every episode call fails: the mock has spent its
+    // script, so each further connection is accepted and dropped — a provider
+    // failure, never a hang. The engine retries the step bounded, then pauses.
+    let (failing, _ready) = mock(vec![Scripted {
+        body: plan_body(&["a step that cannot succeed"]),
+        delay_ms: 0,
+    }]);
+    let output = saya(
+        &env,
+        &[
+            "--format",
+            "ndjson",
+            "--non-interactive",
+            "run",
+            "--allow",
+            "workspace-write",
+            "a goal whose steps all fail",
+        ],
+        &failing,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(6),
+        "the spent retries pause the run; stderr: {}",
+        stderr(&output)
+    );
+    let out = json_lines(&stdout(&output), "stdout");
+    let _err = json_lines(&stderr(&output), "stderr");
+    let tags = type_tags(&out);
+    assert!(
+        tags.iter().filter(|tag| **tag == "step_failed").count() >= 3,
+        "the bounded retries are on the wire: {out:?}"
+    );
+    let paused = out
+        .iter()
+        .find(|value| value.get("type").and_then(|tag| tag.as_str()) == Some("paused"))
+        .expect("a paused line");
+    assert_eq!(
+        paused.get("reason").and_then(|reason| reason.as_str()),
+        Some("step_failed_after_retry"),
+        "the pause names the spent retries: {paused:?}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// A nested `saya run` started from a session `/run` passes its whole stream
+/// through the parent's stdout unmangled: the parent never re-tags a child
+/// line into its own envelope and never swallows one. The exact child line
+/// (`{"type":"run_started"}`) appears in the parent's stdout byte-for-byte.
+#[test]
+fn a_nested_run_child_lines_survive_to_the_parent_stdout_unmangled() {
+    let env = test_root("nested-child");
+    let (address, _ready) = mock(vec![
+        Scripted {
+            body: plan_body(&["survey the schema"]),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: sse("survey complete"),
+            delay_ms: 0,
+        },
+    ]);
+    // The parent session, piped: one `/run` line in NDJSON mode. The child
+    // inherits the parent's env, so the run lands in the same scratch tree.
+    let mut parent = ProcessCommand::new(env!("CARGO_BIN_EXE_saya"))
+        .args(["--format", "ndjson"])
+        .current_dir(&env.root)
+        .env("SAYA_CONFIG_HOME", env.root.join("user-config"))
+        .env("SAYA_RUNS_DIR", &env.runs)
+        .env("SAYA_STATE_DB", &env.state)
+        .env("SAYA_PROVIDER", "openai_compatible")
+        .env("SAYA_MODEL", "mock-model")
+        .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
+        .env("SAYA_API_KEY", "mock-secret")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    parent
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"/run survey the data --allow workspace-write\n")
+        .unwrap();
+    let output = parent.wait_with_output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the session survives the nested run; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parent_stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    // The child's own first line, byte for byte — not wrapped, re-tagged, or
+    // dropped: the parent re-emits nothing, it passed the file descriptors
+    // through.
+    let run_started = format!("{}\n", serde_json::json!({"type": "run_started"}));
+    assert!(
+        parent_stdout.contains(&run_started),
+        "the child's run_started line must survive unmangled: {parent_stdout:?}"
+    );
+    // And every line the parent emitted is still one JSON object per line —
+    // the child's stream is a valid stream inside the parent's.
+    let values: Vec<serde_json::Value> = parent_stdout
+        .lines()
+        .map(|line| {
+            serde_json::from_str(line)
+                .unwrap_or_else(|error| panic!("parent line not JSON: {line:?}: {error}"))
+        })
+        .collect();
+    assert!(
+        values
+            .iter()
+            .any(|value| value.get("type") == Some(&serde_json::json!("completed"))),
+        "the child's run completed on the parent's stream: {values:?}"
+    );
+
+    // The run the child made is the one the session's /runs can see: same
+    // runs root, same store.
+    let listing = saya(&env, &["run", "list"], &address);
+    assert!(
+        stdout(&listing).contains("completed"),
+        "the nested run is visible to `saya run list`: {}",
+        stdout(&listing)
     );
     let _ = fs::remove_dir_all(&env.root);
 }
