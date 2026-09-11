@@ -287,6 +287,7 @@ async fn a_planned_run_refuses_to_begin_until_the_plan_is_approved_once() {
         SinkBudgets {
             wall_clock: None,
             token_ceiling: None,
+            download_budget: None,
             carried_usage: UsageTotals::default(),
         },
         std::time::Instant::now,
@@ -464,6 +465,7 @@ async fn approving_the_plan_once_does_not_prompt_per_tool_call() {
         SinkBudgets {
             wall_clock: None,
             token_ceiling: None,
+            download_budget: None,
             carried_usage: UsageTotals::default(),
         },
         std::time::Instant::now,

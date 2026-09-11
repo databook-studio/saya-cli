@@ -22,6 +22,17 @@ pub struct AgentLimits {
     /// Defaults to **not permitted**: a tool that can write workspace files
     /// must not start writing merely because it was registered.
     pub permit_workspace_writes: bool,
+    /// Whether the loop may execute tools that declare an external side
+    /// effect without a per-call approval prompt. Defaults to **not
+    /// permitted**: the misconfiguration guard denies such a tool exactly as
+    /// before, so an interactive `ask` turn's behavior is byte-identical,
+    /// and an author who set the bit carelessly is still refused. The permit
+    /// exists for tools whose effect is approved once by the run's approved
+    /// scope (plan-gated egress, not per-call approval) — the composition
+    /// root derives it from the step's approved scopes, and a tool the step
+    /// never approved is absent from its definitions regardless, so the
+    /// permit alone can admit nothing unapproved.
+    pub permit_external_effects: bool,
     /// Ceiling on the approximate byte size of the conversation the loop has
     /// assembled (assistant turns plus tool results grow it past the pre-loop
     /// history budget). Breaching it trims the oldest tool-result groups
@@ -35,6 +46,7 @@ impl Default for AgentLimits {
             max_tool_calls: None,
             permit_candidate_writes: false,
             permit_workspace_writes: false,
+            permit_external_effects: false,
             context_byte_budget: 256 * 1024,
         }
     }
@@ -298,6 +310,15 @@ mod tests {
         assert!(
             limits.max_tool_calls.is_none(),
             "no tool-call ceiling by default"
+        );
+        assert!(
+            !limits.permit_candidate_writes && !limits.permit_workspace_writes,
+            "write permits default off"
+        );
+        assert!(
+            !limits.permit_external_effects,
+            "external effects default off: the guard keeps denying exactly as before, so \
+             interactive turns are byte-identical"
         );
     }
 

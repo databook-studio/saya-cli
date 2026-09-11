@@ -32,6 +32,7 @@ use saya_agent::{AgentEvent, AgentEventSink};
 use saya_store::{RunStore, StoreError};
 use saya_types::{PauseReason, RunEvent, RunId};
 
+use crate::fetch::DownloadBudget;
 use crate::{HarnessError, journal::Journal};
 
 use super::state::{RunState, RunTransitionError, transition};
@@ -84,6 +85,9 @@ pub struct EngineEventSink {
     /// The run's token ceiling, armed from [`SinkBudgets`] — its per-endpoint
     /// and whole-spend semantics are documented there.
     token_ceiling: Option<u64>,
+    /// The run's download wallet, armed from [`SinkBudgets`]; `None` is the
+    /// inert case (the run did not approve fetch).
+    download_budget: Option<DownloadBudget>,
     state: Mutex<RunState>,
     usage: Mutex<UsageTotals>,
     diagnostic: Mutex<Option<Arc<EngineSinkError>>>,
@@ -98,7 +102,7 @@ pub struct EngineEventSink {
 /// spend the run's durable record already holds. Declared together because
 /// they arm together — the constructor carries no default for any of them,
 /// so a caller cannot arm a ceiling without stating what is already spent.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SinkBudgets {
     /// The run's declared wall-clock ceiling, measured against the sink's
     /// clock. A ceiling so large it cannot be added to the current instant
@@ -115,6 +119,16 @@ pub struct SinkBudgets {
     /// same number, and pretending otherwise would be the more confusing
     /// lie.
     pub token_ceiling: Option<u64>,
+    /// The run's download wallet — the *same* wallet clone the fetch-capable
+    /// step executors hold, so a download refusal the tool reported to the
+    /// model also reaches the run's lifecycle here. `None` when the run did
+    /// not approve fetch: the check is inert, the `token_ceiling: None`
+    /// pattern. The check reads the wallet's **trip latch**, never a
+    /// `consumed >= limit` threshold — the latch records the event that
+    /// actually happened (a claim was refused), where a threshold would both
+    /// pause an exact-fill run that was refused nothing and miss a refusal
+    /// that left unclaimable headroom below the limit.
+    pub download_budget: Option<DownloadBudget>,
     /// The spend the run's journal already records when this sink takes
     /// over — the seeding a resume does, so the token ceiling measures the
     /// run's whole spend across invocations rather than re-arming in full.
@@ -140,6 +154,7 @@ impl EngineEventSink {
         let SinkBudgets {
             wall_clock,
             token_ceiling,
+            download_budget,
             carried_usage,
         } = budgets;
         let now = clock();
@@ -151,6 +166,7 @@ impl EngineEventSink {
             clock: Box::new(clock),
             deadline,
             token_ceiling,
+            download_budget,
             state: Mutex::new(initial),
             usage: Mutex::new(carried_usage),
             diagnostic: Mutex::new(None),
@@ -281,7 +297,7 @@ impl EngineEventSink {
 }
 
 impl EngineEventSink {
-    /// The per-tick budget checks, armed while the run executes. Past either
+    /// The per-tick budget checks, armed while the run executes. Past any
     /// ceiling the tick pauses the run exactly like any other transition;
     /// emit has no error channel, so any failure the pause meets is held as
     /// a diagnostic rather than dropped.
@@ -290,11 +306,18 @@ impl EngineEventSink {
     /// reports were already spent, so the ceiling is a stop-after, not a
     /// stop-before. A run pauses the tick *after* it crosses — which is the
     /// honest reading of a ceiling nobody can enforce mid-request.
+    ///
+    /// The download latch is checked between the token ceiling and the wall
+    /// clock. The latch is level-triggered, so the pause lands on the first
+    /// tick after the trip — in practice the tripping download's own
+    /// completion event, which the model has already seen as the typed
+    /// `BudgetExhausted` tool error: the episode ends informed, the run
+    /// stops at the step boundary, byte-for-byte the wall-clock posture.
     async fn tick(&self) {
         if self.state() != RunState::Executing {
             return;
         }
-        let reason = if self.tokens_exhausted() {
+        let reason = if self.tokens_exhausted() || self.downloads_exhausted() {
             PauseReason::BudgetExhausted
         } else if self
             .deadline
@@ -307,6 +330,16 @@ impl EngineEventSink {
         if let Err(error) = self.record(TransitionEvent::Pause(reason)).await {
             self.hold_diagnostic(error);
         }
+    }
+
+    /// Whether the run's shared download wallet has recorded a refusal — the
+    /// latch a download trip sets on every refused claim. `None` (the run
+    /// did not approve fetch) leaves the check inert, exactly like an unset
+    /// token ceiling.
+    fn downloads_exhausted(&self) -> bool {
+        self.download_budget
+            .as_ref()
+            .is_some_and(|budget| budget.tripped())
     }
 
     /// Whether the run has spent its declared token ceiling. The sum is the

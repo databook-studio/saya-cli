@@ -81,4 +81,10 @@ pub enum ToolError {
     /// generic failure.
     #[error("{0}")]
     Runner(String),
+    /// A fetch tool refused or failed. The detail is the harness fetch
+    /// error's own text — the typed egress refusal, byte/wall-clock bound,
+    /// status, or budget trip — so the model reads the real reason, never a
+    /// generic failure.
+    #[error("{0}")]
+    Fetch(String),
 }

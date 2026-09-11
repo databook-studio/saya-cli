@@ -144,6 +144,8 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     let toolsets = tools::toolsets(
         &pieces.tools,
         pieces.scratch.as_ref(),
+        pieces.fetch.as_ref(),
+        &workspace,
         pieces.allow_query_data,
         &plan.steps,
     );
@@ -189,6 +191,11 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         SinkBudgets {
             wall_clock: spec.budgets.wall_clock,
             token_ceiling: super::budget::token_ceiling(&spec.budgets),
+            // The same wallet the fetch-capable steps' executors hold: a
+            // download refusal the tool reported to the model pauses the
+            // run here. `None` when the run did not approve fetch — the
+            // check is inert.
+            download_budget: pieces.fetch.as_ref().map(|fetch| fetch.budget.clone()),
             carried_usage: UsageTotals::default(),
         },
         std::time::Instant::now,

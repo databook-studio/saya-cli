@@ -26,10 +26,6 @@ const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
 /// whole of "turning the scope on" once its tool is in the universe.
 const NOT_YET_WIRED: &[(&str, &str)] = &[
     (
-        "fetch",
-        "M3-2/M3-3's http_fetch and http_download are not yet in a run's tool universe",
-    ),
-    (
         "runner",
         "M5-4's run_program is not yet in a run's tool universe, and it is \
          admitted only where the startup sandbox probe proved the host",
@@ -89,9 +85,6 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
         } else if token == "scratch" {
             capabilities.scratch = true;
         } else if let Some(rest) = token.strip_prefix("fetch:") {
-            if let Some(refusal) = not_yet_wired(token, "fetch") {
-                return Err(refusal);
-            }
             let Some((scheme, host)) = rest.split_once('+') else {
                 return Err(format!(
                     "scope `{token}` must be fetch:<scheme>+<host>; {KNOWN}"
@@ -147,15 +140,11 @@ mod tests {
     /// universe consumed any of them. Approving a capability that gates
     /// nothing tells the user something false about what the model may do,
     /// so each is refused until its wiring lands. `scratch` wired with its
-    /// tool (S1) and left this list; the rest stay refused, and this test
-    /// keeps refusing them the day they are typed.
+    /// tool (S1) and `fetch` (S2) left this list; the rest stay refused, and
+    /// this test keeps refusing them the day they are typed.
     #[test]
     fn a_scope_nothing_consumes_is_refused_rather_than_silently_approved() {
-        for token in [
-            "fetch:https+example.com",
-            "runner:python3",
-            "endpoint:analyst=fast",
-        ] {
+        for token in ["runner:python3", "endpoint:analyst=fast"] {
             let Err(error) = parse(&[token.to_string()]) else {
                 panic!("`{token}` gates nothing and must be refused");
             };
@@ -231,7 +220,7 @@ mod tests {
     }
 
     /// The empty approval is stateable: `--allow none` starts a run that
-    /// approves nothing at all. Three of the grammar's five capability
+    /// approves nothing at all. Two of the grammar's five capability
     /// scopes are refused, so without this token the only way to start any
     /// run — including a purely read-only one — would be approving one of
     /// the wired scopes, which would turn a scope that means something into

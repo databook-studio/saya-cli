@@ -34,6 +34,7 @@ use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest, EpisodeRun,
     ManifestBounds, RunState, SinkBudgets, StepToolset, UsageTotals,
 };
+use saya_harness::fetch::{FetchDestination, FetchTransportError};
 use saya_harness::journal::Journal;
 use saya_harness::workspace::{Workspace, manifest};
 use saya_store::{
@@ -281,6 +282,7 @@ fn driver_and_sink<'a>(
         SinkBudgets {
             wall_clock: None,
             token_ceiling: None,
+            download_budget: None,
             carried_usage: UsageTotals::default(),
         },
         std::time::Instant::now,
@@ -667,6 +669,208 @@ async fn a_scratch_only_step_runs_ddl_through_scratch_sql() {
     assert!(
         serde_json::to_string(&read_back).unwrap().contains("42"),
         "the inserted row must be staged in the scratch file, got: {read_back:?}"
+    );
+
+    let _ = fs::remove_dir_all(run.root);
+}
+
+// --- S2: the fetch step, end to end ------------------------------------------
+
+/// A hermetic in-process transport: every policy-judged URL resolves to a
+/// public TEST-NET address and is served the canned body in declared
+/// chunks. No test touches the real network.
+struct FetchNet {
+    chunks: VecDeque<Vec<u8>>,
+}
+
+#[async_trait]
+impl saya_harness::fetch::FetchTransport for FetchNet {
+    async fn resolve(&self, _: &str) -> Result<Vec<std::net::IpAddr>, FetchTransportError> {
+        Ok(vec![std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+            192, 0, 2, 7,
+        ))])
+    }
+    async fn get(
+        &self,
+        _: saya_harness::fetch::FetchRequest,
+    ) -> Result<saya_harness::fetch::WireResponse, FetchTransportError> {
+        Ok(saya_harness::fetch::WireResponse {
+            status: 200,
+            location: None,
+            content_range: None,
+            body: Box::new(FetchChunks(self.chunks.clone())),
+        })
+    }
+}
+
+/// The canned body, chunk by chunk.
+struct FetchChunks(VecDeque<Vec<u8>>);
+
+#[async_trait]
+impl saya_harness::fetch::FetchBody for FetchChunks {
+    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, FetchTransportError> {
+        Ok(self.0.pop_front())
+    }
+}
+
+/// The bytes on disk under a directory tree, summed — sidecar `.json`
+/// files excluded (they are the resume contract, not downloaded bytes).
+fn walk_dir_bytes(root: &std::path::Path) -> u64 {
+    std::fs::read_dir(root)
+        .expect("tree")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_dir_bytes(&path)
+            } else if path.to_string_lossy().ends_with(".json") {
+                0
+            } else {
+                entry.metadata().expect("size").len()
+            }
+        })
+        .sum()
+}
+
+/// The fetch scope's end-to-end gate (S2 decision 2, test 5): a step whose
+/// capabilities asked for fetch — and only fetch — downloads through
+/// `http_download` in a real episode; the tiny run budget refuses a chunk,
+/// the tool's typed error reaches the model, the trip latch pauses the run
+/// with the shared `BudgetExhausted` reason, and the next `run_step`
+/// refuses on state. Paused, not overrun — end to end.
+#[tokio::test]
+async fn a_download_that_trips_the_run_budget_pauses_the_run_typed() {
+    use saya_harness::fetch::{
+        DownloadBudget, DownloadLimits, FetchLimits, FetchPolicy, FetchTools,
+    };
+    use saya_types::{Destination, FetchScope};
+
+    let run = approved_run("fetch-budget").await;
+    let workspace = Arc::new(run.workspace());
+    let mut fetch_caps = Capabilities::default();
+    fetch_caps.fetch = Some(
+        FetchScope::new(vec![
+            Destination::new("https", "files.example.org").unwrap(),
+        ])
+        .expect("shaped"),
+    );
+    let budget = DownloadBudget::new(8);
+    let tools = FetchTools::new(
+        FetchPolicy::new(vec![FetchDestination::new("https", "files.example.org")]),
+        Arc::new(FetchNet {
+            chunks: VecDeque::from(vec![vec![b'x'; 4], vec![b'x'; 4], vec![b'x'; 40]]),
+        }),
+        FetchLimits::for_tool_lane(),
+        DownloadLimits::default(),
+        Arc::clone(&workspace),
+        budget.clone(),
+    );
+    let provider = ScriptProvider::new(vec![
+        Turn::Tools(vec![ToolCall {
+            id: "c-download".into(),
+            name: "http_download".into(),
+            arguments: serde_json::json!({
+                "url": "https://files.example.org/corpus.bin",
+                "destination": "downloads/corpus.bin"
+            }),
+        }]),
+        Turn::Answer("done"),
+    ]);
+    let approval = AllowApproval;
+    let toolsets = vec![toolset(
+        Arc::new(tools),
+        vec![saya_harness::fetch::http_download_definition()],
+    )];
+    // The sink arms the same wallet the step's member holds: a download
+    // refusal the model has already seen as a typed error also pauses the
+    // run here — clone-shares-state.
+    let sink = EngineEventSink::new(
+        run.run_id.clone(),
+        RunState::Approved,
+        Journal::open(&run.run_dir),
+        run.store.clone(),
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            download_budget: Some(budget.clone()),
+            carried_usage: UsageTotals::default(),
+        },
+        std::time::Instant::now,
+    );
+    let driver = EpisodeDriver::new(
+        EpisodeCollaborators {
+            provider: &provider,
+            approval: &approval,
+            toolsets: &toolsets,
+            cancellation: CancellationToken::default(),
+        },
+        EpisodeRun {
+            run_id: run.run_id.clone(),
+            store: run.store.clone(),
+            journal: Journal::open(&run.run_dir),
+        },
+        EpisodeRequest {
+            model: "mock-model".into(),
+            profile_names: Vec::new(),
+            memory_allows_candidate_writes: false,
+        },
+        bounds(),
+    );
+    let plan = RunPlan::new(vec![
+        step("pull the corpus", fetch_caps.clone()),
+        step("read only", Capabilities::default()),
+    ])
+    .unwrap();
+
+    // Step 0 runs: the download claims 8 bytes, the next chunk is refused
+    // typed, the episode ends informed, and the tick after the trip pauses
+    // the run.
+    driver
+        .run_step(&sink, &plan, 0, workspace.as_ref())
+        .await
+        .expect("the episode itself completes; the pause is level-triggered");
+    let second_request = &provider.requests()[1];
+    let tool_text = texts(second_request);
+    assert!(
+        tool_text.contains("the run's download budget of 8 bytes tripped after 8"),
+        "the model must see the typed budget error, never a short success: {tool_text}"
+    );
+    assert_eq!(
+        sink.state(),
+        RunState::Paused,
+        "the trip latch pauses the run on the first tick after the trip"
+    );
+    assert!(budget.tripped(), "the refusal is the recorded event");
+    let on_disk = walk_dir_bytes(&run.root.join("workspace"));
+    assert!(on_disk <= 8, "paused, not overrun: {on_disk} bytes on disk");
+
+    // The next step refuses on state — a paused run is not runnable.
+    let error = driver
+        .run_step(&sink, &plan, 1, workspace.as_ref())
+        .await
+        .expect_err("a paused run cannot begin its next step");
+    assert!(
+        matches!(
+            error,
+            EpisodeError::NotRunnable {
+                state: RunState::Paused,
+                ..
+            }
+        ),
+        "the step boundary stops the run: {error:?}"
+    );
+
+    // The durable record names the reason — the shared vocabulary, no new
+    // pause reason.
+    let events = Journal::open(&run.run_dir).read().unwrap();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted
+            }
+        )),
+        "the pause must name the budget: {events:?}"
     );
 
     let _ = fs::remove_dir_all(run.root);
