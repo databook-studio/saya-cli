@@ -18,6 +18,7 @@ pub mod journal;
 pub mod lock;
 pub mod paths;
 pub mod run_dir;
+pub mod runner;
 pub mod scratch;
 pub mod workspace;
 
