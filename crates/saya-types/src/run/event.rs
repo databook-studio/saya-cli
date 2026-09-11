@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::plan::Deliverable;
+
 /// The run's event stream. Lifecycle variants follow the run state machine
 /// (`planned → approved → executing ⇄ paused → completed | failed |
 /// cancelled`); step variants carry the step's index in the plan.
@@ -25,6 +27,15 @@ pub enum RunEvent {
     StepCompleted { step: usize },
     /// A step's episode failed; the engine retries it bounded, then pauses.
     StepFailed { step: usize },
+    /// A step's declared deliverables, resolved against the workspace at the
+    /// step's completion: one entry per declared output, in declaration
+    /// order. Recorded before the step's own completion — the manifest is
+    /// part of what completing means — so a journal that ends here reads as
+    /// a step still in flight.
+    Deliverables {
+        step: usize,
+        entries: Vec<Deliverable>,
+    },
     /// The run paused — resumable, never a silent stop. Carries the cause.
     Paused { reason: PauseReason },
     /// The run completed successfully.

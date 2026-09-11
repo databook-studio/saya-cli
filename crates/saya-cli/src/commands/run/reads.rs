@@ -6,11 +6,14 @@
 //! journal. Unknown ids fail cleanly with the contract-command precedent's
 //! usage code — never a panic, never an ignored scope.
 
+use std::collections::BTreeMap;
+
 use super::exit::pause_reason_text;
 use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 use saya_store::{RunStore, SqliteStateStore};
+use saya_types::{Deliverable, RunEvent};
 
 pub(super) async fn list(
     _runtime: &RuntimeConfig,
@@ -90,6 +93,19 @@ pub(super) async fn show(
     if let Some(reason) = super::last_pause(&journal) {
         text.push_str(&format!("\npaused: {}", pause_reason_text(reason)));
     }
+    // The deliverables the run recorded at its steps' completions — the
+    // artifact manifests, last record per step. A run that declared none
+    // renders no section.
+    let events = journal
+        .read()
+        .map_err(|error| format!("run journal could not be read: {error}"))?;
+    let lines = deliverable_lines(&events);
+    if !lines.is_empty() {
+        text.push_str("\ndeliverables:");
+        for line in lines {
+            text.push_str(&format!("\n{line}"));
+        }
+    }
     crate::commands::output::result(text, format)
 }
 
@@ -132,6 +148,33 @@ pub(super) async fn log(
         .collect::<Vec<_>>()
         .join("\n");
     crate::commands::output::result(lines, format)
+}
+
+/// The run's recorded deliverables — the last manifest per step, in step
+/// order: name, size, digest. A declared deliverable the step never
+/// produced is rendered missing, never silently dropped.
+fn deliverable_lines(events: &[RunEvent]) -> Vec<String> {
+    // Last record wins: a step re-driven by a resume appends a fresh
+    // manifest for its step.
+    let mut by_step: BTreeMap<usize, Vec<&Deliverable>> = BTreeMap::new();
+    for event in events {
+        if let RunEvent::Deliverables { step, entries } = event {
+            by_step.insert(*step, entries.iter().collect());
+        }
+    }
+    let mut lines = Vec::new();
+    for (step, entries) in &by_step {
+        for deliverable in entries {
+            match &deliverable.artifact {
+                Some(artifact) => lines.push(format!(
+                    "step {step}: {} ({} bytes, sha256 {})",
+                    deliverable.name, artifact.size, artifact.digest
+                )),
+                None => lines.push(format!("step {step}: {} missing", deliverable.name)),
+            }
+        }
+    }
+    lines
 }
 
 /// The scopes as the user declared them: booleans and named sets.

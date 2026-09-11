@@ -49,6 +49,13 @@ pub enum EpisodeError {
     #[error("episode brief failed: {source}")]
     Brief { source: HarnessError },
 
+    /// The step's declared deliverables could not be resolved and recorded: a
+    /// declared name the workspace refuses (an escape, a link, a denied name, a
+    /// bound) is never reported and never silent — the refusal stops the step's
+    /// completion, and it is never retried.
+    #[error("step {step} deliverables could not be recorded: {source}")]
+    Deliverables { step: usize, source: HarnessError },
+
     /// A journal write failed; the durable record did not advance.
     #[error("run journal write failed: {source}")]
     Journal { source: HarnessError },

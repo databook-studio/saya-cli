@@ -10,7 +10,7 @@
 
 use saya_agent::{AgentError, AgentOutput, AgentRequest, run_agent_with_sink};
 use saya_store::RunStepStatus;
-use saya_types::{RunEvent, RunFailureCode, RunPlan};
+use saya_types::{Deliverable, RunEvent, RunFailureCode, RunPlan};
 
 use crate::workspace::Workspace;
 
@@ -129,6 +129,19 @@ pub(super) async fn mark_completed(run: &EpisodeRun, step: usize) -> Result<(), 
         RunStepStatus::Done,
     )
     .await
+}
+
+/// Journals the step's resolved deliverables — the artifact manifest part of
+/// the step's completion, recorded just before it. Journal only: the store
+/// is metadata, and the manifest is recorded data.
+pub(super) fn record_deliverables(
+    run: &EpisodeRun,
+    step: usize,
+    entries: Vec<Deliverable>,
+) -> Result<(), EpisodeError> {
+    run.journal
+        .append(&RunEvent::Deliverables { step, entries })
+        .map_err(|source| EpisodeError::Journal { source })
 }
 
 /// Journals the episode's failure and mirrors the step to `failed` — the

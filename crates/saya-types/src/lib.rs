@@ -25,9 +25,10 @@ pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, Sno
 pub use query::{QueryRequest, QueryResult};
 pub use redaction::redact;
 pub use run::{
-    Budgets, Capabilities, Destination, EndpointBindings, FetchScope, MAX_BUDGET_ENDPOINTS,
-    MAX_ENDPOINT_BINDINGS, MAX_FETCH_DESTINATIONS, MAX_GOAL_BYTES, MAX_OUTPUT_HINTS,
-    MAX_PLAN_STEPS, MAX_RUNNER_PROGRAMS, OutputHint, PauseReason, RunContractError, RunEvent,
-    RunFailureCode, RunId, RunPlan, RunSpec, RunnerScope, StepSpec, is_name_shaped,
+    Budgets, Capabilities, Deliverable, DeliverableArtifact, Destination, EndpointBindings,
+    FetchScope, MAX_BUDGET_ENDPOINTS, MAX_ENDPOINT_BINDINGS, MAX_FETCH_DESTINATIONS,
+    MAX_GOAL_BYTES, MAX_OUTPUT_HINTS, MAX_PLAN_STEPS, MAX_RUNNER_PROGRAMS, OutputHint, PauseReason,
+    RunContractError, RunEvent, RunFailureCode, RunId, RunPlan, RunSpec, RunnerScope, StepSpec,
+    is_name_shaped,
 };
 pub use schema::{Column, Database, ForeignKey, Schema, SchemaTree, Table};

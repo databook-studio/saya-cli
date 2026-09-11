@@ -66,6 +66,51 @@ impl OutputHint {
     }
 }
 
+/// One deliverable a step declared, resolved against the run workspace at
+/// the step's completion. `artifact` is `None` when the declared deliverable
+/// was never produced — recorded, never silently dropped: a run may not look
+/// complete while a declared output is absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Deliverable {
+    /// The declared name, as the step's hint names it.
+    pub name: String,
+    /// The artifact as the manifest recorded it — `None` when the step never
+    /// produced the deliverable.
+    pub artifact: Option<DeliverableArtifact>,
+}
+
+impl Deliverable {
+    /// A deliverable the step produced: the manifest's size and digest.
+    pub fn present(name: impl Into<String>, size: u64, digest: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            artifact: Some(DeliverableArtifact {
+                size,
+                digest: digest.into(),
+            }),
+        }
+    }
+
+    /// A declared deliverable the step never produced.
+    pub fn missing(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            artifact: None,
+        }
+    }
+}
+
+/// The resolved artifact behind a deliverable: its byte size and lowercase
+/// hex sha256 — the same manifest discipline the episode brief reports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DeliverableArtifact {
+    pub size: u64,
+    /// Lowercase hex sha256 of the file's bytes, as the manifest read them.
+    pub digest: String,
+}
+
 /// One unit of work inside a plan: a bounded goal, the capabilities it may
 /// use — a subset of the run's approved scopes, checked by
 /// [`RunPlan::validate`] — an optional budget within the run's remaining, the
@@ -164,6 +209,14 @@ impl RunPlan {
             }
             if step.expects.len() > MAX_OUTPUT_HINTS {
                 return Err(RunContractError::TooManyOutputHints(step.expects.len()));
+            }
+            // The hint constructors keep names to one workspace-shaped path
+            // component; a plan arriving as JSON skipped them, so the gate
+            // re-checks every name here — a declared output that would
+            // resolve outside the workspace (or anywhere its rules refuse)
+            // never binds.
+            if !step.expects.iter().all(|hint| is_artifact_name(&hint.name)) {
+                return Err(RunContractError::InvalidOutputHintName(index));
             }
         }
         Ok(())

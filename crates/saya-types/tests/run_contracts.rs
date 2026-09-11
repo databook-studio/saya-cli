@@ -12,7 +12,7 @@ use std::time::Duration;
 use proptest::prelude::*;
 
 use saya_types::{
-    Budgets, Capabilities, Destination, EndpointBindings, FetchScope, MAX_GOAL_BYTES,
+    Budgets, Capabilities, Deliverable, Destination, EndpointBindings, FetchScope, MAX_GOAL_BYTES,
     MAX_PLAN_STEPS, OutputHint, PauseReason, RunContractError, RunEvent, RunFailureCode, RunId,
     RunPlan, RunSpec, RunnerScope, StepSpec,
 };
@@ -360,6 +360,19 @@ fn plan_rejects_a_step_endpoint_role_that_is_not_bound() {
 }
 
 #[test]
+fn plan_rejects_a_hint_name_that_would_resolve_outside_the_workspace() {
+    // Built through deserialization, bypassing the validating constructor:
+    // the binding gate itself must catch a hint name that would resolve
+    // outside the workspace — never bind it, never let it reach a step.
+    let step_json = r#"{"goal":"exfiltrate","capabilities":{},"budget":null,"expects":[{"name":"../sentinel.txt"}],"endpoint":null}"#;
+    let rogue: StepSpec = serde_json::from_str(step_json).unwrap();
+    let error = plan(vec![rogue])
+        .validate(&approved_scopes(), &run_budgets())
+        .unwrap_err();
+    assert!(matches!(error, RunContractError::InvalidOutputHintName(0)));
+}
+
+#[test]
 fn plan_round_trips_through_serde() {
     let mut first = step("profile the tables");
     first.capabilities.scratch = true;
@@ -439,6 +452,13 @@ fn every_event_variant_round_trips_through_serde() {
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepCompleted { step: 0 },
         RunEvent::StepFailed { step: 0 },
+        RunEvent::Deliverables {
+            step: 0,
+            entries: vec![
+                Deliverable::present("report.md", 29, "4634".to_string()),
+                Deliverable::missing("draft.md"),
+            ],
+        },
         RunEvent::Paused {
             reason: PauseReason::BudgetExhausted,
         },
@@ -495,7 +515,7 @@ proptest! {
             RunFailureCode::Provider,
             RunFailureCode::ConnectionConfig,
         ]),
-        kind in prop::sample::select(vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        kind in prop::sample::select(vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
     ) {
         let event = match kind {
             0 => RunEvent::RunStarted,
@@ -503,10 +523,17 @@ proptest! {
             2 => RunEvent::StepStarted { step: step_index },
             3 => RunEvent::StepCompleted { step: step_index },
             4 => RunEvent::StepFailed { step: step_index },
-            5 => RunEvent::Paused { reason },
-            6 => RunEvent::Completed,
-            7 => RunEvent::Failed { code },
-            8 => RunEvent::Cancelled,
+            5 => RunEvent::Deliverables {
+                step: step_index,
+                entries: vec![
+                    Deliverable::present("report.md", 29, "4634"),
+                    Deliverable::missing("draft.md"),
+                ],
+            },
+            6 => RunEvent::Paused { reason },
+            7 => RunEvent::Completed,
+            8 => RunEvent::Failed { code },
+            9 => RunEvent::Cancelled,
             _ => RunEvent::Usage {
                 endpoint: endpoint.clone(),
                 tokens,
