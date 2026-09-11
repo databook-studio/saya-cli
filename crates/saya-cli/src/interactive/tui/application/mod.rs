@@ -194,7 +194,7 @@ pub(crate) mod tests_support {
     pub(crate) fn unused_runtime() -> RuntimeConfig {
         use saya_config::{
             AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi,
-            ResolvedConfig, ResolvedJobs, ResolvedMemory, ThemeChoice,
+            ResolvedConfig, ResolvedFetchJobs, ResolvedJobs, ResolvedMemory, ThemeChoice,
         };
         RuntimeConfig {
             resolved: ResolvedConfig {
@@ -224,6 +224,7 @@ pub(crate) mod tests_support {
                     tokens_per_endpoint: BTreeMap::new(),
                     turns: 4,
                     tool_calls: None,
+                    fetch: ResolvedFetchJobs::default(),
                 },
                 query_timeout_seconds: 5,
                 output_format: OutputFormat::Text,

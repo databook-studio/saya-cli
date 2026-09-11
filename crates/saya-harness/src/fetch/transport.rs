@@ -21,6 +21,10 @@ use super::policy::FetchUrl;
 pub struct FetchRequest {
     /// The accepted URL, as the fetcher will use it.
     pub url: FetchUrl,
+    /// The resume offset for a ranged GET (the download slice): when set,
+    /// the transport sends `Range: bytes=<start>-` so a partial can be
+    /// continued instead of restarted. `None` is an ordinary full GET.
+    pub range_start: Option<u64>,
 }
 
 /// The head of one response, with the body left streaming behind a pull
@@ -31,6 +35,10 @@ pub struct WireResponse {
     /// The `Location` header value when the server sent one. Redirects are
     /// surfaced here, never followed.
     pub location: Option<String>,
+    /// The `Content-Range` header value when the server sent one (a 206 to
+    /// a ranged request). The downloader reads the served offset from it
+    /// and refuses a response that does not match the offset it asked for.
+    pub content_range: Option<String>,
     /// The response body, chunk by chunk. `None` from
     /// [`FetchBody::next_chunk`] ends it.
     pub body: Box<dyn FetchBody>,
