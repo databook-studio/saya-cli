@@ -200,7 +200,7 @@ pub(super) async fn run_turn_tools(
         // here too. A `WriteWorkspace` tool in a single-call turn ran despite
         // the permit being false until this line existed.
         let candidate_denied = tools::candidate_denied(definition, limits);
-        let side_effect_denied = tools::external_side_effect_gated(definition);
+        let side_effect_denied = tools::external_side_effect_gated(definition, limits);
         let workspace_denied = tools::workspace_write_denied(definition, limits);
         let executed = approved && !candidate_denied && !side_effect_denied && !workspace_denied;
         // Capture the serialized arguments before `execute` moves

@@ -15,6 +15,7 @@ use crate::{
 };
 
 pub use output::{AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, budgets_from_env};
+pub use tools::{MAX_TOOL_MESSAGE_BYTES, tool_message_cap};
 
 /// Add a turn's optional count into a run total without inventing data.
 ///

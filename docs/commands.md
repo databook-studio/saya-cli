@@ -105,7 +105,8 @@ approves; a refusal exits `2`, and that run is not resumable — nothing was
 approved, so start a new run. Approve, and the episodes run without further
 prompts: the wall clock arms only at approval, read-shaped tools run, the
 approved scopes' own plan-gated tools run in the steps that asked for them
-(scratch's `scratch_sql`), and anything needing an interactive decision or an
+(scratch's `scratch_sql`, fetch's `http_fetch` and `http_download`), and
+anything needing an interactive decision or an
 external side effect is denied rather than asked about. One approval instead of one per tool call is what
 makes a long run usable and also what makes the approval matter, so the
 residual is stated here rather than buried: if users rubber-stamp plans, the
@@ -114,26 +115,35 @@ Headless — piped input, CI, or `--non-interactive` — there is no ask at all:
 the `--allow` declaration is the approval, and a plan asking for scopes
 outside it is refused with exit `2`, naming the missing scopes.
 
-**Today two scopes bind: `workspace-write` and `scratch`.** `scratch` gives
-the run one DuckDB file of its own, at `runs/<id>/scratch.duckdb`, reachable
-only through the `scratch_sql` tool, and only in the steps whose plan asked
-for scratch: DDL, DML and joins over the run's staged intermediate results,
-one statement per call, results capped at 50 rows. It holds nothing else:
-external access is off and locked at open, every file reader is refused, and
-it is not a connection to any registered database — the run's only writable
-SQL, and it dies with the run directory. Stage corpus data through the
-workspace tools first.
+**Today three scopes bind: `workspace-write`, `scratch` and `fetch`.**
+`scratch` gives the run one DuckDB file of its own, at
+`runs/<id>/scratch.duckdb`, reachable only through the `scratch_sql` tool, and
+only in the steps whose plan asked for scratch: DDL, DML and joins over the
+run's staged intermediate results, one statement per call, results capped at
+50 rows. It holds nothing else: external access is off and locked at open,
+every file reader is refused, and it is not a connection to any registered
+database — the run's only writable SQL, and it dies with the run directory.
+Stage corpus data through the workspace tools first. `fetch:<scheme>+<host>`
+gives the steps that asked for it two tools, gated by that scope's declared
+destinations and HTTPS-only, loopback/private/refused — `http_fetch` delivers
+one bounded GET's body into the model's context as a labelled, escaped,
+untrusted block (never raw bytes, never the system prompt), and
+`http_download` streams one file into the run workspace under the run's
+shared download budget: a tripped bound pauses the run fail-safe (`exit 6`),
+leaving a resumable partial. Note the destination list is the *only* network
+egress a run has: hosts outside it are refused, and every hop of a redirect
+is re-judged.
 
-The grammar also parses `fetch:<scheme>+<host>`, `runner:<program>` and
-`endpoint:<role>=<endpoint>`, and each is **refused with a usage error** that
-names what is missing, because no tool in a run's universe consumes them yet.
-They are refused rather than accepted-and-ignored on purpose: approving a
-capability that gates nothing would tell you the model may do something it
-cannot. Each becomes available with the slice that wires it. `runner:` stays
-refused even though the `run_program` tool exists in the run engine: the tool
-is admitted only where the startup sandbox probe proved the host, and no
-run's tool universe contains it yet — so today no run can call it, and this
-document does not describe a capability a run cannot reach.
+The grammar also parses `runner:<program>` and `endpoint:<role>=<endpoint>`,
+and each is **refused with a usage error** that names what is missing,
+because no tool in a run's universe consumes them yet. They are refused
+rather than accepted-and-ignored on purpose: approving a capability that
+gates nothing would tell you the model may do something it cannot. Each
+becomes available with the slice that wires it. `runner:` stays refused even
+though the `run_program` tool exists in the run engine: the tool is admitted
+only where the startup sandbox probe proved the host, and no run's tool
+universe contains it yet — so today no run can call it, and this document
+does not describe a capability a run cannot reach.
 
 Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
 (`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,
@@ -143,7 +153,10 @@ and config.
 
 Enforcement differs by dimension, and the difference is worth knowing.
 `wall-clock` and `tokens` are checked as the run streams and **pause** it
-(`BudgetExhausted` / `WallClockExceeded`, exit `6`, resumable). `turns` and
+(`BudgetExhausted` / `WallClockExceeded`, exit `6`, resumable) — and so does
+the download budget a fetch scope implies: a download claim refused by the
+run's wallet (1 GiB by default) trips a latch the engine checks each event,
+pausing with the same `BudgetExhausted`, the partial left resumable. `turns` and
 `tool-calls` bound each episode through the agent's own limits, so exhausting
 them ends the step rather than pausing the run. Because every episode calls
 the single `orchestrator` endpoint today, `tokens.orchestrator` is the only

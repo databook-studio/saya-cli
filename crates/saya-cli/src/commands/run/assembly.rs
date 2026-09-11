@@ -17,10 +17,13 @@ use crate::config::runtime::RuntimeConfig;
 use crate::connection;
 use crate::prompt_approval::TerminalApproval;
 use saya_agent::ChatProvider;
+use saya_harness::fetch::{DownloadBudget, ReqwestTransport};
 use saya_harness::scratch::ScratchSql;
 use saya_types::Budgets;
 use std::sync::Arc;
 use std::time::Duration;
+
+use super::tools::RunFetch;
 
 /// How much workspace the episode brief's manifest walks: names, sizes,
 /// digests — never bulk contents. Conservative brief bounds, fixed here so
@@ -62,6 +65,12 @@ pub(super) struct Pieces {
     /// run approved `scratch` — one file shared across every step toolset;
     /// `None` opens nothing and nothing else may open the file.
     pub(super) scratch: Option<Arc<ScratchSql>>,
+    /// The run-level fetch wiring, built once per run when the run approved
+    /// a fetch scope: the shared transport and the download wallet whose
+    /// clones arm both the fetch-capable steps' members and the sink's
+    /// pause check. `None` means the run did not approve fetch, nothing
+    /// fetch-shaped exists, and the sink's download check is inert.
+    pub(super) fetch: Option<RunFetch>,
     pub(super) decider: TerminalApproval,
     pub(super) model: String,
     pub(super) profile_names: Vec<String>,
@@ -147,10 +156,27 @@ pub(super) async fn assemble(
                     runtime.resolved.query_timeout_seconds,
                 )))
             });
+    // Shared per run, admitted before anything runs (fail closed at start,
+    // never mid-flight): one transport and one download wallet when the run
+    // approved a fetch scope. The per-step toolsets put them behind the
+    // composites of the steps that asked for fetch; a step that did not ask
+    // never sees them, and the sink's download check stays inert.
+    let fetch = match scopes.fetch {
+        Some(_) => {
+            let transport = ReqwestTransport::new()
+                .map_err(|error| format!("the fetch transport could not be built: {error}"))?;
+            Some(RunFetch {
+                transport: Arc::new(transport),
+                budget: DownloadBudget::default(),
+            })
+        }
+        None => None,
+    };
     Ok(Pieces {
         provider,
         tools,
         scratch,
+        fetch,
         decider: TerminalApproval::new(approval, false),
         model: ai.model,
         profile_names,

@@ -162,6 +162,10 @@ pub(crate) async fn run_prompt_with_inputs(
         permit_candidate_writes: learning.permit_candidate_writes,
         context_byte_budget: runtime.resolved.ai.context_byte_budget,
         permit_workspace_writes: false,
+        // An ask turn approves nothing by scope: the plan-gated egress
+        // permit stays off, so the guard keeps denying exactly as before
+        // and the interactive product is unchanged.
+        permit_external_effects: false,
     };
     let mut output = run_agent_with_sink(
         &*provider,

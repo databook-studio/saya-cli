@@ -455,6 +455,7 @@ fn main() {
             SinkBudgets {
                 wall_clock: None,
                 token_ceiling: None,
+                download_budget: None,
                 carried_usage: UsageTotals::default(),
             },
             std::time::Instant::now,

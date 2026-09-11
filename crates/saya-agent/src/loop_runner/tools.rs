@@ -33,10 +33,20 @@ pub(super) fn invalid_reason(call: &ToolCall, definitions: &[ToolDefinition]) ->
 /// gate is satisfied by the prompt, so the term only denies a tool that set
 /// `external_side_effect` without also setting `requires_approval` — a
 /// misconfiguration the loop refuses rather than trusting every author to
-/// set both. Both execution paths consult this, so a tool the
+/// set both. The one exception is a run constructed with
+/// `AgentLimits::permit_external_effects`: the plan-gated egress permit for
+/// tools whose effect the run's approved scope already approved once with
+/// its plan, not per call. Everywhere the permit is false the guard's
+/// purpose stands unchanged, which is what keeps interactive turns
+/// byte-identical. Both execution paths consult this, so a tool the
 /// policy gates cannot be auto-run by one path and not the other.
-pub(super) fn external_side_effect_gated(definition: &ToolDefinition) -> bool {
-    definition.effect.external_side_effect && !definition.effect.requires_approval
+pub(super) fn external_side_effect_gated(
+    definition: &ToolDefinition,
+    limits: &AgentLimits,
+) -> bool {
+    definition.effect.external_side_effect
+        && !definition.effect.requires_approval
+        && !limits.permit_external_effects
 }
 
 /// Whether the runner must refuse `definition` because it may write a
@@ -67,7 +77,7 @@ pub(super) fn workspace_write_denied(definition: &ToolDefinition, limits: &Agent
 /// there, or it binds multi-call turns only.
 pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
     !definition.effect.requires_approval
-        && !external_side_effect_gated(definition)
+        && !external_side_effect_gated(definition, limits)
         && !candidate_denied(definition, limits)
         && !workspace_write_denied(definition, limits)
 }
@@ -182,7 +192,7 @@ const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
 /// grow the content past `cap` by at most the marker length per match; the
 /// cap is a budget bound, not a provider hard limit.
 pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (ChatMessage, bool) {
-    let cap = byte_budget.min(MAX_TOOL_MESSAGE_BYTES);
+    let cap = tool_message_cap(byte_budget);
     let (content, truncated) = bounded_json(&result, cap);
     let content = redact(&content);
     (
@@ -196,11 +206,21 @@ pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (Ch
     )
 }
 
+/// The per-tool-message cap the loop truncates at, derived from the loop's
+/// whole-conversation byte budget: `min(byte_budget, MAX_TOOL_MESSAGE_BYTES)`.
+/// Exported beside [`MAX_TOOL_MESSAGE_BYTES`] so a producer of large tool
+/// results (the fetch lane's rendered blocks) can pre-bind its own output to
+/// the exact number the loop will enforce — the declared bound and the
+/// truncation point are the same number by construction and cannot drift.
+pub fn tool_message_cap(byte_budget: usize) -> usize {
+    byte_budget.min(MAX_TOOL_MESSAGE_BYTES)
+}
+
 /// Absolute per-tool-message ceiling, independent of the conversation budget:
 /// no provider is asked to ingest a tool result larger than this. Kept below
 /// the 16 MiB a connector can return (`saya-connectors`' `MAX_RESULT_BYTES`)
 /// so the loop's own bounds, not the connector's, govern what reaches the model.
-const MAX_TOOL_MESSAGE_BYTES: usize = 65_536;
+pub const MAX_TOOL_MESSAGE_BYTES: usize = 65_536;
 
 fn bounded_json(value: &Value, cap: usize) -> (String, bool) {
     let text = serde_json::to_string(value)
@@ -231,3 +251,7 @@ pub(super) fn floor_boundary(text: &str, mut idx: usize) -> usize {
     }
     idx
 }
+
+#[cfg(test)]
+#[path = "tools_tests.rs"]
+mod tests;

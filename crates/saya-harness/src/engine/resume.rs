@@ -74,6 +74,7 @@ pub async fn resume(
         SinkBudgets {
             wall_clock: resumed.wall_clock,
             token_ceiling: resumed.token_ceiling,
+            download_budget: resumed.download_budget.clone(),
             carried_usage: UsageTotals::from_journal(&events),
         },
         std::time::Instant::now,

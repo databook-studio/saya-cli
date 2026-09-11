@@ -10,6 +10,7 @@ use saya_agent::AgentEventSink;
 use saya_store::RunStore;
 use saya_types::{RunId, RunPlan};
 
+use crate::fetch::DownloadBudget;
 use crate::{HarnessError, journal::JournalWire, workspace::Workspace};
 
 use crate::engine::episode::{EpisodeCollaborators, EpisodeError, EpisodeRequest, ManifestBounds};
@@ -85,6 +86,14 @@ pub struct ResumeRun<'a> {
     /// ceiling, without raising it, trips on the first tick. The wall clock
     /// above, which no record can replay, re-arms per invocation.
     pub token_ceiling: Option<u64>,
+    /// The run's download wallet, armed again so a resumed run keeps its
+    /// declared download posture: the composition root hands the same
+    /// wallet it put behind the fetch-capable steps' executors, so a
+    /// resumed run cannot spend a second full budget. The token ceiling's
+    /// carry has no journal equivalent yet (the wiring plan's resume-carry
+    /// question); this field exists so the composition can thread the
+    /// wallet it built, and `None` keeps the check inert.
+    pub download_budget: Option<DownloadBudget>,
     /// Optional observer every journaled event notifies — the headless run
     /// wire attaches one so a resumed run streams its journal as it writes
     /// it. `None` renders nothing; the durable record is unaffected either way.

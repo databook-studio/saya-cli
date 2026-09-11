@@ -204,6 +204,7 @@ impl CrashedRun {
             bounds: bounds(),
             wall_clock: None,
             token_ceiling: None,
+            download_budget: None,
             journal_wire: None,
             agent_stream: None,
         }
@@ -335,6 +336,7 @@ async fn driven_run(label: &str) -> CrashedRun {
         SinkBudgets {
             wall_clock: None,
             token_ceiling: None,
+            download_budget: None,
             carried_usage: UsageTotals::default(),
         },
         std::time::Instant::now,
@@ -735,6 +737,7 @@ fn budgeted_inputs<'a>(
         bounds: bounds(),
         wall_clock: None,
         token_ceiling: ceiling,
+        download_budget: None,
         journal_wire: None,
         agent_stream: None,
     }
