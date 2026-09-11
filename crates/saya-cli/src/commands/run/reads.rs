@@ -134,28 +134,11 @@ pub(super) async fn log(
     crate::commands::output::result(lines, format)
 }
 
-/// The scopes as the user declared them: booleans and named sets.
+/// The scopes as the user declared them: the `--allow` grammar's words,
+/// which are exactly the tokens `missing_from` speaks against an empty
+/// approval — one grammar, not a second rendering of it.
 fn describe_scopes(caps: &saya_types::Capabilities) -> String {
-    let mut names = Vec::new();
-    if caps.workspace_write {
-        names.push("workspace-write".to_string());
-    }
-    if caps.scratch {
-        names.push("scratch".to_string());
-    }
-    if let Some(fetch) = &caps.fetch {
-        for destination in &fetch.destinations {
-            names.push(format!("fetch:{}+{}", destination.scheme, destination.host));
-        }
-    }
-    if let Some(runner) = &caps.runner {
-        for program in &runner.programs {
-            names.push(format!("runner:{program}"));
-        }
-    }
-    for (role, endpoint) in caps.endpoints.as_map() {
-        names.push(format!("endpoint:{role}={endpoint}"));
-    }
+    let names = caps.missing_from(&saya_types::Capabilities::default());
     if names.is_empty() {
         "(none)".to_string()
     } else {

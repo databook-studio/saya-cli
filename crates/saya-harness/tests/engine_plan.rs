@@ -178,10 +178,11 @@ async fn an_unapproved_capability_is_reprompted_then_refused_with_a_typed_code()
             &error,
             PlanError::Exhausted {
                 attempts: 3,
-                last: PlanRejection::NeedsApproval { step: 0 },
-            }
+                last: PlanRejection::NeedsApproval { step: 0, scopes },
+            } if scopes == &["workspace-write".to_string()]
         ),
-        "the third refusal must be the typed needs-approval outcome: {error:?}"
+        "the third refusal must be the typed needs-approval outcome, naming \
+         what was missing: {error:?}"
     );
 
     // Exactly the bound was spent: three proposals, none more — the stub
@@ -487,10 +488,11 @@ async fn a_new_capability_mid_run_yields_the_needs_approval_outcome_rather_than_
             &error,
             PlanError::Exhausted {
                 attempts: 3,
-                last: PlanRejection::NeedsApproval { step: 1 },
-            }
+                last: PlanRejection::NeedsApproval { step: 1, scopes },
+            } if scopes == &["scratch".to_string()]
         ),
-        "the new capability must be the needs-approval outcome, pointed at its step: {error:?}"
+        "the new capability must be the needs-approval outcome, pointed at \
+         its step and named: {error:?}"
     );
     // The refusal is the outcome: no plan bound, so nothing ran.
     assert_eq!(planner.requests().len(), 3);

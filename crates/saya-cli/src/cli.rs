@@ -174,8 +174,9 @@ pub enum Command {
     /// Run a long-running, resumable job against the configured database:
     /// `saya run "<goal>"` plans and executes it step by step, pausing (never
     /// silently stopping) when a budget trips; `saya run resume|cancel|list|
-    /// show|log` manage runs. Headless by construction: scopes must be
-    /// declared up front with `--allow`.
+    /// show|log` manage runs. Scopes must be declared up front with `--allow`:
+    /// a headless run pre-authorizes them, an interactive terminal approves
+    /// the bound plan, its scopes, and its budgets once.
     Run {
         /// The run's goal. Omit it to read the goal from stdin when input is
         /// piped in.

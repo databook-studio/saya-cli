@@ -9,6 +9,7 @@
 
 pub(crate) mod budget;
 pub(crate) mod event;
+pub(crate) mod missing;
 pub(crate) mod plan;
 pub(crate) mod scope;
 pub(crate) mod spec;

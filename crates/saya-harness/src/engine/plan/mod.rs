@@ -76,7 +76,7 @@ impl<'a> PlanDriver<'a> {
             };
             match plan.validate(scopes, remaining) {
                 Ok(()) => return Ok(plan),
-                Err(source) => last_refusal = Some(refusal_of(&plan, source)),
+                Err(source) => last_refusal = Some(refusal_of(&plan, source, scopes)),
             }
         }
         Err(PlanError::Exhausted {
@@ -88,10 +88,15 @@ impl<'a> PlanDriver<'a> {
 
 /// Maps the contract's own rejection — which already names the step — onto
 /// the driver's typed refusal. The capability rejection is surfaced as its
-/// own outcome: it is an approval ask, not an ordinary invalidity.
-fn refusal_of(plan: &RunPlan, source: RunContractError) -> PlanRejection {
+/// own outcome: it is an approval ask, not an ordinary invalidity, and it
+/// names the scopes it asks for (the subset rule, [`Capabilities::is_subset_of`],
+/// rendered through `missing_from` — no second comparison).
+fn refusal_of(plan: &RunPlan, source: RunContractError, approved: &Capabilities) -> PlanRejection {
     match source {
-        RunContractError::CapabilityNotApproved(step) => PlanRejection::NeedsApproval { step },
+        RunContractError::CapabilityNotApproved(step) => PlanRejection::NeedsApproval {
+            step,
+            scopes: plan.steps[step].capabilities.missing_from(approved),
+        },
         RunContractError::StepBudgetExceeded(step) => PlanRejection::BudgetTooWide { step },
         RunContractError::EndpointNotBound(step) => PlanRejection::EndpointUnbound {
             step,

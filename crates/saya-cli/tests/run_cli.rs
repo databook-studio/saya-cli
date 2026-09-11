@@ -3,7 +3,7 @@
 //! `SAYA_STATE_DB` per test, and a scripted local HTTP provider standing in
 //! for the model (`tests/mvp/provider.rs` is the recipe).
 //!
-//! Five guarantees:
+//! Seven guarantees:
 //! 1. A headless `saya run` without `--allow` refuses before anything exists
 //!    — no run directory, no prompt.
 //! 2. A run paused by its budget exits 6, and `saya run resume <id>`
@@ -12,6 +12,10 @@
 //! 4. `saya run list` and `saya run show <id>` render a run that exists; an
 //!    unknown id fails cleanly, never a panic.
 //! 5. `--allow` with an unknown scope name is a usage error (2).
+//! 6. A plan asking for more than `--allow` granted is refused, naming the
+//!    missing scope.
+//! 7. On a real terminal the bound plan is approved once and the run
+//!    proceeds — no further interaction; a refusal refuses with exit 2.
 
 use std::{
     fs,
@@ -101,6 +105,25 @@ fn plan_body(goals: &[&str]) -> String {
             serde_json::json!({
                 "goal": goal,
                 "capabilities": {},
+                "budget": serde_json::Value::Null,
+                "expects": [],
+                "endpoint": serde_json::Value::Null
+            })
+        })
+        .collect::<Vec<_>>();
+    let plan = serde_json::json!({"steps": steps});
+    sse(&plan.to_string())
+}
+
+/// The planner's answer with per-step capabilities, for plans that ask for
+/// scopes beyond what `--allow` granted.
+fn plan_body_with_capabilities(steps: &[(&str, serde_json::Value)]) -> String {
+    let steps = steps
+        .iter()
+        .map(|(goal, capabilities)| {
+            serde_json::json!({
+                "goal": goal,
+                "capabilities": capabilities,
                 "budget": serde_json::Value::Null,
                 "expects": [],
                 "endpoint": serde_json::Value::Null
@@ -225,6 +248,64 @@ fn allow_with_an_unknown_scope_is_a_usage_error() {
         stderr(&output).contains("unknown scope"),
         "the error must name the refused scope: {}",
         stderr(&output)
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// A plan whose steps ask for more than `--allow` granted is rejected with a
+/// usage refusal that names the missing scope and its step — the model
+/// cannot fix that by re-planning, and a headless run cannot ask. The
+/// engine re-prompts to its bound of three, so the mock serves three plans.
+#[test]
+fn a_plan_asking_for_more_than_allow_granted_is_refused_naming_the_scope() {
+    let env = test_root("needs-approval");
+    let asking = plan_body_with_capabilities(&[(
+        "seed the scratch database",
+        serde_json::json!({"scratch": true}),
+    )]);
+    let (address, _ready) = mock(vec![
+        Scripted {
+            body: asking.clone(),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: asking.clone(),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: asking,
+            delay_ms: 0,
+        },
+    ]);
+    let output = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "workspace-write",
+            "seed and report",
+        ],
+        &address,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a plan asking beyond --allow is a usage refusal; stderr: {}",
+        stderr(&output)
+    );
+    let message = stderr(&output);
+    assert!(
+        message.contains("scratch"),
+        "the refusal must name the missing scope: {message}"
+    );
+    assert!(
+        message.contains("step 0"),
+        "the refusal must point at the asking step: {message}"
+    );
+    assert!(
+        message.contains("--allow"),
+        "the refusal must say the lever to widen: {message}"
     );
     let _ = fs::remove_dir_all(&env.root);
 }
@@ -422,6 +503,222 @@ fn list_and_show_render_a_run_and_an_unknown_id_fails_cleanly() {
         stderr(&unknown).contains("no run with id"),
         "the failure must say why: {}",
         stderr(&unknown)
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+// ---------------------------------------------------------------------------
+// Interactive approval on a real terminal: the binary's stdin is a PTY, so
+// `can_prompt` holds and the bound plan is approved through the channel —
+// the `tui/agent.rs` pattern with the terminal answering. The approval view
+// is the one interaction; the run then proceeds without asking again.
+// ---------------------------------------------------------------------------
+
+/// What one interactive run leaves behind: the exit code and the captured
+/// terminal stream, for assertions on both the prompt and the completion.
+struct InteractiveRun {
+    exit_code: Option<i32>,
+    stream: String,
+}
+
+/// Spawns `saya run` on a PTY, waits for the approval prompt to appear,
+/// answers with `answer`, and waits for the child to exit. A timeout kills
+/// the child and fails the test — an interactive ask that never resolves is
+/// a hang, not a pass.
+fn run_interactively(env: &TestEnv, args: &[&str], address: &str, answer: &str) -> InteractiveRun {
+    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+    const DEADLINE: Duration = Duration::from_secs(30);
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 24,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("the pty must be allocatable");
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_saya"));
+    // The headless helper runs the child in the scratch root; on a PTY the
+    // builder would otherwise fall back to $HOME as the cwd, where a real
+    // project-layer `.saya/config.toml` would shadow the scratch tree.
+    cmd.cwd(&env.root);
+    cmd.args(args);
+    cmd.env("SAYA_CONFIG_HOME", env.root.join("user-config"));
+    cmd.env("SAYA_RUNS_DIR", &env.runs);
+    cmd.env("SAYA_STATE_DB", &env.state);
+    cmd.env("SAYA_PROVIDER", "openai_compatible");
+    cmd.env("SAYA_MODEL", "mock-model");
+    cmd.env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"));
+    cmd.env("SAYA_API_KEY", "mock-secret");
+    let mut child = pair.slave.spawn_command(cmd).expect("the child must spawn");
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().expect("the pty reader");
+    let mut writer = pair.master.take_writer().expect("the pty writer");
+
+    // Drain the terminal stream on a thread; the main loop watches for the
+    // prompt and then for the exit.
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 4096];
+        while let Ok(n) = reader.read(&mut buffer) {
+            if n == 0 || tx.send(buffer[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut stream = String::new();
+    let started = std::time::Instant::now();
+    let prompt_seen = loop {
+        if started.elapsed() > DEADLINE {
+            let _ = child.kill();
+            panic!("the approval prompt never appeared; stream:\n{stream}");
+        }
+        if let Ok(bytes) = rx.recv_timeout(Duration::from_millis(100)) {
+            stream.push_str(&String::from_utf8_lossy(&bytes));
+        }
+        if stream.contains("Approve this plan") {
+            break true;
+        }
+    };
+    let _ = prompt_seen;
+    // The one answer: an explicit yes — nothing else approves.
+    writer.write_all(answer.as_bytes()).expect("the pty writer");
+    while child
+        .try_wait()
+        .expect("the child must be pollable")
+        .is_none()
+    {
+        if started.elapsed() > DEADLINE {
+            let _ = child.kill();
+            panic!("the run never exited after the approval; stream:\n{stream}");
+        }
+        thread::sleep(Duration::from_millis(50));
+        if let Ok(bytes) = rx.try_recv() {
+            stream.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    let exit_code = child
+        .try_wait()
+        .expect("the child exited")
+        .map(|status| status.exit_code() as i32);
+    // Drain whatever remains (the run's stdout) for the completion asserts.
+    while let Ok(bytes) = rx.try_recv() {
+        stream.push_str(&String::from_utf8_lossy(&bytes));
+    }
+    InteractiveRun { exit_code, stream }
+}
+
+/// The journal of the one run in the scratch tree.
+fn only_run_journal(env: &TestEnv) -> String {
+    let mut entries = fs::read_dir(&env.runs)
+        .expect("the runs root exists")
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<PathBuf>>();
+    assert_eq!(entries.len(), 1, "exactly one run exists: {entries:?}");
+    fs::read_to_string(entries.remove(0).join("events.ndjson")).expect("the journal is readable")
+}
+
+/// Interactive approval of the plan satisfies it and the run proceeds: the
+/// approval view is shown once, an explicit yes approves, and the run
+/// completes — with no per-tool-call prompt afterwards.
+#[test]
+fn interactive_approval_of_the_plan_satisfies_it_and_the_run_proceeds() {
+    let env = test_root("interactive-approval");
+    let (address, _ready) = mock(vec![
+        Scripted {
+            body: plan_body(&["survey the data quality"]),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: sse("survey complete"),
+            delay_ms: 0,
+        },
+    ]);
+    let run = run_interactively(
+        &env,
+        &[
+            "run",
+            "--allow",
+            "workspace-write",
+            "survey the data quality",
+        ],
+        &address,
+        "y\n",
+    );
+    assert_eq!(
+        run.exit_code,
+        Some(0),
+        "the approved run must complete; stream:\n{}",
+        run.stream
+    );
+    // The approval view named what was being approved.
+    assert!(
+        run.stream.contains("survey the data quality"),
+        "the view shows the plan: {}",
+        run.stream
+    );
+    assert!(
+        run.stream.contains("approved scopes: workspace-write"),
+        "the view shows the granted scopes: {}",
+        run.stream
+    );
+    // The one approval is on the durable record, and the run completed.
+    let journal = only_run_journal(&env);
+    assert_eq!(
+        journal.matches("plan_approved").count(),
+        1,
+        "exactly one approval interaction: {journal}"
+    );
+    assert!(
+        journal.contains("\"completed\""),
+        "the approved run proceeded to completion: {journal}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// A refusal at the approval gate refuses the run: exit 2, the run stays
+/// unapproved, and nothing executed.
+#[test]
+fn refusing_the_plan_at_the_approval_gate_refuses_the_run() {
+    let env = test_root("interactive-deny");
+    let (address, _ready) = mock(vec![
+        Scripted {
+            body: plan_body(&["survey the data quality"]),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: sse("never reached"),
+            delay_ms: 0,
+        },
+    ]);
+    let run = run_interactively(
+        &env,
+        &[
+            "run",
+            "--allow",
+            "workspace-write",
+            "survey the data quality",
+        ],
+        &address,
+        "n\n",
+    );
+    assert_eq!(
+        run.exit_code,
+        Some(2),
+        "a refused plan is a usage refusal; stream:\n{}",
+        run.stream
+    );
+    assert!(
+        run.stream.contains("was not approved"),
+        "the refusal must say why: {}",
+        run.stream
+    );
+    let journal = only_run_journal(&env);
+    assert!(
+        !journal.contains("\"completed\"") && !journal.contains("step_started"),
+        "a refused run executed nothing: {journal}"
     );
     let _ = fs::remove_dir_all(&env.root);
 }
