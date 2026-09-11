@@ -33,7 +33,11 @@ const NOT_YET_WIRED: &[(&str, &str)] = &[
         "fetch",
         "M3-2/M3-3's http_fetch and http_download are not yet in a run's tool universe",
     ),
-    ("runner", "M5-4's run_program does not exist yet"),
+    (
+        "runner",
+        "M5-4's run_program is not yet in a run's tool universe, and it is \
+         admitted only where the startup sandbox probe proved the host",
+    ),
     (
         "endpoint",
         "every episode calls the orchestrator endpoint; per-step roles are not bound yet",
@@ -168,6 +172,36 @@ mod tests {
             assert!(
                 error.contains(token),
                 "the refusal must name the scope, got: {error}"
+            );
+        }
+    }
+
+    /// The reason every entry here is refused is wiring, not absence: each
+    /// named tool exists in the run engine, and a run's tool universe simply
+    /// does not consume it yet. An absence claim goes stale the moment the
+    /// tool lands — the exact lie `runner:` shipped after M5-4's
+    /// `run_program` merged. The list is the single source of the
+    /// user-facing reason text, so each entry is pinned to the one phrasing
+    /// that is true — a future drift from it is a diff in this test rather
+    /// than a lie to the user. (`endpoint` names no tool: its true reason
+    /// is that per-step roles are not bound, so it is pinned to its own.)
+    #[test]
+    fn a_refusal_names_the_wiring_reason_never_an_absence_claim() {
+        for (family, why) in NOT_YET_WIRED {
+            assert!(
+                !why.contains("not exist"),
+                "`{family}`'s refusal claims a tool is absent — the refusal \
+                 class is wiring, not absence: {why}"
+            );
+            let expected = if *family == "endpoint" {
+                "per-step roles are not bound"
+            } else {
+                "not yet in a run's tool universe"
+            };
+            assert!(
+                why.contains(expected),
+                "`{family}`'s refusal must state its true reason verbatim, \
+                 got: {why}"
             );
         }
     }
