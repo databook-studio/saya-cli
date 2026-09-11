@@ -27,6 +27,9 @@ mod reads;
 mod resume;
 mod scopes;
 mod start;
+mod tools;
+#[cfg(test)]
+mod tools_tests;
 
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;

@@ -32,7 +32,7 @@ use saya_agent::{
 };
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRun, ManifestBounds,
-    PlanDriver, PlanError, PlanRejection, PlanRequest, RunState, TransitionEvent,
+    PlanDriver, PlanError, PlanRejection, PlanRequest, RunState, StepToolset, TransitionEvent,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -288,16 +288,19 @@ async fn a_planned_run_refuses_to_begin_until_the_plan_is_approved_once() {
         std::time::Instant::now,
     );
     let episode = ScriptedEpisode::new(vec![Turn::Answer("done")]);
-    let tools = RecordingTools::default();
+    let tools: Arc<dyn ToolExecutor> = Arc::new(RecordingTools::default());
     let approval = CountingApproval {
         prompts: AtomicUsize::new(0),
     };
+    let toolsets = vec![StepToolset {
+        executor: tools,
+        definitions: vec![],
+    }];
     let driver = EpisodeDriver::new(
         EpisodeCollaborators {
             provider: &episode,
-            tools: &tools,
             approval: &approval,
-            universe: vec![],
+            toolsets: &toolsets,
             cancellation: CancellationToken::default(),
         },
         EpisodeRun {
@@ -467,16 +470,24 @@ async fn approving_the_plan_once_does_not_prompt_per_tool_call() {
         Turn::Tools(vec![call("sql_probe")]),
         Turn::Answer("second step done"),
     ]);
-    let tools = RecordingTools::default();
+    // One executor shared by both steps' toolsets: the call log the test
+    // asserts on is the one the loop wrote across both episodes.
+    let tools = Arc::new(RecordingTools::default());
+    let definitions = vec![approved_read_tool()];
+    let toolsets: Vec<StepToolset> = (0..2)
+        .map(|_| StepToolset {
+            executor: tools.clone(),
+            definitions: definitions.clone(),
+        })
+        .collect();
     let approval = CountingApproval {
         prompts: AtomicUsize::new(0),
     };
     let driver = EpisodeDriver::new(
         EpisodeCollaborators {
             provider: &episode,
-            tools: &tools,
             approval: &approval,
-            universe: vec![approved_read_tool()],
+            toolsets: &toolsets,
             cancellation: CancellationToken::default(),
         },
         EpisodeRun {

@@ -2,13 +2,14 @@
 //! loop.
 //!
 //! Per step the driver builds the brief (the plan state plus the workspace
-//! manifest), narrows the tool set to the step's capabilities — hidden, not
-//! advertised-and-refused — turns the step's budget into `AgentLimits` with
-//! no environment input (a run is reproducible from its spec and config
-//! alone, plan G3), pins learning off explicitly (DESIGN §5.8), and retries
-//! a failing episode a bounded number of times with a fresh brief. When the
-//! bound is spent the run pauses with a typed failure code; it never
-//! retries unbounded and never fails silently.
+//! manifest), runs the step's own toolset — the executor and definitions the
+//! composition root built from the step's capabilities, so a tool outside
+//! them is hidden, not advertised-and-refused — turns the step's budget into
+//! `AgentLimits` with no environment input (a run is reproducible from its
+//! spec and config alone, plan G3), pins learning off explicitly (DESIGN
+//! §5.8), and retries a failing episode a bounded number of times with a
+//! fresh brief. When the bound is spent the run pauses with a typed failure
+//! code; it never retries unbounded and never fails silently.
 //!
 //! The lifecycle transitions the driver records through the sink: `Begin`
 //! (an approved run starts executing with its first episode), `Complete`
@@ -22,7 +23,7 @@ mod deliverables;
 mod retry;
 
 pub use contract::{
-    EpisodeCollaborators, EpisodeError, EpisodeRequest, EpisodeRun, ManifestBounds,
+    EpisodeCollaborators, EpisodeError, EpisodeRequest, EpisodeRun, ManifestBounds, StepToolset,
 };
 pub use retry::MAX_EPISODE_ATTEMPTS;
 

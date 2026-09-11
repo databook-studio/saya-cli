@@ -105,13 +105,20 @@ async fn continue_run(
             );
         }
     };
-    let pieces =
-        match super::assembly::assemble(runtime, None, &spec.scopes, workspace.clone(), approval)
-            .await
-        {
-            Ok(pieces) => pieces,
-            Err(message) => return crate::commands::output::failure_message(3, message, format),
-        };
+    let pieces = match super::assembly::assemble(runtime, None, workspace.clone(), approval).await {
+        Ok(pieces) => pieces,
+        Err(message) => return crate::commands::output::failure_message(3, message, format),
+    };
+    // The per-step toolsets are prebuilt from the loaded plan, the same
+    // fail-closed prebuild a fresh run does: the plan is known before
+    // `engine_resume`, so a toolset that cannot be built refuses before
+    // the resume runs anything.
+    let toolsets = super::tools::toolsets(
+        &pieces.tools,
+        pieces.allow_query_data,
+        &spec.scopes,
+        plan.steps.len(),
+    );
     let resumed = ResumeRun {
         run_id: run_id.clone(),
         store: store.clone(),
@@ -119,9 +126,8 @@ async fn continue_run(
         workspace: (*workspace).clone(),
         collaborators: EpisodeCollaborators {
             provider: &*pieces.provider,
-            tools: &pieces.tools,
             approval: &pieces.decider,
-            universe: pieces.universe,
+            toolsets: &toolsets,
             cancellation: cancellation.clone(),
         },
         request: EpisodeRequest {

@@ -16,8 +16,9 @@ use crate::agent::{profile, provider};
 use crate::config::runtime::RuntimeConfig;
 use crate::connection;
 use crate::prompt_approval::TerminalApproval;
-use saya_agent::{ChatProvider, ToolDefinition};
+use saya_agent::ChatProvider;
 use saya_types::Budgets;
+use std::sync::Arc;
 
 /// How much workspace the episode brief's manifest walks: names, sizes,
 /// digests — never bulk contents. Conservative brief bounds, fixed here so
@@ -49,16 +50,16 @@ pub(super) fn bind_step_budgets(plan: saya_types::RunPlan, run: &Budgets) -> say
 }
 
 /// Everything the engine's drivers need that the composition root builds
-/// once per run or resume: the provider, the executor, the approval decider,
-/// the model the episodes call, and the run's full tool universe (the
-/// episode driver narrows it per step).
+/// once per run or resume: the provider, the shared executor the per-step
+/// toolsets wrap, the approval decider, the model the episodes call, and
+/// the privacy gate the toolset builder advertises the universe under.
 pub(super) struct Pieces {
     pub(super) provider: Box<dyn ChatProvider>,
-    pub(super) tools: DatabaseTools,
+    pub(super) tools: Arc<DatabaseTools>,
     pub(super) decider: TerminalApproval,
     pub(super) model: String,
     pub(super) profile_names: Vec<String>,
-    pub(super) universe: Vec<ToolDefinition>,
+    pub(super) allow_query_data: bool,
 }
 
 /// Assembles the pieces. The model is the `orchestrator` endpoint's — the
@@ -70,7 +71,6 @@ pub(super) struct Pieces {
 pub(super) async fn assemble(
     runtime: &RuntimeConfig,
     profile_override: Option<&String>,
-    scopes: &saya_types::Capabilities,
     workspace: std::sync::Arc<saya_harness::workspace::Workspace>,
     approval: saya_agent::ApprovalPolicy,
 ) -> Result<Pieces, String> {
@@ -109,26 +109,25 @@ pub(super) async fn assemble(
         .iter()
         .map(|name| name.to_string())
         .collect();
-    let tools = DatabaseTools::with_learning(
-        registry,
-        runtime.resolved.max_rows,
-        allow_query_data,
-        None,
-        None,
-    )
-    .with_workspace(Some(workspace));
-    // The universe is every tool this build can advertise: the episode
-    // driver hides a step's unapproved ones. No state store is passed, so
-    // contract tools are absent from a run's universe by construction — a
-    // run episode is a synthetic conversation, learning pinned off.
-    let universe =
-        DatabaseTools::definitions(allow_query_data, false, false, scopes.workspace_write);
+    // Shared per run: one registry and one executor the per-step toolsets
+    // all wrap. The definitions themselves are built per step by the
+    // toolset builder (`tools.rs`), from these same flags.
+    let tools = Arc::new(
+        DatabaseTools::with_learning(
+            registry,
+            runtime.resolved.max_rows,
+            allow_query_data,
+            None,
+            None,
+        )
+        .with_workspace(Some(workspace)),
+    );
     Ok(Pieces {
         provider,
         tools,
         decider: TerminalApproval::new(approval, false),
         model: ai.model,
         profile_names,
-        universe,
+        allow_query_data,
     })
 }

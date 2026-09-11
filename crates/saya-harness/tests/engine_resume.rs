@@ -28,7 +28,8 @@ use saya_agent::{
 use saya_harness::HarnessError;
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun,
-    ManifestBounds, ResumeError, ResumeOutcome, ResumeRun, RunState, TransitionEvent, resume,
+    ManifestBounds, ResumeError, ResumeOutcome, ResumeRun, RunState, StepToolset, TransitionEvent,
+    resume,
 };
 use saya_harness::journal::Journal;
 use saya_harness::lock::RunLock;
@@ -104,11 +105,12 @@ impl ApprovalDecider for AllowApproval {
     }
 }
 
-/// The stub collaborators every resume under test carries.
+/// The stub collaborators every resume under test carries. The executors
+/// live in the per-step toolsets (one `NoTools` behind a shared `Arc`), so
+/// no executor field is needed here.
 #[derive(Default)]
 struct Stubs {
     provider: AnswerProvider,
-    tools: NoTools,
     approval: AllowApproval,
 }
 
@@ -143,6 +145,9 @@ struct CrashedRun {
     run_id: RunId,
     stubs: Stubs,
     plan: RunPlan,
+    /// One toolset per plan step, over one shared `NoTools` executor — no
+    /// resume test under this rig executes a tool call.
+    toolsets: Vec<StepToolset>,
 }
 
 impl CrashedRun {
@@ -158,9 +163,8 @@ impl CrashedRun {
             workspace: workspace(&self.root),
             collaborators: EpisodeCollaborators {
                 provider: &self.stubs.provider,
-                tools: &self.stubs.tools,
                 approval: &self.stubs.approval,
-                universe: Vec::new(),
+                toolsets: &self.toolsets,
                 cancellation: CancellationToken::default(),
             },
             request: request(),
@@ -252,6 +256,13 @@ async fn crashed_run(
     for event in events {
         journal.append(event).unwrap();
     }
+    let executor: Arc<dyn ToolExecutor> = Arc::new(NoTools);
+    let toolsets = (0..plan.steps.len())
+        .map(|_| StepToolset {
+            executor: Arc::clone(&executor),
+            definitions: Vec::new(),
+        })
+        .collect();
     CrashedRun {
         root,
         run_dir,
@@ -259,6 +270,7 @@ async fn crashed_run(
         run_id,
         stubs: Stubs::default(),
         plan,
+        toolsets,
     }
 }
 
@@ -293,12 +305,18 @@ async fn driven_run(label: &str) -> CrashedRun {
     );
     sink.record(TransitionEvent::Approve).await.unwrap();
     let plan = two_step_plan();
+    let executor: Arc<dyn ToolExecutor> = Arc::new(NoTools);
+    let toolsets: Vec<StepToolset> = (0..plan.steps.len())
+        .map(|_| StepToolset {
+            executor: Arc::clone(&executor),
+            definitions: Vec::new(),
+        })
+        .collect();
     let driver = EpisodeDriver::new(
         EpisodeCollaborators {
             provider: &stubs.provider,
-            tools: &stubs.tools,
             approval: &stubs.approval,
-            universe: Vec::new(),
+            toolsets: &toolsets,
             cancellation: CancellationToken::default(),
         },
         EpisodeRun {
@@ -324,6 +342,7 @@ async fn driven_run(label: &str) -> CrashedRun {
         run_id,
         stubs,
         plan,
+        toolsets,
     }
 }
 
