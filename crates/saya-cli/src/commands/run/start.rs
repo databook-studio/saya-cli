@@ -1,10 +1,12 @@
 //! `saya run "<goal>"` — the fresh-run entry point.
 //!
-//! Refuses by construction before anything exists on disk: no scopes, no
-//! run. Then claims the run, proposes and binds a plan, and drives every
-//! step blocking. Ctrl-C cancels and exits 130, the pattern
-//! `commands/query.rs` uses; every typed outcome lands in the shared exit
-//! mapping (`drive.rs`).
+//! Refuses by construction before anything exists on disk: scopes unstated,
+//! no run. `--allow none` is the stated empty approval — a read-only run,
+//! since the episode's per-tool-call decider already defaults to read-only
+//! (`assembly.rs`) and nothing else is reachable. Then claims the run,
+//! proposes and binds a plan, and drives every step blocking. Ctrl-C
+//! cancels and exits 130, the pattern `commands/query.rs` uses; every typed
+//! outcome lands in the shared exit mapping (`drive.rs`).
 
 use super::budget;
 use crate::config::runtime::RuntimeConfig;
@@ -41,15 +43,17 @@ pub(super) async fn start(
         .ok_or("run requires a goal: `saya run \"<goal>\" --allow <scopes>`")?;
     // Refusal by construction, before anything exists on disk: a headless run
     // states its scopes up front or does not start — no run directory, no
-    // store row, no prompt.
-    let approved = super::scopes::parse(allow)?;
-    if approved.is_empty() {
+    // store row, no prompt. The refusal is about *stating*: `--allow none`
+    // states the empty approval and starts a read-only run, so only an
+    // absent `--allow` refuses here.
+    if allow.is_empty() {
         return Err(
             "a headless run refuses to start without --allow <scopes>: it cannot \
              prompt for approval mid-run, so its scopes must be declared up front"
                 .into(),
         );
     }
+    let approved = super::scopes::parse(allow)?;
     let budgets = budget::parse(budget_tokens, &runtime.resolved.jobs.budgets())?;
     let run_id = super::new_run_id();
     let spec = RunSpec::new(

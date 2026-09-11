@@ -19,16 +19,23 @@ answer to a benchmark that dies at question 900 and has to start over.
   a fragment produces a complete-looking line that parses as nothing.
 - **Scopes are approved once, with the plan** — not per tool call, which is what
   makes a long run usable. A headless run states its scopes with `--allow` or
-  refuses to start. A plan asking for a capability the run does not hold is
-  rejected, and a mid-run revision asking for a new one re-enters approval
-  rather than inheriting.
+  refuses to start; `--allow none` states the empty scope set — a deliberately
+  read-only run, with the episode's per-tool-call approval at its read-only
+  default. A plan asking for a capability the run does not hold is rejected,
+  naming the step and the missing scopes. There is no mid-run revision flow:
+  a resume replays the bound plan exactly as persisted, without re-validating
+  it against the run's scopes.
   **Today exactly one scope binds: `workspace-write`.** `scratch`, `fetch:`,
   `runner:` and `endpoint:` parse and are then *refused*, because no tool in a
   run's universe consumes them yet — see `docs/commands.md`.
 - **Budgets pause rather than stop.** Wall-clock and token ceilings pause the
   run (exit `6`, resumable); turns and tool-calls bound each episode. Budgets
   come from `[jobs]` and `--budget`, never from the environment, so a run is
-  reproducible from its spec and config.
+  reproducible from its spec and config. Every episode calls the single
+  `orchestrator` endpoint, so `tokens.orchestrator` is the only token ceiling
+  a run accepts: a `tokens.<role>` key naming another role — from `--budget`
+  or a leftover `[jobs]` entry — is refused at start rather than silently
+  capping the run.
 - **Exit codes gain `6`** — paused and resumable. The previous scheme had no
   class for incomplete-but-not-failed, so a paused run would have exited `0`.
 - `saya run list | show | log | resume | cancel`, `/run`, `/runs` and

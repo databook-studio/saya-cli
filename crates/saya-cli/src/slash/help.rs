@@ -257,10 +257,10 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "approve-all [--yes] [limit] — approve every candidate in the review queue: the same set /queue shows. Each candidate still gets the per-item validation /confirm applies, so some may be refused; every approval and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /approve-all --yes",
         ),
         "run" => Some(
-            "run <goal…> --allow <scopes> [--budget k=v…] — start a headless run from the session: the nested `saya run` streams its events and lands where the headless command lands (completed 0, paused 6 — resume it with /run resume <id> — cancelled 130). Scopes are the headless ones: workspace-write, scratch, fetch:<scheme>+<host>, runner:<program>, endpoint:<role>=<endpoint>. `/run cancel <id>` records a run cancelled the same way `saya run cancel` does; a run with a live holder refuses. Example: /run survey the data --allow workspace-write",
+            "run <goal…> --allow <scopes> [--budget k=v…] — start a headless run from the session: the nested `saya run` streams its events and lands where the headless command lands (completed 0, paused 6 — resume it with /run resume <id> — cancelled 130). Today only `workspace-write` binds; `none` states a read-only run with no capabilities; the grammar's other scope names (`scratch`, `fetch:<scheme>+<host>`, `runner:<program>`, `endpoint:<role>=<endpoint>`) are refused until their tools are wired. `/run cancel <id>` records a run cancelled the same way `saya run cancel` does; a run with a live holder refuses. Example: /run survey the data --allow workspace-write",
         ),
         "runs" => Some(
-            "runs [id] — list every run, most recent first, or show one run's status, goal, scopes, and pause reason when you name its id. Same rendering as `saya run list|show`. Example: /runs   or   /runs r1726820000000-1234",
+            "runs [id] — list every run, most recent first, or show one run's status, goal, scopes, pause reason, and deliverables when you name its id. Same rendering as `saya run list|show`. Example: /runs   or   /runs r1726820000000-1234",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",

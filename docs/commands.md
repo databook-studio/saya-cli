@@ -90,7 +90,10 @@ home.
 
 `saya run` is headless by construction: it never prompts. Scopes must be
 declared up front with `--allow <scopes>`; a run without `--allow` refuses to
-start with exit `2` and creates nothing.
+start with exit `2` and creates nothing. `--allow none` states the empty
+scope set — a deliberately read-only run: no capability is approved, and the
+episode's per-tool-call approval stays at its read-only default (read-shaped
+tools run, side-effecting tools are denied).
 
 **Today exactly one scope binds: `workspace-write`.** The grammar also parses
 `scratch`, `fetch:<scheme>+<host>`, `runner:<program>` and
@@ -102,7 +105,7 @@ cannot. Each becomes available with the slice that wires it.
 
 Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
 (`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,
-`tokens.<endpoint>=<n>`); a zero ceiling is refused as a typo, and the
+`tokens.orchestrator=<n>`); a zero ceiling is refused as a typo, and the
 environment is never read for budgets — a run is reproducible from its spec
 and config.
 
@@ -111,8 +114,13 @@ Enforcement differs by dimension, and the difference is worth knowing.
 (`BudgetExhausted` / `WallClockExceeded`, exit `6`, resumable). `turns` and
 `tool-calls` bound each episode through the agent's own limits, so exhausting
 them ends the step rather than pausing the run. Because every episode calls
-the single `orchestrator` endpoint today, a `tokens.<endpoint>` ceiling binds
-that endpoint; when per-step roles bind, attribution follows the call.
+the single `orchestrator` endpoint today, `tokens.orchestrator` is the only
+token ceiling a run accepts: a `tokens.<role>` key naming any other role —
+from `--budget` or a leftover `[jobs] tokens_per_endpoint` entry — is refused
+at start, because the engine binds the tightest declared ceiling to the
+endpoint every episode calls, and a ceiling for a role that never runs would
+silently cap the whole run. When per-step roles bind, attribution follows
+the call.
 
 Usage is journaled per provider call as the run spends it, and `saya run show`
 renders the per-endpoint totals the journal recorded. A figure no call

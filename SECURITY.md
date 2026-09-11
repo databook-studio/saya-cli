@@ -53,7 +53,8 @@ writes anything. What changed, and what did not:
 construction.** The gate takes no mode and no permit parameter, so there is no
 configuration that makes it writable. Every backend still crosses it.
 
-**New writable surfaces, each contained and each off by default:**
+**New writable surfaces, each contained — and today only the first is
+reachable from any run:**
 
 - **Workspace files.** A run may write inside *its own run directory* and
   nowhere else. Paths are validated before any filesystem call, symlinks are
@@ -65,13 +66,16 @@ configuration that makes it writable. Every backend still crosses it.
   DuckDB's external access disabled, so it can neither read files nor load
   extensions nor reach the network. It is a different type from every user
   database connector and never enters the connection registry — there is no
-  path from a scratch write to a database you registered.
+  path from a scratch write to a database you registered. Not yet reachable
+  from any run: its scope is refused until the wiring lands (see
+  `docs/commands.md`).
 - **Outbound HTTP.** A run may fetch only destinations it declared and you
   approved: HTTPS only, private and link-local addresses refused, redirects
   re-judged at every hop, and every DNS-resolved address checked before
   connecting. DNS rebinding *after* that check is a known, unmitigated
   residual. Fetched content reaches the model only as escaped, delimited
-  untrusted context — never as instructions.
+  untrusted context — never as instructions. Not yet reachable from any
+  run: its scope is refused until the wiring lands (see `docs/commands.md`).
 
 **None of this applies to the interactive REPL or `saya ask`**, which have the
 same read-only posture they always had.

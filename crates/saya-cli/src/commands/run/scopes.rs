@@ -10,8 +10,8 @@
 use saya_types::{Capabilities, Destination, EndpointBindings, FetchScope, RunnerScope};
 
 /// The scope grammar, for the error message that names what was refused.
-const KNOWN: &str = "known scopes: workspace-write, scratch, fetch:<scheme>+<host>, \
-                     runner:<program>, endpoint:<role>=<endpoint>";
+const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
+                     fetch:<scheme>+<host>, runner:<program>, endpoint:<role>=<endpoint>";
 
 /// Scopes the grammar accepts but the run engine cannot yet act on: no tool
 /// in a run's universe consumes them, so approving one would gate nothing.
@@ -59,23 +59,26 @@ pub(super) struct Approved {
     pub(super) capabilities: Capabilities,
 }
 
-impl Approved {
-    /// True when nothing at all was approved — the shape the
-    /// refusal-by-construction rule checks before anything starts.
-    pub(super) fn is_empty(&self) -> bool {
-        let caps = &self.capabilities;
-        !caps.workspace_write
-            && !caps.scratch
-            && caps.fetch.is_none()
-            && caps.runner.is_none()
-            && caps.endpoints.as_map().is_empty()
-    }
-}
-
 /// Parses the `--allow` tokens. An empty list is the caller's refusal
 /// decision, not a silently-empty approval; anything here that does not
-/// match the grammar is a typed usage error.
+/// match the grammar is a typed usage error. `none` is the grammar's
+/// explicit empty approval — see the head of the body.
 pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
+    // `none` states the empty approval: no capabilities at all, read-only
+    // by construction — the episode's per-tool-call decider already
+    // defaults to read-only (`assembly.rs`), and nothing a refused scope
+    // would gate is reachable. It must stand alone: beside a scope it
+    // would state both "nothing" and "something", which states nothing.
+    if tokens.iter().any(|token| token == "none") {
+        if tokens.len() > 1 {
+            return Err(format!(
+                "`none` states the empty scope set and must be the only token; {KNOWN}"
+            ));
+        }
+        return Ok(Approved {
+            capabilities: Capabilities::default(),
+        });
+    }
     let mut capabilities = Capabilities::default();
     let mut destinations = Vec::new();
     let mut programs = Vec::new();
@@ -177,7 +180,42 @@ mod tests {
             panic!("the wired scope must still approve");
         };
         assert!(approved.capabilities.workspace_write);
-        assert!(!approved.is_empty());
+        assert!(!approved.capabilities.scratch);
+        assert!(approved.capabilities.fetch.is_none());
+        assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.endpoints.as_map().is_empty());
+    }
+
+    /// The empty approval is stateable: `--allow none` starts a run that
+    /// approves nothing at all. Four of the grammar's five capability
+    /// scopes are refused, so without this token the only way to start any
+    /// run — including a purely read-only one — would be approving
+    /// `workspace-write`, which would turn the one scope that means
+    /// something into boilerplate everyone types.
+    #[test]
+    fn none_states_the_empty_approval_for_a_read_only_run() {
+        let Ok(approved) = parse(&["none".to_string()]) else {
+            panic!("`none` must state the empty approval");
+        };
+        assert!(!approved.capabilities.workspace_write);
+        assert!(!approved.capabilities.scratch);
+        assert!(approved.capabilities.fetch.is_none());
+        assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.endpoints.as_map().is_empty());
+    }
+
+    /// `none` names "nothing", so beside a scope it would state both
+    /// nothing and something — refused, not resolved in the user's favour.
+    #[test]
+    fn none_must_be_the_only_token_when_stated() {
+        let Err(error) = parse(&["none".to_string(), "workspace-write".to_string()]) else {
+            panic!("`none` beside a scope must refuse");
+        };
+        assert!(
+            error.contains("`none` states the empty scope set"),
+            "the refusal must name the contradiction: {error}"
+        );
+        assert!(error.contains("known scopes:"), "got: {error}");
     }
 
     /// An unknown token stays a usage error, and its message still lists the
