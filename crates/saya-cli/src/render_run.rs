@@ -24,6 +24,7 @@
 //! journal carries the raw index.
 
 use crate::render::{RenderFormat, Rendered};
+use crate::render_usage::usage_line;
 use saya_harness::journal::{Journal, JournalWire};
 use saya_types::{PauseReason, RunEvent, RunFailureCode};
 use std::io::Write;
@@ -92,9 +93,13 @@ pub(crate) fn run_event_text(event: &RunEvent) -> String {
             tokens,
             turns,
             tool_calls,
+            cached_input_tokens,
+            cache_creation_input_tokens,
         } => format!(
-            "usage · {endpoint} · tokens {} · turns {} · tool calls {}\n",
+            "usage · {endpoint} · tokens {} · cache reads {} · cache writes {} · turns {} · tool calls {}\n",
             count_text(*tokens),
+            count_text(*cached_input_tokens),
+            count_text(*cache_creation_input_tokens),
             count_text(*turns),
             count_text(*tool_calls),
         ),
@@ -107,7 +112,7 @@ pub(crate) fn run_event_text(event: &RunEvent) -> String {
 
 /// An optional count renders as its number, or `unknown` — never zero: a
 /// provider that reported nothing must not be read as having cost nothing.
-fn count_text(count: Option<u64>) -> String {
+pub(crate) fn count_text(count: Option<u64>) -> String {
     match count {
         Some(count) => count.to_string(),
         None => "unknown".into(),
@@ -141,8 +146,8 @@ pub(crate) fn pause_reason_text(reason: PauseReason) -> &'static str {
 /// because both adapters call the same read path that ends here. `spec` is
 /// the `(goal, scopes)` pair when the run's spec file reads; a missing file
 /// renders no goal or scopes line rather than failing the read.
-/// Everything the run-show stanza renders. A struct rather than eight
-/// positional arguments: the call sites are the headless command and the
+/// Everything the run-show stanza renders. A struct rather than a positional
+/// list: the call sites are the headless command and the
 /// `/runs` slash adapter, and a positional list this long is exactly where
 /// two callers drift by passing the same types in a different order.
 pub(crate) struct RunShowStanza<'a> {
@@ -157,6 +162,10 @@ pub(crate) struct RunShowStanza<'a> {
     /// cannot diverge: the parity suite asserts they are byte-identical, and
     /// a section added at one call site only would break that silently.
     pub deliverables: &'a [String],
+    /// The per-endpoint usage the run's journal records, folded per endpoint
+    /// with the usage-honesty rule. A run whose journal holds no usage event
+    /// renders no section — the same shape the deliverables section takes.
+    pub usage: &'a [crate::render_usage::EndpointUsage],
 }
 
 pub(crate) fn run_show_text(stanza: RunShowStanza<'_>) -> String {
@@ -169,6 +178,7 @@ pub(crate) fn run_show_text(stanza: RunShowStanza<'_>) -> String {
         spec,
         paused,
         deliverables,
+        usage,
     } = stanza;
     let cause = match failure_cause {
         Some(cause) => format!(" ({cause})"),
@@ -194,141 +204,19 @@ pub(crate) fn run_show_text(stanza: RunShowStanza<'_>) -> String {
             text.push_str(&format!("\n{line}"));
         }
     }
+    // What the run cost, per endpoint, as its journal recorded it — the
+    // stanza's closing line, because cost is what a finished run's reader
+    // asks last. A run whose journal holds no usage event renders no
+    // section: nothing reported is not the same claim as costing nothing.
+    if !usage.is_empty() {
+        text.push_str("\nusage:");
+        for entry in usage {
+            text.push_str(&format!("\n{}", usage_line(entry)));
+        }
+    }
     text
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Json and Ndjson are one serde path with two framings: the bytes are
-    /// the journal's own line, and the only difference between the two
-    /// formats is nothing — the framing is the newline either way.
-    #[test]
-    fn json_and_ndjson_share_one_serde_path() {
-        let event = RunEvent::Paused {
-            reason: PauseReason::BudgetExhausted,
-        };
-        let json = render_run_event(&event, RenderFormat::Json);
-        let ndjson = render_run_event(&event, RenderFormat::Ndjson);
-        assert_eq!(
-            json.stdout, ndjson.stdout,
-            "one serialization, two framings"
-        );
-        assert_eq!(ndjson.stdout, format!("{}\n", journal_line(&event)));
-        assert!(ndjson.stdout.contains(r#""type":"paused""#), "{ndjson:?}");
-        assert!(ndjson.stdout.contains("budget_exhausted"), "{ndjson:?}");
-    }
-
-    /// The lifecycle lines are distinct and say what happened.
-    #[test]
-    fn lifecycle_lines_render_distinctly() {
-        let lines = [
-            RunEvent::RunStarted,
-            RunEvent::PlanApproved,
-            RunEvent::StepStarted { step: 0 },
-            RunEvent::StepCompleted { step: 0 },
-            RunEvent::StepFailed { step: 0 },
-            RunEvent::Paused {
-                reason: PauseReason::WallClockExceeded,
-            },
-            RunEvent::Completed,
-            RunEvent::Failed {
-                code: RunFailureCode::SafetyQuery,
-            },
-            RunEvent::Cancelled,
-        ]
-        .map(|event| run_event_text(&event));
-        for (index, line) in lines.iter().enumerate() {
-            assert!(line.ends_with('\n'), "line {index} is newline-terminated");
-        }
-        for a in 0..lines.len() {
-            for b in (a + 1)..lines.len() {
-                assert_ne!(lines[a], lines[b], "lines {a} and {b} must differ");
-            }
-        }
-        assert_eq!(lines[2], "step 1 started\n", "steps render one-based");
-        assert!(
-            lines[5].contains("the wall-clock budget tripped"),
-            "{lines:?}"
-        );
-    }
-
-    /// An unreported usage figure renders `unknown`, never zero — a provider
-    /// that reported nothing must not be read as having cost nothing.
-    #[test]
-    fn unreported_usage_renders_unknown_not_zero() {
-        let event = RunEvent::Usage {
-            endpoint: "primary".into(),
-            tokens: Some(12),
-            turns: None,
-            tool_calls: None,
-        };
-        let text = run_event_text(&event);
-        assert!(text.contains("tokens 12"), "{text}");
-        assert!(text.contains("turns unknown"), "{text}");
-        assert!(text.contains("tool calls unknown"), "{text}");
-        assert!(!text.contains("0"), "no zero is invented: {text}");
-    }
-
-    /// The show stanza carries the failure cause and the pause reason in the
-    /// exact shapes the read surface has always printed.
-    #[test]
-    fn the_show_stanza_names_cause_and_pause() {
-        let text = run_show_text(RunShowStanza {
-            id: "r-1",
-            status: "failed",
-            failure_cause: Some(crate::render_run::failure_code_cause(
-                RunFailureCode::SafetyQuery,
-            )),
-            created_unix_ms: 100,
-            updated_unix_ms: 200,
-            spec: Some(("the goal", "workspace-write")),
-            paused: Some(PauseReason::StoreUnavailable),
-            deliverables: &[],
-        });
-        assert_eq!(
-            text,
-            "run r-1\nstatus: failed (the safety gate refused a query)\ncreated: 100\n\
-             updated: 200\ngoal: the goal\nscopes: workspace-write\n\
-             paused: the state store became unavailable"
-        );
-    }
-
-    /// Deliverables render inside the shared stanza rather than at a call
-    /// site, which is what keeps `/runs` and `saya run show` byte-identical.
-    /// A run that declared none renders no section at all — an empty
-    /// "deliverables:" heading would read as "it produced nothing", which is
-    /// a different claim from "it declared nothing".
-    #[test]
-    fn the_show_stanza_carries_deliverables_and_omits_the_section_when_there_are_none() {
-        let bare = run_show_text(RunShowStanza {
-            id: "r-2",
-            status: "completed",
-            failure_cause: None,
-            created_unix_ms: 1,
-            updated_unix_ms: 2,
-            spec: None,
-            paused: None,
-            deliverables: &[],
-        });
-        assert!(
-            !bare.contains("deliverables"),
-            "no section without deliverables: {bare}"
-        );
-        let listed = run_show_text(RunShowStanza {
-            id: "r-2",
-            status: "completed",
-            failure_cause: None,
-            created_unix_ms: 1,
-            updated_unix_ms: 2,
-            spec: None,
-            paused: None,
-            deliverables: &["step 0: report.md (29 bytes, sha256 4634)".to_string()],
-        });
-        assert!(
-            listed.ends_with("\ndeliverables:\nstep 0: report.md (29 bytes, sha256 4634)"),
-            "deliverables close the stanza: {listed}"
-        );
-    }
-}
+#[path = "render_run_tests.rs"]
+mod tests;

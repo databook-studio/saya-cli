@@ -107,7 +107,7 @@ unsafe fn restore_runs_dir(previous: Option<std::ffi::OsString>) {
 /// the store and journal the engine itself uses. The directory the read
 /// surfaces resolve (`runs_dir()`) must be `root/runs`, so the caller holds
 /// the env lock.
-async fn seed_run(root: &Path, store: &SqliteStateStore, id: &str, goal: &str) {
+async fn seed_run(root: &Path, store: &SqliteStateStore, id: &str, goal: &str, usage: &[RunEvent]) {
     let run_dir = root.join("runs").join(id);
     fs::create_dir_all(&run_dir).unwrap();
     let run_id = RunId::parse(id).unwrap();
@@ -135,15 +135,20 @@ async fn seed_run(root: &Path, store: &SqliteStateStore, id: &str, goal: &str) {
     .await
     .unwrap();
     let journal = Journal::open(&run_dir);
+    // Usage rides where the engine journals it: per call, before the run's
+    // completion — the durable record the show stanza folds.
     for event in [
         RunEvent::RunStarted,
         RunEvent::PlanApproved,
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepCompleted { step: 0 },
-        RunEvent::Completed,
     ] {
         journal.append(&event).unwrap();
     }
+    for event in usage {
+        journal.append(event).unwrap();
+    }
+    journal.append(&RunEvent::Completed).unwrap();
     // The store's status machine is walked the legal way a real run walks it
     // (planned → approved → executing → completed); an illegal transition is
     // refused, which is the store being the mirror, not the authority.
@@ -201,7 +206,7 @@ async fn runs_slash_and_headless_agree_byte_for_byte() {
     unsafe { set_runs_dir(&root.join("runs")) };
     let runtime = runtime_at(&root);
     let store = store_at(&root).await;
-    seed_run(&root, &store, "r-parity-1", "survey the data quality").await;
+    seed_run(&root, &store, "r-parity-1", "survey the data quality", &[]).await;
 
     let headless_show = run_headless(
         RunCommand::Show {
@@ -317,7 +322,7 @@ async fn json_framing_of_runs_matches_headless_json() {
     unsafe { set_runs_dir(&root.join("runs")) };
     let runtime = runtime_at(&root);
     let store = store_at(&root).await;
-    seed_run(&root, &store, "r-parity-json", "audit the ledger").await;
+    seed_run(&root, &store, "r-parity-json", "audit the ledger", &[]).await;
 
     let headless = run_headless(
         RunCommand::Show {
@@ -352,6 +357,97 @@ async fn json_framing_of_runs_matches_headless_json() {
     let json = saya_cli::render_run_event(&event, RenderFormat::Json).stdout;
     assert_eq!(line, json, "one serde path, two framings");
     assert_eq!(line.trim_end(), serde_json::to_string(&event).unwrap());
+
+    unsafe { restore_runs_dir(None) };
+    let _ = fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------------
+// 4. The per-endpoint usage section rides the shared stanza: `/runs <id>` and
+//    `saya run show <id>` render it byte-identically, and the fold keeps the
+//    honesty rule — a reported cache zero is 0, an unreported one unknown.
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn usage_renders_identically_on_both_paths_with_unknown_never_zero() {
+    let _env = lock_env().await;
+    let root = temp_root("usage_parity");
+    unsafe { set_runs_dir(&root.join("runs")) };
+    let runtime = runtime_at(&root);
+    let store = store_at(&root).await;
+    seed_run(
+        &root,
+        &store,
+        "r-parity-usage",
+        "audit the spend",
+        &[
+            RunEvent::Usage {
+                endpoint: "primary".into(),
+                tokens: Some(100),
+                turns: None,
+                tool_calls: None,
+                cached_input_tokens: None,
+                cache_creation_input_tokens: None,
+            },
+            RunEvent::Usage {
+                endpoint: "primary".into(),
+                tokens: Some(60),
+                turns: None,
+                tool_calls: None,
+                cached_input_tokens: Some(0),
+                cache_creation_input_tokens: None,
+            },
+            RunEvent::Usage {
+                endpoint: "deepseek".into(),
+                tokens: None,
+                turns: None,
+                tool_calls: None,
+                cached_input_tokens: None,
+                cache_creation_input_tokens: None,
+            },
+        ],
+    )
+    .await;
+
+    let headless_show = run_headless(
+        RunCommand::Show {
+            run_id: "r-parity-usage".into(),
+        },
+        &runtime,
+        &store,
+        RenderFormat::Text,
+    )
+    .await;
+    let slash = match parse_slash_command("/runs r-parity-usage") {
+        Ok(Some(SlashCommand::Runs(Some(run_id)))) => {
+            run_headless(
+                RunCommand::Show { run_id },
+                &runtime,
+                &store,
+                RenderFormat::Text,
+            )
+            .await
+        }
+        other => panic!("expected Runs, got {other:?}"),
+    };
+
+    assert_eq!(slash.0, 0, "stderr: {}", slash.2);
+    // The whole stanza byte for byte — a usage section rendered at one call
+    // site only would break exactly here.
+    assert_eq!(slash.1, headless_show.1, "/runs diverged from run show");
+    assert_eq!(slash.2, headless_show.2);
+    let shown = &headless_show.1;
+    assert!(
+        shown.contains("usage:"),
+        "the usage section renders: {shown}"
+    );
+    assert!(
+        shown.contains("primary · tokens 160 · cache reads 0 · cache writes unknown"),
+        "reported figures fold and a reported zero stays 0: {shown}"
+    );
+    assert!(
+        shown.contains("deepseek · tokens unknown · cache reads unknown"),
+        "figures no call reported render unknown, never zero: {shown}"
+    );
 
     unsafe { restore_runs_dir(None) };
     let _ = fs::remove_dir_all(root);

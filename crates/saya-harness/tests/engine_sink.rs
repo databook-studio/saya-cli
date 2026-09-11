@@ -218,10 +218,11 @@ async fn the_wall_clock_deadline_trips_a_pause_per_tick() {
     )
     .await;
     assert_eq!(sink.state(), RunState::Executing);
-    assert_eq!(
-        Journal::open(&run_dir).read().unwrap(),
-        Vec::<RunEvent>::new(),
-        "a tick before the deadline must not pause"
+    let events = Journal::open(&run_dir).read().unwrap();
+    assert!(
+        matches!(events.as_slice(), [RunEvent::Usage { .. }]),
+        "a tick before the deadline must not pause; the call's usage is \
+         journaled as the durable record, nothing more: {events:?}"
     );
 
     // Past the deadline, the very next tick pauses the run — once, with the
@@ -236,12 +237,31 @@ async fn the_wall_clock_deadline_trips_a_pause_per_tick() {
     )
     .await;
     assert_eq!(sink.state(), RunState::Paused);
+    let events = Journal::open(&run_dir).read().unwrap();
     assert_eq!(
-        Journal::open(&run_dir).read().unwrap(),
-        vec![RunEvent::Paused {
-            reason: PauseReason::WallClockExceeded
-        }],
-        "the deadline pause must be journaled exactly once, with its reason"
+        events,
+        vec![
+            RunEvent::Usage {
+                endpoint: "orchestrator".into(),
+                tokens: Some(2),
+                turns: None,
+                tool_calls: None,
+                cached_input_tokens: None,
+                cache_creation_input_tokens: None,
+            },
+            RunEvent::Usage {
+                endpoint: "orchestrator".into(),
+                tokens: Some(2),
+                turns: None,
+                tool_calls: None,
+                cached_input_tokens: None,
+                cache_creation_input_tokens: None,
+            },
+            RunEvent::Paused {
+                reason: PauseReason::WallClockExceeded
+            },
+        ],
+        "each call's usage is journaled, and the deadline pause exactly once, with its reason"
     );
     let record = store.get_run(&run_id).await.unwrap().unwrap();
     assert_eq!(
@@ -250,7 +270,8 @@ async fn the_wall_clock_deadline_trips_a_pause_per_tick() {
         "the pause must be mirrored to the store"
     );
 
-    // A paused run does not re-pause: further ticks write nothing new.
+    // A paused run does not re-pause: further ticks never write a second
+    // pause — the only thing a later usage event adds is its own record.
     clock.advance(10_000);
     AgentEventSink::emit(
         &sink,
@@ -260,7 +281,15 @@ async fn the_wall_clock_deadline_trips_a_pause_per_tick() {
         },
     )
     .await;
-    assert_eq!(Journal::open(&run_dir).read().unwrap().len(), 1);
+    let events = Journal::open(&run_dir).read().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::Paused { .. }))
+            .count(),
+        1,
+        "a paused run never re-pauses: {events:?}"
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -392,6 +421,105 @@ async fn the_token_ceiling_pauses_the_run_once_it_is_spent() {
             }
         )),
         "the pause must name the budget: {events:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The usage a budget-paused run shows agrees with the ceiling that stopped
+/// it. The sink journals each call's usage as it folds it, so the durable
+/// record a reader aggregates (`saya run show` sums the journal's usage
+/// events) and the totals the ceiling compared are the same numbers: the
+/// journaled sum crosses the ceiling, equals the sink's own totals, and the
+/// pause naming the budget is written after the usage that tripped it.
+#[tokio::test]
+async fn the_usage_a_budget_pause_shows_agrees_with_the_ceiling_that_stopped_it() {
+    let root = temp_root("tokens-display");
+    let (store, run_id) = seeded_store(&root, "tokens-display", RunStatus::Approved).await;
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let sink = EngineEventSink::new(
+        run_id,
+        RunState::Approved,
+        Journal::open(&run_dir),
+        store,
+        None,
+        Some(150),
+        Instant::now,
+    );
+    sink.record(TransitionEvent::Begin).await.unwrap();
+
+    // 100 of 150, then the crossing call — the same shape the pause test
+    // above drives, so both readings of the same run must agree.
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(60, 40),
+        },
+    )
+    .await;
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(40, 20),
+        },
+    )
+    .await;
+    assert_eq!(sink.state(), RunState::Paused);
+
+    let events = Journal::open(&run_dir).read().unwrap();
+    let journaled: u64 = events
+        .iter()
+        .map(|event| match event {
+            RunEvent::Usage {
+                tokens: Some(tokens),
+                ..
+            } => *tokens,
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(
+        journaled, 160,
+        "the journal must record what the run spent: {events:?}"
+    );
+    assert!(
+        journaled >= 150,
+        "usage shown for a budget pause must agree with the ceiling that stopped it"
+    );
+    let totals = sink.usage();
+    assert_eq!(
+        totals.input_tokens.saturating_add(totals.output_tokens),
+        journaled,
+        "the ceiling's arithmetic and the durable record must agree"
+    );
+    for event in &events {
+        if let RunEvent::Usage { endpoint, .. } = event {
+            assert_eq!(
+                endpoint, "orchestrator",
+                "every episode calls the one endpoint the ceiling sums: {events:?}"
+            );
+        }
+    }
+    let pause_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                RunEvent::Paused {
+                    reason: PauseReason::BudgetExhausted
+                }
+            )
+        })
+        .expect("the pause must be journaled");
+    let usage_index = events
+        .iter()
+        .position(|event| matches!(event, RunEvent::Usage { .. }))
+        .expect("the usage must be journaled");
+    assert!(
+        usage_index < pause_index,
+        "the usage that tripped the ceiling precedes the pause naming it: {events:?}"
     );
 
     let _ = fs::remove_dir_all(root);

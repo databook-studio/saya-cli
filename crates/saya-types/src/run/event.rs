@@ -53,6 +53,16 @@ pub enum RunEvent {
         tokens: Option<u64>,
         turns: Option<u64>,
         tool_calls: Option<u64>,
+        /// The cache reads the provider reported for this call; `None` when
+        /// it reported no figure — a provider that says nothing about its
+        /// cache must not be read as having missed it. `#[serde(default)]`
+        /// keeps journals written before the field existed parseable.
+        #[serde(default)]
+        cached_input_tokens: Option<u64>,
+        /// The cache writes the provider reported for this call, same rule
+        /// as above.
+        #[serde(default)]
+        cache_creation_input_tokens: Option<u64>,
     },
 }
 

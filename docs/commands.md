@@ -114,6 +114,14 @@ them ends the step rather than pausing the run. Because every episode calls
 the single `orchestrator` endpoint today, a `tokens.<endpoint>` ceiling binds
 that endpoint; when per-step roles bind, attribution follows the call.
 
+Usage is journaled per provider call as the run spends it, and `saya run show`
+renders the per-endpoint totals the journal recorded. A figure no call
+reported renders `unknown`, never `0` — a provider that said nothing about its
+cache is shown as `cache reads unknown`, while a provider that reported a
+cache hit of zero shows `cache reads 0`. The usage shown for a run paused on
+its token budget is the same arithmetic the ceiling compared (input plus
+output), so the display and the budget that stopped the run agree.
+
 **A resume re-arms the full ceiling.** A run that pauses on wall-clock or
 tokens and is resumed gets the whole budget again, so `N` resumes can cost
 `N ×` the declared ceiling. That is deliberate — a resume is a decision to
@@ -126,9 +134,12 @@ overrides it. The episodes call the `orchestrator` endpoint from
 Management subcommands:
 
 - `saya run list` — every run, most recent first, with status.
-- `saya run show <id>` — one run's status, goal, scopes, pause reason, and
-  the deliverables its steps recorded, with sizes and digests.
-- `saya run log <id>` — the run's journal, one event per line.
+- `saya run show <id>` — one run's status, goal, scopes, pause reason, the
+  deliverables its steps recorded (sizes and digests), and the per-endpoint
+  usage its journal recorded.
+- `saya run log <id>` — the run's journal, one event per line; text mode
+  renders what happened, `--format ndjson`/`json` emit the journal's own
+  bytes.
 - `saya run resume <id>` — continue a paused or crashed run at its first
   incomplete step. A run with a live holder refuses.
 - `saya run cancel <id>` — record a run cancelled. A run with a live holder

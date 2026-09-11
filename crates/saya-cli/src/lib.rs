@@ -10,6 +10,7 @@ mod contracts;
 mod interactive;
 mod render;
 pub mod render_run;
+mod render_usage;
 mod runtime_profile;
 mod slash;
 mod stream_render;
