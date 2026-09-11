@@ -10,7 +10,10 @@
 //! and anything a consumer — the model, the run's disk record — can read,
 //! and it is unconditional: the credential-injection condition "redact()
 //! applied to all captured output" is satisfied by construction, not by a
-//! call site remembering to do it.
+//! call site remembering to do it. The gate is two passes: the runner's own
+//! value registry (the exact values it injected, scrubbed wholesale —
+//! pattern redaction cannot recognise a bare value, measured by the M5-7
+//! battery) and then the pattern pass (`redact()`).
 
 use std::{
     collections::VecDeque, io, io::Read, path::Path, sync::Mutex, time::SystemTime,
@@ -111,15 +114,42 @@ pub struct StreamCapture {
 
 /// Finalises one ring. This is the only function a captured stream's bytes
 /// may leave through: the text is redacted here, before any consumer sees
-/// it, unconditionally.
-pub fn capture(ring: &OutputRing) -> StreamCapture {
+/// it, unconditionally. Two passes, in this order:
+///
+/// 1. **The value registry.** `secrets` is the list of credential values
+///    this child's environment was built from (`env::inject` returns it),
+///    and every occurrence is replaced with the redaction marker before
+///    anything else can fragment it. `redact()` is pattern-based — it needs
+///    a marker (`password=`, a credential header, URL userinfo) to
+///    recognise — so a value echoed bare (`SAYA_RUN_EP_ORCHESTRATOR=<value>`,
+///    the exact shape an environment dump produces) would otherwise survive
+///    to the model and the disk record. Measured by the M5-7 battery.
+/// 2. **`redact()`.** The pattern pass every captured byte goes through:
+///    credential-shaped markers, headers, userinfo URLs, private-key blocks.
+///
+/// A secret split across the ring's cap boundary cannot be matched as one
+/// string; the residual risk is stated here rather than hidden.
+pub fn capture(ring: &OutputRing, secrets: &[String]) -> StreamCapture {
     let (text, truncated, dropped_bytes, total_bytes) = ring.snapshot();
     StreamCapture {
-        text: redact(&text),
+        text: redact(&scrub_secrets(&text, secrets)),
         truncated,
         dropped_bytes,
         total_bytes,
     }
+}
+
+/// Replaces every occurrence of a resolved credential value with the
+/// redaction marker. Empty values are skipped: an empty pattern would match
+/// everywhere and destroy the capture without protecting anything.
+fn scrub_secrets(text: &str, secrets: &[String]) -> String {
+    let mut scrubbed = text.to_owned();
+    for secret in secrets {
+        if !secret.is_empty() && scrubbed.contains(secret.as_str()) {
+            scrubbed = scrubbed.replace(secret.as_str(), "[redacted]");
+        }
+    }
+    scrubbed
 }
 
 /// Persists the redacted outcome into the run workspace — the disk record
@@ -185,5 +215,31 @@ mod tests {
         assert!(!truncated);
         assert_eq!(dropped, 0);
         assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn a_captured_value_the_runner_injected_is_scrubbed_even_without_a_marker() {
+        // The M5-7 battery's exfiltration shape: the child echoes the
+        // credential under the env name the generated config binds — no
+        // marker for `redact()` to match, so the value registry is what
+        // stops it.
+        let ring = OutputRing::new(1024);
+        ring.push(b"SAYA_RUN_EP_ORCHESTRATOR=planted-7Qk2mVn9xR4\nplain line");
+        let capture = capture(&ring, &["planted-7Qk2mVn9xR4".to_owned()]);
+        assert!(
+            !capture.text.contains("planted-7Qk2mVn9xR4"),
+            "the injected value must not survive the capture: {:?}",
+            capture.text
+        );
+        assert!(
+            capture.text.contains("SAYA_RUN_EP_ORCHESTRATOR=[redacted]"),
+            "the env-name shape must survive with its value scrubbed: {:?}",
+            capture.text
+        );
+        assert!(
+            capture.text.contains("plain line"),
+            "non-secret output is never destroyed: {:?}",
+            capture.text
+        );
     }
 }

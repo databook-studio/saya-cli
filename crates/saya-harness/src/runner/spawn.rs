@@ -54,7 +54,7 @@ pub(super) async fn run(
     // default, then exactly the declared credentials. A planted variable in
     // the parent's environment cannot reach the child.
     command.env_clear();
-    inject(&mut command, credentials, source)?;
+    let resolved = inject(&mut command, credentials, source)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -125,8 +125,8 @@ pub(super) async fn run(
         cancelled,
         killed_orphans,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        stdout: capture(&stdout_ring),
-        stderr: capture(&stderr_ring),
+        stdout: capture(&stdout_ring, &resolved),
+        stderr: capture(&stderr_ring, &resolved),
     })
 }
 
