@@ -13,11 +13,12 @@ use saya_types::{PauseReason, RunEvent};
 use crate::{
     engine::{
         episode::{EpisodeDriver, EpisodeRun},
-        sink::EngineEventSink,
+        sink::{EngineEventSink, SinkBudgets},
         state::RunState,
         transitions::TransitionEvent,
+        usage::UsageTotals,
     },
-    journal::{Journal, JournalState, StepState},
+    journal::{Journal, JournalState, StepState, replay},
     lock::RunLock,
 };
 
@@ -48,9 +49,15 @@ pub async fn resume(
     journal
         .truncate_torn_tail()
         .map_err(|source| ResumeError::Journal { source })?;
-    let state = journal
-        .rebuild()
+    // The repaired record, read once: the replay is the resume's authority
+    // for where the run stood, and the same events seed the sink's usage
+    // totals, so the token ceiling measures the run's whole spend across
+    // invocations. Seeding rides the repaired view — the read happens after
+    // the torn tail was dropped — so a half-written usage line never counts.
+    let events = journal
+        .read()
         .map_err(|source| ResumeError::Journal { source })?;
+    let state = replay(&events);
     let initial = match position(&state) {
         Position::NoRun => return Ok(ResumeOutcome::NoRun),
         Position::Unapproved => return Ok(ResumeOutcome::Unapproved),
@@ -64,8 +71,11 @@ pub async fn resume(
         initial,
         journal.clone(),
         resumed.store.clone(),
-        resumed.wall_clock,
-        resumed.token_ceiling,
+        SinkBudgets {
+            wall_clock: resumed.wall_clock,
+            token_ceiling: resumed.token_ceiling,
+            carried_usage: UsageTotals::from_journal(&events),
+        },
         std::time::Instant::now,
     );
     let sink = match &resumed.agent_stream {

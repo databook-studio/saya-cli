@@ -78,10 +78,12 @@ pub struct ResumeRun<'a> {
     pub bounds: ManifestBounds,
     /// The run's declared wall-clock ceiling, armed again for the resumed steps.
     pub wall_clock: Option<Duration>,
-    /// The run's token ceiling, carried so a resumed run is bounded by the
-    /// same budget a fresh one is. Note the ceiling re-arms from zero on a
-    /// resume, exactly as the wall clock does — documented in `docs/commands.md`
-    /// rather than left for a user to discover from a bill.
+    /// The run's token ceiling. It binds the **run**, not each invocation:
+    /// `resume` seeds the sink's usage totals from the journal's usage
+    /// record, so a resumed run continues against the same ceiling instead
+    /// of re-arming it in full — resuming a run that already paused on this
+    /// ceiling, without raising it, trips on the first tick. The wall clock
+    /// above, which no record can replay, re-arms per invocation.
     pub token_ceiling: Option<u64>,
     /// Optional observer every journaled event notifies — the headless run
     /// wire attaches one so a resumed run streams its journal as it writes

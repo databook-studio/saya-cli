@@ -28,7 +28,7 @@ use saya_agent::{
 };
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest, EpisodeRun,
-    ManifestBounds, RunState, StepToolset,
+    ManifestBounds, RunState, SinkBudgets, StepToolset, UsageTotals,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::{Workspace, manifest};
@@ -274,8 +274,11 @@ fn driver_and_sink<'a>(
         RunState::Approved,
         Journal::open(&run.run_dir),
         run.store.clone(),
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         std::time::Instant::now,
     );
     let driver = EpisodeDriver::new(

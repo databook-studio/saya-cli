@@ -19,7 +19,7 @@ use crate::stream_render::TerminalSink;
 use saya_agent::ApprovalPolicy;
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun, PlanDriver,
-    PlanError, PlanRejection, PlanRequest, RunState, TransitionEvent,
+    PlanError, PlanRejection, PlanRequest, RunState, SinkBudgets, TransitionEvent, UsageTotals,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -177,8 +177,11 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         RunState::Planned,
         journal.clone(),
         store.clone(),
-        spec.budgets.wall_clock,
-        super::budget::token_ceiling(&spec.budgets),
+        SinkBudgets {
+            wall_clock: spec.budgets.wall_clock,
+            token_ceiling: super::budget::token_ceiling(&spec.budgets),
+            carried_usage: UsageTotals::default(),
+        },
         std::time::Instant::now,
     );
     let sink = match host.agent_stream {

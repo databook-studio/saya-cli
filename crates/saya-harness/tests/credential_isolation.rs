@@ -72,7 +72,7 @@ mod battery {
     };
     use saya_harness::engine::{
         EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest,
-        EpisodeRun, ManifestBounds, RunState, StepToolset,
+        EpisodeRun, ManifestBounds, RunState, SinkBudgets, StepToolset, UsageTotals,
     };
     use saya_harness::journal::{EVENTS_FILE, Journal};
     use saya_harness::run_dir::RunDir;
@@ -452,8 +452,11 @@ fn main() {
             RunState::Approved,
             Journal::open(cell.run.root()),
             cell.store.clone(),
-            None,
-            None,
+            SinkBudgets {
+                wall_clock: None,
+                token_ceiling: None,
+                carried_usage: UsageTotals::default(),
+            },
             std::time::Instant::now,
         )
     }

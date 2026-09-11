@@ -1,6 +1,6 @@
 //! Resume — contract tests (M1-5, resume slice).
 //!
-//! Five guarantees, one per test:
+//! Seven guarantees, one per test:
 //! 1. A crash at **every** journal position: for each prefix of a driven
 //!    two-step run's journal, resume continues at the first incomplete
 //!    step and lands the run in the right final state — completed steps
@@ -13,6 +13,11 @@
 //!    first holds the lock.
 //! 5. A journal with a torn final line — the crash that matters most —
 //!    replays to the last whole event rather than erroring the run.
+//! 6. The token ceiling binds the **run**, not each invocation: a resumed
+//!    run seeded from the journal's usage record pauses at its cumulative
+//!    spend, never at a re-armed ceiling.
+//! 7. Seeding rides the repaired record: a torn usage line never counts
+//!    toward the carried spend.
 
 use std::{
     fs,
@@ -23,13 +28,13 @@ use std::{
 use async_trait::async_trait;
 use saya_agent::{
     ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    ProviderError, ToolDefinition, ToolError, ToolExecutor,
+    ProviderError, TokenUsage, ToolDefinition, ToolError, ToolExecutor,
 };
 use saya_harness::HarnessError;
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun,
-    ManifestBounds, ResumeError, ResumeOutcome, ResumeRun, RunState, StepToolset, TransitionEvent,
-    resume,
+    ManifestBounds, ResumeError, ResumeOutcome, ResumeRun, RunState, SinkBudgets, StepToolset,
+    TransitionEvent, UsageTotals, resume,
 };
 use saya_harness::journal::Journal;
 use saya_harness::lock::RunLock;
@@ -80,6 +85,34 @@ impl ChatProvider for AnswerProvider {
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.requests.lock().unwrap().push(request);
         Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
+    }
+}
+
+/// A provider whose every answer reports usage — the spend a resumed
+/// episode's turn makes — ten tokens per call, recorded like its sibling
+/// above so tests can count the work.
+#[derive(Default)]
+struct UsageProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+impl UsageProvider {
+    fn count(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+}
+
+#[async_trait]
+impl ChatProvider for UsageProvider {
+    fn name(&self) -> &str {
+        "usage-answer"
+    }
+
+    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        let mut response = ChatResponse::new(ChatMessage::text("assistant", "done"));
+        response.usage = Some(TokenUsage::new(10, 0));
+        Ok(response)
     }
 }
 
@@ -299,8 +332,11 @@ async fn driven_run(label: &str) -> CrashedRun {
         RunState::Planned,
         journal.clone(),
         store.clone(),
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         std::time::Instant::now,
     );
     sink.record(TransitionEvent::Approve).await.unwrap();
@@ -604,6 +640,20 @@ async fn a_second_engine_on_the_same_run_directory_is_refused() {
     );
 }
 
+/// One journaled usage event, shaped exactly as the engine journals a
+/// provider call: the combined input-plus-output figure under the ceiling's
+/// arithmetic, with every figure no call reported absent.
+fn journaled_usage(tokens: u64) -> RunEvent {
+    RunEvent::Usage {
+        endpoint: "orchestrator".into(),
+        tokens: Some(tokens),
+        turns: None,
+        tool_calls: None,
+        cached_input_tokens: None,
+        cache_creation_input_tokens: None,
+    }
+}
+
 /// A torn final line — the crash that matters most — replays to the last
 /// whole event: the half-written event is dropped, the run resumes past it.
 #[tokio::test]
@@ -660,4 +710,195 @@ async fn a_torn_final_line_replays_to_the_last_whole_event() {
         ],
         "the torn line must be dropped, not replayed"
     );
+}
+
+/// The resume inputs for a run with a declared token ceiling and a provider
+/// whose turn reports usage — the budget posture of the tests below; every
+/// other input is the crashed run's own.
+fn budgeted_inputs<'a>(
+    run: &'a CrashedRun,
+    provider: &'a UsageProvider,
+    ceiling: Option<u64>,
+) -> ResumeRun<'a> {
+    ResumeRun {
+        run_id: run.run_id.clone(),
+        store: run.store.clone(),
+        plan: run.plan.clone(),
+        workspace: workspace(&run.root),
+        collaborators: EpisodeCollaborators {
+            provider,
+            approval: &run.stubs.approval,
+            toolsets: &run.toolsets,
+            cancellation: CancellationToken::default(),
+        },
+        request: request(),
+        bounds: bounds(),
+        wall_clock: None,
+        token_ceiling: ceiling,
+        journal_wire: None,
+        agent_stream: None,
+    }
+}
+
+/// The one that matters: the token ceiling binds the **run**, not each
+/// invocation. A run pauses on its 150-token ceiling having spent 160; a
+/// resume seeds the sink's totals from the journal's usage record instead of
+/// re-arming the ceiling, so — resumed with no fresh budget — the run pauses
+/// again at its cumulative spend. The pause lands on the first tick of the
+/// resumed episode, before the turn's own usage folds in: the carried spend
+/// alone is already past the ceiling, which no re-armed ceiling could trip.
+/// Under the re-arm behaviour this replaces, the resumed invocation would
+/// have started from zero and spent a whole fresh ceiling before pausing.
+#[tokio::test]
+async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumulative_spend() {
+    // The posture a `BudgetExhausted` pause leaves: the per-call usage the
+    // engine journals, then the pause naming the budget.
+    let plan = RunPlan::new(vec![step("the only step")]).unwrap();
+    let run = crashed_run(
+        "budget-resume",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            journaled_usage(100),
+            journaled_usage(60),
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted,
+            },
+        ],
+        RunStatus::Paused,
+        plan,
+    )
+    .await;
+    let provider = UsageProvider::default();
+
+    // Resumed against the same ceiling, granted nothing fresh.
+    let outcome = resume(&run.run_dir, budgeted_inputs(&run, &provider, Some(150))).await;
+
+    // The resumed episode tripped the ceiling on its first tick and then ran
+    // to its natural end — a paused run's episode is not interrupted — so
+    // the driver's completion meets the machine: only an executing run
+    // completes. That refusal surfaces as the step's error; the pause itself
+    // is in the journal, and it is the shape every mid-episode pause leaves.
+    let error = outcome.unwrap_err();
+    assert!(
+        matches!(error, ResumeError::Episode { .. }),
+        "the machine must refuse a paused run's completion: {error:?}"
+    );
+
+    // The journal: the first invocation's record, then the resume's — one
+    // step started, the ceiling pause, the turn's usage (journaled after the
+    // pause that tripped on the carried spend), and the step's completion.
+    assert_eq!(
+        run.journal(),
+        vec![
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            journaled_usage(100),
+            journaled_usage(60),
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted
+            },
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted
+            },
+            journaled_usage(10),
+            RunEvent::StepCompleted { step: 0 },
+        ],
+        "the resume must pause again on the run's cumulative spend, not at a \
+         re-armed ceiling"
+    );
+    let events = run.journal();
+    // The run's whole spend across both invocations.
+    let total: u64 = events
+        .iter()
+        .map(|event| match event {
+            RunEvent::Usage {
+                tokens: Some(tokens),
+                ..
+            } => *tokens,
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(total, 170, "the run spent 160 before the pause, 10 after");
+    // The store mirrors the pause the resume recorded.
+    let recorded = run.store.get_run(&run.run_id).await.unwrap().unwrap();
+    assert_eq!(
+        recorded.status,
+        RunStatus::Paused,
+        "the run must stand paused, not running on a fresh budget"
+    );
+    // One call — the paused episode's own turn, not a fresh budget's worth.
+    assert_eq!(provider.count(), 1);
+
+    let _ = fs::remove_dir_all(&run.root);
+}
+
+/// Seeding rides the repaired record: a torn trailing usage line — the
+/// half-written event a crash left — never counts toward the carried spend.
+/// The journal shows 100 tokens spent and a torn line that would have added
+/// 60; counting it would push the carried spend past the 150 ceiling and
+/// pause the resumed run at its first tick. The repaired record carries only
+/// the whole event, so the run resumes and completes.
+#[tokio::test]
+async fn a_torn_usage_line_never_counts_toward_the_carried_spend() {
+    let plan = RunPlan::new(vec![step("the only step")]).unwrap();
+    let run = crashed_run(
+        "torn-usage",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            journaled_usage(100),
+        ],
+        RunStatus::Executing,
+        plan,
+    )
+    .await;
+    let torn = "{\"type\":\"usage\",\"endpoint\":\"orchestrator\",\"tokens\":60";
+    fs::write(
+        run.run_dir.join("events.ndjson"),
+        format!(
+            "{}\n{torn}",
+            run.journal()
+                .iter()
+                .map(|event| serde_json::to_string(event).unwrap())
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    )
+    .unwrap();
+    let provider = UsageProvider::default();
+
+    let outcome = resume(&run.run_dir, budgeted_inputs(&run, &provider, Some(150))).await;
+
+    // The carried spend is the repaired record's 100 — the torn 60 never
+    // counted — so the resumed turn's 10 keep the run under the ceiling.
+    assert_eq!(
+        outcome.as_ref().unwrap(),
+        &ResumeOutcome::Resumed {
+            first_step: 0,
+            state: RunState::Completed
+        },
+        "counting the torn line would have paused the run at 170 against 150"
+    );
+    assert_eq!(
+        run.journal(),
+        vec![
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved,
+            RunEvent::StepStarted { step: 0 },
+            journaled_usage(100),
+            RunEvent::Paused {
+                reason: PauseReason::ProcessDeath
+            },
+            RunEvent::StepStarted { step: 0 },
+            journaled_usage(10),
+            RunEvent::StepCompleted { step: 0 },
+            RunEvent::Completed,
+        ]
+    );
+    assert_eq!(provider.count(), 1);
 }

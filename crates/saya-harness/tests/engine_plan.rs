@@ -31,7 +31,7 @@ use saya_agent::{
 };
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, ManifestBounds, PlanDriver, PlanError,
-    PlanParseFailure, PlanRejection, PlanRequest, RunState, StepToolset,
+    PlanParseFailure, PlanRejection, PlanRequest, RunState, SinkBudgets, StepToolset, UsageTotals,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -340,8 +340,11 @@ async fn a_valid_plan_binds_and_step_n_sees_only_step_n_s_capabilities() {
         RunState::Approved,
         Journal::open(&run.run_dir),
         run.store.clone(),
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         std::time::Instant::now,
     );
     let driver = EpisodeDriver::new(

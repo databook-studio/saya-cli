@@ -152,11 +152,13 @@ cache hit of zero shows `cache reads 0`. The usage shown for a run paused on
 its token budget is the same arithmetic the ceiling compared (input plus
 output), so the display and the budget that stopped the run agree.
 
-**A resume re-arms the full ceiling.** A run that pauses on wall-clock or
-tokens and is resumed gets the whole budget again, so `N` resumes can cost
-`N ×` the declared ceiling. That is deliberate — a resume is a decision to
-spend more — but it is stated here rather than left to be discovered from a
-bill. Per-tool-call approval defaults to `read-only` (read-shaped tools run,
+**The token ceiling binds the run, not each invocation.** A run that pauses on
+its token budget resumes against the same ceiling: the resumed run's totals
+are seeded from the usage its journal already records, so it pauses again at
+the run's cumulative spend — resuming without raising the ceiling trips on
+the first tick, because the run is already past it. The wall clock, which no
+record can replay, re-arms in full on a resume. Per-tool-call approval
+defaults to `read-only` (read-shaped tools run,
 side-effecting tools are denied). `--approval-mode ask` or `never` denies
 rather than prompts — a run has no per-call question, so every tool that
 declares it needs approval, the SQL tools included, is refused, while tools

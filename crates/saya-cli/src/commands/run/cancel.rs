@@ -15,7 +15,7 @@
 use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
-use saya_harness::engine::{EngineEventSink, TransitionEvent};
+use saya_harness::engine::{EngineEventSink, SinkBudgets, TransitionEvent, UsageTotals};
 use saya_harness::journal::{Journal, JournalWire};
 use saya_harness::lock::RunLock;
 use saya_store::{RunStore, SqliteStateStore};
@@ -67,8 +67,11 @@ pub(super) async fn record_cancelled(
         position,
         journal,
         Arc::new(state.clone()) as Arc<dyn saya_store::RunStore>,
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         std::time::Instant::now,
     );
     match sink.record(TransitionEvent::Cancel).await {

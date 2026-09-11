@@ -27,7 +27,7 @@ use std::{
 
 use saya_agent::{AgentEvent, AgentEventSink, TokenUsage, UsageCall};
 use saya_harness::engine::{
-    EngineEventSink, EngineSinkError, RunState, TransitionEvent, UsageTotals,
+    EngineEventSink, EngineSinkError, RunState, SinkBudgets, TransitionEvent, UsageTotals,
 };
 use saya_harness::journal::Journal;
 use saya_store::{NewRun, RunBudgets, RunCapabilityFlags, RunStatus, RunStore, SqliteStateStore};
@@ -110,8 +110,11 @@ async fn usage_accumulation_keeps_not_reported_distinct_from_zero() {
         RunState::Executing,
         Journal::open(root.join("run")),
         store,
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         move || clock_for_sink.clock(),
     );
 
@@ -200,8 +203,11 @@ async fn the_wall_clock_deadline_trips_a_pause_per_tick() {
         RunState::Approved,
         Journal::open(&run_dir),
         store.clone(),
-        Some(Duration::from_millis(100)),
-        None,
+        SinkBudgets {
+            wall_clock: Some(Duration::from_millis(100)),
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         move || clock_for_sink.clock(),
     );
 
@@ -310,8 +316,11 @@ async fn a_store_failure_pauses_rather_than_continuing() {
         RunState::Approved,
         Journal::open(&run_dir),
         failing,
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         Instant::now,
     );
 
@@ -375,8 +384,11 @@ async fn the_token_ceiling_pauses_the_run_once_it_is_spent() {
         RunState::Approved,
         Journal::open(&run_dir),
         store.clone(),
-        None,
-        Some(150),
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: Some(150),
+            carried_usage: UsageTotals::default(),
+        },
         Instant::now,
     );
     sink.record(TransitionEvent::Begin).await.unwrap();
@@ -443,8 +455,11 @@ async fn the_usage_a_budget_pause_shows_agrees_with_the_ceiling_that_stopped_it(
         RunState::Approved,
         Journal::open(&run_dir),
         store,
-        None,
-        Some(150),
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: Some(150),
+            carried_usage: UsageTotals::default(),
+        },
         Instant::now,
     );
     sink.record(TransitionEvent::Begin).await.unwrap();
@@ -539,8 +554,11 @@ async fn no_declared_ceiling_means_no_token_pause() {
         RunState::Approved,
         Journal::open(&run_dir),
         store,
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         Instant::now,
     );
     sink.record(TransitionEvent::Begin).await.unwrap();
@@ -553,5 +571,173 @@ async fn no_declared_ceiling_means_no_token_pause() {
     )
     .await;
     assert_eq!(sink.state(), RunState::Executing);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// One journaled usage event, shaped exactly as the sink journals a provider
+/// call: the combined input-plus-output figure under the ceiling's
+/// arithmetic, with every figure no call reported absent.
+fn journaled_usage(tokens: u64) -> RunEvent {
+    RunEvent::Usage {
+        endpoint: "orchestrator".into(),
+        tokens: Some(tokens),
+        turns: None,
+        tool_calls: None,
+        cached_input_tokens: None,
+        cache_creation_input_tokens: None,
+    }
+}
+
+/// The seeding path's twin of the accumulation test above: a sink seeded
+/// from its journal — what a resume does — keeps "not reported" distinct
+/// from zero across the seam. The journal carries only the combined
+/// input-plus-output figure per call, so the seeded totals hold that spend
+/// whole (`carried_tokens`), the optional figures no recorded call reported
+/// stay `None`, no split is fabricated, and the invocation's own reports
+/// fold in under the same rule afterwards.
+#[tokio::test]
+async fn seeding_from_the_journal_keeps_not_reported_distinct_from_zero() {
+    let root = temp_root("seeded-usage");
+    let (store, run_id) = seeded_store(&root, "seeded-usage", RunStatus::Executing).await;
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let journaled = vec![journaled_usage(100), journaled_usage(60)];
+    let journal = Journal::open(&run_dir);
+    for event in &journaled {
+        journal.append(event).unwrap();
+    }
+    let sink = EngineEventSink::new(
+        run_id,
+        RunState::Executing,
+        Journal::open(&run_dir),
+        store,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::from_journal(&journaled),
+        },
+        Instant::now,
+    );
+
+    // The seeded totals: the record's combined spend, every optional figure
+    // still unknown — never zero — and no input/output split the journal
+    // never held.
+    let seeded = sink.usage();
+    assert_eq!(seeded.carried_tokens, 160);
+    assert_eq!(
+        (seeded.input_tokens, seeded.output_tokens),
+        (0, 0),
+        "the record holds no split, and none is fabricated"
+    );
+    assert_eq!(
+        seeded.cached_input_tokens, None,
+        "a figure no recorded call reported stays unknown, never zero"
+    );
+    assert_eq!(seeded.cache_creation_input_tokens, None);
+    assert_eq!(seeded.reasoning_tokens, None, "the journal carries none");
+
+    // A *reported* zero from this invocation is a number, not unknown: it
+    // survives as `Some(0)` on the seeded sink too.
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Extraction,
+            usage: TokenUsage::new(10, 2).with_cached_input(Some(0)),
+        },
+    )
+    .await;
+    assert_eq!(
+        sink.usage().cached_input_tokens,
+        Some(0),
+        "a reported zero is a number, not 'not reported'"
+    );
+
+    // Later live reports sum in under the same rule; a call that reports
+    // nothing never folds in as a zero, and the carried spend stands apart
+    // from the invocation's own figures.
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(5, 1)
+                .with_cached_input(Some(5))
+                .with_reasoning(Some(3)),
+        },
+    )
+    .await;
+    let totals = sink.usage();
+    assert_eq!(totals.carried_tokens, 160, "seeding is not re-folded");
+    assert_eq!(totals.input_tokens, 15);
+    assert_eq!(totals.output_tokens, 3);
+    assert_eq!(
+        totals.cached_input_tokens,
+        Some(5),
+        "the last call did not report cache reads; they must not fold in as zero"
+    );
+    assert_eq!(totals.reasoning_tokens, Some(3));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The ceiling binds the run's whole spend, not each invocation's: a sink
+/// seeded from its journal — the seeding a resume does — pauses on the next
+/// tick even though the spend this invocation has made is far under the
+/// ceiling. Without the seed, a resumed invocation re-armed the ceiling in
+/// full and could spend it again; this is the sink-side form of the defect
+/// the resume tests drive end to end.
+#[tokio::test]
+async fn the_ceiling_binds_the_run_s_whole_spend_not_each_invocation_s() {
+    let root = temp_root("seeded-ceiling");
+    let (store, run_id) = seeded_store(&root, "seeded-ceiling", RunStatus::Executing).await;
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    // The journal a ceiling-paused run leaves: each call's usage, then the
+    // pause — 160 tokens spent against the 150 ceiling.
+    let journaled = vec![journaled_usage(100), journaled_usage(60)];
+    let journal = Journal::open(&run_dir);
+    for event in &journaled {
+        journal.append(event).unwrap();
+    }
+    let sink = EngineEventSink::new(
+        run_id,
+        RunState::Executing,
+        journal,
+        store,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: Some(150),
+            carried_usage: UsageTotals::from_journal(&journaled),
+        },
+        Instant::now,
+    );
+    assert_eq!(
+        sink.usage().carried_tokens,
+        160,
+        "the journal seeds the spend the run already made"
+    );
+
+    // One token this invocation — far under a fresh 150 — and the run
+    // pauses: the ceiling compares the run's 161, not the invocation's 1.
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(1, 0),
+        },
+    )
+    .await;
+    assert_eq!(
+        sink.state(),
+        RunState::Paused,
+        "161 tokens against a 150 ceiling must pause the run, though the \
+         invocation itself spent one"
+    );
+    assert!(matches!(
+        Journal::open(&run_dir).read().unwrap().last(),
+        Some(RunEvent::Paused {
+            reason: PauseReason::BudgetExhausted
+        })
+    ));
+
     let _ = fs::remove_dir_all(root);
 }

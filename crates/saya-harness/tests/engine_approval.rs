@@ -32,7 +32,8 @@ use saya_agent::{
 };
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRun, ManifestBounds,
-    PlanDriver, PlanError, PlanRejection, PlanRequest, RunState, StepToolset, TransitionEvent,
+    PlanDriver, PlanError, PlanRejection, PlanRequest, RunState, SinkBudgets, StepToolset,
+    TransitionEvent, UsageTotals,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -283,8 +284,11 @@ async fn a_planned_run_refuses_to_begin_until_the_plan_is_approved_once() {
         RunState::Planned,
         journal.clone(),
         run.store.clone(),
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         std::time::Instant::now,
     );
     let episode = ScriptedEpisode::new(vec![Turn::Answer("done")]);
@@ -457,8 +461,11 @@ async fn approving_the_plan_once_does_not_prompt_per_tool_call() {
         RunState::Planned,
         journal.clone(),
         run.store.clone(),
-        None,
-        None,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            carried_usage: UsageTotals::default(),
+        },
         std::time::Instant::now,
     );
     // The one approval interaction: the plan, decided once.
