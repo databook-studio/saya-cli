@@ -20,7 +20,11 @@
 //!    [`CredentialSource::resolve`] at call time.
 //! 4. **redact() applied to all captured output** — structural. The output
 //!    path redacts unconditionally (`output::capture`); no call site can
-//!    skip it.
+//!    skip it. The capture also scrubs the resolved credential values
+//!    themselves — `redact()` is pattern-based and a value echoed bare
+//!    carries no marker, measured by the M5-7 battery — so the registry pass
+//!    cannot be skipped either: `capture` takes the injected values as its
+//!    parameter.
 //!
 //! Any one missing means no credential — and three of the four cannot be
 //! violated by a caller; only "declared" is a per-step decision.
@@ -147,16 +151,24 @@ impl CredentialSource for StaticCredentialSource {
 
 /// Injects every declared credential's resolved value into `command`'s
 /// environment — the child's environment is otherwise empty, so what is
-/// declared here is the whole of what the child can see.
+/// declared here is the whole of what the child can see. Returns the
+/// resolved values in declaration order: the capture boundary scrubs them
+/// from the child's captured output, because `redact()` is pattern-based and
+/// a value echoed bare (`NAME=<value>`, the exact shape an environment dump
+/// produces) carries no marker for it to recognise — measured by the M5-7
+/// battery.
 pub(crate) fn inject(
     command: &mut std::process::Command,
     credentials: &[Credential],
     source: &dyn CredentialSource,
-) -> Result<(), RunnerError> {
+) -> Result<Vec<String>, RunnerError> {
+    let mut resolved = Vec::with_capacity(credentials.len());
     for credential in credentials {
-        command.env(credential.env_var(), credential.resolved(source)?);
+        let value = credential.resolved(source)?;
+        command.env(credential.env_var(), &value);
+        resolved.push(value);
     }
-    Ok(())
+    Ok(resolved)
 }
 
 /// The shared resolver handle a tool carries.

@@ -11,9 +11,11 @@
 //! cwd is pinned to the run workspace by the spawn configuration; the
 //! environment is built in `env`, empty by default, with only the declared
 //! credentials injected. Timeout and cancellation kill the process group
-//! (`spawn`); stdout and stderr are ring-buffered with byte caps, redacted
-//! unconditionally, and delivered to the model and the run's disk record
-//! only after that redaction (`output`).
+//! (`spawn`); stdout and stderr are ring-buffered with byte caps and
+//! redacted unconditionally — the resolved credential values themselves
+//! scrubbed by the capture's value registry, then the `redact()` pattern
+//! pass — before anything reaches the model or the run's disk record
+//! (`output`).
 
 pub mod env;
 pub mod error;
