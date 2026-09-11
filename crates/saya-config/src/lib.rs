@@ -22,7 +22,7 @@ pub use endpoints::{ORCHESTRATOR_ROLE, ResolvedEndpoint};
 pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
 pub use input::{CliOverrides, ResolutionInput};
-pub use jobs::{ResolvedFetchJobs, ResolvedJobs};
+pub use jobs::{ResolvedFetchJobs, ResolvedJobs, ResolvedRunnerJobs};
 pub use memory::ResolvedMemory;
 pub use model::{ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, JobsFile};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};

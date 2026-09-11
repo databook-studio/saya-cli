@@ -29,6 +29,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(jobs.turns);
     apply!(jobs.tool_calls);
     apply!(jobs.fetch);
+    apply!(jobs.runner);
     apply!(output.format);
     apply!(output.color);
     apply!(ui.theme);

@@ -84,6 +84,13 @@ mod spawn;
 pub struct RunSandbox {
     fs_roots: Vec<PathBuf>,
     net_allow: Vec<(String, u16)>,
+    /// The measured reason `(allow process-fork)` was granted, when it was.
+    /// Deny by default means a child that forks is refused with
+    /// `fork: Operation not permitted` (measured, spike §4.5), so any
+    /// allowlisted program that forks needs this opt-in — and the reason
+    /// with which it was granted is the measured evidence, carried verbatim
+    /// into the generated profile as the comment a reviewer reads.
+    process_fork: Option<String>,
 }
 
 impl RunSandbox {
@@ -109,7 +116,34 @@ impl RunSandbox {
         Ok(Self {
             fs_roots: roots,
             net_allow: net,
+            process_fork: None,
         })
+    }
+
+    /// Grants `(allow process-fork)` to the generated profile, with the
+    /// measured reason this slice grants it for. The reason becomes the
+    /// profile's own comment — it must carry the same conservative text
+    /// class every other profile substitution carries, so a reason shaped
+    /// like profile language is refused here. On Linux this is a deliberate
+    /// no-op: nothing in the Landlock + namespace confinement restricts
+    /// fork, so there is nothing to grant [UNVERIFIED platform].
+    pub fn with_process_fork(mut self, reason: impl Into<String>) -> Result<Self, SandboxError> {
+        let reason = reason.into();
+        if !validate::text_safe(&reason) {
+            return Err(SandboxError::RootNotSafeForProfile {
+                path: reason,
+                reason: "the process-fork reason is substituted into a profile comment and \
+                         must carry the safe profile text class"
+                    .into(),
+            });
+        }
+        self.process_fork = Some(reason);
+        Ok(self)
+    }
+
+    /// The measured reason `process-fork` was granted, when it was.
+    pub fn process_fork_reason(&self) -> Option<&str> {
+        self.process_fork.as_deref()
     }
 
     /// The canonicalised roots, in the order given.

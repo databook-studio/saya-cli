@@ -10,11 +10,14 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use saya_types::{Budgets, MAX_BUDGET_ENDPOINTS, is_name_shaped};
+use saya_types::{
+    Budgets, MAX_BUDGET_ENDPOINTS, MAX_RUNNER_PROGRAMS, is_bare_name, is_name_shaped,
+    is_refused_runner_program,
+};
 
 use crate::{
     ConfigError,
-    model::{FetchJobsFile, JobsFile},
+    model::{FetchJobsFile, JobsFile, RunnerJobsFile},
 };
 
 /// Smallest accepted `[jobs]` ceiling. A zero on any dimension means "pause
@@ -43,6 +46,12 @@ pub(crate) const FETCH_MAX_RUN_BYTES: u64 = 1024 * 1024 * 1024;
 /// transfer is a sequence of budgeted attempts. Provisional until M5
 /// measures real runs (U8).
 pub(crate) const FETCH_TIMEOUT_SECONDS: u64 = 60;
+
+/// Provisional `[jobs.runner]` default wall-clock ceiling for one child
+/// process: minutes of headroom for a data program, tight enough that a
+/// wedged child cannot hold a step open for an hour. Provisional until M5
+/// measures real runs (U8).
+pub(crate) const RUNNER_TIMEOUT_SECONDS: u64 = 300;
 
 /// Effective download budget defaults, resolved from `[jobs.fetch]`.
 /// Always concrete: a run with nothing declared is bounded by these
@@ -94,6 +103,35 @@ pub struct ResolvedJobs {
     /// concrete: a run with nothing declared is bounded by the conservative
     /// defaults.
     pub fetch: ResolvedFetchJobs,
+    /// Runner defaults for `run_program` (M5-4): the program universe a
+    /// run's approved runner scope may draw from (empty when nothing is
+    /// declared — no default program universe exists) and the default
+    /// per-process wall-clock ceiling. Always concrete.
+    pub runner: ResolvedRunnerJobs,
+}
+
+/// Effective runner defaults, resolved from `[jobs.runner]`. `allow` empty
+/// means the run has no runner capability — there is no program universe a
+/// run gets for free; approving programs is a deliberate act.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRunnerJobs {
+    /// The programs a run's approved runner scope may name. Bare names in
+    /// the run-scoped name shape; shells and interpreters were refused at
+    /// resolve time, so a name here is one the runner can actually honour.
+    pub allow: Vec<String>,
+    /// Default wall-clock ceiling for one child process, in seconds.
+    pub timeout_seconds: u64,
+}
+
+impl Default for ResolvedRunnerJobs {
+    /// The conservative defaults — the same values an absent `[jobs.runner]`
+    /// resolves to: no programs approved, the conservative timeout.
+    fn default() -> Self {
+        Self {
+            allow: Vec::new(),
+            timeout_seconds: RUNNER_TIMEOUT_SECONDS,
+        }
+    }
 }
 
 impl ResolvedJobs {
@@ -128,12 +166,14 @@ pub(crate) fn resolve(file: &JobsFile, max_iterations: u64) -> Result<ResolvedJo
         require_at_least_one("tool_calls", tool_calls)?;
     }
     let fetch = resolve_fetch(file.fetch.as_ref())?;
+    let runner = resolve_runner(file.runner.as_ref())?;
     Ok(ResolvedJobs {
         wall_clock_seconds: file.wall_clock_seconds,
         tokens_per_endpoint,
         turns,
         tool_calls: file.tool_calls,
         fetch,
+        runner,
     })
 }
 
@@ -152,6 +192,58 @@ fn resolve_fetch(fetch: Option<&FetchJobsFile>) -> Result<ResolvedFetchJobs, Con
     Ok(ResolvedFetchJobs {
         max_file_bytes,
         max_run_bytes,
+        timeout_seconds,
+    })
+}
+
+/// Resolves `[jobs.runner]`: each declared key is checked at resolve time
+/// with typed errors — never silently clamped at the point of use. Program
+/// names must have the run-scoped name shape, must not repeat, must stay
+/// within the contract's program-count bound, and must never name a shell or
+/// interpreter — the runner refuses those structurally, so an allowlist that
+/// carried one would approve a capability that cannot exist.
+fn resolve_runner(runner: Option<&RunnerJobsFile>) -> Result<ResolvedRunnerJobs, ConfigError> {
+    let runner = runner.cloned().unwrap_or_default();
+    let mut allow = Vec::new();
+    if let Some(programs) = runner.allow {
+        if programs.len() > MAX_RUNNER_PROGRAMS {
+            return Err(ConfigError::SettingAboveMaximum {
+                field: "runner.allow",
+                value: programs.len(),
+                max: MAX_RUNNER_PROGRAMS,
+            });
+        }
+        for program in programs {
+            if !is_bare_name(&program) {
+                return Err(ConfigError::InvalidRunnerProgram {
+                    field: "runner.allow",
+                    program: program.clone(),
+                    reason: "a program entry is a bare name, never a path or traversal",
+                });
+            }
+            if is_refused_runner_program(&program) {
+                return Err(ConfigError::InvalidRunnerProgram {
+                    field: "runner.allow",
+                    program: program.clone(),
+                    reason: "shells and interpreters are refused: the runner runs one \
+                             allowlisted program with typed argv, and an interpreter would \
+                             spawn arbitrary children from inside the allowlist",
+                });
+            }
+            if allow.contains(&program) {
+                return Err(ConfigError::InvalidRunnerProgram {
+                    field: "runner.allow",
+                    program: program.clone(),
+                    reason: "declared more than once",
+                });
+            }
+            allow.push(program);
+        }
+    }
+    let timeout_seconds = runner.timeout_seconds.unwrap_or(RUNNER_TIMEOUT_SECONDS);
+    require_at_least_one("runner.timeout_seconds", timeout_seconds)?;
+    Ok(ResolvedRunnerJobs {
+        allow,
         timeout_seconds,
     })
 }

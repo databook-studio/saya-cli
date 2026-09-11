@@ -22,7 +22,8 @@ pub use plan::{
 };
 pub use scope::{
     Capabilities, Destination, EndpointBindings, FetchScope, MAX_ENDPOINT_BINDINGS,
-    MAX_FETCH_DESTINATIONS, MAX_RUNNER_PROGRAMS, RunnerScope, is_name_shaped,
+    MAX_FETCH_DESTINATIONS, MAX_RUNNER_PROGRAMS, RunnerScope, is_bare_name, is_name_shaped,
+    is_refused_runner_program,
 };
 pub use spec::{MAX_GOAL_BYTES, RunId, RunSpec};
 

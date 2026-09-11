@@ -25,7 +25,13 @@ use super::SandboxError;
 const ROOT_TEXT_ALLOWED: &str = "ASCII printable, minus \" \\ { } ( ) ;";
 
 fn root_text_safe(path: &Path) -> bool {
-    let text = path.to_string_lossy();
+    text_safe(&path.to_string_lossy())
+}
+
+/// The safe profile-text class, as a function over plain text: every
+/// substitution into profile language — roots, `net_allow` hosts, and the
+/// `process-fork` reason comment — must carry it.
+pub(crate) fn text_safe(text: &str) -> bool {
     text.is_ascii()
         && text.chars().all(|c| {
             (' '..='~').contains(&c) && !matches!(c, '"' | '\\' | '{' | '}' | '(' | ')' | ';')

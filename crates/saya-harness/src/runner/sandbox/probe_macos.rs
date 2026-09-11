@@ -39,11 +39,18 @@ use super::{
 
 /// The probe policy: the real policy, widened only by the probe listener's
 /// port (appended to `net_allow` so the allowed endpoint is provable against
-/// a real accepting listener).
+/// a real accepting listener). Every other setting of the real policy —
+/// including a granted `process-fork` and its measured reason — is carried
+/// through, so the probe measures the profile the runner would actually
+/// generate, never a lookalike.
 fn probe_policy(sb: &RunSandbox, listener_port: u16) -> Result<RunSandbox, String> {
     let mut net = sb.net_allow().to_vec();
     net.push(("127.0.0.1".to_owned(), listener_port));
-    RunSandbox::new(sb.fs_roots().to_vec(), net).map_err(|e| e.to_string())
+    let policy = RunSandbox::new(sb.fs_roots().to_vec(), net).map_err(|e| e.to_string())?;
+    match sb.process_fork_reason() {
+        Some(reason) => policy.with_process_fork(reason).map_err(|e| e.to_string()),
+        None => Ok(policy),
+    }
 }
 
 pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
