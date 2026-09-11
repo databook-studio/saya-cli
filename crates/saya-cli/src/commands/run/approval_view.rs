@@ -10,7 +10,7 @@ use saya_types::{Budgets, Capabilities, RunPlan};
 
 /// The approval view: what was granted, what the plan asks for, what it may
 /// spend, and what the workspace holds.
-pub(super) struct PlanApprovalView {
+pub(crate) struct PlanApprovalView {
     pub(super) goal: String,
     /// The run's approved scopes (`--allow`), as the grammar's words.
     pub(super) approved: Vec<String>,
@@ -19,11 +19,14 @@ pub(super) struct PlanApprovalView {
     pub(super) artifacts: Vec<ManifestEntry>,
 }
 
-pub(super) struct StepView {
-    pub(super) goal: String,
+/// One plan step as the approval view recorded it. Carried on the approval
+/// request so the TUI's run panel renders the same steps the modal showed.
+#[derive(Clone)]
+pub(crate) struct StepView {
+    pub(crate) goal: String,
     /// The step's requested scopes as the `--allow` grammar's words.
-    pub(super) scopes: Vec<String>,
-    pub(super) endpoint: Option<String>,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) endpoint: Option<String>,
 }
 
 /// Builds the view from the bound plan, the run's goal and budgets, and the

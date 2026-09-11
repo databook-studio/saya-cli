@@ -74,3 +74,15 @@ pub(super) fn connection_failure(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     crate::commands::output::failure_message(3, message, format)
 }
+
+/// The typed cause an episode error carries, when it carries one. The exit
+/// mapping (`settle`) reads it for the documented exit class; the episode
+/// errors' own layering decides which code a failure belongs to.
+pub(super) fn failure_code_of(
+    error: &saya_harness::engine::EpisodeError,
+) -> Option<saya_types::RunFailureCode> {
+    match error {
+        saya_harness::engine::EpisodeError::StepExhausted { code, .. } => Some(*code),
+        _ => None,
+    }
+}

@@ -5,6 +5,8 @@ mod input_box;
 mod markdown;
 mod overlays;
 mod panels;
+mod plan_approval_view;
+mod run_panel_view;
 mod splash;
 mod status;
 pub(crate) mod theme;
@@ -15,15 +17,30 @@ use crate::interactive::tui::types::App;
 use input_box::draw_input;
 use overlays::{draw_help, draw_menu, draw_picker, draw_search};
 use panels::{approval_height, draw_approval, draw_empty_state, draw_transcript};
+use plan_approval_view::{draw_plan_approval, plan_approval_height};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
 };
+use run_panel_view::{draw_run_panel, run_panel_height};
 use status::draw_status;
 
-/// Draws one frame: transcript (fills), status bar, approval panel (when pending), input box, popup overlay.
+/// Draws one frame: transcript (fills), the run panel (docked below the
+/// conversation when a run has been started from the session), status bar,
+/// approval panels, input box, popup overlay.
 pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     let input_height = (app.input_rows(frame.area().width as usize) as u16) + 2;
+    let run_panel_h = app
+        .run_panel
+        .as_ref()
+        .map(|panel| run_panel_height(panel, frame.area().height))
+        .unwrap_or(0);
+    let plan_approval_h = app
+        .run_panel
+        .as_ref()
+        .and_then(|panel| panel.plan_approval.as_ref())
+        .map(|request| plan_approval_height(&request.view_text, frame.area().width))
+        .unwrap_or(0);
     let approval_h = app
         .request
         .pending_approval
@@ -33,10 +50,12 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),               // transcript
-            Constraint::Length(1),            // status bar
-            Constraint::Length(approval_h),   // approval panel (0 when none)
-            Constraint::Length(input_height), // input box
+            Constraint::Min(1),                  // transcript
+            Constraint::Length(run_panel_h),     // run panel (0 when none)
+            Constraint::Length(1),               // status bar
+            Constraint::Length(approval_h),      // approval panel (0 when none)
+            Constraint::Length(plan_approval_h), // plan-approval modal (0 when none)
+            Constraint::Length(input_height),    // input box
         ])
         .split(frame.area());
 
@@ -50,13 +69,21 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     } else {
         draw_empty_state(frame, app, chunks[0]);
     }
-    draw_status(frame, app, status, chunks[1]);
-    if let Some(pending) = &app.request.pending_approval {
-        draw_approval(frame, &pending.tool, pending.detail.as_deref(), chunks[2]);
+    if run_panel_h > 0 {
+        draw_run_panel(frame, app, chunks[1]);
     }
-    draw_input(frame, app, chunks[3]);
+    draw_status(frame, app, status, chunks[2]);
+    if let Some(pending) = &app.request.pending_approval {
+        draw_approval(frame, &pending.tool, pending.detail.as_deref(), chunks[3]);
+    }
+    if let Some(panel) = &app.run_panel
+        && panel.plan_approval.is_some()
+    {
+        draw_plan_approval(frame, panel, chunks[4]);
+    }
+    draw_input(frame, app, chunks[5]);
     if let Some(menu) = &app.overlays.menu {
-        draw_menu(frame, menu, chunks[3]);
+        draw_menu(frame, menu, chunks[5]);
     }
     if app.overlays.search.is_some() {
         draw_search(frame, app, frame.area());

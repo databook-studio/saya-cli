@@ -8,15 +8,15 @@
 //! resumable record either way.
 
 use super::approval;
-use super::approval::PlanApproval;
 use super::approval_view;
 use super::exit::Settled;
+use super::host::HostRun;
 use super::{assembly, exit, files};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 use crate::render_run;
 use crate::stream_render::TerminalSink;
-use saya_agent::{ApprovalPolicy, CancellationToken};
+use saya_agent::ApprovalPolicy;
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun, PlanDriver,
     PlanError, PlanRejection, PlanRequest, RunState, TransitionEvent,
@@ -24,13 +24,13 @@ use saya_harness::engine::{
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
 use saya_store::{RunStore, SqliteStateStore};
-use saya_types::{Budgets, RunSpec};
+use saya_types::RunSpec;
 use std::sync::Arc;
 
 /// What a fresh run's drive needs, the way the resume's `ResumeInputs`
 /// bundles its own: the spec, the claimed directory, the store mirror, and
 /// the composition inputs the engine cannot derive — config, rendering, the
-/// approval policies, and the cancellation.
+/// approval policies, and the host's observers and cancellation.
 pub(super) struct DriveInputs<'a> {
     pub(super) spec: &'a RunSpec,
     pub(super) run_dir: saya_harness::run_dir::RunDir,
@@ -38,8 +38,7 @@ pub(super) struct DriveInputs<'a> {
     pub(super) runtime: &'a RuntimeConfig,
     pub(super) format: RenderFormat,
     pub(super) approval: ApprovalPolicy,
-    pub(super) plan_approval: &'a PlanApproval,
-    pub(super) cancellation: CancellationToken,
+    pub(super) host: HostRun<'a>,
 }
 
 /// Proposes and binds the plan, then drives every step. Everything here is
@@ -60,12 +59,17 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         runtime,
         format,
         approval,
-        plan_approval,
-        cancellation,
+        host,
     } = inputs;
     let run_id = spec.id.clone();
     let store: Arc<dyn RunStore> = Arc::new(state.clone());
-    let journal = render_run::wired_journal(Journal::open(run_dir.root()), format);
+    // The journal carries the host's observer when one is injected, so the
+    // wire and the durable record stay one stream; the headless default
+    // renders each journaled event onto the process stream in journal order.
+    let journal = match host.journal_wire {
+        Some(wire) => Journal::open(run_dir.root()).with_wire(wire),
+        None => render_run::wired_journal(Journal::open(run_dir.root()), format),
+    };
     let workspace = match Workspace::open(run_dir.workspace()) {
         Ok(workspace) => Arc::new(workspace),
         Err(error) => {
@@ -75,7 +79,14 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             );
         }
     };
-    let pieces = match assembly::assemble(runtime, &spec.scopes, workspace.clone(), approval).await
+    let pieces = match assembly::assemble(
+        runtime,
+        host.profile,
+        &spec.scopes,
+        workspace.clone(),
+        approval,
+    )
+    .await
     {
         Ok(pieces) => pieces,
         Err(message) => return exit::connection_failure(message, format),
@@ -123,7 +134,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     // A step whose budget is unset inherits the run's budgets as its
     // ceilings (the StepSpec contract's layering rule); the persisted plan
     // is the layered one a resume replays.
-    let plan = bind_step_budgets(plan, &spec.budgets);
+    let plan = assembly::bind_step_budgets(plan, &spec.budgets);
     if let Err(error) = files::persist_plan(run_dir.root(), &plan) {
         return exit::connection_failure(
             format!("run plan could not be persisted: {error}"),
@@ -144,7 +155,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         Ok(view) => view,
         Err(message) => return exit::connection_failure(message, format),
     };
-    if !approval::decide(plan_approval, &view).await {
+    if !approval::decide(host.plan_approval, &view).await {
         return crate::commands::output::failure_message(
             2,
             format!(
@@ -155,7 +166,9 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         );
     }
     // The sink exists from approval on: the wall-clock budget arms here,
-    // never before the user has answered.
+    // never before the user has answered. The episode's events forward to
+    // the host's sink when one is injected; the headless default renders
+    // them through today's `TerminalEvent` envelope on the process stream.
     let sink = EngineEventSink::new(
         run_id.clone(),
         RunState::Planned,
@@ -164,8 +177,11 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         spec.budgets.wall_clock,
         super::budget::token_ceiling(&spec.budgets),
         std::time::Instant::now,
-    )
-    .with_agent_stream(Arc::new(TerminalSink::new(format)));
+    );
+    let sink = match host.agent_stream {
+        Some(stream) => sink.with_agent_stream(stream),
+        None => sink.with_agent_stream(Arc::new(TerminalSink::new(format))),
+    };
     if let Err(error) = sink.record(TransitionEvent::Approve).await {
         return exit::connection_failure(
             format!("run approval could not be recorded: {error}"),
@@ -178,7 +194,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             tools: &pieces.tools,
             approval: &pieces.decider,
             universe: pieces.universe,
-            cancellation: cancellation.clone(),
+            cancellation: host.cancellation.clone(),
         },
         EpisodeRun {
             run_id: run_id.clone(),
@@ -204,7 +220,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         Err(error) => exit::settle(
             Settled {
                 state: sink.state(),
-                code: failure_code_of(&error),
+                code: exit::failure_code_of(&error),
             },
             &run_id,
             format,
@@ -223,28 +239,4 @@ async fn drive_steps(
         driver.run_step(sink, plan, step, workspace).await?;
     }
     Ok(())
-}
-
-/// The typed cause an episode error carries, when it carries one.
-fn failure_code_of(
-    error: &saya_harness::engine::EpisodeError,
-) -> Option<saya_types::RunFailureCode> {
-    match error {
-        saya_harness::engine::EpisodeError::StepExhausted { code, .. } => Some(*code),
-        _ => None,
-    }
-}
-
-/// A step whose budget is unset inherits the run's budgets as its ceilings
-/// (the `StepSpec` contract's layering rule). The engine's brief reads only
-/// the step budget, so the composition root applies the inheritance when
-/// binding: the persisted plan is the layered one a resume replays.
-fn bind_step_budgets(plan: saya_types::RunPlan, run: &Budgets) -> saya_types::RunPlan {
-    let mut plan = plan;
-    for step in &mut plan.steps {
-        if step.budget.is_none() {
-            step.budget = Some(run.clone());
-        }
-    }
-    plan
 }

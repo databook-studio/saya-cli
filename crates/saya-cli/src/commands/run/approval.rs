@@ -10,7 +10,7 @@ use super::approval_view::{PlanApprovalView, render};
 use tokio::sync::oneshot::{Receiver, Sender};
 
 /// The plan-approval decision surface.
-pub(super) enum PlanApproval {
+pub(crate) enum PlanApproval {
     /// Headless: the `RunSpec` pre-authorized the scopes, the engine refused
     /// any plan outside them, and the run cannot prompt — the
     /// pre-authorization is the decision, made once.
@@ -22,9 +22,13 @@ pub(super) enum PlanApproval {
 }
 
 /// One approval ask: what the modal shows and how it answers.
-pub(super) struct PlanApprovalRequest {
-    pub(super) view_text: String,
-    pub(super) respond: Sender<bool>,
+pub(crate) struct PlanApprovalRequest {
+    pub(crate) view_text: String,
+    /// The bound plan's steps as the approval view recorded them — the TUI's
+    /// run panel seeds its step list from these instead of re-parsing the
+    /// rendered text, so the panel and the modal cannot disagree.
+    pub(crate) steps: Vec<super::approval_view::StepView>,
+    pub(crate) respond: Sender<bool>,
 }
 
 /// Decides the plan approval once, at `planned → approved`. The surface
@@ -38,6 +42,7 @@ pub(super) async fn decide(surface: &PlanApproval, view: &PlanApprovalView) -> b
             if sender
                 .send(PlanApprovalRequest {
                     view_text: render(view),
+                    steps: view.steps.clone(),
                     respond,
                 })
                 .is_err()

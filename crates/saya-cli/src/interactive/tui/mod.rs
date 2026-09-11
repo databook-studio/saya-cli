@@ -23,6 +23,13 @@ mod history;
 mod input;
 mod keys;
 pub(crate) mod replay;
+mod run_panel;
+mod run_panel_apply;
+#[cfg(test)]
+mod run_panel_snapshot_tests;
+#[cfg(test)]
+mod run_panel_tests;
+mod run_worker;
 mod session_save;
 mod sql_task;
 mod stream_events;
@@ -192,6 +199,11 @@ pub(crate) fn run(
             }
         }
 
+        // Poll the run worker (non-blocking): the panel's step list, its
+        // lifecycle line, and its episode transcript advance when the run
+        // has news; the event loop never blocks on the run.
+        app.poll_run_panel(state.show_thinking);
+
         // Poll the direct-SQL worker (non-blocking): apply its result when ready.
         if let Some((rx, task, _started)) = app.sql_task.as_ref() {
             match rx.try_recv() {
@@ -250,12 +262,23 @@ pub(crate) fn run(
                 format,
                 &mut app.last_query,
             ) {
-                Dispatch::Quit => app.should_quit = true,
+                Dispatch::Quit => {
+                    // An in-flight run is not orphaned by a quit: the quit is
+                    // refused until the run is cancelled or finished.
+                    if app.try_quit() {
+                        app.should_quit = true;
+                    }
+                }
                 // A command may have switched profiles; refresh @-references.
                 Dispatch::Handled => app.reload_at_refs(state),
                 Dispatch::Agent(prompt) => app.start_agent(prompt, state),
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
                 Dispatch::SetColumns(arg) => app.set_visible_columns(arg),
+                Dispatch::RunPanel {
+                    goal,
+                    allow,
+                    budget,
+                } => app.start_run_panel(goal, allow, budget, format, state),
                 Dispatch::SqlTask(task) => {
                     // One SQL command in flight at a time. The queued-prompt
                     // gate (`!is_busy()`, which now covers SQL tasks) is the

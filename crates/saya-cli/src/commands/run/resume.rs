@@ -106,7 +106,9 @@ async fn continue_run(
         }
     };
     let pieces =
-        match super::assembly::assemble(runtime, &spec.scopes, workspace.clone(), approval).await {
+        match super::assembly::assemble(runtime, None, &spec.scopes, workspace.clone(), approval)
+            .await
+        {
             Ok(pieces) => pieces,
             Err(message) => return crate::commands::output::failure_message(3, message, format),
         };
