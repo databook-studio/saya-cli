@@ -1,0 +1,126 @@
+# saya runner child sandbox — Linux (Landlock + unprivileged namespaces) DRAFT
+
+> **Status: draft, UNVERIFIED.** No Linux behaviour in this document was
+> observed. The M5-3 spike host is macOS 26.6.2; the Linux probe
+> (`crates/saya-harness/tests/sandbox_probe.rs`) has not yet run on any Linux
+> machine, so every factual claim below about Linux is a citation of the
+> kernel's own documentation — marked **[UNVERIFIED]** — or an unmeasured
+> plan. Per the spike's rule, an unmeasured claim is worse than a gap: nothing
+> here is a decision, and the `landlock` dependency has deliberately **not**
+> been added. The implementation slice must measure every **[UNVERIFIED]**
+> item on a real Linux host before this draft becomes a profile.
+
+Source policy: `RunSandbox { fs_roots: [run dir, child temp], net_allow: [(host, port)] }`
+Probe: `crates/saya-harness/tests/sandbox_probe.rs` (records Landlock ABI and
+user+network namespace availability; records `landlock_enforcement` as failed
+until the `landlock` dependency lands, so Linux cannot be "proven" yet —
+fail closed).
+
+## 1. Measured facts on this host
+
+None. Linux was not measured. The probe exists and will measure:
+
+- `landlock_abi` — raw `landlock_create_ruleset(NULL, 0,
+  LANDLOCK_CREATE_RULESET_VERSION)` version query (syscall 444 via
+  `libc::SYS_landlock_create_ruleset`; the locked `libc` 0.2.189 carries the
+  constant for gnu/musl x86_64 and arm64).
+- `user_network_namespace_unprivileged` — `fork`, then `unshare(CLONE_NEWUSER)`
+  then `unshare(CLONE_NEWNET)` in the child (forked because
+  `unshare(CLONE_NEWUSER)` is refused in a multithreaded process and the test
+  harness is threaded **[UNVERIFIED — per unshare(2)]**), reporting errno over a
+  pipe.
+- informational: `/sys/kernel/security/lsm` (is `landlock` in the LSM list),
+  `/proc/sys/user/max_user_namespaces`.
+
+## 2. Landlock ruleset plan (filesystem confinement)
+
+Shape mirrors the macOS draft, deny by default by construction:
+
+1. Create a ruleset with `handled_access_fs` = every `LANDLOCK_ACCESS_FS_*`
+   right the kernel ABI supports: `EXECUTE`, `READ_FILE`, `READ_DIR`,
+   `REMOVE_FILE`, `REMOVE_DIR`, `MAKE_CHAR`, `MAKE_DIR`, `MAKE_REG`,
+   `MAKE_SOCK`, `MAKE_FIFO`, `MAKE_BLOCK`, `MAKE_SYM`, plus (ABI ≥ 3)
+   `REFER`, (ABI ≥ 5) `TRUNCATE` **[UNVERIFIED — list and semantics per
+   `Documentation/userspace-api/landlock.rst`]**. Handling fewer rights than
+   the kernel supports would silently unrestrict — refuse to run if the
+   probe's ABI and the ruleset's handled set disagree.
+2. `PR_SET_NO_NEW_PRIVS` on the child before restriction **[UNVERIFIED —
+   required by landlock(7) for unprivileged use]**.
+3. One `LANDLOCK_RULE_PATH_BENEATH` rule per `fs_roots` entry
+   (`{RUN_DIR}`, `{CHILD_TEMP}`): allowed_access = READ_FILE | READ_DIR |
+   WRITE_FILE | REMOVE_FILE | REMOVE_DIR | MAKE_* | TRUNCATE **[UNVERIFIED
+   set]**. Everything outside is denied by the ruleset itself — there is no
+   allowlist to forget.
+4. `restrict_self()`; the enforced domain is then unpriviligable.
+
+The enforcement probe (canary child: read/write inside roots must succeed,
+write outside must fail with EACCES/EPERM, exec outside the roots denied) is
+the entry condition for registering the runner on Linux — same deny-evidence
+discipline as the macOS probe, with the `landlock` crate
+(see §5) doing the syscall marshalling.
+
+## 3. Namespace plan (process + egress isolation)
+
+Order matters **[UNVERIFIED — per user_namespaces(7)]**:
+
+1. `fork` (the runner is multithreaded; `unshare(CLONE_NEWUSER)` is refused
+   in a multithreaded process — the plan's runner spawns the child from a
+   dedicated pre-exec step, which must be single-threaded at that moment, or
+   the probe's fork-based shape is used directly).
+2. Child: `unshare(CLONE_NEWUSER)` — unprivileged, if
+   `user.max_user_namespaces > 0` and the distribution has not disabled
+   unprivileged user namespaces (Debian's `kernel.unprivileged_userns_clone`,
+   container runtimes' seccomp profiles). All failures must surface as the
+   probe's recorded `user_network_namespace_unprivileged` failure, not a
+   fallback.
+3. Child: write `deny` to `/proc/self/setgroups`, then map the run uid/gid
+   into the new namespace via `/proc/self/uid_map` and `/proc/self/gid_map`
+   **[UNVERIFIED — per user_namespaces(7); the exact map line for an
+   unprivileged single-uid mapping is unmeasured]**.
+4. Child: `unshare(CLONE_NEWNET)`. Inside the new netns there are **no**
+   network interfaces — not even loopback carries parent traffic. This is
+   the egress denial mechanism.
+5. The runner program then executes under: Landlock ruleset (filesystem) +
+   fresh netns (network) + no-new-privs.
+
+## 4. net_allow on Linux — the open decision
+
+Three measured-by-documentation facts collide **[UNVERIFIED]**:
+
+- A fresh netns has **no** network at all: every child is fully egress-denied,
+  which cannot honour a non-empty `net_allow`.
+- Landlock's network support (ABI ≥ 4, i.e. kernel ≥ 6.7) restricts TCP
+  `bind`/`connect` **by port only** — there is no host/IP dimension in
+  `LANDLOCK_RULE_NET_PORT` **[UNVERIFIED]**. So Landlock alone can enforce
+  `(*, port)`, not `(host, port)`.
+- A selective-egress design therefore needs either (a) `net_allow = []` plus
+  netns (deny everything), or (b) no netns plus Landlock port rules (port
+  exact, host wildcard — same shape Seatbelt's `"*"` gives), or (c) a
+  parent- or in-sandbox proxy that owns the allowlist — a new, itself
+  unmeasured network component.
+
+The spike could not choose between these from this host. The implementation
+slice must measure the Landlock ABI reality on the actual target
+distributions first (Ubuntu LTS and Debian stable ship kernels well below
+6.7 **[UNVERIFIED — distribution kernels were not measured]**), then record
+the choice in an amendment, with the security reviewer's sign-off below.
+
+## 5. Fail-closed mapping
+
+`sandbox_probe.rs` computes the verdict; the runner consumes it:
+
+- required checks on Linux: `landlock_abi`, `user_network_namespace_unprivileged`,
+  `landlock_enforcement`;
+- `landlock_enforcement` is recorded **failed** until the `landlock`-based
+  canary probe exists — so Linux fails closed today by construction;
+- any required check failing on any host ⇒ runner tool not registered, plans
+  requesting the runner scope refused. No warning mode, no degraded mode.
+
+## 6. Kernel ABI reference (unverified, for the implementation slice)
+
+**[UNVERIFIED — from the kernel's landlock documentation, not observed
+here]**: ABI 1 (Linux 5.13) filesystem rights; ABI 2 (5.19) symlink handling;
+ABI 3 (6.2) `TRUNCATE`; ABI 4 (6.7) TCP bind/connect; ABI 5 (6.12) scoped
+signals; ABI 6 (6.12) scoped Unix sockets. The probe records the version
+number the running kernel reports; the runner gates on what it measured, not
+on this table.
