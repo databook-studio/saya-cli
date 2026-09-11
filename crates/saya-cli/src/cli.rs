@@ -6,7 +6,7 @@ saya ask \"count orders per region\"     one-shot question\n  \
 echo \"SELECT 1\" | saya query           piped SQL works too\n  \
 saya query --sql \"SELECT 1\"            bounded read-only SQL\n  \
 saya config doctor                     diagnose setup problems\n  \
-saya completions --shell zsh > completion.zsh\n\nExit codes: 0 ok · 2 usage · 3 connection/config · 4 safety/query · 5 agent · 130 cancelled";
+saya completions --shell zsh > completion.zsh\n\nExit codes: 0 ok · 2 usage · 3 connection/config · 4 safety/query · 5 agent · 6 paused · 130 cancelled";
 
 #[derive(Debug, Clone, Parser)]
 #[command(
@@ -171,6 +171,30 @@ pub enum Command {
         #[command(subcommand)]
         command: ContractsCommand,
     },
+    /// Run a long-running, resumable job against the configured database:
+    /// `saya run "<goal>"` plans and executes it step by step, pausing (never
+    /// silently stopping) when a budget trips; `saya run resume|cancel|list|
+    /// show|log` manage runs. Headless by construction: scopes must be
+    /// declared up front with `--allow`.
+    Run {
+        /// The run's goal. Omit it to read the goal from stdin when input is
+        /// piped in.
+        prompt: Option<String>,
+        /// Approved capability scopes, comma-separated: `workspace-write`,
+        /// `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`,
+        /// `endpoint:<role>=<endpoint>`. A headless run refuses to start
+        /// without declared scopes — nothing runs unapproved.
+        #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
+        allow: Vec<String>,
+        /// Budget overrides as KEY=VALUE: `wall-clock=<seconds>`,
+        /// `turns=<n>`, `tool-calls=<n>`, or `tokens.<endpoint>=<n>`.
+        /// Unset keys fall back to `[jobs]`; a zero ceiling is refused as a
+        /// typo, not clamped.
+        #[arg(long, value_name = "KEY=VALUE")]
+        budget: Vec<String>,
+        #[command(subcommand)]
+        command: Option<RunCommand>,
+    },
     /// Generate shell completion scripts for `saya`.
     Completions {
         /// Shell to generate completions for.
@@ -333,6 +357,34 @@ pub enum ContractsCommand {
         /// Why the claim is being forgotten.
         #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
         reason: ForgetReasonArg,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum RunCommand {
+    /// Continue a paused (or crashed) run at its first incomplete step. The
+    /// run's journal is the authority; a run with a live holder refuses.
+    Resume {
+        /// The id of the run to resume (`saya run list` prints them).
+        run_id: String,
+    },
+    /// Record a run cancelled. A run with a live holder refuses — cancel the
+    /// process that owns it (Ctrl-C) instead; a finished run changes nothing.
+    Cancel {
+        /// The id of the run to cancel.
+        run_id: String,
+    },
+    /// List every run, most recent first.
+    List,
+    /// Show one run's status, scopes, budgets, and usage.
+    Show {
+        /// The id of the run to show.
+        run_id: String,
+    },
+    /// Print one run's journal — every lifecycle and step event, in order.
+    Log {
+        /// The id of the run whose journal to print.
+        run_id: String,
     },
 }
 

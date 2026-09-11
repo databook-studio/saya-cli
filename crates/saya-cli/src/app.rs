@@ -76,5 +76,12 @@ fn command_options(
         };
         options.profile = profile;
     }
+    // Runs are headless by construction: they never prompt for a tool call,
+    // so an unset approval mode reads `read-only` — read-shaped tools run,
+    // anything needing an interactive decision is denied. An explicit
+    // --approval-mode (or --non-interactive's "never") wins unchanged.
+    if matches!(command, Command::Run { .. }) && options.approval_mode.is_none() {
+        options.approval_mode = Some("read-only".to_string());
+    }
     options
 }

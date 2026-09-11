@@ -75,3 +75,43 @@ instead. It is credential-free, refuses to overwrite either file,
 and makes a best-effort rollback after an ordinary creation error; it is not
 crash-atomic. Use `--format text|json|ndjson` for a stable result envelope;
 errors and diagnostics remain on stderr.
+
+## Runs: `saya run`
+
+`saya run "<goal>"` starts a long-running, resumable job: the model proposes a
+plan (ordered steps), and the engine executes each step against the configured
+database, pausing — never silently stopping — when a declared budget trips, a
+step keeps failing past its bounded retries, or the process holding the run
+dies. A run directory `runs/<id>/` holds the run's spec (`spec.json`), its
+bound plan (`plan.json`), the workspace the run's tools may write into, and
+the event journal (`events.ndjson`); the state store mirrors statuses for
+`saya run list`. The runs root follows `SAYA_RUNS_DIR`, then the platform data
+home.
+
+`saya run` is headless by construction: it never prompts. Scopes must be
+declared up front with `--allow <scopes>` (comma-separated:
+`workspace-write`, `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`,
+`endpoint:<role>=<endpoint>`); a run without `--allow` refuses to start with
+exit `2` and creates nothing. Budgets come from `[jobs]` in the config,
+layered with `--budget KEY=VALUE` (`wall-clock=<seconds>`, `turns=<n>`,
+`tool-calls=<n>`, `tokens.<endpoint>=<n>`); a zero ceiling is refused as a
+typo, and the environment is never read for budgets — a run is reproducible
+from its spec and config. Per-tool-call approval defaults to `read-only`
+(read-shaped tools run, side-effecting tools are denied); `--approval-mode`
+overrides it. The episodes call the `orchestrator` endpoint from
+`[[ai.endpoints]]`.
+
+Management subcommands:
+
+- `saya run list` — every run, most recent first, with status.
+- `saya run show <id>` — one run's status, goal, scopes, and pause reason.
+- `saya run log <id>` — the run's journal, one event per line.
+- `saya run resume <id>` — continue a paused or crashed run at its first
+  incomplete step. A run with a live holder refuses.
+- `saya run cancel <id>` — record a run cancelled. A run with a live holder
+  refuses; cancel the owning process with Ctrl-C instead.
+
+Exit codes follow the global scheme, plus `6` for a paused run: a run that
+stopped incomplete-but-not-failed exits `6` and says how to resume. A run
+completing with failures exits by cause — safety/query `4`, provider/agent
+`5`, connection/config `3` — never silently `0`.
