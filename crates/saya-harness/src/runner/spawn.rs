@@ -17,6 +17,7 @@
 
 use std::{
     io::{self, Read},
+    path::PathBuf,
     process::{ExitStatus, Stdio},
     sync::Arc,
     time::Instant,
@@ -37,9 +38,14 @@ use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 
 /// Spawns the validated call, waits on it under the timeout and the run's
 /// cancellation, and reports. Exit code is data, not an error.
+///
+/// `pinned_env` is the nested re-entry's (M5-5) run-pinned paths, set ahead
+/// of the declared credentials; a `run_program` child passes none and its
+/// environment stays empty-but-declared.
 pub(super) async fn run(
     spawn: &RunnerSpawn,
     call: ValidatedCall,
+    pinned_env: &[(&'static str, PathBuf)],
     credentials: &[Credential],
     source: &dyn super::env::CredentialSource,
     cancellation: &CancellationToken,
@@ -51,9 +57,13 @@ pub(super) async fn run(
     // becomes a command line.
     command.args(&call.argv);
     // The child's environment is built here, not inherited: empty by
-    // default, then exactly the declared credentials. A planted variable in
-    // the parent's environment cannot reach the child.
+    // default, then the nested re-entry's pinned run paths, then exactly
+    // the declared credentials. A planted variable in the parent's
+    // environment cannot reach the child.
     command.env_clear();
+    for (name, path) in pinned_env {
+        command.env(*name, path);
+    }
     inject(&mut command, credentials, source)?;
     command
         .stdin(Stdio::null())
