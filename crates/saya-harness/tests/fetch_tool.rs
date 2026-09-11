@@ -249,6 +249,7 @@ impl saya_harness::fetch::FetchTransport for TestNet {
         Ok(saya_harness::fetch::WireResponse {
             status,
             location,
+            content_range: None,
             body: Box::new(SocketBody { socket, pulls }),
         })
     }

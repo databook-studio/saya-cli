@@ -128,7 +128,10 @@ impl HttpFetchTool {
             let response = self
                 .under_deadline(
                     deadline,
-                    self.transport.get(FetchRequest { url: url.clone() }),
+                    self.transport.get(FetchRequest {
+                        url: url.clone(),
+                        range_start: None,
+                    }),
                 )
                 .await?;
             let redirect = matches!(response.status, 301 | 302 | 303 | 307 | 308);

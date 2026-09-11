@@ -152,8 +152,7 @@ pub struct RunFile {
 /// The `[jobs]` section: the default budgets a *run* is declared with when
 /// the run's specification and each of its steps declare none. `ConfigFile`
 /// is `deny_unknown_fields`, so this section must be declared here before
-/// any config may carry it. Later items extend it with `runner` and `fetch`
-/// keys.
+/// any config may carry it. Later items extend it with `runner` keys.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobsFile {
@@ -170,6 +169,34 @@ pub struct JobsFile {
     /// Default ceiling on total tool calls across a run's episodes. Absent:
     /// no ceiling.
     pub tool_calls: Option<u64>,
+    /// Default download budgets for the `http_download` tool, as the
+    /// `[jobs.fetch]` sub-table (M3-3): per-file bytes, total run download
+    /// bytes, and the per-request timeout. Absent: the harness's
+    /// conservative defaults. There is deliberately no environment override
+    /// for any of it (plan G3).
+    pub fetch: Option<FetchJobsFile>,
+}
+
+/// The `[jobs.fetch]` sub-table: the download budgets a run's
+/// `http_download` calls spend from. Each key is optional and resolved with
+/// a conservative default; a declared zero is a typed resolve error, never a
+/// silent clamp (the same discipline as the sibling `[jobs]` budgets — a
+/// zero here would pause every download before its first byte, a typo, not
+/// an intent).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FetchJobsFile {
+    /// Per-file download ceiling, in bytes. Absent: the conservative
+    /// default. Provisional until M5 measures real runs (U8).
+    pub max_file_bytes: Option<u64>,
+    /// Ceiling on total download bytes across the whole run. Absent: the
+    /// conservative default. Provisional until M5 measures real runs (U8).
+    pub max_run_bytes: Option<u64>,
+    /// Wall-clock budget for one download request, in seconds. With
+    /// resumable partials a longer transfer is a sequence of budgeted
+    /// attempts. Absent: the conservative default. Provisional until M5
+    /// measures real runs (U8).
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

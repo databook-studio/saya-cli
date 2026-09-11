@@ -3061,12 +3061,16 @@ name = "saya-harness"
 version = "0.4.1"
 dependencies = [
  "async-trait",
+ "bytes",
  "duckdb",
+ "futures-util",
  "libc",
  "proptest",
+ "reqwest",
  "saya-agent",
  "saya-store",
  "saya-types",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.20",

@@ -352,6 +352,106 @@ impl Workspace {
         }
         Ok(file)
     }
+
+    /// Opens the download machinery's partial file under containment: the
+    /// same argument validation and component walk as any workspace write,
+    /// then a no-follow open at 0600 — `truncate` for a fresh download,
+    /// append for a resume — with a post-open identity check so the file
+    /// streamed into is the one that was scanned. Never executable.
+    pub(crate) fn open_download_part(
+        &self,
+        rel: &str,
+        truncate: bool,
+    ) -> Result<(PathBuf, fs::File), HarnessError> {
+        let path = self.target(rel, true)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create(true);
+        if truncate {
+            options.truncate(true);
+        } else {
+            options.append(true);
+        }
+        #[cfg(unix)]
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let file = options.open(&path).map_err(|error| {
+            #[cfg(unix)]
+            if error.raw_os_error() == Some(libc::ELOOP) {
+                return HarnessError::SymlinkRefused {
+                    path: rel.to_string(),
+                };
+            }
+            io_error("open workspace download part", &path, error)
+        })?;
+        let opened = file
+            .metadata()
+            .map_err(|error| io_error("stat opened download part", &path, error))?;
+        let current = fs::symlink_metadata(&path)
+            .map_err(|error| io_error("verify opened download part", &path, error))?;
+        if identity(&current) != identity(&opened) {
+            return Err(HarnessError::IdentityChanged {
+                path: rel.to_string(),
+            });
+        }
+        Ok((path, file))
+    }
+
+    /// Promotes a completed download part over `dest_rel` atomically: the
+    /// rename replaces whatever the path names without following it, and the
+    /// destination is re-verified afterwards (regular file, 0600, never
+    /// executable, still the inode that was renamed) so a completed download
+    /// is never pretended onto a swapped path.
+    pub(crate) fn promote_download(&self, part: &Path, dest_rel: &str) -> Result<(), HarnessError> {
+        let dest = self.target(dest_rel, true)?;
+        let part_identity = {
+            let meta = fs::symlink_metadata(part)
+                .map_err(|error| io_error("stat download part", part, error))?;
+            if !meta.is_file() {
+                return Err(HarnessError::NotRegularFile {
+                    path: part.display().to_string(),
+                });
+            }
+            identity(&meta)
+        };
+        replace_file(part, &dest)?;
+        let final_meta = fs::symlink_metadata(&dest)
+            .map_err(|error| io_error("verify written workspace file", &dest, error))?;
+        #[cfg(unix)]
+        let exec_bits = final_meta.permissions().mode() & 0o111 != 0;
+        #[cfg(not(unix))]
+        let exec_bits = false;
+        if identity(&final_meta) != part_identity || !final_meta.is_file() || exec_bits {
+            return Err(HarnessError::IdentityChanged {
+                path: dest_rel.to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// The argument half of [`Workspace::target`] with no filesystem contact:
+/// argument validation plus the `..`-depth walk, assuming every non-`..`
+/// component is a directory — the conservative shape check that refuses an
+/// escape (absolute forms, `..` rising above the root, drive shapes) before
+/// any scan or creation can happen. A caller that must refuse a path before
+/// touching the disk runs this first and then `target`.
+pub(crate) fn validate_argument(rel: &str) -> Result<(), HarnessError> {
+    let comps = argument_components(rel)?;
+    let mut depth = 0usize;
+    for comp in comps {
+        if comp == ".." {
+            if depth == 0 {
+                return Err(HarnessError::PathOutsideRoot {
+                    path: rel.to_string(),
+                });
+            }
+            depth -= 1;
+        } else {
+            depth += 1;
+        }
+    }
+    Ok(())
 }
 
 fn argument_components(rel: &str) -> Result<Vec<String>, HarnessError> {

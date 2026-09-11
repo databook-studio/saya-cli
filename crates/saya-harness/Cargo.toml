@@ -12,6 +12,12 @@ saya-agent = { path = "../saya-agent", version = "0.4.1" }
 saya-store = { path = "../saya-store", version = "0.4.1" }
 saya-types = { path = "../saya-types", version = "0.4.1" }
 async-trait.workspace = true
+# The production FetchTransport. The workspace entry carries
+# `default-features = false` with rustls-tls, so no second TLS stack arrives.
+reqwest.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
