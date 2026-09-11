@@ -17,6 +17,7 @@
 
 pub mod env;
 pub mod error;
+pub mod nested_saya;
 pub mod output;
 pub mod refuse;
 pub mod sandbox;
@@ -105,6 +106,10 @@ impl RunProgram {
         spawn::run(
             &self.spawn,
             call,
+            // A run_program child pins nothing: its environment is the
+            // declared credentials and nothing else. The nested re-entry
+            // (`nested_saya`) is the caller that pins run paths.
+            &[],
             &self.credentials,
             self.resolver.as_ref(),
             &self.cancellation,
