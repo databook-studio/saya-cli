@@ -75,4 +75,10 @@ pub enum ToolError {
     /// written file is worse than a refused one.
     #[error("workspace write refused: content is over the {limit}-byte write bound")]
     WorkspaceWriteTooLarge { limit: usize },
+    /// A runner tool refused or failed. The detail is the harness runner
+    /// error's own text — the typed refusal (allowlist, argv shape, sandbox,
+    /// timeout) or failure, so the model reads the real reason, never a
+    /// generic failure.
+    #[error("{0}")]
+    Runner(String),
 }

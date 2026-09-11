@@ -54,10 +54,26 @@ pub fn seatbelt_profile(sb: &RunSandbox, program_dirs: &[PathBuf]) -> Result<Str
     for dir in program_dirs {
         let _ = writeln!(p, "(allow process-exec (subpath \"{}\"))", dir.display());
     }
+    // `(allow process-fork)` is granted only by explicit opt-in with a
+    // measured reason (`RunSandbox::with_process_fork`): deny by default
+    // measured a forking child as `fork: Operation not permitted` (spike
+    // §4.5), and the reason the policy carries is emitted verbatim as the
+    // comment a reviewer reads at the scene.
+    if let Some(reason) = sb.process_fork_reason() {
+        let _ = writeln!(p, "(allow process-fork) ; granted: {reason}");
+    }
     // Loader startup, measured (spike §4.1): without this exact allow every
     // child dies SIGABRT before dyld prints anything — 10/10 for echo, mkdir,
     // cat, and bash. The mechanism is unverified; the requirement is measured.
     p.push_str("(allow file-read-data (literal \"/\"))\n");
+    // Runtime init, measured (M5-4 escape battery): a Rust child queries a
+    // sysctl at startup (`sysconf(_SC_PAGESIZE)` for its guard page) and
+    // dies SIGABRT with `failed to allocate a guard page: Invalid argument`
+    // when the query is denied — C binaries never touch it, so the spike's
+    // canaries could not have caught it. The error class is EINVAL, not
+    // EPERM, so the spike's deny-evidence rule does not apply here: the
+    // allow is required by measurement, not by a deny log.
+    p.push_str("(allow sysctl-read)\n");
     for root in sb.fs_roots() {
         let _ = writeln!(p, "(allow file-read* (subpath \"{}\"))", root.display());
         let _ = writeln!(p, "(allow file-write* (subpath \"{}\"))", root.display());

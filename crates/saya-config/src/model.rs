@@ -199,7 +199,7 @@ pub struct RunFile {
 /// The `[jobs]` section: the default budgets a *run* is declared with when
 /// the run's specification and each of its steps declare none. `ConfigFile`
 /// is `deny_unknown_fields`, so this section must be declared here before
-/// any config may carry it. Later items extend it with `runner` keys.
+/// any config may carry it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobsFile {
@@ -222,6 +222,35 @@ pub struct JobsFile {
     /// conservative defaults. There is deliberately no environment override
     /// for any of it (plan G3).
     pub fetch: Option<FetchJobsFile>,
+    /// The `[jobs.runner]` sub-table (M5-4): the universe of programs a run's
+    /// approved runner scope may name, and the default per-process timeout.
+    /// Absent: no runner programs are approved and the conservative timeout
+    /// default applies. There is deliberately no environment override for
+    /// any of it (plan G3).
+    pub runner: Option<RunnerJobsFile>,
+}
+
+/// The `[jobs.runner]` sub-table: the runner programs a run's approved
+/// runner scope may draw from and the default wall-clock ceiling for one
+/// child process (M5-4). Each key is optional: an absent `allow` approves no
+/// programs (the runner capability is absent entirely — there is no default
+/// program universe a run gets for free), and an absent `timeout_seconds`
+/// resolves to the conservative default. Entries are bare program names in
+/// the run-scoped name shape; shells and interpreters are refused at resolve
+/// time — a program the runner will never honour must not look approved.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerJobsFile {
+    /// The programs a run's runner scope may name. Absent or empty: the run
+    /// has no runner capability. Each entry is validated against the same
+    /// name shape the run contracts carry, bounded like every set-valued
+    /// approval surface, and refused when it names a shell or interpreter.
+    pub allow: Option<Vec<String>>,
+    /// Default wall-clock ceiling for one child process, in seconds. A
+    /// declared zero is a typed resolve error, never a silent clamp — a
+    /// zero-second timeout would kill every child before its first byte, a
+    /// typo, not an intent. Provisional until M5 measures real runs (U8).
+    pub timeout_seconds: Option<u64>,
 }
 
 /// The `[jobs.fetch]` sub-table: the download budgets a run's

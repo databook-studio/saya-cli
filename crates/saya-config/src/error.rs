@@ -75,4 +75,15 @@ pub enum ConfigError {
     /// role" ambiguous. Rejected rather than resolved last-wins.
     #[error("endpoint {0:?} is declared more than once in [ai.endpoints]; remove the duplicate")]
     DuplicateEndpointName(String),
+    /// A `[jobs.runner] allow` entry is not a program the runner can honour:
+    /// a bare, non-repeating name in the run-scoped shape that is not a shell
+    /// or interpreter. The reason is carried because "why not" is the whole
+    /// diagnostic — the shapes refused here are refused by the runner tool
+    /// too, so approving one would approve a capability that cannot exist.
+    #[error("setting {field} has an invalid runner program {program:?}: {reason}")]
+    InvalidRunnerProgram {
+        field: &'static str,
+        program: String,
+        reason: &'static str,
+    },
 }

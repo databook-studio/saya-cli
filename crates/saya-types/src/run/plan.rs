@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::RunContractError;
 use super::budget::Budgets;
-use super::scope::{Capabilities, is_name_shaped};
+use super::scope::{Capabilities, is_bare_name};
 use super::spec::validate_goal;
 
 /// A plan is a bounded list: an orchestrating episode proposes it, and no
@@ -23,13 +23,11 @@ pub const MAX_OUTPUT_HINTS: usize = 16;
 const MAX_HINT_DESCRIPTION_CHARS: usize = 512;
 
 /// True when `name` is safe to use as a single workspace path component: no
-/// separators, no traversal, no control characters, no whitespace.
+/// separators, no traversal, no control characters, no whitespace. The same
+/// bare-name rule a runner program must satisfy, shared with
+/// [`is_bare_name`](super::scope::is_bare_name) so the two cannot drift.
 pub(crate) fn is_artifact_name(name: &str) -> bool {
-    is_name_shaped(name)
-        && !name.contains('/')
-        && !name.contains('\\')
-        && name != "."
-        && name != ".."
+    is_bare_name(name)
 }
 
 /// An artifact a step is expected to produce, named relative to the run

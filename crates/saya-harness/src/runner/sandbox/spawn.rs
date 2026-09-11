@@ -20,7 +20,11 @@ use super::linux;
 use super::macos;
 
 /// The per-platform spawn mechanics behind a proven [`RunnerSpawn`].
-#[derive(Debug)]
+///
+/// `Clone` because the configuration is immutable and a run may hand it to
+/// more than one tool instance; cloning it grants nothing — the proven arm
+/// of `prepare` remains the only source.
+#[derive(Debug, Clone)]
 pub(super) enum SpawnPlatform {
     /// The generated Seatbelt profile (macOS, measured; see `macos`).
     #[cfg(target_os = "macos")]
@@ -38,8 +42,9 @@ pub(super) enum SpawnPlatform {
 /// The spawn configuration the runner tool (M5-4) needs, handed out only
 /// where the startup probe proved the sandbox on this host. There is no way
 /// to construct one otherwise: [`SandboxProvision::Proven`] is the only
-/// source.
-#[derive(Debug)]
+/// source. `Clone` because the configuration is immutable — cloning grants
+/// nothing the proven arm did not hand out.
+#[derive(Debug, Clone)]
 pub struct RunnerSpawn {
     fs_roots: Vec<PathBuf>,
     net_allow: Vec<(String, u16)>,

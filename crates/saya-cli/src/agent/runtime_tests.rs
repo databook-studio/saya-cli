@@ -25,7 +25,7 @@ use saya_agent::{
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedFetchJobs, ResolvedJobs, ResolvedMemory, ThemeChoice,
+    ResolvedFetchJobs, ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs, ThemeChoice,
 };
 use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -246,6 +246,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
                 turns: 4,
                 tool_calls: None,
                 fetch: ResolvedFetchJobs::default(),
+                runner: ResolvedRunnerJobs::default(),
             },
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
