@@ -42,10 +42,12 @@ pub enum PlanError {
 #[non_exhaustive]
 pub enum PlanRejection {
     /// A step asks for a capability outside the run's approved scopes. The
-    /// model cannot fix this by re-planning; the user must grant it — the
-    /// approval surface that can is M1-10.
-    #[error("step {step} asks for a capability outside the run's approved scopes")]
-    NeedsApproval { step: usize },
+    /// model cannot fix this by re-planning; the user must grant it. `scopes`
+    /// names the missing scope tokens (the `--allow` grammar's words), so the
+    /// composition root's refusal reaches the user with the scope named, not
+    /// a generic refusal.
+    #[error("step {step} asks for {} outside the run's approved scopes", scopes.join(", "))]
+    NeedsApproval { step: usize, scopes: Vec<String> },
 
     /// A step's budget exceeds the run's remaining budget on some ceiling —
     /// a step cannot widen the run.

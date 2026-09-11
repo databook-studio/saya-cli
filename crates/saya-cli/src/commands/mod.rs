@@ -81,6 +81,7 @@ pub async fn run(
                 runtime,
                 format,
                 approval,
+                can_prompt,
                 &state,
             )
             .await

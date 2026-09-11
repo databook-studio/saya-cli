@@ -7,6 +7,9 @@
 //! plan is persisted before approval so a crash between the two leaves a
 //! resumable record either way.
 
+use super::approval;
+use super::approval::PlanApproval;
+use super::approval_view;
 use super::exit::Settled;
 use super::{assembly, exit, files};
 use crate::config::runtime::RuntimeConfig;
@@ -16,7 +19,7 @@ use crate::stream_render::TerminalSink;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun, PlanDriver,
-    PlanRequest, RunState, TransitionEvent,
+    PlanError, PlanRejection, PlanRequest, RunState, TransitionEvent,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -24,8 +27,24 @@ use saya_store::{RunStore, SqliteStateStore};
 use saya_types::{Budgets, RunSpec};
 use std::sync::Arc;
 
+/// What a fresh run's drive needs, the way the resume's `ResumeInputs`
+/// bundles its own: the spec, the claimed directory, the store mirror, and
+/// the composition inputs the engine cannot derive — config, rendering, the
+/// approval policies, and the cancellation.
+pub(super) struct DriveInputs<'a> {
+    pub(super) spec: &'a RunSpec,
+    pub(super) run_dir: saya_harness::run_dir::RunDir,
+    pub(super) state: &'a SqliteStateStore,
+    pub(super) runtime: &'a RuntimeConfig,
+    pub(super) format: RenderFormat,
+    pub(super) approval: ApprovalPolicy,
+    pub(super) plan_approval: &'a PlanApproval,
+    pub(super) cancellation: CancellationToken,
+}
+
 /// Proposes and binds the plan, then drives every step. Everything here is
-/// covered by Ctrl-C.
+/// covered by Ctrl-C. `plan_approval` is the surface the bound plan's one
+/// approval decision flows through.
 ///
 /// The run wire is attached here, not rendered by hand: the journal carries
 /// the wire, so every lifecycle and step event is rendered from the journal's
@@ -33,15 +52,17 @@ use std::sync::Arc;
 /// forwards the episode's agent events through today's `TerminalEvent`
 /// envelope in the caller's format. The two tags share the stream by design —
 /// see `crate::render_run` for why the benchmark's wire stays intact.
-pub(super) async fn drive(
-    spec: &RunSpec,
-    run_dir: saya_harness::run_dir::RunDir,
-    state: &SqliteStateStore,
-    runtime: &RuntimeConfig,
-    format: RenderFormat,
-    approval: ApprovalPolicy,
-    cancellation: CancellationToken,
-) -> Result<i32, Box<dyn std::error::Error>> {
+pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::error::Error>> {
+    let DriveInputs {
+        spec,
+        run_dir,
+        state,
+        runtime,
+        format,
+        approval,
+        plan_approval,
+        cancellation,
+    } = inputs;
     let run_id = spec.id.clone();
     let store: Arc<dyn RunStore> = Arc::new(state.clone());
     let journal = render_run::wired_journal(Journal::open(run_dir.root()), format);
@@ -70,6 +91,24 @@ pub(super) async fn drive(
     .await
     {
         Ok(plan) => plan,
+        Err(PlanError::Exhausted {
+            last: PlanRejection::NeedsApproval { step, scopes },
+            ..
+        }) => {
+            // The plan asks for scopes `--allow` did not grant: the model
+            // cannot fix that by re-planning, and a headless run cannot ask
+            // — the refusal names the missing scopes and is a usage error
+            // (2), not a provider failure.
+            return crate::commands::output::failure_message(
+                2,
+                format!(
+                    "run {run_id} cannot start: step {step} asks for {} which --allow did \
+                     not grant; re-run with the missing scope(s) in --allow",
+                    scopes.join(", ")
+                ),
+                format,
+            );
+        }
         Err(error) => {
             // The plan never bound: the run stops by cause before it began,
             // staying `planned` — there is nothing to resume, and the exit
@@ -91,6 +130,32 @@ pub(super) async fn drive(
             format,
         );
     }
+    // The approval gate at `planned → approved` (DESIGN §5.2): the plan is
+    // already persisted, so a refusal or a crash here leaves a resumable
+    // `planned` record — no approval was granted, and none is implied.
+    let view = match approval_view::view_of(
+        &spec.goal,
+        &spec.scopes,
+        &plan,
+        &spec.budgets,
+        &workspace,
+        assembly::manifest_bounds(),
+    ) {
+        Ok(view) => view,
+        Err(message) => return exit::connection_failure(message, format),
+    };
+    if !approval::decide(plan_approval, &view).await {
+        return crate::commands::output::failure_message(
+            2,
+            format!(
+                "run {run_id} was not approved: the plan, its scopes, and its budgets \
+                 were refused at the approval gate"
+            ),
+            format,
+        );
+    }
+    // The sink exists from approval on: the wall-clock budget arms here,
+    // never before the user has answered.
     let sink = EngineEventSink::new(
         run_id.clone(),
         RunState::Planned,

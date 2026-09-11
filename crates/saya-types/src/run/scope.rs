@@ -186,7 +186,9 @@ impl Capabilities {
     /// True when every scope `self` asks for is approved by `approved`. A
     /// scope that names a set (destinations, programs, bindings) must be a
     /// subset of the approved set — naming a member the run was not approved
-    /// for is not a subset.
+    /// for is not a subset. The *named* difference lives in
+    /// [`Capabilities::missing_from`](super::super::missing) — this rule's
+    /// message, not a second comparison.
     pub fn is_subset_of(&self, approved: &Capabilities) -> bool {
         if self.workspace_write && !approved.workspace_write {
             return false;

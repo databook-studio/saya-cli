@@ -281,7 +281,7 @@ async fn probe_failure_leaves_the_runner_unregistered_and_refuses_runner_scopes(
             &error,
             PlanError::Exhausted {
                 attempts: 3,
-                last: PlanRejection::NeedsApproval { step: 0 },
+                last: PlanRejection::NeedsApproval { step: 0, scopes: _ },
             }
         ),
         "the third refusal must be the typed needs-approval outcome: {error:?}"

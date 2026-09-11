@@ -13,15 +13,28 @@ use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_store::SqliteStateStore;
 use saya_types::RunSpec;
 
+/// The fresh-run invocation inputs: the goal prompt, the `--allow` scopes,
+/// the budget overrides, and whether the run can interact.
+pub(super) struct StartInputs<'a> {
+    pub(super) prompt: Option<String>,
+    pub(super) allow: &'a [String],
+    pub(super) budget_tokens: &'a [String],
+    pub(super) can_prompt: bool,
+}
+
 pub(super) async fn start(
-    prompt: Option<String>,
-    allow: &[String],
-    budget_tokens: &[String],
+    inputs: StartInputs<'_>,
     runtime: &RuntimeConfig,
     format: RenderFormat,
     approval: ApprovalPolicy,
     state: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    let StartInputs {
+        prompt,
+        allow,
+        budget_tokens,
+        can_prompt,
+    } = inputs;
     let goal = prompt
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty())
@@ -50,17 +63,28 @@ pub(super) async fn start(
         Ok(claimed) => claimed,
         Err(message) => return super::claim::claim_failure(message, format),
     };
-    // Ctrl-C covers everything below: the plan proposal and every episode.
+    // Ctrl-C covers everything below: the plan proposal, the approval, and
+    // every episode. The plan-approval surface: a run that can interact asks
+    // once over the channel (the `tui/agent.rs` pattern, the terminal
+    // answering); a headless run's approval is the RunSpec pre-authorization
+    // — `--allow` declared the scopes, and the engine refuses any plan
+    // outside them.
+    let plan_approval = if can_prompt {
+        super::ask::terminal()
+    } else {
+        super::approval::PlanApproval::PreAuthorized
+    };
     let cancellation = CancellationToken::default();
-    let work = super::drive::drive(
-        &spec,
+    let work = super::drive::drive(super::drive::DriveInputs {
+        spec: &spec,
         run_dir,
         state,
         runtime,
         format,
         approval,
-        cancellation.clone(),
-    );
+        plan_approval: &plan_approval,
+        cancellation: cancellation.clone(),
+    });
     tokio::pin!(work);
     match tokio::select! {
         result = &mut work => result,

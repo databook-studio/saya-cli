@@ -10,6 +10,11 @@
 //! collaborators the way `ask` builds a turn's, drives the steps blocking,
 //! and maps the typed outcomes onto the documented exit codes.
 
+mod approval;
+#[cfg(test)]
+mod approval_tests;
+mod approval_view;
+mod ask;
 mod assembly;
 mod budget;
 mod cancel;
@@ -42,6 +47,7 @@ pub(super) async fn run_command(
     runtime: &RuntimeConfig,
     format: RenderFormat,
     approval: saya_agent::ApprovalPolicy,
+    can_prompt: bool,
     state: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let RunInvocation {
@@ -64,7 +70,21 @@ pub(super) async fn run_command(
         Some(crate::cli::RunCommand::Resume { run_id }) => {
             resume::resume(&run_id, runtime, format, approval, state).await
         }
-        None => start::start(prompt, &allow, &budget, runtime, format, approval, state).await,
+        None => {
+            start::start(
+                start::StartInputs {
+                    prompt,
+                    allow: &allow,
+                    budget_tokens: &budget,
+                    can_prompt,
+                },
+                runtime,
+                format,
+                approval,
+                state,
+            )
+            .await
+        }
     }
 }
 
@@ -89,6 +109,9 @@ pub async fn run_management(
         runtime,
         format,
         approval,
+        // A management read never starts a run, so the prompt surface is
+        // never consulted.
+        false,
         state,
     )
     .await
