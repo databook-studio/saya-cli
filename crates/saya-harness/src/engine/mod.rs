@@ -16,7 +16,7 @@ mod usage;
 
 pub use episode::{
     EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest, EpisodeRun,
-    MAX_EPISODE_ATTEMPTS, ManifestBounds,
+    MAX_EPISODE_ATTEMPTS, ManifestBounds, StepToolset,
 };
 pub use plan::{
     MAX_PLAN_ATTEMPTS, PlanDriver, PlanError, PlanParseFailure, PlanRejection, PlanRequest,

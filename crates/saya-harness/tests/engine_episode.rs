@@ -28,7 +28,7 @@ use saya_agent::{
 };
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest, EpisodeRun,
-    ManifestBounds, RunState,
+    ManifestBounds, RunState, StepToolset,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::{Workspace, manifest};
@@ -219,6 +219,15 @@ fn def(name: &str, local_state: LocalStateEffect) -> ToolDefinition {
     }
 }
 
+/// One step's toolset: the executor behind it and the definitions the
+/// step's episodes advertise — the composition root's per-step shape.
+fn toolset(executor: Arc<dyn ToolExecutor>, definitions: Vec<ToolDefinition>) -> StepToolset {
+    StepToolset {
+        executor,
+        definitions,
+    }
+}
+
 fn call(name: &str) -> ToolCall {
     ToolCall {
         id: format!("c-{name}"),
@@ -256,9 +265,8 @@ impl ApprovalDecider for AllowApproval {
 fn driver_and_sink<'a>(
     run: &ApprovedRun,
     provider: &'a ScriptProvider,
-    tools: &'a dyn ToolExecutor,
     approval: &'a AllowApproval,
-    universe: Vec<ToolDefinition>,
+    toolsets: &'a [StepToolset],
     memory_allows_candidate_writes: bool,
 ) -> (EngineEventSink, EpisodeDriver<'a>) {
     let sink = EngineEventSink::new(
@@ -273,9 +281,8 @@ fn driver_and_sink<'a>(
     let driver = EpisodeDriver::new(
         EpisodeCollaborators {
             provider,
-            tools,
             approval,
-            universe,
+            toolsets,
             cancellation: CancellationToken::default(),
         },
         EpisodeRun {
@@ -310,20 +317,16 @@ fn texts(request: &ChatRequest) -> String {
 async fn a_tool_outside_the_step_s_capabilities_is_absent_from_definitions() {
     let run = approved_run("narrow").await;
     let provider = ScriptProvider::new(vec![Turn::Answer("done")]);
-    let tools = RecordingTools::default();
     let approval = AllowApproval;
-    let (sink, driver) = driver_and_sink(
-        &run,
-        &provider,
-        &tools,
-        &approval,
+    let toolsets = vec![toolset(
+        Arc::new(RecordingTools::default()),
         vec![
             def("probe", LocalStateEffect::None),
             def("workspace_writer", LocalStateEffect::WriteWorkspace),
             def("remember", LocalStateEffect::WriteCandidate),
         ],
-        false,
-    );
+    )];
+    let (sink, driver) = driver_and_sink(&run, &provider, &approval, &toolsets, false);
     let workspace = run.workspace();
     let plan = RunPlan::new(vec![step("read the schema", Capabilities::default())]).unwrap();
 
@@ -361,16 +364,12 @@ async fn the_step_budget_becomes_the_limits_and_the_environment_changes_nothing(
         Turn::Tools(vec![call("probe")]),
         Turn::Answer("salvaged"),
     ]);
-    let tools = RecordingTools::default();
     let approval = AllowApproval;
-    let (sink, driver) = driver_and_sink(
-        &run,
-        &provider,
-        &tools,
-        &approval,
+    let toolsets = vec![toolset(
+        Arc::new(RecordingTools::default()),
         vec![def("probe", LocalStateEffect::None)],
-        false,
-    );
+    )];
+    let (sink, driver) = driver_and_sink(&run, &provider, &approval, &toolsets, false);
     let workspace = run.workspace();
     let mut budget = Budgets::default();
     budget.turns = Some(2);
@@ -399,16 +398,12 @@ async fn the_step_budget_becomes_the_limits_and_the_environment_changes_nothing(
         Turn::Tools(vec![call("probe")]),
         Turn::Answer("salvaged"),
     ]);
-    let tools = RecordingTools::default();
     let approval = AllowApproval;
-    let (sink, driver) = driver_and_sink(
-        &run,
-        &provider,
-        &tools,
-        &approval,
+    let toolsets = vec![toolset(
+        Arc::new(RecordingTools::default()),
         vec![def("probe", LocalStateEffect::None)],
-        false,
-    );
+    )];
+    let (sink, driver) = driver_and_sink(&run, &provider, &approval, &toolsets, false);
     let workspace = run.workspace();
     let mut budget = Budgets::default();
     budget.tool_calls = Some(1);
@@ -437,19 +432,16 @@ async fn candidate_writes_are_pinned_off_even_when_memory_would_permit_them() {
         Turn::Tools(vec![call("remember")]),
         Turn::Answer("noted"),
     ]);
-    let tools = RecordingTools::default();
+    let tools = Arc::new(RecordingTools::default());
     let approval = AllowApproval;
-    let (sink, driver) = driver_and_sink(
-        &run,
-        &provider,
-        &tools,
-        &approval,
+    let toolsets = vec![toolset(
+        tools.clone(),
         vec![
             def("probe", LocalStateEffect::None),
             def("remember", LocalStateEffect::WriteCandidate),
         ],
-        true,
-    );
+    )];
+    let (sink, driver) = driver_and_sink(&run, &provider, &approval, &toolsets, true);
     let workspace = run.workspace();
     let plan = RunPlan::new(vec![step("record a claim", Capabilities::default())]).unwrap();
 
@@ -495,19 +487,15 @@ async fn a_failing_step_retries_with_a_fresh_brief_then_pauses_with_a_typed_code
         Turn::Tools(vec![call("probe")]),
         Turn::Fail,
     ]);
-    let tools = SeedingTools {
-        workspace: run.root.join("workspace"),
-        calls: Arc::new(Mutex::new(Vec::new())),
-    };
     let approval = AllowApproval;
-    let (sink, driver) = driver_and_sink(
-        &run,
-        &provider,
-        &tools,
-        &approval,
+    let toolsets = vec![toolset(
+        Arc::new(SeedingTools {
+            workspace: run.root.join("workspace"),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }),
         vec![def("probe", LocalStateEffect::None)],
-        false,
-    );
+    )];
+    let (sink, driver) = driver_and_sink(&run, &provider, &approval, &toolsets, false);
     let workspace = run.workspace();
     let plan = RunPlan::new(vec![step("keep failing", Capabilities::default())]).unwrap();
 
@@ -587,16 +575,12 @@ async fn the_brief_carries_the_workspace_manifest() {
     fs::write(workspace.root().join("notes/a.md"), "hello notes").unwrap();
     fs::write(workspace.root().join("b.csv"), "col\n1\n").unwrap();
     let provider = ScriptProvider::new(vec![Turn::Answer("done")]);
-    let tools = RecordingTools::default();
     let approval = AllowApproval;
-    let (sink, driver) = driver_and_sink(
-        &run,
-        &provider,
-        &tools,
-        &approval,
+    let toolsets = vec![toolset(
+        Arc::new(RecordingTools::default()),
         vec![def("probe", LocalStateEffect::None)],
-        false,
-    );
+    )];
+    let (sink, driver) = driver_and_sink(&run, &provider, &approval, &toolsets, false);
     let plan = RunPlan::new(vec![step("read the workspace", Capabilities::default())]).unwrap();
 
     driver.run_step(&sink, &plan, 0, &workspace).await.unwrap();

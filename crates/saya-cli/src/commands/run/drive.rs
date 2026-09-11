@@ -11,7 +11,7 @@ use super::approval;
 use super::approval_view;
 use super::exit::Settled;
 use super::host::HostRun;
-use super::{assembly, exit, files};
+use super::{assembly, exit, files, tools};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 use crate::render_run;
@@ -79,14 +79,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             );
         }
     };
-    let pieces = match assembly::assemble(
-        runtime,
-        host.profile,
-        &spec.scopes,
-        workspace.clone(),
-        approval,
-    )
-    .await
+    let pieces = match assembly::assemble(runtime, host.profile, workspace.clone(), approval).await
     {
         Ok(pieces) => pieces,
         Err(message) => return exit::connection_failure(message, format),
@@ -135,6 +128,16 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     // ceilings (the StepSpec contract's layering rule); the persisted plan
     // is the layered one a resume replays.
     let plan = assembly::bind_step_budgets(plan, &spec.budgets);
+    // The per-step toolsets are prebuilt from the bound plan, before the
+    // approval gate: a toolset that cannot be built refuses the run before
+    // it starts, never mid-flight (the same fail-closed discipline as
+    // scope parsing).
+    let toolsets = tools::toolsets(
+        &pieces.tools,
+        pieces.allow_query_data,
+        &spec.scopes,
+        plan.steps.len(),
+    );
     if let Err(error) = files::persist_plan(run_dir.root(), &plan) {
         return exit::connection_failure(
             format!("run plan could not be persisted: {error}"),
@@ -191,9 +194,8 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     let driver = EpisodeDriver::new(
         EpisodeCollaborators {
             provider: &*pieces.provider,
-            tools: &pieces.tools,
             approval: &pieces.decider,
-            universe: pieces.universe,
+            toolsets: &toolsets,
             cancellation: host.cancellation.clone(),
         },
         EpisodeRun {

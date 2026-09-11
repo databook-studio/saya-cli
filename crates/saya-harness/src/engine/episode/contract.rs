@@ -70,16 +70,27 @@ pub enum EpisodeError {
     Transition { source: EngineSinkError },
 }
 
-/// The loop's collaborators and the run's tool universe, supplied once per
+/// One step's toolset: the executor the step's episodes dispatch through
+/// and the definitions they advertise, built together from the same
+/// capabilities by the composition root so what a step advertises and what
+/// its calls dispatch through can never drift apart. The executor is an
+/// `Arc` because run-level executors are shared across a plan's steps.
+pub struct StepToolset {
+    pub executor: Arc<dyn ToolExecutor>,
+    pub definitions: Vec<ToolDefinition>,
+}
+
+/// The loop's collaborators and the per-step toolsets, supplied once per
 /// run by the composition root and shared by every episode.
 pub struct EpisodeCollaborators<'a> {
     pub provider: &'a dyn ChatProvider,
-    pub tools: &'a dyn ToolExecutor,
     pub approval: &'a dyn ApprovalDecider,
-    /// Every tool definition the run may advertise. `run_step` narrows it
-    /// to the step's capabilities: a tool outside them is absent from the
-    /// episode's definitions, never present-and-refused.
-    pub universe: Vec<ToolDefinition>,
+    /// One toolset per plan step, aligned with `plan.steps`. `run_step`
+    /// reads the step's own toolset: its definitions are what the episode
+    /// advertises, its executor is what tool calls dispatch through — so a
+    /// tool outside the step's capabilities is absent from the definitions,
+    /// never present-and-refused.
+    pub toolsets: &'a [StepToolset],
     pub cancellation: CancellationToken,
 }
 

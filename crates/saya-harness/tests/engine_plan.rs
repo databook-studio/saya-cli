@@ -31,7 +31,7 @@ use saya_agent::{
 };
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, ManifestBounds, PlanDriver, PlanError,
-    PlanParseFailure, PlanRejection, PlanRequest, RunState,
+    PlanParseFailure, PlanRejection, PlanRequest, RunState, StepToolset,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -321,7 +321,19 @@ async fn a_valid_plan_binds_and_step_n_sees_only_step_n_s_capabilities() {
     // episode is narrowed to that step's capabilities.
     let run = approved_run("bind").await;
     let episode = ScriptedEpisode::new(vec!["observed", "written"]);
-    let tools = NoTools;
+    // One toolset per step, all carrying the run universe — the per-step
+    // narrowing is what this test proves.
+    let tools: Arc<dyn ToolExecutor> = Arc::new(NoTools);
+    let definitions = vec![
+        def("probe", LocalStateEffect::None),
+        def("workspace_writer", LocalStateEffect::WriteWorkspace),
+    ];
+    let toolsets: Vec<StepToolset> = (0..2)
+        .map(|_| StepToolset {
+            executor: Arc::clone(&tools),
+            definitions: definitions.clone(),
+        })
+        .collect();
     let allow = AllowApproval;
     let sink = EngineEventSink::new(
         run.run_id.clone(),
@@ -335,12 +347,8 @@ async fn a_valid_plan_binds_and_step_n_sees_only_step_n_s_capabilities() {
     let driver = EpisodeDriver::new(
         EpisodeCollaborators {
             provider: &episode,
-            tools: &tools,
             approval: &allow,
-            universe: vec![
-                def("probe", LocalStateEffect::None),
-                def("workspace_writer", LocalStateEffect::WriteWorkspace),
-            ],
+            toolsets: &toolsets,
             cancellation: CancellationToken::default(),
         },
         saya_harness::engine::EpisodeRun {

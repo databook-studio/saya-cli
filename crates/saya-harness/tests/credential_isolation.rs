@@ -65,14 +65,14 @@ mod battery {
     use async_trait::async_trait;
     use saya_agent::{
         ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-        ProviderError, ToolCall, ToolDefinition,
+        ProviderError, ToolCall, ToolDefinition, ToolExecutor,
     };
     use saya_harness::endpoints::{
         CorpusProfile, EndpointSpec, ORCHESTRATOR_ROLE, endpoint_env_var, write_run_configs,
     };
     use saya_harness::engine::{
         EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest,
-        EpisodeRun, ManifestBounds, RunState,
+        EpisodeRun, ManifestBounds, RunState, StepToolset,
     };
     use saya_harness::journal::{EVENTS_FILE, Journal};
     use saya_harness::run_dir::RunDir;
@@ -464,18 +464,27 @@ fn main() {
     async fn drive_step(
         cell: &Cell,
         sink: &EngineEventSink,
-        tool: &RunProgram,
+        tool: RunProgram,
         provider: &ScriptProvider,
         plan: &RunPlan,
         step: usize,
     ) -> Result<(), EpisodeError> {
         let approval = AllowApproval;
+        let definition = tool.definition();
+        let executor: Arc<dyn ToolExecutor> = Arc::new(tool);
+        // One toolset per plan step over the same executor, the way the
+        // composition root builds them; only the driven step's episode runs.
+        let toolsets: Vec<StepToolset> = (0..plan.steps.len())
+            .map(|_| StepToolset {
+                executor: Arc::clone(&executor),
+                definitions: vec![definition.clone()],
+            })
+            .collect();
         let driver = EpisodeDriver::new(
             EpisodeCollaborators {
                 provider,
-                tools: tool,
                 approval: &approval,
-                universe: vec![tool.definition()],
+                toolsets: &toolsets,
                 cancellation: CancellationToken::default(),
             },
             EpisodeRun {
@@ -650,7 +659,7 @@ fn main() {
         let plan = RunPlan::new(vec![runner_step("measure the child's environment")])
             .expect("well-shaped plan");
         let sink = sink(&cell);
-        drive_step(&cell, &sink, &tool, &provider, &plan, 0)
+        drive_step(&cell, &sink, tool, &provider, &plan, 0)
             .await
             .expect("the step completes");
         drop(sink);
@@ -733,7 +742,7 @@ fn main() {
         );
         let plan = RunPlan::new(vec![runner_step("echo the environment")]).expect("well-shaped");
         let sink = sink(&cell);
-        drive_step(&cell, &sink, &tool, &provider, &plan, 0)
+        drive_step(&cell, &sink, tool, &provider, &plan, 0)
             .await
             .expect("the step completes");
         drop(sink);
@@ -820,7 +829,7 @@ fn main() {
         let tool = cell.tool(Vec::new(), source_with(&[]));
         let plan = RunPlan::new(vec![runner_step("probe the environment")]).expect("well-shaped");
         let sink = sink(&cell);
-        drive_step(&cell, &sink, &tool, &provider, &plan, 0)
+        drive_step(&cell, &sink, tool, &provider, &plan, 0)
             .await
             .expect("the step completes");
         drop(sink);
@@ -870,7 +879,7 @@ fn main() {
         let tool = cell.tool(vec![dangling], source_with(&[]));
         let plan = RunPlan::new(vec![runner_step("measure the environment")]).expect("well-shaped");
         let sink = sink(&cell);
-        drive_step(&cell, &sink, &tool, &provider, &plan, 0)
+        drive_step(&cell, &sink, tool, &provider, &plan, 0)
             .await
             .expect("the loop survives the refusal and finishes the step");
         drop(sink);
@@ -934,7 +943,7 @@ fn main() {
             ])]),
             Turn::Answer("done"),
         ]);
-        drive_step(&cell, &sink, &reviewer_tool, &reviewer_provider, &plan, 0)
+        drive_step(&cell, &sink, reviewer_tool, &reviewer_provider, &plan, 0)
             .await
             .expect("the reviewer step completes");
 
@@ -950,7 +959,7 @@ fn main() {
         drive_step(
             &cell,
             &sink,
-            &orchestrator_tool,
+            orchestrator_tool,
             &orchestrator_provider,
             &plan,
             1,
@@ -1028,7 +1037,7 @@ fn main() {
         );
         let plan = RunPlan::new(vec![runner_step("keep failing")]).expect("well-shaped plan");
         let sink = sink(&cell);
-        let error = drive_step(&cell, &sink, &tool, &provider, &plan, 0)
+        let error = drive_step(&cell, &sink, tool, &provider, &plan, 0)
             .await
             .expect_err("the step exhausts its bounded attempts");
         assert!(

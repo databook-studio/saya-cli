@@ -117,11 +117,83 @@ pub(super) fn limits(request: &EpisodeRequest, spec: &StepSpec) -> AgentLimits {
     let ceiling =
         |asked: Option<u64>| asked.map(|asked| usize::try_from(asked).unwrap_or(usize::MAX));
     let budget = spec.budget.as_ref();
+    let caps = &spec.capabilities;
     AgentLimits {
         max_turns: ceiling(budget.and_then(|budget| budget.turns)),
         max_tool_calls: ceiling(budget.and_then(|budget| budget.tool_calls)),
         permit_candidate_writes: false,
-        permit_workspace_writes: spec.capabilities.workspace_write,
+        // The permit means "this step approved some write-shaped scope",
+        // not "this step may write the workspace": `LocalStateEffect` has
+        // one write-shaped variant and `AgentLimits` one write permit by
+        // design, so every write-shaped scope — workspace-write, scratch,
+        // runner, fetch (`http_download` is fetch's write-shaped member) —
+        // maps onto this permit here. This line is the explicit
+        // scope→permit mapping; the union cannot smuggle a tool the step
+        // never saw, because the step's definitions are built from the
+        // same capabilities.
+        permit_workspace_writes: caps.workspace_write
+            || caps.scratch
+            || caps.runner.is_some()
+            || caps.fetch.is_some(),
         context_byte_budget: AgentLimits::default().context_byte_budget,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use saya_types::{Destination, FetchScope, RunnerScope};
+
+    fn request() -> EpisodeRequest {
+        EpisodeRequest {
+            model: "mock-model".into(),
+            profile_names: Vec::new(),
+            memory_allows_candidate_writes: false,
+        }
+    }
+
+    fn spec(capabilities: &Capabilities) -> StepSpec {
+        StepSpec::new("the step", capabilities.clone(), None, Vec::new(), None).unwrap()
+    }
+
+    /// The explicit scope→permit mapping: a step approved any write-shaped
+    /// scope — workspace-write, scratch, runner, fetch — carries the write
+    /// permit, because `LocalStateEffect` has one write-shaped variant and
+    /// the loop gates it on this one permit. What the step can actually
+    /// write stays bounded by construction: a scope the step lacks leaves
+    /// the tool absent from its definitions, so the union cannot admit a
+    /// tool the step never saw.
+    #[test]
+    fn every_write_shaped_scope_maps_onto_the_write_permit() {
+        let mut caps = Capabilities::default();
+        assert!(
+            !limits(&request(), &spec(&caps)).permit_workspace_writes,
+            "no write-shaped scope approved, no permit"
+        );
+
+        caps.workspace_write = true;
+        assert!(limits(&request(), &spec(&caps)).permit_workspace_writes);
+
+        // Scratch, runner, and fetch are refused at `--allow` parse time
+        // today — no tool consumes them yet — but the mapping is the
+        // mapping: approving the scope carries the permit, so wiring a tool
+        // needs no further limit change.
+        let mut scratch = Capabilities::default();
+        scratch.scratch = true;
+        let mut runner = Capabilities::default();
+        runner.runner = Some(RunnerScope::new(vec!["python3".to_owned()]).expect("shaped"));
+        let mut fetch = Capabilities::default();
+        fetch.fetch = Some(
+            FetchScope::new(vec![
+                Destination::new("https", "example.com").expect("shaped"),
+            ])
+            .expect("shaped"),
+        );
+        for shape in [scratch, runner, fetch] {
+            assert!(
+                limits(&request(), &spec(&shape)).permit_workspace_writes,
+                "a write-shaped scope must carry the write permit: {shape:?}"
+            );
+        }
     }
 }

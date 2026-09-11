@@ -62,6 +62,16 @@ pub(super) async fn drive_attempt(
             steps: plan.steps.len(),
         }));
     };
+    // The toolsets ride the plan step for step; a short vec is a
+    // composition-root bug, and the gate fails closed through the same
+    // `OutOfRange` refusal a step beyond the plan gets — never a panic,
+    // never a fallback to another step's toolset.
+    let Some(toolset) = driver.collaborators.toolsets.get(step) else {
+        return Err(AttemptError::Gate(EpisodeError::OutOfRange {
+            step,
+            steps: driver.collaborators.toolsets.len(),
+        }));
+    };
     let manifest = brief::manifest(workspace, &driver.bounds)
         .map_err(|source| AttemptError::Gate(EpisodeError::Brief { source }))?;
     let request = AgentRequest {
@@ -74,9 +84,9 @@ pub(super) async fn drive_attempt(
     };
     match run_agent_with_sink(
         driver.collaborators.provider,
-        driver.collaborators.tools,
+        toolset.executor.as_ref(),
         request,
-        brief::definitions(&driver.collaborators.universe, &spec.capabilities),
+        brief::definitions(&toolset.definitions, &spec.capabilities),
         brief::limits(&driver.request, spec),
         driver.collaborators.approval,
         sink,
