@@ -65,6 +65,7 @@ pub async fn resume(
         journal.clone(),
         resumed.store.clone(),
         resumed.wall_clock,
+        resumed.token_ceiling,
         std::time::Instant::now,
     );
     let sink = match &resumed.agent_stream {

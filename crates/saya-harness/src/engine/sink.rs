@@ -81,6 +81,15 @@ pub struct EngineEventSink {
     store: Arc<dyn RunStore>,
     clock: Clock,
     deadline: Option<Instant>,
+    /// The run's token ceiling, summed across input and output.
+    ///
+    /// The declared budget is per endpoint, but every episode currently calls
+    /// the single orchestrator endpoint, so there is exactly one bucket to
+    /// enforce and the ceiling is that endpoint's. When per-step endpoint
+    /// roles bind, this becomes a map and attribution follows the call —
+    /// until then a per-endpoint ceiling with one endpoint is the same
+    /// number, and pretending otherwise would be the more confusing lie.
+    token_ceiling: Option<u64>,
     state: Mutex<RunState>,
     usage: Mutex<UsageTotals>,
     diagnostic: Mutex<Option<Arc<EngineSinkError>>>,
@@ -104,6 +113,7 @@ impl EngineEventSink {
         journal: Journal,
         store: Arc<dyn RunStore>,
         wall_clock: Option<Duration>,
+        token_ceiling: Option<u64>,
         clock: impl Fn() -> Instant + Send + Sync + 'static,
     ) -> Self {
         let now = clock();
@@ -114,6 +124,7 @@ impl EngineEventSink {
             store,
             clock: Box::new(clock),
             deadline,
+            token_ceiling,
             state: Mutex::new(initial),
             usage: Mutex::new(UsageTotals::default()),
             diagnostic: Mutex::new(None),
@@ -216,22 +227,44 @@ impl AgentEventSink for EngineEventSink {
 }
 
 impl EngineEventSink {
-    /// The per-tick wall-clock check, armed while the run executes. Past the
-    /// deadline the tick pauses the run exactly like any other transition;
+    /// The per-tick budget checks, armed while the run executes. Past either
+    /// ceiling the tick pauses the run exactly like any other transition;
     /// emit has no error channel, so any failure the pause meets is held as
     /// a diagnostic rather than dropped.
+    ///
+    /// Tokens are checked after the fold, never before: the tokens an event
+    /// reports were already spent, so the ceiling is a stop-after, not a
+    /// stop-before. A run pauses the tick *after* it crosses — which is the
+    /// honest reading of a ceiling nobody can enforce mid-request.
     async fn tick(&self) {
-        let Some(deadline) = self.deadline else {
+        if self.state() != RunState::Executing {
+            return;
+        }
+        let reason = if self.tokens_exhausted() {
+            PauseReason::BudgetExhausted
+        } else if self
+            .deadline
+            .is_some_and(|deadline| (self.clock)() >= deadline)
+        {
+            PauseReason::WallClockExceeded
+        } else {
             return;
         };
-        if (self.clock)() < deadline || self.state() != RunState::Executing {
-            return;
-        }
-        if let Err(error) = self
-            .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
-            .await
-        {
+        if let Err(error) = self.record(TransitionEvent::Pause(reason)).await {
             self.hold_diagnostic(error);
         }
+    }
+
+    /// Whether the run has spent its declared token ceiling. Input and output
+    /// are summed because the budget is what the run costs, and a ceiling
+    /// that counted only one half would be a ceiling on nothing in
+    /// particular. Figures no call reported stay out of the sum rather than
+    /// counting as zero.
+    fn tokens_exhausted(&self) -> bool {
+        let Some(ceiling) = self.token_ceiling else {
+            return false;
+        };
+        let usage = self.usage();
+        usage.input_tokens.saturating_add(usage.output_tokens) >= ceiling
     }
 }

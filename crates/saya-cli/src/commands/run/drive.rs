@@ -97,6 +97,7 @@ pub(super) async fn drive(
         journal.clone(),
         store.clone(),
         spec.budgets.wall_clock,
+        super::budget::token_ceiling(&spec.budgets),
         std::time::Instant::now,
     )
     .with_agent_stream(Arc::new(TerminalSink::new(format)));

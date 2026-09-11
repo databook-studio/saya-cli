@@ -177,8 +177,7 @@ pub enum Command {
     /// show|log` manage runs. Headless by construction: scopes must be
     /// declared up front with `--allow`.
     Run {
-        /// The run's goal. Omit it to read the goal from stdin when input is
-        /// piped in.
+        /// The run's goal.
         prompt: Option<String>,
         /// Approved capability scopes, comma-separated: `workspace-write`,
         /// `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`,

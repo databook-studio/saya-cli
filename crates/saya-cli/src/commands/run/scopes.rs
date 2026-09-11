@@ -13,7 +13,48 @@ use saya_types::{Capabilities, Destination, EndpointBindings, FetchScope, Runner
 const KNOWN: &str = "known scopes: workspace-write, scratch, fetch:<scheme>+<host>, \
                      runner:<program>, endpoint:<role>=<endpoint>";
 
+/// Scopes the grammar accepts but the run engine cannot yet act on: no tool
+/// in a run's universe consumes them, so approving one would gate nothing.
+///
+/// They are refused at parse time rather than accepted and ignored. The
+/// repo's own standard is that a flag implying a capability is available is
+/// worse than no flag — a user who types `--allow scratch` and gets a run
+/// has been told the model may use a scratch database, and it cannot. An
+/// independent review found exactly this shipped, and this list is the fix.
+///
+/// Each entry names the plan item that wires it. Deleting an entry is the
+/// whole of "turning the scope on" once its tool is in the universe.
+const NOT_YET_WIRED: &[(&str, &str)] = &[
+    (
+        "scratch",
+        "M4-2's scratch_sql is not yet in a run's tool universe",
+    ),
+    (
+        "fetch",
+        "M3-2/M3-3's http_fetch and http_download are not yet in a run's tool universe",
+    ),
+    ("runner", "M5-4's run_program does not exist yet"),
+    (
+        "endpoint",
+        "every episode calls the orchestrator endpoint; per-step roles are not bound yet",
+    ),
+];
+
+/// The refusal for a scope that parses but binds nothing.
+fn not_yet_wired(token: &str, family: &str) -> Option<String> {
+    NOT_YET_WIRED
+        .iter()
+        .find(|(name, _)| *name == family)
+        .map(|(_, why)| {
+            format!(
+                "scope `{token}` is not available yet: {why}. It parses, but nothing in a run \
+             would consume it, so approving it would gate nothing. Re-run without it."
+            )
+        })
+}
+
 /// The scopes `--allow` approved.
+#[derive(Debug)]
 pub(super) struct Approved {
     pub(super) capabilities: Capabilities,
 }
@@ -43,8 +84,14 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
         if token == "workspace-write" {
             capabilities.workspace_write = true;
         } else if token == "scratch" {
+            if let Some(refusal) = not_yet_wired(token, "scratch") {
+                return Err(refusal);
+            }
             capabilities.scratch = true;
         } else if let Some(rest) = token.strip_prefix("fetch:") {
+            if let Some(refusal) = not_yet_wired(token, "fetch") {
+                return Err(refusal);
+            }
             let Some((scheme, host)) = rest.split_once('+') else {
                 return Err(format!(
                     "scope `{token}` must be fetch:<scheme>+<host>; {KNOWN}"
@@ -55,8 +102,14 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
             })?;
             destinations.push(destination);
         } else if let Some(rest) = token.strip_prefix("runner:") {
+            if let Some(refusal) = not_yet_wired(token, "runner") {
+                return Err(refusal);
+            }
             programs.push(rest.to_string());
         } else if let Some(rest) = token.strip_prefix("endpoint:") {
+            if let Some(refusal) = not_yet_wired(token, "endpoint") {
+                return Err(refusal);
+            }
             let Some((role, endpoint)) = rest.split_once('=') else {
                 return Err(format!(
                     "scope `{token}` must be endpoint:<role>=<endpoint>; {KNOWN}"
@@ -83,4 +136,59 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
             .map_err(|error| format!("endpoint bindings refused: {error}"))?;
     }
     Ok(Approved { capabilities })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An independent review found `--allow scratch`, `fetch:`, `runner:` and
+    /// `endpoint:` accepted, persisted and rendered while no tool in a run's
+    /// universe consumed any of them. Approving a capability that gates
+    /// nothing tells the user something false about what the model may do,
+    /// so each is refused until its wiring lands.
+    #[test]
+    fn a_scope_nothing_consumes_is_refused_rather_than_silently_approved() {
+        for token in [
+            "scratch",
+            "fetch:https+example.com",
+            "runner:python3",
+            "endpoint:analyst=fast",
+        ] {
+            let Err(error) = parse(&[token.to_string()]) else {
+                panic!("`{token}` gates nothing and must be refused");
+            };
+            assert!(
+                error.contains("not available yet"),
+                "the refusal must say why, got: {error}"
+            );
+            assert!(
+                error.contains(token),
+                "the refusal must name the scope, got: {error}"
+            );
+        }
+    }
+
+    /// The scope that *is* wired keeps working — the fix must refuse the
+    /// inert ones without breaking the one capability a run can actually use.
+    #[test]
+    fn workspace_write_is_wired_and_still_approves() {
+        let Ok(approved) = parse(&["workspace-write".to_string()]) else {
+            panic!("the wired scope must still approve");
+        };
+        assert!(approved.capabilities.workspace_write);
+        assert!(!approved.is_empty());
+    }
+
+    /// An unknown token stays a usage error, and its message still lists the
+    /// grammar — the refusal for "not yet" must not swallow the refusal for
+    /// "no such thing".
+    #[test]
+    fn an_unknown_scope_is_still_a_usage_error_naming_the_grammar() {
+        let Err(error) = parse(&["wat".to_string()]) else {
+            panic!("unknown scope must refuse");
+        };
+        assert!(error.contains("unknown scope `wat`"), "got: {error}");
+        assert!(error.contains("known scopes:"), "got: {error}");
+    }
 }

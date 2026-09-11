@@ -7,6 +7,81 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+**`saya run` — headless, resumable, budgeted runs.** A run takes a goal, proposes a
+plan, and executes it step by step without a person at the keyboard. It is the
+answer to a benchmark that dies at question 900 and has to start over.
+
+- **Resume.** Every lifecycle event is journalled before it is mirrored to the
+  store, so a run that dies resumes at its first incomplete step. A step that
+  was mid-flight restarts from its beginning rather than pretending to resume
+  inside an episode whose tool calls cannot be replayed. A crash that leaves a
+  torn final line is repaired before the first append, because appending after
+  a fragment produces a complete-looking line that parses as nothing.
+- **Scopes are approved once, with the plan** — not per tool call, which is what
+  makes a long run usable. A headless run states its scopes with `--allow` or
+  refuses to start. A plan asking for a capability the run does not hold is
+  rejected, and a mid-run revision asking for a new one re-enters approval
+  rather than inheriting.
+  **Today exactly one scope binds: `workspace-write`.** `scratch`, `fetch:`,
+  `runner:` and `endpoint:` parse and are then *refused*, because no tool in a
+  run's universe consumes them yet — see `docs/commands.md`.
+- **Budgets pause rather than stop.** Wall-clock and token ceilings pause the
+  run (exit `6`, resumable); turns and tool-calls bound each episode. Budgets
+  come from `[jobs]` and `--budget`, never from the environment, so a run is
+  reproducible from its spec and config.
+- **Exit codes gain `6`** — paused and resumable. The previous scheme had no
+  class for incomplete-but-not-failed, so a paused run would have exited `0`.
+- `saya run list | show | log | resume | cancel`, `/run`, `/runs` and
+  `/run cancel`, and an NDJSON wire that is the run journal's own observer, so
+  the stream cannot drift from the durable record.
+
+**Workspace tools.** `workspace_read`, `workspace_list`, `workspace_write`,
+`glob` and `grep`, all through one containment seam: arguments validated before
+any filesystem call, symlinks refused at every component, no-follow opens with a
+post-open identity check, atomic `0600` writes that are never executable.
+`grep` reports what it *skipped* alongside its matches, because a capped search
+rendered as empty reads as proof of absence.
+
+**A run-scoped scratch database** (ADR 0003) — the first writable SQL in the
+product, and deliberately not reachable through any `DatabaseConnector`. SQL
+against user-registered databases stays read-only by construction: the gate
+takes no mode and no permit, and the scratch writer is a different type with its
+own validator that never enters the connection registry.
+
+**Fetch.** `http_fetch` and `http_download` behind an egress policy: HTTPS only,
+private and link-local address ranges refused, destinations declared then
+approved, redirects re-judged per hop, and every DNS-resolved address checked
+before connecting. Fetched content reaches the model only as an escaped context
+block. Downloads are resumable by digest and bounded by a run budget.
+
+**Config.** `[[ai.endpoints]]` binds roles to named endpoints, with per-endpoint
+`base_url` and `api_key` on the trust boundary — a project-layer config cannot
+add an endpoint or retarget one without `--trust-project-config`. `[jobs]`
+declares default run budgets, and `[run] max_iterations` finally has a
+behavioural reader.
+
+### Fixed
+
+**`--approval-mode read-only` auto-approved every gated tool.** The decider
+returned true by construction, so a side-effecting tool would have run without
+asking. It now reads the tool's declared effect. This was harmless only while
+every tool was read-only; it is fixed before the first one that is not.
+
+**A resumed session ignored an explicit `--approval-mode`.** The persisted value
+won, so a deliberate attempt to tighten approval on resume was discarded.
+
+**Redaction ran before disk but not before the model.** Scrubbing now happens at
+the context boundary, closing a channel that writing-time redaction never
+covered.
+
+**Charts wrote unredacted query rows to a temp file nobody removed**, and the
+`0600` tightening was unix-only, so on Windows the file was world-readable.
+
+**A dropped provider stream lost the run** instead of retrying at the turn
+boundary, and a failed salvage call discarded the work it was salvaging.
+
+### Added — earlier in this cycle
+
 - **A release now fails — loudly — when the Homebrew tap does not serve it.**
   The 0.4.0 release looked complete while `brew install` kept serving 0.3.2 for
   a month: the tap-bump job failed one second in on an expired

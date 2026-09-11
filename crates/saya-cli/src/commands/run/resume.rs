@@ -129,6 +129,7 @@ async fn continue_run(
         },
         bounds: super::assembly::manifest_bounds(),
         wall_clock: spec.budgets.wall_clock,
+        token_ceiling: super::budget::token_ceiling(&spec.budgets),
         // The resumed run speaks the same wire a fresh run does: the journal
         // carries the event renderer, and the episode's agent events mirror
         // through today's `TerminalEvent` envelope. `engine_resume` opens its

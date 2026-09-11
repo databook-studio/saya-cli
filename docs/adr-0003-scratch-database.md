@@ -4,6 +4,11 @@
   hardening) was **withdrawn** by the M4-1 pinning; the sign-off below is on external access
   off — see Amendments.
 - Date: 2026-09-10
+- **On the citations below:** this ADR was written alongside an internal design
+  note and implementation plan that are not part of the repository. References
+  to them have been replaced with the substance they carried, so that every
+  claim here can be checked against the code and tests in this tree. Where a
+  decision rests on something outside this repo, it says so.
 - Supersedes: nothing. Complements [ADR 0001](adr-0001-release-architecture.md) and
   [ADR 0002](adr-0002-memory-and-contract-trust-model.md).
 - Records why runs get a writable scratch database, why it deliberately does not travel
@@ -12,13 +17,13 @@
 ## Context
 
 The design's non-goal is absolute: **no write to a user-registered database, ever, not
-just in v1** ([DESIGN](../plan/DESIGN.md) §2). The scratch database is named there as
+just in v1** (the design §2). The scratch database is named there as
 the single exception, and the exception is not user data — it is run-scoped working
 state.
 
 Runs need it. An analysis run stages intermediate results, joins predictions against
 gold answers, scores per-table findings, and re-queries its own working set across
-steps ([DESIGN](../plan/DESIGN.md) §6.5). Doing that in workspace files means
+steps (the design §6.5). Doing that in workspace files means
 hand-rolled CSV diffing inside the model's context; doing it in a user database is
 forbidden. A relational engine is exactly the right tool for join-and-score, and DuckDB
 is already in the dependency tree (`duckdb` 1.10505.0, [`Cargo.lock`](../Cargo.lock)
@@ -28,7 +33,7 @@ This is the first writable SQL in the product. Everything else in saya — every
 the user points it at — crosses the read-only AST gate in
 [`safety/read_only.rs`](../crates/saya-connectors/src/safety/read_only.rs). The design
 therefore requires that scratch ship with its own ADR and its full test battery
-([DESIGN](../plan/DESIGN.md) §6.5).
+(the design §6.5).
 
 ## Decision
 
@@ -41,7 +46,7 @@ lines 59–62) — as staging, join, and scoring space for that run. It holds in
 results the run creates: staged extracts, joined predictions-vs-gold tables, scored
 findings. It never holds anything the user registered, and it never serves `saya ask`
 or any interactive session: the tool that drives it exists only in the run engine's
-toolset ([plan](../plan/PLAN.md) §9, M4-2).
+toolset (the design §9, M4-2).
 
 ### 2. It must not travel the `DatabaseConnector` path
 
@@ -61,7 +66,7 @@ The read-only gate is unconditional today, and that is its entire value:
   `INSTALL httpfs`, `PRAGMA enable_external_access`, writes hidden in CTEs
   ([`read_only_contract.rs`](../crates/saya-connectors/tests/read_only_contract.rs)).
   Those suites are the merge condition for every phase of the plan
-  ([plan](../plan/PLAN.md) §3) and are never modified.
+  (the design §3) and are never modified.
 
 A scratch database behind [`DatabaseConnector`](../crates/saya-connectors/src/lib.rs)
 (lines 35–43) would need exactly one new thing: a "writes permitted" parameter on the
@@ -85,7 +90,7 @@ with a different policy — one that does not implement `DatabaseConnector` and 
 enters the [`ConnectionRegistry`](../crates/saya-cli/src/connection/registry.rs)
 (lines 29–33), so no existing SQL tool can select it as a connection and no
 type-level path exists from a scratch write to a user database
-([DESIGN](../plan/DESIGN.md) §6.5).
+(the design §6.5).
 
 The cost is accepted and deliberate: a second validator pass (`sqlparser` again, its
 own policy), a second open/timeout/interrupt plumbing, and a structural test asserting
@@ -106,7 +111,7 @@ single-writer lock (`run_dir.rs` lines 57–60) covers it.
 **Who may write:** only the run's own episode, only through the `scratch_sql` tool,
 only after the run's plan is approved with the `scratch` scope — runs approve scopes
 once, at plan approval, and headless runs pre-declare them or refuse by construction
-([DESIGN](../plan/DESIGN.md) §7). The tool declares an honest write-shaped effect; the
+(the design §7). The tool declares an honest write-shaped effect; the
 effect machinery already distinguishes write-shaped local state and the loop refuses
 it unless permitted ([`tool.rs`](../crates/saya-agent/src/protocol/contracts/tool.rs)
 lines 25–30), and read-only approval denies anything not read-shaped
@@ -140,14 +145,14 @@ property battery proving every accepted statement touches only the run dir
 
 **Fallback if review rejects even this:** files-only staging — no DuckDB file reads at
 all; loads happen outside the engine. The design degrades cleanly
-([DESIGN](../plan/DESIGN.md) §6.5); the scratch join/score capability survives, only
+(the design §6.5); the scratch join/score capability survives, only
 its ingestion path narrows.
 
 ### 5. DuckDB's ReadWrite semantics are pinned before the capability is advertised
 
 DuckDB's ReadWrite file-creation behaviour is unverified and unpinned by any current
-test — open question U3 ([DESIGN](../plan/DESIGN.md) §12;
-[plan](../plan/PLAN.md) §2). M4-1 writes the semantics suite
+test — open question U3 (the design §12;
+the design §2). M4-1 writes the semantics suite
 (`crates/saya-harness/tests/scratch_semantics.rs`) *before* `scratch_sql` exists: what
 ReadWrite creation does, what the locked configuration actually permits, `read_csv` on
 a local file, and the absence of network functions without httpfs — on the bundled
@@ -168,7 +173,7 @@ stay red and the capability is not advertised — that is what pinning first mea
   gate.
 - The write capability is plan-gated, not per-call approved. In runs the user approves
   the scratch scope once with the plan; per-call prompts stay where they are for
-  interactive SQL ([DESIGN](../plan/DESIGN.md) §7). An unattended run with scratch
+  interactive SQL (the design §7). An unattended run with scratch
   approved can write to its own scratch file without further prompts — bounded by the
   run dir, the budget, and the battery.
 - Admission of `scratch_sql` is hidden until the scope is approved, the same
@@ -184,7 +189,7 @@ stay red and the capability is not advertised — that is what pinning first mea
 - *A long-lived scratch database shared between runs.* One run's intermediate state
   silently steering another run's query is cross-run bleed with no provenance, and it
   breaks run reproducibility — a run's inputs are its spec, not leftovers from a
-  previous run ([plan](../plan/PLAN.md) §2, G3). It also needs a deletion story no one
+  previous run (the design §2, G3). It also needs a deletion story no one
   owns: shared state that outlives its producer is exactly the trust problem ADR 0002
   was written to avoid.
 - *Marking user profiles writable.* Reintroduces the write path at the profile level,
@@ -192,7 +197,7 @@ stay red and the capability is not advertised — that is what pinning first mea
   away. It requires the same conditional gate as the permit flag, and it puts that
   gate between the user and their own databases. The design's non-goal stands: no
   write to a user-registered database, ever; scratch is the only writable SQL and it
-  is run-scoped, not user data ([DESIGN](../plan/DESIGN.md) §2).
+  is run-scoped, not user data (the design §2).
 
 ## Open question recorded for amendment
 

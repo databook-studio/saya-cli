@@ -267,6 +267,7 @@ fn driver_and_sink<'a>(
         Journal::open(&run.run_dir),
         run.store.clone(),
         None,
+        None,
         std::time::Instant::now,
     );
     let driver = EpisodeDriver::new(

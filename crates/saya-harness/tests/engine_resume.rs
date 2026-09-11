@@ -166,6 +166,7 @@ impl CrashedRun {
             request: request(),
             bounds: bounds(),
             wall_clock: None,
+            token_ceiling: None,
             journal_wire: None,
             agent_stream: None,
         }
@@ -286,6 +287,7 @@ async fn driven_run(label: &str) -> CrashedRun {
         RunState::Planned,
         journal.clone(),
         store.clone(),
+        None,
         None,
         std::time::Instant::now,
     );

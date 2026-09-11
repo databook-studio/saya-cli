@@ -57,3 +57,21 @@ fn parse_positive(key: &str, value: &str) -> Result<u64, String> {
     }
     Ok(parsed)
 }
+
+/// The token ceiling the engine enforces, taken from the run's declared
+/// per-endpoint budget.
+///
+/// Every episode currently calls the single orchestrator endpoint, so there
+/// is one bucket and its ceiling is the run's. Declaring a ceiling for some
+/// other role would silently bind nothing, so that is a refusal at parse
+/// time rather than a number quietly ignored here — see `scopes.rs`.
+pub(super) fn token_ceiling(budgets: &saya_types::Budgets) -> Option<u64> {
+    if budgets.tokens_per_endpoint.is_empty() {
+        return None;
+    }
+    // The smallest declared ceiling binds: with one endpoint it is that
+    // endpoint's, and if a future spec carries several before attribution
+    // lands, stopping at the tightest is the safe reading rather than the
+    // generous one.
+    budgets.tokens_per_endpoint.values().copied().min()
+}

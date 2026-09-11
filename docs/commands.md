@@ -89,14 +89,36 @@ the event journal (`events.ndjson`); the state store mirrors statuses for
 home.
 
 `saya run` is headless by construction: it never prompts. Scopes must be
-declared up front with `--allow <scopes>` (comma-separated:
-`workspace-write`, `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`,
-`endpoint:<role>=<endpoint>`); a run without `--allow` refuses to start with
-exit `2` and creates nothing. Budgets come from `[jobs]` in the config,
-layered with `--budget KEY=VALUE` (`wall-clock=<seconds>`, `turns=<n>`,
-`tool-calls=<n>`, `tokens.<endpoint>=<n>`); a zero ceiling is refused as a
-typo, and the environment is never read for budgets — a run is reproducible
-from its spec and config. Per-tool-call approval defaults to `read-only`
+declared up front with `--allow <scopes>`; a run without `--allow` refuses to
+start with exit `2` and creates nothing.
+
+**Today exactly one scope binds: `workspace-write`.** The grammar also parses
+`scratch`, `fetch:<scheme>+<host>`, `runner:<program>` and
+`endpoint:<role>=<endpoint>`, and each is **refused with a usage error** that
+names what is missing, because no tool in a run's universe consumes them yet.
+They are refused rather than accepted-and-ignored on purpose: approving a
+capability that gates nothing would tell you the model may do something it
+cannot. Each becomes available with the slice that wires it.
+
+Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
+(`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,
+`tokens.<endpoint>=<n>`); a zero ceiling is refused as a typo, and the
+environment is never read for budgets — a run is reproducible from its spec
+and config.
+
+Enforcement differs by dimension, and the difference is worth knowing.
+`wall-clock` and `tokens` are checked as the run streams and **pause** it
+(`BudgetExhausted` / `WallClockExceeded`, exit `6`, resumable). `turns` and
+`tool-calls` bound each episode through the agent's own limits, so exhausting
+them ends the step rather than pausing the run. Because every episode calls
+the single `orchestrator` endpoint today, a `tokens.<endpoint>` ceiling binds
+that endpoint; when per-step roles bind, attribution follows the call.
+
+**A resume re-arms the full ceiling.** A run that pauses on wall-clock or
+tokens and is resumed gets the whole budget again, so `N` resumes can cost
+`N ×` the declared ceiling. That is deliberate — a resume is a decision to
+spend more — but it is stated here rather than left to be discovered from a
+bill. Per-tool-call approval defaults to `read-only`
 (read-shaped tools run, side-effecting tools are denied); `--approval-mode`
 overrides it. The episodes call the `orchestrator` endpoint from
 `[[ai.endpoints]]`.
@@ -104,7 +126,8 @@ overrides it. The episodes call the `orchestrator` endpoint from
 Management subcommands:
 
 - `saya run list` — every run, most recent first, with status.
-- `saya run show <id>` — one run's status, goal, scopes, and pause reason.
+- `saya run show <id>` — one run's status, goal, scopes, pause reason, and
+  the deliverables its steps recorded, with sizes and digests.
 - `saya run log <id>` — the run's journal, one event per line.
 - `saya run resume <id>` — continue a paused or crashed run at its first
   incomplete step. A run with a live holder refuses.

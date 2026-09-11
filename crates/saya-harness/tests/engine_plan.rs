@@ -328,6 +328,7 @@ async fn a_valid_plan_binds_and_step_n_sees_only_step_n_s_capabilities() {
         Journal::open(&run.run_dir),
         run.store.clone(),
         None,
+        None,
         std::time::Instant::now,
     );
     let driver = EpisodeDriver::new(

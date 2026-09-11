@@ -111,6 +111,7 @@ async fn usage_accumulation_keeps_not_reported_distinct_from_zero() {
         Journal::open(root.join("run")),
         store,
         None,
+        None,
         move || clock_for_sink.clock(),
     );
 
@@ -200,6 +201,7 @@ async fn the_wall_clock_deadline_trips_a_pause_per_tick() {
         Journal::open(&run_dir),
         store.clone(),
         Some(Duration::from_millis(100)),
+        None,
         move || clock_for_sink.clock(),
     );
 
@@ -280,6 +282,7 @@ async fn a_store_failure_pauses_rather_than_continuing() {
         Journal::open(&run_dir),
         failing,
         None,
+        None,
         Instant::now,
     );
 
@@ -320,5 +323,107 @@ async fn a_store_failure_pauses_rather_than_continuing() {
     );
     assert_eq!(Journal::open(&run_dir).read().unwrap().len(), 1);
 
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The token ceiling pauses the run, and does it on the tick *after* the
+/// tokens are spent.
+///
+/// An independent review found `--budget tokens.<endpoint>` parsed,
+/// persisted to the store and the spec, and re-validated whenever a step
+/// declared its own — and then never compared to anything at runtime. A user
+/// who declared a ceiling got silence, on the one surface whose documented
+/// meaning is that it pauses rather than silently stopping. This is the test
+/// that would have caught it.
+#[tokio::test]
+async fn the_token_ceiling_pauses_the_run_once_it_is_spent() {
+    let root = temp_root("tokens");
+    let (store, run_id) = seeded_store(&root, "tokens", RunStatus::Approved).await;
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let sink = EngineEventSink::new(
+        run_id.clone(),
+        RunState::Approved,
+        Journal::open(&run_dir),
+        store.clone(),
+        None,
+        Some(150),
+        Instant::now,
+    );
+    sink.record(TransitionEvent::Begin).await.unwrap();
+    assert_eq!(sink.state(), RunState::Executing);
+
+    // Under the ceiling: counted, and the run keeps executing.
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(60, 40),
+        },
+    )
+    .await;
+    assert_eq!(sink.state(), RunState::Executing, "100 of 150 is not spent");
+
+    // Crossing it: input and output are summed, because the budget is what
+    // the run costs and a ceiling on half of it bounds nothing in particular.
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(40, 20),
+        },
+    )
+    .await;
+    assert_eq!(
+        sink.state(),
+        RunState::Paused,
+        "160 tokens against a 150 ceiling must pause the run"
+    );
+
+    // The journal says *why*, so `run show` and a resume can both tell this
+    // pause apart from a wall-clock one.
+    let events = Journal::open(&run_dir).read().unwrap();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            RunEvent::Paused {
+                reason: PauseReason::BudgetExhausted,
+                ..
+            }
+        )),
+        "the pause must name the budget: {events:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A run with no declared ceiling is not bounded into a pause by this check —
+/// the guard must be inert when nothing was declared, or every unbudgeted run
+/// would stop at zero.
+#[tokio::test]
+async fn no_declared_ceiling_means_no_token_pause() {
+    let root = temp_root("notokens");
+    let (store, run_id) = seeded_store(&root, "notokens", RunStatus::Approved).await;
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let sink = EngineEventSink::new(
+        run_id,
+        RunState::Approved,
+        Journal::open(&run_dir),
+        store,
+        None,
+        None,
+        Instant::now,
+    );
+    sink.record(TransitionEvent::Begin).await.unwrap();
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(10_000_000, 10_000_000),
+        },
+    )
+    .await;
+    assert_eq!(sink.state(), RunState::Executing);
     let _ = fs::remove_dir_all(root);
 }

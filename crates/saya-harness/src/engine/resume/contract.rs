@@ -78,6 +78,11 @@ pub struct ResumeRun<'a> {
     pub bounds: ManifestBounds,
     /// The run's declared wall-clock ceiling, armed again for the resumed steps.
     pub wall_clock: Option<Duration>,
+    /// The run's token ceiling, carried so a resumed run is bounded by the
+    /// same budget a fresh one is. Note the ceiling re-arms from zero on a
+    /// resume, exactly as the wall clock does — documented in `docs/commands.md`
+    /// rather than left for a user to discover from a bill.
+    pub token_ceiling: Option<u64>,
     /// Optional observer every journaled event notifies — the headless run
     /// wire attaches one so a resumed run streams its journal as it writes
     /// it. `None` renders nothing; the durable record is unaffected either way.

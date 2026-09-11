@@ -79,6 +79,7 @@ pub(super) async fn cancel(
         journal,
         Arc::new(state.clone()) as Arc<dyn saya_store::RunStore>,
         None,
+        None,
         std::time::Instant::now,
     );
     match sink.record(TransitionEvent::Cancel).await {

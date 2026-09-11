@@ -124,8 +124,6 @@ pub(crate) fn resolve(file: &JobsFile, max_iterations: u64) -> Result<ResolvedJo
     };
     let turns = file.turns.unwrap_or(max_iterations);
     require_at_least_one("turns", turns)?;
-    let turns = file.turns.unwrap_or(max_iterations);
-    require_at_least_one("turns", turns)?;
     if let Some(tool_calls) = file.tool_calls {
         require_at_least_one("tool_calls", tool_calls)?;
     }
