@@ -96,6 +96,15 @@ saya query --sql "SELECT count(*) FROM orders"
   Gemini.
 - ⚙️ **Scriptable** — piped or non-TTY input runs headless with text, JSON, or
   NDJSON output, and typed exit codes.
+- 🏃 **Long-running runs** — `saya run "<goal>"` asks the model for a plan,
+  shows it to you once with its scopes and budgets, and executes it step by
+  step, pausing (never silently stopping) when a declared budget trips so a
+  resume picks up at the first incomplete step. Scopes are declared up front
+  with `--allow`, and today the one writable surface any run can reach is its
+  own run directory. Approval is one ask, not one per tool call — and the
+  trade is stated where you make it: if users rubber-stamp plans, the
+  security story leans on the sandbox, the bounds, and the sentinel tests.
+  → [commands](docs/commands.md)
 
 ## Safety
 

@@ -87,8 +87,8 @@ stopping.
 
 ```toml
 [jobs]
-turns = 40                # run-episode turn ceiling
-tool_calls = 25           # total tool calls across episodes
+turns = 40                # per-episode turn ceiling
+tool_calls = 25           # per-episode tool-call ceiling
 wall_clock_seconds = 1800 # run wall-clock ceiling
 
 [jobs.tokens_per_endpoint]
@@ -121,10 +121,12 @@ timeout_seconds = 60         # per request; default 60
 A zero there is refused the same way. No `[jobs]` key has an environment
 override, deliberately: a run must be reproducible from its specification and
 config alone. Per-invocation overrides belong on the command line instead —
-`saya run --budget turns=40 --budget tokens.planner=100000` — whose known keys
-are `wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`, and
-`tokens.<endpoint>=<n>`; unset keys fall back to `[jobs]`, and a zero is
-refused as a typo there too.
+`saya run --budget turns=40 --budget tokens.orchestrator=100000` — whose known
+keys are `wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`, and
+`tokens.orchestrator=<n>`: today every episode calls the orchestrator
+endpoint, so a `tokens.<role>` ceiling naming any other endpoint is refused at
+start (the map's shape is still validated here, at config resolve time).
+Unset keys fall back to `[jobs]`, and a zero is refused as a typo there too.
 
 The project layer may set `[jobs]` without `--trust-project-config`: it is a
 cost control, not a security-critical setting. Layering is per key: a layer
