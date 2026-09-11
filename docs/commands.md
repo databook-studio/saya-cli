@@ -88,12 +88,30 @@ the event journal (`events.ndjson`); the state store mirrors statuses for
 `saya run list`. The runs root follows `SAYA_RUNS_DIR`, then the platform data
 home.
 
-`saya run` is headless by construction: it never prompts. Scopes must be
-declared up front with `--allow <scopes>`; a run without `--allow` refuses to
-start with exit `2` and creates nothing. `--allow none` states the empty
-scope set — a deliberately read-only run: no capability is approved, and the
-episode's per-tool-call approval stays at its read-only default (read-shaped
-tools run, side-effecting tools are denied).
+`saya run` never prompts per tool call, whatever the approval mode: a run has
+no per-call question. Scopes must be declared up front with `--allow <scopes>`;
+a run without `--allow` refuses to start with exit `2` and creates nothing.
+`--allow none` states the empty scope set — a deliberately read-only run: no
+capability is approved, and the episode's per-tool-call approval stays at its
+read-only default (read-shaped tools run, side-effecting tools are denied).
+
+The plan is the one decision point. The model proposes the ordered steps; the
+bound plan is persisted before you are asked, so a refusal or a crash leaves
+a resumable record either way. When the command is attached to a terminal,
+`saya run` asks exactly once: the prompt shows the goal, the scopes `--allow`
+granted, each step with the scopes it asks for, the declared budgets, and the
+workspace artifacts' digests as they stand. Only an explicit `y`/`yes`
+approves; a refusal exits `2`, and that run is not resumable — nothing was
+approved, so start a new run. Approve, and the episodes run without further
+prompts: the wall clock arms only at approval, read-shaped tools run, and
+anything needing an interactive decision or an external side effect is denied
+rather than asked about. One approval instead of one per tool call is what
+makes a long run usable and also what makes the approval matter, so the
+residual is stated here rather than buried: if users rubber-stamp plans, the
+security story leans on the sandbox, the bounds, and the sentinel tests.
+Headless — piped input, CI, or `--non-interactive` — there is no ask at all:
+the `--allow` declaration is the approval, and a plan asking for scopes
+outside it is refused with exit `2`, naming the missing scopes.
 
 **Today exactly one scope binds: `workspace-write`.** The grammar also parses
 `scratch`, `fetch:<scheme>+<host>`, `runner:<program>` and
@@ -101,7 +119,11 @@ tools run, side-effecting tools are denied).
 names what is missing, because no tool in a run's universe consumes them yet.
 They are refused rather than accepted-and-ignored on purpose: approving a
 capability that gates nothing would tell you the model may do something it
-cannot. Each becomes available with the slice that wires it.
+cannot. Each becomes available with the slice that wires it. `runner:` stays
+refused even though the `run_program` tool exists in the run engine: the tool
+is admitted only where the startup sandbox probe proved the host, and no
+run's tool universe contains it yet — so today no run can call it, and this
+document does not describe a capability a run cannot reach.
 
 Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
 (`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,
@@ -134,10 +156,12 @@ output), so the display and the budget that stopped the run agree.
 tokens and is resumed gets the whole budget again, so `N` resumes can cost
 `N ×` the declared ceiling. That is deliberate — a resume is a decision to
 spend more — but it is stated here rather than left to be discovered from a
-bill. Per-tool-call approval defaults to `read-only`
-(read-shaped tools run, side-effecting tools are denied); `--approval-mode`
-overrides it. The episodes call the `orchestrator` endpoint from
-`[[ai.endpoints]]`.
+bill. Per-tool-call approval defaults to `read-only` (read-shaped tools run,
+side-effecting tools are denied). `--approval-mode ask` or `never` denies
+rather than prompts — a run has no per-call question, so every tool that
+declares it needs approval, the SQL tools included, is refused, while tools
+that declare no approval need (schema discovery, the workspace reads) still
+run. The episodes call the `orchestrator` endpoint from `[[ai.endpoints]]`.
 
 Management subcommands:
 
@@ -156,4 +180,7 @@ Management subcommands:
 Exit codes follow the global scheme, plus `6` for a paused run: a run that
 stopped incomplete-but-not-failed exits `6` and says how to resume. A run
 completing with failures exits by cause — safety/query `4`, provider/agent
-`5`, connection/config `3` — never silently `0`.
+`5`, connection/config `3` — never silently `0`. Ctrl-C cancels and exits
+`130`; every refusal before or at the approval gate — unstated scopes, a
+scope or budget the grammar refuses, a plan `--allow` did not grant, a
+refused plan — exits `2`.
