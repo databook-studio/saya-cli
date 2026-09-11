@@ -40,7 +40,7 @@ use crate::interactive::session_prompt::StatusView;
 /// A minimal `RuntimeConfig` that satisfies the `App` fields `ui::draw` never
 /// reads. Built as a struct literal so no config file, env file, or connection
 /// file is touched — the only requirement is that the type constructs.
-fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
+pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
     Arc::new(crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
             profile_name: None,
@@ -96,13 +96,13 @@ fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
 /// A lazy `SqliteStateStore` whose pool is never initialized — `ui::draw` never
 /// calls `pool()`, so no file is created or read. The path is empty and never
 /// touched.
-fn unused_store() -> SqliteStateStore {
+pub(crate) fn unused_store() -> SqliteStateStore {
     SqliteStateStore::new(PathBuf::new())
 }
 
 /// An idle `App` with an empty transcript and a fixed profile list. Built
 /// directly so no history file is read (`App::new` calls `History::load`).
-fn empty_app() -> App {
+pub(crate) fn empty_app() -> App {
     App {
         sql_task: None,
         input: InputBuffer::new(),
@@ -122,6 +122,7 @@ fn empty_app() -> App {
         pending_session_save: None,
         last_query: None,
         wide_table: Default::default(),
+        run_panel: None,
         runtime: unused_runtime(),
         state_db: unused_store(),
         should_quit: false,
@@ -139,7 +140,7 @@ fn empty_app_with_text(text: &str) -> App {
 /// A stable status bar: profile `analytics`, `ollama/qwen`, `read-only`
 /// approval, sharing on. The spinner/elapsed fields are not read when the app
 /// is idle, so this is the whole status strip.
-fn fixed_status() -> StatusView {
+pub(crate) fn fixed_status() -> StatusView {
     StatusView {
         profile: "analytics".into(),
         included: Vec::new(),
@@ -209,7 +210,7 @@ fn proposed_claim(
 
 /// Draws `app` at `w×h` through the real `ui::draw` and returns the backend's
 /// buffer view (one quoted line per screen row, trailing whitespace preserved).
-fn render_buffer(app: &App, status: &StatusView, w: u16, h: u16) -> String {
+pub(crate) fn render_buffer(app: &App, status: &StatusView, w: u16, h: u16) -> String {
     let backend = ratatui::backend::TestBackend::new(w, h);
     let mut terminal = ratatui::Terminal::new(backend).expect("test backend builds");
     terminal

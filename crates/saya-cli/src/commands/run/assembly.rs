@@ -17,6 +17,7 @@ use crate::config::runtime::RuntimeConfig;
 use crate::connection;
 use crate::prompt_approval::TerminalApproval;
 use saya_agent::{ChatProvider, ToolDefinition};
+use saya_types::Budgets;
 
 /// How much workspace the episode brief's manifest walks: names, sizes,
 /// digests — never bulk contents. Conservative brief bounds, fixed here so
@@ -31,6 +32,20 @@ pub(super) fn manifest_bounds() -> saya_harness::engine::ManifestBounds {
         max_files: MANIFEST_MAX_FILES,
         max_file_bytes: MANIFEST_MAX_FILE_BYTES,
     }
+}
+
+/// A step whose budget is unset inherits the run's budgets as its ceilings
+/// (the `StepSpec` contract's layering rule). The engine's brief reads only
+/// the step budget, so the composition root applies the inheritance when
+/// binding: the persisted plan is the layered one a resume replays.
+pub(super) fn bind_step_budgets(plan: saya_types::RunPlan, run: &Budgets) -> saya_types::RunPlan {
+    let mut plan = plan;
+    for step in &mut plan.steps {
+        if step.budget.is_none() {
+            step.budget = Some(run.clone());
+        }
+    }
+    plan
 }
 
 /// Everything the engine's drivers need that the composition root builds
@@ -48,10 +63,13 @@ pub(super) struct Pieces {
 
 /// Assembles the pieces. The model is the `orchestrator` endpoint's — the
 /// role every run has — resolved over the `[ai]` block exactly the way
-/// endpoint resolution layers it. Errors are configuration or connection
+/// endpoint resolution layers it. `profile_override` is the host's active
+/// connection profile (what a nested child's `--profile` forwards); `None`
+/// keeps the resolved default. Errors are configuration or connection
 /// problems (exit-code class 3), reported as text for the caller to emit.
 pub(super) async fn assemble(
     runtime: &RuntimeConfig,
+    profile_override: Option<&String>,
     scopes: &saya_types::Capabilities,
     workspace: std::sync::Arc<saya_harness::workspace::Workspace>,
     approval: saya_agent::ApprovalPolicy,
@@ -70,7 +88,7 @@ pub(super) async fn assemble(
     let provider =
         provider::build(&ai, &runtime.secret_resolver()).map_err(|error| error.to_string())?;
     let (profile_name, profile) =
-        profile::selected(runtime, None).map_err(|error| error.to_string())?;
+        profile::selected(runtime, profile_override).map_err(|error| error.to_string())?;
     let (registry, _failures) = match profile.as_ref() {
         Some(primary) => connection::build_registry(
             &runtime.secret_resolver(),

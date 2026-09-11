@@ -22,6 +22,7 @@ mod claim;
 mod drive;
 mod exit;
 mod files;
+mod host;
 mod reads;
 mod resume;
 mod scopes;
@@ -32,6 +33,26 @@ use crate::render::RenderFormat;
 use saya_store::SqliteStateStore;
 use saya_types::{PauseReason, RunEvent, RunId};
 use std::path::PathBuf;
+
+// The panel adapter surface: the TUI's run panel drives the same fresh-run
+// path through `start_for_panel`, and its plan-approval modal answers the
+// channel request `ask.rs`'s terminal driver answers for `saya run`. The
+// panel mints its run's id with the same helper so the title names the run
+// the journal will record.
+pub(crate) use approval::{PlanApproval, PlanApprovalRequest};
+pub(crate) use host::{HostRun, RunRequest};
+pub(crate) use start::start_for_panel;
+
+/// A fresh run id: milliseconds plus pid — unique on one machine, and inside
+/// the shape [`saya_types::RunId`] allows for a path component.
+pub(crate) fn new_run_id() -> RunId {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or_default();
+    RunId::parse(&format!("r{millis}-{}", std::process::id()))
+        .expect("generated run id satisfies the run-id shape")
+}
 
 /// The `saya run` invocation the CLI parsed: the goal prompt, the approved
 /// scopes, the budget overrides, and the optional management subcommand.
@@ -130,17 +151,6 @@ pub(super) fn parse_run_id(raw: &str) -> Result<RunId, String> {
         .map_err(|_| "run id must be non-empty and use only letters, digits, '-', '_'".to_string())
 }
 
-/// A fresh run id: milliseconds plus pid — unique on one machine, and inside
-/// the shape [`saya_types::RunId`] allows for a path component.
-pub(super) fn new_run_id() -> RunId {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_millis())
-        .unwrap_or_default();
-    RunId::parse(&format!("r{millis}-{}", std::process::id()))
-        .expect("generated run id satisfies the run-id shape")
-}
-
 /// The pause reason the journal last recorded, for messages that name it.
 pub(super) fn last_pause(journal: &saya_harness::journal::Journal) -> Option<PauseReason> {
     match journal.rebuild() {
@@ -194,4 +204,12 @@ pub(super) fn journal_tail(
         },
         Err(_) => (RunState::Executing, None),
     }
+}
+
+/// Serializes the unit tests that point `SAYA_RUNS_DIR` at a private root:
+/// the variable is process-global and the lib test binary runs its tests
+/// concurrently, so every such test holds this for its whole body.
+#[cfg(test)]
+pub(crate) mod test_lock {
+    pub(crate) static RUNS_DIR: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 }

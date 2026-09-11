@@ -83,6 +83,18 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         return;
     }
+    // The run panel's plan-approval modal captures input the same way: the
+    // merged M1-10 gate, answered by the UI, never stdin.
+    if app
+        .run_panel
+        .as_ref()
+        .is_some_and(|panel| panel.plan_approval.is_some())
+    {
+        if let Some(allow) = approval_answer(code) {
+            app.answer_plan_approval(allow);
+        }
+        return;
+    }
     // When the popup is open these keys drive it.
     if app.overlays.menu.is_some() {
         match code {
@@ -115,6 +127,23 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             .push(super::transcript::BlockKind::System, "Cancelling…");
         return;
     }
+    // Esc cancels the panel's in-flight run — the token cancels and the
+    // worker records the stop through the engine path `saya run cancel`
+    // takes. When the panel's run is over, Esc closes the panel; the
+    // conversation returns and the durable record stays in /runs. Checked
+    // after the SQL detach and agent cancel — an agent stream in the
+    // conversation cancels first — and never races them: a run and those
+    // are separate workers.
+    if code == KeyCode::Esc
+        && let Some(panel) = app.run_panel.as_ref()
+    {
+        if panel.is_active() {
+            app.cancel_run_panel();
+        } else {
+            app.close_run_panel();
+        }
+        return;
+    }
     let ctrl = mods.contains(KeyModifiers::CONTROL);
     let alt = mods.contains(KeyModifiers::ALT);
     let word = ctrl || alt;
@@ -138,7 +167,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             } else if !app.input.is_empty() {
                 app.input.clear();
                 app.overlays.menu = None;
-            } else if was_armed {
+            } else if was_armed && app.try_quit() {
                 app.should_quit = true;
             } else {
                 app.ctrl_c_armed = true;
@@ -149,7 +178,9 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             }
             return;
         }
-        KeyCode::Char('d') if ctrl && app.input.is_empty() => return app.should_quit = true,
+        KeyCode::Char('d') if ctrl && app.input.is_empty() => {
+            return app.should_quit = app.try_quit();
+        }
         KeyCode::Char('a') if ctrl => app.input.move_home(),
         KeyCode::Char('e') if ctrl => app.input.move_end(),
         KeyCode::Char('k') if ctrl => app.input.kill_to_line_end(),
@@ -196,6 +227,84 @@ mod approval_modal_tests {
         assert_eq!(approval_answer(KeyCode::Char('N')), Some(false));
         assert_eq!(approval_answer(KeyCode::Esc), Some(false));
         assert_eq!(approval_answer(KeyCode::Tab), None);
+    }
+}
+
+#[cfg(test)]
+mod esc_run_panel_tests {
+    use super::*;
+    use crate::interactive::tui::application::tests_support::idle_app;
+    use crate::interactive::tui::run_panel::{RunPanel, test_channels};
+    use crate::interactive::tui::run_worker::RunWorker;
+    use saya_agent::CancellationToken;
+
+    /// A panel wired the way the real worker hands one back.
+    fn app_with_panel(active: bool) -> (App, CancellationToken) {
+        let (_tx, rx) = test_channels();
+        let cancel = CancellationToken::new();
+        let mut app = idle_app();
+        let mut panel = RunPanel::new(
+            RunWorker {
+                rx,
+                cancel: cancel.clone(),
+            },
+            "r-keys-1".into(),
+            "goal".into(),
+        );
+        if !active {
+            panel.worker = None;
+        }
+        app.run_panel = Some(panel);
+        (app, cancel)
+    }
+
+    /// Esc cancels an in-flight run: the token fires, the panel stays (it is
+    /// cancelling), and nothing claims the conversation.
+    #[test]
+    fn esc_cancels_an_in_flight_run() {
+        let (mut app, cancel) = app_with_panel(true);
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(cancel.is_cancelled(), "the stop cancels the token");
+        assert!(app.run_panel.is_some(), "the panel stays while cancelling");
+    }
+
+    /// Esc closes a finished panel; the conversation returns and the durable
+    /// record stays in /runs.
+    #[test]
+    fn esc_closes_a_finished_panel() {
+        let (mut app, _cancel) = app_with_panel(false);
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.run_panel.is_none(), "the finished panel closes");
+    }
+
+    /// An agent stream in the conversation cancels first: with both a stream
+    /// and a finished panel on screen, Esc stops the stream and the panel
+    /// stays. A run and an agent stream are separate workers, and Esc never
+    /// closes the panel out from under an active stream.
+    #[test]
+    fn esc_cancels_the_agent_stream_before_touching_the_panel() {
+        let (mut app, _cancel) = app_with_panel(false);
+        let stream = crate::interactive::tui::agent::start(
+            app.runtime.clone(),
+            "a prompt".into(),
+            saya_agent::ApprovalPolicy::ReadOnly,
+            crate::agent::runtime::PromptOverrides::default(),
+            Vec::new(),
+            app.state_db.clone(),
+            None,
+        );
+        app.request.stream = Some(stream);
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(
+            app.run_panel.is_some(),
+            "the panel is not closed while the stream cancels"
+        );
+        let last = app
+            .transcript
+            .blocks()
+            .last()
+            .expect("the stream cancel posts");
+        assert_eq!(last.text, "Cancelling…");
     }
 }
 

@@ -10,6 +10,7 @@ use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_commands::SessionAction;
+use crate::interactive::session_run::{self, RunTail};
 use crate::interactive::session_state::SessionState;
 use crate::render::RenderFormat;
 use crate::slash::{SlashCommand, parse_slash_command};
@@ -31,6 +32,13 @@ pub(crate) enum Dispatch {
     /// `/columns` — set which columns wide result tables show. Handled by the
     /// caller, which owns the view state on `App`.
     SetColumns(Option<String>),
+    /// `/run <goal…>` — a fresh run the run panel drives as a worker task;
+    /// the caller owns the panel state and the worker handle.
+    RunPanel {
+        goal: Option<String>,
+        allow: Vec<String>,
+        budget: Vec<String>,
+    },
 }
 
 /// Dispatches one submitted line, mutating `state` and appending to `transcript`.
@@ -94,12 +102,40 @@ pub(crate) fn dispatch(
                     format,
                     crate::cli::RunCommand::Cancel { run_id },
                 ),
-                SessionAction::Run(_) => transcript.push(
-                    BlockKind::System,
-                    "A run streams to the terminal — start it from the headless session \
-                     (piped input) or a shell: `saya run <goal> --allow <scopes>`. \
-                     /runs and /run cancel <id> work here.",
-                ),
+                SessionAction::Run(tail) => {
+                    // The child's own grammar parses the tail in-process (the
+                    // parser stays the authority); a fresh run drives the
+                    // run panel as a worker task instead of the nested child
+                    // a piped session spawns — the alternate screen owns
+                    // stdout, so the run's observers forward to the panel.
+                    match session_run::parse_run_tail(&tail) {
+                        Ok(RunTail::Start {
+                            goal,
+                            allow,
+                            budget,
+                        }) => {
+                            result = Dispatch::RunPanel {
+                                goal,
+                                allow,
+                                budget,
+                            };
+                        }
+                        Ok(RunTail::Manage(command)) => {
+                            dispatch_runs::run_management_command(
+                                transcript, runtime, state_db, format, command,
+                            );
+                        }
+                        Ok(RunTail::Resume(run_id)) => transcript.push(
+                            BlockKind::System,
+                            format!(
+                                "Resuming run {run_id} streams to the real terminal, which \
+                                 the TUI does not own while the panel is up — resume it \
+                                 from a shell: `saya run resume {run_id}`."
+                            ),
+                        ),
+                        Err(message) => transcript.push(BlockKind::Error, message),
+                    }
+                }
                 SessionAction::Export(path) => match last_query.as_ref() {
                     Some(lq) => {
                         result = Dispatch::SqlTask(super::sql_task::SqlTask {

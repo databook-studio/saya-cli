@@ -30,6 +30,7 @@
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_state::SessionState;
 use crate::render::RenderFormat;
+use clap::Parser as _;
 use std::process::{Command, Stdio};
 
 /// The run subcommands the child's CLI recognizes after `run`. A tail whose
@@ -108,6 +109,55 @@ fn format_flag(format: RenderFormat) -> &'static str {
     }
 }
 
+/// What a `/run <tail>` tail means once the child's own grammar has parsed
+/// it. The same clap grammar `saya run` uses parses the tail in-process, so
+/// the TUI's panel adapter parses nothing twice — the parser stays the
+/// authority on `--allow`, `--budget`, and the subcommands.
+#[derive(Debug)]
+pub(crate) enum RunTail {
+    /// A fresh run: goal, scopes, and budgets. The run panel drives it.
+    Start {
+        goal: Option<String>,
+        allow: Vec<String>,
+        budget: Vec<String>,
+    },
+    /// A management subcommand (`show`/`log`/`list`/`cancel`) — the shared
+    /// dispatcher handles it, the same path `saya run` and `/runs` take.
+    Manage(crate::cli::RunCommand),
+    /// `resume` — the resume drive streams to the real stdout, which the TUI
+    /// does not own while the alternate screen is up; a shell hosts it.
+    Resume(String),
+}
+
+/// Parses a `/run <tail>` tail through the child's own grammar. The TUI
+/// routes `Start` tails to the run panel and `Manage` tails through the
+/// shared dispatcher; `resume` is declined (see [`RunTail::Resume`]).
+pub(crate) fn parse_run_tail(tail: &str) -> Result<RunTail, String> {
+    let mut argv = vec!["saya".to_string(), "--non-interactive".to_string()];
+    argv.push("run".to_string());
+    argv.extend(child_argv(tail));
+    match crate::cli::Cli::try_parse_from(argv) {
+        Ok(cli) => match cli.command {
+            Some(crate::cli::Command::Run {
+                prompt,
+                allow,
+                budget,
+                command,
+            }) => match command {
+                Some(crate::cli::RunCommand::Resume { run_id }) => Ok(RunTail::Resume(run_id)),
+                Some(other) => Ok(RunTail::Manage(other)),
+                None => Ok(RunTail::Start {
+                    goal: prompt,
+                    allow,
+                    budget,
+                }),
+            },
+            _ => Err("expected a run command: /run <goal> --allow <scopes>".to_string()),
+        },
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +187,51 @@ mod tests {
     fn subcommand_tails_pass_through_verbatim() {
         assert_eq!(child_argv("resume r-1"), ["resume", "r-1"]);
         assert_eq!(child_argv("list"), ["list"]);
+    }
+
+    /// The panel path parses the tail through the same grammar the child
+    /// gets: a goal tail becomes one positional plus flags, a management
+    /// subcommand maps to the shared `RunCommand`, and `resume` is surfaced
+    /// as its own decline (the resume drive streams to the real stdout).
+    #[test]
+    fn the_panel_parses_the_tail_through_the_child_grammar() {
+        match parse_run_tail("survey the data --allow workspace-write") {
+            Ok(RunTail::Start {
+                goal,
+                allow,
+                budget,
+            }) => {
+                assert_eq!(goal.as_deref(), Some("survey the data"));
+                assert_eq!(allow, vec!["workspace-write".to_string()]);
+                assert!(budget.is_empty());
+            }
+            other => panic!("a goal tail parses to Start, got {other:?}"),
+        }
+        match parse_run_tail("show r-1") {
+            Ok(RunTail::Manage(crate::cli::RunCommand::Show { run_id })) => {
+                assert_eq!(run_id, "r-1");
+            }
+            other => panic!("a show tail parses to Manage, got {other:?}"),
+        }
+        match parse_run_tail("log r-1") {
+            Ok(RunTail::Manage(crate::cli::RunCommand::Log { run_id })) => {
+                assert_eq!(run_id, "r-1");
+            }
+            other => panic!("a log tail parses to Manage, got {other:?}"),
+        }
+        match parse_run_tail("resume r-1") {
+            Ok(RunTail::Resume(run_id)) => assert_eq!(run_id, "r-1"),
+            other => panic!("a resume tail parses to Resume, got {other:?}"),
+        }
+        // The parser is the authority: an unknown flag fails the way the
+        // child's own parse would. (A budget *value* is validated later, by
+        // the run surface — the grammar itself accepts it.)
+        assert!(parse_run_tail("--nonsense").is_err());
+        match parse_run_tail("--budget nonsense") {
+            Ok(RunTail::Start { budget, .. }) => {
+                assert_eq!(budget, vec!["nonsense".to_string()]);
+            }
+            other => panic!("a budget tail parses to Start, got {other:?}"),
+        }
     }
 }

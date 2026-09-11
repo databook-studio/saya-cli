@@ -2,6 +2,7 @@
 
 mod input_actions;
 mod picker;
+mod run_panel;
 mod search;
 mod streaming;
 mod wide_table;
@@ -46,6 +47,7 @@ impl App {
             pending_session_save: None,
             last_query: None,
             wide_table: Default::default(),
+            run_panel: None,
             runtime,
             state_db,
             should_quit: false,
@@ -164,6 +166,7 @@ pub(crate) mod tests_support {
             pending_session_save: None,
             last_query: None,
             wide_table: Default::default(),
+            run_panel: None,
             runtime: Arc::new(unused_runtime()),
             state_db: SqliteStateStore::new(PathBuf::new()),
             should_quit: false,

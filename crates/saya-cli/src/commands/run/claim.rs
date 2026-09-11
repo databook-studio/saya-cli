@@ -19,11 +19,14 @@ use saya_types::{Budgets, RunEvent, RunId};
 /// for the whole run; the caller drops it when the run ends. The claim
 /// journal carries the run wire, so the `RunStarted` it appends is the wire's
 /// first line — rendered from the journal's own write, never a second copy.
+/// A host-injected wire (the TUI's panel) rides `wire` instead of the
+/// process stream's renderer.
 pub(super) async fn claim(
     run_id: &RunId,
     state: &SqliteStateStore,
     spec: &saya_types::RunSpec,
     format: RenderFormat,
+    wire: Option<saya_harness::journal::JournalWire>,
 ) -> Result<(RunDir, RunLock), String> {
     let run_dir = RunDir::create(&super::runs_dir(), run_id)
         .map_err(|error| format!("run directory could not be created: {error}"))?;
@@ -39,7 +42,10 @@ pub(super) async fn claim(
     )
     .await
     .map_err(|error| format!("run state store refused the run: {error}"))?;
-    let journal = render_run::wired_journal(Journal::open(run_dir.root()), format);
+    let journal = match wire {
+        Some(wire) => Journal::open(run_dir.root()).with_wire(wire),
+        None => render_run::wired_journal(Journal::open(run_dir.root()), format),
+    };
     journal
         .append(&RunEvent::RunStarted)
         .map_err(|error| format!("run journal refused RunStarted: {error}"))?;
