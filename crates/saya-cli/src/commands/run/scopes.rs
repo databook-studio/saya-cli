@@ -26,10 +26,6 @@ const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
 /// whole of "turning the scope on" once its tool is in the universe.
 const NOT_YET_WIRED: &[(&str, &str)] = &[
     (
-        "scratch",
-        "M4-2's scratch_sql is not yet in a run's tool universe",
-    ),
-    (
         "fetch",
         "M3-2/M3-3's http_fetch and http_download are not yet in a run's tool universe",
     ),
@@ -91,9 +87,6 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
         if token == "workspace-write" {
             capabilities.workspace_write = true;
         } else if token == "scratch" {
-            if let Some(refusal) = not_yet_wired(token, "scratch") {
-                return Err(refusal);
-            }
             capabilities.scratch = true;
         } else if let Some(rest) = token.strip_prefix("fetch:") {
             if let Some(refusal) = not_yet_wired(token, "fetch") {
@@ -153,11 +146,12 @@ mod tests {
     /// `endpoint:` accepted, persisted and rendered while no tool in a run's
     /// universe consumed any of them. Approving a capability that gates
     /// nothing tells the user something false about what the model may do,
-    /// so each is refused until its wiring lands.
+    /// so each is refused until its wiring lands. `scratch` wired with its
+    /// tool (S1) and left this list; the rest stay refused, and this test
+    /// keeps refusing them the day they are typed.
     #[test]
     fn a_scope_nothing_consumes_is_refused_rather_than_silently_approved() {
         for token in [
-            "scratch",
             "fetch:https+example.com",
             "runner:python3",
             "endpoint:analyst=fast",
@@ -207,7 +201,7 @@ mod tests {
     }
 
     /// The scope that *is* wired keeps working — the fix must refuse the
-    /// inert ones without breaking the one capability a run can actually use.
+    /// inert ones without breaking the capability a run can actually use.
     #[test]
     fn workspace_write_is_wired_and_still_approves() {
         let Ok(approved) = parse(&["workspace-write".to_string()]) else {
@@ -220,12 +214,28 @@ mod tests {
         assert!(approved.capabilities.endpoints.as_map().is_empty());
     }
 
+    /// The inverse pin's first half: `scratch` is wired, so `--allow scratch`
+    /// approves the scope — the deletion of its refusal entry alone proves
+    /// nothing, this does. The second half (its tool in the universe of the
+    /// steps that asked for it) lives beside the toolset builder's tests.
+    #[test]
+    fn scratch_is_wired_and_still_approves() {
+        let Ok(approved) = parse(&["scratch".to_string()]) else {
+            panic!("the wired scope must approve");
+        };
+        assert!(approved.capabilities.scratch);
+        assert!(!approved.capabilities.workspace_write);
+        assert!(approved.capabilities.fetch.is_none());
+        assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.endpoints.as_map().is_empty());
+    }
+
     /// The empty approval is stateable: `--allow none` starts a run that
-    /// approves nothing at all. Four of the grammar's five capability
+    /// approves nothing at all. Three of the grammar's five capability
     /// scopes are refused, so without this token the only way to start any
-    /// run — including a purely read-only one — would be approving
-    /// `workspace-write`, which would turn the one scope that means
-    /// something into boilerplate everyone types.
+    /// run — including a purely read-only one — would be approving one of
+    /// the wired scopes, which would turn a scope that means something into
+    /// boilerplate everyone types.
     #[test]
     fn none_states_the_empty_approval_for_a_read_only_run() {
         let Ok(approved) = parse(&["none".to_string()]) else {

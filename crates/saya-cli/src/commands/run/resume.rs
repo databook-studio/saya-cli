@@ -105,19 +105,30 @@ async fn continue_run(
             );
         }
     };
-    let pieces = match super::assembly::assemble(runtime, None, workspace.clone(), approval).await {
+    let pieces = match super::assembly::assemble(
+        runtime,
+        None,
+        &dir,
+        &spec.scopes,
+        workspace.clone(),
+        approval,
+    )
+    .await
+    {
         Ok(pieces) => pieces,
         Err(message) => return crate::commands::output::failure_message(3, message, format),
     };
     // The per-step toolsets are prebuilt from the loaded plan, the same
     // fail-closed prebuild a fresh run does: the plan is known before
     // `engine_resume`, so a toolset that cannot be built refuses before
-    // the resume runs anything.
+    // the resume runs anything. Each is built from its step's capabilities
+    // over the run's shared collaborators, the same way a fresh run builds
+    // them.
     let toolsets = super::tools::toolsets(
         &pieces.tools,
+        pieces.scratch.as_ref(),
         pieces.allow_query_data,
-        &spec.scopes,
-        plan.steps.len(),
+        &plan.steps,
     );
     let resumed = ResumeRun {
         run_id: run_id.clone(),

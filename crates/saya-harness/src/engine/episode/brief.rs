@@ -90,6 +90,14 @@ pub(super) fn render(plan: &RunPlan, step: usize, manifest: &[ManifestEntry]) ->
 /// the result — the hidden-not-advertised pattern: the model never sees a
 /// tool it would only be refused on. Candidate-write tools are not
 /// capability-scoped, so they pass and are stopped by the pinned limit.
+///
+/// The write-shaped class is one `LocalStateEffect` variant shared by
+/// workspace-write, scratch, runner and fetch (`http_download`), so the
+/// filter asks the same question the permit mapping does — "did this step
+/// approve some write-shaped scope?" — not which tool it is: which tool is
+/// the composition root's decision, made from the same capabilities the
+/// toolset was built from. This is the second lock behind construction; it
+/// must never strip a tool the step approved.
 pub(super) fn definitions(
     universe: &[ToolDefinition],
     capabilities: &Capabilities,
@@ -97,7 +105,12 @@ pub(super) fn definitions(
     universe
         .iter()
         .filter(|tool| match tool.effect.local_state {
-            LocalStateEffect::WriteWorkspace => capabilities.workspace_write,
+            LocalStateEffect::WriteWorkspace => {
+                capabilities.workspace_write
+                    || capabilities.scratch
+                    || capabilities.runner.is_some()
+                    || capabilities.fetch.is_some()
+            }
             _ => true,
         })
         .cloned()
@@ -195,5 +208,47 @@ mod tests {
                 "a write-shaped scope must carry the write permit: {shape:?}"
             );
         }
+    }
+
+    /// The definitions filter asks the same question the permit mapping does:
+    /// a write-shaped tool survives for a step that approved any write-shaped
+    /// scope. Pinned with the real `scratch_sql` definition, because it is
+    /// the first write-shaped tool whose approval does not come from
+    /// `workspace_write` — a scratch-only step (the `--allow scratch` shape)
+    /// must see it, and a step that approved no write-shaped scope must not.
+    #[test]
+    fn the_write_shaped_filter_keeps_what_a_write_shaped_scope_approved() {
+        use crate::scratch::{SCRATCH_SQL_TOOL, ScratchSql};
+
+        let definition = ScratchSql::definition();
+        let names = |universe: &[ToolDefinition]| {
+            universe
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let mut scratch = Capabilities::default();
+        scratch.scratch = true;
+        assert_eq!(
+            names(&definitions(std::slice::from_ref(&definition), &scratch)),
+            vec![SCRATCH_SQL_TOOL],
+            "a scratch-only step must see scratch_sql — the filter is the \
+             second lock, never a strip of an approved tool"
+        );
+
+        assert!(
+            definitions(std::slice::from_ref(&definition), &Capabilities::default()).is_empty(),
+            "a step that approved no write-shaped scope must not see it"
+        );
+
+        let mut workspace_write = Capabilities::default();
+        workspace_write.workspace_write = true;
+        assert_eq!(
+            names(&definitions(&[definition], &workspace_write)),
+            vec![SCRATCH_SQL_TOOL],
+            "a workspace-write-only step carrying the permit passes the \
+             class filter; which tool it sees was the builder's decision"
+        );
     }
 }
