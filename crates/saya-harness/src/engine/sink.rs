@@ -81,14 +81,8 @@ pub struct EngineEventSink {
     store: Arc<dyn RunStore>,
     clock: Clock,
     deadline: Option<Instant>,
-    /// The run's token ceiling, summed across input and output.
-    ///
-    /// The declared budget is per endpoint, but every episode currently calls
-    /// the single orchestrator endpoint, so there is exactly one bucket to
-    /// enforce and the ceiling is that endpoint's. When per-step endpoint
-    /// roles bind, this becomes a map and attribution follows the call —
-    /// until then a per-endpoint ceiling with one endpoint is the same
-    /// number, and pretending otherwise would be the more confusing lie.
+    /// The run's token ceiling, armed from [`SinkBudgets`] — its per-endpoint
+    /// and whole-spend semantics are documented there.
     token_ceiling: Option<u64>,
     state: Mutex<RunState>,
     usage: Mutex<UsageTotals>,
@@ -100,22 +94,54 @@ pub struct EngineEventSink {
     agent_stream: Option<Arc<dyn AgentEventSink>>,
 }
 
+/// The run's budgets as the sink arms them: the declared ceilings, and the
+/// spend the run's durable record already holds. Declared together because
+/// they arm together — the constructor carries no default for any of them,
+/// so a caller cannot arm a ceiling without stating what is already spent.
+#[derive(Debug, Clone, Copy)]
+pub struct SinkBudgets {
+    /// The run's declared wall-clock ceiling, measured against the sink's
+    /// clock. A ceiling so large it cannot be added to the current instant
+    /// arms as already expired: a budget that cannot be honored trips
+    /// rather than runs unbounded.
+    pub wall_clock: Option<Duration>,
+    /// The run's declared token ceiling, summed across input and output.
+    ///
+    /// The declared budget is per endpoint, but every episode currently
+    /// calls the single orchestrator endpoint, so there is exactly one
+    /// bucket to enforce and the ceiling is that endpoint's. When per-step
+    /// endpoint roles bind, this becomes a map and attribution follows the
+    /// call — until then a per-endpoint ceiling with one endpoint is the
+    /// same number, and pretending otherwise would be the more confusing
+    /// lie.
+    pub token_ceiling: Option<u64>,
+    /// The spend the run's journal already records when this sink takes
+    /// over — the seeding a resume does, so the token ceiling measures the
+    /// run's whole spend across invocations rather than re-arming in full.
+    /// A fresh run carries [`UsageTotals::default`].
+    pub carried_usage: UsageTotals,
+}
+
 impl EngineEventSink {
     /// A sink for `run_id` standing at `initial` — the state the machine
     /// already holds. `journal` and `store` are the run's two mirrors;
-    /// `wall_clock` is the run's declared ceiling, measured against `clock`.
-    /// A ceiling so large it cannot be added to the current instant arms as
-    /// already expired: a budget that cannot be honored trips rather than
-    /// runs unbounded.
+    /// `budgets` carries the run's declared ceilings and the spend already
+    /// behind them — the seeding a resume does, so the token ceiling
+    /// measures the run's whole spend; a fresh run carries
+    /// [`UsageTotals::default`].
     pub fn new(
         run_id: RunId,
         initial: RunState,
         journal: Journal,
         store: Arc<dyn RunStore>,
-        wall_clock: Option<Duration>,
-        token_ceiling: Option<u64>,
+        budgets: SinkBudgets,
         clock: impl Fn() -> Instant + Send + Sync + 'static,
     ) -> Self {
+        let SinkBudgets {
+            wall_clock,
+            token_ceiling,
+            carried_usage,
+        } = budgets;
         let now = clock();
         let deadline = wall_clock.map(|ceiling| now.checked_add(ceiling).unwrap_or(now));
         Self {
@@ -126,7 +152,7 @@ impl EngineEventSink {
             deadline,
             token_ceiling,
             state: Mutex::new(initial),
-            usage: Mutex::new(UsageTotals::default()),
+            usage: Mutex::new(carried_usage),
             diagnostic: Mutex::new(None),
             agent_stream: None,
         }
@@ -283,16 +309,22 @@ impl EngineEventSink {
         }
     }
 
-    /// Whether the run has spent its declared token ceiling. Input and output
-    /// are summed because the budget is what the run costs, and a ceiling
-    /// that counted only one half would be a ceiling on nothing in
-    /// particular. Figures no call reported stay out of the sum rather than
-    /// counting as zero.
+    /// Whether the run has spent its declared token ceiling. The sum is the
+    /// run's whole spend: the tokens the durable record already carries (a
+    /// resume seeds them into the totals) plus the calls this sink has seen.
+    /// Input and output are summed because the budget is what the run costs,
+    /// and a ceiling that counted only one half would be a ceiling on
+    /// nothing in particular. Figures no call reported stay out of the sum
+    /// rather than counting as zero.
     fn tokens_exhausted(&self) -> bool {
         let Some(ceiling) = self.token_ceiling else {
             return false;
         };
         let usage = self.usage();
-        usage.input_tokens.saturating_add(usage.output_tokens) >= ceiling
+        usage
+            .carried_tokens
+            .saturating_add(usage.input_tokens)
+            .saturating_add(usage.output_tokens)
+            >= ceiling
     }
 }
