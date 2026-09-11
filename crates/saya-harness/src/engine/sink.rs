@@ -209,20 +209,48 @@ impl EngineEventSink {
 
 #[async_trait]
 impl AgentEventSink for EngineEventSink {
-    /// One event emission is one tick: usage folds into the run's totals,
-    /// then the wall-clock deadline is checked. Counting precedes the check
-    /// because the tokens the event reports were already spent.
+    /// One event emission is one tick: usage folds into the run's totals and
+    /// is journaled as the run's durable per-endpoint record, then the
+    /// wall-clock deadline is checked. Counting precedes the check because
+    /// the tokens the event reports were already spent.
     async fn emit(&self, event: AgentEvent) {
         if let AgentEvent::Usage { usage, .. } = &event {
             self.usage
                 .lock()
                 .expect("engine sink usage lock")
                 .fold(usage);
+            self.journal_usage(usage);
         }
         if let Some(stream) = &self.agent_stream {
             stream.emit(event).await;
         }
         self.tick().await;
+    }
+}
+
+impl EngineEventSink {
+    /// Journals one call's usage as the durable record `saya run show` and
+    /// `saya run log` read back. The event is labelled with the endpoint the
+    /// episode calls — today always the single orchestrator endpoint, the
+    /// same one bucket the token ceiling sums — and carries each figure only
+    /// when the provider reported it: an unreported cache figure journals
+    /// absent (unknown), never zero. The journal is the durable authority;
+    /// the store's usage mirror is a reconciliation concern, not this one.
+    ///
+    /// A failed append is held as a diagnostic: emit has no error channel,
+    /// and the next transition's write fails loudly the same way.
+    fn journal_usage(&self, usage: &saya_agent::TokenUsage) {
+        let event = RunEvent::Usage {
+            endpoint: crate::endpoints::ORCHESTRATOR_ROLE.to_string(),
+            tokens: Some(usage.input_tokens.saturating_add(usage.output_tokens)),
+            turns: None,
+            tool_calls: None,
+            cached_input_tokens: usage.cached_input_tokens,
+            cache_creation_input_tokens: usage.cache_creation_input_tokens,
+        };
+        if let Err(source) = self.journal.append(&event) {
+            self.hold_diagnostic(EngineSinkError::Journal { source });
+        }
     }
 }
 

@@ -94,6 +94,8 @@ fn an_event_carrying_a_planted_secret_writes_no_secret_to_the_run_dir() {
             tokens: Some(5),
             turns: None,
             tool_calls: None,
+            cached_input_tokens: None,
+            cache_creation_input_tokens: None,
         })
         .unwrap();
 
@@ -153,6 +155,8 @@ fn replay_records_a_bounded_retry_and_lets_usage_stand_aside() {
             tokens: Some(1),
             turns: None,
             tool_calls: None,
+            cached_input_tokens: None,
+            cache_creation_input_tokens: None,
         },
     ];
 

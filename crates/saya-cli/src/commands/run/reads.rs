@@ -12,6 +12,7 @@ use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 use crate::render_run;
+use crate::render_usage;
 use saya_store::{RunStore, SqliteStateStore};
 use saya_types::{Deliverable, RunEvent};
 
@@ -84,6 +85,7 @@ pub(super) async fn show(
         .read()
         .map_err(|error| format!("run journal could not be read: {error}"))?;
     let deliverables = deliverable_lines(&events);
+    let usage = render_usage::usage_by_endpoint(&events);
     let text = render_run::run_show_text(render_run::RunShowStanza {
         id: record.id.as_str(),
         status: record.status.as_str(),
@@ -100,14 +102,18 @@ pub(super) async fn show(
             .map(|(goal, scopes)| (goal.as_str(), scopes.as_str())),
         paused,
         deliverables: &deliverables,
+        usage: &usage,
     });
     crate::commands::output::result(text, format)
 }
 
-/// Prints one run's journal: every lifecycle and step event, in write order,
-/// one NDJSON line each — the journal is already the wire format. The lines
-/// are the renderer's one serde path (`crate::render_run::journal_line`),
-/// the same bytes the live run wire streams.
+/// Prints one run's journal: every event, in write order, one line each.
+/// Text renders the shaper's own line per event (`crate::render_run`), so a
+/// reader sees what happened rather than wire bytes; JSON and NDJSON keep
+/// the journal's bytes — one `journal_line` per event, the same bytes the
+/// live run wire streams and the only framing a script should parse. An
+/// event the shaper does not know (a future variant) still shows — its one
+/// journal line — rather than vanishing from the record it belongs to.
 pub(super) async fn log(
     raw_id: &str,
     _runtime: &RuntimeConfig,
@@ -139,12 +145,34 @@ pub(super) async fn log(
             format,
         );
     }
-    let lines = events
-        .iter()
-        .map(render_run::journal_line)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let lines = match format {
+        // Each line already carries its newline; the result envelope adds
+        // the final one, so the block is trimmed to one line per event.
+        RenderFormat::Text => events
+            .iter()
+            .map(log_text_line)
+            .collect::<String>()
+            .trim_end_matches('\n')
+            .to_string(),
+        RenderFormat::Json | RenderFormat::Ndjson => events
+            .iter()
+            .map(render_run::journal_line)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
     crate::commands::output::result(lines, format)
+}
+
+/// One journal event's text line for `run log`. The shaper's line when it
+/// has one; the journal's own bytes when the shaper does not know the
+/// variant — the log shows every recorded event, never hides one.
+fn log_text_line(event: &RunEvent) -> String {
+    let text = render_run::run_event_text(event);
+    if text.is_empty() {
+        format!("{}\n", render_run::journal_line(event))
+    } else {
+        text
+    }
 }
 
 /// The scopes as the user declared them: the `--allow` grammar's words,

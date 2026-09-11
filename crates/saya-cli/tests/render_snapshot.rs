@@ -91,6 +91,8 @@ fn run_event_ndjson_usage_is_stable() {
         tokens: Some(120),
         turns: Some(3),
         tool_calls: None,
+        cached_input_tokens: Some(90),
+        cache_creation_input_tokens: None,
     };
     insta::assert_snapshot!(render_run_event(&event, RenderFormat::Ndjson).stdout);
 }

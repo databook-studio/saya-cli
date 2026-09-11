@@ -481,9 +481,18 @@ fn list_and_show_render_a_run_and_an_unknown_id_fails_cleanly() {
     let log = saya(&env, &["run", "log", &id], &address);
     assert_eq!(log.status.code(), Some(0), "stderr: {}", stderr(&log));
     let logged = stdout(&log);
+    // Text mode renders the shaper's own lines: what happened, in journal
+    // order. The wire bytes stay under `--format ndjson`, asserted below.
     assert!(
-        logged.contains("run_started") && logged.contains("plan_approved"),
+        logged.contains("run started") && logged.contains("plan approved"),
         "the log must carry the journal events: {logged}"
+    );
+    let wire = saya(&env, &["--format", "ndjson", "run", "log", &id], &address);
+    assert_eq!(wire.status.code(), Some(0), "stderr: {}", stderr(&wire));
+    let wired = stdout(&wire);
+    assert!(
+        wired.contains("run_started") && wired.contains("plan_approved"),
+        "the NDJSON framing carries the journal's own lines: {wired}"
     );
     // An unknown id fails cleanly: non-zero, a message that names the miss,
     // and never a panic (101).

@@ -528,6 +528,8 @@ fn usage_event_serializes_absence_as_null_never_zero() {
         tokens: None,
         turns: None,
         tool_calls: None,
+        cached_input_tokens: None,
+        cache_creation_input_tokens: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(
@@ -538,22 +540,54 @@ fn usage_event_serializes_absence_as_null_never_zero() {
         json.contains("\"turns\":null"),
         "absence must stay null: {json}"
     );
+    assert!(
+        json.contains("\"cached_input_tokens\":null"),
+        "an unreported cache figure must stay null: {json}"
+    );
+    assert!(
+        json.contains("\"cache_creation_input_tokens\":null"),
+        "an unreported cache-write figure must stay null: {json}"
+    );
     assert!(!json.contains("\"tokens\":0"));
+    assert!(!json.contains("\"cached_input_tokens\":0"));
 
     let reported = RunEvent::Usage {
         endpoint: "deepseek".to_string(),
         tokens: Some(0),
         turns: Some(3),
         tool_calls: Some(7),
+        cached_input_tokens: Some(0),
+        cache_creation_input_tokens: Some(0),
     };
     let json = serde_json::to_string(&reported).unwrap();
     assert!(
         json.contains("\"tokens\":0"),
         "a reported zero stays 0: {json}"
     );
+    assert!(
+        json.contains("\"cached_input_tokens\":0"),
+        "a reported cache zero stays 0, never unknown: {json}"
+    );
 
     let back: RunEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(reported, back);
+
+    // A journal line written before the cache fields existed still parses:
+    // the fields default to "unreported", never to a reported zero.
+    let legacy = r#"{"type":"usage","endpoint":"deepseek","tokens":120,"turns":1,"tool_calls":2}"#;
+    let old: RunEvent = serde_json::from_str(legacy).unwrap();
+    assert_eq!(
+        old,
+        RunEvent::Usage {
+            endpoint: "deepseek".to_string(),
+            tokens: Some(120),
+            turns: Some(1),
+            tool_calls: Some(2),
+            cached_input_tokens: None,
+            cache_creation_input_tokens: None,
+        },
+        "an old journal line must read as unreported cache figures, not zeros"
+    );
 }
 
 #[test]
@@ -593,6 +627,8 @@ fn every_event_variant_round_trips_through_serde() {
             tokens: Some(120),
             turns: Some(1),
             tool_calls: Some(2),
+            cached_input_tokens: Some(60),
+            cache_creation_input_tokens: None,
         },
     ];
     for event in events {
@@ -613,6 +649,8 @@ proptest! {
         tokens in prop::option::of(0u64..1_000_000),
         turns in prop::option::of(0u64..1_000),
         tool_calls in prop::option::of(0u64..1_000),
+        cached in prop::option::of(0u64..1_000_000),
+        cache_creation in prop::option::of(0u64..1_000_000),
         step_index in 0usize..64,
         reason in prop::sample::select(vec![
             PauseReason::BudgetExhausted,
@@ -651,6 +689,8 @@ proptest! {
                 tokens,
                 turns,
                 tool_calls,
+                cached_input_tokens: cached,
+                cache_creation_input_tokens: cache_creation,
             },
         };
         let line = serde_json::to_string(&event).unwrap();
