@@ -34,7 +34,9 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_t
         // assistant block (the one the next delta would extend) so the
         // re-streamed answer replaces it instead of appending to it.
         AgentEvent::TurnReset => transcript.reset_delta(BlockKind::Assistant),
-        AgentEvent::ToolRequested { name, arguments } => {
+        AgentEvent::ToolRequested {
+            name, arguments, ..
+        } => {
             if let Some(call) = crate::agent::tools::sql_tool_call(&name, &arguments) {
                 let header = match &call.target {
                     Some(t) => format!("SQL · {t}"),

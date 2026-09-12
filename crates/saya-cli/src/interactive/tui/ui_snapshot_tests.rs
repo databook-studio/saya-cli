@@ -21,7 +21,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use saya_agent::{
-    AgentEvent, KnowledgeOutcome, ProposedClaimDto, SuppliedClaimDto, SuppliedContractDto,
+    AgentEvent, KnowledgeOutcome, LocalStateEffect, ProposedClaimDto, SuppliedClaimDto,
+    SuppliedContractDto, ToolEffect,
 };
 use saya_config::{
     AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
@@ -37,6 +38,17 @@ use super::stream_events::apply_event;
 use super::transcript::Transcript;
 use super::types::{App, OverlayState, RequestState};
 use crate::interactive::session_prompt::StatusView;
+
+/// `bounded_sql_query`'s declared effect, carried on the fabricated request
+/// events so they match what the loop emits.
+fn bounded_sql_query_effect() -> ToolEffect {
+    ToolEffect {
+        database_data: true,
+        external_side_effect: false,
+        requires_approval: true,
+        local_state: LocalStateEffect::None,
+    }
+}
 
 /// A minimal `RuntimeConfig` that satisfies the `App` fields `ui::draw` never
 /// reads. Built as a struct literal so no config file, env file, or connection
@@ -350,6 +362,7 @@ fn long_content_at_real_width() {
                 "sql": "select order_id, customer_id, placed_at, fulfilled_at, shipped_at, total_amount, tax_amount, discount_amount, currency, status, region, country, city, postal_code, carrier, tracking_number from catalog.public.orders where placed_at >= '2024-01-01' and status in ('fulfilled','shipped','delivered') and total_amount > 100 and region in ('north','south','east','west','central','pacific','mountain') and currency = 'USD' and carrier is not null order by placed_at desc, total_amount desc limit 50",
                 "connection": "analytics",
             }),
+            Some(bounded_sql_query_effect()),
         ),
         false,
     );
@@ -371,6 +384,7 @@ fn long_content_at_real_width() {
                 "sql": "select customer_id, count(*) as orders, sum(total_amount) as spend, avg(total_amount) as avg_order, max(placed_at) as last_order from catalog.public.orders where placed_at >= '2024-01-01' and status in ('fulfilled','shipped','delivered') group by customer_id having count(*) > 1 order by spend desc limit 25",
                 "connection": "analytics",
             }),
+            Some(bounded_sql_query_effect()),
         ),
         false,
     );

@@ -121,6 +121,12 @@ fn a_running_run_shows_its_steps_status_and_episode() {
                 "bounded_sql_query",
                 serde_json::json!({"sql": "SELECT status, count(*) FROM orders GROUP BY status",
                                "connection": "analytics"}),
+                Some(saya_agent::ToolEffect {
+                    database_data: true,
+                    external_side_effect: false,
+                    requires_approval: true,
+                    local_state: saya_agent::LocalStateEffect::None,
+                }),
             ),
             AgentEvent::ToolCompleted {
                 name: "bounded_sql_query".into(),
