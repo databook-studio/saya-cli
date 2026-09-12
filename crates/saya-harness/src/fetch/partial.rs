@@ -15,13 +15,13 @@
 //! and re-digested, so a tampered or clobbered partial is a typed refusal —
 //! never a shrug, and never a corrupted completion.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::HarnessError;
 use crate::workspace::Workspace;
-use crate::{HarnessError, io_error};
 
 use super::download_error::DownloadError;
 
@@ -107,20 +107,11 @@ pub(super) fn write_meta(
 }
 
 /// Removes the sidecar after a completed download: the destination is whole,
-/// so there is no partial to resume.
+/// so there is no partial to resume. Absence is already-done, not an error.
 pub(super) fn remove_meta(workspace: &Workspace, destination: &str) -> Result<(), DownloadError> {
-    let path = match workspace.target(&sidecar_rel(destination), false) {
-        Ok(path) => path,
-        Err(HarnessError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    match std::fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_error("remove download sidecar", &path, error).into()),
-    }
+    workspace
+        .unlink(&sidecar_rel(destination))
+        .map_err(DownloadError::from)
 }
 
 /// Starts a fresh download: the zero sidecar is written *before* the part
@@ -152,13 +143,11 @@ pub(super) fn start_fresh(
 }
 
 /// Promotes the completed part over the destination and clears the sidecar.
-pub(super) fn promote(
-    workspace: &Workspace,
-    destination: &str,
-    part_path: &Path,
-) -> Result<(), DownloadError> {
+/// The part and the destination are both re-anchored through the contained
+/// walk, so the promotion acts on the directories the walk validates.
+pub(super) fn promote(workspace: &Workspace, destination: &str) -> Result<(), DownloadError> {
     workspace
-        .promote_download(part_path, destination)
+        .promote_download(&part_rel(destination), destination)
         .map_err(DownloadError::from)?;
     remove_meta(workspace, destination)
 }

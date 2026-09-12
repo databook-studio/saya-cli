@@ -146,7 +146,7 @@ pub async fn http_download(
         )
         .await?;
         let digest = partial::hex(session.hasher.finalize().as_slice());
-        partial::promote(workspace, destination, &session.path)?;
+        partial::promote(workspace, destination)?;
         return Ok(DownloadOutcome {
             destination: destination.to_owned(),
             bytes: session.total,
