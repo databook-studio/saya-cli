@@ -49,6 +49,7 @@ pub struct RedactedDiagnostics {
     pub jobs_turns: Option<u64>,
     pub jobs_tool_calls: Option<u64>,
     pub jobs_runner_allow: Option<Vec<String>>,
+    pub jobs_runner_program_dir: Option<String>,
     pub jobs_runner_timeout_seconds: Option<u64>,
     pub query_timeout_seconds: Option<u64>,
     pub output_format: Option<OutputFormat>,
@@ -88,6 +89,7 @@ pub struct ResolvedDiagnostics {
     pub jobs_turns: u64,
     pub jobs_tool_calls: Option<u64>,
     pub jobs_runner_allow: Vec<String>,
+    pub jobs_runner_program_dir: Option<String>,
     pub jobs_runner_timeout_seconds: u64,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
@@ -135,6 +137,12 @@ impl RedactedDiagnostics {
             jobs_turns: file.jobs.turns,
             jobs_tool_calls: file.jobs.tool_calls,
             jobs_runner_allow: file.jobs.runner.as_ref().and_then(|r| r.allow.clone()),
+            jobs_runner_program_dir: file
+                .jobs
+                .runner
+                .as_ref()
+                .and_then(|r| r.program_dir.as_ref())
+                .map(|path| path.display().to_string()),
             jobs_runner_timeout_seconds: file.jobs.runner.as_ref().and_then(|r| r.timeout_seconds),
             query_timeout_seconds: file.run.query_timeout_seconds,
             output_format: file.output.format,
@@ -191,6 +199,12 @@ impl ResolvedConfig {
             jobs_turns: self.jobs.turns,
             jobs_tool_calls: self.jobs.tool_calls,
             jobs_runner_allow: self.jobs.runner.allow.clone(),
+            jobs_runner_program_dir: self
+                .jobs
+                .runner
+                .program_dir
+                .as_ref()
+                .map(|path| path.display().to_string()),
             jobs_runner_timeout_seconds: self.jobs.runner.timeout_seconds,
             query_timeout_seconds: self.query_timeout_seconds,
             output_format: self.output_format,

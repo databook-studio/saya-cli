@@ -119,16 +119,23 @@ pub struct ResolvedRunnerJobs {
     /// the run-scoped name shape; shells and interpreters were refused at
     /// resolve time, so a name here is one the runner can actually honour.
     pub allow: Vec<String>,
+    /// The absolute path of the operator-owned directory the allowlisted
+    /// programs are staged in. `None` when undeclared: a run that approved
+    /// the runner then fails closed at assemble — the resolve never checks
+    /// existence, so a dangling path cannot break `saya ask`.
+    pub program_dir: Option<std::path::PathBuf>,
     /// Default wall-clock ceiling for one child process, in seconds.
     pub timeout_seconds: u64,
 }
 
 impl Default for ResolvedRunnerJobs {
     /// The conservative defaults — the same values an absent `[jobs.runner]`
-    /// resolves to: no programs approved, the conservative timeout.
+    /// resolves to: no programs approved, no directory, the conservative
+    /// timeout.
     fn default() -> Self {
         Self {
             allow: Vec::new(),
+            program_dir: None,
             timeout_seconds: RUNNER_TIMEOUT_SECONDS,
         }
     }
@@ -201,9 +208,20 @@ fn resolve_fetch(fetch: Option<&FetchJobsFile>) -> Result<ResolvedFetchJobs, Con
 /// names must have the run-scoped name shape, must not repeat, must stay
 /// within the contract's program-count bound, and must never name a shell or
 /// interpreter — the runner refuses those structurally, so an allowlist that
-/// carried one would approve a capability that cannot exist.
+/// carried one would approve a capability that cannot exist. The program
+/// directory must be absolute (the canonical form must not depend on the
+/// working directory the config was loaded from), and an `allow` that names
+/// programs requires it.
 fn resolve_runner(runner: Option<&RunnerJobsFile>) -> Result<ResolvedRunnerJobs, ConfigError> {
     let runner = runner.cloned().unwrap_or_default();
+    let program_dir = match runner.program_dir {
+        Some(dir) if !dir.is_absolute() => {
+            return Err(ConfigError::RelativeRunnerProgramDir {
+                path: dir.display().to_string(),
+            });
+        }
+        other => other,
+    };
     let mut allow = Vec::new();
     if let Some(programs) = runner.allow {
         if programs.len() > MAX_RUNNER_PROGRAMS {
@@ -240,10 +258,14 @@ fn resolve_runner(runner: Option<&RunnerJobsFile>) -> Result<ResolvedRunnerJobs,
             allow.push(program);
         }
     }
+    if !allow.is_empty() && program_dir.is_none() {
+        return Err(ConfigError::RunnerAllowWithoutProgramDir);
+    }
     let timeout_seconds = runner.timeout_seconds.unwrap_or(RUNNER_TIMEOUT_SECONDS);
     require_at_least_one("runner.timeout_seconds", timeout_seconds)?;
     Ok(ResolvedRunnerJobs {
         allow,
+        program_dir,
         timeout_seconds,
     })
 }

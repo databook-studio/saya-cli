@@ -1082,3 +1082,287 @@ fn refusing_the_plan_at_the_approval_gate_refuses_the_run() {
     );
     let _ = fs::remove_dir_all(&env.root);
 }
+
+/// Writes the user-layer config the binary reads:
+/// `<SAYA_CONFIG_HOME>/saya/config.toml`.
+fn user_config(env: &TestEnv, toml: &str) {
+    let dir = env.root.join("user-config").join("saya");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("config.toml"), toml).unwrap();
+}
+
+/// A run that approved `runner:` while `[jobs.runner] program_dir` is
+/// undeclared refuses at start (exit 3): an allowlist without its directory
+/// approves programs that cannot run. The refusal names the key.
+#[test]
+fn a_runner_approved_run_refuses_without_a_program_dir() {
+    let env = test_root("runner-no-dir");
+    let (address, _ready) = mock(Vec::new());
+    let output = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "runner:bench",
+            "measure the harness",
+        ],
+        &address,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a runner-approved run without a program dir is an admission refusal; stderr: {}",
+        stderr(&output)
+    );
+    let message = stderr(&output);
+    assert!(
+        message.contains("program_dir"),
+        "the refusal must name the missing key: {message}"
+    );
+    assert!(
+        message.contains("runner"),
+        "the refusal must say the run approved a runner scope: {message}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// A relative `[jobs.runner] program_dir` is a typed resolve error — the
+/// canonical form must not depend on the working directory the config was
+/// loaded from — refused at config load, before any run exists.
+#[test]
+fn a_relative_program_dir_is_a_typed_config_error() {
+    let env = test_root("runner-relative");
+    user_config(&env, "[jobs.runner]\nprogram_dir = \"programs\"\n");
+    let (address, _ready) = mock(Vec::new());
+    let output = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "runner:bench",
+            "measure the harness",
+        ],
+        &address,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a config resolve error is a usage refusal; stderr: {}",
+        stderr(&output)
+    );
+    let message = stderr(&output);
+    assert!(
+        message.contains("runner.program_dir") && message.contains("absolute"),
+        "the refusal must name the field and the requirement: {message}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// The placement guard, end to end: a program directory that contains this
+/// run's filesystem roots refuses the run with exit 3 and the escape
+/// report's why — with programs inside the run tree, one step's child
+/// writes the binary the next step's `run_program` validates green and
+/// executes. The guard fires before the probe, so this is platform-honest.
+#[test]
+fn a_program_dir_containing_the_run_tree_refuses_the_run() {
+    let env = test_root("runner-placement");
+    user_config(
+        &env,
+        &format!(
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
+            env.root.display()
+        ),
+    );
+    let (address, _ready) = mock(Vec::new());
+    let output = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "runner:bench",
+            "measure the harness",
+        ],
+        &address,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a program dir containing the run's roots must refuse the run; stderr: {}",
+        stderr(&output)
+    );
+    let message = stderr(&output);
+    assert!(
+        message.contains("overlaps this run's filesystem root"),
+        "the refusal must state the containment: {message}"
+    );
+    assert!(
+        message.contains("child write the binary the next step's run_program validates"),
+        "the refusal must record the escape it prevents: {message}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// The admission check, end to end: `--allow runner:bench` against a
+/// configured directory the probe proves, with no `bench` staged in it,
+/// refuses the run at start (exit 3) naming the program and the directory —
+/// the operator's staging gap said out loud, never a tool whose every call
+/// refuses mid-flight.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unstaged_program_refuses_the_run_at_start() {
+    let env = test_root("runner-unstaged");
+    let programs = env.root.join("staged-programs");
+    fs::create_dir_all(&programs).unwrap();
+    user_config(
+        &env,
+        &format!(
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
+            programs.display()
+        ),
+    );
+    let (address, _ready) = mock(vec![Scripted {
+        body: plan_body(&["measure the harness"]),
+        delay_ms: 0,
+    }]);
+    let output = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "runner:bench",
+            "measure the harness",
+        ],
+        &address,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "an unstaged program refuses the run at start; stderr: {}",
+        stderr(&output)
+    );
+    let message = stderr(&output);
+    assert!(
+        message.contains("bench"),
+        "the refusal must name the program: {message}"
+    );
+    assert!(
+        message.contains("not in"),
+        "the refusal must say the program is missing from the directory: {message}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// The interpreter refusal list stays in force on the approval surface:
+/// `--allow runner:python3` parses, and the run refuses at start naming the
+/// interpreter and the reason — the same refusal the config resolves and
+/// the tool enforces per call, so the layers cannot disagree.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_interpreter_name_refuses_the_run_at_start() {
+    let env = test_root("runner-interpreter");
+    let programs = env.root.join("staged-programs");
+    fs::create_dir_all(&programs).unwrap();
+    user_config(
+        &env,
+        &format!(
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
+            programs.display()
+        ),
+    );
+    let (address, _ready) = mock(vec![Scripted {
+        body: plan_body(&["measure the harness"]),
+        delay_ms: 0,
+    }]);
+    let output = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "runner:python3",
+            "measure the harness",
+        ],
+        &address,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "an interpreter name refuses the run at start; stderr: {}",
+        stderr(&output)
+    );
+    let message = stderr(&output);
+    assert!(
+        message.contains("python3") && message.contains("interpreters are refused"),
+        "the refusal must name the interpreter and its reason: {message}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// A correctly staged program reaches the run: the probe proves the host,
+/// the admission check approves, and a plan whose step asks for the runner
+/// scope — the thing `--allow runner:bench` granted — binds, is approved
+/// headlessly, and completes. (macOS: the platform the probe proves.)
+#[cfg(target_os = "macos")]
+#[test]
+fn a_correctly_staged_program_reaches_a_runner_asking_step() {
+    let env = test_root("runner-happy");
+    let programs = env.root.join("staged-programs");
+    fs::create_dir_all(&programs).unwrap();
+    fs::copy("/bin/echo", programs.join("bench")).unwrap();
+    user_config(
+        &env,
+        &format!(
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
+            programs.display()
+        ),
+    );
+    let (address, _ready) = mock(vec![
+        Scripted {
+            body: plan_body_with_capabilities(&[(
+                "run the benchmark harness",
+                serde_json::json!({"runner": {"programs": ["bench"]}}),
+            )]),
+            delay_ms: 0,
+        },
+        Scripted {
+            body: sse("measured"),
+            delay_ms: 0,
+        },
+    ]);
+    let started = saya(
+        &env,
+        &[
+            "--non-interactive",
+            "run",
+            "--allow",
+            "runner:bench",
+            "measure the harness",
+        ],
+        &address,
+    );
+    assert_eq!(
+        started.status.code(),
+        Some(0),
+        "a run with a correctly staged program must start and complete; stderr: {}",
+        stderr(&started)
+    );
+    let journal = fs::read_to_string(
+        fs::read_dir(&env.runs)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("events.ndjson"),
+    )
+    .unwrap();
+    assert!(
+        journal.contains("run_started") && journal.contains("\"completed\""),
+        "the runner-approved run started and completed: {journal}"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}

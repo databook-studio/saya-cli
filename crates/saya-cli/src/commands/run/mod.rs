@@ -25,6 +25,9 @@ mod files;
 mod host;
 mod reads;
 mod resume;
+mod runner;
+#[cfg(test)]
+mod runner_tests;
 mod scopes;
 mod start;
 mod tools;
