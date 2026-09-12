@@ -375,4 +375,102 @@ mod tests {
             .expect("the interpreter scope must be approved");
         assert_eq!(interpreters.programs, vec!["bash".to_owned()]);
     }
+
+    /// The two help surfaces that enumerate the scope grammar — the clap
+    /// `--allow` doc comment and the `/run` slash help — and
+    /// [`NOT_YET_WIRED`] must agree, in both directions: a family the help
+    /// names as refused must sit in the refusal list, and every
+    /// refusal-list entry must be named as refused in the help. Each
+    /// S-slice deleted its entry here and updated `docs/commands.md` while
+    /// the clap and slash help kept claiming every remaining family was
+    /// refused — a help surface denying a capability the engine has, the
+    /// exact class this test turns red the day the lists diverge again,
+    /// either direction. The families come from [`KNOWN`] itself, so a
+    /// scope added to the grammar without touching both surfaces is caught
+    /// too. "Refused" is read per sentence: a wired family must never share
+    /// a sentence with a refusal word, and a refused family must.
+    #[test]
+    fn the_help_surfaces_and_the_refusal_list_agree() {
+        let surfaces = [
+            ("the clap `--allow` help", clap_allow_help()),
+            (
+                "the `/run` slash help",
+                crate::slash::command_help("run")
+                    .expect("/run has per-command help")
+                    .to_string(),
+            ),
+        ];
+        for (surface_name, text) in &surfaces {
+            for (family, token) in grammar_tokens() {
+                assert!(
+                    text.contains(token),
+                    "{surface_name} must name the scope `{token}` — a surface that \
+                     omits a scope leaves its status to the reader's guess, got: {text}"
+                );
+                let claimed = claims_refused(text, token);
+                let listed = NOT_YET_WIRED.iter().any(|(name, _)| *name == family);
+                assert_eq!(
+                    claimed,
+                    listed,
+                    "{surface_name} and NOT_YET_WIRED disagree about `{family}`: the help \
+                     {} while the refusal list {}. A scope the next slice wires must stop \
+                     being refused in the help; one still unwired must stay refused there.",
+                    if claimed {
+                        "claims it is refused"
+                    } else {
+                        "does not claim it is refused"
+                    },
+                    if listed {
+                        "still refuses it"
+                    } else {
+                        "no longer refuses it"
+                    },
+                );
+            }
+        }
+    }
+
+    /// The `--allow` help text exactly as clap derives it from the doc
+    /// comment — the string a user reads in `saya run --help`.
+    fn clap_allow_help() -> String {
+        use clap::CommandFactory as _;
+        let mut cmd = crate::cli::Cli::command();
+        let run = cmd
+            .find_subcommand_mut("run")
+            .expect("`saya run` is declared");
+        let allow = run
+            .get_arguments()
+            .find(|arg| arg.get_id() == "allow")
+            .expect("`--allow` is declared on `saya run`");
+        allow
+            .get_long_help()
+            .or_else(|| allow.get_help())
+            .expect("the --allow doc comment reaches clap")
+            .to_string()
+    }
+
+    /// The grammar's families, derived from [`KNOWN`] itself: each token
+    /// paired with its family key (the prefix before `:`, the name
+    /// [`NOT_YET_WIRED`] entries use). A token added to [`KNOWN`] without a
+    /// surface update fails the parity test, not just the parse.
+    fn grammar_tokens() -> Vec<(&'static str, &'static str)> {
+        let list = KNOWN
+            .split_once("known scopes: ")
+            .expect("`KNOWN` must name the scopes it refuses around")
+            .1;
+        list.split(", ")
+            .map(|token| {
+                let family = token.split(':').next().unwrap_or(token);
+                (family, token)
+            })
+            .collect()
+    }
+
+    /// True when some `.`-sentence of the surface pairs the scope token with
+    /// a refusal word — the shape a refusal claim takes in these surfaces.
+    fn claims_refused(surface: &str, token: &str) -> bool {
+        surface
+            .split('.')
+            .any(|sentence| sentence.contains(token) && sentence.contains("refus"))
+    }
 }

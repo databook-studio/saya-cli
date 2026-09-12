@@ -212,3 +212,54 @@ fn candidates_flag_parses_and_help_warns_about_cost() {
         "help must warn that each candidate is a full agent run: {help}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `saya run` advertised `--continue`, an interactive flag it ignored. The
+// flag continues the interactive REPL session — the only surface that reads
+// it — and a run is not a session: it resumes by explicit id. A flag that
+// implies a capability is available is worse than no flag, so the flag comes
+// off the run surface (it is no longer global) and clap refuses
+// `saya run --continue`. The pre-subcommand spelling (`saya --continue run`)
+// is refused by the dispatch guard in `app.rs` with run-shaped guidance.
+// ---------------------------------------------------------------------------
+
+/// `saya run --continue` no longer parses: a script passing the flag gets a
+/// clap usage error instead of a run that silently ignored it — the same
+/// accepted-and-discarded defect `config show --resolved`'s removal fixed.
+#[test]
+fn run_no_longer_accepts_continue() {
+    let parsed = Cli::try_parse_from(["saya", "run", "--continue", "goal"]);
+    assert!(
+        parsed.is_err(),
+        "`saya run --continue` must not parse once the flag is off the run surface: {parsed:?}"
+    );
+}
+
+/// `saya run --help` no longer advertises `--continue`, so the help surface
+/// and the run grammar agree. The bare REPL keeps the flag: its root `--help`
+/// still lists it, which `mvp/cli.rs` pins. The tree is built before the
+/// subcommand renders — the propagation step that puts a global arg into a
+/// subcommand's help, i.e. what `saya run --help` actually prints.
+#[test]
+fn run_help_no_longer_advertises_continue() {
+    let mut cmd = Cli::command();
+    cmd.build();
+    let run_help = cmd
+        .find_subcommand_mut("run")
+        .expect("`saya run` is declared")
+        .render_help()
+        .to_string();
+    assert!(
+        !run_help.contains("--continue"),
+        "`saya run --help` must not advertise the REPL-only `--continue`: {run_help}"
+    );
+}
+
+/// The bare REPL keeps the flag: `saya --continue` parses at the top level,
+/// where its only consumer (the interactive session resume) reads it.
+#[test]
+fn continue_still_parses_for_the_bare_repl() {
+    let parsed = Cli::try_parse_from(["saya", "--continue"]).expect("bare `--continue` parses");
+    assert!(parsed.command.is_none(), "no subcommand: the REPL path");
+    assert!(parsed.options.continue_session, "the flag reached options");
+}
