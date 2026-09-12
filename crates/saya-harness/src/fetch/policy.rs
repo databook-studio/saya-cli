@@ -104,6 +104,12 @@ impl FetchUrl {
 #[derive(Clone, Debug)]
 pub struct FetchPolicy {
     destinations: BTreeSet<FetchDestination>,
+    /// The session shape: any HTTPS host outside the refused ranges may be
+    /// fetched, the per-call ask being the destination consent. Gates 1 and
+    /// 2 are unchanged — the structural refusals stay absolute — only the
+    /// declared-destination gate is waived, and only for a surface that asks
+    /// before every fetch.
+    session_wide: bool,
 }
 
 impl FetchPolicy {
@@ -111,6 +117,18 @@ impl FetchPolicy {
     pub fn new(destinations: impl IntoIterator<Item = FetchDestination>) -> Self {
         Self {
             destinations: destinations.into_iter().collect(),
+            session_wide: false,
+        }
+    }
+
+    /// The interactive session's policy: HTTPS only, refused ranges still
+    /// refused, and every host consented per call instead of declared up
+    /// front. A run never uses this shape — its destinations are declared
+    /// with its plan and enforced by this policy.
+    pub fn session() -> Self {
+        Self {
+            destinations: Default::default(),
+            session_wide: true,
         }
     }
 
@@ -154,7 +172,7 @@ impl FetchPolicy {
             return Err(FetchRefusal::DisallowedAddress { host });
         }
         let destination = FetchDestination::new(url.scheme(), &host);
-        if !self.destinations.contains(&destination) {
+        if !self.session_wide && !self.destinations.contains(&destination) {
             return Err(FetchRefusal::UndeclaredDestination { host });
         }
         Ok(FetchUrl(url))

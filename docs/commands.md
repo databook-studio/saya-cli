@@ -23,7 +23,9 @@ saya query --profile analytics --sql "select 1"
 Global flags include `--config`, `--connections`, `--env-file`, `--profile`,
 `--include-profile <profile>` (repeatable flag to connect additional read-only databases), `--approval-mode ask|read-only|never`, `--format
 text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
-and `--verbose`.
+and `--verbose`. `--workspace <dir>` (the interactive session only) binds the
+session's workspace root explicitly; without it the root is the git worktree
+top above the launch directory, and outside any worktree nothing binds.
 
 Automation never prompts. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake `connection
 test`, `connection schema`, and `query` commands are live; Snowflake
@@ -54,13 +56,22 @@ in recent-first order. The slash commands `/connect <profile>`, `/include <profi
 providers are `ollama`, `openai`, `openai_compatible`, `anthropic`, and `gemini`.
 When attached to a terminal, each interactive prompt shows a one-line status
 header (active profile, any included databases, provider/model, approval mode,
-and privacy/cloud data-sharing state) followed by the `saya> ` input marker,
+workspace root, and privacy/cloud data-sharing state) followed by the
+`saya> ` input marker,
 with command history recall (Up/Down) and standard line editing. Piped input
 uses a plain line reader so scripts and CI behave predictably. Interactive prompts carry bounded prior user/assistant
 turns, and `--continue`/`--resume` reconstruct redacted history with saved
 provider settings. `/clear` removes the canonical turns as well as visible
 context. Tool arguments, responses, credentials, headers, and rows are never
-restored into provider history.
+restored into provider history. The status header's `ws:` segment names the
+session's bound workspace root — the git worktree top above the launch
+directory, or a `--workspace <dir>` statement, pinned into the session record
+and re-opened on a resume from anywhere — or `ws:unbound`, the outside-a-worktree
+shape where the write-shaped tools are absent and the workspace reads refuse.
+A session's workspace is what the file tools and `run_program` children are
+contained to; the session's scratch database and lock live outside it, at
+`~/.local/share/saya/sessions/<id>/`, where no file tool and no child can
+reach them.
 
 `connection schema PROFILE` and interactive `/schema` authenticate and fetch
 live metadata before updating the local schema cache. If a later live attempt

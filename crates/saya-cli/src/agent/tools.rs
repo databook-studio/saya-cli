@@ -6,10 +6,12 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 mod contract_tools;
 mod database_tools;
 mod executor;
+mod run_tools;
 mod sql_format;
 mod tool_calls;
 
 pub(crate) use database_tools::DatabaseTools;
+pub(crate) use run_tools::RunTools;
 // Re-exported through `tools` (not the private `database_tools` module) so the
 // agent runtime's learning wiring and tests can reach the observation types.
 // `ToolObservation` is consumed only by tests; the others by `agent::learning`.

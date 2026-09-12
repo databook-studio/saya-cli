@@ -762,7 +762,7 @@ async fn a_download_that_trips_the_run_budget_pauses_the_run_typed() {
         }),
         FetchLimits::for_tool_lane(),
         DownloadLimits::default(),
-        Arc::clone(&workspace),
+        Some(Arc::clone(&workspace)),
         budget.clone(),
     );
     let provider = ScriptProvider::new(vec![

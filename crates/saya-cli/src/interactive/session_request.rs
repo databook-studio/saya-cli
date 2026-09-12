@@ -10,6 +10,9 @@ use crate::{
 use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
 use saya_store::SqliteStateStore;
 
+use super::session_universe::SessionUniverse;
+use std::sync::Arc;
+
 pub(crate) enum PromptResult {
     /// Boxed because the variant dwarfs `Cancelled`, which carries nothing;
     /// an unboxed `AgentOutput` makes every `PromptResult` as large as a
@@ -28,6 +31,7 @@ pub(crate) async fn run(
     history: Vec<ChatMessage>,
     format: RenderFormat,
     state_db: &SqliteStateStore,
+    session: Arc<SessionUniverse>,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
@@ -43,7 +47,7 @@ pub(crate) async fn run(
         Some(state_db.clone()),
         None,
         None,
-        None,
+        Some(session),
     );
     tokio::pin!(work);
     tokio::select! {

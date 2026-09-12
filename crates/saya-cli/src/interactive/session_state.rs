@@ -14,6 +14,15 @@ pub struct SessionState {
     pub model: String,
     pub allow_data_sharing: bool,
     pub approval_mode: String,
+    /// The session's pinned workspace root, canonical (SESSION-WORKSPACE.md):
+    /// resolved once at first start — the git worktree top, or an explicit
+    /// `--workspace` — persisted here, and re-opened on a resume, never
+    /// re-derived from wherever the shell happens to be. `None` binds no
+    /// root: the write-shaped tools stay hidden and workspace reads refuse
+    /// with their typed error, which is every session written before the
+    /// workspace existed.
+    #[serde(default)]
+    pub workspace_root: Option<String>,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
     /// Whether the model's chain-of-thought is shown in the transcript. Off by
@@ -48,6 +57,7 @@ impl SessionState {
             model: model.into(),
             allow_data_sharing: false,
             approval_mode: "ask".into(),
+            workspace_root: None,
             messages: Vec::new(),
             turns: Vec::new(),
             show_thinking: false,
@@ -123,6 +133,7 @@ impl SessionState {
             model: self.model.clone(),
             allow_data_sharing: self.allow_data_sharing,
             approval_mode: self.approval_mode.clone(),
+            workspace_root: self.workspace_root.clone(),
             turns: self.turns.clone(),
             profile_names: self.profile_names(),
             messages: Vec::new(),

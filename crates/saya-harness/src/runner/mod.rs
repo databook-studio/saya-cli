@@ -121,6 +121,15 @@ impl RunProgram {
         self
     }
 
+    /// Redirects the outcome record out of the default (`fs_roots[0]` /
+    /// `run_program`). The interactive session uses this: its root is the
+    /// user's project, which gains no saya-created directories, so the
+    /// record lands in the session's own state directory instead.
+    pub fn with_record_dir(mut self, dir: PathBuf) -> Self {
+        self.record_dir = dir;
+        self
+    }
+
     /// Runs one validated call and returns the child's report. The door a
     /// call goes through is decided by the name: one the runner refuses by
     /// name enters the interpreter door only when the step's interpreter

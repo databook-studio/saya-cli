@@ -75,6 +75,11 @@ pub(crate) fn state_from_redacted(
     } else {
         value.included_profiles
     };
+    // The pinned workspace root rides the record: re-opened on a resume,
+    // never re-derived from the resume cwd. A session written before the
+    // workspace existed carries no root and resumes unbound — exactly its
+    // old behaviour.
+    state.workspace_root = value.workspace_root;
     state.messages = value
         .messages
         .into_iter()

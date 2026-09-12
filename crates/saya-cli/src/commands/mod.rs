@@ -6,7 +6,7 @@ mod contracts;
 mod output;
 mod query;
 mod query_input;
-mod run;
+pub(crate) mod run;
 mod state;
 
 use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};

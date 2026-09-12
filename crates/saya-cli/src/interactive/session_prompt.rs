@@ -1,11 +1,16 @@
 use crate::SessionState;
 
 /// Builds a compact one-line status header shown with the interactive prompt:
-/// the active profile, any included databases, the provider/model, the approval
-/// mode, and the cloud data-sharing state. The sharing segment names what is
-/// happening (`sharing:on` = row values are sent to the provider), not a
-/// protection claim — `allow_data_sharing == true` means data *is* shared, so
-/// the label must not read as protection.
+/// the active profile, any included databases, the provider/model, the
+/// approval mode, the workspace root, and the cloud data-sharing state. The
+/// sharing segment names what is happening (`sharing:on` = row values are
+/// sent to the provider), not a protection claim — `allow_data_sharing ==
+/// true` means data *is* shared, so the label must not read as protection.
+/// The workspace segment names the tree the session can touch: the bound
+/// canonical root, or `ws:none` — the no-root shape where the write-shaped
+/// tools are absent and workspace reads refuse. This is where the binding
+/// is visible at every moment it matters, including on a resume whose cwd
+/// differs from the launch one.
 pub(crate) fn status_line(state: &SessionState) -> String {
     let profile = state.profile.as_deref().unwrap_or("(no profile)");
     let included = if state.included_profiles.is_empty() {
@@ -26,8 +31,12 @@ pub(crate) fn status_line(state: &SessionState) -> String {
     } else {
         "sharing:off"
     };
+    let workspace = match state.workspace_root.as_deref() {
+        Some(root) => format!("ws:{root}"),
+        None => "ws:unbound".to_string(),
+    };
     format!(
-        "[{profile}{included}] {}/{} approval:{} {sharing}",
+        "[{profile}{included}] {}/{} approval:{} {workspace} {sharing}",
         state.provider, state.model, state.approval_mode
     )
 }
@@ -39,6 +48,9 @@ pub(crate) struct StatusView {
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) approval_mode: String,
+    /// The pinned workspace root, when one binds — mirrors `status_line`'s
+    /// segment; `None` renders the no-root shape.
+    pub(crate) workspace_root: Option<String>,
     /// Mirrors `status_line`'s mapping: `allow_data_sharing` => `sharing:on`.
     pub(crate) sharing_on: bool,
 }
@@ -54,6 +66,7 @@ pub(crate) fn status_segments(state: &SessionState) -> StatusView {
         provider: state.provider.clone(),
         model: state.model.clone(),
         approval_mode: state.approval_mode.clone(),
+        workspace_root: state.workspace_root.clone(),
         sharing_on: state.allow_data_sharing,
     }
 }
@@ -112,5 +125,37 @@ mod tests {
                 "status_line ({line}) must match StatusView ({expected}) for allow={allow}"
             );
         }
+    }
+
+    /// The workspace segment names the bound root — the binding is visible at
+    /// every moment it matters, including on a resume whose cwd differs — and
+    /// the no-root shape is named as unbound, not hidden.
+    #[test]
+    fn status_line_names_the_workspace_binding() {
+        let mut bound = session_with_sharing(false);
+        bound.workspace_root = Some("/projects/saya".into());
+        let line = status_line(&bound);
+        assert!(
+            line.contains("ws:/projects/saya"),
+            "the status header names the pinned root: {line}"
+        );
+        let segments = status_segments(&bound);
+        assert_eq!(
+            segments.workspace_root.as_deref(),
+            Some("/projects/saya"),
+            "the TUI view mirrors the header"
+        );
+
+        let unbound = status_line(&session_with_sharing(false));
+        assert!(
+            unbound.contains("ws:unbound") && !unbound.contains("ws:/"),
+            "no root reads as unbound: {unbound}"
+        );
+        assert!(
+            status_segments(&session_with_sharing(false))
+                .workspace_root
+                .is_none(),
+            "the TUI view mirrors the no-root shape"
+        );
     }
 }

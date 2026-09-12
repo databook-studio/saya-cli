@@ -5,12 +5,13 @@ pub(crate) use super::turn_config::{
     AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed,
 };
 use super::turn_inputs::{TurnInputs, prepare_turn};
+use crate::interactive::session_universe::SessionUniverse;
 use crate::{config::runtime::RuntimeConfig, prompt_approval::TerminalApproval};
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, AgentRequest,
-    ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, run_agent_with_sink,
+    ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, LocalStateEffect,
+    run_agent_with_sink,
 };
-use saya_harness::workspace::Workspace;
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
@@ -28,9 +29,10 @@ pub(crate) async fn run_prompt_with_sink(
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
-    // The run's contained workspace, when a run engine opened one. `None`
-    // leaves `workspace_read` denying with a typed error.
-    workspace: Option<Arc<Workspace>>,
+    // The session's tool universe, composed once per interactive session.
+    // `None` (the one-shot `ask` path) leaves `workspace_read` denying with
+    // a typed error and the write-shaped tools hidden.
+    session: Option<Arc<SessionUniverse>>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let inputs = prepare_turn(runtime, &overrides, can_prompt)
         .await
@@ -47,7 +49,7 @@ pub(crate) async fn run_prompt_with_sink(
         state_db,
         decider,
         last_sql,
-        workspace,
+        session,
     )
     .await
 }
@@ -66,9 +68,10 @@ pub(crate) async fn run_prompt_with_inputs(
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
-    // The run's contained workspace, when a run engine opened one. `None`
-    // leaves `workspace_read` denying with a typed error.
-    workspace: Option<Arc<Workspace>>,
+    // The session's tool universe, composed once per interactive session.
+    // `None` (the one-shot `ask` path) leaves `workspace_read` denying with
+    // a typed error and the write-shaped tools hidden.
+    session: Option<Arc<SessionUniverse>>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = inputs.ai;
     let provider = inputs.provider;
@@ -129,16 +132,21 @@ pub(crate) async fn run_prompt_with_inputs(
     let observations_log = learning.observations.clone();
     let has_state_store = state_db.is_some();
     let override_log = Arc::new(tools::OverrideLog::new());
-    let tools = tools::DatabaseTools::with_learning(
-        registry,
-        runtime.resolved.max_rows,
-        allow_query_data,
-        state_db,
-        learning.observations,
-    )
-    .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect())
-    .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()))
-    .with_workspace(workspace);
+    let database = Arc::new(
+        tools::DatabaseTools::with_learning(
+            registry,
+            runtime.resolved.max_rows,
+            allow_query_data,
+            state_db,
+            learning.observations,
+        )
+        .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect())
+        .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()))
+        // The session's bound workspace — the only file I/O the read tools
+        // reach. `None` (the one-shot `ask` path) leaves them denying with
+        // their typed error.
+        .with_workspace(session.as_ref().and_then(|session| session.workspace())),
+    );
     let request = AgentRequest {
         prompt: prompt.into(),
         profile_names,
@@ -156,27 +164,55 @@ pub(crate) async fn run_prompt_with_inputs(
     // when unset: SAYA_AGENT_MAX_TURNS / SAYA_AGENT_MAX_TOOL_CALLS, with no
     // upper limit on a set value.
     let env_budgets = saya_agent::budgets_from_env(|name| std::env::var(name).ok());
+    // The turn's universe and its executor ride together: a session dispatches
+    // through the shared `RunTools` composite and advertises its write-shaped
+    // members only where a prompt is possible; the one-shot `ask` path keeps
+    // the database surface alone, where `workspace_read` denies with a typed
+    // error.
+    let definitions = match session.as_ref() {
+        Some(session) => session.definitions(
+            approval,
+            can_prompt,
+            allow_query_data,
+            has_state_store,
+            learning.permit_candidate_writes,
+        ),
+        None => tools::DatabaseTools::definitions(
+            allow_query_data,
+            has_state_store,
+            learning.permit_candidate_writes,
+            false,
+        ),
+    };
+    // The fail-closed permits are the definitions' own enforcement, read off
+    // them: a turn that advertises a workspace-writing tool must permit
+    // workspace writes, or the loop's gate would deny after the ask — and a
+    // turn that advertises none keeps the permit off, so nothing can write.
+    // Derived, never stated twice, so advertisement and enforcement cannot
+    // drift.
+    let permit_workspace_writes = definitions
+        .iter()
+        .any(|definition| definition.effect.local_state == LocalStateEffect::WriteWorkspace);
     let limits = AgentLimits {
         max_turns: env_budgets.0,
         max_tool_calls: env_budgets.1,
         permit_candidate_writes: learning.permit_candidate_writes,
         context_byte_budget: runtime.resolved.ai.context_byte_budget,
-        permit_workspace_writes: false,
+        permit_workspace_writes,
         // An ask turn approves nothing by scope: the plan-gated egress
-        // permit stays off, so the guard keeps denying exactly as before
-        // and the interactive product is unchanged.
+        // permit stays off, so a tool with an undeclared approval shape
+        // still refuses — the author check, not a user gate.
         permit_external_effects: false,
+    };
+    let executor: Arc<dyn saya_agent::ToolExecutor> = match session.as_ref() {
+        Some(session) => session.executor(Arc::clone(&database), &cancellation),
+        None => Arc::clone(&database) as Arc<dyn saya_agent::ToolExecutor>,
     };
     let mut output = run_agent_with_sink(
         &*provider,
-        &tools,
+        executor.as_ref(),
         request,
-        tools::DatabaseTools::definitions(
-            allow_query_data,
-            has_state_store,
-            limits.permit_candidate_writes,
-            limits.permit_workspace_writes,
-        ),
+        definitions,
         limits,
         approver,
         sink,
@@ -195,7 +231,7 @@ pub(crate) async fn run_prompt_with_inputs(
     let mut learning_usage: Option<saya_agent::TokenUsage> = None;
     // Post-turn structured extraction (Safety Property 1: fail-soft isolation).
     if learning.permit_candidate_writes
-        && let Some(store) = tools.state_db()
+        && let Some(store) = database.state_db()
         && let Ok(out) = output.as_ref()
     {
         let drained_obs = observations_log
@@ -205,7 +241,7 @@ pub(crate) async fn run_prompt_with_inputs(
         let turn_record = super::learning::TurnRecord::assemble(
             prompt,
             &out.answer,
-            tools.registry(),
+            database.registry(),
             &drained_obs,
             Some(&receipt),
             &overridden,
@@ -227,7 +263,7 @@ pub(crate) async fn run_prompt_with_inputs(
                     &*provider,
                     &ai.model,
                     &turn_record,
-                    tools.registry(),
+                    database.registry(),
                     store,
                     &receipt,
                 ),

@@ -26,7 +26,7 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     for inc in &view.included {
         label.push_str(&format!(" +{inc}"));
     }
-    vec![
+    let mut spans = vec![
         Span::styled(
             format!(" [{label}] "),
             base.fg(accent()).add_modifier(Modifier::BOLD),
@@ -39,15 +39,23 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
             format!("approval:{} ", view.approval_mode),
             base.fg(approval_color),
         ),
-        Span::styled(
-            format!("sharing:{}", if view.sharing_on { "on" } else { "off" }),
-            base.fg(if view.sharing_on {
-                warning()
-            } else {
-                success()
-            }),
-        ),
-    ]
+    ];
+    // The workspace segment names the tree the session can touch, so the
+    // binding is visible at every moment it matters — including on a resume
+    // from a different directory.
+    match view.workspace_root.as_deref() {
+        Some(root) => spans.push(Span::styled(format!("ws:{root} "), base.fg(secondary()))),
+        None => spans.push(Span::styled("ws:unbound ", base.fg(secondary()))),
+    }
+    spans.push(Span::styled(
+        format!("sharing:{}", if view.sharing_on { "on" } else { "off" }),
+        base.fg(if view.sharing_on {
+            warning()
+        } else {
+            success()
+        }),
+    ));
+    spans
 }
 
 /// Renders the status bar as a filled accent-tinted strip, with a spinner and

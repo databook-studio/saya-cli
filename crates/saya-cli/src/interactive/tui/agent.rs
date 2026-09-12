@@ -4,6 +4,7 @@
 
 use crate::agent::runtime::{PromptOverrides, run_prompt_with_sink};
 use crate::config::runtime::RuntimeConfig;
+use crate::interactive::session_universe::SessionUniverse;
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, AgentOutput, ApprovalDecider, ApprovalDecision, ApprovalPolicy,
@@ -94,16 +95,31 @@ impl ApprovalDecider for ChannelApproval {
     }
 }
 
+/// Everything one streaming turn runs with. A bundle rather than eight
+/// positional parameters, so the call sites read by name.
+pub(crate) struct StreamRequest {
+    pub(crate) runtime: Arc<RuntimeConfig>,
+    pub(crate) prompt: String,
+    pub(crate) approval: ApprovalPolicy,
+    pub(crate) overrides: PromptOverrides,
+    pub(crate) history: Vec<ChatMessage>,
+    pub(crate) state_db: SqliteStateStore,
+    pub(crate) last_sql: Option<String>,
+    pub(crate) session: Arc<SessionUniverse>,
+}
+
 /// Spawns the agent on a background thread and returns the live stream handle.
-pub(crate) fn start(
-    runtime: Arc<RuntimeConfig>,
-    prompt: String,
-    approval: ApprovalPolicy,
-    overrides: PromptOverrides,
-    history: Vec<ChatMessage>,
-    state_db: SqliteStateStore,
-    last_sql: Option<String>,
-) -> Stream {
+pub(crate) fn start(request: StreamRequest) -> Stream {
+    let StreamRequest {
+        runtime,
+        prompt,
+        approval,
+        overrides,
+        history,
+        state_db,
+        last_sql,
+        session,
+    } = request;
     let (tx, rx) = unbounded_channel();
     let cancel = CancellationToken::new();
     let cancel_worker = cancel.clone();
@@ -135,7 +151,7 @@ pub(crate) fn start(
             Some(state_db),
             Some(decider),
             last_sql,
-            None,
+            Some(session),
         ));
         let _ = tx.send(StreamMsg::Done(result.map_err(|error| error.to_string())));
     });

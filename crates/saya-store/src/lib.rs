@@ -56,6 +56,12 @@ pub struct RedactedSession {
     pub allow_data_sharing: bool,
     #[serde(default)]
     pub approval_mode: String,
+    /// The session's pinned workspace root, canonical, resolved once at
+    /// first start. Absent (`None`) on every session written before the
+    /// workspace existed — such a session resumes unbound, its old
+    /// behaviour.
+    #[serde(default)]
+    pub workspace_root: Option<String>,
     #[serde(default)]
     pub turns: Vec<RedactedTurn>,
     #[serde(default)]
@@ -75,6 +81,7 @@ impl Default for RedactedSession {
             model: String::new(),
             allow_data_sharing: false,
             approval_mode: String::new(),
+            workspace_root: None,
             turns: Vec::new(),
             profile_names: Vec::new(),
             messages: Vec::new(),

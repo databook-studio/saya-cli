@@ -13,21 +13,18 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use saya_agent::CancellationToken;
-use saya_agent::{ToolError, ToolExecutor};
 use saya_harness::engine::StepToolset;
 use saya_harness::fetch::{
     DownloadBudget, DownloadLimits, FetchDestination, FetchLimits, FetchPolicy, FetchTools,
     FetchTransport, http_download_definition, http_fetch_definition,
 };
-use saya_harness::runner::RunProgram;
-use saya_harness::runner::{SharedCredentialSource, StaticCredentialSource};
+use saya_harness::runner::{RunProgram, SharedCredentialSource, StaticCredentialSource};
 use saya_harness::scratch::ScratchSql;
 use saya_harness::workspace::Workspace;
 use saya_types::StepSpec;
 
-use crate::agent::tools::DatabaseTools;
+use crate::agent::tools::{DatabaseTools, RunTools};
 
 use super::runner::RunRunner;
 
@@ -42,57 +39,14 @@ pub(super) struct RunFetch {
     pub(super) budget: DownloadBudget,
 }
 
-/// The run's composite executor: the four fixed harness tool names route to
-/// member executors, everything else falls through to the shared
-/// `DatabaseTools`.
-struct RunTools {
-    database: Arc<DatabaseTools>,
-    /// The run's scratch database, present in this step's composite only
-    /// when the step's capabilities asked for scratch. Its absence makes the
-    /// narrowing real: a step without scratch refuses the name as an unknown
-    /// tool, before any permit is consulted.
-    scratch: Option<Arc<ScratchSql>>,
-    /// The step's fetch member, present only when the step's capabilities
-    /// asked for fetch, over the run's shared wiring. Its absence refuses
-    /// both fetch names as unknown tools, before any permit is consulted.
-    fetch: Option<Arc<FetchTools>>,
-    /// The step's runner member, present only when the step's capabilities
-    /// asked for the runner, over the run's proven spawn. Its absence
-    /// refuses `run_program` as an unknown tool, before any permit is
-    /// consulted — an unproven host never has the tool at all.
-    runner: Option<Arc<RunProgram>>,
-}
-
-#[async_trait]
-impl ToolExecutor for RunTools {
-    async fn execute(
-        &self,
-        name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
-        match name {
-            "scratch_sql" => match &self.scratch {
-                Some(scratch) => scratch.execute(name, arguments).await,
-                None => Err(ToolError::UnsupportedTool),
-            },
-            "http_fetch" | "http_download" => match &self.fetch {
-                Some(fetch) => fetch.execute(name, arguments).await,
-                None => Err(ToolError::UnsupportedTool),
-            },
-            "run_program" => match &self.runner {
-                Some(runner) => runner.execute(name, arguments).await,
-                None => Err(ToolError::UnsupportedTool),
-            },
-            _ => self.database.execute(name, arguments).await,
-        }
-    }
-}
-
 /// The run-level collaborators the toolset builder narrows per step: what
 /// the composition root built once per run (the shared database tools, the
 /// scope-gated admissions — already `None` unless the run approved the
 /// scope — the workspace, the privacy gate, and the cancellation the
-/// runner's children answer).
+/// runner's children answer). The composite each toolset wraps is the
+/// shared `RunTools` (`agent::tools`), composed per step from the step's
+/// own capabilities, so a step without a member refuses its names as
+/// unknown tools before any permit is consulted.
 pub(super) struct ToolsetInputs<'a> {
     pub(super) database: &'a Arc<DatabaseTools>,
     pub(super) scratch: Option<&'a Arc<ScratchSql>>,
@@ -184,14 +138,14 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
                 definitions.push(runner.definition());
             }
             StepToolset {
-                executor: Arc::new(RunTools {
-                    database: Arc::clone(database),
-                    scratch: scratch.cloned(),
-                    fetch: fetch.map(|run_fetch| {
+                executor: Arc::new(RunTools::compose(
+                    Arc::clone(database),
+                    scratch.cloned(),
+                    fetch.map(|run_fetch| {
                         Arc::new(fetch_tools(run_fetch, &step.capabilities, workspace))
                     }),
                     runner,
-                }),
+                )),
                 definitions,
             }
         })
@@ -221,7 +175,7 @@ fn fetch_tools(
         Arc::clone(&run_fetch.transport),
         FetchLimits::for_tool_lane(),
         DownloadLimits::default(),
-        Arc::clone(workspace),
+        Some(Arc::clone(workspace)),
         run_fetch.budget.clone(),
     )
 }
