@@ -42,6 +42,7 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     if cli.options.verbose {
         crate::agent::extraction_trace::enable();
     }
+    refuse_continue_on_run(&command, cli.options.continue_session)?;
     let options = command_options(&cli.options, &command);
     let runtime = config::runtime::load(&options, Path::new("."))?;
     let approval = config::runtime::approval_mode(&options)?;
@@ -58,6 +59,22 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             can_prompt,
             options.include_profiles.clone(),
         ))
+}
+
+/// The `--continue` guard on the run path. The flag continues the
+/// interactive REPL session — the only surface that reads it — and a run is
+/// not a session: it resumes by explicit id. The flag is not global, so
+/// `saya run --continue` is already a clap usage error; this refuses the
+/// pre-subcommand spelling rather than letting a run silently ignore a
+/// stated intent.
+fn refuse_continue_on_run(command: &Command, continue_session: bool) -> Result<(), &'static str> {
+    if continue_session && matches!(command, Command::Run { .. }) {
+        return Err(
+            "`--continue` continues the interactive REPL session, not a run; a run resumes \
+             by explicit id: `saya run resume <id>` (`saya run list` prints the ids)",
+        );
+    }
+    Ok(())
 }
 
 fn command_options(
@@ -84,4 +101,41 @@ fn command_options(
         options.approval_mode = Some("read-only".to_string());
     }
     options
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    /// `--continue` continues the REPL session only; a run must never
+    /// receive it silently. The flag is declared for the bare REPL (not
+    /// global, so `saya run --continue` is a clap error), and the
+    /// pre-subcommand spelling is refused here with run-shaped guidance.
+    #[test]
+    fn continue_before_a_run_subcommand_is_refused() {
+        let cli = Cli::try_parse_from(["saya", "--continue", "run", "goal", "--allow", "none"])
+            .expect("the flag parses before a subcommand");
+        assert!(matches!(cli.command, Some(Command::Run { .. })));
+        let error = refuse_continue_on_run(
+            cli.command.as_ref().expect("the run command parsed"),
+            cli.options.continue_session,
+        )
+        .expect_err("`--continue` before a run must refuse");
+        assert!(
+            error.contains("saya run resume"),
+            "the refusal must name the run-shaped analog: {error}"
+        );
+    }
+
+    /// The bare REPL keeps the flag: `saya --continue` parses with no
+    /// subcommand (the branch dispatch serves before this guard runs, so
+    /// only the parse shape is pinned here; the run-shaped refusal is the
+    /// test above).
+    #[test]
+    fn continue_without_a_subcommand_still_reaches_the_repl() {
+        let cli = Cli::try_parse_from(["saya", "--continue"]).expect("bare `--continue` parses");
+        assert!(cli.command.is_none(), "no subcommand: the REPL path");
+        assert!(cli.options.continue_session);
+    }
 }

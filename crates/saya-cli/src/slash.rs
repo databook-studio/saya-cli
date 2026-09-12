@@ -17,6 +17,10 @@ pub(crate) use help::help_for;
 #[cfg(test)]
 pub(crate) use help::COMMAND_DESCRIPTIONS;
 pub(crate) use help::description_for;
+// The run scope parser's parity test reads the `/run` help from
+// `commands/run/scopes.rs`, so the per-command help joins the re-exports.
+#[cfg(test)]
+pub(crate) use help::command_help;
 // The inline `test_help_command` test calls `help_text` bare via `super::*`;
 // bring it into scope for tests only so the test stays unchanged.
 #[cfg(test)]

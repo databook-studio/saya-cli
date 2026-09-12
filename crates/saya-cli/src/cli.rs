@@ -26,7 +26,12 @@ pub struct Cli {
 #[derive(Debug, Clone, Args, Default)]
 pub struct GlobalOptions {
     /// Continue the most recent session.
-    #[arg(long = "continue", global = true)]
+    ///
+    /// Not a global flag: its only consumer is the interactive session this
+    /// flag sits beside, and a run is not a session — `saya run --continue`
+    /// is a usage error, never a silently ignored intent. The pre-subcommand
+    /// spelling (`saya --continue run`) is refused by the dispatch guard.
+    #[arg(long = "continue")]
     pub continue_session: bool,
     /// Resume a saved session by id (see `saya config doctor` / /sessions).
     #[arg(long, global = true)]
@@ -180,13 +185,19 @@ pub enum Command {
     Run {
         /// The run's goal.
         prompt: Option<String>,
-        /// Approved capability scopes, comma-separated. Today only
-        /// `workspace-write` binds; `none` states a deliberately read-only
-        /// run — the empty scope set. The grammar also parses `scratch`,
-        /// `fetch:<scheme>+<host>`, `runner:<program>`, and
-        /// `endpoint:<role>=<endpoint>`, and each is refused with a usage
-        /// error until the tool that consumes it is wired. A headless run
-        /// refuses to start without `--allow` — nothing runs unapproved.
+        /// Approved capability scopes, comma-separated. `none` states a
+        /// deliberately read-only run — the empty scope set — and must stand
+        /// alone. The wired scopes bind: `workspace-write` (writes outside
+        /// reads), `scratch` (a scratch database), `fetch:<scheme>+<host>`
+        /// (network fetches to that scheme and bare host), and
+        /// `runner:<program>` (a program the runner executes directly).
+        /// `interpreter:<program>` grants a shell or interpreter — a program
+        /// that can spawn arbitrary children, so the runner will not choose
+        /// one on its own; naming it here is the only way a run may use one.
+        /// The grammar also parses `endpoint:<role>=<endpoint>`, which is
+        /// refused with a usage error until per-step endpoint roles are
+        /// bound. A run states its scopes up front or does not start —
+        /// nothing runs unapproved.
         #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
         allow: Vec<String>,
         /// Budget overrides as KEY=VALUE: `wall-clock=<seconds>`,
