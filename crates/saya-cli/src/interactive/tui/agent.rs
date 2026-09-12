@@ -6,8 +6,8 @@ use crate::agent::runtime::{PromptOverrides, run_prompt_with_sink};
 use crate::config::runtime::RuntimeConfig;
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken,
-    ChatMessage, ToolDefinition, read_only_permits,
+    AgentEvent, AgentEventSink, AgentOutput, ApprovalDecider, ApprovalDecision, ApprovalPolicy,
+    CancellationToken, ChatMessage, SessionPolicy, ToolDefinition,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -46,40 +46,51 @@ impl AgentEventSink for ChannelSink {
     }
 }
 
-/// Approval decider that honors the session's approval policy: `ReadOnly`
-/// auto-approves read-shaped tools only, `Never` auto-denies, and `Ask` prompts
-/// the UI (via the same channel) and waits for the user's y/n answer.
-struct ChannelApproval {
+/// Approval decider that consults the session policy: whatever the engine
+/// allows or denies runs or refuses without the user; an ask is rendered as
+/// the modal (over the same channel) and the user's y/n answer is the
+/// decision. The TUI can always prompt, so an ask never falls back to stdin.
+pub(crate) struct ChannelApproval {
     tx: UnboundedSender<StreamMsg>,
-    policy: ApprovalPolicy,
+    policy: SessionPolicy,
+}
+
+impl ChannelApproval {
+    pub(crate) fn new(tx: UnboundedSender<StreamMsg>, policy: ApprovalPolicy) -> Self {
+        Self {
+            tx,
+            policy: SessionPolicy::new(policy),
+        }
+    }
 }
 
 #[async_trait]
 impl ApprovalDecider for ChannelApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
-        match self.policy {
-            ApprovalPolicy::ReadOnly => return read_only_permits(&tool.effect),
-            ApprovalPolicy::Never => return false,
-            ApprovalPolicy::Ask => {}
+        match self.policy.resolve(&tool.effect, None) {
+            ApprovalDecision::Allow => true,
+            ApprovalDecision::Deny => false,
+            ApprovalDecision::Ask => {
+                let (respond, answer) = oneshot::channel();
+                if self
+                    .tx
+                    .send(StreamMsg::ApprovalRequest {
+                        tool: tool.name.clone(),
+                        detail: crate::agent::tools::sql_tool_call(&tool.name, arguments).map(
+                            |call| match call.target {
+                                Some(target) => format!("-- on {target}\n{}", call.sql),
+                                None => call.sql,
+                            },
+                        ),
+                        respond,
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+                answer.await.unwrap_or(false)
+            }
         }
-        let (respond, answer) = oneshot::channel();
-        if self
-            .tx
-            .send(StreamMsg::ApprovalRequest {
-                tool: tool.name.clone(),
-                detail: crate::agent::tools::sql_tool_call(&tool.name, arguments).map(|call| {
-                    match call.target {
-                        Some(target) => format!("-- on {target}\n{}", call.sql),
-                        None => call.sql,
-                    }
-                }),
-                respond,
-            })
-            .is_err()
-        {
-            return false;
-        }
-        answer.await.unwrap_or(false)
     }
 }
 
@@ -100,10 +111,8 @@ pub(crate) fn start(
 
     std::thread::spawn(move || {
         let sink = ChannelSink { tx: tx.clone() };
-        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval {
-            tx: tx.clone(),
-            policy: approval,
-        });
+        let decider: Arc<dyn ApprovalDecider> =
+            Arc::new(ChannelApproval::new(tx.clone(), approval));
         let runtime_handle = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -133,3 +142,7 @@ pub(crate) fn start(
 
     Stream { rx, cancel, prompt }
 }
+
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;

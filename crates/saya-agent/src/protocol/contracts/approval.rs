@@ -3,7 +3,9 @@
 
 use async_trait::async_trait;
 
+use super::session_policy::{ApprovalDecision, SessionPolicy};
 use super::{LocalStateEffect, ToolDefinition, ToolEffect};
+use crate::protocol::approval::ApprovalPolicy;
 
 #[async_trait]
 pub trait ApprovalDecider: Send + Sync {
@@ -25,12 +27,15 @@ pub fn read_only_permits(effect: &ToolEffect) -> bool {
 }
 
 /// The read-only approval policy: auto-approves read-shaped tools, denies
-/// everything else.
+/// everything else. Decides through the same engine every approval frontend
+/// consults — its read-only arm is the policy engine's read-only mode with
+/// nothing granted.
 pub struct AllowReadOnlyApproval;
 
 #[async_trait]
 impl ApprovalDecider for AllowReadOnlyApproval {
     async fn approve(&self, tool: &ToolDefinition, _: &serde_json::Value) -> bool {
-        read_only_permits(&tool.effect)
+        SessionPolicy::new(ApprovalPolicy::ReadOnly).resolve(&tool.effect, None)
+            == ApprovalDecision::Allow
     }
 }

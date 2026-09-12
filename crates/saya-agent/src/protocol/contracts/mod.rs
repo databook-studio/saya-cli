@@ -10,8 +10,12 @@ mod error;
 mod event;
 mod knowledge;
 mod learning;
+mod session_policy;
 mod tool;
 mod usage;
+
+#[cfg(test)]
+mod session_policy_tests;
 
 pub use approval::{AllowReadOnlyApproval, ApprovalDecider, read_only_permits};
 pub use chat::{
@@ -24,6 +28,7 @@ pub use knowledge::{
     KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedClaimDto, SuppliedContractDto,
 };
 pub use learning::LearningSkipReason;
+pub use session_policy::{ApprovalChoice, ApprovalDecision, SessionGrants, SessionPolicy};
 pub use tool::{LocalStateEffect, ToolDefinition, ToolEffect, ToolExecutor};
 pub use usage::UsageCall;
 

@@ -1,13 +1,16 @@
-use saya_agent::{ApprovalPolicy, ToolDefinition, read_only_permits};
+use saya_agent::{ApprovalDecision, ApprovalPolicy, SessionPolicy, ToolDefinition};
 
 pub(crate) struct TerminalApproval {
-    policy: ApprovalPolicy,
+    policy: SessionPolicy,
     can_prompt: bool,
 }
 
 impl TerminalApproval {
     pub(crate) fn new(policy: ApprovalPolicy, can_prompt: bool) -> Self {
-        Self { policy, can_prompt }
+        Self {
+            policy: SessionPolicy::new(policy),
+            can_prompt,
+        }
     }
 }
 
@@ -25,11 +28,11 @@ pub(crate) fn approval_prompt(tool: &ToolDefinition, arguments: &serde_json::Val
 #[async_trait::async_trait]
 impl saya_agent::ApprovalDecider for TerminalApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
-        match self.policy {
-            ApprovalPolicy::ReadOnly => read_only_permits(&tool.effect),
-            ApprovalPolicy::Never => false,
-            ApprovalPolicy::Ask if !self.can_prompt => false,
-            ApprovalPolicy::Ask => {
+        match self.policy.resolve(&tool.effect, None) {
+            ApprovalDecision::Allow => true,
+            ApprovalDecision::Deny => false,
+            ApprovalDecision::Ask if !self.can_prompt => false,
+            ApprovalDecision::Ask => {
                 use std::io::{self, IsTerminal, Write};
                 if !io::stdin().is_terminal() {
                     return false;
