@@ -36,6 +36,13 @@ pub struct GlobalOptions {
     /// Resume a saved session by id (see `saya config doctor` / /sessions).
     #[arg(long, global = true)]
     pub resume: Option<String>,
+    /// Bind the session's workspace root explicitly to this directory
+    /// (canonicalised and pinned into the session). Without it the root is
+    /// the git worktree top above the launch directory, and outside any
+    /// worktree nothing binds: the write-shaped tools stay hidden and the
+    /// workspace reads refuse.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<std::path::PathBuf>,
     /// Connection profile to use (overrides `default_profile` in config).
     #[arg(long, global = true)]
     pub profile: Option<String>,

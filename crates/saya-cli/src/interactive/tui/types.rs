@@ -236,5 +236,8 @@ pub(crate) struct App {
     pub(crate) run_panel: Option<super::run_panel::RunPanel>,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) state_db: SqliteStateStore,
+    /// The session's composed tool universe — the executor and definitions
+    /// every turn of this session dispatches through.
+    pub(crate) session: Arc<crate::interactive::session_universe::SessionUniverse>,
     pub(crate) should_quit: bool,
 }

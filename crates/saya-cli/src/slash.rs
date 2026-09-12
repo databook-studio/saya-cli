@@ -74,6 +74,9 @@ pub enum SlashCommand {
     Usage,
     /// Toggle display of the model's chain-of-thought in the transcript.
     Thinking(Option<bool>),
+    /// Show the session's workspace binding: the pinned canonical root, or
+    /// the no-root shape where nothing binds.
+    Workspace,
     Help(Option<String>),
     Exit,
 }
@@ -137,6 +140,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "doctor" => SlashCommand::Doctor,
         "usage" => SlashCommand::Usage,
         "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
+        "workspace" => SlashCommand::Workspace,
         "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject"
         | "approve-all" => {
             // The contract slash adapters: translate to the same

@@ -3,6 +3,7 @@ use super::{
     session_commands::SessionAction,
     session_request::PromptResult,
     session_resume::{SessionDefaults, block_on, load_session},
+    session_runtime::SessionRuntime,
 };
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
@@ -15,9 +16,9 @@ use std::io::{self, IsTerminal, Write};
 ///
 /// When attached to a terminal, each prompt is preceded by a one-line status
 /// header (active profile, included databases, provider/model, approval mode,
-/// and privacy state) and the `saya> ` input marker. Normal terminal scrollback
-/// is preserved. Piped input reads lines without the status header, so scripts
-/// and CI behave predictably.
+/// workspace root, and privacy state) and the `saya> ` input marker. Normal
+/// terminal scrollback is preserved. Piped input reads lines without the
+/// status header, so scripts and CI behave predictably.
 pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let runtime = config::runtime::load(&cli.options, std::path::Path::new("."))?;
     let format = config::runtime::format_name(&cli.options, &runtime.resolved);
@@ -30,7 +31,8 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         approval_mode: config::runtime::approval_name(&cli.options)?,
     };
     let mut state = load_session(&store, &cli, &defaults)?;
-    if !cli.options.continue_session && cli.options.resume.is_none() {
+    let fresh = !cli.options.continue_session && cli.options.resume.is_none();
+    if fresh {
         state.provider = runtime.resolved.ai.provider.as_str().into();
         state.model = runtime.resolved.ai.model.clone();
         state.allow_data_sharing = runtime.resolved.ai.allow_data_sharing;
@@ -51,18 +53,50 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     if state.profile.is_none() {
         state.profile = runtime.resolved.profile_name.clone();
     }
+    // The session's engine side, once per process: the state directory
+    // (`sessions/<id>/`), the single-writer lock, and the tool universe —
+    // workspace binding, scratch, fetch, runner. Held for the process; the
+    // lock releases when it drops.
+    let mut session = SessionRuntime::acquire(
+        &runtime,
+        cli.options.workspace.as_deref(),
+        fresh,
+        state.workspace_root.as_deref(),
+        &state.id,
+    )?;
+    // The pin the record carries: resolved fresh, or re-bound by an explicit
+    // `--workspace`; a resumed session re-opening its recorded pin keeps it
+    // untouched (even where the root has vanished, so the record remembers).
+    if let Some(root) = session.record_root(fresh) {
+        state.workspace_root = Some(root);
+    }
     let terminal = io::stdin().is_terminal();
     if terminal {
         // Interactive terminals get the full-screen TUI. Chart temp files are
         // removed when the session ends, on the clean path and on error alike.
-        let outcome = super::tui::run(&runtime, &store, &state_db, format, &mut state);
+        let outcome = super::tui::run(
+            &runtime,
+            &store,
+            &state_db,
+            format,
+            &mut state,
+            &mut session,
+        );
         crate::chart::cleanup_session_charts();
         let code = outcome?;
         block_on(store.save(state.redacted()))?;
         return Ok(code);
     }
     // Piped / non-TTY input (scripts, CI) uses the headless line executor.
-    let outcome = run_plain_loop(terminal, &mut state, &runtime, &store, &state_db, format);
+    let outcome = run_plain_loop(
+        terminal,
+        &mut state,
+        &runtime,
+        &store,
+        &state_db,
+        format,
+        &mut session,
+    );
     crate::chart::cleanup_session_charts();
     outcome?;
     block_on(store.save(state.redacted()))?;
@@ -93,7 +127,13 @@ fn run_plain_loop(
     store: &FsSessionStore,
     state_db: &SqliteStateStore,
     format: RenderFormat,
+    session: &mut SessionRuntime,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // A startup fact the user must read once, in the loop they will see every
+    // turn: a pinned root that vanished, or any other composition notice.
+    if let Some(notice) = session.notice() {
+        println!("{notice}");
+    }
     let mut input = String::new();
     loop {
         if terminal {
@@ -105,7 +145,9 @@ fn run_plain_loop(
         if io::stdin().read_line(&mut input)? == 0 {
             break;
         }
-        if handle_line(&input, state, runtime, store, state_db, format, terminal)? {
+        if handle_line(
+            &input, state, runtime, store, state_db, format, terminal, session,
+        )? {
             break;
         }
     }
@@ -124,6 +166,7 @@ fn handle_line(
     state_db: &SqliteStateStore,
     format: RenderFormat,
     terminal: bool,
+    session: &mut SessionRuntime,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let line = line.trim_end();
     if line.trim().is_empty() {
@@ -169,6 +212,7 @@ fn handle_line(
                 history,
                 format,
                 state_db,
+                session.universe(),
             )) {
                 Ok(PromptResult::Completed(output)) => {
                     state.record_turn(
@@ -291,13 +335,34 @@ fn handle_line(
         };
         match super::session_resume::resume_session(store, &id, &defaults) {
             Ok(Some(loaded)) => {
-                *state = loaded;
-                super::session_emit::emit_action(
-                    SessionAction::Message(format!("Resumed session {id}")),
-                    format,
-                    state,
-                    store,
-                )?;
+                // The resumed session's own state must ride the swap: the new
+                // state directory claimed and composed before the old lock
+                // releases; a refused swap keeps this session.
+                match session.reacquire(runtime, loaded.workspace_root.as_deref(), &id) {
+                    Ok(()) => {
+                        *state = loaded;
+                        super::session_emit::emit_action(
+                            SessionAction::Message(format!("Resumed session {id}")),
+                            format,
+                            state,
+                            store,
+                        )?;
+                        if let Some(notice) = session.notice() {
+                            super::session_emit::emit_action(
+                                SessionAction::Message(notice.to_string()),
+                                format,
+                                state,
+                                store,
+                            )?;
+                        }
+                    }
+                    Err(error) => super::session_emit::emit_action(
+                        SessionAction::Error(error),
+                        format,
+                        state,
+                        store,
+                    )?,
+                }
             }
             Ok(None) => super::session_emit::emit_action(
                 SessionAction::Error(format!("Session not found: {id}")),

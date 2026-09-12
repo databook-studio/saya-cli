@@ -43,6 +43,7 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         crate::agent::extraction_trace::enable();
     }
     refuse_continue_on_run(&command, cli.options.continue_session)?;
+    refuse_workspace_on_subcommand(Some(&command), cli.options.workspace.as_deref())?;
     let options = command_options(&cli.options, &command);
     let runtime = config::runtime::load(&options, Path::new("."))?;
     let approval = config::runtime::approval_mode(&options)?;
@@ -72,6 +73,27 @@ fn refuse_continue_on_run(command: &Command, continue_session: bool) -> Result<(
         return Err(
             "`--continue` continues the interactive REPL session, not a run; a run resumes \
              by explicit id: `saya run resume <id>` (`saya run list` prints the ids)",
+        );
+    }
+    Ok(())
+}
+
+/// The `--workspace` guard. The flag binds the interactive session's
+/// workspace — the only surface that reads it, and only when no subcommand
+/// is present — and a subcommand is not a session: `saya ask` composes no
+/// session state at all. The flag is not global, so `saya ask --workspace
+/// <dir>` is already a clap usage error; this refuses the pre-subcommand
+/// spelling rather than letting a subcommand silently ignore a stated
+/// intent.
+fn refuse_workspace_on_subcommand(
+    command: Option<&Command>,
+    workspace: Option<&Path>,
+) -> Result<(), String> {
+    if command.is_some() && workspace.is_some() {
+        return Err(
+            "`--workspace` binds the interactive session's workspace, not a subcommand: \
+             launch the session (`saya --workspace <dir>`) or run the subcommand without it"
+                .into(),
         );
     }
     Ok(())
@@ -125,6 +147,30 @@ mod tests {
         assert!(
             error.contains("saya run resume"),
             "the refusal must name the run-shaped analog: {error}"
+        );
+    }
+
+    /// `--workspace` reaches only the bare REPL; a subcommand is not a
+    /// session, so the pre-subcommand spelling is refused rather than
+    /// silently ignored.
+    #[test]
+    fn workspace_before_a_subcommand_is_refused() {
+        let cli = Cli::try_parse_from(["saya", "--workspace", "/tmp/proj", "ask", "question"])
+            .expect("the flag parses before a subcommand");
+        assert!(cli.command.is_some());
+        let error = refuse_workspace_on_subcommand(
+            Some(cli.command.as_ref().unwrap()),
+            cli.options.workspace.as_deref(),
+        )
+        .expect_err("`--workspace` before a subcommand must refuse");
+        assert!(
+            error.contains("interactive session"),
+            "the refusal names the surface that reads the flag: {error}"
+        );
+        // The bare REPL keeps the flag: no subcommand, no guard fires.
+        assert!(
+            refuse_workspace_on_subcommand(None, Some(Path::new("/tmp/proj"))).is_ok(),
+            "no subcommand: the flag binds the session"
         );
     }
 

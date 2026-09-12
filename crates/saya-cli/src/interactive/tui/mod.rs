@@ -43,6 +43,7 @@ mod ui_snapshot_tests;
 mod usage_footer;
 mod usage_totals;
 
+use super::session_runtime::SessionRuntime;
 use super::session_state::SessionState;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
@@ -68,6 +69,7 @@ pub(crate) fn run(
     state_db: &SqliteStateStore,
     format: RenderFormat,
     state: &mut SessionState,
+    session: &mut SessionRuntime,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::new()?;
     let choice = runtime.resolved.output_color;
@@ -87,7 +89,17 @@ pub(crate) fn run(
         .keys()
         .cloned()
         .collect::<Vec<String>>();
-    let mut app = App::new(profiles, Arc::new(runtime.clone()), state_db.clone());
+    let mut app = App::new(
+        profiles,
+        Arc::new(runtime.clone()),
+        state_db.clone(),
+        session.universe(),
+    );
+    // A startup fact the user must read: a pinned root that vanished, or any
+    // other composition notice, said once into the transcript.
+    if let Some(notice) = session.notice() {
+        app.transcript.push(BlockKind::System, notice.to_string());
+    }
     app.reload_at_refs(state);
     // A session resumed via --resume/--continue arrives with its turns already
     // loaded; replay them so the panel opens on the prior conversation.
@@ -251,6 +263,7 @@ pub(crate) fn run(
         if !app.is_busy()
             && let Some(line) = app.pending.take()
         {
+            let id_before = state.id.clone();
             match dispatch::dispatch(
                 &line,
                 &mut app.transcript,
@@ -261,6 +274,7 @@ pub(crate) fn run(
                 &app.state_db,
                 format,
                 &mut app.last_query,
+                session,
             ) {
                 Dispatch::Quit => {
                     // An in-flight run is not orphaned by a quit: the quit is
@@ -314,6 +328,11 @@ pub(crate) fn run(
                     }
                 }
             }
+            // A `/resume` swapped the session: the engine side too, so the
+            // app's universe is the resumed session's, not the old one's.
+            if state.id != id_before {
+                app.session = session.universe();
+            }
             queue_session_save(&mut app, store, state);
         }
 
@@ -326,17 +345,26 @@ pub(crate) fn run(
             };
             match super::session_resume::resume_session(store, &id, &defaults) {
                 Ok(Some(loaded)) => {
-                    *state = loaded;
-                    app.reload_at_refs(state);
-                    if state.turns.is_empty() {
-                        app.transcript.clear();
-                        app.transcript.push(
-                            BlockKind::System,
-                            format!("Resumed session {id} (no earlier turns)."),
-                        );
-                    } else {
-                        // Replace the panel with the resumed session's conversation.
-                        app.show_history(state);
+                    match session.reacquire(runtime, loaded.workspace_root.as_deref(), &id) {
+                        Ok(()) => {
+                            *state = loaded;
+                            app.session = session.universe();
+                            app.reload_at_refs(state);
+                            if state.turns.is_empty() {
+                                app.transcript.clear();
+                                app.transcript.push(
+                                    BlockKind::System,
+                                    format!("Resumed session {id} (no earlier turns)."),
+                                );
+                            } else {
+                                // Replace the panel with the resumed session's conversation.
+                                app.show_history(state);
+                            }
+                            if let Some(notice) = session.notice() {
+                                app.transcript.push(BlockKind::System, notice.to_string());
+                            }
+                        }
+                        Err(error) => app.transcript.push(BlockKind::Error, error),
                     }
                 }
                 Ok(None) => app

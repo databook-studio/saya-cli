@@ -42,6 +42,17 @@ impl ScratchSql {
         }))
     }
 
+    /// Opens the tool over a root the caller has already gated: the
+    /// interactive session's `sessions/<id>/`, where admission is per call
+    /// (the approval engine asks; nothing is pre-declared to admit). The
+    /// file, configuration, and 0600 hardening are the pinned scratch
+    /// semantics either way.
+    pub fn open(root: &Path) -> Result<Self, ScratchError> {
+        Ok(Self {
+            db: ScratchDb::open(root)?,
+        })
+    }
+
     /// Narrows the per-statement timeout, for the run engine to follow a
     /// step's remaining budget. Never called with a longer value.
     pub fn with_query_timeout(mut self, query_timeout: Duration) -> Self {

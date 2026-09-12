@@ -28,7 +28,10 @@ mod grants_tests;
 mod host;
 mod reads;
 mod resume;
-mod runner;
+// The runner composition's shared guard mechanics (`place_guard`) are the
+// one implementation both composition roots — this run surface and the
+// interactive session — consult, so the module is reachable crate-wide.
+pub(crate) mod runner;
 #[cfg(test)]
 mod runner_tests;
 mod scopes;

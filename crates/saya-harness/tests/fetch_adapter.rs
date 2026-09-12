@@ -126,7 +126,7 @@ fn adapter(
         Arc::new(transport),
         limits,
         DownloadLimits::default(),
-        workspace,
+        Some(workspace),
         budget,
     )
 }

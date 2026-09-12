@@ -284,15 +284,17 @@ mod esc_run_panel_tests {
     #[test]
     fn esc_cancels_the_agent_stream_before_touching_the_panel() {
         let (mut app, _cancel) = app_with_panel(false);
-        let stream = crate::interactive::tui::agent::start(
-            app.runtime.clone(),
-            "a prompt".into(),
-            saya_agent::ApprovalPolicy::ReadOnly,
-            crate::agent::runtime::PromptOverrides::default(),
-            Vec::new(),
-            app.state_db.clone(),
-            None,
-        );
+        let stream =
+            crate::interactive::tui::agent::start(crate::interactive::tui::agent::StreamRequest {
+                runtime: app.runtime.clone(),
+                prompt: "a prompt".into(),
+                approval: saya_agent::ApprovalPolicy::ReadOnly,
+                overrides: crate::agent::runtime::PromptOverrides::default(),
+                history: Vec::new(),
+                state_db: app.state_db.clone(),
+                last_sql: None,
+                session: std::sync::Arc::clone(&app.session),
+            });
         app.request.stream = Some(stream);
         handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
         assert!(

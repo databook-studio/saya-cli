@@ -146,7 +146,7 @@ mod tests {
     fn test_slash_only() {
         let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
         assert_eq!((start, end), (0, 1));
-        assert_eq!(candidates.len(), 34); // 30 commands + /approve-all + /thinking + /run + /runs
+        assert_eq!(candidates.len(), 35); // 30 commands + /approve-all + /thinking + /run + /runs + /workspace
         assert_eq!(candidates[0].value, "/connect");
         // The description is the single-source one from slash::help, sharpened
         // to carry the /connect vs /include contrast (one replaces the

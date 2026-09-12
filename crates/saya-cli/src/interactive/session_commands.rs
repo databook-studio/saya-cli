@@ -148,6 +148,11 @@ impl SessionState {
             SlashCommand::History => SessionAction::History,
             SlashCommand::Doctor => SessionAction::Doctor,
             SlashCommand::Usage => SessionAction::Message(self.usage.render()),
+            SlashCommand::Workspace => SessionAction::Message(match self.workspace_root.as_deref() {
+                Some(root) => format!("workspace: {root}"),
+                None => "no workspace is bound: writes, downloads, and run_program are                          unavailable — launch inside a git worktree or with --workspace <dir>"
+                    .to_string(),
+            }),
             SlashCommand::Thinking(value) => {
                 if let Some(value) = value {
                     self.show_thinking = value;

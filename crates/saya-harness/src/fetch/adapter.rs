@@ -41,12 +41,16 @@ use crate::workspace::Workspace;
 /// The two fetch tools as one step's executor member: the policy is the
 /// step's, the transport, workspace, and download wallet are the run's
 /// shared ones (the wallet by clone — a trip anywhere is seen everywhere).
+/// The workspace is the download destination; `None` is the session shape
+/// where `http_fetch` needs no root and the download tool is simply not
+/// advertised — a stray call refuses typed rather than guessing at a
+/// destination.
 pub struct FetchTools {
     fetch: HttpFetchTool,
     policy: FetchPolicy,
     transport: Arc<dyn FetchTransport>,
     download_limits: DownloadLimits,
-    workspace: Arc<Workspace>,
+    workspace: Option<Arc<Workspace>>,
     budget: DownloadBudget,
 }
 
@@ -59,7 +63,7 @@ impl FetchTools {
         transport: Arc<dyn FetchTransport>,
         limits: FetchLimits,
         download_limits: DownloadLimits,
-        workspace: Arc<Workspace>,
+        workspace: Option<Arc<Workspace>>,
         budget: DownloadBudget,
     ) -> Self {
         Self {
@@ -87,16 +91,24 @@ impl FetchTools {
         })
     }
 
-    /// One bounded, resumable download into the run workspace under the
-    /// run's shared budget. The result is metadata — destination, bytes,
-    /// digest — never page bytes.
+    /// One bounded, resumable download into the workspace under the shared
+    /// budget. The result is metadata — destination, bytes, digest — never
+    /// page bytes. Without a workspace bound there is no destination: the
+    /// call refuses typed, naming the missing root.
     async fn run_download(&self, arguments: Value) -> Result<Value, ToolError> {
+        let Some(workspace) = self.workspace.as_ref() else {
+            return Err(ToolError::Fetch(
+                "no workspace is bound, so there is nowhere to download to: bind a \
+                 workspace (a git worktree or --workspace) to download files"
+                    .into(),
+            ));
+        };
         let url = string_argument(&arguments, "url")?;
         let destination = string_argument(&arguments, "destination")?;
         let outcome = http_download(
             &self.policy,
             self.transport.as_ref(),
-            &self.workspace,
+            workspace,
             &destination,
             &url,
             self.download_limits,

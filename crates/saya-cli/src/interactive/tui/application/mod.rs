@@ -21,6 +21,7 @@ impl App {
         profiles: Vec<String>,
         runtime: Arc<RuntimeConfig>,
         state_db: SqliteStateStore,
+        session: Arc<crate::interactive::session_universe::SessionUniverse>,
     ) -> Self {
         let mut transcript = Transcript::new();
         transcript.push(
@@ -50,6 +51,7 @@ impl App {
             run_panel: None,
             runtime,
             state_db,
+            session,
             should_quit: false,
         }
     }
@@ -169,6 +171,9 @@ pub(crate) mod tests_support {
             run_panel: None,
             runtime: Arc::new(unused_runtime()),
             state_db: SqliteStateStore::new(PathBuf::new()),
+            session: std::sync::Arc::new(
+                crate::interactive::session_universe::SessionUniverse::empty(),
+            ),
             should_quit: false,
         }
     }
@@ -402,6 +407,7 @@ mod tests {
             provider: "ollama".into(),
             model: "qwen".into(),
             approval_mode: "read-only".into(),
+            workspace_root: None,
             sharing_on: true,
         };
         let backend = ratatui::backend::TestBackend::new(80, 24);

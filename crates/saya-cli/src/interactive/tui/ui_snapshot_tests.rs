@@ -139,6 +139,9 @@ pub(crate) fn empty_app() -> App {
         run_panel: None,
         runtime: unused_runtime(),
         state_db: unused_store(),
+        session: std::sync::Arc::new(
+            crate::interactive::session_universe::SessionUniverse::empty(),
+        ),
         should_quit: false,
     }
 }
@@ -161,6 +164,7 @@ pub(crate) fn fixed_status() -> StatusView {
         provider: "ollama".into(),
         model: "qwen".into(),
         approval_mode: "read-only".into(),
+        workspace_root: Some("/home/user/proj".into()),
         sharing_on: true,
     }
 }

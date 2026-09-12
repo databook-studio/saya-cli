@@ -1,4 +1,5 @@
 mod session_commands;
+mod session_definitions;
 mod session_emit;
 mod session_loop;
 pub(crate) mod session_paths;
@@ -6,9 +7,13 @@ mod session_prompt;
 mod session_request;
 mod session_resume;
 mod session_run;
+mod session_runner;
+pub(crate) mod session_runtime;
 mod session_schema;
 mod session_sql;
 mod session_state;
+pub(crate) mod session_universe;
+mod session_workspace;
 mod tui;
 
 pub use session_commands::SessionAction;

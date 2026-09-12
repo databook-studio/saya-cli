@@ -3,6 +3,8 @@
 use super::super::agent::{self, StreamMsg};
 use super::super::stream_events::apply_event;
 use super::super::transcript::BlockKind;
+use std::sync::Arc;
+
 use super::super::types::{App, LastQuery, PendingApproval};
 use super::super::usage_footer;
 use crate::interactive::session_state::SessionState;
@@ -19,15 +21,16 @@ impl App {
             .approval_mode
             .parse()
             .unwrap_or(saya_agent::ApprovalPolicy::Ask);
-        self.request.stream = Some(agent::start(
-            self.runtime.clone(),
+        self.request.stream = Some(agent::start(agent::StreamRequest {
+            runtime: Arc::clone(&self.runtime),
             prompt,
             approval,
-            state.prompt_overrides(),
-            state.provider_history(),
-            self.state_db.clone(),
-            self.last_query.as_ref().map(|lq| lq.sql.clone()),
-        ));
+            overrides: state.prompt_overrides(),
+            history: state.provider_history(),
+            state_db: self.state_db.clone(),
+            last_sql: self.last_query.as_ref().map(|lq| lq.sql.clone()),
+            session: Arc::clone(&self.session),
+        }));
         self.request.started = Some(std::time::Instant::now());
     }
 

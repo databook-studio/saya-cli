@@ -160,10 +160,16 @@ at start (exit `3`) naming the program and the directory. The directory
 must also sit outside the run's filesystem roots in both directions — not
 inside, equal to, or containing one — and the run refuses to start
 otherwise: with programs inside the run tree, one step's child could write
-the binary the next step's `run_program` validates and executes. The runner
-tool itself is admitted only where the startup sandbox probe proved the
-host; on a host the probe refused, plans asking for the runner refuse as
-needs-approval.
+the binary the next step's `run_program` validates and executes. The same
+guard runs for interactive sessions against the session's workspace root —
+the project tree — so a project's checked-in tool directory, inside a
+session's fs root, is refused for sessions (the enforcement cannot express
+an exclusion: Seatbelt subpaths are allow-lists and Landlock has no
+subtractive rights); keep a session's program directory outside the
+workspace tree, in the default recommended layout beside the runs and
+sessions roots. The runner tool itself is admitted only where the startup
+sandbox probe proved the host; on a host the probe refused, plans asking for
+the runner refuse as needs-approval.
 
 The project layer may set `[jobs]` without `--trust-project-config`: it is a
 cost control, not a security-critical setting. Layering is per key: a layer

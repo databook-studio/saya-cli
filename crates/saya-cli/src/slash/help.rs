@@ -32,6 +32,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("schema", "Inspect or refresh database schema"),
     ("doctor", "Diagnose config: secrets, provider endpoint"),
     ("usage", "Show session token usage and cache hit rate"),
+    ("workspace", "Show the session's bound workspace root"),
     ("thinking", "Toggle display of the model's chain-of-thought"),
     ("sql", "Run a raw SQL query against the active profile"),
     ("export", "Export the last query result as CSV or JSON"),
@@ -145,6 +146,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("resume", "/resume <id>"),
             ("doctor", "/doctor"),
             ("usage", "/usage"),
+            ("workspace", "/workspace"),
             ("thinking", "/thinking [on|off]"),
             ("help", "/help [command]"),
             ("exit", "/exit  (alias /quit)"),
@@ -225,6 +227,11 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "usage" => Some(
             "usage — show session token usage: input, output, reasoning, cached input, cache creation, and the cache hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a mean of per-turn rates). Fields the provider did not report show —; the hit rate shows 'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
+        ),
+        "workspace" => Some(
+            "workspace — show the session's bound workspace root, the one tree every file tool \
+             and run_program child is contained to. Unbound means the write-shaped tools are \
+             hidden and workspace reads refuse. Example: /workspace",
         ),
         "thinking" => Some(
             "thinking [on|off] — toggle display of the model's chain-of-thought in the transcript. Off by default: thinking is verbose (often longer than the answer) and restates database contents in prose. With no argument, toggles; with on/off, sets explicitly. Display only — reasoning is never written to a saved session, and the copy keys (Ctrl+Y, Ctrl+B) leave it out. Selection mode (Ctrl+O) hands the screen to your terminal, so a mouse drag can still copy thinking that is visible. Example: /thinking on",

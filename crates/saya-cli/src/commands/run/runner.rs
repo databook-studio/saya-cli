@@ -143,29 +143,49 @@ pub(super) fn build(
 /// The placement guard: the canonical program dir must not sit inside, equal
 /// to, or containing any fs root. Both containment directions are checked —
 /// a program dir containing a root puts a child-writable root under the exec
-/// allow, the measured escape one composition mistake away.
+/// allow, the measured escape one composition mistake away. The mechanics
+/// are the one implementation both surfaces share; the refusal text is each
+/// surface's own contract, supplied here in the run's words.
 pub(super) fn place(program_dir: &Path, roots: &[PathBuf]) -> Result<PathBuf, String> {
-    let unresolvable = || {
-        format!(
-            "the runner program directory {} could not be resolved — set [jobs.runner] \
-             program_dir to an existing directory and stage its programs there",
-            program_dir.display()
-        )
-    };
-    let canonical = std::fs::canonicalize(program_dir).map_err(|_| unresolvable())?;
-    if !canonical.is_dir() {
-        return Err(unresolvable());
-    }
-    for root in roots {
-        if canonical.starts_with(root) || root.starts_with(&canonical) {
-            return Err(format!(
+    place_guard(
+        program_dir,
+        roots,
+        |dir| {
+            format!(
+                "the runner program directory {} could not be resolved — set [jobs.runner] \
+                 program_dir to an existing directory and stage its programs there",
+                dir.display()
+            )
+        },
+        |canonical, root| {
+            format!(
                 "the runner program directory {} overlaps this run's filesystem root {} — \
                  a program directory inside, equal to, or containing a run root lets one \
                  step's child write the binary the next step's run_program validates green \
                  and executes; stage programs outside the run tree",
                 canonical.display(),
                 root.display()
-            ));
+            )
+        },
+    )
+}
+
+/// The shared guard mechanics: canonicalise the program directory (it must
+/// resolve to an existing directory), then refuse any containment relation —
+/// in either direction — to any root. Each surface renders its own refusal.
+pub(crate) fn place_guard(
+    program_dir: &Path,
+    roots: &[PathBuf],
+    unresolvable: impl Fn(&Path) -> String,
+    overlap: impl Fn(&Path, &Path) -> String,
+) -> Result<PathBuf, String> {
+    let canonical = std::fs::canonicalize(program_dir).map_err(|_| unresolvable(program_dir))?;
+    if !canonical.is_dir() {
+        return Err(unresolvable(program_dir));
+    }
+    for root in roots {
+        if canonical.starts_with(root) || root.starts_with(&canonical) {
+            return Err(overlap(&canonical, root));
         }
     }
     Ok(canonical)

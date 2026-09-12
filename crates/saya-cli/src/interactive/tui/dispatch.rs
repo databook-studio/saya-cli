@@ -3,6 +3,7 @@
 //! results that would normally print to stdout are captured via `render_event`
 //! and pushed into the transcript instead.
 
+use super::super::session_runtime::SessionRuntime;
 use super::dispatch_actions::{list_sessions, resume};
 use super::dispatch_contracts::run_contracts;
 use super::dispatch_runs;
@@ -54,6 +55,7 @@ pub(crate) fn dispatch(
     state_db: &saya_store::SqliteStateStore,
     format: RenderFormat,
     last_query: &mut Option<LastQuery>,
+    session: &mut SessionRuntime,
 ) -> Dispatch {
     // In the TUI, /sessions opens an interactive picker rather than a text list.
     if line.trim() == "/sessions" {
@@ -73,7 +75,9 @@ pub(crate) fn dispatch(
                 SessionAction::Doctor => {
                     transcript.push(BlockKind::System, crate::config::doctor::summary(runtime))
                 }
-                SessionAction::Resume(id) => resume(transcript, state, store, &id),
+                SessionAction::Resume(id) => {
+                    resume(transcript, state, runtime, store, session, &id)
+                }
                 SessionAction::Sql(sql) => {
                     result = Dispatch::SqlTask(super::sql_task::SqlTask {
                         profile: state.profile.clone(),
