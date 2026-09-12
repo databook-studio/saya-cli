@@ -65,6 +65,34 @@ pub(super) fn view_of(
     })
 }
 
+/// The interpreter approval's deterministic warning line, for the approved
+/// scopes that carry an interpreter token — `None` for every run that did
+/// not opt in, so the body a run without the grant shows is today's bytes
+/// exactly. The line states what the user is accepting in place of the
+/// typed-argv contract's behavioural half — no euphemism, no dilution into
+/// a generic "dangerous mode" banner. The headless receipt prints the same
+/// line before the first step: what the terminal shows and what the journal
+/// records agree.
+pub(super) fn interpreter_warning(approved: &[String]) -> Option<String> {
+    let mut programs = Vec::new();
+    for token in approved {
+        if let Some(program) = token.strip_prefix("interpreter:") {
+            programs.push(program.to_string());
+        }
+    }
+    if programs.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "interpreter approval: this run may execute {} as an interpreter. Its argv is typed \
+         and the sandbox still bounds its reads, writes, exec, and egress — but the model \
+         writes the program the interpreter runs, and (where process-fork is granted) any \
+         children it spawns run arbitrary argv. What the interpreter computes is not a \
+         reviewed, fixed binary.",
+        programs.join(", ")
+    ))
+}
+
 /// The approval text: deterministic, one line per fact — the body the modal
 /// shows and the tests assert on.
 pub(super) fn render(view: &PlanApprovalView) -> String {
@@ -77,6 +105,10 @@ pub(super) fn render(view: &PlanApprovalView) -> String {
             view.approved.join(", ")
         }
     ));
+    if let Some(warning) = interpreter_warning(&view.approved) {
+        text.push('\n');
+        text.push_str(&warning);
+    }
     text.push_str("\nplan:");
     for (index, step) in view.steps.iter().enumerate() {
         text.push_str(&format!("\n  {}. {}", index + 1, step.goal));

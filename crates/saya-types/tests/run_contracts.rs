@@ -12,9 +12,9 @@ use std::time::Duration;
 use proptest::prelude::*;
 
 use saya_types::{
-    Budgets, Capabilities, Deliverable, Destination, EndpointBindings, FetchScope, MAX_GOAL_BYTES,
-    MAX_PLAN_STEPS, OutputHint, PauseReason, RunContractError, RunEvent, RunFailureCode, RunId,
-    RunPlan, RunSpec, RunnerScope, StepSpec,
+    Budgets, Capabilities, Deliverable, Destination, EndpointBindings, FetchScope,
+    InterpreterScope, MAX_GOAL_BYTES, MAX_PLAN_STEPS, OutputHint, PauseReason, RunContractError,
+    RunEvent, RunFailureCode, RunId, RunPlan, RunSpec, RunnerScope, StepSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -484,6 +484,42 @@ fn plan_rejects_a_hint_name_that_would_resolve_outside_the_workspace() {
     assert!(matches!(error, RunContractError::InvalidOutputHintName(0)));
 }
 
+/// The interpreter step's credential refusal (the interpreter approval's
+/// design §5): a step whose capabilities include the interpreter scope
+/// declares no credentials — model-authored code can encode, split, and
+/// reverse a declared credential, so redaction's adversary against an
+/// interpreter child is deliberate, not incidental. Refused at plan-bind,
+/// the way an unbound endpoint role is.
+#[test]
+fn plan_rejects_credentials_declared_beside_an_interpreter_scope() {
+    let mut interpreter_scopes = Capabilities::default();
+    interpreter_scopes_set(&mut interpreter_scopes);
+    let mut credentialed = step("score the fetched benchmark");
+    credentialed.capabilities.interpreter = interpreter_scopes.interpreter.clone();
+    credentialed.credentials = vec!["api_token".to_string()];
+    let error = plan(vec![credentialed])
+        .validate(&interpreter_scopes, &run_budgets())
+        .unwrap_err();
+    assert!(
+        matches!(error, RunContractError::CredentialsWithInterpreter(0)),
+        "the interpreter step's credentials must refuse at plan-bind: {error:?}"
+    );
+
+    // The same step without the credentials binds: the refusal is the
+    // combination, not the interpreter scope itself.
+    let mut clean = step("score the fetched benchmark");
+    clean.capabilities.interpreter = interpreter_scopes.interpreter.clone();
+    plan(vec![clean])
+        .validate(&interpreter_scopes, &run_budgets())
+        .expect("an interpreter step declaring no credentials binds");
+}
+
+/// An approved interpreter scope: the grammar's own family, one refusal-list
+/// name.
+fn interpreter_scopes_set(scopes: &mut Capabilities) {
+    scopes.interpreter = Some(InterpreterScope::new(vec!["python3".to_string()]).unwrap());
+}
+
 #[test]
 fn plan_round_trips_through_serde() {
     let mut first = step("profile the tables");
@@ -591,10 +627,44 @@ fn usage_event_serializes_absence_as_null_never_zero() {
 }
 
 #[test]
+fn plan_approved_journal_line_without_scopes_replays_as_scopes_unstated() {
+    // A journal written before the `scopes` payload existed carries no
+    // `scopes` field; `#[serde(default)]` keeps it parseable as an empty
+    // list — "scopes unstated here" — so old runs resume unchanged.
+    let legacy = r#"{"type":"plan_approved"}"#;
+    let old: RunEvent = serde_json::from_str(legacy).unwrap();
+    assert_eq!(
+        old,
+        RunEvent::PlanApproved { scopes: vec![] },
+        "an old PlanApproved line must replay as scopes unstated, not fail to parse"
+    );
+
+    // And the round trip of a modern line keeps the tokens verbatim, in
+    // declaration order — the journal is the authority a resume re-grants
+    // from, so the field must survive the round trip exactly.
+    let approved = RunEvent::PlanApproved {
+        scopes: vec!["interpreter:python3".to_string()],
+    };
+    let json = serde_json::to_string(&approved).unwrap();
+    let back: RunEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(approved, back);
+    assert!(
+        json.contains(r#""scopes":["interpreter:python3"]"#),
+        "the journal line carries the approved scopes verbatim: {json}"
+    );
+}
+
+#[test]
 fn every_event_variant_round_trips_through_serde() {
     let events = vec![
         RunEvent::RunStarted,
-        RunEvent::PlanApproved,
+        RunEvent::PlanApproved { scopes: vec![] },
+        RunEvent::PlanApproved {
+            scopes: vec![
+                "fetch:https+example.com".to_string(),
+                "interpreter:python3".to_string(),
+            ],
+        },
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepCompleted { step: 0 },
         RunEvent::StepFailed { step: 0 },
@@ -672,7 +742,9 @@ proptest! {
     ) {
         let event = match kind {
             0 => RunEvent::RunStarted,
-            1 => RunEvent::PlanApproved,
+            1 => RunEvent::PlanApproved {
+                scopes: vec![format!("fetch:https+{endpoint}")],
+            },
             2 => RunEvent::StepStarted { step: step_index },
             3 => RunEvent::StepCompleted { step: step_index },
             4 => RunEvent::StepFailed { step: step_index },

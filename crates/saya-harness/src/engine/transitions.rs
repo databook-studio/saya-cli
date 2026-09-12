@@ -11,10 +11,15 @@ use saya_types::{PauseReason, RunEvent, RunFailureCode};
 use super::state::RunTransition;
 
 /// A lifecycle transition the engine asks the sink to record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransitionEvent {
-    Approve,
+    /// The plan's approval: carries the approved scopes as the `--allow`
+    /// grammar's words — the payload the journal's `PlanApproved` records,
+    /// the durable authority a resume re-grants from.
+    Approve {
+        scopes: Vec<String>,
+    },
     Begin,
     Resume,
     Complete,
@@ -37,9 +42,11 @@ impl TransitionEvent {
         Option<RunFailureCode>,
     ) {
         match self {
-            Self::Approve => (
+            Self::Approve { scopes } => (
                 RunTransition::Approve,
-                Some(RunEvent::PlanApproved),
+                Some(RunEvent::PlanApproved {
+                    scopes: scopes.clone(),
+                }),
                 RunStatus::Approved,
                 None,
             ),

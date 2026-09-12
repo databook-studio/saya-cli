@@ -17,7 +17,7 @@ use saya_types::{
 
 use crate::{
     ConfigError,
-    model::{FetchJobsFile, JobsFile, RunnerJobsFile},
+    model::{FetchJobsFile, InterpreterJobsFile, JobsFile, RunnerJobsFile},
 };
 
 /// Smallest accepted `[jobs]` ceiling. A zero on any dimension means "pause
@@ -108,6 +108,11 @@ pub struct ResolvedJobs {
     /// declared — no default program universe exists) and the default
     /// per-process wall-clock ceiling. Always concrete.
     pub runner: ResolvedRunnerJobs,
+    /// Interpreter defaults for the `--allow interpreter:<program>` family:
+    /// the universe a run's approved interpreter scope may draw from (empty
+    /// when nothing is declared — the run has no interpreter capability,
+    /// whatever `--allow` says). Always concrete.
+    pub interpreter: ResolvedInterpreterJobs,
 }
 
 /// Effective runner defaults, resolved from `[jobs.runner]`. `allow` empty
@@ -138,6 +143,27 @@ impl Default for ResolvedRunnerJobs {
             program_dir: None,
             timeout_seconds: RUNNER_TIMEOUT_SECONDS,
         }
+    }
+}
+
+/// Effective interpreter defaults, resolved from `[jobs.interpreter]`.
+/// `allow` empty means the run has no interpreter capability — there is no
+/// interpreter a run gets for free; approving one is a deliberate act, and
+/// the bytes that answer the approved name are staged by the trusted layers
+/// into the runner's one program directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedInterpreterJobs {
+    /// The interpreters a run's approved interpreter scope may name. Bare
+    /// names on the runner's refusal list — the family's own mirror, checked
+    /// at resolve time.
+    pub allow: Vec<String>,
+}
+
+impl Default for ResolvedInterpreterJobs {
+    /// The conservative default — the same value an absent
+    /// `[jobs.interpreter]` resolves to: no interpreter approved.
+    fn default() -> Self {
+        Self { allow: Vec::new() }
     }
 }
 
@@ -174,6 +200,7 @@ pub(crate) fn resolve(file: &JobsFile, max_iterations: u64) -> Result<ResolvedJo
     }
     let fetch = resolve_fetch(file.fetch.as_ref())?;
     let runner = resolve_runner(file.runner.as_ref())?;
+    let interpreter = resolve_interpreter(file.interpreter.as_ref(), runner.program_dir.as_ref())?;
     Ok(ResolvedJobs {
         wall_clock_seconds: file.wall_clock_seconds,
         tokens_per_endpoint,
@@ -181,6 +208,7 @@ pub(crate) fn resolve(file: &JobsFile, max_iterations: u64) -> Result<ResolvedJo
         tool_calls: file.tool_calls,
         fetch,
         runner,
+        interpreter,
     })
 }
 
@@ -268,6 +296,64 @@ fn resolve_runner(runner: Option<&RunnerJobsFile>) -> Result<ResolvedRunnerJobs,
         program_dir,
         timeout_seconds,
     })
+}
+
+/// Resolves `[jobs.interpreter]`, mirroring `resolve_runner` exactly: each
+/// declared key is checked at resolve time with typed errors — never
+/// silently clamped at the point of use. Program names must have the
+/// run-scoped name shape, must not repeat, must stay within the contract's
+/// program-count bound, and must BE a shell or interpreter the runner
+/// refuses — the family is the refusal list, so a member the runner would
+/// run is a typed resolve error pointing at `[jobs.runner] allow`, and the
+/// two universes stay disjoint by construction. An `allow` naming
+/// interpreters requires `[jobs.runner] program_dir`: the interpreters are
+/// staged in that one directory, and staging input is trusted-layer
+/// business.
+fn resolve_interpreter(
+    interpreter: Option<&InterpreterJobsFile>,
+    program_dir: Option<&std::path::PathBuf>,
+) -> Result<ResolvedInterpreterJobs, ConfigError> {
+    let interpreter = interpreter.cloned().unwrap_or_default();
+    let mut allow = Vec::new();
+    if let Some(programs) = interpreter.allow {
+        if programs.len() > MAX_RUNNER_PROGRAMS {
+            return Err(ConfigError::SettingAboveMaximum {
+                field: "interpreter.allow",
+                value: programs.len(),
+                max: MAX_RUNNER_PROGRAMS,
+            });
+        }
+        for program in programs {
+            if !is_bare_name(&program) {
+                return Err(ConfigError::InvalidInterpreterProgram {
+                    field: "interpreter.allow",
+                    program: program.clone(),
+                    reason: "an interpreter entry is a bare name, never a path or traversal",
+                });
+            }
+            if !is_refused_runner_program(&program) {
+                return Err(ConfigError::InvalidInterpreterProgram {
+                    field: "interpreter.allow",
+                    program: program.clone(),
+                    reason: "not a shell or interpreter the runner refuses — the interpreter \
+                             family is the refusal list; declare programs the runner can run \
+                             in [jobs.runner] allow",
+                });
+            }
+            if allow.contains(&program) {
+                return Err(ConfigError::InvalidInterpreterProgram {
+                    field: "interpreter.allow",
+                    program: program.clone(),
+                    reason: "declared more than once",
+                });
+            }
+            allow.push(program);
+        }
+    }
+    if !allow.is_empty() && program_dir.is_none() {
+        return Err(ConfigError::InterpreterAllowWithoutProgramDir);
+    }
+    Ok(ResolvedInterpreterJobs { allow })
 }
 
 /// Rejects a `[run] max_iterations` of zero. It is now the run-episode

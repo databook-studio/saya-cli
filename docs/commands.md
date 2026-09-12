@@ -141,7 +141,11 @@ name must be declared in `[jobs.runner]` (`allow` plus the absolute
 `program_dir` they are staged in — see `docs/configuration.md`) and staged
 there as regular, non-symlink, non-script files before the run; the
 directory must sit outside the run's filesystem roots in both directions,
-and the run refuses to start otherwise.
+and the run refuses to start otherwise. A refused interpreter name is
+refused by the grammar itself: `--allow runner:python3` is a usage error
+(exit `2`) naming `interpreter:python3` as the family that approves it,
+refused before any run directory exists — so the admission check below
+keeps the refusal list in force for anything that still reaches it.
 
 The runner is admitted only where the startup sandbox probe proved this
 host. On a host the probe refused, a plan asking for the runner is refused

@@ -18,6 +18,7 @@ const SCHEMA: &str = r#"{
         "workspace_write": false,
         "fetch": null,
         "runner": null,
+        "interpreter": null,
         "scratch": false,
         "endpoints": {}
       },
@@ -29,7 +30,7 @@ const SCHEMA: &str = r#"{
 }"#;
 
 const RULES: &str = "### STRICT RULES:
-1. Every step's `capabilities` must be a subset of APPROVED CAPABILITIES below: a step may narrow the approval, never widen it. `fetch` and `runner`, when not null, name only destinations and programs the approval names.
+1. Every step's `capabilities` must be a subset of APPROVED CAPABILITIES below: a step may narrow the approval, never widen it. `fetch`, `runner`, and `interpreter`, when not null, name only destinations and programs the approval names.
 2. `budget`, when not null, stays within REMAINING BUDGET below on every ceiling; `null` inherits the run's budgets.
 3. `endpoint`, when not null, names a role bound in APPROVED CAPABILITIES' `endpoints`; `null` uses the engine's default role.
 4. `expects` names the workspace artifacts the step is expected to produce, one path component each.

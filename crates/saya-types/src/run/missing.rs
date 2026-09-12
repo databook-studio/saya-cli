@@ -9,7 +9,8 @@ impl Capabilities {
     /// Names the scope tokens `self` asks for that `approved` does not
     /// grant — the words the `--allow` grammar speaks (`workspace-write`,
     /// `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`,
-    /// `endpoint:<role>=<endpoint>`). Every family is judged by
+    /// `interpreter:<program>`, `endpoint:<role>=<endpoint>`). Every family is
+    /// judged by
     /// [`Capabilities::is_subset_of`] (the one subset rule) on a probe
     /// carrying that family alone; this only names the families and members
     /// that fail it, and is empty exactly when the subset holds.
@@ -59,6 +60,21 @@ impl Capabilities {
                 }
             }
             probe.runner = None;
+        }
+        if let Some(interpreters) = &self.interpreter {
+            probe.interpreter = Some(interpreters.clone());
+            if !probe.is_subset_of(approved) {
+                for program in &interpreters.programs {
+                    let approved_program = approved
+                        .interpreter
+                        .as_ref()
+                        .is_some_and(|theirs| theirs.programs.contains(program));
+                    if !approved_program {
+                        missing.push(format!("interpreter:{program}"));
+                    }
+                }
+            }
+            probe.interpreter = None;
         }
         if !self.endpoints.as_map().is_empty() {
             for (role, endpoint) in self.endpoints.as_map() {

@@ -1256,11 +1256,12 @@ fn an_unstaged_program_refuses_the_run_at_start() {
     let _ = fs::remove_dir_all(&env.root);
 }
 
-/// The interpreter refusal list stays in force on the approval surface:
-/// `--allow runner:python3` parses, and the run refuses at start naming the
-/// interpreter and the reason — the same refusal the config resolves and
-/// the tool enforces per call, so the layers cannot disagree.
-#[cfg(target_os = "macos")]
+/// The grammar mirror holds on the approval surface: `--allow runner:python3`
+/// does not parse — the scope parser refuses it as a typed usage error, the
+/// same arm an unknown scope token takes, before any run directory exists —
+/// naming `interpreter:python3` as the family that approves it. The admission
+/// check keeps the refusal list in force beneath this for anything that
+/// reaches it.
 #[test]
 fn an_interpreter_name_refuses_the_run_at_start() {
     let env = test_root("runner-interpreter");
@@ -1273,10 +1274,7 @@ fn an_interpreter_name_refuses_the_run_at_start() {
             programs.display()
         ),
     );
-    let (address, _ready) = mock(vec![Scripted {
-        body: plan_body(&["measure the harness"]),
-        delay_ms: 0,
-    }]);
+    let (address, _ready) = mock(Vec::new());
     let output = saya(
         &env,
         &[
@@ -1290,14 +1288,19 @@ fn an_interpreter_name_refuses_the_run_at_start() {
     );
     assert_eq!(
         output.status.code(),
-        Some(3),
-        "an interpreter name refuses the run at start; stderr: {}",
+        Some(2),
+        "a refused interpreter name is a usage error at the grammar, not an \
+         admission refusal; stderr: {}",
         stderr(&output)
     );
     let message = stderr(&output);
     assert!(
-        message.contains("python3") && message.contains("interpreters are refused"),
+        message.contains("python3") && message.contains("shell or interpreter the runner refuses"),
         "the refusal must name the interpreter and its reason: {message}"
+    );
+    assert!(
+        message.contains("`interpreter:python3`"),
+        "the refusal must name the family that approves it: {message}"
     );
     let _ = fs::remove_dir_all(&env.root);
 }

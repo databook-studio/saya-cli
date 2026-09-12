@@ -176,15 +176,17 @@ impl SandboxProvision {
         }
     }
 
-    /// The approved capabilities as plan validation must see them: the
-    /// runner scope survives only where the sandbox was proven. A plan step
-    /// requesting the runner scope against the refused form is rejected with
-    /// the ordinary needs-approval outcome — the capability is absent, not
-    /// degraded.
+    /// The approved capabilities as plan validation must see them: the runner
+    /// scope survives only where the sandbox was proven, and the interpreter
+    /// scope with it — an interpreter child spawns through the same proven
+    /// arm, so an unproven host strips both. A plan step requesting either
+    /// scope against the refused form is rejected with the ordinary
+    /// needs-approval outcome — the capability is absent, not degraded.
     pub fn plan_capabilities(&self, approved: &Capabilities) -> Capabilities {
         let mut caps = approved.clone();
         if matches!(self, Self::Refused(_)) {
             caps.runner = None;
+            caps.interpreter = None;
         }
         caps
     }

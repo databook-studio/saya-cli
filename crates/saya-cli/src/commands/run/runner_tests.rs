@@ -7,10 +7,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use saya_config::ResolvedRunnerJobs;
-use saya_types::{Capabilities, RunnerScope};
+use saya_config::{ResolvedInterpreterJobs, ResolvedRunnerJobs};
+use saya_types::{Capabilities, InterpreterScope, RunnerScope};
 
-use super::runner::{admit, build, place};
+use super::runner::{admit, admit_interpreters, build, place};
 
 fn temp_dir(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("saya-run-runner-{label}-{}", std::process::id()));
@@ -21,6 +21,10 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn scope(programs: &[&str]) -> RunnerScope {
     RunnerScope::new(programs.iter().map(|p| (*p).to_owned()).collect()).expect("shaped")
+}
+
+fn interpreter_scope(programs: &[&str]) -> InterpreterScope {
+    InterpreterScope::new(programs.iter().map(|p| (*p).to_owned()).collect()).expect("refused name")
 }
 
 fn runner_scopes(programs: &[&str]) -> Capabilities {
@@ -36,6 +40,7 @@ fn runner_scopes(programs: &[&str]) -> Capabilities {
 fn a_runner_approved_run_refuses_without_a_program_dir() {
     let error = build(
         &ResolvedRunnerJobs::default(),
+        &ResolvedInterpreterJobs::default(),
         Path::new("/irrelevant"),
         &runner_scopes(&["bench"]),
     )
@@ -55,8 +60,13 @@ fn a_run_without_a_runner_scope_never_consults_the_directory() {
         program_dir: Some(temp_dir("does-not-exist-no-such-path")),
         ..ResolvedRunnerJobs::default()
     };
-    let wiring = build(&jobs, Path::new("/irrelevant"), &Capabilities::default())
-        .expect("a run without a runner scope consults nothing");
+    let wiring = build(
+        &jobs,
+        &ResolvedInterpreterJobs::default(),
+        Path::new("/irrelevant"),
+        &Capabilities::default(),
+    )
+    .expect("a run without a runner scope consults nothing");
     assert!(wiring.runner.is_none());
     assert!(wiring.plan_scopes.runner.is_none());
 }
@@ -204,8 +214,13 @@ async fn a_proven_host_binds_the_directory_and_admits_the_staged_program() {
         program_dir: Some(programs.clone()),
         ..ResolvedRunnerJobs::default()
     };
-    let wiring = build(&jobs, &run_root, &runner_scopes(&["bench"]))
-        .expect("a proven host admits and binds the wiring");
+    let wiring = build(
+        &jobs,
+        &ResolvedInterpreterJobs::default(),
+        &run_root,
+        &runner_scopes(&["bench"]),
+    )
+    .expect("a proven host admits and binds the wiring");
 
     let runner = wiring.runner.expect("the probe proves this host");
     assert_eq!(
@@ -242,5 +257,61 @@ async fn a_proven_host_binds_the_directory_and_admits_the_staged_program() {
     );
 
     let _ = fs::remove_dir_all(&run_root);
+    let _ = fs::remove_dir_all(&programs);
+}
+
+/// The interpreter family's admission check, name-level: a program the
+/// run's interpreter scope carries but resolved `[jobs.interpreter] allow`
+/// never declared refuses — `--allow` may only draw from the trusted
+/// config's universe.
+#[test]
+fn interpreter_admission_refuses_a_name_outside_the_universe() {
+    let programs = temp_dir("interpreter-admission-universe");
+    let error = admit_interpreters(
+        &interpreter_scope(&["python3"]),
+        &["bash".to_owned()],
+        &programs,
+        Duration::from_secs(300),
+    )
+    .expect_err("a name the universe never declared must refuse");
+    assert!(
+        error.contains("python3") && error.contains(programs.display().to_string().as_str()),
+        "the refusal must name the program and the directory: {error}"
+    );
+    assert!(
+        error.contains("[jobs.interpreter] allow"),
+        "the refusal must point at the universe that decides: {error}"
+    );
+    let _ = fs::remove_dir_all(&programs);
+}
+
+/// The interpreter family's admission check, file-level: an unstaged name
+/// refuses with the staging instruction, and a staged regular file admits —
+/// the same battery `validate_interpreter_call` applies per call, applied
+/// once, at start.
+#[cfg(unix)]
+#[test]
+fn interpreter_admission_refuses_unstaged_and_admits_a_staged_binary() {
+    let programs = temp_dir("interpreter-admission-files");
+    let error = admit_interpreters(
+        &interpreter_scope(&["python3"]),
+        &["python3".to_owned()],
+        &programs,
+        Duration::from_secs(300),
+    )
+    .expect_err("an unstaged interpreter refuses the run at start");
+    assert!(
+        error.contains("python3") && error.contains("not staged in"),
+        "the refusal must name the program and the staging contract: {error}"
+    );
+
+    fs::copy("/bin/echo", programs.join("python3")).unwrap();
+    admit_interpreters(
+        &interpreter_scope(&["python3"]),
+        &["python3".to_owned()],
+        &programs,
+        Duration::from_secs(300),
+    )
+    .expect("a staged regular binary admits");
     let _ = fs::remove_dir_all(&programs);
 }

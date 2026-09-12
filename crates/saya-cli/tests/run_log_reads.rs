@@ -166,7 +166,7 @@ async fn run_log(
 fn seeded_events() -> Vec<RunEvent> {
     vec![
         RunEvent::RunStarted,
-        RunEvent::PlanApproved,
+        RunEvent::PlanApproved { scopes: vec![] },
         RunEvent::StepStarted { step: 0 },
         RunEvent::Usage {
             endpoint: "primary".into(),

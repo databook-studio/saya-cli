@@ -27,7 +27,7 @@ fn json_and_ndjson_share_one_serde_path() {
 fn lifecycle_lines_render_distinctly() {
     let lines = [
         RunEvent::RunStarted,
-        RunEvent::PlanApproved,
+        RunEvent::PlanApproved { scopes: vec![] },
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepCompleted { step: 0 },
         RunEvent::StepFailed { step: 0 },

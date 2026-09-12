@@ -92,12 +92,12 @@ pub(super) fn render(plan: &RunPlan, step: usize, manifest: &[ManifestEntry]) ->
 /// capability-scoped, so they pass and are stopped by the pinned limit.
 ///
 /// The write-shaped class is one `LocalStateEffect` variant shared by
-/// workspace-write, scratch, runner and fetch (`http_download`), so the
-/// filter asks the same question the permit mapping does — "did this step
-/// approve some write-shaped scope?" — not which tool it is: which tool is
-/// the composition root's decision, made from the same capabilities the
-/// toolset was built from. This is the second lock behind construction; it
-/// must never strip a tool the step approved.
+/// workspace-write, scratch, runner, interpreter and fetch
+/// (`http_download`), so the filter asks the same question the permit
+/// mapping does — "did this step approve some write-shaped scope?" — not
+/// which tool it is: which tool is the composition root's decision, made
+/// from the same capabilities the toolset was built from. This is the second
+/// lock behind construction; it must never strip a tool the step approved.
 pub(super) fn definitions(
     universe: &[ToolDefinition],
     capabilities: &Capabilities,
@@ -109,6 +109,7 @@ pub(super) fn definitions(
                 capabilities.workspace_write
                     || capabilities.scratch
                     || capabilities.runner.is_some()
+                    || capabilities.interpreter.is_some()
                     || capabilities.fetch.is_some()
             }
             _ => true,
@@ -139,21 +140,26 @@ pub(super) fn limits(request: &EpisodeRequest, spec: &StepSpec) -> AgentLimits {
         // not "this step may write the workspace": `LocalStateEffect` has
         // one write-shaped variant and `AgentLimits` one write permit by
         // design, so every write-shaped scope — workspace-write, scratch,
-        // runner, fetch (`http_download` is fetch's write-shaped member) —
-        // maps onto this permit here. This line is the explicit
-        // scope→permit mapping; the union cannot smuggle a tool the step
-        // never saw, because the step's definitions are built from the
-        // same capabilities.
+        // runner, interpreter, fetch (`http_download` is fetch's
+        // write-shaped member) — maps onto this permit here. This line is
+        // the explicit scope→permit mapping; the union cannot smuggle a
+        // tool the step never saw, because the step's definitions are built
+        // from the same capabilities.
         permit_workspace_writes: caps.workspace_write
             || caps.scratch
             || caps.runner.is_some()
+            || caps.interpreter.is_some()
             || caps.fetch.is_some(),
         // The egress permit: the plan-gated external effects (the fetch
         // tools' `external_side_effect` without per-call approval) are
         // approved once by the step's approved scope, so the loop's
-        // misconfiguration guard stands down exactly here. The same union
-        // the write permit maps from, minus the plain write scope —
-        // workspace-write alone carries no egress. A scope the step lacks
+        // misconfiguration guard stands down exactly here. The egress union
+        // is fetch and runner — not the write-shaped union minus the plain
+        // write scope: workspace-write alone carries no egress, and the
+        // interpreter family deliberately carries none either, because an
+        // interpreter child is wired with an empty `net_allow` (the
+        // fail-closed composition; a non-empty one would mean "any host,
+        // that port" for model-authored code). A scope the step lacks
         // leaves the tool absent from its definitions, so the union cannot
         // admit an external tool the step never saw: the definitions and
         // this permit are built from the same capabilities.

@@ -26,11 +26,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use saya_config::ResolvedRunnerJobs;
+use saya_config::{ResolvedInterpreterJobs, ResolvedRunnerJobs};
 use saya_harness::runner::RunnerError;
 use saya_harness::runner::refuse::validate_call;
+use saya_harness::runner::refuse::validate_interpreter_call;
 use saya_harness::runner::sandbox::{RunSandbox, RunnerSpawn};
-use saya_types::{Capabilities, RunnerScope, is_refused_runner_program};
+use saya_types::{Capabilities, InterpreterScope, RunnerScope, is_refused_runner_program};
 
 /// The run's runner wiring, built once per run when the run approved a
 /// runner scope and the startup probe proved the host. The step toolsets
@@ -55,25 +56,29 @@ pub(super) struct RunnerWiring {
 }
 
 /// Builds the run's runner wiring, exactly once per run, fresh and resume
-/// alike. A run that did not approve a runner scope never consults the
-/// directory: no check, no failure, the runner simply absent from every
-/// toolset — so `saya ask` and any read-only run are unaffected by any
-/// state of `[jobs.runner]`.
+/// alike. A run that approved neither a runner nor an interpreter scope
+/// never consults the directory: no check, no failure, the tool simply
+/// absent from every toolset — so `saya ask` and any read-only run are
+/// unaffected by any state of `[jobs.runner]` or `[jobs.interpreter]`. One
+/// program directory serves both families, so one probe covers both; the
+/// admission check runs per family, against that family's universe.
 pub(super) fn build(
     jobs: &ResolvedRunnerJobs,
+    interpreters: &ResolvedInterpreterJobs,
     run_root: &Path,
     scopes: &Capabilities,
 ) -> Result<RunnerWiring, String> {
-    let Some(approved) = scopes.runner.as_ref() else {
+    if scopes.runner.is_none() && scopes.interpreter.is_none() {
         return Ok(RunnerWiring {
             runner: None,
             plan_scopes: scopes.clone(),
         });
-    };
+    }
     let Some(program_dir) = jobs.program_dir.clone() else {
         return Err(
-            "the run approved a runner scope but [jobs.runner] program_dir is not set: stage \
-             the approved programs in one directory and set program_dir to its absolute path"
+            "the run approved a runner or interpreter scope but [jobs.runner] program_dir is \
+             not set: stage the approved programs and interpreters in one directory and set \
+             program_dir to its absolute path"
                 .to_string(),
         );
     };
@@ -102,15 +107,26 @@ pub(super) fn build(
     let plan_scopes = provision.plan_capabilities(scopes);
     let runner = match provision.spawn() {
         Some(spawn) => {
-            // The admission check: explicitly stated programs that cannot
-            // run refuse the run at start, never a tool whose every call
-            // refuses mid-flight.
-            admit(
-                approved,
-                &jobs.allow,
-                spawn.program_dir(),
-                Duration::from_secs(jobs.timeout_seconds),
-            )?;
+            // The admission check, per family against that family's
+            // universe: explicitly stated programs that cannot run refuse
+            // the run at start, never a tool whose every call refuses
+            // mid-flight.
+            if let Some(approved) = scopes.runner.as_ref() {
+                admit(
+                    approved,
+                    &jobs.allow,
+                    spawn.program_dir(),
+                    Duration::from_secs(jobs.timeout_seconds),
+                )?;
+            }
+            if let Some(approved_interpreters) = scopes.interpreter.as_ref() {
+                admit_interpreters(
+                    approved_interpreters,
+                    &interpreters.allow,
+                    spawn.program_dir(),
+                    Duration::from_secs(jobs.timeout_seconds),
+                )?;
+            }
             Some(RunRunner {
                 spawn: spawn.clone(),
                 timeout: Duration::from_secs(jobs.timeout_seconds),
@@ -212,6 +228,59 @@ pub(super) fn admit(
 fn admission_refusal(program: &str, program_dir: &Path, reason: &str) -> String {
     format!(
         "runner program {program:?} approved by --allow is not usable in {}: {reason}",
+        program_dir.display()
+    )
+}
+
+/// The interpreter family's admission check, mirroring `admit`: every
+/// program in the run's approved interpreter scope must be one the resolved
+/// `[jobs.interpreter] allow` universe declared, and must stage as a real,
+/// non-symlink, non-script file in the one program directory — the same
+/// battery `validate_interpreter_call` applies per call, applied once, at
+/// start. An approved interpreter whose bytes are absent refuses the run
+/// rather than granting a name that answers with nothing.
+pub(super) fn admit_interpreters(
+    scope: &InterpreterScope,
+    allow: &[String],
+    program_dir: &Path,
+    default_timeout: Duration,
+) -> Result<(), String> {
+    for program in &scope.programs {
+        if !allow.iter().any(|allowed| allowed == program) {
+            return Err(interpreter_admission_refusal(
+                program,
+                program_dir,
+                "it is not declared in [jobs.interpreter] allow — a run's interpreter scope \
+                 may name only interpreters the trusted config allows",
+            ));
+        }
+        let allowed =
+            InterpreterScope::new(vec![program.clone()]).expect("the scope's entry is a bare name");
+        match validate_interpreter_call(&allowed, program_dir, default_timeout, None, program, &[])
+        {
+            Ok(_) => {}
+            Err(RunnerError::ProgramMissing { .. }) => {
+                return Err(format!(
+                    "interpreter {program:?} approved by --allow is not staged in {}: stage a \
+                     real, non-script, non-symlink interpreter binary with that name there",
+                    program_dir.display()
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "interpreter {program:?} approved by --allow is not usable in {}: {error}. \
+                     Stage a real, non-script, non-symlink interpreter binary there.",
+                    program_dir.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn interpreter_admission_refusal(program: &str, program_dir: &Path, reason: &str) -> String {
+    format!(
+        "interpreter {program:?} approved by --allow is not usable in {}: {reason}",
         program_dir.display()
     )
 }

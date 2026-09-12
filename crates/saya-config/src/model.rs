@@ -228,6 +228,18 @@ pub struct JobsFile {
     /// default applies. There is deliberately no environment override for
     /// any of it (plan G3).
     pub runner: Option<RunnerJobsFile>,
+    /// The `[jobs.interpreter]` sub-table: the universe of interpreters a
+    /// run's approved interpreter scope may name (`--allow
+    /// interpreter:<program>`). Absent or empty: the run has no interpreter
+    /// capability, whatever `--allow` says — approving an interpreter is a
+    /// deliberate act, the same rule `[jobs.runner] allow` already follows.
+    /// The whole sub-table is on the protected list, so an untrusted project
+    /// layer cannot declare it (the staging inputs decide which bytes answer
+    /// an approved name). There is deliberately no environment override for
+    /// any of it (plan G3), and no timeout key: an interpreter child is one
+    /// child process, so `[jobs.runner] timeout_seconds` is its ceiling — a
+    /// per-family timeout would be a second knob for one fact.
+    pub interpreter: Option<InterpreterJobsFile>,
 }
 
 /// The `[jobs.runner]` sub-table: the runner programs a run's approved
@@ -263,6 +275,28 @@ pub struct RunnerJobsFile {
     /// zero-second timeout would kill every child before its first byte, a
     /// typo, not an intent. Provisional until M5 measures real runs (U8).
     pub timeout_seconds: Option<u64>,
+}
+
+/// The `[jobs.interpreter]` sub-table: the interpreters a run's approved
+/// interpreter scope may draw from. Entries are bare program names that
+/// MUST be on the runner's refusal list — the interpreter family is that
+/// list, mirrored at resolve time, so a member the runner does not refuse
+/// is a typed resolve error pointing at `[jobs.runner] allow`. The two
+/// universes stay disjoint by construction, not by convention. The sub-table
+/// is protected (see `layers.rs`): it decides which bytes answer an
+/// approved interpreter's name, so only the trusted layers may declare it.
+/// Its bytes are staged in the runner's one program directory
+/// (`[jobs.runner] program_dir`), so an `allow` naming interpreters
+/// requires that key.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterpreterJobsFile {
+    /// The interpreters a run's interpreter scope may name. Absent or
+    /// empty: the run has no interpreter capability. Each entry is
+    /// validated against the same name shape the run contracts carry,
+    /// bounded like every set-valued approval surface, and required to be
+    /// a name the runner refuses — the family's own mirror.
+    pub allow: Option<Vec<String>>,
 }
 
 /// The `[jobs.fetch]` sub-table: the download budgets a run's

@@ -35,9 +35,9 @@ use async_trait::async_trait;
 use saya_agent::{
     CancellationToken, LocalStateEffect, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
 };
-use saya_types::RunnerScope;
+use saya_types::{InterpreterScope, RunnerScope, is_refused_runner_program};
 
-use refuse::validate_call;
+use refuse::{INTERPRETER_REFUSAL, validate_call, validate_interpreter_call};
 use sandbox::RunnerSpawn;
 
 /// The tool's name in the run engine's toolset.
@@ -46,9 +46,25 @@ pub const RUN_PROGRAM_TOOL: &str = "run_program";
 /// The admitted `run_program` tool: one allowlisted program per call, under
 /// the proven sandbox, with the step-narrowed allowlist and the declared
 /// credentials.
+///
+/// The step's scopes open two doors on the same tool, and never one scope
+/// wearing the other's name: the **runner door** admits the programs the
+/// step's `RunnerScope` names; the **interpreter door** admits only the
+/// names the runner refuses by name and the step's `InterpreterScope`
+/// explicitly carries — the `--allow interpreter:<program>` grant, which
+/// voids the typed-argv contract's behavioural half and is granted by the
+/// typed token alone. A refused name outside the interpreter scope falls
+/// back to the runner's byte-identical refusal, whatever doors the step
+/// holds.
 pub struct RunProgram {
     spawn: RunnerSpawn,
-    allowed: RunnerScope,
+    /// The step's narrowed runner programs; `None` when the step asked for
+    /// none — every non-refused name is then not allowlisted.
+    runner: Option<RunnerScope>,
+    /// The step's narrowed interpreter programs; `None` when the step asked
+    /// for none — every refused name keeps the runner's byte-identical
+    /// refusal.
+    interpreters: Option<InterpreterScope>,
     credentials: Vec<Credential>,
     resolver: SharedCredentialSource,
     default_timeout: Duration,
@@ -65,10 +81,25 @@ impl RunProgram {
         default_timeout: Duration,
         resolver: SharedCredentialSource,
     ) -> Self {
+        Self::for_step(spawn, Some(allowed), None, default_timeout, resolver)
+    }
+
+    /// Builds the tool from one step's capabilities: the runner door opens
+    /// on the step's `RunnerScope`, the interpreter door on the step's
+    /// `InterpreterScope` — each `None` when the step did not ask, so a
+    /// step that did not ask never has the door at all.
+    pub fn for_step(
+        spawn: RunnerSpawn,
+        runner: Option<RunnerScope>,
+        interpreters: Option<InterpreterScope>,
+        default_timeout: Duration,
+        resolver: SharedCredentialSource,
+    ) -> Self {
         Self {
             record_dir: spawn.fs_roots()[0].join("run_program"),
             spawn,
-            allowed,
+            runner,
+            interpreters,
             credentials: Vec::new(),
             resolver,
             default_timeout,
@@ -90,21 +121,62 @@ impl RunProgram {
         self
     }
 
-    /// Runs one validated call and returns the child's report.
+    /// Runs one validated call and returns the child's report. The door a
+    /// call goes through is decided by the name: one the runner refuses by
+    /// name enters the interpreter door only when the step's interpreter
+    /// scope explicitly carries it — every other refused name keeps the
+    /// runner's byte-identical refusal — and every other name enters the
+    /// runner door, which a step without a runner scope holds shut.
     pub async fn run(
         &self,
         program: &str,
         argv: &[String],
         timeout_seconds: Option<u64>,
     ) -> Result<ProgramOutcome, RunnerError> {
-        let call = validate_call(
-            &self.allowed,
-            self.spawn.program_dir(),
-            self.default_timeout,
-            timeout_seconds,
-            program,
-            argv,
-        )?;
+        let call = if is_refused_runner_program(program)
+            && self
+                .interpreters
+                .as_ref()
+                .is_some_and(|allowed| allowed.contains(program))
+        {
+            validate_interpreter_call(
+                self.interpreters
+                    .as_ref()
+                    .expect("the door was just checked"),
+                self.spawn.program_dir(),
+                self.default_timeout,
+                timeout_seconds,
+                program,
+                argv,
+            )?
+        } else {
+            match &self.runner {
+                Some(allowed) => validate_call(
+                    allowed,
+                    self.spawn.program_dir(),
+                    self.default_timeout,
+                    timeout_seconds,
+                    program,
+                    argv,
+                )?,
+                None => {
+                    // The step holds no runner scope: a refused name keeps
+                    // the runner's byte-identical refusal, everything else is
+                    // simply not allowlisted.
+                    let reason = if is_refused_runner_program(program) {
+                        INTERPRETER_REFUSAL
+                    } else {
+                        return Err(RunnerError::ProgramNotAllowlisted {
+                            program: program.to_owned(),
+                        });
+                    };
+                    return Err(RunnerError::ProgramRefused {
+                        program: program.to_owned(),
+                        reason,
+                    });
+                }
+            }
+        };
         spawn::run(
             &self.spawn,
             call,

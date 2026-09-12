@@ -136,6 +136,51 @@ pub fn is_refused_runner_program(name: &str) -> bool {
     REFUSED.contains(&name)
 }
 
+/// The interpreters a run's approved interpreter scope may name. This family
+/// exists beside the runner's, never instead of it: its members are exactly
+/// [`is_refused_runner_program`]'s list — the names the runner refuses
+/// structurally — and the constructor enforces that mirror, so a name the
+/// runner does not refuse can never ride the interpreter family. Approving
+/// one is a deliberate, explicit act (the `--allow interpreter:<program>`
+/// token); it voids the typed-argv contract's behavioural half, which is why
+/// nothing but the typed token grants it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct InterpreterScope {
+    pub programs: Vec<String>,
+}
+
+impl InterpreterScope {
+    pub fn new(programs: Vec<String>) -> Result<Self, RunContractError> {
+        if programs.is_empty() {
+            return Err(RunContractError::EmptyInterpreterPrograms);
+        }
+        if programs.len() > MAX_RUNNER_PROGRAMS {
+            return Err(RunContractError::TooManyInterpreterPrograms);
+        }
+        for program in &programs {
+            // A scope names programs, never paths — the same rule the
+            // runner scope carries, shared so the two cannot drift.
+            if !is_bare_name(program) {
+                return Err(RunContractError::InvalidInterpreterProgram);
+            }
+            // The family IS the refusal list, mirrored here so a hand-built
+            // scope cannot smuggle a non-refused name in: the interpreter
+            // door exists only for names the runner refuses, and every other
+            // program belongs to the runner family.
+            if !is_refused_runner_program(program) {
+                return Err(RunContractError::InterpreterProgramNotRefused);
+            }
+        }
+        Ok(Self { programs })
+    }
+
+    /// True when `program` is one of this scope's members.
+    pub fn contains(&self, program: &str) -> bool {
+        self.programs.iter().any(|allowed| allowed == program)
+    }
+}
+
 /// The runner capability with its allowlisted programs. Typed argv and shell
 /// refusal are the runner's own concern; this scope is the universe of
 /// programs a run's plan may narrow a step to.
@@ -233,6 +278,10 @@ pub struct Capabilities {
     pub fetch: Option<FetchScope>,
     /// The allowlisted programs; `None` means no runner capability.
     pub runner: Option<RunnerScope>,
+    /// The approved interpreters; `None` means no interpreter capability.
+    /// Members are exactly the runner's refused list (the scope type
+    /// enforces it), so the two families stay disjoint by construction.
+    pub interpreter: Option<InterpreterScope>,
     /// The run-scoped scratch database.
     pub scratch: bool,
     /// The roles bound to endpoints this run may call.
@@ -267,6 +316,14 @@ impl Capabilities {
         }
         if let Some(mine) = &self.runner {
             let Some(theirs) = &approved.runner else {
+                return false;
+            };
+            if !mine.programs.iter().all(|p| theirs.programs.contains(p)) {
+                return false;
+            }
+        }
+        if let Some(mine) = &self.interpreter {
+            let Some(theirs) = &approved.interpreter else {
                 return false;
             };
             if !mine.programs.iter().all(|p| theirs.programs.contains(p)) {

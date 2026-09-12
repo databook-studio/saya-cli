@@ -306,7 +306,7 @@ fn main() {
             .append(&RunEvent::RunStarted)
             .expect("the journal appends");
         journal
-            .append(&RunEvent::PlanApproved)
+            .append(&RunEvent::PlanApproved { scopes: vec![] })
             .expect("the journal appends");
 
         let store = Arc::new(SqliteStateStore::new(root.join("state.sqlite3")));
@@ -1071,7 +1071,7 @@ fn main() {
             events,
             vec![
                 RunEvent::RunStarted,
-                RunEvent::PlanApproved,
+                RunEvent::PlanApproved { scopes: vec![] },
                 RunEvent::StepStarted { step: 0 },
                 RunEvent::StepFailed { step: 0 },
                 RunEvent::StepStarted { step: 0 },

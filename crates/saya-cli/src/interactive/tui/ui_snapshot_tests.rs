@@ -25,7 +25,8 @@ use saya_agent::{
 };
 use saya_config::{
     AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedFetchJobs, ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs, ThemeChoice,
+    ResolvedFetchJobs, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs,
+    ThemeChoice,
 };
 use saya_store::SqliteStateStore;
 use saya_types::ClaimStatus;
@@ -70,6 +71,7 @@ pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 turns: 4,
                 tool_calls: None,
                 fetch: ResolvedFetchJobs::default(),
+                interpreter: ResolvedInterpreterJobs::default(),
                 runner: ResolvedRunnerJobs::default(),
             },
             query_timeout_seconds: 5,
