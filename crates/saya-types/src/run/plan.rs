@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::RunContractError;
 use super::budget::Budgets;
-use super::scope::{Capabilities, is_bare_name};
+use super::scope::{Capabilities, is_bare_name, is_name_shaped};
 use super::spec::validate_goal;
 
 /// A plan is a bounded list: an orchestrating episode proposes it, and no
@@ -19,6 +19,11 @@ pub const MAX_PLAN_STEPS: usize = 64;
 
 /// How many artifacts one step may declare as expected outputs.
 pub const MAX_OUTPUT_HINTS: usize = 16;
+
+/// How many credentials one step may declare for its children. Every
+/// set-valued plan surface is bounded so a plan cannot smuggle an unbounded
+/// approval view; the endpoint bindings' bound is the scale.
+pub const MAX_STEP_CREDENTIALS: usize = 8;
 
 const MAX_HINT_DESCRIPTION_CHARS: usize = 512;
 
@@ -125,6 +130,17 @@ pub struct StepSpec {
     /// The endpoint role this step's episodes call, resolved through the
     /// run's endpoint bindings; `None` lets the engine use its default role.
     pub endpoint: Option<String>,
+    /// The credentials this step declares for its children: run-scoped names
+    /// the composition root resolves and hands the step's runner member, so
+    /// only what a step declared can ever reach a child's environment.
+    /// Empty by default — a child's environment is empty by construction,
+    /// and only a declared name can ride it. An interpreter step declares
+    /// none and the plan-bind gate refuses the combination: model-authored
+    /// code can encode, split, and reverse a declared credential, which
+    /// turns redaction's adversary from incidental to deliberate (the
+    /// interpreter approval's design §5).
+    #[serde(default)]
+    pub credentials: Vec<String>,
 }
 
 impl StepSpec {
@@ -149,8 +165,36 @@ impl StepSpec {
             budget,
             expects,
             endpoint,
+            credentials: Vec::new(),
         })
     }
+
+    /// Declares the credentials this step's children may receive, keeping
+    /// hand-built plans honest: every entry is a bounded, name-shaped
+    /// credential name, and the count is bounded — the same discipline every
+    /// set-valued plan field carries.
+    pub fn with_credentials(mut self, credentials: Vec<String>) -> Result<Self, RunContractError> {
+        validate_credentials(0, &credentials)?;
+        self.credentials = credentials;
+        Ok(self)
+    }
+}
+
+/// Checks one step's declared credentials: bounded, every entry name-shaped.
+/// `step` is the plan index for the typed error when validating a bound
+/// plan; the constructor validates before a step belongs to one, so `0`
+/// never reaches a rendered diagnostic there.
+fn validate_credentials(step: usize, credentials: &[String]) -> Result<(), RunContractError> {
+    if credentials.len() > MAX_STEP_CREDENTIALS {
+        return Err(RunContractError::TooManyStepCredentials(
+            step,
+            credentials.len(),
+        ));
+    }
+    if !credentials.iter().all(|name| is_name_shaped(name)) {
+        return Err(RunContractError::InvalidStepCredential(step));
+    }
+    Ok(())
 }
 
 /// The ordered steps a run will execute, proposed by the orchestrating
@@ -204,6 +248,18 @@ impl RunPlan {
                 && !scopes.endpoints.contains(role)
             {
                 return Err(RunContractError::EndpointNotBound(index));
+            }
+            // A plan arriving as JSON skipped the constructor's credential
+            // checks, so the gate re-checks the bound and the shape here.
+            validate_credentials(index, &step.credentials)?;
+            // The interpreter step's credential refusal (the interpreter
+            // approval's design §5): model-authored code can encode, split,
+            // and reverse a declared credential, so redaction's adversary
+            // against an interpreter child is deliberate, not incidental.
+            // Refused at plan-bind, the way an unbound endpoint role is —
+            // the model can fix it by re-planning without the credentials.
+            if step.capabilities.interpreter.is_some() && !step.credentials.is_empty() {
+                return Err(RunContractError::CredentialsWithInterpreter(index));
             }
             if step.expects.len() > MAX_OUTPUT_HINTS {
                 return Err(RunContractError::TooManyOutputHints(step.expects.len()));

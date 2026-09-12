@@ -19,7 +19,7 @@ use saya_harness::fetch::{
 };
 use saya_harness::scratch::ScratchSql;
 use saya_harness::workspace::Workspace;
-use saya_types::{Capabilities, RunnerScope, StepSpec};
+use saya_types::{Capabilities, InterpreterScope, RunnerScope, StepSpec};
 
 use crate::agent::tools::DatabaseTools;
 
@@ -778,5 +778,99 @@ async fn a_step_s_narrowed_allowlist_rejects_a_program_it_did_not_ask_for() {
     assert!(
         message.contains("ripgrep") && message.contains("allowlist"),
         "the refusal must name the program and the allowlist: {message}"
+    );
+}
+
+/// The per-step trap (the interpreter approval's design §6): the test a
+/// run-wide boolean passes while being wrong. One step of a run holds the
+/// interpreter scope, another asks only for the runner; the second step's
+/// tool must not contain the interpreter. A run-wide
+/// `allow_interpreters` threaded beside the scope machinery makes every step
+/// interpreter-capable and cannot pass this — the grant is per-step, like
+/// `scratch` and `fetch` before it.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_interpreter_grant_does_not_leak_into_the_steps_that_did_not_ask_for_it() {
+    let database = Arc::new(DatabaseTools::new(None, 100, true));
+    let workspace = workspace("interpreter-trap");
+    let (_run_root, runner) = proven_runner("interpreter-trap");
+
+    // Step 1 asks for the interpreter; step 2 asks only for a runner
+    // program. The run approved the interpreter scope — a run-wide boolean
+    // would open the door on both steps.
+    let mut interpreter_caps = Capabilities::default();
+    interpreter_caps.interpreter =
+        Some(InterpreterScope::new(vec!["python3".to_owned()]).expect("refused name"));
+    let mut runner_caps = Capabilities::default();
+    runner_caps.runner = Some(RunnerScope::new(vec!["bench".to_owned()]).expect("shaped"));
+    let built = toolsets(
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: Some(&runner),
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
+        &[
+            step("score the fetched benchmark", interpreter_caps),
+            step("measure with the harness", runner_caps),
+        ],
+    );
+
+    // Both steps carry `run_program` — the two families route through one
+    // tool, each step's doors narrowed to what that step itself asked for.
+    assert_eq!(
+        names(&built, 0),
+        [OPEN_GATE, RUNNER_TAIL].concat(),
+        "the interpreter-asking step's universe must carry run_program"
+    );
+    assert_eq!(
+        names(&built, 1),
+        [OPEN_GATE, RUNNER_TAIL].concat(),
+        "the runner-asking step's universe must carry run_program"
+    );
+
+    // The asking step's interpreter door is open: a python3 call is not
+    // refused by name — it passes the gate and dies on the staged-file
+    // battery (nothing is staged here), the refusal an approved interpreter
+    // reaches when its bytes are absent. The run-wide boolean passes this
+    // half trivially; the next assertion is the one it cannot.
+    let error = built[0]
+        .executor
+        .execute(
+            "run_program",
+            serde_json::json!({"program": "python3", "args": []}),
+        )
+        .await
+        .expect_err("nothing is staged, so the door's own battery refuses");
+    let ToolError::Runner(message) = &error else {
+        panic!("the refusal must be the runner's typed error, got: {error:?}");
+    };
+    assert!(
+        message.contains("no allowlisted program file exists"),
+        "the asking step's python3 must pass the name gate and reach the file \
+         battery, not be refused by name: {message}"
+    );
+
+    // The trap: the second step never asked for the interpreter, so its
+    // `run_program` must keep the runner's byte-identical name refusal —
+    // the run's approval alone grants nothing to a step that did not ask.
+    let error = built[1]
+        .executor
+        .execute(
+            "run_program",
+            serde_json::json!({"program": "python3", "args": []}),
+        )
+        .await
+        .expect_err("the step that did not ask must refuse the interpreter");
+    let ToolError::Runner(message) = &error else {
+        panic!("the refusal must be the runner's typed error, got: {error:?}");
+    };
+    assert!(
+        message.contains("shells and interpreters are refused by name"),
+        "the non-asking step's refusal must be the runner's byte-identical \
+         name refusal: {message}"
     );
 }

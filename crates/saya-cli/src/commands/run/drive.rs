@@ -183,6 +183,16 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             format,
         );
     }
+    // The headless receipt (the interpreter approval's design §3): a
+    // headless run's typed token is the confirmation, so the same warning
+    // the interactive modal shows prints to stderr once, before the first
+    // step — not a prompt, a receipt, so what the terminal shows and what
+    // the journal records agree.
+    if matches!(host.plan_approval, approval::PlanApproval::PreAuthorized)
+        && let Some(warning) = approval_view::interpreter_warning(&view.approved)
+    {
+        eprintln!("{warning}");
+    }
     // The sink exists from approval on: the wall-clock budget arms here,
     // never before the user has answered. The episode's events forward to
     // the host's sink when one is injected; the headless default renders
@@ -208,7 +218,15 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         Some(stream) => sink.with_agent_stream(stream),
         None => sink.with_agent_stream(Arc::new(TerminalSink::new(format))),
     };
-    if let Err(error) = sink.record(TransitionEvent::Approve).await {
+    if let Err(error) = sink
+        .record(TransitionEvent::Approve {
+            // The approved scopes as the `--allow` grammar's words — the
+            // journal's durable authority a resume re-grants from, recorded
+            // before anything runs.
+            scopes: view.approved.clone(),
+        })
+        .await
+    {
         return exit::connection_failure(
             format!("run approval could not be recorded: {error}"),
             format,

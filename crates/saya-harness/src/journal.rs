@@ -175,7 +175,7 @@ pub fn replay(events: &[RunEvent]) -> JournalState {
         }
         match event {
             RunEvent::RunStarted => state.started = true,
-            RunEvent::PlanApproved => state.plan_approved = true,
+            RunEvent::PlanApproved { scopes: _ } => state.plan_approved = true,
             RunEvent::StepStarted { step } => {
                 state.steps.insert(*step, StepState::Started);
             }

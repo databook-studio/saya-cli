@@ -119,7 +119,9 @@ fn resume_reads_back_the_last_state() {
     let dir = temp_run_dir("resume");
     let journal = Journal::open(&dir);
     journal.append(&RunEvent::RunStarted).unwrap();
-    journal.append(&RunEvent::PlanApproved).unwrap();
+    journal
+        .append(&RunEvent::PlanApproved { scopes: vec![] })
+        .unwrap();
     journal.append(&RunEvent::StepStarted { step: 0 }).unwrap();
     journal
         .append(&RunEvent::StepCompleted { step: 0 })
@@ -143,7 +145,7 @@ fn resume_reads_back_the_last_state() {
 fn replay_records_a_bounded_retry_and_lets_usage_stand_aside() {
     let events = vec![
         RunEvent::RunStarted,
-        RunEvent::PlanApproved,
+        RunEvent::PlanApproved { scopes: vec![] },
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepFailed { step: 0 },
         RunEvent::StepStarted { step: 0 },
@@ -177,7 +179,7 @@ fn replay_records_a_bounded_retry_and_lets_usage_stand_aside() {
 fn replay_records_terminal_states_and_their_failure_code() {
     let events = vec![
         RunEvent::RunStarted,
-        RunEvent::PlanApproved,
+        RunEvent::PlanApproved { scopes: vec![] },
         RunEvent::StepStarted { step: 0 },
         RunEvent::Failed {
             code: RunFailureCode::SafetyQuery,
@@ -208,7 +210,9 @@ fn a_torn_tail_left_by_a_crash_is_ignored_but_complete_lines_must_parse() {
     let dir = temp_run_dir("torn");
     let journal = Journal::open(&dir);
     journal.append(&RunEvent::RunStarted).unwrap();
-    journal.append(&RunEvent::PlanApproved).unwrap();
+    journal
+        .append(&RunEvent::PlanApproved { scopes: vec![] })
+        .unwrap();
 
     // Simulate a crash mid-append: a partial final line with no newline.
     let complete = fs::read_to_string(dir.join("events.ndjson")).unwrap();
@@ -221,7 +225,10 @@ fn a_torn_tail_left_by_a_crash_is_ignored_but_complete_lines_must_parse() {
     let events = journal.read().unwrap();
     assert_eq!(
         events,
-        vec![RunEvent::RunStarted, RunEvent::PlanApproved],
+        vec![
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: vec![] }
+        ],
         "a torn tail was never a complete event; it must not poison the read"
     );
 

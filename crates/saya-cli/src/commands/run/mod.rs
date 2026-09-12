@@ -22,6 +22,9 @@ mod claim;
 mod drive;
 mod exit;
 mod files;
+mod grants;
+#[cfg(test)]
+mod grants_tests;
 mod host;
 mod reads;
 mod resume;

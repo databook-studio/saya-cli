@@ -30,6 +30,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(jobs.tool_calls);
     apply!(jobs.fetch);
     apply!(jobs.runner);
+    apply!(jobs.interpreter);
     apply!(output.format);
     apply!(output.color);
     apply!(ui.theme);
@@ -173,11 +174,33 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
 /// traffic — and their key — at an attacker. An endpoint's `provider` and
 /// `model` stay ordinary settings, like `[ai] model`: they name which model
 /// answers, not where the request goes or what it authenticates with.
+///
+/// `[jobs.interpreter]` is protected as a whole sub-table. The
+/// interpreter approval's argument: the user typing
+/// `--allow interpreter:python3` is approving *the python3 of their
+/// toolchain*, but an interpreter's staging inputs — which binary answers
+/// the name, which support trees become readable — decide what actually
+/// executes under it. A repository-controlled config that answers
+/// "python3" with a binary of its own choosing turns the user's typed
+/// approval into approval of bytes the user never saw — the `ai.base_url`
+/// class of decision: the flag the user types is redirected by an untrusted
+/// file. And an interpreter the trusted layers never declared is still an
+/// attacker-chosen program, the endpoint-name precedent applied to
+/// programs. The whole sub-table is snapshotted and reverted, reported by
+/// its dotted name, so the user is told what was ignored. A compiled
+/// program's behaviour is fixed and reviewable before the run, which is why
+/// `[jobs.runner]` — its sibling — stays an ordinary setting: an interpreter
+/// approval voids a security contract, and it would be void against bytes
+/// the staging config chose.
 pub(crate) struct ProtectedSettings {
     ai_base_url: Option<String>,
     ai_api_key: Option<SecretRef>,
     ai_allow_data_sharing: Option<bool>,
     run_read_only: Option<bool>,
+    /// The whole `[jobs.interpreter]` sub-table as the trusted layers
+    /// declared it: which interpreters may ever resolve, and by extension
+    /// which bytes answer them.
+    jobs_interpreter: Option<crate::model::InterpreterJobsFile>,
     /// The declared endpoint names, with each one's protected fields. Keyed
     /// by name so a project-layer entry is classified as either an override
     /// of a known endpoint or an addition.
@@ -196,6 +219,7 @@ pub(crate) fn snapshot_protected(file: &ConfigFile) -> ProtectedSettings {
         ai_api_key: file.ai.api_key.clone(),
         ai_allow_data_sharing: file.ai.allow_data_sharing,
         run_read_only: file.run.read_only,
+        jobs_interpreter: file.jobs.interpreter.clone(),
         endpoints: file
             .ai
             .endpoints
@@ -232,6 +256,14 @@ pub(crate) fn revert_untrusted(file: &mut ConfigFile, before: &ProtectedSettings
     if file.run.read_only != before.run_read_only {
         file.run.read_only = before.run_read_only;
         ignored.push("run.read_only".into());
+    }
+    // The interpreter universe is protected as a whole sub-table: which
+    // interpreters may ever resolve, and by extension which bytes answer
+    // them, is trusted-layer business. Reported by its dotted name so the
+    // user is told what was ignored.
+    if file.jobs.interpreter != before.jobs_interpreter {
+        file.jobs.interpreter = before.jobs_interpreter.clone();
+        ignored.push("jobs.interpreter".into());
     }
     // Endpoints the untrusted layer added wholesale: a name the trusted
     // layers never declared. Removed entirely and reported by name — a bare

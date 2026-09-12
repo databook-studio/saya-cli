@@ -19,8 +19,17 @@ pub enum RunEvent {
     /// The run was created and claimed its directory.
     RunStarted,
     /// The plan, scopes, and budgets were approved (or pre-authorised
-    /// headless). No implicit approval exists.
-    PlanApproved,
+    /// headless). No implicit approval exists. Carries the approved scopes as
+    /// the `--allow` grammar's words, in declaration order — the journal is
+    /// the durable authority a resume re-grants from, so a resumed run
+    /// carries exactly the capabilities the original approval carried. Old
+    /// journals carry no field and parse as "scopes unstated here":
+    /// `#[serde(default)]` keeps journals written before the field existed
+    /// parseable, exactly the `Usage` precedent.
+    PlanApproved {
+        #[serde(default)]
+        scopes: Vec<String>,
+    },
     /// A step's episode began.
     StepStarted { step: usize },
     /// A step completed.

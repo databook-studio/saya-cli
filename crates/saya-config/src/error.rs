@@ -86,6 +86,18 @@ pub enum ConfigError {
         program: String,
         reason: &'static str,
     },
+    /// A `[jobs.interpreter] allow` entry is not a name the interpreter
+    /// family can carry: a bare, non-repeating name in the run-scoped shape
+    /// that IS on the runner's refusal list — the family is that list,
+    /// mirrored at resolve time so the two universes stay disjoint by
+    /// construction. The reason is carried for the same "why not" reason as
+    /// the runner entry's.
+    #[error("setting {field} has an invalid interpreter program {program:?}: {reason}")]
+    InvalidInterpreterProgram {
+        field: &'static str,
+        program: String,
+        reason: &'static str,
+    },
     /// A `[jobs.runner] program_dir` that is a relative path. The canonical
     /// form must not depend on the working directory the config was loaded
     /// from — a relative path would resolve to a different directory per
@@ -107,4 +119,17 @@ pub enum ConfigError {
          the allowlisted programs in one directory and set program_dir to its absolute path"
     )]
     RunnerAllowWithoutProgramDir,
+    /// `[jobs.interpreter] allow` names interpreters while
+    /// `[jobs.runner] program_dir` is undeclared. The approved interpreter's
+    /// bytes are staged in that one directory — the same directory the
+    /// runner resolves every program against — so a universe without it
+    /// approves interpreters that cannot run: the same typed resolve error
+    /// every other `[jobs]` mistake gets, never a capability that gates
+    /// nothing.
+    #[error(
+        "[jobs.interpreter] allow names interpreters but runner.program_dir is undeclared: \
+         the interpreters are staged in the runner's program directory — stage them there \
+         and set program_dir to its absolute path"
+    )]
+    InterpreterAllowWithoutProgramDir,
 }

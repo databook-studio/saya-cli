@@ -197,8 +197,8 @@ pub(crate) mod tests_support {
     pub(crate) fn unused_runtime() -> RuntimeConfig {
         use saya_config::{
             AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi,
-            ResolvedConfig, ResolvedFetchJobs, ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs,
-            ThemeChoice,
+            ResolvedConfig, ResolvedFetchJobs, ResolvedInterpreterJobs, ResolvedJobs,
+            ResolvedMemory, ResolvedRunnerJobs, ThemeChoice,
         };
         RuntimeConfig {
             resolved: ResolvedConfig {
@@ -229,6 +229,7 @@ pub(crate) mod tests_support {
                     turns: 4,
                     tool_calls: None,
                     fetch: ResolvedFetchJobs::default(),
+                    interpreter: ResolvedInterpreterJobs::default(),
                     runner: ResolvedRunnerJobs::default(),
                 },
                 query_timeout_seconds: 5,

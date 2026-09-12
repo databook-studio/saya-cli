@@ -150,20 +150,30 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
                 definitions.push(http_download_definition());
             }
             // The step's runner member: the run's proven spawn shared by
-            // clone (cloning grants nothing), the *step's* narrowed
-            // `RunnerScope` — never the run's union — the resolved default
-            // timeout, and the run's cancellation.
+            // clone (cloning grants nothing), the *step's* narrowed scopes
+            // — never the run's union — the resolved default timeout, and
+            // the run's cancellation. Both doors ride the one tool: the
+            // step's `RunnerScope` opens the runner door, its
+            // `InterpreterScope` the interpreter door, and each is `None`
+            // when the step did not ask, so a step that asked for one never
+            // holds the other.
             let runner = runner
-                .filter(|_| step.capabilities.runner.is_some())
+                .filter(|_| {
+                    step.capabilities.runner.is_some() || step.capabilities.interpreter.is_some()
+                })
                 .map(|wiring| {
-                    let scope =
-                        step.capabilities.runner.as_ref().expect(
-                            "the builder only builds a runner member for a step that asked",
+                    let runner_scope = step.capabilities.runner.clone();
+                    let interpreter_scope = step.capabilities.interpreter.clone();
+                    if runner_scope.is_none() && interpreter_scope.is_none() {
+                        unreachable!(
+                            "the builder only builds a runner member for a step that asked"
                         );
+                    }
                     Arc::new(
-                        RunProgram::new(
+                        RunProgram::for_step(
                             wiring.spawn.clone(),
-                            scope.clone(),
+                            runner_scope,
+                            interpreter_scope,
                             wiring.timeout,
                             Arc::clone(&resolver),
                         )

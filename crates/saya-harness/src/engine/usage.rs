@@ -180,7 +180,7 @@ mod tests {
     fn seeding_folds_usage_events_only() {
         let seeded = UsageTotals::from_journal(&[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved,
+            RunEvent::PlanApproved { scopes: vec![] },
             RunEvent::Paused {
                 reason: saya_types::PauseReason::BudgetExhausted,
             },
@@ -203,7 +203,10 @@ mod tests {
         // A run that never reported usage seeds the same totals a fresh
         // sink holds: the resume behaves exactly as it did before seeding.
         assert_eq!(
-            UsageTotals::from_journal(&[RunEvent::RunStarted, RunEvent::PlanApproved]),
+            UsageTotals::from_journal(&[
+                RunEvent::RunStarted,
+                RunEvent::PlanApproved { scopes: vec![] },
+            ]),
             UsageTotals::default()
         );
     }

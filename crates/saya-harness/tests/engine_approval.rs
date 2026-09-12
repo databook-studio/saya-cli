@@ -341,7 +341,9 @@ async fn a_planned_run_refuses_to_begin_until_the_plan_is_approved_once() {
     );
 
     // The one approval, through the transition path — never a direct write.
-    sink.record(TransitionEvent::Approve).await.unwrap();
+    sink.record(TransitionEvent::Approve { scopes: vec![] })
+        .await
+        .unwrap();
     assert_eq!(sink.state(), RunState::Approved);
     let recorded = RunStore::get_run(run.store.as_ref(), &run.run_id)
         .await
@@ -351,7 +353,9 @@ async fn a_planned_run_refuses_to_begin_until_the_plan_is_approved_once() {
 
     // Approval is per plan, granted once: the machine refuses a second one.
     assert!(
-        sink.record(TransitionEvent::Approve).await.is_err(),
+        sink.record(TransitionEvent::Approve { scopes: vec![] })
+            .await
+            .is_err(),
         "approving an already-approved plan must be refused"
     );
 
@@ -471,7 +475,9 @@ async fn approving_the_plan_once_does_not_prompt_per_tool_call() {
         std::time::Instant::now,
     );
     // The one approval interaction: the plan, decided once.
-    sink.record(TransitionEvent::Approve).await.unwrap();
+    sink.record(TransitionEvent::Approve { scopes: vec![] })
+        .await
+        .unwrap();
 
     let episode = ScriptedEpisode::new(vec![
         Turn::Tools(vec![call("sql_probe")]),

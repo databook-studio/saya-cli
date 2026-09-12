@@ -194,7 +194,12 @@ pub(super) async fn assemble(
     // that did not approve runner never consults the directory, and a host
     // the probe refused strips the scope from plan validation
     // (`plan_scopes`), so plans asking for it refuse as needs-approval.
-    let wiring = build_runner(&runtime.resolved.jobs.runner, run_root, scopes)?;
+    let wiring = build_runner(
+        &runtime.resolved.jobs.runner,
+        &runtime.resolved.jobs.interpreter,
+        run_root,
+        scopes,
+    )?;
     Ok(Pieces {
         provider,
         tools,

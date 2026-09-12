@@ -7,11 +7,15 @@
 //! mirrors the [`Capabilities`] contract fields; the built approval is
 //! exactly the stated scopes, nothing implicit.
 
-use saya_types::{Capabilities, Destination, EndpointBindings, FetchScope, RunnerScope};
+use saya_types::{
+    Capabilities, Destination, EndpointBindings, FetchScope, InterpreterScope, RunnerScope,
+    is_refused_runner_program,
+};
 
 /// The scope grammar, for the error message that names what was refused.
 const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
-                     fetch:<scheme>+<host>, runner:<program>, endpoint:<role>=<endpoint>";
+                     fetch:<scheme>+<host>, runner:<program>, interpreter:<program>, \
+                     endpoint:<role>=<endpoint>";
 
 /// Scopes the grammar accepts but the run engine cannot yet act on: no tool
 /// in a run's universe consumes them, so approving one would gate nothing.
@@ -71,6 +75,7 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
     let mut capabilities = Capabilities::default();
     let mut destinations = Vec::new();
     let mut programs = Vec::new();
+    let mut interpreters = Vec::new();
     let mut bindings = Vec::new();
     for token in tokens {
         if token == "workspace-write" {
@@ -88,10 +93,33 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
             })?;
             destinations.push(destination);
         } else if let Some(rest) = token.strip_prefix("runner:") {
-            if let Some(refusal) = not_yet_wired(token, "runner") {
-                return Err(refusal);
+            // The mirror, in both directions: a name the runner refuses is
+            // the interpreter family's member, not the runner's — a token
+            // that approved it here would be a lying scope, refused at call
+            // time after surviving the pre-authorization.
+            if is_refused_runner_program(rest) {
+                return Err(format!(
+                    "`{rest}` is a shell or interpreter the runner refuses; use \
+                     `interpreter:{rest}` to approve it explicitly; {KNOWN}"
+                ));
             }
             programs.push(rest.to_string());
+        } else if let Some(rest) = token.strip_prefix("interpreter:") {
+            if rest.is_empty() {
+                return Err(format!(
+                    "scope `{token}` must be interpreter:<program>; {KNOWN}"
+                ));
+            }
+            // The family IS the runner's refusal list, mirrored at parse
+            // time: a non-refused name never rides the interpreter family —
+            // it belongs to the runner's, which can run it.
+            if !is_refused_runner_program(rest) {
+                return Err(format!(
+                    "`{rest}` is not a shell or interpreter the runner refuses; use \
+                     `runner:{rest}` to approve it as a runner program; {KNOWN}"
+                ));
+            }
+            interpreters.push(rest.to_string());
         } else if let Some(rest) = token.strip_prefix("endpoint:") {
             if let Some(refusal) = not_yet_wired(token, "endpoint") {
                 return Err(refusal);
@@ -115,6 +143,12 @@ pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
     if !programs.is_empty() {
         capabilities.runner = Some(
             RunnerScope::new(programs).map_err(|error| format!("runner scope refused: {error}"))?,
+        );
+    }
+    if !interpreters.is_empty() {
+        capabilities.interpreter = Some(
+            InterpreterScope::new(interpreters)
+                .map_err(|error| format!("interpreter scope refused: {error}"))?,
         );
     }
     if !bindings.is_empty() {
@@ -188,6 +222,7 @@ mod tests {
         assert!(!approved.capabilities.scratch);
         assert!(approved.capabilities.fetch.is_none());
         assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.interpreter.is_none());
         assert!(approved.capabilities.endpoints.as_map().is_empty());
     }
 
@@ -204,6 +239,7 @@ mod tests {
         assert!(!approved.capabilities.workspace_write);
         assert!(approved.capabilities.fetch.is_none());
         assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.interpreter.is_none());
         assert!(approved.capabilities.endpoints.as_map().is_empty());
     }
 
@@ -244,6 +280,7 @@ mod tests {
         assert!(!approved.capabilities.scratch);
         assert!(approved.capabilities.fetch.is_none());
         assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.interpreter.is_none());
         assert!(approved.capabilities.endpoints.as_map().is_empty());
     }
 
@@ -271,5 +308,71 @@ mod tests {
         };
         assert!(error.contains("unknown scope `wat`"), "got: {error}");
         assert!(error.contains("known scopes:"), "got: {error}");
+    }
+
+    /// The grammar mirror, both directions (the interpreter approval's
+    /// design §1): a name the runner refuses rides the interpreter family
+    /// only, and a name the runner can run rides the runner family only.
+    /// One list, two doors — `--allow runner:python3` names the fix
+    /// (`interpreter:`), `--allow interpreter:ripgrep` names its fix
+    /// (`runner:`), and neither survives to become a scope the runner
+    /// refuses at call time.
+    #[test]
+    fn a_refused_name_is_the_interpreter_family_s_not_the_runner_s() {
+        let Err(error) = parse(&["runner:python3".to_string()]) else {
+            panic!("`runner:python3` must be a typed usage error");
+        };
+        assert!(
+            error.contains("`python3` is a shell or interpreter the runner refuses"),
+            "the refusal must say why: {error}"
+        );
+        assert!(
+            error.contains("`interpreter:python3`"),
+            "the refusal must name the right family: {error}"
+        );
+
+        let Err(error) = parse(&["interpreter:ripgrep".to_string()]) else {
+            panic!("`interpreter:ripgrep` must be a typed usage error");
+        };
+        assert!(
+            error.contains("`ripgrep` is not a shell or interpreter the runner refuses"),
+            "the refusal must say why: {error}"
+        );
+        assert!(
+            error.contains("`runner:ripgrep`"),
+            "the refusal must name the right family: {error}"
+        );
+    }
+
+    /// The interpreter family approves its own token: `--allow
+    /// interpreter:python3` grants exactly that interpreter, and the other
+    /// spellings stay refused — a shell the family's list carries is a
+    /// member, so `interpreter:bash` parses (the family is the refusal list
+    /// verbatim; the design does not pretend bash is unreachable by
+    /// refusing to spell it), while a program the runner can run is refused
+    /// here.
+    #[test]
+    fn the_interpreter_family_approves_its_own_tokens() {
+        let Ok(approved) = parse(&["interpreter:python3".to_string()]) else {
+            panic!("`interpreter:python3` must approve");
+        };
+        let interpreters = approved
+            .capabilities
+            .interpreter
+            .expect("the interpreter scope must be approved");
+        assert_eq!(interpreters.programs, vec!["python3".to_owned()]);
+        assert!(approved.capabilities.runner.is_none());
+        assert!(!approved.capabilities.workspace_write);
+        assert!(!approved.capabilities.scratch);
+        assert!(approved.capabilities.fetch.is_none());
+
+        let Ok(approved) = parse(&["interpreter:bash".to_string()]) else {
+            panic!("`interpreter:bash` parses — the family is the refusal list");
+        };
+        let interpreters = approved
+            .capabilities
+            .interpreter
+            .expect("the interpreter scope must be approved");
+        assert_eq!(interpreters.programs, vec!["bash".to_owned()]);
     }
 }
