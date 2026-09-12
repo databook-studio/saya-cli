@@ -8,7 +8,7 @@ use crate::protocol::streaming::TokenUsage;
 
 use super::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, UsageCall,
+    SuppliedContractDto, ToolEffect, UsageCall,
 };
 
 // `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
@@ -47,10 +47,18 @@ pub enum AgentEvent {
     TurnReset,
     /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
     /// surfaced so the user can see exactly what will run before approving it.
+    /// `effect` carries the tool's **declared effect** (`ToolEffect`) so a
+    /// renderer can say what the call may do to the user's machine from the
+    /// declaration the loop gates on — never from the tool's name. `None` only
+    /// when no declaration exists (a call to an unknown tool, which cannot
+    /// run); a declared effect is always carried whole, and the renderer — not
+    /// the loop — decides what the line claims from it.
     ToolRequested {
         name: String,
         #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
         arguments: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect: Option<ToolEffect>,
     },
     ToolCompleted {
         name: String,

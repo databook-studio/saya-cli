@@ -4,7 +4,7 @@
 
 use super::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, UsageCall,
+    SuppliedContractDto, ToolEffect, UsageCall,
 };
 use crate::AgentEvent;
 use crate::protocol::streaming::TokenUsage;
@@ -31,10 +31,21 @@ impl AgentEvent {
         Self::TurnReset
     }
 
-    pub fn tool_requested(name: impl Into<String>, arguments: serde_json::Value) -> Self {
+    /// Builds the per-call request event. `effect` is the tool's **declared
+    /// effect**, carried so a renderer can derive its label from the
+    /// declaration the loop gates on; `None` only when no declaration exists
+    /// (an unknown tool, which cannot run). A caller that knows the tool must
+    /// pass the definition's effect — the event carries the declaration, it
+    /// does not guess one.
+    pub fn tool_requested(
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+        effect: Option<ToolEffect>,
+    ) -> Self {
         Self::ToolRequested {
             name: name.into(),
             arguments,
+            effect,
         }
     }
 

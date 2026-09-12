@@ -185,6 +185,12 @@ fn an_episodes_transcript_stays_in_its_own_panel() {
     tx.send(RunMsg::Episode(AgentEvent::tool_requested(
         "bounded_sql_query",
         serde_json::json!({"sql": "SELECT 1", "connection": "analytics"}),
+        Some(saya_agent::ToolEffect {
+            database_data: true,
+            external_side_effect: false,
+            requires_approval: true,
+            local_state: saya_agent::LocalStateEffect::None,
+        }),
     )))
     .unwrap();
     tx.send(RunMsg::Episode(AgentEvent::assistant_text(

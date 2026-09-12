@@ -1,6 +1,6 @@
 use saya_agent::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, TokenUsage, UsageCall,
+    SuppliedContractDto, TokenUsage, ToolEffect, UsageCall, read_only_permits,
 };
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
@@ -64,6 +64,14 @@ pub enum TerminalEvent {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// The tool's **declared effect**, carried from the event the loop
+        /// emitted so the text line's effect claim is derived from the same
+        /// declaration the approval gate reads — never from the tool's name.
+        /// Absent only when no declaration exists (an unknown tool, which
+        /// cannot run), and skipped on the wire then, so a stream that never
+        /// declared a tool keeps the shape it always had.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect: Option<ToolEffect>,
     },
     ToolCompleted {
         name: String,
@@ -224,6 +232,35 @@ pub(super) fn sanitize_terminal(s: &str) -> String {
     out
 }
 
+/// Shapes the `ToolRequested` line: the one a pipe reader sees *before* a tool
+/// runs, naming what the call may do to their machine. The `read-only` claim
+/// is derived from the tool's **declared effect** through
+/// [`read_only_permits`] — the same predicate the approval policy gates on —
+/// so the line and the gate cannot drift: a workspace-write tool (including
+/// `scratch_sql`, which declares the same effect), a network-reaching tool,
+/// or any future effect that fails the predicate is never announced as
+/// read-only.
+///
+/// The other half of the wording is a deliberate non-claim: when the
+/// declaration does not prove read-only, the line says only "Using tool".
+/// A positive per-effect label ("writing the workspace", "network access")
+/// would need a match over the effect variants kept current by hand, and its
+/// default arm would be exactly the defect this fixes — a new variant silently
+/// rendering under the wrong claim. "Read-only" is the one claim the declared
+/// effect proves cheaply, and only that one is made; the detail line (the SQL,
+/// the path) and the tool's name carry what the call actually does.
+fn tool_requested_text(name: &str, detail: Option<&str>, effect: Option<&ToolEffect>) -> String {
+    let head = if effect.is_some_and(read_only_permits) {
+        format!("Using read-only tool: {name}\n")
+    } else {
+        format!("Using tool: {name}\n")
+    };
+    match detail {
+        Some(detail) => format!("{head}  {detail}\n"),
+        None => head,
+    }
+}
+
 fn text_event(event: &TerminalEvent) -> Rendered {
     let rendered = match event {
         TerminalEvent::Diagnostic { message } | TerminalEvent::Error { message } => Rendered {
@@ -231,11 +268,12 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stderr: format!("{message}\n"),
         },
         TerminalEvent::AssistantText { text } => render_delta::text(text),
-        TerminalEvent::ToolRequested { name, detail } => Rendered {
-            stdout: match detail {
-                Some(detail) => format!("Using read-only tool: {name}\n  {detail}\n"),
-                None => format!("Using read-only tool: {name}\n"),
-            },
+        TerminalEvent::ToolRequested {
+            name,
+            detail,
+            effect,
+        } => Rendered {
+            stdout: tool_requested_text(name, detail.as_deref(), effect.as_ref()),
             stderr: String::new(),
         },
         TerminalEvent::ToolCompleted { name, summary } => Rendered {

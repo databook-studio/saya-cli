@@ -43,20 +43,25 @@ pub(super) async fn run_turn_tools(
     if batch_parallel {
         check_cancelled(cancellation)?;
         for call in &assistant.tool_calls {
+            // The batch precondition validated every call against the
+            // definitions, so the declared effect is at hand for the event —
+            // the renderer derives its label from this declaration, the same
+            // one the gates below consult.
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == call.name)
+                .expect("the batch precondition validated the call");
             emit(
                 events,
                 sink,
                 AgentEvent::ToolRequested {
                     name: call.name.clone(),
                     arguments: call.arguments.clone(),
+                    effect: Some(definition.effect),
                 },
             )
             .await;
-            if definitions
-                .iter()
-                .find(|definition| definition.name == call.name)
-                .is_some_and(|definition| definition.effect.database_data)
-            {
+            if definition.effect.database_data {
                 *used_bounded_sql_query = true;
             }
         }
@@ -107,12 +112,20 @@ pub(super) async fn run_turn_tools(
                 return Err(AgentError::InvalidToolCall);
             }
             check_cancelled(cancellation)?;
+            // A call to an unknown tool has no declared effect to carry —
+            // `None`, never a fabricated one; the renderer claims nothing it
+            // cannot prove for a tool that does not exist.
+            let effect = definitions
+                .iter()
+                .find(|definition| definition.name == call.name)
+                .map(|definition| definition.effect);
             emit(
                 events,
                 sink,
                 AgentEvent::ToolRequested {
                     name: call.name.clone(),
                     arguments: call.arguments.clone(),
+                    effect,
                 },
             )
             .await;
@@ -174,19 +187,22 @@ pub(super) async fn run_turn_tools(
             continue;
         }
         check_cancelled(cancellation)?;
+        // The call was validated above, so the definition — and with it the
+        // declared effect the event carries — is known before anything runs.
+        let definition = definitions
+            .iter()
+            .find(|tool| tool.name == call.name)
+            .expect("validated");
         emit(
             events,
             sink,
             AgentEvent::ToolRequested {
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
+                effect: Some(definition.effect),
             },
         )
         .await;
-        let definition = definitions
-            .iter()
-            .find(|tool| tool.name == call.name)
-            .expect("validated");
         let approved = !definition.effect.requires_approval
             || approval.approve(definition, &call.arguments).await;
         // Apply the same policy the batch path consults (`auto_runnable`),

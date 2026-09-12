@@ -51,7 +51,9 @@ impl App {
             match msg {
                 StreamMsg::Event(event) => {
                     match &event {
-                        AgentEvent::ToolRequested { name, arguments } => {
+                        AgentEvent::ToolRequested {
+                            name, arguments, ..
+                        } => {
                             self.request.activity = Some(name.clone());
                             if matches!(
                                 name.as_str(),
