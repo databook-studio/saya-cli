@@ -105,7 +105,8 @@ approves; a refusal exits `2`, and that run is not resumable — nothing was
 approved, so start a new run. Approve, and the episodes run without further
 prompts: the wall clock arms only at approval, read-shaped tools run, the
 approved scopes' own plan-gated tools run in the steps that asked for them
-(scratch's `scratch_sql`, fetch's `http_fetch` and `http_download`), and
+(scratch's `scratch_sql`, fetch's `http_fetch` and `http_download`, the
+runner's `run_program`), and
 anything needing an interactive decision or an
 external side effect is denied rather than asked about. One approval instead of one per tool call is what
 makes a long run usable and also what makes the approval matter, so the
@@ -115,7 +116,8 @@ Headless — piped input, CI, or `--non-interactive` — there is no ask at all:
 the `--allow` declaration is the approval, and a plan asking for scopes
 outside it is refused with exit `2`, naming the missing scopes.
 
-**Today three scopes bind: `workspace-write`, `scratch` and `fetch`.**
+**Today four scopes bind: `workspace-write`, `scratch`, `fetch` and
+`runner`.**
 `scratch` gives the run one DuckDB file of its own, at
 `runs/<id>/scratch.duckdb`, reachable only through the `scratch_sql` tool, and
 only in the steps whose plan asked for scratch: DDL, DML and joins over the
@@ -132,18 +134,37 @@ untrusted block (never raw bytes, never the system prompt), and
 shared download budget: a tripped bound pauses the run fail-safe (`exit 6`),
 leaving a resumable partial. Note the destination list is the *only* network
 egress a run has: hosts outside it are refused, and every hop of a redirect
-is re-judged.
+is re-judged. `runner:<program>` gives the steps that asked for it one tool,
+`run_program`: one allowlisted program with typed argv — no shell, no
+interpolation, one argv element per argument, ever. The programs a run may
+name must be declared in `[jobs.runner]` (`allow` plus the absolute
+`program_dir` they are staged in — see `docs/configuration.md`) and staged
+there as regular, non-symlink, non-script files before the run; the
+directory must sit outside the run's filesystem roots in both directions,
+and the run refuses to start otherwise.
 
-The grammar also parses `runner:<program>` and `endpoint:<role>=<endpoint>`,
-and each is **refused with a usage error** that names what is missing,
-because no tool in a run's universe consumes them yet. They are refused
-rather than accepted-and-ignored on purpose: approving a capability that
-gates nothing would tell you the model may do something it cannot. Each
-becomes available with the slice that wires it. `runner:` stays refused even
-though the `run_program` tool exists in the run engine: the tool is admitted
-only where the startup sandbox probe proved the host, and no run's tool
-universe contains it yet — so today no run can call it, and this document
-does not describe a capability a run cannot reach.
+The runner is admitted only where the startup sandbox probe proved this
+host. On a host the probe refused, a plan asking for the runner is refused
+as needs-approval naming the missing scope — the honest refusal — because
+the capability is absent, not degraded. On a proven host, every program the
+run approved is checked once, at start: a program missing from the
+directory, staged as a symlink or a script, not declared in
+`[jobs.runner] allow`, or naming a refused interpreter refuses the run
+(exit `3`) naming the program, the directory, and the reason. The refusal
+list stays in force — shells and interpreters (`bash`, `python3`, …) can
+spawn arbitrary children and are refused whatever any allowlist says; what
+is stageable is a purpose-built, single-command binary. Each step can call
+only the programs its own plan asked for: a step scoped to one program
+rejects another allowlisted one.
+
+The grammar also parses `endpoint:<role>=<endpoint>`, and it is **refused
+with a usage error** that names what is missing, because no tool in a run's
+universe consumes it yet. It is refused rather than accepted-and-ignored on
+purpose: approving a capability that gates nothing would tell you the model
+may do something it cannot. It becomes available with the slice that wires
+it — per-step roles are not bound yet, every episode calls the orchestrator
+endpoint, and this document does not describe a capability a run cannot
+reach.
 
 Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
 (`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,

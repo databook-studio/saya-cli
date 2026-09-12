@@ -24,17 +24,10 @@ const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
 ///
 /// Each entry names the plan item that wires it. Deleting an entry is the
 /// whole of "turning the scope on" once its tool is in the universe.
-const NOT_YET_WIRED: &[(&str, &str)] = &[
-    (
-        "runner",
-        "M5-4's run_program is not yet in a run's tool universe, and it is \
-         admitted only where the startup sandbox probe proved the host",
-    ),
-    (
-        "endpoint",
-        "every episode calls the orchestrator endpoint; per-step roles are not bound yet",
-    ),
-];
+const NOT_YET_WIRED: &[(&str, &str)] = &[(
+    "endpoint",
+    "every episode calls the orchestrator endpoint; per-step roles are not bound yet",
+)];
 
 /// The refusal for a scope that parses but binds nothing.
 fn not_yet_wired(token: &str, family: &str) -> Option<String> {
@@ -140,29 +133,29 @@ mod tests {
     /// universe consumed any of them. Approving a capability that gates
     /// nothing tells the user something false about what the model may do,
     /// so each is refused until its wiring lands. `scratch` wired with its
-    /// tool (S1) and `fetch` (S2) left this list; the rest stay refused, and
-    /// this test keeps refusing them the day they are typed.
+    /// tool (S1), `fetch` (S2) and `runner` (S3) left this list; the rest
+    /// stay refused, and this test keeps refusing them the day they are
+    /// typed.
     #[test]
     fn a_scope_nothing_consumes_is_refused_rather_than_silently_approved() {
-        for token in ["runner:python3", "endpoint:analyst=fast"] {
-            let Err(error) = parse(&[token.to_string()]) else {
-                panic!("`{token}` gates nothing and must be refused");
-            };
-            assert!(
-                error.contains("not available yet"),
-                "the refusal must say why, got: {error}"
-            );
-            assert!(
-                error.contains(token),
-                "the refusal must name the scope, got: {error}"
-            );
-        }
+        let token = "endpoint:analyst=fast";
+        let Err(error) = parse(&[token.to_string()]) else {
+            panic!("`{token}` gates nothing and must be refused");
+        };
+        assert!(
+            error.contains("not available yet"),
+            "the refusal must say why, got: {error}"
+        );
+        assert!(
+            error.contains(token),
+            "the refusal must name the scope, got: {error}"
+        );
     }
 
     /// The reason every entry here is refused is wiring, not absence: each
-    /// named tool exists in the run engine, and a run's tool universe simply
-    /// does not consume it yet. An absence claim goes stale the moment the
-    /// tool lands — the exact lie `runner:` shipped after M5-4's
+    /// named capability exists in the run engine, and a run's tool universe
+    /// simply does not consume it yet. An absence claim goes stale the
+    /// moment the tool lands — the exact lie `runner:` shipped after M5-4's
     /// `run_program` merged. The list is the single source of the
     /// user-facing reason text, so each entry is pinned to the one phrasing
     /// that is true — a future drift from it is a diff in this test rather
@@ -176,13 +169,8 @@ mod tests {
                 "`{family}`'s refusal claims a tool is absent — the refusal \
                  class is wiring, not absence: {why}"
             );
-            let expected = if *family == "endpoint" {
-                "per-step roles are not bound"
-            } else {
-                "not yet in a run's tool universe"
-            };
             assert!(
-                why.contains(expected),
+                why.contains("per-step roles are not bound"),
                 "`{family}`'s refusal must state its true reason verbatim, \
                  got: {why}"
             );
@@ -219,9 +207,31 @@ mod tests {
         assert!(approved.capabilities.endpoints.as_map().is_empty());
     }
 
+    /// The inverse pin's first half: `runner:` is wired, so `--allow
+    /// runner:bench` approves the scope — the deletion of its refusal entry
+    /// alone proves nothing, this does. The second half (its tool in the
+    /// universe of the steps that asked, and the narrowed-allowlist gate
+    /// that rides the toolset builder) lives beside the toolset builder's
+    /// tests.
+    #[test]
+    fn runner_is_wired_and_still_approves() {
+        let Ok(approved) = parse(&["runner:bench".to_string()]) else {
+            panic!("the wired scope must approve");
+        };
+        let runner = approved
+            .capabilities
+            .runner
+            .expect("the runner scope must be approved");
+        assert_eq!(runner.programs, vec!["bench".to_owned()]);
+        assert!(!approved.capabilities.workspace_write);
+        assert!(!approved.capabilities.scratch);
+        assert!(approved.capabilities.fetch.is_none());
+        assert!(approved.capabilities.endpoints.as_map().is_empty());
+    }
+
     /// The empty approval is stateable: `--allow none` starts a run that
-    /// approves nothing at all. Two of the grammar's five capability
-    /// scopes are refused, so without this token the only way to start any
+    /// approves nothing at all. One of the grammar's five capability
+    /// scopes is refused, so without this token the only way to start any
     /// run — including a purely read-only one — would be approving one of
     /// the wired scopes, which would turn a scope that means something into
     /// boilerplate everyone types.

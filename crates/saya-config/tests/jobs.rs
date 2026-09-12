@@ -338,13 +338,19 @@ fn jobs_runner_resolves_defaults_and_declared_values() {
         resolved.jobs.runner.allow
     );
 
-    let declared =
-        resolve_with_user("[jobs.runner]\nallow = [\"duckdb\", \"jq\"]\ntimeout_seconds = 60\n");
+    let declared = resolve_with_user(
+        "[jobs.runner]\nallow = [\"duckdb\", \"jq\"]\ntimeout_seconds = 60\nprogram_dir = \"/opt/saya-programs\"\n",
+    );
     assert_eq!(
         declared.jobs.runner.allow,
         vec!["duckdb".to_owned(), "jq".to_owned()]
     );
     assert_eq!(declared.jobs.runner.timeout_seconds, 60);
+    assert_eq!(
+        declared.jobs.runner.program_dir.as_deref(),
+        Some(std::path::Path::new("/opt/saya-programs")),
+        "the staged programs' directory resolves as declared"
+    );
 }
 
 /// A `[jobs.runner]` value below the floor is a typed resolve error naming
@@ -472,6 +478,77 @@ fn jobs_runner_unknown_keys_are_rejected_naming_the_key() {
     );
 }
 
+/// A relative `[jobs.runner] program_dir` is a typed resolve error: the
+/// canonical form must not depend on the working directory the config was
+/// loaded from, and the run's probe verdict is only as real as the one
+/// directory it proved.
+#[test]
+fn jobs_runner_program_dir_relative_is_rejected_naming_the_field() {
+    let error =
+        resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(
+            ConfigFile::from_toml("[jobs.runner]\nprogram_dir = \"programs\"\n").unwrap(),
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(&error, ConfigError::RelativeRunnerProgramDir { path } if path == "programs"),
+        "expected RelativeRunnerProgramDir, got {error:?}"
+    );
+    let display = format!("{error}");
+    assert!(
+        display.contains("runner.program_dir") && display.contains("absolute"),
+        "the refusal must name the field and the requirement: {display}"
+    );
+}
+
+/// `allow` that names programs requires `program_dir`: the runner resolves
+/// every allowlisted program inside one directory, so an allowlist without
+/// its directory approves programs that cannot run — a typed resolve error,
+/// the same class every other `[jobs]` mistake gets.
+#[test]
+fn jobs_runner_allow_without_program_dir_is_rejected() {
+    let error = resolve(
+        ResolutionInput::new(ConnectionsFile::default())
+            .with_user(ConfigFile::from_toml("[jobs.runner]\nallow = [\"bench\"]\n").unwrap()),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, ConfigError::RunnerAllowWithoutProgramDir),
+        "expected RunnerAllowWithoutProgramDir, got {error:?}"
+    );
+    let display = format!("{error}");
+    assert!(
+        display.contains("program_dir"),
+        "the refusal must name the missing key: {display}"
+    );
+}
+
+/// `program_dir` alone (empty `allow`) is harmless and allowed: it declares
+/// where programs would be staged without approving any program.
+#[test]
+fn jobs_runner_program_dir_alone_resolves() {
+    let resolved = resolve_with_user("[jobs.runner]\nprogram_dir = \"/opt/saya-programs\"\n");
+    assert!(resolved.jobs.runner.allow.is_empty());
+    assert_eq!(
+        resolved.jobs.runner.program_dir.as_deref(),
+        Some(std::path::Path::new("/opt/saya-programs"))
+    );
+}
+
+/// A dangling `program_dir` resolves fine: existence is deliberately not a
+/// resolve-time question, so `saya ask` and `saya query` are unaffected by
+/// any state of the key; a run that approved the runner fails closed at
+/// assemble instead.
+#[test]
+fn jobs_runner_dangling_program_dir_resolves() {
+    let resolved = resolve_with_user(
+        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"/nonexistent/saya-programs\"\n",
+    );
+    assert_eq!(
+        resolved.jobs.runner.program_dir.as_deref(),
+        Some(std::path::Path::new("/nonexistent/saya-programs"))
+    );
+}
+
 /// `[jobs]` is a cost control, not a security-critical setting, so the
 /// project layer may set it and the merge must carry it across layers.
 #[test]
@@ -530,5 +607,46 @@ fn diagnostics_report_jobs_like_their_neighbours() {
     assert!(
         rendered.contains("\"jobs_tokens_per_endpoint\":{\"ollama\":200000}"),
         "resolved diagnostics must report the token ceilings: {rendered}"
+    );
+}
+
+/// The `[jobs.runner]` settings mirror beside their neighbours in both
+/// views: the file view shows what was declared (`None` when unset), the
+/// resolved view shows the effective values, and the JSON `config show`
+/// names the fields — the path itself is user-declared, not a secret.
+#[test]
+fn diagnostics_report_the_runner_settings_like_their_neighbours() {
+    let unset = ConfigFile::from_toml("[run]\nmax_rows = 10\n").unwrap();
+    let declared_unset = unset.redacted_diagnostics();
+    assert_eq!(declared_unset.jobs_runner_allow, None);
+    assert_eq!(declared_unset.jobs_runner_program_dir, None);
+    assert_eq!(declared_unset.jobs_runner_timeout_seconds, None);
+
+    let set = ConfigFile::from_toml(
+        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"/opt/saya-programs\"\ntimeout_seconds = 45\n",
+    )
+    .unwrap();
+    let declared = set.redacted_diagnostics();
+    assert_eq!(declared.jobs_runner_allow, Some(vec!["bench".to_owned()]));
+    assert_eq!(
+        declared.jobs_runner_program_dir,
+        Some("/opt/saya-programs".to_owned())
+    );
+    assert_eq!(declared.jobs_runner_timeout_seconds, Some(45));
+
+    let shown = resolve_with_user(
+        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"/opt/saya-programs\"\n",
+    )
+    .redacted_diagnostics();
+    assert_eq!(shown.jobs_runner_allow, vec!["bench".to_owned()]);
+    assert_eq!(
+        shown.jobs_runner_program_dir,
+        Some("/opt/saya-programs".to_owned())
+    );
+    assert_eq!(shown.jobs_runner_timeout_seconds, 300);
+    let rendered = serde_json::to_string(&shown).unwrap();
+    assert!(
+        rendered.contains("\"jobs_runner_program_dir\":\"/opt/saya-programs\""),
+        "resolved diagnostics must report the program directory: {rendered}"
     );
 }

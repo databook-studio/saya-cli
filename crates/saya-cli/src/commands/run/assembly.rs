@@ -23,6 +23,7 @@ use saya_types::Budgets;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::runner::{RunRunner, build as build_runner};
 use super::tools::RunFetch;
 
 /// How much workspace the episode brief's manifest walks: names, sizes,
@@ -71,6 +72,18 @@ pub(super) struct Pieces {
     /// pause check. `None` means the run did not approve fetch, nothing
     /// fetch-shaped exists, and the sink's download check is inert.
     pub(super) fetch: Option<RunFetch>,
+    /// The run's runner wiring, built once per run when the run approved a
+    /// runner scope **and** the startup probe proved the host: the placement
+    /// guard, the probe, and the admission check all ran here. `None` when
+    /// the run did not approve runner or the host did not prove — either way
+    /// the capability is absent from every toolset, never degraded.
+    pub(super) runner: Option<RunRunner>,
+    /// The capabilities plan validation must see: the run's approved scopes
+    /// passed through the provision's own fail-closed rule
+    /// (`provision.plan_capabilities(&scopes)`), so a plan asking for the
+    /// runner on an unproven host refuses as needs-approval — the honest
+    /// refusal — instead of reaching a tool that does not exist.
+    pub(super) plan_scopes: saya_types::Capabilities,
     pub(super) decider: TerminalApproval,
     pub(super) model: String,
     pub(super) profile_names: Vec<String>,
@@ -82,11 +95,13 @@ pub(super) struct Pieces {
 /// endpoint resolution layers it. `run_root` is the claimed run directory
 /// (the scratch file's home, ADR 0003) and `scopes` the run's approved
 /// capabilities: the scratch database is admitted here, once per run, when
-/// — and only when — the run approved `scratch`. `profile_override` is the
-/// host's active connection profile (what a nested child's `--profile`
-/// forwards); `None` keeps the resolved default. Errors are configuration,
-/// connection, or admission problems (exit-code class 3), reported as text
-/// for the caller to emit.
+/// — and only when — the run approved `scratch`, and the runner wiring is
+/// built once per run the same way — the placement guard, the startup probe,
+/// and the admission check — when the run approved a runner scope, fresh and
+/// resume alike. `profile_override` is the host's active connection profile
+/// (what a nested child's `--profile` forwards); `None` keeps the resolved
+/// default. Errors are configuration, connection, or admission problems
+/// (exit-code class 3), reported as text for the caller to emit.
 pub(super) async fn assemble(
     runtime: &RuntimeConfig,
     profile_override: Option<&String>,
@@ -172,11 +187,21 @@ pub(super) async fn assemble(
         }
         None => None,
     };
+    // Shared per run, built before anything runs (fail closed at start,
+    // never mid-flight): the runner wiring — the sandbox composed over the
+    // run's fs roots, the placement guard, the startup probe, and the
+    // admission check — only when the run approved a runner scope. A run
+    // that did not approve runner never consults the directory, and a host
+    // the probe refused strips the scope from plan validation
+    // (`plan_scopes`), so plans asking for it refuse as needs-approval.
+    let wiring = build_runner(&runtime.resolved.jobs.runner, run_root, scopes)?;
     Ok(Pieces {
         provider,
         tools,
         scratch,
         fetch,
+        runner: wiring.runner,
+        plan_scopes: wiring.plan_scopes,
         decider: TerminalApproval::new(approval, false),
         model: ai.model,
         profile_names,

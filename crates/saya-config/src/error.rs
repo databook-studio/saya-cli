@@ -86,4 +86,25 @@ pub enum ConfigError {
         program: String,
         reason: &'static str,
     },
+    /// A `[jobs.runner] program_dir` that is a relative path. The canonical
+    /// form must not depend on the working directory the config was loaded
+    /// from — a relative path would resolve to a different directory per
+    /// invocation, and the run's probe verdict is only as real as the one
+    /// directory it proved.
+    #[error(
+        "setting runner.program_dir {path:?} must be an absolute path: the canonical form \
+         must not depend on the working directory the config was loaded from"
+    )]
+    RelativeRunnerProgramDir { path: String },
+    /// `[jobs.runner] allow` names programs while `program_dir` is
+    /// undeclared. The runner resolves every allowlisted program inside one
+    /// directory and nowhere else, so an allowlist without its directory
+    /// approves programs that cannot run — the same typed resolve error
+    /// every other `[jobs]` mistake gets, never a silently-approved
+    /// capability that gates nothing.
+    #[error(
+        "[jobs.runner] allow names programs but runner.program_dir is undeclared: stage \
+         the allowlisted programs in one directory and set program_dir to its absolute path"
+    )]
+    RunnerAllowWithoutProgramDir,
 }

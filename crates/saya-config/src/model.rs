@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use saya_types::{DatabaseProfile, SecretRef};
 use serde::Deserialize;
@@ -231,13 +231,15 @@ pub struct JobsFile {
 }
 
 /// The `[jobs.runner]` sub-table: the runner programs a run's approved
-/// runner scope may draw from and the default wall-clock ceiling for one
-/// child process (M5-4). Each key is optional: an absent `allow` approves no
-/// programs (the runner capability is absent entirely — there is no default
-/// program universe a run gets for free), and an absent `timeout_seconds`
-/// resolves to the conservative default. Entries are bare program names in
-/// the run-scoped name shape; shells and interpreters are refused at resolve
-/// time — a program the runner will never honour must not look approved.
+/// runner scope may draw from, the one directory they are staged in, and the
+/// default wall-clock ceiling for one child process (M5-4). Each key is
+/// optional: an absent `allow` approves no programs (the runner capability
+/// is absent entirely — there is no default program universe a run gets for
+/// free), and an absent `timeout_seconds` resolves to the conservative
+/// default. Entries are bare program names in the run-scoped name shape;
+/// shells and interpreters are refused at resolve time — a program the
+/// runner will never honour must not look approved. The directory is
+/// operator-owned and staged before the run: the engine only ever reads it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerJobsFile {
@@ -246,6 +248,16 @@ pub struct RunnerJobsFile {
     /// name shape the run contracts carry, bounded like every set-valued
     /// approval surface, and refused when it names a shell or interpreter.
     pub allow: Option<Vec<String>>,
+    /// The absolute path of the directory the allowlisted programs are
+    /// staged in. An `allow` that names programs requires it — programs are
+    /// resolved inside one directory and nowhere else — while a `program_dir`
+    /// alone (empty `allow`) is harmless. It must be absolute: the canonical
+    /// form must not depend on the working directory the config was loaded
+    /// from. Existence is deliberately not checked at resolve time — a
+    /// dangling path must not break `saya ask`; a run that approved the
+    /// runner fails closed at assemble instead. The engine never writes the
+    /// directory, at claim or at any other point in a run.
+    pub program_dir: Option<PathBuf>,
     /// Default wall-clock ceiling for one child process, in seconds. A
     /// declared zero is a typed resolve error, never a silent clamp — a
     /// zero-second timeout would kill every child before its first byte, a

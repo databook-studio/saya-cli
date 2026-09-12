@@ -128,6 +128,43 @@ endpoint, so a `tokens.<role>` ceiling naming any other endpoint is refused at
 start (the map's shape is still validated here, at config resolve time).
 Unset keys fall back to `[jobs]`, and a zero is refused as a typo there too.
 
+`[jobs.runner]` declares the runner universe: the programs a run's
+`--allow runner:<name>` may draw from, the one directory they are staged in,
+and the default wall-clock ceiling for one child process:
+
+```toml
+[jobs.runner]
+allow = ["bench"]                    # the programs a runner scope may name
+program_dir = "/opt/saya-programs"   # where those programs are staged
+timeout_seconds = 300                # per-child ceiling; default 300
+```
+
+`allow` entries are bare program names — never paths — bounded at 32, with
+no repeats; a shell or interpreter name (`bash`, `python3`, `env`, …) is
+refused at resolve time, because the runner runs one allowlisted program
+with typed argv and an interpreter would spawn arbitrary children from
+inside the allowlist. An `allow` that names programs **requires**
+`program_dir`, an absolute path to the operator-owned directory the
+programs are staged in; a relative path is a typed resolve error (the
+canonical form must not depend on the working directory the config was
+loaded from), while `program_dir` alone — an empty `allow` — is harmless.
+Existence is deliberately not checked here: a dangling path must not break
+`saya ask` or `saya query`, and a run that approved the runner fails closed
+at start instead.
+
+The directory is operator-owned and staged by you, before the run: the
+engine never writes it, at claim or at any other point. Stage each
+allowlisted program as a regular, non-symlink, non-script file with its
+bare name — a symlink, a shebang script, or a missing file refuses the run
+at start (exit `3`) naming the program and the directory. The directory
+must also sit outside the run's filesystem roots in both directions — not
+inside, equal to, or containing one — and the run refuses to start
+otherwise: with programs inside the run tree, one step's child could write
+the binary the next step's `run_program` validates and executes. The runner
+tool itself is admitted only where the startup sandbox probe proved the
+host; on a host the probe refused, plans asking for the runner refuse as
+needs-approval.
+
 The project layer may set `[jobs]` without `--trust-project-config`: it is a
 cost control, not a security-critical setting. Layering is per key: a layer
 that declares a key replaces that key's whole value from the lower layers, so

@@ -125,11 +125,15 @@ async fn continue_run(
     // over the run's shared collaborators, the same way a fresh run builds
     // them.
     let toolsets = super::tools::toolsets(
-        &pieces.tools,
-        pieces.scratch.as_ref(),
-        pieces.fetch.as_ref(),
-        &workspace,
-        pieces.allow_query_data,
+        super::tools::ToolsetInputs {
+            database: &pieces.tools,
+            scratch: pieces.scratch.as_ref(),
+            fetch: pieces.fetch.as_ref(),
+            runner: pieces.runner.as_ref(),
+            workspace: &workspace,
+            allow_query_data: pieces.allow_query_data,
+            cancellation: &cancellation,
+        },
         &plan.steps,
     );
     let resumed = ResumeRun {

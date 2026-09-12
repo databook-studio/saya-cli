@@ -99,7 +99,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             run_goal: spec.goal.clone(),
         },
     )
-    .propose(&spec.scopes, &spec.budgets)
+    .propose(&pieces.plan_scopes, &spec.budgets)
     .await
     {
         Ok(plan) => plan,
@@ -142,11 +142,15 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     // scope parsing). Each is built from its step's capabilities — the
     // thing the approval view shows — over the run's shared collaborators.
     let toolsets = tools::toolsets(
-        &pieces.tools,
-        pieces.scratch.as_ref(),
-        pieces.fetch.as_ref(),
-        &workspace,
-        pieces.allow_query_data,
+        tools::ToolsetInputs {
+            database: &pieces.tools,
+            scratch: pieces.scratch.as_ref(),
+            fetch: pieces.fetch.as_ref(),
+            runner: pieces.runner.as_ref(),
+            workspace: &workspace,
+            allow_query_data: pieces.allow_query_data,
+            cancellation: &host.cancellation,
+        },
         &plan.steps,
     );
     if let Err(error) = files::persist_plan(run_dir.root(), &plan) {

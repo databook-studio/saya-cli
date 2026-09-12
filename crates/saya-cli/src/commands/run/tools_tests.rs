@@ -2,7 +2,9 @@
 //! database and workspace universe byte-identically to the single executor
 //! and run-level universe they replaced — and, since S1, the scratch tool
 //! must appear in — and only in — the steps that asked for it, behind a
-//! composite that actually runs it.
+//! composite that actually runs it. The same holds for fetch (S2) and the
+//! runner (S3), whose proven spawn narrows per step to the `RunnerScope`
+//! that step itself asked for.
 
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
@@ -10,23 +12,30 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use saya_agent::CancellationToken;
 use saya_agent::{LocalStateEffect, ToolError};
 use saya_harness::fetch::{
     DownloadBudget, FetchBody, FetchRequest, FetchTransport, FetchTransportError, WireResponse,
 };
 use saya_harness::scratch::ScratchSql;
 use saya_harness::workspace::Workspace;
-use saya_types::{Capabilities, StepSpec};
+use saya_types::{Capabilities, RunnerScope, StepSpec};
 
 use crate::agent::tools::DatabaseTools;
 
-use super::tools::{RunFetch, toolsets};
+use super::runner::RunRunner;
+use super::tools::{RunFetch, ToolsetInputs, toolsets};
+
+/// The run's cancellation token, as the composition root passes it.
+fn cancellation() -> CancellationToken {
+    CancellationToken::default()
+}
 
 /// The names each step's definitions must carry, in order, for a read-only
 /// run with the privacy gate open: the database and workspace-read set, no
 /// write tool, and no contract tools (a run passes no state store).
 /// `workspace_write` sits between `grep` and the sql tools when approved;
-/// `scratch_sql` is appended last when the step asked for scratch.
+/// the scope-asking tails append after it.
 const OPEN_GATE: &[&str] = &[
     "schema_discovery",
     "workspace_read",
@@ -41,6 +50,12 @@ const OPEN_GATE: &[&str] = &[
     "render_chart",
     "designate_answer",
 ];
+/// The tools each scope-asking step gets appended after the database
+/// universe, in construction order: scratch, then fetch's pair, then the
+/// runner's `run_program`.
+const SCRATCH_TAIL: &[&str] = &["scratch_sql"];
+const FETCH_TAIL: &[&str] = &["http_fetch", "http_download"];
+const RUNNER_TAIL: &[&str] = &["run_program"];
 
 /// The same universe with the privacy gate closed: every tool that touches
 /// database data is hidden.
@@ -79,9 +94,12 @@ fn admitted_scratch(label: &str) -> (PathBuf, Arc<ScratchSql>) {
 }
 
 /// An open `Workspace` over a private root — the `Arc` `assemble` builds
-/// once per run and hands the toolset builder.
-fn workspace() -> Arc<Workspace> {
-    let root = std::env::temp_dir().join(format!("saya-run-tools-ws-{}", std::process::id()));
+/// once per run and hands the toolset builder. The label keeps each test's
+/// root its own: the tests run in parallel, and a shared root would let one
+/// test's cleanup wipe another's in-flight writes.
+fn workspace(label: &str) -> Arc<Workspace> {
+    let root =
+        std::env::temp_dir().join(format!("saya-run-tools-ws-{label}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     Arc::new(Workspace::open(&root).unwrap())
@@ -156,15 +174,19 @@ fn run_fetch(body: &[u8]) -> (Arc<std::sync::Mutex<Vec<String>>>, RunFetch) {
 #[test]
 fn every_step_s_definitions_follow_the_step_s_capabilities() {
     let database = Arc::new(DatabaseTools::new(None, 100, true));
-    let workspace = workspace();
+    let workspace = workspace("defs");
 
     // Read-only steps: the unchanged universe, byte-identical across steps.
     let built = toolsets(
-        &database,
-        None,
-        None,
-        &workspace,
-        true,
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
         &[
             step("read the schema", Capabilities::default()),
             step("summarize", Capabilities::default()),
@@ -197,11 +219,15 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
     );
 
     let built = toolsets(
-        &database,
-        None,
-        None,
-        &workspace,
-        false,
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: false,
+            cancellation: &cancellation(),
+        },
         &[step("closed gate", Capabilities::default())],
     );
     assert_eq!(names(&built, 0), CLOSED_GATE);
@@ -209,11 +235,15 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
     let mut write_scopes = Capabilities::default();
     write_scopes.workspace_write = true;
     let built = toolsets(
-        &database,
-        None,
-        None,
-        &workspace,
-        true,
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
         &[step("write files", write_scopes)],
     );
     assert_eq!(
@@ -246,17 +276,21 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
 #[tokio::test]
 async fn the_scratch_tool_is_in_the_universe_of_the_steps_that_asked_for_it() {
     let database = Arc::new(DatabaseTools::new(None, 100, true));
-    let workspace = workspace();
+    let workspace = workspace("scratch-universe");
     let (root, scratch) = admitted_scratch("universe");
 
     let mut scratch_caps = Capabilities::default();
     scratch_caps.scratch = true;
     let built = toolsets(
-        &database,
-        Some(&scratch),
-        None,
-        &workspace,
-        true,
+        ToolsetInputs {
+            database: &database,
+            scratch: Some(&scratch),
+            fetch: None,
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
         &[
             step("stage results", scratch_caps.clone()),
             step("read only", Capabilities::default()),
@@ -267,7 +301,7 @@ async fn the_scratch_tool_is_in_the_universe_of_the_steps_that_asked_for_it() {
     // scratch alone is not the workspace-write scope.
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, &["scratch_sql"]].concat(),
+        [OPEN_GATE, SCRATCH_TAIL].concat(),
         "the scratch-asking step's universe must end with scratch_sql"
     );
     assert!(
@@ -301,23 +335,27 @@ async fn the_scratch_tool_is_in_the_universe_of_the_steps_that_asked_for_it() {
 #[tokio::test]
 async fn ddl_runs_through_scratch_sql_with_only_the_scratch_scope() {
     let database = Arc::new(DatabaseTools::new(None, 100, true));
-    let workspace = workspace();
+    let workspace = workspace("scratch-ddl");
     let (root, scratch) = admitted_scratch("ddl");
 
     let mut scratch_caps = Capabilities::default();
     scratch_caps.scratch = true;
     let built = toolsets(
-        &database,
-        Some(&scratch),
-        None,
-        &workspace,
-        true,
+        ToolsetInputs {
+            database: &database,
+            scratch: Some(&scratch),
+            fetch: None,
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
         &[step("stage results", scratch_caps.clone())],
     );
 
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, &["scratch_sql"]].concat(),
+        [OPEN_GATE, SCRATCH_TAIL].concat(),
         "the step's universe must carry scratch_sql and nothing write-shaped besides"
     );
 
@@ -351,28 +389,28 @@ async fn ddl_runs_through_scratch_sql_with_only_the_scratch_scope() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// The composite dispatches the four fixed harness names — and refuses them
-/// exactly as the single executor always did where no member executor backs
-/// them: the database tools' typed `UnsupportedTool`, fail closed.
+/// The composite dispatches the four fixed harness names — and refuses the
+/// ones no member backs exactly as the single executor always did: the
+/// database tools' typed `UnsupportedTool`, fail closed. `run_program` is
+/// not on this list any more: its member is wired (S3), and its narrowing
+/// is pinned in the runner tests below.
 #[tokio::test]
 async fn the_harness_names_fall_through_to_the_same_typed_refusal() {
     let database = Arc::new(DatabaseTools::new(None, 100, true));
-    let workspace = workspace();
+    let workspace = workspace("fall-through");
     let built = toolsets(
-        &database,
-        None,
-        None,
-        &workspace,
-        true,
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
         &[step("read only", Capabilities::default())],
     );
-    for name in [
-        "scratch_sql",
-        "http_fetch",
-        "http_download",
-        "run_program",
-        "wat",
-    ] {
+    for name in ["scratch_sql", "http_fetch", "http_download", "wat"] {
         let error = built[0]
             .executor
             .execute(name, serde_json::json!({}))
@@ -426,7 +464,7 @@ fn fetch_is_wired_and_still_approves() {
 #[tokio::test]
 async fn the_fetch_tools_are_in_the_universe_of_the_steps_that_asked_for_it() {
     let database = Arc::new(DatabaseTools::new(None, 100, true));
-    let workspace = workspace();
+    let workspace = workspace("fetch-universe");
     let (_calls, fetch) = run_fetch(b"irrelevant");
 
     let mut fetch_caps = Capabilities::default();
@@ -437,11 +475,15 @@ async fn the_fetch_tools_are_in_the_universe_of_the_steps_that_asked_for_it() {
         .expect("shaped"),
     );
     let built = toolsets(
-        &database,
-        None,
-        Some(&fetch),
-        &workspace,
-        true,
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: Some(&fetch),
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
         &[
             step("pull the corpus", fetch_caps.clone()),
             step("read only", Capabilities::default()),
@@ -452,7 +494,7 @@ async fn the_fetch_tools_are_in_the_universe_of_the_steps_that_asked_for_it() {
     // write tool — fetch alone is not the workspace-write scope.
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, &["http_fetch", "http_download"]].concat(),
+        [OPEN_GATE, FETCH_TAIL].concat(),
         "the fetch-asking step's universe must carry both fetch tools"
     );
     assert!(
@@ -490,7 +532,7 @@ async fn the_fetch_tools_are_in_the_universe_of_the_steps_that_asked_for_it() {
 #[tokio::test]
 async fn a_download_runs_through_the_composite_with_only_the_fetch_scope() {
     let database = Arc::new(DatabaseTools::new(None, 100, true));
-    let workspace = workspace();
+    let workspace = workspace("download");
     let content = b"the corpus bytes".to_vec();
     let (_calls, fetch) = run_fetch(&content);
 
@@ -502,17 +544,21 @@ async fn a_download_runs_through_the_composite_with_only_the_fetch_scope() {
         .expect("shaped"),
     );
     let built = toolsets(
-        &database,
-        None,
-        Some(&fetch),
-        &workspace,
-        true,
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: Some(&fetch),
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
         &[step("pull the corpus", fetch_caps.clone())],
     );
 
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, &["http_fetch", "http_download"]].concat(),
+        [OPEN_GATE, FETCH_TAIL].concat(),
         "the step's universe must carry both fetch tools and nothing write-shaped besides"
     );
 
@@ -536,12 +582,201 @@ async fn a_download_runs_through_the_composite_with_only_the_fetch_scope() {
         "the digest the resume verifies against: {outcome:?}"
     );
     let landed = std::fs::read(std::env::temp_dir().join(format!(
-        "saya-run-tools-ws-{}/downloads/corpus.bin",
+        "saya-run-tools-ws-download-{}/downloads/corpus.bin",
         std::process::id()
     )))
     .expect("the file landed in the run workspace");
     assert_eq!(landed, content, "the bytes on disk are the served bytes");
     let _ = fs::remove_dir_all(
-        std::env::temp_dir().join(format!("saya-run-tools-ws-{}", std::process::id())),
+        std::env::temp_dir().join(format!("saya-run-tools-ws-download-{}", std::process::id())),
+    );
+}
+
+/// A step whose capabilities ask for the runner gets nothing when the run's
+/// runner wiring is absent — an unproven host, or a run that approved the
+/// scope on a host the probe refused. The tool has no definition and the
+/// composite refuses the name as an unknown tool: the capability is absent,
+/// never degraded. (The definitions half needs no proven spawn.)
+#[tokio::test]
+async fn run_program_is_absent_where_no_runner_wiring_exists() {
+    let database = Arc::new(DatabaseTools::new(None, 100, true));
+    let workspace = workspace("runner-absent");
+    let mut runner_caps = Capabilities::default();
+    runner_caps.runner = Some(RunnerScope::new(vec!["bench".to_owned()]).expect("shaped"));
+    let built = toolsets(
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
+        &[step("run the harness", runner_caps.clone())],
+    );
+    assert_eq!(
+        names(&built, 0),
+        OPEN_GATE,
+        "without wiring the runner tool must be absent from the universe"
+    );
+    let error = built[0]
+        .executor
+        .execute("run_program", serde_json::json!({}))
+        .await
+        .expect_err("no wiring means no member behind the composite");
+    assert_eq!(error, ToolError::UnsupportedTool);
+}
+
+/// A proven spawn for the toolset tests: the startup probe decides per
+/// host, and only the proven arm of `prepare` constructs a `RunnerSpawn`,
+/// so this helper — and every test below that uses it — is macOS-only,
+/// exactly like the escape battery it mirrors. The program directory sits
+/// beside the roots, the staging contract.
+#[cfg(target_os = "macos")]
+fn proven_runner(tag: &str) -> (PathBuf, RunRunner) {
+    use std::time::Duration;
+
+    use saya_harness::runner::sandbox::RunSandbox;
+
+    let run_root = std::env::temp_dir().join(format!(
+        "saya-run-tools-runner-{tag}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&run_root);
+    fs::create_dir_all(run_root.join("workspace")).unwrap();
+    fs::create_dir_all(run_root.join("state")).unwrap();
+    let programs = std::env::temp_dir().join(format!(
+        "saya-run-tools-runner-programs-{tag}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&programs);
+    fs::create_dir_all(&programs).unwrap();
+    let sandbox = RunSandbox::new(
+        [
+            fs::canonicalize(run_root.join("workspace")).unwrap(),
+            fs::canonicalize(run_root.join("state")).unwrap(),
+        ],
+        Vec::<(String, u16)>::new(),
+    )
+    .expect("the run's roots construct");
+    let provision = sandbox.prepare(&programs).expect("preparation must run");
+    assert!(
+        provision.report().proves_runner(),
+        "the probe must prove this host for the wiring to exist:\n{}",
+        provision.report().render()
+    );
+    (
+        run_root,
+        RunRunner {
+            spawn: provision.spawn().expect("proven").clone(),
+            timeout: Duration::from_secs(300),
+        },
+    )
+}
+
+/// The inverse pin's second half: the runner tool is in the universe of —
+/// and only of — the steps that asked for it. The run-level admission alone
+/// (the run approved the scope and the probe proved the host) must not leak
+/// `run_program` into a non-asking step, in either its definitions or its
+/// executor.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_runner_tool_is_in_the_universe_of_the_steps_that_asked_for_it() {
+    let database = Arc::new(DatabaseTools::new(None, 100, true));
+    let workspace = workspace("runner-universe");
+    let (_run_root, runner) = proven_runner("universe");
+
+    let mut runner_caps = Capabilities::default();
+    runner_caps.runner = Some(RunnerScope::new(vec!["bench".to_owned()]).expect("shaped"));
+    let built = toolsets(
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: Some(&runner),
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
+        &[
+            step("run the harness", runner_caps.clone()),
+            step("read only", Capabilities::default()),
+        ],
+    );
+
+    // The asking step: run_program appended last, no workspace write tool —
+    // the runner alone is not the workspace-write scope.
+    assert_eq!(
+        names(&built, 0),
+        [OPEN_GATE, RUNNER_TAIL].concat(),
+        "the runner-asking step's universe must end with run_program"
+    );
+    assert!(
+        !names(&built, 0).contains(&"workspace_write".to_string()),
+        "the runner alone must not carry the workspace-write tool"
+    );
+    // The non-asking step: byte-identical to the unchanged universe.
+    assert_eq!(
+        names(&built, 1),
+        OPEN_GATE,
+        "a step that did not ask for the runner must never see it"
+    );
+
+    // And the executor narrows with the definitions: the non-asking step's
+    // composite refuses the name even though the run wired the scope.
+    let error = built[1]
+        .executor
+        .execute("run_program", serde_json::json!({}))
+        .await
+        .expect_err("the non-asking step has no runner member behind its composite");
+    assert_eq!(error, ToolError::UnsupportedTool);
+}
+
+/// The slice's headline gate on the approval surface: a step that asked only
+/// for one program rejects a different allowlisted one — the tool carries
+/// the *step's* narrowed `RunnerScope`, never the run's union, so the
+/// enforcement matches the thing the approval view showed.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_step_s_narrowed_allowlist_rejects_a_program_it_did_not_ask_for() {
+    let database = Arc::new(DatabaseTools::new(None, 100, true));
+    let workspace = workspace("runner-narrowed");
+    let (_run_root, runner) = proven_runner("narrowed");
+
+    // The run approved both programs; this step asked only for `bench`.
+    let mut step_caps = Capabilities::default();
+    step_caps.runner = Some(RunnerScope::new(vec!["bench".to_owned()]).expect("shaped"));
+    let built = toolsets(
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: None,
+            runner: Some(&runner),
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
+        &[step("measure with the harness", step_caps)],
+    );
+    assert_eq!(
+        names(&built, 0),
+        [OPEN_GATE, RUNNER_TAIL].concat(),
+        "the step's universe must carry run_program"
+    );
+    let error = built[0]
+        .executor
+        .execute(
+            "run_program",
+            serde_json::json!({"program": "ripgrep", "args": []}),
+        )
+        .await
+        .expect_err("a program outside the step's narrowed scope must refuse");
+    let ToolError::Runner(message) = &error else {
+        panic!("the refusal must be the runner's typed error, got: {error:?}");
+    };
+    assert!(
+        message.contains("ripgrep") && message.contains("allowlist"),
+        "the refusal must name the program and the allowlist: {message}"
     );
 }
