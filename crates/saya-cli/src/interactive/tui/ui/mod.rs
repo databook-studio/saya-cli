@@ -45,7 +45,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
         .request
         .pending_approval
         .as_ref()
-        .map(|p| approval_height(p.detail.as_deref(), frame.area().width))
+        .map(|p| approval_height(p.detail.as_deref(), p.grant.as_deref(), frame.area().width))
         .unwrap_or(0);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -74,7 +74,13 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     }
     draw_status(frame, app, status, chunks[2]);
     if let Some(pending) = &app.request.pending_approval {
-        draw_approval(frame, &pending.tool, pending.detail.as_deref(), chunks[3]);
+        draw_approval(
+            frame,
+            &pending.tool,
+            pending.detail.as_deref(),
+            pending.grant.as_deref(),
+            chunks[3],
+        );
     }
     if let Some(panel) = &app.run_panel
         && panel.plan_approval.is_some()

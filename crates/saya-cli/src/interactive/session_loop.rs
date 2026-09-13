@@ -55,14 +55,19 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     }
     // The session's engine side, once per process: the state directory
     // (`sessions/<id>/`), the single-writer lock, and the tool universe —
-    // workspace binding, scratch, fetch, runner. Held for the process; the
-    // lock releases when it drops.
+    // workspace binding, scratch, fetch, runner — plus the session's one
+    // approval policy, built from the session's mode. Held for the process;
+    // the lock releases when it drops.
     let mut session = SessionRuntime::acquire(
         &runtime,
         cli.options.workspace.as_deref(),
         fresh,
         state.workspace_root.as_deref(),
         &state.id,
+        state
+            .approval_mode
+            .parse()
+            .unwrap_or(saya_agent::ApprovalPolicy::Ask),
     )?;
     // The pin the record carries: resolved fresh, or re-bound by an explicit
     // `--workspace`; a resumed session re-opening its recorded pin keeps it
@@ -203,10 +208,15 @@ fn handle_line(
                 .approval_mode
                 .parse()
                 .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
+            // The turn's decider rides the session's one policy, synced to
+            // the current mode (a mid-session `/approval` takes effect next
+            // turn, grants carried), so a session grant outlives the turn.
+            session.sync_policy(approval);
             match block_on(super::session_request::run(
                 runtime,
                 line,
                 approval,
+                session.policy(),
                 terminal,
                 state.prompt_overrides(),
                 history,
@@ -337,8 +347,18 @@ fn handle_line(
             Ok(Some(loaded)) => {
                 // The resumed session's own state must ride the swap: the new
                 // state directory claimed and composed before the old lock
-                // releases; a refused swap keeps this session.
-                match session.reacquire(runtime, loaded.workspace_root.as_deref(), &id) {
+                // releases; a refused swap keeps this session. The resumed
+                // session's policy is its own — grants are process-lifetime
+                // facts about one session, and a resumed session starts empty.
+                match session.reacquire(
+                    runtime,
+                    loaded.workspace_root.as_deref(),
+                    &id,
+                    loaded
+                        .approval_mode
+                        .parse()
+                        .unwrap_or(saya_agent::ApprovalPolicy::Ask),
+                ) {
                     Ok(()) => {
                         *state = loaded;
                         super::session_emit::emit_action(

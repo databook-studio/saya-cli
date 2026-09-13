@@ -3,6 +3,7 @@
 use super::super::agent::{self, StreamMsg};
 use super::super::stream_events::apply_event;
 use super::super::transcript::BlockKind;
+use crate::interactive::session_runtime::SessionRuntime;
 use std::sync::Arc;
 
 use super::super::types::{App, LastQuery, PendingApproval};
@@ -15,16 +16,27 @@ use saya_agent::{AgentEvent, UsageCall};
 mod tests;
 
 impl App {
-    /// Starts streaming an agent prompt on a background thread.
-    pub(crate) fn start_agent(&mut self, prompt: String, state: &SessionState) {
+    /// Starts streaming an agent prompt on a background thread. The turn's
+    /// decider is built over the session's one approval policy — synced to
+    /// the current mode (a mid-session `/approval` takes effect next turn,
+    /// carrying every grant the user made) and cloned into `StreamRequest`,
+    /// so a grant recorded in this turn is in force for the next.
+    pub(crate) fn start_agent(
+        &mut self,
+        prompt: String,
+        state: &SessionState,
+        session: &mut SessionRuntime,
+    ) {
         let approval = state
             .approval_mode
             .parse()
             .unwrap_or(saya_agent::ApprovalPolicy::Ask);
+        session.sync_policy(approval);
         self.request.stream = Some(agent::start(agent::StreamRequest {
             runtime: Arc::clone(&self.runtime),
             prompt,
             approval,
+            policy: session.policy(),
             overrides: state.prompt_overrides(),
             history: state.provider_history(),
             state_db: self.state_db.clone(),
@@ -108,11 +120,13 @@ impl App {
                 StreamMsg::ApprovalRequest {
                     tool,
                     detail,
+                    grant,
                     respond,
                 } => {
                     self.request.pending_approval = Some(PendingApproval {
                         tool,
                         detail,
+                        grant,
                         respond,
                     });
                 }

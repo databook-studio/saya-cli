@@ -7,7 +7,7 @@ use super::input::InputBuffer;
 use super::transcript::Transcript;
 use super::usage_totals::UsageTotals;
 use crate::config::runtime::RuntimeConfig;
-use saya_agent::TokenUsage;
+use saya_agent::{ApprovalChoice, TokenUsage};
 use saya_store::{RedactedSession, SqliteStateStore};
 use std::cell::Cell;
 use std::sync::Arc;
@@ -94,12 +94,15 @@ pub(crate) struct Menu {
     pub(crate) selected: usize,
 }
 
-/// A pending tool-approval request awaiting the user's y/n answer.
+/// A pending tool-approval request awaiting the user's answer.
 pub(crate) struct PendingApproval {
     pub(crate) tool: String,
     /// Human-readable detail (e.g. the SQL) shown in the approval dialog.
     pub(crate) detail: Option<String>,
-    pub(crate) respond: oneshot::Sender<bool>,
+    /// The grammar token a session grant for this call would record; the
+    /// modal offers its `[s]` answer only when this is `Some`.
+    pub(crate) grant: Option<String>,
+    pub(crate) respond: oneshot::Sender<ApprovalChoice>,
 }
 
 /// A selectable list of saved sessions to resume, filterable as you type.

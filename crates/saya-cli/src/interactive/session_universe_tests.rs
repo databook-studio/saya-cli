@@ -442,6 +442,7 @@ fn a_second_acquisition_of_a_live_session_refuses() {
         true,
         None,
         "lock-session-1",
+        saya_agent::ApprovalPolicy::Ask,
     )
     .expect("the first holder acquires");
     let error = crate::interactive::session_runtime::SessionRuntime::acquire(
@@ -450,6 +451,7 @@ fn a_second_acquisition_of_a_live_session_refuses() {
         true,
         None,
         "lock-session-1",
+        saya_agent::ApprovalPolicy::Ask,
     )
     .map(|_: crate::interactive::session_runtime::SessionRuntime| ())
     .expect_err("a live holder refuses");
@@ -465,6 +467,7 @@ fn a_second_acquisition_of_a_live_session_refuses() {
         true,
         None,
         "lock-session-1",
+        saya_agent::ApprovalPolicy::Ask,
     )
     .expect("the lock is reclaimable after release");
     // Two different sessions on the same project both hold: no project lock.
@@ -474,6 +477,7 @@ fn a_second_acquisition_of_a_live_session_refuses() {
         true,
         None,
         "lock-session-2",
+        saya_agent::ApprovalPolicy::Ask,
     )
     .expect("a different session on the same project acquires");
     let _ = fs::remove_dir_all(&project);

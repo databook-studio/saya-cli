@@ -1,11 +1,16 @@
 //! Terminal approval semantics: what each `ApprovalPolicy` approves through
 //! `TerminalApproval` (the decider behind `saya ask` and non-interactive
 //! runs). The TUI's `ChannelApproval` (`interactive/tui/agent.rs`) mirrors the
-//! read-only rule.
+//! read-only rule. The session's hoisted policy rides `from_session`: grants
+//! recorded through one turn's decider stay in force for the next.
 
 use crate::agent::tools::DatabaseTools;
-use crate::prompt_approval::{TerminalApproval, approval_prompt};
-use saya_agent::{ApprovalDecider, ApprovalPolicy, LocalStateEffect, ToolDefinition, ToolEffect};
+use crate::grant_token::grant_token;
+use crate::prompt_approval::{TerminalApproval, approval_prompt, terminal_choice};
+use saya_agent::{
+    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, LocalStateEffect,
+    SessionPolicy, ToolDefinition, ToolEffect,
+};
 
 fn side_effecting_tool() -> ToolDefinition {
     ToolDefinition {
@@ -21,6 +26,11 @@ fn side_effecting_tool() -> ToolDefinition {
         },
         completion: None,
     }
+}
+
+/// The session's `workspace_write` definition, the canonical grantable shape.
+fn workspace_write_tool() -> ToolDefinition {
+    crate::interactive::session_definitions::workspace_write()
 }
 
 fn database_tools() -> Vec<ToolDefinition> {
@@ -100,7 +110,7 @@ fn ask_prompt_uses_the_generic_sentence_for_non_sql_tools() {
         .iter()
         .find(|tool| tool.name == "designate_answer")
         .expect("designate_answer is defined");
-    let prompt = approval_prompt(designate, &serde_json::json!({"sql": "SELECT 1"}));
+    let prompt = approval_prompt(designate, &serde_json::json!({"sql": "SELECT 1"}), None);
     assert!(
         prompt.contains("Run tool `designate_answer`"),
         "a tool with no visible detail gets the generic sentence: got \"{prompt}\""
@@ -112,7 +122,10 @@ fn ask_prompt_uses_the_generic_sentence_for_non_sql_tools() {
 }
 
 /// The SQL sentence is unchanged for the SQL tools — the sentence shown is the
-/// one `bench/spider`-shaped usage has always been prompted with.
+/// one `bench/spider`-shaped usage has always been prompted with. The answers
+/// part changed with the three-answer ask (this slice's moved assertion: the
+/// sentence stays, `[y/N]` becomes the answers line, and SQL — which no grant
+/// covers — offers the two answers and says so).
 #[test]
 fn ask_prompt_keeps_the_sql_sentence_for_sql_tools() {
     let tools = database_tools();
@@ -120,9 +133,116 @@ fn ask_prompt_keeps_the_sql_sentence_for_sql_tools() {
         .iter()
         .find(|tool| tool.name == "bounded_sql_query")
         .expect("bounded_sql_query is defined");
-    let prompt = approval_prompt(sql, &serde_json::json!({"sql": "SELECT 1"}));
+    let prompt = approval_prompt(sql, &serde_json::json!({"sql": "SELECT 1"}), None);
     assert_eq!(
         prompt,
-        "  SELECT 1\nAllow bounded read-only SQL query? [y/N] "
+        "  SELECT 1\nAllow bounded read-only SQL query? [a] allow once   [d] deny   \
+         (no session grant for this tool) "
+    );
+}
+
+/// A granted token stops the ask: the second call of the same shape resolves
+/// `Allow` with no prompt at all. Without the grant the same call still asks
+/// (here, and asks deny when nobody can answer).
+#[tokio::test]
+async fn a_granted_token_stops_the_ask_without_a_prompt() {
+    let tool = workspace_write_tool();
+    let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
+    let token = grant_token(&tool.name, &arguments).expect("workspace_write is grantable");
+    let policy = SessionPolicy::new(ApprovalPolicy::Ask);
+    let before = TerminalApproval::from_session(policy.clone(), false);
+    assert!(
+        !before.approve(&tool, &arguments).await,
+        "an ungranted ask is decided by the mode: nobody to answer, so deny"
+    );
+    assert!(
+        policy.record(ApprovalChoice::AllowSession { token }),
+        "the first grant is new"
+    );
+    let after = TerminalApproval::from_session(policy, false);
+    assert!(
+        after.approve(&tool, &arguments).await,
+        "the granted token pre-answers the same shape with no prompt"
+    );
+}
+
+/// "Allow once" leaves no grant behind: the store stays empty, so the same
+/// call asks again. The answer's meaning is decided by the terminal's answer
+/// mapping, the grant by the engine's own `record`.
+#[test]
+fn an_allow_once_answer_leaves_no_grant_behind() {
+    let policy = SessionPolicy::new(ApprovalPolicy::Ask);
+    let choice = terminal_choice("y", Some("workspace-write"));
+    assert_eq!(choice, ApprovalChoice::AllowOnce, "`y` means allow once");
+    assert!(!policy.record(choice), "allow once records no grant");
+    assert!(policy.grants().is_empty(), "nothing was granted");
+    assert_eq!(
+        policy.resolve(&workspace_write_tool().effect, Some("workspace-write")),
+        ApprovalDecision::Ask,
+        "the same call asks again"
+    );
+}
+
+/// The terminal's answer words keep their meaning: `y`/`yes` allow once and
+/// `n`/`no` deny (a script or a habit must not break), `a` is the third
+/// answer's allow-once, `s` grants the offered token only, `d` denies, and
+/// anything unrecognised is a deny.
+#[test]
+fn the_terminal_answers_keep_their_meaning() {
+    assert_eq!(terminal_choice("y", None), ApprovalChoice::AllowOnce);
+    assert_eq!(terminal_choice("yes", None), ApprovalChoice::AllowOnce);
+    assert_eq!(
+        terminal_choice(" Y \n", None),
+        ApprovalChoice::AllowOnce,
+        "trimming and case are part of the habit"
+    );
+    assert_eq!(terminal_choice("n", None), ApprovalChoice::Deny);
+    assert_eq!(terminal_choice("no", None), ApprovalChoice::Deny);
+    assert_eq!(terminal_choice("d", None), ApprovalChoice::Deny);
+    assert_eq!(terminal_choice("", None), ApprovalChoice::Deny);
+    assert_eq!(
+        terminal_choice("sure", None),
+        ApprovalChoice::Deny,
+        "anything unrecognised is a deny"
+    );
+    assert_eq!(
+        terminal_choice("s", Some("runner:bench")),
+        ApprovalChoice::AllowSession {
+            token: "runner:bench".to_owned()
+        },
+        "`s` grants exactly the offered token"
+    );
+    assert_eq!(
+        terminal_choice("s", None),
+        ApprovalChoice::Deny,
+        "`s` without a token is unoffered input: a deny, never a guess"
+    );
+}
+
+/// The prompt offers the session grant only when it can name the token: the
+/// `[s]` answer appears with the token verbatim, and with no token the prompt
+/// offers two answers and says so.
+#[test]
+fn the_prompt_offers_a_session_grant_only_when_one_exists() {
+    let tool = workspace_write_tool();
+    let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
+    let token = grant_token(&tool.name, &arguments);
+    let with = approval_prompt(&tool, &arguments, token.as_deref());
+    assert!(
+        with.contains("[s] allow workspace-write for this session"),
+        "the offered token is named verbatim: {with}"
+    );
+    assert!(
+        with.contains("[a] allow once") && with.contains("[d] deny"),
+        "the three answers are stated: {with}"
+    );
+    let none = approval_prompt(&tool, &arguments, None);
+    assert!(
+        !none.contains("[s]"),
+        "no token, no session-grant offer: {none}"
+    );
+    assert!(
+        none.contains("(no session grant for this tool)"),
+        "the two-answer prompt says why the third is absent: {none}"
     );
 }

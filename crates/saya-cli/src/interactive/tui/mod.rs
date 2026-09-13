@@ -264,7 +264,7 @@ pub(crate) fn run(
             && let Some(line) = app.pending.take()
         {
             let id_before = state.id.clone();
-            match dispatch::dispatch(
+            let outcome = dispatch::dispatch(
                 &line,
                 &mut app.transcript,
                 &app.profiles,
@@ -275,7 +275,8 @@ pub(crate) fn run(
                 format,
                 &mut app.last_query,
                 session,
-            ) {
+            );
+            match outcome {
                 Dispatch::Quit => {
                     // An in-flight run is not orphaned by a quit: the quit is
                     // refused until the run is cancelled or finished.
@@ -285,7 +286,9 @@ pub(crate) fn run(
                 }
                 // A command may have switched profiles; refresh @-references.
                 Dispatch::Handled => app.reload_at_refs(state),
-                Dispatch::Agent(prompt) => app.start_agent(prompt, state),
+                Dispatch::Agent(prompt) => {
+                    app.start_agent(prompt, state, session);
+                }
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
                 Dispatch::SetColumns(arg) => app.set_visible_columns(arg),
                 Dispatch::RunPanel {
@@ -345,7 +348,18 @@ pub(crate) fn run(
             };
             match super::session_resume::resume_session(store, &id, &defaults) {
                 Ok(Some(loaded)) => {
-                    match session.reacquire(runtime, loaded.workspace_root.as_deref(), &id) {
+                    // The resumed session's policy is its own, built from the
+                    // resumed mode: grants are process-lifetime facts about
+                    // one session, and a resumed session starts empty.
+                    match session.reacquire(
+                        runtime,
+                        loaded.workspace_root.as_deref(),
+                        &id,
+                        loaded
+                            .approval_mode
+                            .parse()
+                            .unwrap_or(saya_agent::ApprovalPolicy::Ask),
+                    ) {
                         Ok(()) => {
                             *state = loaded;
                             app.session = session.universe();

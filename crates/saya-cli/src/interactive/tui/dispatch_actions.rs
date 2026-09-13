@@ -1,3 +1,4 @@
+use saya_agent::ApprovalPolicy;
 use saya_store::{FsSessionStore, SessionStore};
 
 use super::transcript::{BlockKind, Transcript};
@@ -45,7 +46,15 @@ pub(super) fn resume(
     };
     match resume_session(store, id, &defaults) {
         Ok(Some(loaded)) => {
-            match session.reacquire(runtime, loaded.workspace_root.as_deref(), id) {
+            // The resumed session's policy is its own, built from the resumed
+            // mode: grants are process-lifetime facts about one session, and
+            // a resumed session starts empty.
+            match session.reacquire(
+                runtime,
+                loaded.workspace_root.as_deref(),
+                id,
+                loaded.approval_mode.parse().unwrap_or(ApprovalPolicy::Ask),
+            ) {
                 Ok(()) => {
                     *state = loaded;
                     transcript.push(BlockKind::System, format!("Resumed session {id}"));

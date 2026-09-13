@@ -7,6 +7,9 @@ mod config;
 mod connection;
 #[allow(dead_code)] // contract ops surface, not yet wired into an adapter
 mod contracts;
+mod grant_token;
+#[cfg(test)]
+mod grant_token_tests;
 mod interactive;
 mod render;
 pub mod render_run;

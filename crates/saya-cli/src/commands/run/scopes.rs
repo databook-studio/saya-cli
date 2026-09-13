@@ -48,15 +48,19 @@ fn not_yet_wired(token: &str, family: &str) -> Option<String> {
 
 /// The scopes `--allow` approved.
 #[derive(Debug)]
-pub(super) struct Approved {
-    pub(super) capabilities: Capabilities,
+pub(crate) struct Approved {
+    pub(crate) capabilities: Capabilities,
 }
 
 /// Parses the `--allow` tokens. An empty list is the caller's refusal
 /// decision, not a silently-empty approval; anything here that does not
 /// match the grammar is a typed usage error. `none` is the grammar's
 /// explicit empty approval — see the head of the body.
-pub(super) fn parse(tokens: &[String]) -> Result<Approved, String> {
+///
+/// `pub(crate)` so the interactive session's grant token suggester can feed
+/// every token it produces back through this one parser — the grammar's
+/// authority is here, never a duplicate.
+pub(crate) fn parse(tokens: &[String]) -> Result<Approved, String> {
     // `none` states the empty approval: no capabilities at all, read-only
     // by construction — the episode's per-tool-call decider already
     // defaults to read-only (`assembly.rs`), and nothing a refused scope

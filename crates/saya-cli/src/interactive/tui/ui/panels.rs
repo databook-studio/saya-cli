@@ -173,21 +173,38 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 /// Computes the required vertical height (in rows) for the approval panel.
-pub(super) fn approval_height(detail: Option<&str>, width: u16) -> u16 {
+/// The answers line wraps like any other line, so a long offered token
+/// claims its rows instead of clipping.
+pub(super) fn approval_height(detail: Option<&str>, grant: Option<&str>, width: u16) -> u16 {
     let inner = width.saturating_sub(2).max(1) as usize;
-    if let Some(d) = detail {
-        let wrapped_lines: usize = d
-            .lines()
-            .map(|line| line.chars().count().max(1).div_ceil(inner))
-            .sum();
-        (6 + wrapped_lines as u16).min(16)
-    } else {
-        5
+    let answers_rows = crate::grant_token::session_answers_line(grant)
+        .chars()
+        .count()
+        .max(1)
+        .div_ceil(inner)
+        .max(1) as u16;
+    match detail {
+        Some(d) => {
+            let wrapped_lines: usize = d
+                .lines()
+                .map(|line| line.chars().count().max(1).div_ceil(inner))
+                .sum();
+            (6 + wrapped_lines as u16 + answers_rows - 1).min(16)
+        }
+        None => (4 + answers_rows).min(16),
     }
 }
 
-/// Draws the tool-approval panel into the given area.
-pub(super) fn draw_approval(frame: &mut Frame<'_>, tool: &str, detail: Option<&str>, area: Rect) {
+/// Draws the tool-approval panel into the given area. The answers line is
+/// the shared three-answer text — with the offered token when one exists,
+/// two answers and the reason when not.
+pub(super) fn draw_approval(
+    frame: &mut Frame<'_>,
+    tool: &str,
+    detail: Option<&str>,
+    grant: Option<&str>,
+    area: Rect,
+) {
     let mut lines = Vec::new();
     if let Some(sql) = detail {
         lines.push(Line::from(Span::styled(
@@ -206,7 +223,7 @@ pub(super) fn draw_approval(frame: &mut Frame<'_>, tool: &str, detail: Option<&s
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "[y] allow    [n] deny",
+        crate::grant_token::session_answers_line(grant),
         Style::default().add_modifier(Modifier::BOLD),
     )));
 
