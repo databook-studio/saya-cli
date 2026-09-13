@@ -354,9 +354,14 @@ fn handle_line(
         return Ok(false);
     }
     if let SessionAction::Grants = action {
-        // `/grants` lists the store verbatim: the words are the record.
+        // `/grants` lists the store verbatim: the words are the record, and
+        // the mode the store sits under is the engine's own — under bypass
+        // it is stated first, so the count never reads "nothing runs".
         super::session_emit::emit_action(
-            SessionAction::Message(super::session_grants::listing(session.policy().grants())),
+            SessionAction::Message(super::session_grants::listing(
+                session.policy().mode(),
+                session.policy().grants(),
+            )),
             format,
             state,
             store,
@@ -365,10 +370,30 @@ fn handle_line(
         return Ok(false);
     }
     if let SessionAction::Run(tail) = action {
-        // The nested run's stream passes through on the real stdout/stderr;
-        // see `session_run` for the passthrough rule. The child's own settle
-        // message is the outcome; the parent says nothing.
-        super::session_run::spawn_run_child(runtime, format, state, &tail)?;
+        // `/run --seed-grants <tail…>` seeds the child's `--allow` from this
+        // session's grants on request: only tokens the run's parser accepts
+        // are forwarded, the rest are named — the parent's own words, before
+        // the child's stream begins. The child's parser stays the authority
+        // on everything it receives. The nested run's stream passes through
+        // on the real stdout/stderr (see `session_run` for the passthrough
+        // rule); the child's settle message is the outcome.
+        let (seed_requested, tail) = super::session_run::separate_seed_flag(&tail);
+        let seed = if seed_requested {
+            let seed = super::session_grants::run_seed(&session.policy().grants().tokens());
+            super::session_emit::emit_action(
+                SessionAction::Message(super::session_grants::seed_message(&seed)),
+                format,
+                state,
+                store,
+            )?;
+            seed
+        } else {
+            super::session_grants::RunSeed {
+                forwarded: Vec::new(),
+                dropped: Vec::new(),
+            }
+        };
+        super::session_run::spawn_run_child(runtime, format, state, &seed.forwarded, tail)?;
         block_on(store.save(state.redacted()))?;
         return Ok(false);
     }

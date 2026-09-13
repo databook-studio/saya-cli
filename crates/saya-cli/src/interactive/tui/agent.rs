@@ -89,7 +89,7 @@ impl ApprovalDecider for ChannelApproval {
         let grant = grant_token(&tool.name, arguments, primary.as_deref());
         match self.policy.resolve(&tool.effect, grant.as_deref()) {
             ApprovalDecision::Allow => true,
-            ApprovalDecision::Deny => false,
+            ApprovalDecision::Deny { .. } => false,
             ApprovalDecision::Ask => {
                 let (respond, answer) = oneshot::channel();
                 if self

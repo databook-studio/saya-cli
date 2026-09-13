@@ -19,6 +19,22 @@ impl TerminalApproval {
         }
     }
 
+    /// The headless run's decider (U4: the same engine, frozen): built over a
+    /// [`SessionPolicy::frozen`] seeded from the run's `--allow` tokens — the
+    /// stated scopes are the approval — so a seed pre-answers the asks it
+    /// names and everything else an `ask` mode would raise denies with the
+    /// engine's own reason. It prompts nothing and records nothing: a
+    /// headless session grant is impossible, not merely unused. The primary
+    /// stays unbound — the run's fail-closed rule: only a call that names its
+    /// connection suggests a token, never a guessed one.
+    pub(crate) fn frozen(mode: ApprovalPolicy, seeds: &[String]) -> Self {
+        Self {
+            policy: SessionPolicy::frozen(mode, seeds),
+            can_prompt: false,
+            primary: TurnPrimary::default(),
+        }
+    }
+
     /// Built over the session's one approval policy — the hoisted instance a
     /// session's turns clone, so a grant recorded through this decider's ask
     /// is in force for every later turn of the same session. The primary is
@@ -78,7 +94,7 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
         let grant = grant_token(&tool.name, arguments, primary.as_deref());
         match self.policy.resolve(&tool.effect, grant.as_deref()) {
             ApprovalDecision::Allow => true,
-            ApprovalDecision::Deny => false,
+            ApprovalDecision::Deny { .. } => false,
             ApprovalDecision::Ask if !self.can_prompt => false,
             ApprovalDecision::Ask => {
                 use std::io::{self, IsTerminal, Write};

@@ -5,7 +5,7 @@
 //! authority.
 
 use crate::commands::run::scopes::{self, Surface};
-use saya_agent::SessionGrants;
+use saya_agent::{ApprovalPolicy, SessionGrants};
 
 /// `/allow <scopes…>`: parse the tokens on the session surface, seed the
 /// store with the stated tokens verbatim, and say what was seeded.
@@ -54,10 +54,21 @@ pub(crate) fn allow(tokens: &[String], grants: &SessionGrants) -> Result<String,
 /// `/grants`: the store's tokens verbatim, one per line, sorted, under a
 /// header stating the lifetime, with a count — and an explicit empty state,
 /// never a bare nothing. The words are the record, and they are the same
-/// words the prompt offered.
-pub(crate) fn listing(grants: &SessionGrants) -> String {
+/// words the prompt offered. Under bypass the mode is stated **first**:
+/// a count alone would read "nothing runs", when the truth is that every
+/// call runs without asking and the store is never consulted. Every other
+/// mode renders today's bytes exactly — the listing is the store's, and the
+/// mode is the engine's own (`SessionPolicy::mode`).
+pub(crate) fn listing(mode: ApprovalPolicy, grants: &SessionGrants) -> String {
+    let mut out = String::new();
+    if mode == ApprovalPolicy::Bypass {
+        out.push_str("mode bypass: every call runs without asking; grants are not consulted\n");
+    }
     let tokens = grants.tokens();
-    let mut out = format!("session grants (die with this session): {}", tokens.len());
+    out.push_str(&format!(
+        "session grants (die with this session): {}",
+        tokens.len()
+    ));
     if tokens.is_empty() {
         out.push_str(
             "\n  (none — nothing pre-answers this session yet; /allow <scopes> \
@@ -70,4 +81,53 @@ pub(crate) fn listing(grants: &SessionGrants) -> String {
         }
     }
     out
+}
+
+/// The session grants a `/run --seed-grants` child receives: the tokens the
+/// run's own parser accepts are forwarded into the child's `--allow`; the
+/// rest are named, never silently dropped. The child's parser stays the
+/// authority — the filter asks it, one token at a time. (`none` cannot sit
+/// in a store: `/allow none` seeds nothing, and no ask ever offers it.)
+pub(crate) struct RunSeed {
+    /// The tokens forwarded as the child's `--allow`: exactly the ones the
+    /// run surface parses.
+    pub(crate) forwarded: Vec<String>,
+    /// The tokens a run refuses — named to the user, never forwarded.
+    pub(crate) dropped: Vec<String>,
+}
+
+pub(crate) fn run_seed(tokens: &[String]) -> RunSeed {
+    let mut forwarded = Vec::new();
+    let mut dropped = Vec::new();
+    for token in tokens {
+        match scopes::parse(std::slice::from_ref(token), Surface::Run) {
+            Ok(_) => forwarded.push(token.clone()),
+            Err(_) => dropped.push(token.clone()),
+        }
+    }
+    RunSeed { forwarded, dropped }
+}
+
+/// The parent's own words about a seed request: what was forwarded, what was
+/// not, and — over an empty store — that there was nothing to seed. Silence
+/// about a drop would be exactly the lying-scope class the refusal list
+/// exists to prevent.
+pub(crate) fn seed_message(seed: &RunSeed) -> String {
+    if seed.forwarded.is_empty() && seed.dropped.is_empty() {
+        return "no session grants to seed — the run's --allow is yours to state".to_owned();
+    }
+    let mut lines = Vec::new();
+    if !seed.forwarded.is_empty() {
+        lines.push(format!(
+            "seeded the run's --allow from this session's grants: {}",
+            seed.forwarded.join(", ")
+        ));
+    }
+    if !seed.dropped.is_empty() {
+        lines.push(format!(
+            "not forwarded — a run refuses these scopes (they would gate nothing there): {}",
+            seed.dropped.join(", ")
+        ));
+    }
+    lines.join("\n")
 }

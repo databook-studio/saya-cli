@@ -94,6 +94,7 @@ pub(super) async fn start(
         runtime,
         format,
         approval,
+        allow_tokens: prepared.allow_tokens,
         host,
     });
     tokio::pin!(work);
@@ -140,6 +141,7 @@ pub(crate) async fn start_for_panel(
         runtime,
         format,
         approval,
+        allow_tokens: prepared.allow_tokens,
         host,
     });
     tokio::pin!(work);
@@ -216,6 +218,10 @@ async fn prepare(
     };
     Ok(Prepared {
         spec,
+        // The stated scopes as the grammar's words: the frozen decider's
+        // seeds, and the carried words the journal's approval payload
+        // records so a resume re-derives them (never `spec.json`).
+        allow_tokens: approved.tokens,
         run_dir,
         lock,
     })
@@ -234,9 +240,12 @@ pub(super) fn refuse_bypass_mode(
 }
 
 /// What a claim leaves the caller holding: the spec the drive reads, the
-/// claimed directory, and the single-writer lock the run holds for its life.
+/// stated scopes as grammar words (the decider's seeds and the journal's
+/// carried payload), the claimed directory, and the single-writer lock the
+/// run holds for its life.
 struct Prepared {
     spec: RunSpec,
+    allow_tokens: Vec<String>,
     run_dir: RunDir,
     lock: RunLock,
 }

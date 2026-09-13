@@ -19,10 +19,55 @@ fn store_with(token: &str) -> SessionGrants {
 #[test]
 fn the_listing_states_the_empty_store_explicitly() {
     assert_eq!(
-        listing(&SessionGrants::default()),
+        listing(ApprovalPolicy::Ask, &SessionGrants::default()),
         "session grants (die with this session): 0\n  (none — nothing pre-answers \
          this session yet; /allow <scopes> or answer [s] at an ask)"
     );
+}
+
+/// `/grants` under bypass states the mode **first**: the count alone would
+/// read "nothing runs", when the truth is everything does — every call runs
+/// without asking and the store is not consulted. The listing follows.
+#[test]
+fn the_listing_states_the_mode_first_under_bypass() {
+    let grants = store_with("runner:bench");
+    let text = listing(ApprovalPolicy::Bypass, &grants);
+    let (mode_line, rest) = text
+        .split_once('\n')
+        .expect("the bypass listing carries the mode line first");
+    assert_eq!(
+        mode_line, "mode bypass: every call runs without asking; grants are not consulted",
+        "the mode is stated before the listing: {text}"
+    );
+    assert!(
+        rest.contains("session grants (die with this session): 1") && rest.contains("runner:bench"),
+        "the listing follows the mode line: {rest}"
+    );
+    // The mode line comes before the count, byte-ordered.
+    let count = text
+        .find("session grants (die with this session): 1")
+        .expect("the count line is present");
+    let mode = text.find("mode bypass:").expect("the mode line is present");
+    assert!(mode < count, "the mode line precedes the listing: {text}");
+}
+
+/// The non-bypass modes render today's listing exactly: no mode line, the
+/// lifetime header, the count, and the tokens.
+#[test]
+fn the_listing_without_bypass_keeps_its_exact_bytes() {
+    let grants = store_with("sql:analytics");
+    grants.grant("runner:bench");
+    for mode in [
+        ApprovalPolicy::Ask,
+        ApprovalPolicy::ReadOnly,
+        ApprovalPolicy::Never,
+    ] {
+        assert_eq!(
+            listing(mode, &grants),
+            "session grants (die with this session): 2\n  runner:bench\n  sql:analytics",
+            "no mode line under {mode:?} — the listing is today's bytes"
+        );
+    }
 }
 
 /// `/grants` lists the store's tokens **verbatim**, one per line, sorted,
@@ -33,7 +78,7 @@ fn the_listing_prints_the_tokens_verbatim_sorted() {
     let grants = store_with("sql:analytics");
     grants.grant("runner:bench");
     assert_eq!(
-        listing(&grants),
+        listing(ApprovalPolicy::Ask, &grants),
         "session grants (die with this session): 2\n  runner:bench\n  sql:analytics",
         "sorted, one per line, under the lifetime header with the count"
     );
@@ -163,5 +208,86 @@ fn the_primary_handle_names_the_registry_s_primary() {
         primary.get(),
         None,
         "an empty registry resolves no primary, so the handle binds nothing"
+    );
+}
+
+/// `/run --seed-grants` (test: the child's --allow is seeded from this
+/// session's grants **on request**): only tokens a run's own parser accepts
+/// are forwarded — each forwarded token parses on the run surface — and the
+/// rest are named, never silently dropped. The child's parser stays the
+/// authority; the filter asks it, one token at a time.
+#[test]
+fn a_seed_request_forwards_only_what_a_run_accepts_and_names_the_rest() {
+    use super::session_grants::{run_seed, seed_message};
+    let tokens = [
+        "runner:bench".to_owned(),
+        "sql:analytics".to_owned(),
+        "endpoint:analyst=fast".to_owned(),
+        "workspace-write".to_owned(),
+    ];
+    let seed = run_seed(&tokens);
+    assert_eq!(
+        seed.forwarded,
+        vec![
+            "runner:bench".to_owned(),
+            "sql:analytics".to_owned(),
+            "workspace-write".to_owned(),
+        ],
+        "every forwarded token parses on the run surface"
+    );
+    assert_eq!(seed.dropped, vec!["endpoint:analyst=fast".to_owned()]);
+    for token in &seed.forwarded {
+        assert!(
+            crate::commands::run::scopes::parse(
+                std::slice::from_ref(token),
+                crate::commands::run::scopes::Surface::Run
+            )
+            .is_ok(),
+            "a forwarded token is one the run's parser accepts: {token}"
+        );
+    }
+    let message = seed_message(&seed);
+    assert!(
+        message.contains("seeded the run's --allow from this session's grants:")
+            && message.contains("runner:bench")
+            && message.contains("sql:analytics")
+            && message.contains("workspace-write"),
+        "the message names what was forwarded: {message}"
+    );
+    assert!(
+        message.contains("not forwarded") && message.contains("endpoint:analyst=fast"),
+        "the message names what was not forwarded — never a silent drop: {message}"
+    );
+}
+
+/// A seed request over an empty store says so — never silence.
+#[test]
+fn a_seed_request_over_an_empty_store_says_so() {
+    use super::session_grants::{run_seed, seed_message};
+    let seed = run_seed(&[]);
+    assert!(seed.forwarded.is_empty() && seed.dropped.is_empty());
+    let message = seed_message(&seed);
+    assert!(
+        message.contains("no session grants to seed"),
+        "an empty store is said, not silent: {message}"
+    );
+}
+
+/// A seed where the store holds only tokens a run refuses: nothing is
+/// forwarded and every token is named — the child's `--allow` is untouched.
+#[test]
+fn a_seed_request_names_every_token_it_does_not_forward() {
+    use super::session_grants::{run_seed, seed_message};
+    let tokens = ["endpoint:analyst=fast".to_owned()];
+    let seed = run_seed(&tokens);
+    assert!(seed.forwarded.is_empty(), "a run accepts none of it");
+    let message = seed_message(&seed);
+    assert!(
+        message.contains("not forwarded") && message.contains("endpoint:analyst=fast"),
+        "the dropped tokens are named: {message}"
+    );
+    assert!(
+        !message.contains("seeded"),
+        "nothing was forwarded, so the message claims no seeding: {message}"
     );
 }

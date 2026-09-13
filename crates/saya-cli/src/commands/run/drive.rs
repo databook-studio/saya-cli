@@ -30,7 +30,8 @@ use std::sync::Arc;
 /// What a fresh run's drive needs, the way the resume's `ResumeInputs`
 /// bundles its own: the spec, the claimed directory, the store mirror, and
 /// the composition inputs the engine cannot derive — config, rendering, the
-/// approval policies, and the host's observers and cancellation.
+/// approval policies, the run's stated scope words, and the host's observers
+/// and cancellation.
 pub(super) struct DriveInputs<'a> {
     pub(super) spec: &'a RunSpec,
     pub(super) run_dir: saya_harness::run_dir::RunDir,
@@ -38,6 +39,9 @@ pub(super) struct DriveInputs<'a> {
     pub(super) runtime: &'a RuntimeConfig,
     pub(super) format: RenderFormat,
     pub(super) approval: ApprovalPolicy,
+    /// The run's stated scopes as the grammar's words — the frozen decider's
+    /// seeds, and the carried words (`sql:`) the approval payload records.
+    pub(super) allow_tokens: Vec<String>,
     pub(super) host: HostRun<'a>,
 }
 
@@ -59,6 +63,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         runtime,
         format,
         approval,
+        allow_tokens,
         host,
     } = inputs;
     let run_id = spec.id.clone();
@@ -86,6 +91,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         &spec.scopes,
         workspace.clone(),
         approval,
+        &allow_tokens,
     )
     .await
     {
@@ -161,7 +167,10 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     }
     // The approval gate at `planned → approved` (DESIGN §5.2): the plan is
     // already persisted, so a refusal or a crash here leaves a resumable
-    // `planned` record — no approval was granted, and none is implied.
+    // `planned` record — no approval was granted, and none is implied. The
+    // approved scopes shown (and journaled) are the capability words plus
+    // the carried grant words the run stated — every word `--allow` stated
+    // is on the record a resume re-grants from.
     let view = match approval_view::view_of(
         &spec.goal,
         &spec.scopes,
@@ -169,6 +178,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         &spec.budgets,
         &workspace,
         assembly::manifest_bounds(),
+        &super::scopes::carried_tokens(&allow_tokens),
     ) {
         Ok(view) => view,
         Err(message) => return exit::connection_failure(message, format),

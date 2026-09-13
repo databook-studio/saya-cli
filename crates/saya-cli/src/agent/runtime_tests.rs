@@ -2543,7 +2543,7 @@ impl saya_agent::ApprovalDecider for AskYesDecider {
         match SessionPolicy::new(saya_agent::ApprovalPolicy::Ask).resolve(&tool.effect, None) {
             ApprovalDecision::Allow => true,
             ApprovalDecision::Ask => true,
-            ApprovalDecision::Deny => false,
+            ApprovalDecision::Deny { reason: _ } => false,
         }
     }
 }

@@ -126,10 +126,15 @@ pub(crate) fn dispatch(
                 }
                 SessionAction::Grants => {
                     // `/grants` lists the store verbatim: the words are the
-                    // record, the same words the prompts offered.
+                    // record, the same words the prompts offered. The mode
+                    // is the engine's own — under bypass it is stated first,
+                    // so the count never reads "nothing runs".
                     transcript.push(
                         BlockKind::System,
-                        crate::interactive::session_grants::listing(session.policy().grants()),
+                        crate::interactive::session_grants::listing(
+                            session.policy().mode(),
+                            session.policy().grants(),
+                        ),
                     );
                 }
                 SessionAction::Run(tail) => {
@@ -138,12 +143,32 @@ pub(crate) fn dispatch(
                     // run panel as a worker task instead of the nested child
                     // a piped session spawns — the alternate screen owns
                     // stdout, so the run's observers forward to the panel.
-                    match session_run::parse_run_tail(&tail) {
+                    // `--seed-grants` is the adapter's word: the session's
+                    // grants are filtered through the run's parser first —
+                    // accepted ones join the child's `--allow`, refused ones
+                    // are named before the panel opens.
+                    let (seed_requested, tail) = session_run::separate_seed_flag(&tail);
+                    let seed = if seed_requested {
+                        let seed = crate::interactive::session_grants::run_seed(
+                            &session.policy().grants().tokens(),
+                        );
+                        transcript.push(
+                            BlockKind::System,
+                            crate::interactive::session_grants::seed_message(&seed),
+                        );
+                        Some(seed)
+                    } else {
+                        None
+                    };
+                    match session_run::parse_run_tail(tail) {
                         Ok(RunTail::Start {
                             goal,
-                            allow,
+                            mut allow,
                             budget,
                         }) => {
+                            if let Some(seed) = seed.as_ref() {
+                                allow.extend(seed.forwarded.iter().cloned());
+                            }
                             result = Dispatch::RunPanel {
                                 goal,
                                 allow,

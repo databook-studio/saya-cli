@@ -38,15 +38,37 @@ use std::process::{Command, Stdio};
 /// anything else is the goal.
 const SUBCOMMAND_WORDS: [&str; 5] = ["cancel", "resume", "show", "log", "list"];
 
+/// The slash adapter's own word: `/run --seed-grants <tail…>` seeds the
+/// child's `--allow` from this session's grants on request. The flag is the
+/// tail's first token and never reaches the child; anything else passes
+/// through verbatim, and the child's own parser refuses it as the unknown
+/// flag it is — the adapter parses one word, the child's parser stays the
+/// authority on the rest.
+pub(crate) fn separate_seed_flag(tail: &str) -> (bool, &str) {
+    let Some(rest) = tail.strip_prefix("--seed-grants") else {
+        return (false, tail);
+    };
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        // A longer flag that merely starts with the word is the child's
+        // business, not a seed request.
+        return (false, tail);
+    }
+    (true, rest.trim_start())
+}
+
 /// Spawns the nested `saya run <tail…>` child, streams its output through
 /// unmangled, and waits for it. The child's exit code is its own: it already
 /// said why the run ended (its settle message names completed, paused, the
 /// resume hint, or the failure), and the parent adds nothing to the stream —
 /// any echo here would be exactly the re-tagging the module doc refuses.
+/// `seed_forwarded` is the session grants a requested seed forwards: appended
+/// as one more `--allow` group, the child's parser the authority on every
+/// token.
 pub(crate) fn spawn_run_child(
     runtime: &RuntimeConfig,
     format: RenderFormat,
     state: &SessionState,
+    seed_forwarded: &[String],
     tail: &str,
 ) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
@@ -57,6 +79,9 @@ pub(crate) fn spawn_run_child(
         .arg(format_flag(format))
         .arg("run")
         .args(child_argv(tail));
+    if !seed_forwarded.is_empty() {
+        command.arg("--allow").args(seed_forwarded);
+    }
     // Forward the config sources the session actually loaded, so the child
     // resolves the same profiles, provider, and secrets — a run must not
     // silently run against a different configuration than the session's.
@@ -274,5 +299,38 @@ mod tests {
             forwarded_approval_mode("bypassish").is_some(),
             "an unknown mode word is forwarded verbatim, never treated as bypass"
         );
+    }
+
+    /// `--seed-grants` is the slash adapter's own word: it must be the tail's
+    /// first token, and it never reaches the child. A tail that merely
+    /// contains it — or a longer flag spelling it — passes through verbatim,
+    /// and the child's own parser refuses it as the unknown flag it is.
+    #[test]
+    fn the_seed_flag_is_the_slash_adapter_s_first_token_only() {
+        use super::separate_seed_flag;
+        let (requested, rest) = separate_seed_flag("--seed-grants survey --allow workspace-write");
+        assert!(requested, "the leading flag is the adapter's request");
+        assert_eq!(
+            rest, "survey --allow workspace-write",
+            "the tail loses only the flag"
+        );
+        let (requested, rest) = separate_seed_flag("--seed-grants");
+        assert!(
+            requested && rest.is_empty(),
+            "a bare request seeds an empty tail"
+        );
+        let (requested, rest) = separate_seed_flag("survey --seed-grants --allow x");
+        assert!(
+            !requested && rest == "survey --seed-grants --allow x",
+            "mid-tail, the word passes to the child verbatim — its parser is the \
+             authority and refuses it"
+        );
+        let (requested, rest) = separate_seed_flag("--seed-grants-only survey");
+        assert!(
+            !requested && rest == "--seed-grants-only survey",
+            "a longer flag spelling is the child's word, never the adapter's request"
+        );
+        let (requested, rest) = separate_seed_flag("--allow x");
+        assert!(!requested && rest == "--allow x");
     }
 }

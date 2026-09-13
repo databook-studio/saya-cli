@@ -32,7 +32,11 @@ pub(crate) struct StepView {
 /// Builds the view from the bound plan, the run's goal and budgets, and the
 /// workspace as it stands at approval time (fresh: empty; a re-approval:
 /// whatever earlier steps wrote, digested). A manifest walk that refuses is
-/// a refusal to show a lying approval view, not an empty one.
+/// a refusal to show a lying approval view, not an empty one. `carried` are
+/// the stated scopes that are per-call grant words (`sql:<connection>`) —
+/// appended to the capability words, so the shown (and journaled) approval
+/// states every word the run approved; a resume re-derives them from the
+/// journal. A run without carried tokens renders today's bytes exactly.
 pub(super) fn view_of(
     goal: &str,
     approved: &Capabilities,
@@ -40,14 +44,17 @@ pub(super) fn view_of(
     budgets: &Budgets,
     workspace: &Workspace,
     bounds: saya_harness::engine::ManifestBounds,
+    carried: &[String],
 ) -> Result<PlanApprovalView, String> {
     let artifacts =
         manifest_build(workspace, bounds.max_files, bounds.max_file_bytes).map_err(|error| {
             format!("the workspace manifest for approval could not be built: {error}")
         })?;
+    let mut approved_words = approved.missing_from(&Capabilities::default());
+    approved_words.extend(carried.iter().cloned());
     Ok(PlanApprovalView {
         goal: goal.to_string(),
-        approved: approved.missing_from(&Capabilities::default()),
+        approved: approved_words,
         steps: plan
             .steps
             .iter()

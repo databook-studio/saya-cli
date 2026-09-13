@@ -7,6 +7,35 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+**Headless runs on the same approval engine (U4).** The run's per-call
+decider is the same `SessionPolicy` a session consults, frozen: seeded from
+the run's `--allow` tokens, unable to prompt, unable to accumulate. An
+`ask`-mode call the seeds do not cover denies with the engine's own reason —
+"cannot prompt: a headless run's approval is its `--allow` scopes" — instead
+of a bare refusal, and `record` refuses on the frozen policy, so a headless
+session grant is impossible by construction, not merely unused.
+
+- **`sql:<connection>` gates a run now.** The refusal entry left the
+  grammar's `NOT_YET_WIRED` list: the stated token seeds the frozen decider,
+  so under `--approval-mode ask` the read-shaped SQL tools' calls naming
+  that connection run without asking, on the connection it names only. The
+  token builds no plan capability; the run's `PlanApproved` journal payload
+  carries it, so a resume re-derives the grant from the journal — never from
+  an editable file. Run behaviour for every pre-existing scope is
+  byte-identical (the pinned run suites pass unmodified).
+- **`/run --seed-grants <tail…>`.** The slash adapter's one word: the
+  session's grants are filtered through the run's own parser — accepted
+  tokens join the child's `--allow`, refused ones are named to the user
+  before the child's stream begins, never silently dropped. The child's
+  parser stays the authority on everything it receives.
+- **`/grants` states the mode first under bypass.** "mode bypass: every call
+  runs without asking; grants are not consulted" precedes the listing — a
+  token count alone read as "nothing runs" when the truth is that everything
+  does.
+- **The scope refusal's tail names its surface.** A run re-runs the command
+  without the scope (exact bytes unchanged); a slash command has nothing to
+  re-run — `/allow` is re-issued without the token.
+
 **The fourth approval mode: `bypass` (sessions).** `--approval-mode bypass`
 (or `/approvals bypass`) runs every tool call without asking — one typed,
 global, informed consent, given once at the flag instead of once per call,
