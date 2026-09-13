@@ -118,6 +118,51 @@ fn allow_over_an_existing_grant_says_so_and_changes_nothing() {
     assert_eq!(grants.tokens(), vec!["runner:bench".to_owned()]);
 }
 
+/// A fetch grant seeded in any casing is the URL parser's word — the same
+/// word the suggester offers at an ask on that destination — so it
+/// pre-answers the call it names (U6 defect 2: the verbatim seed never
+/// matched the lowercased suggestion, and `/grants` listed a grant that
+/// pre-answered nothing while the user was told they granted it).
+#[test]
+fn a_fetch_grant_seeded_in_any_casing_pre_answers_the_call_it_names() {
+    let grants = SessionGrants::default();
+    let message = allow(&["fetch:HTTPS+Example.com".to_owned()], &grants)
+        .expect("the session surface accepts the fetch scope");
+    assert!(
+        message.contains("fetch:https+example.com"),
+        "the echo names the grammar's spelling of the token: {message}"
+    );
+    assert_eq!(
+        grants.tokens(),
+        vec!["fetch:https+example.com".to_owned()],
+        "the store holds the token the suggester produces for that destination"
+    );
+    // The seeded grant is in force: the session policy pre-answers the
+    // fetch call the grant names — the call's suggested token and the
+    // seeded token are one string. The effect is `http_fetch`'s own
+    // (`session_definitions.rs`): an external side effect consented per
+    // call.
+    let policy = SessionPolicy::new(ApprovalPolicy::Ask);
+    allow(&["fetch:HTTPS+Example.com".to_owned()], policy.grants())
+        .expect("the session surface accepts the fetch scope");
+    let effect = saya_agent::ToolEffect {
+        database_data: false,
+        external_side_effect: true,
+        requires_approval: true,
+        local_state: saya_agent::LocalStateEffect::None,
+    };
+    assert!(
+        policy.resolve(&effect, Some("fetch:https+example.com"))
+            == saya_agent::ApprovalDecision::Allow,
+        "the seeded grant pre-answers the fetch call it names"
+    );
+    assert!(
+        policy.resolve(&effect, Some("fetch:https+other.example"))
+            == saya_agent::ApprovalDecision::Ask,
+        "and nothing on a different destination"
+    );
+}
+
 /// `/allow none` keeps the grammar's meaning — the empty approval, alone —
 /// and seeds nothing, saying so. It is not a revoke: whatever the session
 /// already holds stays held.

@@ -8,6 +8,7 @@
 //! exits 130; every typed outcome lands in the shared exit mapping.
 
 use super::exit::{Settled, settle};
+use super::mode::RunApproval;
 use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
@@ -30,6 +31,12 @@ pub(super) async fn resume(
     state: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let run_id = parse_run_id(raw_id)?;
+    // The entry guard, shared with every other entry point into a run
+    // (`mode.rs`): a run's approval is its `--allow` scopes; bypass is a
+    // session mode. A resumed run would otherwise compose its frozen policy
+    // in bypass mode and auto-allow every ask-shaped call on it — refused
+    // here, before anything is read or claimed.
+    let approval = RunApproval::admit(approval)?;
     let dir = runs_dir().join(run_id.as_str());
     let record = RunStore::get_run(state, &run_id)
         .await
@@ -79,12 +86,13 @@ struct ResumeInputs<'a> {
 
 /// Rebuilds the collaborators and hands the engine the resume inputs. The
 /// engine re-derives the machine state from the journal itself and holds the
-/// single-writer lock; every failure it returns is mapped here.
+/// single-writer lock; every failure it returns is mapped here. The approval
+/// is the boundary's admitted mode — never a raw policy.
 async fn continue_run(
     runtime: &RuntimeConfig,
     inputs: ResumeInputs<'_>,
     format: RenderFormat,
-    approval: ApprovalPolicy,
+    approval: RunApproval,
     cancellation: CancellationToken,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let ResumeInputs {

@@ -254,8 +254,10 @@ started after the change; grants made before the toggle ride it and are
 consulted again under `ask` — bypass consults no grant and records none.
 
 A run never takes bypass: `saya run --approval-mode bypass` refuses at start
-(`2`) — a run's approval is its `--allow` scopes, and bypass is a session
-mode. A `/run` from a bypass session therefore forwards no mode to the child:
+(`2`), and `saya run resume <id> --approval-mode bypass` refuses the same way
+at the resume — a run's approval is its `--allow` scopes, and bypass is a
+session mode. A `/run` from a bypass session therefore forwards no mode to
+the child:
 the child states its own scopes or takes the run default (read-only).
 
 Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`

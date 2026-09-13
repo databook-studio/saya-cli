@@ -143,4 +143,7 @@ pub(super) async fn cancel(
 
 #[cfg(test)]
 #[path = "cancel_tests.rs"]
-mod tests;
+// The module is run-surface-reachable so its shared helpers (`temp_root`,
+// `runtime_at`) serve the boundary's other test modules (`entry_tests`) —
+// one test fixture for one run surface, never two copies.
+pub(in crate::commands::run) mod tests;

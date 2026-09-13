@@ -15,7 +15,7 @@ use saya_store::{NewRun, RunBudgets, RunCapabilityFlags, RunStatus, RunStore, Sq
 use saya_types::{RunEvent, RunId};
 use std::{collections::BTreeMap, fs, path::Path, path::PathBuf};
 
-fn temp_root(label: &str) -> PathBuf {
+pub(in crate::commands::run) fn temp_root(label: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -28,7 +28,7 @@ fn temp_root(label: &str) -> PathBuf {
     root
 }
 
-fn runtime_at(root: &Path) -> RuntimeConfig {
+pub(in crate::commands::run) fn runtime_at(root: &Path) -> RuntimeConfig {
     let database = root.join("data.sqlite3");
     fs::write(&database, b"").unwrap();
     let connections = root.join("connections.toml");

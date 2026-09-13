@@ -1,14 +1,18 @@
 //! The headless `saya run` surface — the CLI composition root for the run
 //! engine.
 //!
-//! No policy lives here beyond one rule: a headless run states its scopes
-//! up front or does not start. Scopes come from `--allow`, budgets from
-//! `[jobs]` layered with `--budget` (never the environment — a run is
-//! reproducible from its spec and config, plan G3); the goal comes from the
-//! positional prompt. The engine (`saya-harness`) owns the state machine,
-//! the journal, and the plan/episode drivers; this module builds the
-//! collaborators the way `ask` builds a turn's, drives the steps blocking,
-//! and maps the typed outcomes onto the documented exit codes.
+//! Two rules live here, both refused by construction. A headless run states
+//! its scopes up front or does not start; and no entry point into a run —
+//! fresh, resumed, or future — composes its policy in bypass mode: the
+//! boundary's admission type (`mode::RunApproval`) refuses bypass at its one
+//! constructor, and the run's composition takes the type, never a raw mode.
+//! Scopes come from `--allow`, budgets from `[jobs]` layered with `--budget`
+//! (never the environment — a run is reproducible from its spec and config,
+//! plan G3); the goal comes from the positional prompt. The engine
+//! (`saya-harness`) owns the state machine, the journal, and the
+//! plan/episode drivers; this module builds the collaborators the way `ask`
+//! builds a turn's, drives the steps blocking, and maps the typed outcomes
+//! onto the documented exit codes.
 
 mod approval;
 #[cfg(test)]
@@ -20,12 +24,15 @@ mod budget;
 mod cancel;
 mod claim;
 mod drive;
+#[cfg(test)]
+mod entry_tests;
 mod exit;
 mod files;
 mod grants;
 #[cfg(test)]
 mod grants_tests;
 mod host;
+mod mode;
 mod reads;
 mod resume;
 // The runner composition's shared guard mechanics (`place_guard`) are the
@@ -39,8 +46,6 @@ mod runner_tests;
 // parser is the grammar's single authority, never duplicated.
 pub(crate) mod scopes;
 mod start;
-#[cfg(test)]
-mod start_tests;
 mod tools;
 #[cfg(test)]
 mod tools_tests;

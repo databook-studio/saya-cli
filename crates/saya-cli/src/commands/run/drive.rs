@@ -11,12 +11,12 @@ use super::approval;
 use super::approval_view;
 use super::exit::Settled;
 use super::host::HostRun;
+use super::mode::RunApproval;
 use super::{assembly, exit, files, tools};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 use crate::render_run;
 use crate::stream_render::TerminalSink;
-use saya_agent::ApprovalPolicy;
 use saya_harness::engine::{
     EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun, PlanDriver,
     PlanError, PlanRejection, PlanRequest, RunState, SinkBudgets, TransitionEvent, UsageTotals,
@@ -30,15 +30,18 @@ use std::sync::Arc;
 /// What a fresh run's drive needs, the way the resume's `ResumeInputs`
 /// bundles its own: the spec, the claimed directory, the store mirror, and
 /// the composition inputs the engine cannot derive — config, rendering, the
-/// approval policies, the run's stated scope words, and the host's observers
-/// and cancellation.
+/// admitted approval (the boundary's type, never a raw mode), the run's
+/// stated scope words, and the host's observers and cancellation.
 pub(super) struct DriveInputs<'a> {
     pub(super) spec: &'a RunSpec,
     pub(super) run_dir: saya_harness::run_dir::RunDir,
     pub(super) state: &'a SqliteStateStore,
     pub(super) runtime: &'a RuntimeConfig,
     pub(super) format: RenderFormat,
-    pub(super) approval: ApprovalPolicy,
+    /// The run's admitted mode: every entry point into a run passes the
+    /// boundary's own admission (`mode.rs`), so bypass cannot reach the
+    /// composition here — or anywhere below it.
+    pub(super) approval: RunApproval,
     /// The run's stated scopes as the grammar's words — the frozen decider's
     /// seeds, and the carried words (`sql:`) the approval payload records.
     pub(super) allow_tokens: Vec<String>,
