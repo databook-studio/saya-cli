@@ -3,7 +3,7 @@
 //! one place. A frontend renders an [`ApprovalDecision::Ask`] and reports the
 //! user's [`ApprovalChoice`] back; it never implements policy itself.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::ToolEffect;
@@ -57,6 +57,12 @@ pub enum ApprovalChoice {
 #[derive(Debug, Clone, Default)]
 pub struct SessionGrants {
     tokens: Arc<Mutex<BTreeSet<String>>>,
+    /// The calls each token's grant has pre-answered — the count a prompt's
+    /// session-history line reads ("3 calls so far"). Incremented by
+    /// [`SessionPolicy::resolve`] every time a grant resolves a call to
+    /// `Allow`, so the number a prompt states is the store's own count, not
+    /// a frontend's tally. Allow-once and denies record nothing here.
+    calls: Arc<Mutex<BTreeMap<String, u64>>>,
 }
 
 impl SessionGrants {
@@ -81,11 +87,30 @@ impl SessionGrants {
         self.locked().iter().cloned().collect()
     }
 
+    /// The calls [`SessionPolicy::resolve`] allowed under `token` — the
+    /// session-history figure a prompt's session line reads. Zero for a
+    /// token nothing has run under yet.
+    pub fn calls(&self, token: &str) -> u64 {
+        self.call_lock().get(token).copied().unwrap_or(0)
+    }
+
+    /// Counts one grant-answered call. Internal to the policy: only
+    /// `resolve` deciding `Allow` through a grant increments a token.
+    pub(crate) fn record_allowed_call(&self, token: &str) {
+        *self.call_lock().entry(token.to_owned()).or_insert(0) += 1;
+    }
+
     /// The grant set is a plain set, so a panicked holder cannot have left it
     /// in a state recovery must fear; taking the guard anyway keeps approving
     /// (and prompting) rather than wedging the session on a poisoned lock.
     fn locked(&self) -> MutexGuard<'_, BTreeSet<String>> {
         self.tokens.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The call counts share the same posture: a poisoned lock keeps
+    /// prompting rather than wedging the session.
+    fn call_lock(&self) -> MutexGuard<'_, BTreeMap<String, u64>> {
+        self.calls.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -146,33 +171,35 @@ impl SessionPolicy {
     /// grant for this call would be recorded under, when the caller can name
     /// one; callers that do not suggest tokens pass `None` and the decision
     /// falls to the mode alone. A grant pre-answers the call the mode would
-    /// have asked about, so it allows under `ask`; `read-only` and `never`
-    /// never ask, so grants cannot move them — read-only still allows exactly
-    /// the read-shaped tools (`read_only_permits`) and denies the rest, and
-    /// `never` denies everything. `bypass` allows every call: it is the
-    /// per-call consent given once, in the launch flag, so no grant is
-    /// consulted and none is recorded — no ask occurs under it. On a frozen
-    /// policy — the headless run's — an `Ask` the seeds do not cover resolves
-    /// to [`ApprovalDecision::Deny`] naming [`HEADLESS_ASK_REASON`], never to
-    /// an ask: a headless surface has no reader, and its approval is its
-    /// seeds. The mode judges *who answers*, never *what the tool is*: every
-    /// structural guard lives in the tools and the composition, untouched by
-    /// any mode.
+    /// have asked about, so it allows under `ask` — and counts the call
+    /// under its token, the session-history figure a prompt reads. `read-only`
+    /// and `never` never ask, so grants cannot move them — read-only still
+    /// allows exactly the read-shaped tools (`read_only_permits`) and denies
+    /// the rest, and `never` denies everything. `bypass` allows every call:
+    /// it is the per-call consent given once, in the launch flag, so no grant
+    /// is consulted and none is recorded — no ask occurs under it. On a
+    /// frozen policy — the headless run's — an `Ask` the seeds do not cover
+    /// resolves to [`ApprovalDecision::Deny`] naming [`HEADLESS_ASK_REASON`],
+    /// never to an ask: a headless surface has no reader, and its approval is
+    /// its seeds. The mode judges *who answers*, never *what the tool is*:
+    /// every structural guard lives in the tools and the composition,
+    /// untouched by any mode.
     pub fn resolve(&self, effect: &ToolEffect, grant_token: Option<&str>) -> ApprovalDecision {
         match self.mode {
             ApprovalPolicy::Bypass => ApprovalDecision::Allow,
             ApprovalPolicy::ReadOnly if read_only_permits(effect) => ApprovalDecision::Allow,
             ApprovalPolicy::ReadOnly => ApprovalDecision::Deny { reason: None },
             ApprovalPolicy::Never => ApprovalDecision::Deny { reason: None },
-            ApprovalPolicy::Ask
-                if grant_token.is_some_and(|token| self.grants.is_granted(token)) =>
-            {
-                ApprovalDecision::Allow
-            }
-            ApprovalPolicy::Ask if self.frozen => ApprovalDecision::Deny {
-                reason: Some(HEADLESS_ASK_REASON),
+            ApprovalPolicy::Ask => match grant_token {
+                Some(token) if self.grants.is_granted(token) => {
+                    self.grants.record_allowed_call(token);
+                    ApprovalDecision::Allow
+                }
+                _ if self.frozen => ApprovalDecision::Deny {
+                    reason: Some(HEADLESS_ASK_REASON),
+                },
+                _ => ApprovalDecision::Ask,
             },
-            ApprovalPolicy::Ask => ApprovalDecision::Ask,
         }
     }
 

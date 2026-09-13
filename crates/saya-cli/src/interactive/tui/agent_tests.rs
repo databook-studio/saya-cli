@@ -7,17 +7,19 @@
 //! decides, every path must decide; no frontend carries its own mode match.
 //!
 //! The one cell no test may drive is the terminal's `ask` with prompting
-//! allowed — it would read the real stdin. Its prompt sentence is pinned by
-//! `prompt_approval_tests::ask_prompt_keeps_the_sql_sentence_for_sql_tools`,
-//! and the TUI's answered ask is driven in full below.
+//! allowed — it would read the real stdin.
 //!
 //! The session's policy is hoisted to session lifetime: each turn's decider
 //! is built over a clone of the one session policy, and a clone shares the
 //! grant store — the tests below pin that a grant made in one turn is in
 //! force in the next, and that it never answers a different shape.
+//!
+//! The prompt sentence is pinned by `approval_facts_tests` (one snapshot per
+//! tool family); the TUI's answered ask is driven in full below.
 
 use super::{ChannelApproval, StreamMsg};
 use crate::agent::tools::DatabaseTools;
+use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::TurnPrimary;
 use crate::prompt_approval::TerminalApproval;
 use saya_agent::{
@@ -69,7 +71,12 @@ async fn the_four_approval_paths_decide_what_the_engine_decides() {
             // not consulted — the mode allows.
             let (tx, rx) = unbounded_channel();
             drop(rx);
-            let tui = ChannelApproval::new(tx, SessionPolicy::new(mode), TurnPrimary::default());
+            let tui = ChannelApproval::new(
+                tx,
+                SessionPolicy::new(mode),
+                TurnPrimary::default(),
+                crate::approval_facts::ApprovalFacts::default(),
+            );
             assert_eq!(
                 tui.approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
                     .await,
@@ -81,7 +88,12 @@ async fn the_four_approval_paths_decide_what_the_engine_decides() {
             // drivable; ask is the stdin cell the header excludes. Bypass
             // resolves Allow, so it too never reaches the prompt.
             if mode != ApprovalPolicy::Ask {
-                let terminal = TerminalApproval::new(mode, true, TurnPrimary::default());
+                let terminal = TerminalApproval::new(
+                    mode,
+                    true,
+                    TurnPrimary::default(),
+                    ApprovalFacts::default(),
+                );
                 assert_eq!(
                     terminal
                         .approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
@@ -92,7 +104,12 @@ async fn the_four_approval_paths_decide_what_the_engine_decides() {
             }
             // 3 + 4. The run's decider and the headless fallback are the same
             // `TerminalApproval::new(mode, false)` construction.
-            let headless = TerminalApproval::new(mode, false, TurnPrimary::default());
+            let headless = TerminalApproval::new(
+                mode,
+                false,
+                TurnPrimary::default(),
+                ApprovalFacts::default(),
+            );
             assert_eq!(
                 headless
                     .approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
@@ -128,6 +145,7 @@ async fn all_four_decider_paths_allow_what_the_engine_allows_under_bypass() {
             tx,
             SessionPolicy::new(ApprovalPolicy::Bypass),
             TurnPrimary::default(),
+            crate::approval_facts::ApprovalFacts::default(),
         );
         assert!(
             tui.approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
@@ -136,7 +154,12 @@ async fn all_four_decider_paths_allow_what_the_engine_allows_under_bypass() {
         );
         // 2. The terminal decider with a prompt surface: bypass reaches no
         // prompt — the engine answers before the surface would.
-        let terminal = TerminalApproval::new(ApprovalPolicy::Bypass, true, TurnPrimary::default());
+        let terminal = TerminalApproval::new(
+            ApprovalPolicy::Bypass,
+            true,
+            TurnPrimary::default(),
+            ApprovalFacts::default(),
+        );
         assert!(
             terminal
                 .approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
@@ -145,7 +168,12 @@ async fn all_four_decider_paths_allow_what_the_engine_allows_under_bypass() {
         );
         // 3 + 4. The run's decider and the headless fallback: the same
         // `TerminalApproval::new(mode, false)` construction.
-        let headless = TerminalApproval::new(ApprovalPolicy::Bypass, false, TurnPrimary::default());
+        let headless = TerminalApproval::new(
+            ApprovalPolicy::Bypass,
+            false,
+            TurnPrimary::default(),
+            ApprovalFacts::default(),
+        );
         assert!(
             headless
                 .approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
@@ -169,6 +197,7 @@ async fn the_tuis_answered_ask_allows_allow_once_and_denies_a_deny() {
             tx.clone(),
             SessionPolicy::new(ApprovalPolicy::Ask),
             TurnPrimary::default(),
+            crate::approval_facts::ApprovalFacts::default(),
         );
         let answerer = tokio::spawn(async move {
             if let Some(StreamMsg::ApprovalRequest { respond, .. }) = rx.recv().await {
@@ -198,8 +227,12 @@ async fn the_tui_s_modal_offers_the_turn_s_primary_sql_token() {
         "analytics",
     ));
     let (tx, mut rx) = unbounded_channel();
-    let decider =
-        ChannelApproval::new(tx, SessionPolicy::new(ApprovalPolicy::Ask), primary.clone());
+    let decider = ChannelApproval::new(
+        tx,
+        SessionPolicy::new(ApprovalPolicy::Ask),
+        primary.clone(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
             assert_eq!(
@@ -227,6 +260,7 @@ async fn the_tui_s_modal_offers_the_turn_s_primary_sql_token() {
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { grant, .. }) = rx.recv().await {
@@ -255,7 +289,12 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
     // Turn three: the ask arrives with the suggested token, and the user's
     // session grant is recorded through the decider.
     let (tx, mut rx) = unbounded_channel();
-    let turn_three = ChannelApproval::new(tx, policy.clone(), TurnPrimary::default());
+    let turn_three = ChannelApproval::new(
+        tx,
+        policy.clone(),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
             assert_eq!(
@@ -278,7 +317,12 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
     // closed, so an ask would deny.
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let turn_four = ChannelApproval::new(tx, policy.clone(), TurnPrimary::default());
+    let turn_four = ChannelApproval::new(
+        tx,
+        policy.clone(),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     assert!(
         turn_four.approve(&tool, &arguments).await,
         "the grant made in turn three is still in force in turn four"
@@ -302,7 +346,12 @@ async fn a_grant_does_not_answer_a_different_shape() {
 
     // Turn three grants runner:bench through the ask.
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(tx, policy.clone(), TurnPrimary::default());
+    let decider = ChannelApproval::new(
+        tx,
+        policy.clone(),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
             assert_eq!(grant.as_deref(), Some("runner:bench"));
@@ -317,14 +366,24 @@ async fn a_grant_does_not_answer_a_different_shape() {
     // The granted shape is pre-answered (closed channel: an ask would deny).
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let decider = ChannelApproval::new(tx, policy.clone(), TurnPrimary::default());
+    let decider = ChannelApproval::new(
+        tx,
+        policy.clone(),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     assert!(
         decider.approve(&granted, &granted_args).await,
         "the granted shape runs without asking"
     );
     // A different shape still asks — and a deny there denies.
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(tx, policy.clone(), TurnPrimary::default());
+    let decider = ChannelApproval::new(
+        tx,
+        policy.clone(),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
             assert_eq!(grant.as_deref(), Some("runner:deploy"));
@@ -346,7 +405,12 @@ async fn a_grant_does_not_answer_a_different_shape() {
     let here = serde_json::json!({"url": "https://a.example/x"});
     let there = serde_json::json!({"url": "https://b.example/x"});
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(tx, policy.clone(), TurnPrimary::default());
+    let decider = ChannelApproval::new(
+        tx,
+        policy.clone(),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
             assert_eq!(grant.as_deref(), Some("fetch:https+a.example"));
@@ -359,7 +423,12 @@ async fn a_grant_does_not_answer_a_different_shape() {
     answerer.await.expect("the answerer completes");
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let decider = ChannelApproval::new(tx, policy, TurnPrimary::default());
+    let decider = ChannelApproval::new(
+        tx,
+        policy.clone(),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+    );
     assert!(
         !decider.approve(&fetch, &there).await,
         "`fetch:https+a.example` does not allow `fetch:https+b.example`: it asks, \

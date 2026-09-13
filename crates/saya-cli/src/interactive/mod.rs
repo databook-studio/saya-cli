@@ -1,4 +1,4 @@
-mod session_activation;
+pub(crate) mod session_activation;
 mod session_commands;
 // The session's write-shaped definitions are crate-reachable: the approval
 // tests build the real grantable shapes the frontends are asked about.

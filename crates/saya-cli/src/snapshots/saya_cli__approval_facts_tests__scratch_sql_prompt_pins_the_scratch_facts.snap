@@ -1,0 +1,10 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+assertion_line: 158
+expression: prompt
+---
+scratch_sql — this session's scratch database
+  sql: CREATE TABLE t AS SELECT 1
+  one statement per call · ≤ 50 rows · 30s per-statement timeout
+  a session-local DuckDB file in this session's state directory · external access off · no file reads
+[a] allow once   [s] allow scratch for this session   [d] deny

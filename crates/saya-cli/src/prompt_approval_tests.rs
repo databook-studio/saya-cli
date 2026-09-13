@@ -5,6 +5,7 @@
 //! recorded through one turn's decider stay in force for the next.
 
 use crate::agent::tools::DatabaseTools;
+use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::{TurnPrimary, grant_token};
 use crate::prompt_approval::{TerminalApproval, approval_prompt, terminal_choice};
 use saya_agent::{
@@ -39,7 +40,12 @@ fn database_tools() -> Vec<ToolDefinition> {
 
 #[tokio::test]
 async fn read_only_approval_denies_a_side_effecting_tool() {
-    let approval = TerminalApproval::new(ApprovalPolicy::ReadOnly, false, TurnPrimary::default());
+    let approval = TerminalApproval::new(
+        ApprovalPolicy::ReadOnly,
+        false,
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+    );
     assert!(
         !approval
             .approve(&side_effecting_tool(), &serde_json::json!({}))
@@ -50,7 +56,12 @@ async fn read_only_approval_denies_a_side_effecting_tool() {
 
 #[tokio::test]
 async fn non_interactive_read_only_denies_render_chart_and_still_approves_sql() {
-    let approval = TerminalApproval::new(ApprovalPolicy::ReadOnly, false, TurnPrimary::default());
+    let approval = TerminalApproval::new(
+        ApprovalPolicy::ReadOnly,
+        false,
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+    );
     let tools = database_tools();
     let render_chart = tools
         .iter()
@@ -87,13 +98,23 @@ async fn never_denies_and_ask_without_a_terminal_denies() {
         .iter()
         .find(|tool| tool.name == "bounded_sql_query")
         .expect("bounded_sql_query is defined");
-    let never = TerminalApproval::new(ApprovalPolicy::Never, false, TurnPrimary::default());
+    let never = TerminalApproval::new(
+        ApprovalPolicy::Never,
+        false,
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+    );
     assert!(
         !never
             .approve(sql, &serde_json::json!({"sql": "SELECT 1"}))
             .await
     );
-    let ask = TerminalApproval::new(ApprovalPolicy::Ask, false, TurnPrimary::default());
+    let ask = TerminalApproval::new(
+        ApprovalPolicy::Ask,
+        false,
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+    );
     assert!(
         !ask.approve(sql, &serde_json::json!({"sql": "SELECT 1"}))
             .await
@@ -110,7 +131,14 @@ fn ask_prompt_uses_the_generic_sentence_for_non_sql_tools() {
         .iter()
         .find(|tool| tool.name == "designate_answer")
         .expect("designate_answer is defined");
-    let prompt = approval_prompt(designate, &serde_json::json!({"sql": "SELECT 1"}), None);
+    let prompt = approval_prompt(
+        designate,
+        &serde_json::json!({"sql": "SELECT 1"}),
+        None,
+        &ApprovalFacts::default(),
+        None,
+        None,
+    );
     assert!(
         prompt.contains("Run tool `designate_answer`"),
         "a tool with no visible detail gets the generic sentence: got \"{prompt}\""
@@ -121,25 +149,13 @@ fn ask_prompt_uses_the_generic_sentence_for_non_sql_tools() {
     );
 }
 
-/// The SQL sentence is unchanged for the SQL tools — the sentence shown is the
-/// one `bench/spider`-shaped usage has always been prompted with. The answers
-/// part changed with the three-answer ask (this slice's moved assertion: the
-/// sentence stays, `[y/N]` becomes the answers line, and SQL — which no grant
-/// covers — offers the two answers and says so).
-#[test]
-fn ask_prompt_keeps_the_sql_sentence_for_sql_tools() {
-    let tools = database_tools();
-    let sql = tools
-        .iter()
-        .find(|tool| tool.name == "bounded_sql_query")
-        .expect("bounded_sql_query is defined");
-    let prompt = approval_prompt(sql, &serde_json::json!({"sql": "SELECT 1"}), None);
-    assert_eq!(
-        prompt,
-        "  SELECT 1\nAllow bounded read-only SQL query? [a] allow once   [d] deny   \
-         (no session grant for this tool) "
-    );
-}
+// Moved assertion (U5): the old byte-pinned "Allow bounded read-only SQL
+// query?" sentence is replaced by the SQL family's per-call fact lines. The
+// prompt's exact text is now pinned by
+// `approval_facts_tests::bounded_sql_query_prompt_pins_the_sql_family_s_facts`
+// — the snapshot is this assertion's new home, with its reason: the generic
+// SQL sentence could not say which connection or which bounds the call runs
+// under.
 
 /// A granted token stops the ask: the second call of the same shape resolves
 /// `Allow` with no prompt at all. Without the grant the same call still asks
@@ -150,7 +166,12 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
     let token = grant_token(&tool.name, &arguments, None).expect("workspace_write is grantable");
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
-    let before = TerminalApproval::from_session(policy.clone(), false, TurnPrimary::default());
+    let before = TerminalApproval::from_session(
+        policy.clone(),
+        false,
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+    );
     assert!(
         !before.approve(&tool, &arguments).await,
         "an ungranted ask is decided by the mode: nobody to answer, so deny"
@@ -159,7 +180,12 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
         policy.record(ApprovalChoice::AllowSession { token }),
         "the first grant is new"
     );
-    let after = TerminalApproval::from_session(policy, false, TurnPrimary::default());
+    let after = TerminalApproval::from_session(
+        policy,
+        false,
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+    );
     assert!(
         after.approve(&tool, &arguments).await,
         "the granted token pre-answers the same shape with no prompt"
@@ -247,7 +273,8 @@ async fn the_sql_family_s_grant_rides_the_turn_s_primary() {
         }),
         "the first grant is new"
     );
-    let after = TerminalApproval::from_session(policy.clone(), false, primary);
+    let after =
+        TerminalApproval::from_session(policy.clone(), false, primary, ApprovalFacts::default());
     // The bound decider suggests `sql:analytics` for a connectionless call,
     // so the grant pre-answers it with no prompt at all.
     assert!(
@@ -261,7 +288,14 @@ async fn the_sql_family_s_grant_rides_the_turn_s_primary() {
         ApprovalDecision::Ask,
         "the grant allows nothing on a different connection"
     );
-    let offered = approval_prompt(&sql, &here, Some("sql:analytics"));
+    let offered = approval_prompt(
+        &sql,
+        &here,
+        Some("sql:analytics"),
+        &ApprovalFacts::default(),
+        None,
+        None,
+    );
     assert!(
         offered.contains("[s] allow sql:analytics for this session"),
         "the offered token is the primary's real name: {offered}"
@@ -276,7 +310,14 @@ fn the_prompt_offers_a_session_grant_only_when_one_exists() {
     let tool = workspace_write_tool();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
     let token = grant_token(&tool.name, &arguments, None);
-    let with = approval_prompt(&tool, &arguments, token.as_deref());
+    let with = approval_prompt(
+        &tool,
+        &arguments,
+        token.as_deref(),
+        &ApprovalFacts::default(),
+        None,
+        None,
+    );
     assert!(
         with.contains("[s] allow workspace-write for this session"),
         "the offered token is named verbatim: {with}"
@@ -285,7 +326,14 @@ fn the_prompt_offers_a_session_grant_only_when_one_exists() {
         with.contains("[a] allow once") && with.contains("[d] deny"),
         "the three answers are stated: {with}"
     );
-    let none = approval_prompt(&tool, &arguments, None);
+    let none = approval_prompt(
+        &tool,
+        &arguments,
+        None,
+        &ApprovalFacts::default(),
+        None,
+        None,
+    );
     assert!(
         !none.contains("[s]"),
         "no token, no session-grant offer: {none}"

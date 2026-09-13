@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod approval_facts;
 mod approval_text;
 mod chart;
 mod cli;
@@ -36,6 +37,9 @@ pub use cli::{
 };
 pub use commands::{capture_output_start, capture_output_take, run_contracts, run_management};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
+
+#[cfg(test)]
+mod approval_facts_tests;
 pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
 pub use profile_identity::profile_identity;

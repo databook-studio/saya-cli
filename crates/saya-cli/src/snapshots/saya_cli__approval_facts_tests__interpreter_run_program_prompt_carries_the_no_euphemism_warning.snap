@@ -1,0 +1,15 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+assertion_line: 119
+expression: prompt
+---
+run_program — python3 (interpreter)
+  program: python3 — staged in [jobs.interpreter] allow
+  argv: python3 -c print(1)
+  typed argv: no shell, no interpolation, one element per argument
+  sandbox: reads/writes/exec bounded to /home/user/proj · egress: none · cwd pinned to /home/user/proj
+  timeout: 120s — the call may narrow it, never widen it
+  credential injection: none declared
+  output: capped at 65536 bytes per stream · redacted before it reaches the model
+  interpreter approval: this session may execute python3 as an interpreter. Its argv is typed and the sandbox still bounds its reads, writes, exec, and egress — but the model writes the program the interpreter runs, and no process-fork is granted: children an interpreter spawns are refused by the sandbox. What the interpreter computes is not a reviewed, fixed binary.
+[a] allow once   [s] allow interpreter:python3 for this session   [d] deny

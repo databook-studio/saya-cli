@@ -1,5 +1,8 @@
+use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
-use saya_agent::{ApprovalChoice, ApprovalDecision, ApprovalPolicy, SessionPolicy, ToolDefinition};
+use saya_agent::{
+    ApprovalChoice, ApprovalDecision, ApprovalPolicy, SessionGrants, SessionPolicy, ToolDefinition,
+};
 
 pub(crate) struct TerminalApproval {
     policy: SessionPolicy,
@@ -8,14 +11,24 @@ pub(crate) struct TerminalApproval {
     /// decider; the SQL family's suggestion names it when the call names
     /// no connection. Unbound — a run's construction — suggests no token.
     primary: TurnPrimary,
+    /// The composition facts the prompt may state. Built from the session
+    /// universe (or the resolved config on the one-shot ask path); the
+    /// prompt states only these, never prose.
+    facts: ApprovalFacts,
 }
 
 impl TerminalApproval {
-    pub(crate) fn new(policy: ApprovalPolicy, can_prompt: bool, primary: TurnPrimary) -> Self {
+    pub(crate) fn new(
+        policy: ApprovalPolicy,
+        can_prompt: bool,
+        primary: TurnPrimary,
+        facts: ApprovalFacts,
+    ) -> Self {
         Self {
             policy: SessionPolicy::new(policy),
             can_prompt,
             primary,
+            facts,
         }
     }
 
@@ -32,6 +45,7 @@ impl TerminalApproval {
             policy: SessionPolicy::frozen(mode, seeds),
             can_prompt: false,
             primary: TurnPrimary::default(),
+            facts: ApprovalFacts::default(),
         }
     }
 
@@ -39,33 +53,42 @@ impl TerminalApproval {
     /// session's turns clone, so a grant recorded through this decider's ask
     /// is in force for every later turn of the same session. The primary is
     /// the turn's handle: the turn binds the registry's primary into it
-    /// before the model runs.
+    /// before the model runs. `facts` are the session composition's prompt
+    /// facts — what this decider's prompts may state about the session.
     pub(crate) fn from_session(
         policy: SessionPolicy,
         can_prompt: bool,
         primary: TurnPrimary,
+        facts: ApprovalFacts,
     ) -> Self {
         Self {
             policy,
             can_prompt,
             primary,
+            facts,
         }
     }
 }
 
-/// The prompt shown when an `Ask` approval needs the user: for tools whose call
-/// has a visible detail, that detail and the SQL sentence; for every other
-/// tool, a generic sentence naming the tool, so nothing is ever approved under
-/// a sentence it does not match. The answers line follows: the session grant
-/// answer names the offered token only when one exists.
+/// The prompt shown when an `Ask` approval needs the user: the per-call fact
+/// body (`approval_facts::call_facts`) — the containment that makes the call
+/// safe, the bounds that cap it, the session's grant history — followed by
+/// the answers line; for a call with no facts worth showing, a generic
+/// sentence naming the tool, so nothing is ever approved under a sentence it
+/// does not match. The TUI's modal renders the same body and answers line
+/// (`interactive/tui/ui/panels`), so the two frontends cannot state
+/// different facts.
 pub(crate) fn approval_prompt(
     tool: &ToolDefinition,
     arguments: &serde_json::Value,
     grant: Option<&str>,
+    facts: &ApprovalFacts,
+    primary: Option<&str>,
+    grants: Option<&SessionGrants>,
 ) -> String {
     let answers = session_answers_line(grant);
-    match crate::agent::tools::tool_call_detail(&tool.name, arguments) {
-        Some(detail) => format!("  {detail}\nAllow bounded read-only SQL query? {answers} "),
+    match crate::approval_facts::call_facts(&tool.name, arguments, grant, facts, primary, grants) {
+        Some(body) => format!("{body}\n{answers} "),
         None => format!("Run tool `{}`? {answers} ", tool.name),
     }
 }
@@ -101,7 +124,18 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                 if !io::stdin().is_terminal() {
                     return false;
                 }
-                eprint!("{}", approval_prompt(tool, arguments, grant.as_deref()));
+                let primary = primary.as_deref();
+                eprint!(
+                    "{}",
+                    approval_prompt(
+                        tool,
+                        arguments,
+                        grant.as_deref(),
+                        &self.facts,
+                        primary,
+                        Some(self.policy.grants()),
+                    )
+                );
                 let _ = io::stderr().flush();
                 let mut answer = String::new();
                 if !(io::stdin().read_line(&mut answer).is_ok()) {

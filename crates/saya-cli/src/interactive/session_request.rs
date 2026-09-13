@@ -44,10 +44,12 @@ pub(crate) async fn run(
     // resolves there, and a session grant recorded by an answer lands in the
     // one store every turn shares. It holds the session universe's primary
     // handle, which the turn binds from its registry — a grant suggestion
-    // names the database the session is actually connected to.
+    // names the database the session is actually connected to — and the
+    // session composition's prompt facts, which its prompts may state.
     let primary = session.primary.clone();
+    let facts = session.approval_facts(runtime);
     let decider: Arc<dyn ApprovalDecider> = Arc::new(
-        crate::prompt_approval::TerminalApproval::from_session(policy, can_prompt, primary),
+        crate::prompt_approval::TerminalApproval::from_session(policy, can_prompt, primary, facts),
     );
     let work = agent::runtime::run_prompt_with_sink(
         runtime,
