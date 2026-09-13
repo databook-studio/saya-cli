@@ -28,7 +28,9 @@ pub(crate) const NO_INTERPRETERS_STAGED: &str =
 /// fact, in place of the run surface's conditional parenthetical, which is
 /// false for sessions (`session_runner.rs` grants no process-fork; a forked
 /// child dies with `fork: Operation not permitted`, `sandbox/mod.rs`).
-const SESSION_FORK_FACT: &str =
+/// `pub(crate)` so the run_program approval prompt states the same clause —
+/// one wording, no drift.
+pub(crate) const SESSION_FORK_FACT: &str =
     "no process-fork is granted: children an interpreter spawns are refused by the sandbox.";
 
 /// The activation line for a bypass session: the mode fact, then — when

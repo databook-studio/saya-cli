@@ -669,3 +669,43 @@ fn input_empty_buffer_cursor_at_origin() {
     // The box is the last 3 rows (21..24); inner top is row 22.
     assert_eq!(y, 22, "empty buffer: cursor at inner top row");
 }
+
+// --- The tool-approval modal renders the shared fact body. -------------------
+
+/// The approval modal renders the per-call fact body verbatim — the same
+/// `call_facts` output the terminal prompt renders — plus the shared answers
+/// line. This is the modal half of the parity property: the body the modal
+/// shows is the body the terminal prompt shows, byte for byte.
+#[test]
+fn approval_modal_renders_the_shared_fact_body() {
+    let mut app = empty_app();
+    let tool = crate::interactive::session_definitions::http_fetch();
+    let arguments = serde_json::json!({"url": "https://api.github.com/repos/x/y"});
+    let grant = crate::grant_token::grant_token(&tool.name, &arguments, None);
+    let facts = crate::approval_facts::ApprovalFacts {
+        fetch: Some(crate::approval_facts::FetchFacts {
+            fetch_body_bytes: 61_440,
+            fetch_seconds: 30,
+            fetch_redirects: 5,
+            download: None,
+        }),
+        ..crate::approval_facts::ApprovalFacts::default()
+    };
+    let detail = crate::approval_facts::call_facts(
+        &tool.name,
+        &arguments,
+        grant.as_deref(),
+        &facts,
+        None,
+        None,
+    );
+    let (respond, _answer) = tokio::sync::oneshot::channel();
+    app.request.pending_approval = Some(super::types::PendingApproval {
+        tool: tool.name.clone(),
+        detail,
+        grant,
+        respond,
+    });
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    insta::assert_snapshot!(buffer);
+}

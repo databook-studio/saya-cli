@@ -3,6 +3,7 @@
 //! while the model works.
 
 use crate::agent::runtime::{PromptOverrides, run_prompt_with_sink};
+use crate::approval_facts::ApprovalFacts;
 use crate::config::runtime::RuntimeConfig;
 use crate::grant_token::{TurnPrimary, grant_token};
 use crate::interactive::session_universe::SessionUniverse;
@@ -20,12 +21,15 @@ use tokio::sync::oneshot;
 pub(crate) enum StreamMsg {
     Event(AgentEvent),
     /// The agent is asking the user to approve a tool; the UI replies via
-    /// `respond` with the user's [`ApprovalChoice`]. `grant` is the grammar
+    /// `respond` with the user's [`ApprovalChoice`]. `detail` is the shared
+    /// fact body the terminal prompt renders too (`approval_facts::call_facts`),
+    /// so both surfaces state the same facts; `grant` is the grammar
     /// token a session grant for this call would record — the modal offers
     /// its third answer only when it is `Some`.
     ApprovalRequest {
         tool: String,
-        /// Human-readable detail (e.g. the SQL) shown so the user sees what they approve.
+        /// The per-call fact body (e.g. the SQL, the bounds, the session's
+        /// grant history) shown so the user sees what they approve.
         detail: Option<String>,
         grant: Option<String>,
         respond: oneshot::Sender<ApprovalChoice>,
@@ -66,6 +70,10 @@ pub(crate) struct ChannelApproval {
     /// belongs to; the SQL family's suggestion names it when the call
     /// names no connection.
     primary: TurnPrimary,
+    /// The session composition's prompt facts: what this decider's modal
+    /// may state. The same bundle the terminal decider renders, so the
+    /// modal cannot state different facts.
+    facts: ApprovalFacts,
 }
 
 impl ChannelApproval {
@@ -73,11 +81,13 @@ impl ChannelApproval {
         tx: UnboundedSender<StreamMsg>,
         policy: SessionPolicy,
         primary: TurnPrimary,
+        facts: ApprovalFacts,
     ) -> Self {
         Self {
             tx,
             policy,
             primary,
+            facts,
         }
     }
 }
@@ -92,16 +102,23 @@ impl ApprovalDecider for ChannelApproval {
             ApprovalDecision::Deny { .. } => false,
             ApprovalDecision::Ask => {
                 let (respond, answer) = oneshot::channel();
+                // The detail is the shared fact body — the same bytes the
+                // terminal prompt renders (`approval_facts::call_facts`) —
+                // so the modal cannot state different facts for the same
+                // call. `None` and the modal falls back to the tool's name.
+                let detail = crate::approval_facts::call_facts(
+                    &tool.name,
+                    arguments,
+                    grant.as_deref(),
+                    &self.facts,
+                    primary.as_deref(),
+                    Some(self.policy.grants()),
+                );
                 if self
                     .tx
                     .send(StreamMsg::ApprovalRequest {
                         tool: tool.name.clone(),
-                        detail: crate::agent::tools::sql_tool_call(&tool.name, arguments).map(
-                            |call| match call.target {
-                                Some(target) => format!("-- on {target}\n{}", call.sql),
-                                None => call.sql,
-                            },
-                        ),
+                        detail,
                         grant,
                         respond,
                     })
@@ -162,11 +179,15 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
     // The turn's primary handle rides the session's universe: the decider
     // holds a clone, and the turn binds the registry's primary into it.
     let primary = session.primary.clone();
+    // The prompt facts come from the members this session actually composed,
+    // read off the universe and the resolved config — the modal states only
+    // these.
+    let facts = session.approval_facts(&runtime);
 
     std::thread::spawn(move || {
         let sink = ChannelSink { tx: tx.clone() };
         let decider: Arc<dyn ApprovalDecider> =
-            Arc::new(ChannelApproval::new(tx.clone(), policy, primary));
+            Arc::new(ChannelApproval::new(tx.clone(), policy, primary, facts));
         let runtime_handle = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

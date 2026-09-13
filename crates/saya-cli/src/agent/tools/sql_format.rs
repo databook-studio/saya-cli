@@ -149,7 +149,7 @@ fn dollar_quote_tag_at(text: &str, start: usize) -> Option<&str> {
 
 /// Collapses runs of whitespace outside quoted values and comments into single
 /// spaces, so model SQL renders tidily without misrepresenting literal text.
-pub(super) fn collapse_whitespace(text: &str) -> String {
+pub(crate) fn collapse_whitespace(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut state = ScanState::Normal;
     let mut dollar_tag = None;

@@ -174,7 +174,10 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 /// Computes the required vertical height (in rows) for the approval panel.
 /// The answers line wraps like any other line, so a long offered token
-/// claims its rows instead of clipping.
+/// claims its rows instead of clipping. The per-call fact bodies
+/// (`approval_facts`) run longer than the old SQL-only detail, so the cap
+/// follows them: an interpreter `run_program` prompt carries the no-euphemism
+/// warning, and clipping a containment fact is worse than a taller panel.
 pub(super) fn approval_height(detail: Option<&str>, grant: Option<&str>, width: u16) -> u16 {
     let inner = width.saturating_sub(2).max(1) as usize;
     let answers_rows = crate::grant_token::session_answers_line(grant)
@@ -189,15 +192,18 @@ pub(super) fn approval_height(detail: Option<&str>, grant: Option<&str>, width: 
                 .lines()
                 .map(|line| line.chars().count().max(1).div_ceil(inner))
                 .sum();
-            (6 + wrapped_lines as u16 + answers_rows - 1).min(16)
+            (6 + wrapped_lines as u16 + answers_rows - 1).min(24)
         }
         None => (4 + answers_rows).min(16),
     }
 }
 
-/// Draws the tool-approval panel into the given area. The answers line is
-/// the shared three-answer text — with the offered token when one exists,
-/// two answers and the reason when not.
+/// Draws the tool-approval panel into the given area. The body is the shared
+/// fact text — the same lines the terminal prompt renders
+/// (`approval_facts::call_facts`) — drawn verbatim, so the modal cannot
+/// state different facts for the same call; the answers line is the shared
+/// three-answer text — with the offered token when one exists, two answers
+/// and the reason when not.
 pub(super) fn draw_approval(
     frame: &mut Frame<'_>,
     tool: &str,
@@ -206,20 +212,22 @@ pub(super) fn draw_approval(
     area: Rect,
 ) {
     let mut lines = Vec::new();
-    if let Some(sql) = detail {
-        lines.push(Line::from(Span::styled(
-            "Approve this read-only query:",
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        for l in sql.lines() {
-            lines.push(Line::from(Span::styled(
-                l.to_string(),
-                Style::default().fg(accent()),
-            )));
+    match detail {
+        Some(body) => {
+            for line in body.lines() {
+                lines.push(Line::from(Span::styled(
+                    line.to_string(),
+                    if line.starts_with("  ") {
+                        Style::default().fg(accent())
+                    } else {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    },
+                )));
+            }
         }
-    } else {
-        lines.push(Line::from(format!("Run tool `{tool}`?")));
+        None => {
+            lines.push(Line::from(format!("Run tool `{tool}`?")));
+        }
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(

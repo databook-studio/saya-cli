@@ -76,6 +76,14 @@ impl FetchTools {
         }
     }
 
+    /// The download wallet this member streams under — the same wallet
+    /// `run_download` claims from (built by clone at composition, so a trip
+    /// anywhere is seen everywhere). An approval prompt states the
+    /// *remaining* budget from it, read at ask time, never a frozen figure.
+    pub fn download_budget(&self) -> &DownloadBudget {
+        &self.budget
+    }
+
     /// One bounded fetch, delivered as the honest envelope around the
     /// rendered untrusted block.
     async fn run_fetch(&self, arguments: Value) -> Result<Value, ToolError> {

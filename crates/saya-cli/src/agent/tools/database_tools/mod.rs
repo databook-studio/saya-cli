@@ -51,7 +51,9 @@ pub(crate) use workspace_grep::{
 pub(crate) use workspace_list::WORKSPACE_LIST_MAX_ENTRIES;
 #[cfg(test)]
 pub(crate) use workspace_read::WORKSPACE_READ_MAX_BYTES;
-#[cfg(test)]
+// `WORKSPACE_WRITE_MAX_BYTES` is not test-gated: the approval prompt states
+// the exact per-write bound the tool enforces (`approval_facts`), so the
+// prompt's number is this constant, never a copy of it.
 pub(crate) use workspace_write::WORKSPACE_WRITE_MAX_BYTES;
 
 /// Agent tools for inspecting and querying configured database connections.
@@ -94,7 +96,12 @@ pub(crate) struct DatabaseTools {
 
 impl DatabaseTools {
     const MAX_CONCURRENT_FAN_OUT_QUERIES: usize = 4;
-    const FAN_OUT_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+    /// The wall-clock ceiling one fan-out query runs under (`fan_out.rs`
+    /// wraps every per-database query in it, narrowing the connector's own
+    /// configured timeout). `pub(crate)` so the approval prompt states the
+    /// same figure the fan-out applies — the prompt's number and the
+    /// enforcement are the same constant by construction.
+    pub(crate) const FAN_OUT_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// Creates database tools with a single optional primary connection for testing.
     #[cfg(test)]

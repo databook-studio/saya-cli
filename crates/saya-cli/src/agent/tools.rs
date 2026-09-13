@@ -11,6 +11,8 @@ mod sql_format;
 mod tool_calls;
 
 pub(crate) use database_tools::DatabaseTools;
+// The write bound the tool enforces, which the approval prompt states.
+pub(crate) use database_tools::WORKSPACE_WRITE_MAX_BYTES;
 pub(crate) use run_tools::RunTools;
 // Re-exported through `tools` (not the private `database_tools` module) so the
 // agent runtime's learning wiring and tests can reach the observation types.
@@ -21,7 +23,7 @@ pub(crate) use database_tools::{
     DrainedObservations, ObservationLog, ObservationOutcome, OverrideLog, ToolObservation,
 };
 #[allow(unused_imports)]
-pub(crate) use sql_format::format_sql;
+pub(crate) use sql_format::{collapse_whitespace, format_sql};
 #[allow(unused_imports)]
 pub(crate) use tool_calls::{SqlCall, sql_tool_call, tool_call_detail};
 

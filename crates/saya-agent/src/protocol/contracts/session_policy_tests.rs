@@ -105,6 +105,51 @@ fn a_session_grant_pre_answers_the_ask() {
     );
 }
 
+/// The session-history fact: every call a grant pre-answers increments the
+/// token's allowed-call count — the number a prompt's session-history line
+/// reads ("3 calls so far"). Allow-once, denies, and unanswered asks count
+/// nothing: only grant-answered calls do.
+#[test]
+fn each_call_a_grant_answers_counts_under_its_token() {
+    let policy = SessionPolicy::new(ApprovalPolicy::Ask);
+    policy.record(ApprovalChoice::AllowSession {
+        token: "sql:analytics".into(),
+    });
+    assert_eq!(
+        policy.grants().calls("sql:analytics"),
+        0,
+        "a grant records no calls until one runs"
+    );
+    assert_eq!(
+        policy.resolve(&read_shaped(), Some("sql:analytics")),
+        ApprovalDecision::Allow
+    );
+    assert_eq!(
+        policy.resolve(&read_shaped(), Some("sql:analytics")),
+        ApprovalDecision::Allow
+    );
+    assert_eq!(
+        policy.grants().calls("sql:analytics"),
+        2,
+        "two grant-answered calls, counted twice"
+    );
+    assert_eq!(
+        policy.grants().calls("sql:staging"),
+        0,
+        "tokens count separately"
+    );
+    // An unanswered ask counts nothing, and neither does allow-once.
+    assert_eq!(
+        policy.resolve(&read_shaped(), Some("sql:staging")),
+        ApprovalDecision::Ask
+    );
+    assert_eq!(
+        policy.grants().calls("sql:staging"),
+        0,
+        "a token nothing ran under stays at zero"
+    );
+}
+
 /// The modes that never ask are untouched by grants: `read-only` denies a
 /// side-effecting call even when a token is named, and `never` denies
 /// everything, granted or not.

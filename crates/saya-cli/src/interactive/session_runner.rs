@@ -54,6 +54,32 @@ pub(crate) struct SessionRunner {
     pub(super) definition: saya_agent::ToolDefinition,
 }
 
+impl SessionRunner {
+    /// The composition facts this runner's approval prompt may state, read
+    /// off the composed spawn and scopes — the same objects the per-call
+    /// battery (`refuse::validate_call` / `validate_interpreter_call`)
+    /// applies, so the prompt's numbers are the enforcement's numbers.
+    pub(super) fn prompt_facts(&self) -> crate::approval_facts::RunnerFacts {
+        crate::approval_facts::RunnerFacts {
+            fs_roots: self.spawn.fs_roots().to_vec(),
+            net_allow: self.spawn.net_allow().to_vec(),
+            timeout_seconds: self.timeout.as_secs(),
+            runner_programs: self.scope.programs.clone(),
+            interpreter_programs: self
+                .interpreters
+                .as_ref()
+                .map(|scope| scope.programs.clone())
+                .unwrap_or_default(),
+            // The session's composition injects no credentials: the resolver
+            // built below is empty and the tool never gains any
+            // (`compose_runner`'s `StaticCredentialSource::new(Vec::new())`;
+            // only `with_credentials` could add some, and no session site
+            // calls it — `runner/mod.rs`'s seam).
+            credentials_declared: 0,
+        }
+    }
+}
+
 /// What composing the session runner produced: the wiring for the executor,
 /// and the probe's verdict when it refused — a fact the session must say,
 /// never a silent absence.

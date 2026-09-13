@@ -24,7 +24,7 @@ mod open;
 mod tools;
 mod validate;
 
-pub use open::{SCRATCH_FILE_NAME, ScratchDb};
+pub use open::{SCRATCH_FILE_NAME, SCRATCH_QUERY_TIMEOUT, ScratchDb};
 pub use tools::{SCRATCH_SQL_TOOL, ScratchSql};
 pub use validate::{SCRATCH_ROW_CAP, ScratchRejection, Validated, validate};
 

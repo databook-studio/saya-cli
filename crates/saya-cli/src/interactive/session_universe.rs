@@ -128,6 +128,43 @@ impl SessionUniverse {
         self.workspace.as_ref().map(|bound| bound.root.as_path())
     }
 
+    /// The approval prompts' facts, read off this universe's composed
+    /// members and the resolved config. The prompt states what these
+    /// enforce and nothing else: a member that was not composed contributes
+    /// no fact lines, and every stated number is the enforcement's own.
+    pub(crate) fn approval_facts(
+        &self,
+        runtime: &crate::config::runtime::RuntimeConfig,
+    ) -> crate::approval_facts::ApprovalFacts {
+        // The fetch member was composed with exactly these lane bounds
+        // (`compose`: `FetchLimits::for_tool_lane()`), and the same
+        // constructor here is the same numbers by construction.
+        let lane = saya_harness::fetch::FetchLimits::for_tool_lane();
+        crate::approval_facts::ApprovalFacts {
+            row_cap: crate::agent::state_tools::model_row_cap(runtime.resolved.max_rows),
+            sql_timeout_seconds: runtime.resolved.query_timeout_seconds,
+            runner: self.runner.as_ref().map(|runner| runner.prompt_facts()),
+            fetch: self
+                .fetch
+                .as_ref()
+                .map(|fetch| crate::approval_facts::FetchFacts {
+                    fetch_body_bytes: lane.max_total_bytes,
+                    fetch_seconds: lane.time_budget.as_secs(),
+                    fetch_redirects: lane.max_redirect_hops,
+                    download: Some(fetch.download_budget().clone()),
+                }),
+            scratch: self.scratch.as_ref().map(|_| {
+                // The session's scratch runs under the harness's own
+                // constants (opened in `compose` without narrowing).
+                crate::approval_facts::ScratchFacts {
+                    row_cap: saya_harness::scratch::SCRATCH_ROW_CAP,
+                    timeout_seconds: saya_harness::scratch::SCRATCH_QUERY_TIMEOUT.as_secs(),
+                }
+            }),
+            workspace_root: self.root().map(|root| root.to_path_buf()),
+        }
+    }
+
     /// The containment seam the file tools read and write through, when a
     /// root binds. `None` leaves `workspace_read` denying with its typed
     /// error — the no-root shape.

@@ -170,7 +170,12 @@ pub(crate) async fn run_prompt_with_inputs(
         history,
         context_blocks,
     };
-    let fallback_approval = TerminalApproval::new(approval, can_prompt, fallback_primary);
+    let fallback_approval = TerminalApproval::new(
+        approval,
+        can_prompt,
+        fallback_primary,
+        crate::approval_facts::ApprovalFacts::for_ask(runtime),
+    );
     let approver: &dyn ApprovalDecider = match decider.as_deref() {
         Some(decider) => decider,
         None => &fallback_approval,
