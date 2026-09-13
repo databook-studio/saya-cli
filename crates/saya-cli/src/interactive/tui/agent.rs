@@ -4,11 +4,12 @@
 
 use crate::agent::runtime::{PromptOverrides, run_prompt_with_sink};
 use crate::config::runtime::RuntimeConfig;
+use crate::grant_token::grant_token;
 use crate::interactive::session_universe::SessionUniverse;
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentOutput, ApprovalDecider, ApprovalDecision, ApprovalPolicy,
-    CancellationToken, ChatMessage, SessionPolicy, ToolDefinition,
+    AgentEvent, AgentEventSink, AgentOutput, ApprovalChoice, ApprovalDecider, ApprovalDecision,
+    ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy, ToolDefinition,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -18,12 +19,16 @@ use tokio::sync::oneshot;
 /// A message from the agent thread to the UI.
 pub(crate) enum StreamMsg {
     Event(AgentEvent),
-    /// The agent is asking the user to approve a tool; the UI replies via `respond`.
+    /// The agent is asking the user to approve a tool; the UI replies via
+    /// `respond` with the user's [`ApprovalChoice`]. `grant` is the grammar
+    /// token a session grant for this call would record — the modal offers
+    /// its third answer only when it is `Some`.
     ApprovalRequest {
         tool: String,
         /// Human-readable detail (e.g. the SQL) shown so the user sees what they approve.
         detail: Option<String>,
-        respond: oneshot::Sender<bool>,
+        grant: Option<String>,
+        respond: oneshot::Sender<ApprovalChoice>,
     },
     Done(Result<AgentOutput, String>),
 }
@@ -49,26 +54,27 @@ impl AgentEventSink for ChannelSink {
 
 /// Approval decider that consults the session policy: whatever the engine
 /// allows or denies runs or refuses without the user; an ask is rendered as
-/// the modal (over the same channel) and the user's y/n answer is the
-/// decision. The TUI can always prompt, so an ask never falls back to stdin.
+/// the modal (over the same channel) and the user's [`ApprovalChoice`] is
+/// recorded into the session policy and turned back into the decision. The
+/// TUI can always prompt, so an ask never falls back to stdin. The policy is
+/// the session's one instance, cloned per turn by `start` — a grant recorded
+/// through one turn's ask is in force for every later turn.
 pub(crate) struct ChannelApproval {
     tx: UnboundedSender<StreamMsg>,
     policy: SessionPolicy,
 }
 
 impl ChannelApproval {
-    pub(crate) fn new(tx: UnboundedSender<StreamMsg>, policy: ApprovalPolicy) -> Self {
-        Self {
-            tx,
-            policy: SessionPolicy::new(policy),
-        }
+    pub(crate) fn new(tx: UnboundedSender<StreamMsg>, policy: SessionPolicy) -> Self {
+        Self { tx, policy }
     }
 }
 
 #[async_trait]
 impl ApprovalDecider for ChannelApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
-        match self.policy.resolve(&tool.effect, None) {
+        let grant = grant_token(&tool.name, arguments);
+        match self.policy.resolve(&tool.effect, grant.as_deref()) {
             ApprovalDecision::Allow => true,
             ApprovalDecision::Deny => false,
             ApprovalDecision::Ask => {
@@ -83,24 +89,39 @@ impl ApprovalDecider for ChannelApproval {
                                 None => call.sql,
                             },
                         ),
+                        grant,
                         respond,
                     })
                     .is_err()
                 {
                     return false;
                 }
-                answer.await.unwrap_or(false)
+                match answer.await {
+                    Ok(choice) => {
+                        // The user's answer reaches the session's grant store
+                        // here, where the policy lives; allow-once and deny
+                        // record nothing.
+                        self.policy.record(choice.clone());
+                        !matches!(choice, ApprovalChoice::Deny)
+                    }
+                    // A UI that died mid-ask denies.
+                    Err(_) => false,
+                }
             }
         }
     }
 }
 
 /// Everything one streaming turn runs with. A bundle rather than eight
-/// positional parameters, so the call sites read by name.
+/// positional parameters, so the call sites read by name. `policy` is the
+/// session's one approval policy, cloned into this turn's decider so the
+/// session's grant set is shared across turns; `approval` is the same
+/// policy's mode, for the turn's definition advertising.
 pub(crate) struct StreamRequest {
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) prompt: String,
     pub(crate) approval: ApprovalPolicy,
+    pub(crate) policy: SessionPolicy,
     pub(crate) overrides: PromptOverrides,
     pub(crate) history: Vec<ChatMessage>,
     pub(crate) state_db: SqliteStateStore,
@@ -114,6 +135,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
         runtime,
         prompt,
         approval,
+        policy,
         overrides,
         history,
         state_db,
@@ -127,8 +149,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
 
     std::thread::spawn(move || {
         let sink = ChannelSink { tx: tx.clone() };
-        let decider: Arc<dyn ApprovalDecider> =
-            Arc::new(ChannelApproval::new(tx.clone(), approval));
+        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::new(tx.clone(), policy));
         let runtime_handle = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

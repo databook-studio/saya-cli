@@ -7,11 +7,13 @@ use crate::{
     render::RenderFormat,
     stream_render::TerminalSink,
 };
-use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
+use saya_agent::{
+    AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy,
+};
 use saya_store::SqliteStateStore;
+use std::sync::Arc;
 
 use super::session_universe::SessionUniverse;
-use std::sync::Arc;
 
 pub(crate) enum PromptResult {
     /// Boxed because the variant dwarfs `Cancelled`, which carries nothing;
@@ -26,6 +28,9 @@ pub(crate) async fn run(
     runtime: &RuntimeConfig,
     prompt: &str,
     approval: ApprovalPolicy,
+    // The session's one approval policy, cloned into this turn's decider: a
+    // grant recorded in this turn's ask is in force for every later turn.
+    policy: SessionPolicy,
     can_prompt: bool,
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
@@ -35,6 +40,12 @@ pub(crate) async fn run(
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
+    // The decider is the terminal ask over the session's policy: the mode
+    // resolves there, and a session grant recorded by an answer lands in the
+    // one store every turn shares.
+    let decider: Arc<dyn ApprovalDecider> = Arc::new(
+        crate::prompt_approval::TerminalApproval::from_session(policy, can_prompt),
+    );
     let work = agent::runtime::run_prompt_with_sink(
         runtime,
         prompt,
@@ -45,7 +56,7 @@ pub(crate) async fn run(
         &sink,
         cancellation.clone(),
         Some(state_db.clone()),
-        None,
+        Some(decider),
         None,
         Some(session),
     );

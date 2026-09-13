@@ -34,7 +34,10 @@ mod resume;
 pub(crate) mod runner;
 #[cfg(test)]
 mod runner_tests;
-mod scopes;
+// The `--allow` grammar is crate-reachable because the session approval's
+// grant token suggester feeds its tokens back through this parser — the
+// parser is the grammar's single authority, never duplicated.
+pub(crate) mod scopes;
 mod start;
 mod tools;
 #[cfg(test)]

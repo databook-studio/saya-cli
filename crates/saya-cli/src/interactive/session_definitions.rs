@@ -152,6 +152,10 @@ pub(crate) fn http_download() -> ToolDefinition {
 /// `run_program` over the session's proven spawn: the allowlist is the
 /// config's `[jobs.runner] allow`, the sandbox is the session's one
 /// workspace root with no egress, and the ask is the per-call consent.
+/// The run surface's plan-gated effect (`requires_approval: false`) does
+/// not ride along: the session has no plan, so the definition this module
+/// advertises carries the per-call ask — the engine decides every call,
+/// per this module's rule for everything it pushes.
 pub(crate) fn run_program(source: ToolDefinition) -> ToolDefinition {
     ToolDefinition {
         description: "Run one allowlisted program with typed argv. Every argument is passed \
@@ -162,6 +166,66 @@ pub(crate) fn run_program(source: ToolDefinition) -> ToolDefinition {
             no network egress; output is capped and redacted; a timeout kills the whole \
             process group."
             .into(),
+        effect: ToolEffect {
+            requires_approval: true,
+            ..source.effect
+        },
         ..source
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use saya_agent::ApprovalPolicy;
+    use saya_agent::SessionPolicy;
+
+    /// The session's `run_program` is ask-gated, not plan-gated: the run
+    /// surface's definition is plan-gated (`requires_approval: false`, the
+    /// plan approval answering for every call), but the session has no plan —
+    /// the ask is the per-call consent, so the definition this module
+    /// advertises must carry `requires_approval: true`. A definition that
+    /// spread the run surface's effect would auto-run any allowlisted program
+    /// with no ask at all — advertised-but-unasked, the anti-pattern this
+    /// module exists to prevent — while its own doc promises the ask.
+    #[test]
+    fn the_session_s_run_program_is_ask_gated_not_plan_gated() {
+        // The run surface's own shape: plan-gated, workspace-writing, no
+        // external side effect (the session spawn declares no egress).
+        let source = ToolDefinition {
+            name: "run_program".into(),
+            description: "the run surface's wording".into(),
+            read_only: false,
+            parameters: serde_json::json!({"type": "object"}),
+            effect: ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::WriteWorkspace,
+            },
+            completion: Some("program ran".into()),
+        };
+        let definition = run_program(source);
+        assert!(
+            definition.effect.requires_approval,
+            "the session's run_program is ask-gated: the engine decides every call"
+        );
+        assert!(
+            !definition.effect.external_side_effect,
+            "the empty egress stays empty — the rewrite adds no capability"
+        );
+        assert_eq!(
+            definition.effect.local_state,
+            LocalStateEffect::WriteWorkspace,
+            "the write shape is unchanged"
+        );
+        // And so the engine asks under the session's mode, where the grant
+        // token (`runner:<program>` / `interpreter:<program>`) is offered.
+        let policy = SessionPolicy::new(ApprovalPolicy::Ask);
+        assert_eq!(
+            policy.resolve(&definition.effect, None),
+            saya_agent::ApprovalDecision::Ask,
+            "an ask session renders the ask for run_program"
+        );
     }
 }

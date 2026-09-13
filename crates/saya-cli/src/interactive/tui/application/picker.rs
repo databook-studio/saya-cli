@@ -5,6 +5,7 @@ use super::super::replay::{history_blocks, relative_time};
 use super::super::transcript::BlockKind;
 use super::super::types::{App, Picker, PickerEntry};
 use crate::interactive::session_state::SessionState;
+use saya_agent::ApprovalChoice;
 use saya_store::{FsSessionStore, SchemaStore, SessionStore};
 
 impl App {
@@ -143,13 +144,21 @@ impl App {
         }
     }
 
-    /// Answers the pending tool-approval request and records the decision.
-    pub(crate) fn answer_approval(&mut self, allow: bool) {
+    /// Answers the pending tool-approval request: the user's [`ApprovalChoice`]
+    /// goes back to the turn's decider, which records it into the session policy
+    /// (a session grant survives the turn; allow-once and deny leave nothing
+    /// behind). The transcript names what the answer actually did.
+    pub(crate) fn answer_approval(&mut self, choice: ApprovalChoice) {
         if let Some(pending) = self.request.pending_approval.take() {
-            let _ = pending.respond.send(allow);
-            let verb = if allow { "Approved" } else { "Denied" };
-            self.transcript
-                .push(BlockKind::System, format!("{verb} tool: {}", pending.tool));
+            let verb = match &choice {
+                ApprovalChoice::AllowOnce => format!("Approved tool: {}", pending.tool),
+                ApprovalChoice::AllowSession { token } => {
+                    format!("Allowed for session ({token}): {}", pending.tool)
+                }
+                ApprovalChoice::Deny => format!("Denied tool: {}", pending.tool),
+            };
+            let _ = pending.respond.send(choice);
+            self.transcript.push(BlockKind::System, verb);
         }
     }
 

@@ -2,15 +2,41 @@
 
 use super::types::{App, SearchKind};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use saya_agent::ApprovalChoice;
 
 /// Decides the answer for a key press aimed at a pending approval modal.
 /// Enter is deliberately *not* an approval: the modal can appear while the
 /// user is typing, and an implicit Enter must never allow SQL to run. Only an
-/// explicit `y` approves; `n`/Esc deny; anything else is left for the modal.
+/// explicit `y` (or `a`) approves once; `s` grants the offered session token
+/// when one exists; `n`/`d`/Esc deny; anything else is left for the modal.
 pub(crate) fn approval_answer(code: KeyCode) -> Option<bool> {
     match code {
         KeyCode::Char('y') | KeyCode::Char('Y') => Some(true),
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Some(false),
+        _ => None,
+    }
+}
+
+/// Decides the answer for a key press aimed at the tool-approval modal, where
+/// a session grant can be offered. The `[s]` key grants exactly the token the
+/// modal offered; with no token offered, `s` is not an answer at all (the
+/// modal stays — it never offered a grant to take). `a` keeps allow-once
+/// beside the habit keys, and Esc keeps denying.
+pub(crate) fn approval_choice(code: KeyCode, grant: Option<&str>) -> Option<ApprovalChoice> {
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('a') | KeyCode::Char('A') => {
+            Some(ApprovalChoice::AllowOnce)
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            grant.map(|token| ApprovalChoice::AllowSession {
+                token: token.to_owned(),
+            })
+        }
+        KeyCode::Char('n')
+        | KeyCode::Char('N')
+        | KeyCode::Char('d')
+        | KeyCode::Char('D')
+        | KeyCode::Esc => Some(ApprovalChoice::Deny),
         _ => None,
     }
 }
@@ -76,10 +102,16 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         return;
     }
-    // A tool-approval modal captures input until answered.
+    // A tool-approval modal captures input until answered. The modal's
+    // offered token decides whether `s` is an answer at all.
     if app.request.pending_approval.is_some() {
-        if let Some(allow) = approval_answer(code) {
-            app.answer_approval(allow);
+        let grant = app
+            .request
+            .pending_approval
+            .as_ref()
+            .and_then(|pending| pending.grant.clone());
+        if let Some(choice) = approval_choice(code, grant.as_deref()) {
+            app.answer_approval(choice);
         }
         return;
     }
@@ -228,6 +260,51 @@ mod approval_modal_tests {
         assert_eq!(approval_answer(KeyCode::Esc), Some(false));
         assert_eq!(approval_answer(KeyCode::Tab), None);
     }
+
+    /// The tool modal's three answers: `y`/`a` allow once, `s` grants exactly
+    /// the offered token, `n`/`d`/Esc deny. Enter is still not an approval,
+    /// and an unoffered `s` is not an answer at all — the modal never offered
+    /// a grant, so the key must not invent one.
+    #[test]
+    fn the_tool_modal_answers_grant_only_the_offered_token() {
+        use saya_agent::ApprovalChoice;
+        assert_eq!(
+            approval_choice(KeyCode::Char('y'), Some("workspace-write")),
+            Some(ApprovalChoice::AllowOnce)
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Char('a'), None),
+            Some(ApprovalChoice::AllowOnce)
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Char('s'), Some("workspace-write")),
+            Some(ApprovalChoice::AllowSession {
+                token: "workspace-write".to_owned()
+            })
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Char('s'), None),
+            None,
+            "no token offered, no grant to take: the modal stays"
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Char('n'), None),
+            Some(ApprovalChoice::Deny)
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Char('d'), None),
+            Some(ApprovalChoice::Deny)
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Esc, None),
+            Some(ApprovalChoice::Deny)
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Enter, Some("workspace-write")),
+            None,
+            "Enter is still never an approval"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -289,6 +366,7 @@ mod esc_run_panel_tests {
                 runtime: app.runtime.clone(),
                 prompt: "a prompt".into(),
                 approval: saya_agent::ApprovalPolicy::ReadOnly,
+                policy: saya_agent::SessionPolicy::new(saya_agent::ApprovalPolicy::ReadOnly),
                 overrides: crate::agent::runtime::PromptOverrides::default(),
                 history: Vec::new(),
                 state_db: app.state_db.clone(),
