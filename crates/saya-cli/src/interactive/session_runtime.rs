@@ -6,12 +6,13 @@
 //! already share the tree.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use saya_agent::{ApprovalPolicy, SessionPolicy};
 use saya_harness::lock::RunLock;
+use saya_store::{BypassSource, SessionJournal};
 
-use super::session_paths::{create_state_dir, default_session_dir};
+use super::session_paths::create_state_dir;
 use super::session_universe::SessionUniverse;
 
 pub(crate) struct SessionRuntime {
@@ -31,6 +32,18 @@ pub(crate) struct SessionRuntime {
     /// The explicit `--workspace` statement, carried so a mid-session
     /// `/resume` re-binds the same way the launch did.
     explicit: Option<PathBuf>,
+    /// The session journal: `sessions/<id>/journal.ndjson`, the audit record
+    /// of what the user consented to. Opened under this runtime's lock; a
+    /// torn tail from a crashed process is healed at open. Never read back
+    /// into the grant store — a resumed session starts empty.
+    journal: Arc<SessionJournal>,
+    /// Where `sessions/<id>/` lives, carried so a mid-session `/resume`
+    /// claims the resumed state directory in the same root the launch did.
+    sessions_root: PathBuf,
+    /// A journal write that failed at the launch site, said once by the
+    /// notice seam the surfaces already print. Later failures are said by
+    /// the site that made the consent.
+    journal_failure: Mutex<Option<String>>,
 }
 
 impl SessionRuntime {
@@ -39,7 +52,11 @@ impl SessionRuntime {
     /// universe. `fresh` distinguishes a first start — the git worktree top
     /// binds when nothing is stated — from a resume, which re-opens the
     /// recorded pin and runs unbound when the record has none. The approval
-    /// policy is built once here, from the session's mode.
+    /// policy is built once here, from the session's mode — empty by
+    /// construction: a resumed session inherits no grant, from the record
+    /// or from the journal, which is the audit record, never a grant source.
+    /// `sessions_root` is where `sessions/<id>/` lives, so a test can claim
+    /// a root of its own; production passes [`default_session_dir`].
     pub(crate) fn acquire(
         runtime: &crate::config::runtime::RuntimeConfig,
         explicit: Option<&Path>,
@@ -47,8 +64,9 @@ impl SessionRuntime {
         pinned_root: Option<&str>,
         id: &str,
         mode: ApprovalPolicy,
+        sessions_root: &Path,
     ) -> Result<Self, String> {
-        let state_dir = create_state_dir(&default_session_dir(), id)?;
+        let state_dir = create_state_dir(sessions_root, id)?;
         let lock = RunLock::acquire(state_dir.join("lock")).map_err(|error| match error {
             // The same words a run's second writer reads, with the same pid.
             saya_harness::HarnessError::LockHeld { pid } => format!(
@@ -73,7 +91,50 @@ impl SessionRuntime {
             policy_mode: mode,
             _lock: lock,
             explicit,
+            sessions_root: sessions_root.to_path_buf(),
+            journal: Arc::new(SessionJournal::open(&state_dir)),
+            journal_failure: Mutex::new(None),
         })
+    }
+
+    /// The session's journal handle — what `/allow`, the deciders, and the
+    /// bypass activation sites write through. Clones share the file.
+    pub(crate) fn journal(&self) -> Arc<SessionJournal> {
+        Arc::clone(&self.journal)
+    }
+
+    /// Journals one bypass activation and records a failure for the notice
+    /// seam — the launch site has no message of its own to say it in, so
+    /// the startup notice the surfaces already print carries it. The first
+    /// failure is kept; a journal that cannot write will keep failing.
+    pub(crate) fn journal_bypass_activation(&self, source: BypassSource) {
+        if let Err(error) = self.journal.bypass_activated(source) {
+            let mut failure = self
+                .journal_failure
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if failure.is_none() {
+                *failure = Some(super::session_grants::journal_warning(&error));
+            }
+        }
+    }
+
+    /// The startup notice the universe reported, if any — a vanished pin
+    /// must be said, never silent — plus a journal write that failed at the
+    /// launch site, if one did.
+    pub(crate) fn notice(&self) -> Option<String> {
+        let universe = self.universe.notice.as_deref();
+        let journal = self
+            .journal_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        match (universe, journal) {
+            (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+            (Some(a), None) => Some(a.to_owned()),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
     }
 
     /// The session's approval policy, cloned into a turn's decider. A clone
@@ -118,12 +179,6 @@ impl SessionRuntime {
         None
     }
 
-    /// The startup notice the universe reported, if any — a vanished pin
-    /// must be said, never silent.
-    pub(crate) fn notice(&self) -> Option<&str> {
-        self.universe.notice.as_deref()
-    }
-
     /// Swaps the runtime to a resumed session id: the new state directory is
     /// claimed (refusing a live holder) and composed before the old lock
     /// releases, so a failed swap leaves the current session still held. The
@@ -144,6 +199,7 @@ impl SessionRuntime {
             pinned_root,
             id,
             mode,
+            &self.sessions_root,
         )?;
         // Only reached when the new session is fully held and composed; the
         // swap drops this lock last.

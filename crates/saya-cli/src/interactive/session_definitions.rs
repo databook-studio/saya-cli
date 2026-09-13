@@ -65,9 +65,11 @@ pub(crate) fn scratch_sql() -> ToolDefinition {
             session's only writable SQL. It holds the session's staged intermediate results: \
             CREATE TABLE, INSERT, UPDATE, DELETE, and SELECT over them, joins and scoring \
             included. Single statement per call; results are capped at 50 rows; the database \
-            persists with the session and dies with it. No file reads of any kind — \
-            read_csv, read_parquet, ATTACH, COPY, INSTALL and LOAD are refused — so stage \
-            corpus data through the workspace tools first."
+            lives in this session's state directory, so it persists across the process — \
+            resuming the session re-opens it with its staged tables intact — and nothing \
+            deletes it: it remains until the session's state directory itself is removed. \
+            No file reads of any kind — read_csv, read_parquet, ATTACH, COPY, INSTALL and \
+            LOAD are refused — so stage corpus data through the workspace tools first."
             .into(),
         read_only: false,
         parameters: serde_json::json!({
@@ -181,6 +183,39 @@ mod tests {
     use super::*;
     use saya_agent::ApprovalPolicy;
     use saya_agent::SessionPolicy;
+
+    /// The scratch database's lifetime, stated truthfully (U7): the old
+    /// description claimed the database "dies with" the session, which was
+    /// the one sentence in the toolset that was not true — nothing deletes
+    /// it, and a resumed session re-enters the same state directory and
+    /// re-opens the same file with its staged tables (pinned end-to-end by
+    /// `session_universe_tests::a_resumed_session_re_enters_its_state_dir_
+    /// and_reopens_the_scratch`). The description must state what persists
+    /// and never imply an end that does not exist.
+    #[test]
+    fn the_scratch_description_states_what_persists_and_never_claims_it_dies() {
+        let description = scratch_sql().description;
+        assert!(
+            description.contains("state directory"),
+            "the database's home is stated: {description}"
+        );
+        assert!(
+            description.contains("persists across the process"),
+            "the persistence is stated: {description}"
+        );
+        assert!(
+            description.contains("resuming the session re-opens it"),
+            "the resume behaviour is stated: {description}"
+        );
+        assert!(
+            description.contains("nothing deletes it"),
+            "what ends it is stated, if anything does: {description}"
+        );
+        assert!(
+            !description.contains("dies with"),
+            "the false claim must not come back in any wording: {description}"
+        );
+    }
 
     /// The session's `run_program` is ask-gated, not plan-gated: the run
     /// surface's definition is plan-gated (`requires_approval: false`, the

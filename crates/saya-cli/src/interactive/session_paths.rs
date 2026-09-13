@@ -13,7 +13,7 @@ pub fn default_history_file() -> PathBuf {
 }
 
 /// Creates (or re-enters) `sessions/<id>/` at 0700 — the session's engine
-/// state: the scratch DuckDB, the single-writer lock, (from U2 on) the
+/// state: the scratch DuckDB, the single-writer lock, and (from U7 on) the
 /// session journal. Ids are filename-safe (the store's own rule); the id
 /// guard here is the same one the store applies to its own paths.
 pub(crate) fn create_state_dir(sessions_root: &Path, id: &str) -> Result<PathBuf, String> {

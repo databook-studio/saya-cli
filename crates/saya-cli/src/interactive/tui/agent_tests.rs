@@ -76,6 +76,7 @@ async fn the_four_approval_paths_decide_what_the_engine_decides() {
                 SessionPolicy::new(mode),
                 TurnPrimary::default(),
                 crate::approval_facts::ApprovalFacts::default(),
+                None,
             );
             assert_eq!(
                 tui.approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
@@ -146,6 +147,7 @@ async fn all_four_decider_paths_allow_what_the_engine_allows_under_bypass() {
             SessionPolicy::new(ApprovalPolicy::Bypass),
             TurnPrimary::default(),
             crate::approval_facts::ApprovalFacts::default(),
+            None,
         );
         assert!(
             tui.approve(&tool, &serde_json::json!({"sql": "SELECT 1"}))
@@ -198,6 +200,7 @@ async fn the_tuis_answered_ask_allows_allow_once_and_denies_a_deny() {
             SessionPolicy::new(ApprovalPolicy::Ask),
             TurnPrimary::default(),
             crate::approval_facts::ApprovalFacts::default(),
+            None,
         );
         let answerer = tokio::spawn(async move {
             if let Some(StreamMsg::ApprovalRequest { respond, .. }) = rx.recv().await {
@@ -232,6 +235,7 @@ async fn the_tui_s_modal_offers_the_turn_s_primary_sql_token() {
         SessionPolicy::new(ApprovalPolicy::Ask),
         primary.clone(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -261,6 +265,7 @@ async fn the_tui_s_modal_offers_the_turn_s_primary_sql_token() {
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { grant, .. }) = rx.recv().await {
@@ -294,6 +299,7 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
         policy.clone(),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -322,6 +328,7 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
         policy.clone(),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     assert!(
         turn_four.approve(&tool, &arguments).await,
@@ -351,6 +358,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         policy.clone(),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -371,6 +379,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         policy.clone(),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     assert!(
         decider.approve(&granted, &granted_args).await,
@@ -383,6 +392,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         policy.clone(),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -410,6 +420,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         policy.clone(),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -428,10 +439,131 @@ async fn a_grant_does_not_answer_a_different_shape() {
         policy.clone(),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
+        None,
     );
     assert!(
         !decider.approve(&fetch, &there).await,
         "`fetch:https+a.example` does not allow `fetch:https+b.example`: it asks, \
          and nobody answers"
     );
+}
+
+/// The session journal's `prompt` properties, driven through the one ask
+/// surface a test can drive (the TUI's channel; the terminal decider shares
+/// the operation, `record_prompt_answer`):
+///
+/// - a first `[s]` grant writes exactly one line — `source: "prompt"` — and
+///   the line is already on disk when `approve` returns true, which is the
+///   moment the call it allowed is allowed to run: the write precedes the
+///   run gate opening, so the record is meaningful;
+/// - a second grant of the same token writes none: the store answers
+///   "already", and the journal-once hook is that answer.
+#[tokio::test]
+async fn a_prompted_grant_journals_once_before_the_call_it_allowed_runs() {
+    let dir = std::env::temp_dir().join(format!("saya-tui-journal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("state dir creates");
+    let journal = std::sync::Arc::new(saya_store::SessionJournal::open(&dir));
+    let (tx, mut rx) = unbounded_channel();
+    let decider = ChannelApproval::new(
+        tx,
+        SessionPolicy::new(ApprovalPolicy::Ask),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+        Some(journal.clone()),
+    );
+    let tool = crate::interactive::session_definitions::workspace_write();
+    let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
+    let answerer = tokio::spawn(async move {
+        if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
+            assert_eq!(grant.as_deref(), Some("workspace-write"));
+            let _ = respond.send(ApprovalChoice::AllowSession {
+                token: grant.expect("the ask offered a token"),
+            });
+        }
+    });
+    assert!(
+        decider.approve(&tool, &arguments).await,
+        "the user's session grant allows the call that asked"
+    );
+    answerer.await.expect("the answerer completes");
+    // The line already exists at the moment the grant opened the run gate:
+    // this is the ordering property, pinned at the only instant the test can
+    // observe — the call it allowed is about to run.
+    assert_eq!(
+        journal.read().expect("the journal reads"),
+        vec![saya_store::JournalEvent::Granted {
+            token: "workspace-write".to_owned(),
+            source: saya_store::GrantSource::Prompt,
+        }],
+        "one line, source prompt, written before the call it allowed runs"
+    );
+    // The second call of the same shape resolves Allow through the grant —
+    // no ask, no new record, no line.
+    assert!(
+        decider.approve(&tool, &arguments).await,
+        "the granted token pre-answers the next call of the same shape"
+    );
+    assert_eq!(
+        journal.read().expect("the journal reads").len(),
+        1,
+        "a second grant of the same token writes none"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A journal write that fails must not take the session down — the user's
+/// `[s]` stands and the call it allowed runs — and must not fail silently:
+/// the decider says the missing audit line into the transcript.
+#[tokio::test]
+async fn a_failed_journal_write_says_so_and_does_not_take_the_call_down() {
+    let dir = std::env::temp_dir().join(format!("saya-tui-journal-fail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("state dir creates");
+    // The journal path is a directory, so every append fails.
+    std::fs::create_dir_all(dir.join("journal.ndjson")).expect("the block is made");
+    let journal = std::sync::Arc::new(saya_store::SessionJournal::open(&dir));
+    let (tx, mut rx) = unbounded_channel();
+    let decider = ChannelApproval::new(
+        tx,
+        SessionPolicy::new(ApprovalPolicy::Ask),
+        TurnPrimary::default(),
+        crate::approval_facts::ApprovalFacts::default(),
+        Some(journal),
+    );
+    let tool = crate::interactive::session_definitions::workspace_write();
+    let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
+    let answerer = tokio::spawn(async move {
+        if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
+            assert_eq!(grant.as_deref(), Some("workspace-write"));
+            let _ = respond.send(ApprovalChoice::AllowSession {
+                token: grant.expect("the ask offered a token"),
+            });
+        }
+        // Then the warning the decider said arrives on the same channel.
+        match rx.recv().await {
+            Some(StreamMsg::Notice(warning)) => Some(warning),
+            Some(_) => panic!("the decider said something other than the journal warning"),
+            None => panic!("the decider said nothing"),
+        }
+    });
+    assert!(
+        decider.approve(&tool, &arguments).await,
+        "the consent stands: a failed audit write does not revoke it"
+    );
+    let warning = answerer
+        .await
+        .expect("the answerer completes")
+        .expect("the decider said the warning");
+    assert!(
+        warning.to_lowercase().contains("journal"),
+        "the warning names the journal: {warning}"
+    );
+    // The grant is in force: the next call of the same shape resolves Allow
+    // through it — the session carries on.
+    assert!(
+        decider.approve(&tool, &arguments).await,
+        "the granted token pre-answers the next call: the session carries on"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

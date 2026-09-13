@@ -3,6 +3,8 @@ use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
 use saya_agent::{
     ApprovalChoice, ApprovalDecision, ApprovalPolicy, SessionGrants, SessionPolicy, ToolDefinition,
 };
+use saya_store::SessionJournal;
+use std::sync::Arc;
 
 pub(crate) struct TerminalApproval {
     policy: SessionPolicy,
@@ -15,6 +17,11 @@ pub(crate) struct TerminalApproval {
     /// universe (or the resolved config on the one-shot ask path); the
     /// prompt states only these, never prose.
     facts: ApprovalFacts,
+    /// The session journal, when this decider belongs to a session — a
+    /// `[s]` answer's new grant is journalled there, before the call it
+    /// allowed runs. `None` — the one-shot ask and the headless shapes —
+    /// records grants with no journal: there is no session to journal for.
+    journal: Option<Arc<SessionJournal>>,
 }
 
 impl TerminalApproval {
@@ -29,6 +36,7 @@ impl TerminalApproval {
             can_prompt,
             primary,
             facts,
+            journal: None,
         }
     }
 
@@ -46,6 +54,7 @@ impl TerminalApproval {
             can_prompt: false,
             primary: TurnPrimary::default(),
             facts: ApprovalFacts::default(),
+            journal: None,
         }
     }
 
@@ -54,18 +63,22 @@ impl TerminalApproval {
     /// is in force for every later turn of the same session. The primary is
     /// the turn's handle: the turn binds the registry's primary into it
     /// before the model runs. `facts` are the session composition's prompt
-    /// facts — what this decider's prompts may state about the session.
+    /// facts — what this decider's prompts may state about the session. The
+    /// session's journal rides along: a `[s]` answer's new grant is written
+    /// there before this call is allowed to run.
     pub(crate) fn from_session(
         policy: SessionPolicy,
         can_prompt: bool,
         primary: TurnPrimary,
         facts: ApprovalFacts,
+        journal: Option<Arc<SessionJournal>>,
     ) -> Self {
         Self {
             policy,
             can_prompt,
             primary,
             facts,
+            journal,
         }
     }
 }
@@ -143,8 +156,20 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                 }
                 let choice = terminal_choice(&answer, grant.as_deref());
                 // Only "allow for this session" records anything; the grant
-                // lands in the session's one policy, so it outlives the turn.
-                self.policy.record(choice.clone());
+                // lands in the session's one policy, so it outlives the turn,
+                // and a *new* grant is journalled there before this call is
+                // allowed to run — the shared operation, one wording. A
+                // failed journal write changes no consent: it is said on
+                // stderr, the prompt's own channel, and the session carries
+                // on.
+                let (_, warning) = crate::interactive::session_grants::record_prompt_answer(
+                    &self.policy,
+                    &choice,
+                    self.journal.as_deref(),
+                );
+                if let Some(warning) = warning {
+                    eprintln!("{warning}");
+                }
                 !matches!(choice, ApprovalChoice::Deny)
             }
         }

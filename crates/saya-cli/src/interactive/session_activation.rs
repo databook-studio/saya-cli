@@ -68,6 +68,33 @@ pub(crate) fn is_bypass_mode(state: &SessionState) -> bool {
     state.approval_mode.parse() == Ok(saya_agent::ApprovalPolicy::Bypass)
 }
 
+/// Whether this launch itself activates bypass — a property of the system,
+/// not a preference: the journal records a consent, so it records exactly
+/// the launches where the user consented to the mode now. A fresh session
+/// runs under the mode its launch stated, so bypass there is an activation;
+/// a resume whose `--approval-mode` explicitly overrode the persisted mode
+/// is a new statement of consent this process made; a resume that merely
+/// carries the persisted mode re-prints the activation line for the user
+/// (the mode is real again) but consents to nothing new — the record is
+/// what made it operative — so nothing is journalled.
+pub(crate) fn bypass_activated_at_launch(
+    fresh: bool,
+    mode_explicitly_stated: bool,
+    mode: &str,
+) -> bool {
+    (fresh || mode_explicitly_stated) && mode.parse() == Ok(saya_agent::ApprovalPolicy::Bypass)
+}
+
+/// Whether a mid-session `/approvals bypass` newly activates the mode: the
+/// mode was not bypass before the command and is bypass after it. A
+/// re-statement over an already-bypass session changes nothing — like
+/// `/allow` over an already-granted token, it says so but records no new
+/// consent — so nothing is journalled for it.
+pub(crate) fn bypass_activated_by_command(before: &str, after: &str) -> bool {
+    before.parse() != Ok(saya_agent::ApprovalPolicy::Bypass)
+        && after.parse() == Ok(saya_agent::ApprovalPolicy::Bypass)
+}
+
 /// The activation line when the session's mode is bypass, `None` otherwise —
 /// the one call every emission site makes (launch, `/approvals bypass`,
 /// resume), so the three surfaces cannot drift into different words.

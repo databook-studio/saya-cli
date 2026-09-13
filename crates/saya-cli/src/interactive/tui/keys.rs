@@ -372,6 +372,7 @@ mod esc_run_panel_tests {
                 state_db: app.state_db.clone(),
                 last_sql: None,
                 session: std::sync::Arc::clone(&app.session),
+                journal: None,
             });
         app.request.stream = Some(stream);
         handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);

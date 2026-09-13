@@ -68,12 +68,25 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             .approval_mode
             .parse()
             .unwrap_or(saya_agent::ApprovalPolicy::Ask),
+        &default_session_dir(),
     )?;
     // The pin the record carries: resolved fresh, or re-bound by an explicit
     // `--workspace`; a resumed session re-opening its recorded pin keeps it
     // untouched (even where the root has vanished, so the record remembers).
     if let Some(root) = session.record_root(fresh) {
         state.workspace_root = Some(root);
+    }
+    // The launch stated the mode; a fresh session under bypass — or a
+    // resume whose `--approval-mode` explicitly overrode the record — is an
+    // activation, and the journal records it here, before anything runs. A
+    // resume that merely carries the persisted mode re-prints the line but
+    // consents to nothing new, so nothing is journalled.
+    if super::session_activation::bypass_activated_at_launch(
+        fresh,
+        cli.options.approval_mode.is_some(),
+        &state.approval_mode,
+    ) {
+        session.journal_bypass_activation(saya_store::BypassSource::Launch);
     }
     let terminal = io::stdin().is_terminal();
     if terminal {
@@ -202,7 +215,11 @@ fn handle_line(
     // A mode change through `/approvals` carries the activation line with it:
     // under bypass the no-euphemism wording, the staged interpreter facts,
     // and the probe's verdict — said where the mode is set, not just implied
-    // by the indicator.
+    // by the indicator. The mode before the command decides whether this
+    // command newly activated bypass: only then is a consent recorded in
+    // the journal; a re-statement over an already-bypass session records
+    // none, and a failed journal write is said, not silent.
+    let before_mode = state.approval_mode.clone();
     let approvals_set = matches!(parsed, Some(SlashCommand::Approvals(Some(_))));
     let action = match parsed {
         Some(command) => state.apply(
@@ -229,6 +246,7 @@ fn handle_line(
                 line,
                 approval,
                 session.policy(),
+                Some(session.journal()),
                 terminal,
                 state.prompt_overrides(),
                 history,
@@ -344,8 +362,14 @@ fn handle_line(
         // `/allow <scopes…>` seeds the session's one grant store through the
         // shared behaviour — the same parser, the session surface. A refused
         // scope is an error and seeds nothing; `/allow none` seeds nothing
-        // and says so.
-        let action = match super::session_grants::allow(&tokens, session.policy().grants()) {
+        // and says so. Each newly seeded token is journalled once by the
+        // shared behaviour; a failed journal write changes no grant and is
+        // said in the message.
+        let action = match super::session_grants::allow(
+            &tokens,
+            session.policy().grants(),
+            &session.journal(),
+        ) {
             Ok(message) => SessionAction::Message(message),
             Err(error) => SessionAction::Error(error),
         };
@@ -478,11 +502,26 @@ fn handle_line(
         return Ok(false);
     }
     super::session_emit::emit_action(action, format, state, store)?;
-    if approvals_set
-        && let Some(line) =
+    if approvals_set {
+        if let Some(line) =
             super::session_activation::line_if_bypass(state, runtime, &session.universe())
-    {
-        super::session_emit::emit_action(SessionAction::Message(line), format, state, store)?;
+        {
+            super::session_emit::emit_action(SessionAction::Message(line), format, state, store)?;
+        }
+        if super::session_activation::bypass_activated_by_command(
+            &before_mode,
+            &state.approval_mode,
+        ) && let Err(error) = session
+            .journal()
+            .bypass_activated(saya_store::BypassSource::Command)
+        {
+            super::session_emit::emit_action(
+                SessionAction::Message(super::session_grants::journal_warning(&error)),
+                format,
+                state,
+                store,
+            )?;
+        }
     }
     block_on(store.save(state.redacted()))?;
     Ok(false)

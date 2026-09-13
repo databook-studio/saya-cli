@@ -31,6 +31,9 @@ pub(crate) async fn run(
     // The session's one approval policy, cloned into this turn's decider: a
     // grant recorded in this turn's ask is in force for every later turn.
     policy: SessionPolicy,
+    // The session's journal: a `[s]` answer's new grant is journalled there
+    // before the call it allowed runs.
+    journal: Option<Arc<saya_store::SessionJournal>>,
     can_prompt: bool,
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
@@ -48,9 +51,10 @@ pub(crate) async fn run(
     // session composition's prompt facts, which its prompts may state.
     let primary = session.primary.clone();
     let facts = session.approval_facts(runtime);
-    let decider: Arc<dyn ApprovalDecider> = Arc::new(
-        crate::prompt_approval::TerminalApproval::from_session(policy, can_prompt, primary, facts),
-    );
+    let decider: Arc<dyn ApprovalDecider> =
+        Arc::new(crate::prompt_approval::TerminalApproval::from_session(
+            policy, can_prompt, primary, facts, journal,
+        ));
     let work = agent::runtime::run_prompt_with_sink(
         runtime,
         prompt,

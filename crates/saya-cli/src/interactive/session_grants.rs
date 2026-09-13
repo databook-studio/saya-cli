@@ -5,7 +5,46 @@
 //! authority.
 
 use crate::commands::run::scopes::{self, Surface};
-use saya_agent::{ApprovalPolicy, SessionGrants};
+use saya_agent::{ApprovalChoice, ApprovalPolicy, SessionGrants, SessionPolicy};
+use saya_store::{GrantSource, SessionJournal};
+
+/// How a failed journal write is said — the one wording every journaling
+/// site renders, so the two surfaces cannot drift. The consent always
+/// stands; only the audit line is missing.
+pub(crate) fn journal_warning(error: &saya_store::StoreError) -> String {
+    format!(
+        "warning: the session journal could not record this ({error}) — the grant stands, \
+         but the audit line is missing"
+    )
+}
+
+/// The `[s]` answer's one operation, shared by both prompt surfaces: record
+/// the answer in the session's one policy, and journal a *new* grant there —
+/// before the call it allowed runs, which is the best a per-call approval
+/// surface can do and the ordering that makes the record meaningful. Allow-
+/// once and deny record nothing. Returns whether a new grant landed, and —
+/// when the journal write failed — the one warning wording: the consent
+/// stands, the audit line is missing, and saying so is never optional.
+pub(crate) fn record_prompt_answer(
+    policy: &SessionPolicy,
+    choice: &ApprovalChoice,
+    journal: Option<&SessionJournal>,
+) -> (bool, Option<String>) {
+    let new_grant = policy.record(choice.clone());
+    if !new_grant {
+        return (false, None);
+    }
+    let ApprovalChoice::AllowSession { token } = choice else {
+        return (true, None);
+    };
+    let Some(journal) = journal else {
+        return (true, None);
+    };
+    match journal.granted(token, GrantSource::Prompt) {
+        Ok(()) => (true, None),
+        Err(error) => (true, Some(journal_warning(&error))),
+    }
+}
 
 /// `/allow <scopes…>`: parse the tokens on the session surface, seed the
 /// store with the stated tokens verbatim, and say what was seeded.
@@ -14,7 +53,16 @@ use saya_agent::{ApprovalPolicy, SessionGrants};
 /// seeds nothing, saying so. It is not a revoke: the store is additive
 /// only, so whatever the session already holds stays held. A refused scope
 /// is a usage error and seeds nothing.
-pub(crate) fn allow(tokens: &[String], grants: &SessionGrants) -> Result<String, String> {
+///
+/// Every newly seeded token is journalled once (`source: "seed"`), before
+/// anything runs under it — the store's own new-grant answer is the
+/// journal-once hook. A failed journal write changes no grant; its warning
+/// is folded into the message, never silent.
+pub(crate) fn allow(
+    tokens: &[String],
+    grants: &SessionGrants,
+    journal: &SessionJournal,
+) -> Result<String, String> {
     let approved = scopes::parse(tokens, Surface::Session)?;
     if approved.tokens.iter().any(|token| token == "none") {
         return Ok(
@@ -25,8 +73,14 @@ pub(crate) fn allow(tokens: &[String], grants: &SessionGrants) -> Result<String,
     }
     let mut seeded = Vec::new();
     let mut already = Vec::new();
+    let mut warnings = Vec::new();
     for token in &approved.tokens {
         if grants.grant(token) {
+            // Journal once, at the moment of seeding — the same act that
+            // puts the token in the store.
+            if let Err(error) = journal.granted(token, GrantSource::Seed) {
+                warnings.push(journal_warning(&error));
+            }
             seeded.push(token.clone());
         } else {
             already.push(token.clone());
@@ -47,6 +101,12 @@ pub(crate) fn allow(tokens: &[String], grants: &SessionGrants) -> Result<String,
             "already granted (nothing changed): {}",
             already.join(", ")
         ));
+    }
+    for warning in warnings {
+        if !message.is_empty() {
+            message.push('\n');
+        }
+        message.push_str(&warning);
     }
     Ok(message)
 }
