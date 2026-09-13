@@ -27,7 +27,11 @@ pub(crate) fn emit_action(
         | SessionAction::Resume(_)
         // The `/run` family is intercepted in the session loop (it needs the
         // runtime, and the nested run's output never passes through this
-        // seam); the arms keep the match exhaustive.
+        // seam); the arms keep the match exhaustive. `/allow` and `/grants`
+        // are intercepted too — they seed and read the session's grant
+        // store, which lives in the runtime.
+        | SessionAction::Allow(_)
+        | SessionAction::Grants
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)

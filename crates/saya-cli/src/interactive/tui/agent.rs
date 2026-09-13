@@ -4,7 +4,7 @@
 
 use crate::agent::runtime::{PromptOverrides, run_prompt_with_sink};
 use crate::config::runtime::RuntimeConfig;
-use crate::grant_token::grant_token;
+use crate::grant_token::{TurnPrimary, grant_token};
 use crate::interactive::session_universe::SessionUniverse;
 use async_trait::async_trait;
 use saya_agent::{
@@ -62,18 +62,31 @@ impl AgentEventSink for ChannelSink {
 pub(crate) struct ChannelApproval {
     tx: UnboundedSender<StreamMsg>,
     policy: SessionPolicy,
+    /// The turn's primary connection, bound by the turn this decider
+    /// belongs to; the SQL family's suggestion names it when the call
+    /// names no connection.
+    primary: TurnPrimary,
 }
 
 impl ChannelApproval {
-    pub(crate) fn new(tx: UnboundedSender<StreamMsg>, policy: SessionPolicy) -> Self {
-        Self { tx, policy }
+    pub(crate) fn new(
+        tx: UnboundedSender<StreamMsg>,
+        policy: SessionPolicy,
+        primary: TurnPrimary,
+    ) -> Self {
+        Self {
+            tx,
+            policy,
+            primary,
+        }
     }
 }
 
 #[async_trait]
 impl ApprovalDecider for ChannelApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
-        let grant = grant_token(&tool.name, arguments);
+        let primary = self.primary.get();
+        let grant = grant_token(&tool.name, arguments, primary.as_deref());
         match self.policy.resolve(&tool.effect, grant.as_deref()) {
             ApprovalDecision::Allow => true,
             ApprovalDecision::Deny => false,
@@ -146,10 +159,14 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
     let cancel = CancellationToken::new();
     let cancel_worker = cancel.clone();
     let prompt_worker = prompt.clone();
+    // The turn's primary handle rides the session's universe: the decider
+    // holds a clone, and the turn binds the registry's primary into it.
+    let primary = session.primary.clone();
 
     std::thread::spawn(move || {
         let sink = ChannelSink { tx: tx.clone() };
-        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::new(tx.clone(), policy));
+        let decider: Arc<dyn ApprovalDecider> =
+            Arc::new(ChannelApproval::new(tx.clone(), policy, primary));
         let runtime_handle = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

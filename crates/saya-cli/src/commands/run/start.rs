@@ -190,7 +190,8 @@ async fn prepare(
                 .into(),
         ));
     }
-    let approved = super::scopes::parse(&request.allow).map_err(|message| Err(message.into()))?;
+    let approved = super::scopes::parse(&request.allow, super::scopes::Surface::Run)
+        .map_err(|message| Err(message.into()))?;
     let budgets = budget::parse(&request.budget, &runtime.resolved.jobs.budgets())
         .map_err(|message| Err(message.into()))?;
     let spec = RunSpec::new(

@@ -6,7 +6,9 @@ pub(crate) use super::turn_config::{
 };
 use super::turn_inputs::{TurnInputs, prepare_turn};
 use crate::interactive::session_universe::SessionUniverse;
-use crate::{config::runtime::RuntimeConfig, prompt_approval::TerminalApproval};
+use crate::{
+    config::runtime::RuntimeConfig, grant_token::TurnPrimary, prompt_approval::TerminalApproval,
+};
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, AgentRequest,
     ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, LocalStateEffect,
@@ -77,6 +79,19 @@ pub(crate) async fn run_prompt_with_inputs(
     let provider = inputs.provider;
     let registry = inputs.registry;
     let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
+
+    // The turn's registry is the turn's connection fact: the deciders hold
+    // the session universe's primary handle, and this binds the turn's
+    // primary into it — before the registry moves into the tools. The
+    // fallback decider (the one-shot `ask` path, no decider passed in)
+    // owns its own handle, bound the same way, so its SQL suggestions name
+    // the turn's real primary.
+    let fallback_primary = TurnPrimary::default();
+    if let Some(session) = session.as_ref() {
+        session.primary.bind(&registry);
+    } else {
+        fallback_primary.bind(&registry);
+    }
 
     for (name, reason) in inputs.failures {
         sink.emit(AgentEvent::assistant_text(format!(
@@ -155,7 +170,7 @@ pub(crate) async fn run_prompt_with_inputs(
         history,
         context_blocks,
     };
-    let fallback_approval = TerminalApproval::new(approval, can_prompt);
+    let fallback_approval = TerminalApproval::new(approval, can_prompt, fallback_primary);
     let approver: &dyn ApprovalDecider = match decider.as_deref() {
         Some(decider) => decider,
         None => &fallback_approval,

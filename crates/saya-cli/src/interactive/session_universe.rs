@@ -39,6 +39,12 @@ pub(crate) struct SessionUniverse {
     scratch: Option<Arc<ScratchSql>>,
     fetch: Option<Arc<FetchTools>>,
     runner: Option<SessionRunner>,
+    /// The turn's primary connection handle. The approval deciders hold a
+    /// clone, and each turn binds the registry `prepare_turn` builds into
+    /// it, so a grant suggestion names the database the session is actually
+    /// connected to — and a mid-session `/connect` rebinds it for the next
+    /// turn, never stale.
+    pub(crate) primary: crate::grant_token::TurnPrimary,
     /// A startup fact the user must see: a pinned root that no longer
     /// exists. Reported, never silent.
     pub(crate) notice: Option<String>,
@@ -55,6 +61,7 @@ impl SessionUniverse {
             scratch: None,
             fetch: None,
             runner: None,
+            primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
         }
     }
@@ -100,6 +107,7 @@ impl SessionUniverse {
             scratch: Some(Arc::new(scratch)),
             fetch: Some(fetch),
             runner,
+            primary: crate::grant_token::TurnPrimary::default(),
             notice,
         })
     }

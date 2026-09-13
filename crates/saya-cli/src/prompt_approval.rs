@@ -1,24 +1,39 @@
-use crate::grant_token::{grant_token, session_answers_line};
+use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
 use saya_agent::{ApprovalChoice, ApprovalDecision, ApprovalPolicy, SessionPolicy, ToolDefinition};
 
 pub(crate) struct TerminalApproval {
     policy: SessionPolicy,
     can_prompt: bool,
+    /// The turn's primary connection, bound by the turn that owns this
+    /// decider; the SQL family's suggestion names it when the call names
+    /// no connection. Unbound — a run's construction — suggests no token.
+    primary: TurnPrimary,
 }
 
 impl TerminalApproval {
-    pub(crate) fn new(policy: ApprovalPolicy, can_prompt: bool) -> Self {
+    pub(crate) fn new(policy: ApprovalPolicy, can_prompt: bool, primary: TurnPrimary) -> Self {
         Self {
             policy: SessionPolicy::new(policy),
             can_prompt,
+            primary,
         }
     }
 
     /// Built over the session's one approval policy — the hoisted instance a
     /// session's turns clone, so a grant recorded through this decider's ask
-    /// is in force for every later turn of the same session.
-    pub(crate) fn from_session(policy: SessionPolicy, can_prompt: bool) -> Self {
-        Self { policy, can_prompt }
+    /// is in force for every later turn of the same session. The primary is
+    /// the turn's handle: the turn binds the registry's primary into it
+    /// before the model runs.
+    pub(crate) fn from_session(
+        policy: SessionPolicy,
+        can_prompt: bool,
+        primary: TurnPrimary,
+    ) -> Self {
+        Self {
+            policy,
+            can_prompt,
+            primary,
+        }
     }
 }
 
@@ -59,7 +74,8 @@ pub(crate) fn terminal_choice(answer: &str, grant: Option<&str>) -> ApprovalChoi
 #[async_trait::async_trait]
 impl saya_agent::ApprovalDecider for TerminalApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
-        let grant = grant_token(&tool.name, arguments);
+        let primary = self.primary.get();
+        let grant = grant_token(&tool.name, arguments, primary.as_deref());
         match self.policy.resolve(&tool.effect, grant.as_deref()) {
             ApprovalDecision::Allow => true,
             ApprovalDecision::Deny => false,

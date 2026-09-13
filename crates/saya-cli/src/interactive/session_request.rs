@@ -42,9 +42,12 @@ pub(crate) async fn run(
     let sink = TerminalSink::new(format);
     // The decider is the terminal ask over the session's policy: the mode
     // resolves there, and a session grant recorded by an answer lands in the
-    // one store every turn shares.
+    // one store every turn shares. It holds the session universe's primary
+    // handle, which the turn binds from its registry — a grant suggestion
+    // names the database the session is actually connected to.
+    let primary = session.primary.clone();
     let decider: Arc<dyn ApprovalDecider> = Arc::new(
-        crate::prompt_approval::TerminalApproval::from_session(policy, can_prompt),
+        crate::prompt_approval::TerminalApproval::from_session(policy, can_prompt, primary),
     );
     let work = agent::runtime::run_prompt_with_sink(
         runtime,

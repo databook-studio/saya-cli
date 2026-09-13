@@ -2,7 +2,8 @@
 
 Running `saya` without a subcommand starts the scrollback-preserving terminal
 session. It accepts `/help`, `/connect`, `/connections`, `/include`,
-`/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/schema`,
+`/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/allow`,
+`/grants`, `/schema`,
 `/clear`, `/history`, and `/exit`.
 
 Examples:
@@ -180,6 +181,24 @@ may do something it cannot. It becomes available with the slice that wires
 it — per-step roles are not bound yet, every episode calls the orchestrator
 endpoint, and this document does not describe a capability a run cannot
 reach.
+
+The grammar also parses `sql:<connection>`, and a run **refuses it with a
+usage error** for the same reason: a run's decider consults no session
+grant, so the scope would gate nothing. The scope is a session's word —
+`/allow sql:<connection>` in an interactive session pre-answers the
+read-shaped SQL tools' asks against that connection for the session's
+lifetime — and headless runs are put on that same engine by a later wiring
+item (U4). Until then a run states what it can act on, and `sql:` is not
+one of them.
+
+Interactive sessions grant these words without a run: `/allow <scopes>`
+seeds the session's grant store through the same grammar judged for the
+session surface (it accepts `sql:<connection>` and refuses
+`endpoint:<role>=<endpoint>` — a session binds no per-step endpoint roles),
+and `/grants` lists the store's tokens verbatim, one per line, sorted, under
+a header stating the lifetime. Grants die with the session: they are never
+persisted, and a resumed session starts empty. `/allow none` states the
+empty approval and seeds nothing — it is not a revoke.
 
 Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
 (`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,

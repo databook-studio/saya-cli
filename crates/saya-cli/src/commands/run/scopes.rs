@@ -9,16 +9,44 @@
 
 use saya_types::{
     Capabilities, Destination, EndpointBindings, FetchScope, InterpreterScope, RunnerScope,
-    is_refused_runner_program,
+    is_name_shaped, is_refused_runner_program,
 };
+
+/// The surface a scope list is stated on: one grammar, parsed by one
+/// parser; the surface selects which [`NOT_YET_WIRED`] refusals apply. A
+/// run's `--allow` and a session's `/allow` state the same words but bind
+/// different things — a run approves [`Capabilities`], a session seeds its
+/// grant store — so a family can be wired on one and not the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Surface {
+    /// `--allow` on a headless run.
+    Run,
+    /// `/allow` in an interactive session.
+    Session,
+}
 
 /// The scope grammar, for the error message that names what was refused.
 const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
                      fetch:<scheme>+<host>, runner:<program>, interpreter:<program>, \
-                     endpoint:<role>=<endpoint>";
+                     endpoint:<role>=<endpoint>, sql:<connection>";
 
-/// Scopes the grammar accepts but the run engine cannot yet act on: no tool
-/// in a run's universe consumes them, so approving one would gate nothing.
+/// One family-surface refusal: the family parses under the grammar but the
+/// named surface binds nothing for it, so approving one there would gate
+/// nothing.
+struct NotYetWired {
+    family: &'static str,
+    surface: Surface,
+    /// The user-facing reason — wiring, never an absence claim.
+    reason: &'static str,
+    /// The phrase the tests pin, so the reason cannot drift into a lie.
+    /// Read by tests only; production reads `reason`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pinned: &'static str,
+}
+
+/// Scopes the grammar accepts but a surface cannot yet act on: no tool the
+/// surface's decider consults consumes them, so approving one there would
+/// gate nothing.
 ///
 /// They are refused at parse time rather than accepted and ignored. The
 /// repo's own standard is that a flag implying a capability is available is
@@ -26,22 +54,49 @@ const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
 /// has been told the model may use a scratch database, and it cannot. An
 /// independent review found exactly this shipped, and this list is the fix.
 ///
-/// Each entry names the plan item that wires it. Deleting an entry is the
-/// whole of "turning the scope on" once its tool is in the universe.
-const NOT_YET_WIRED: &[(&str, &str)] = &[(
-    "endpoint",
-    "every episode calls the orchestrator endpoint; per-step roles are not bound yet",
-)];
+/// Entries are per surface by design: `endpoint:` is refused on both, each
+/// with its own true reason (a run's episodes and a session's binding are
+/// different facts), and `sql:` is refused only on the run surface — the
+/// session's `/allow` accepts it. Each entry names the plan item that wires
+/// it. Deleting an entry is the whole of "turning the scope on" once its
+/// consumer lands.
+const NOT_YET_WIRED: &[NotYetWired] = &[
+    NotYetWired {
+        family: "endpoint",
+        surface: Surface::Run,
+        reason: "every episode calls the orchestrator endpoint; per-step roles are not bound yet",
+        pinned: "per-step roles are not bound",
+    },
+    NotYetWired {
+        family: "endpoint",
+        surface: Surface::Session,
+        reason: "a session binds no per-step endpoint roles; a run plan is where roles bind",
+        pinned: "binds no per-step endpoint roles",
+    },
+    NotYetWired {
+        family: "sql",
+        surface: Surface::Run,
+        reason: "a run's decider consults no session grant; wiring item U4 (headless runs on \
+                 the same engine) is what wires it",
+        pinned: "wiring item U4",
+    },
+];
 
-/// The refusal for a scope that parses but binds nothing.
-fn not_yet_wired(token: &str, family: &str) -> Option<String> {
+/// The refusal for a scope that parses but binds nothing on `surface`.
+fn not_yet_wired(token: &str, family: &str, surface: Surface) -> Option<String> {
+    let place = match surface {
+        Surface::Run => "in a run",
+        Surface::Session => "in this session",
+    };
     NOT_YET_WIRED
         .iter()
-        .find(|(name, _)| *name == family)
-        .map(|(_, why)| {
+        .find(|entry| entry.family == family && entry.surface == surface)
+        .map(|entry| {
             format!(
-                "scope `{token}` is not available yet: {why}. It parses, but nothing in a run \
-             would consume it, so approving it would gate nothing. Re-run without it."
+                "scope `{token}` is not available yet: {reason}. It parses, but nothing \
+                 {place} would consume it, so approving it would gate nothing. Re-run \
+                 without it.",
+                reason = entry.reason,
             )
         })
 }
@@ -50,6 +105,10 @@ fn not_yet_wired(token: &str, family: &str) -> Option<String> {
 #[derive(Debug)]
 pub(crate) struct Approved {
     pub(crate) capabilities: Capabilities,
+    /// The scopes exactly as stated — the session grant store's words. A
+    /// run's approval is `capabilities`; a session's `/allow` seeds these
+    /// verbatim, so `/grants` shows the words the user typed.
+    pub(crate) tokens: Vec<String>,
 }
 
 /// Parses the `--allow` tokens. An empty list is the caller's refusal
@@ -57,10 +116,12 @@ pub(crate) struct Approved {
 /// match the grammar is a typed usage error. `none` is the grammar's
 /// explicit empty approval — see the head of the body.
 ///
-/// `pub(crate)` so the interactive session's grant token suggester can feed
-/// every token it produces back through this one parser — the grammar's
-/// authority is here, never a duplicate.
-pub(crate) fn parse(tokens: &[String]) -> Result<Approved, String> {
+/// `pub(crate)` so the interactive session's grant token suggester and the
+/// `/allow` command can feed every token they produce or accept back
+/// through this one parser — the grammar's authority is here, never a
+/// duplicate. The `surface` selects which [`NOT_YET_WIRED`] refusals apply;
+/// the grammar itself is one loop, one `KNOWN`, one shape rule set.
+pub(crate) fn parse(tokens: &[String], surface: Surface) -> Result<Approved, String> {
     // `none` states the empty approval: no capabilities at all, read-only
     // by construction — the episode's per-tool-call decider already
     // defaults to read-only (`assembly.rs`), and nothing a refused scope
@@ -74,6 +135,7 @@ pub(crate) fn parse(tokens: &[String]) -> Result<Approved, String> {
         }
         return Ok(Approved {
             capabilities: Capabilities::default(),
+            tokens: tokens.to_vec(),
         });
     }
     let mut capabilities = Capabilities::default();
@@ -125,15 +187,35 @@ pub(crate) fn parse(tokens: &[String]) -> Result<Approved, String> {
             }
             interpreters.push(rest.to_string());
         } else if let Some(rest) = token.strip_prefix("endpoint:") {
-            if let Some(refusal) = not_yet_wired(token, "endpoint") {
-                return Err(refusal);
-            }
+            // The payload is judged by the grammar's own shape rule first:
+            // a refusal message that says "it parses" must be true.
             let Some((role, endpoint)) = rest.split_once('=') else {
                 return Err(format!(
                     "scope `{token}` must be endpoint:<role>=<endpoint>; {KNOWN}"
                 ));
             };
+            if !is_name_shaped(role) || !is_name_shaped(endpoint) {
+                return Err(format!(
+                    "scope `{token}` must name a role and an endpoint with the shape a \
+                     run-scoped name has; {KNOWN}"
+                ));
+            }
+            if let Some(refusal) = not_yet_wired(token, "endpoint", surface) {
+                return Err(refusal);
+            }
             bindings.push((role.to_string(), endpoint.to_string()));
+        } else if let Some(rest) = token.strip_prefix("sql:") {
+            // The payload is a connection's registry name, judged by the
+            // same name-shape rule `endpoint:` payloads are.
+            if !is_name_shaped(rest) {
+                return Err(format!(
+                    "scope `{token}` must be sql:<connection>, a connection's registry \
+                     name; {KNOWN}"
+                ));
+            }
+            if let Some(refusal) = not_yet_wired(token, "sql", surface) {
+                return Err(refusal);
+            }
         } else {
             return Err(format!("unknown scope `{token}`; {KNOWN}"));
         }
@@ -159,7 +241,10 @@ pub(crate) fn parse(tokens: &[String]) -> Result<Approved, String> {
         capabilities.endpoints = EndpointBindings::new(bindings)
             .map_err(|error| format!("endpoint bindings refused: {error}"))?;
     }
-    Ok(Approved { capabilities })
+    Ok(Approved {
+        capabilities,
+        tokens: tokens.to_vec(),
+    })
 }
 
 #[cfg(test)]
@@ -177,7 +262,7 @@ mod tests {
     #[test]
     fn a_scope_nothing_consumes_is_refused_rather_than_silently_approved() {
         let token = "endpoint:analyst=fast";
-        let Err(error) = parse(&[token.to_string()]) else {
+        let Err(error) = parse(&[token.to_string()], Surface::Run) else {
             panic!("`{token}` gates nothing and must be refused");
         };
         assert!(
@@ -191,35 +276,193 @@ mod tests {
     }
 
     /// The reason every entry here is refused is wiring, not absence: each
-    /// named capability exists in the run engine, and a run's tool universe
-    /// simply does not consume it yet. An absence claim goes stale the
-    /// moment the tool lands — the exact lie `runner:` shipped after M5-4's
-    /// `run_program` merged. The list is the single source of the
+    /// named capability exists in the run engine, and a surface's tool
+    /// universe simply does not consume it yet. An absence claim goes stale
+    /// the moment the tool lands — the exact lie `runner:` shipped after
+    /// M5-4's `run_program` merged. The list is the single source of the
     /// user-facing reason text, so each entry is pinned to the one phrasing
-    /// that is true — a future drift from it is a diff in this test rather
-    /// than a lie to the user. (`endpoint` names no tool: its true reason
-    /// is that per-step roles are not bound, so it is pinned to its own.)
+    /// that is true **for that entry** — a family's reason rides the
+    /// surface it is refused on (`endpoint:`'s run reason and session
+    /// reason differ; `sql:` exists only on the run surface) — and a future
+    /// drift from the pin is a diff in this test rather than a lie to the
+    /// user. The "never an absence claim" assertion applies to every entry,
+    /// on every surface.
     #[test]
     fn a_refusal_names_the_wiring_reason_never_an_absence_claim() {
-        for (family, why) in NOT_YET_WIRED {
+        for entry in NOT_YET_WIRED {
             assert!(
-                !why.contains("not exist"),
-                "`{family}`'s refusal claims a tool is absent — the refusal \
-                 class is wiring, not absence: {why}"
+                !entry.reason.contains("not exist"),
+                "`{}`'s refusal on {:?} claims a tool is absent — the refusal \
+                 class is wiring, not absence: {reason}",
+                entry.family,
+                entry.surface,
+                reason = entry.reason
             );
             assert!(
-                why.contains("per-step roles are not bound"),
-                "`{family}`'s refusal must state its true reason verbatim, \
-                 got: {why}"
+                entry.reason.contains(entry.pinned),
+                "`{}`'s refusal on {:?} must state its true reason (the pin) \
+                 verbatim, got: {reason}",
+                entry.family,
+                entry.surface,
+                reason = entry.reason
             );
         }
+    }
+
+    /// Each surface's refusal entries are distinct facts, so the pins are
+    /// per entry and must not collide: the session's `endpoint:` reason is
+    /// its own words (what a session binds), never the run's phrase, and
+    /// the run's `sql:` reason names its wiring item. One phrase pinned
+    /// onto two futures is how the run's words ended up describing a
+    /// session's refusal — this keeps every phrase its entry's own.
+    #[test]
+    fn every_refusal_pin_is_its_entry_s_own_phrase() {
+        for entry in NOT_YET_WIRED {
+            for other in NOT_YET_WIRED {
+                if std::ptr::eq(entry, other) {
+                    continue;
+                }
+                assert!(
+                    !other.reason.contains(entry.pinned),
+                    "`{}` on {:?} must not carry `{}`'s pinned phrase \
+                     ({:?}): {reason}",
+                    other.family,
+                    other.surface,
+                    entry.family,
+                    entry.pinned,
+                    reason = other.reason
+                );
+            }
+        }
+    }
+
+    /// `sql:<connection>` joins the grammar on the session surface: `/allow
+    /// sql:analytics` parses and carries the token verbatim — the session's
+    /// grant store seeds the words as stated — while a run refuses the same
+    /// token with its wiring reason: a run's decider consults no grant
+    /// token, so the scope would gate nothing. The refusal names the wiring
+    /// item (U4, headless runs on the same engine), never an absence claim.
+    #[test]
+    fn sql_joins_the_grammar_on_the_session_surface_only() {
+        let Ok(approved) = parse(&["sql:analytics".to_string()], Surface::Session) else {
+            panic!("`sql:analytics` must parse on the session surface");
+        };
+        assert!(
+            approved.tokens.iter().any(|token| token == "sql:analytics"),
+            "the session approval carries the token verbatim: {:?}",
+            approved.tokens
+        );
+        // The grammar names capabilities a run's `Capabilities` carries;
+        // `sql:` is a session grant word, so it builds no run capability —
+        // the other fields stay at their defaults.
+        assert!(!approved.capabilities.workspace_write);
+        assert!(!approved.capabilities.scratch);
+        assert!(approved.capabilities.fetch.is_none());
+        assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.interpreter.is_none());
+        assert!(approved.capabilities.endpoints.as_map().is_empty());
+
+        let Err(error) = parse(&["sql:analytics".to_string()], Surface::Run) else {
+            panic!("a run's decider consults no grant token, so a run must refuse `sql:`");
+        };
+        assert!(
+            error.contains("not available yet"),
+            "the refusal must say why, got: {error}"
+        );
+        assert!(
+            error.contains("wiring item U4"),
+            "the run refusal must name the wiring item, never claim a tool is \
+             absent: {error}"
+        );
+        assert!(
+            error.contains("sql:analytics"),
+            "the refusal must name the scope, got: {error}"
+        );
+    }
+
+    /// `endpoint:` is refused on the session surface too — a session binds
+    /// no per-step endpoint roles — and with its own reason: the run's
+    /// words ("every episode calls the orchestrator endpoint") describe a
+    /// run, not a session, so the session refusal is pinned to its own
+    /// phrase and must not borrow the run's. The run surface's refusal
+    /// (with the run's reason) is pinned by
+    /// `a_scope_nothing_consumes_is_refused_rather_than_silently_approved`.
+    #[test]
+    fn endpoint_is_refused_on_the_session_surface_with_its_own_reason() {
+        let Err(error) = parse(&["endpoint:analyst=fast".to_string()], Surface::Session) else {
+            panic!("a session binds no per-step endpoint roles, so `/allow endpoint:` refuses");
+        };
+        assert!(
+            error.contains("not available yet"),
+            "the refusal must say why, got: {error}"
+        );
+        assert!(
+            error.contains("binds no per-step endpoint roles"),
+            "the session refusal must state its own reason: {error}"
+        );
+        assert!(
+            !error.contains("every episode calls the orchestrator endpoint"),
+            "the session refusal must not borrow the run's reason: {error}"
+        );
+        assert!(
+            error.contains("endpoint:analyst=fast"),
+            "the refusal must name the scope, got: {error}"
+        );
+    }
+
+    /// The `sql:` payload is a connection's registry name, judged by the
+    /// same name-shape rule `endpoint:` payloads are: non-empty, bounded,
+    /// no control characters, no whitespace. A payload that fails the shape
+    /// is a typed usage error on the surface that accepts the family, and
+    /// the run surface still refuses a well-shaped one by wiring — the
+    /// shape rule is the grammar's, shared by both surfaces.
+    #[test]
+    fn the_sql_payload_is_judged_by_the_name_shape_rule() {
+        assert!(
+            parse(&["sql:".to_string()], Surface::Session).is_err(),
+            "empty payload"
+        );
+        assert!(
+            parse(&["sql:prod eu".to_string()], Surface::Session).is_err(),
+            "whitespace is never a connection name"
+        );
+        assert!(
+            parse(&["sql:has\nnewline".to_string()], Surface::Session).is_err(),
+            "control characters are never a connection name"
+        );
+        let Ok(approved) = parse(&["sql:Analytics_2".to_string()], Surface::Session) else {
+            panic!("a name-shaped payload parses");
+        };
+        assert!(
+            approved.tokens.contains(&"sql:Analytics_2".to_string()),
+            "the payload rides the token verbatim — /grants shows the word the \
+             user typed, got: {:?}",
+            approved.tokens
+        );
+    }
+
+    /// The empty approval is stateable on the session surface too: `/allow
+    /// none` parses and carries nothing grantable — the session command
+    /// layer reads the `none` from the stated tokens and seeds nothing.
+    #[test]
+    fn none_states_the_empty_approval_on_the_session_surface_too() {
+        let Ok(approved) = parse(&["none".to_string()], Surface::Session) else {
+            panic!("`none` must state the empty approval on the session surface");
+        };
+        assert_eq!(approved.tokens, vec!["none".to_string()]);
+        assert!(!approved.capabilities.workspace_write);
+        assert!(!approved.capabilities.scratch);
+        assert!(approved.capabilities.fetch.is_none());
+        assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.interpreter.is_none());
+        assert!(approved.capabilities.endpoints.as_map().is_empty());
     }
 
     /// The scope that *is* wired keeps working — the fix must refuse the
     /// inert ones without breaking the capability a run can actually use.
     #[test]
     fn workspace_write_is_wired_and_still_approves() {
-        let Ok(approved) = parse(&["workspace-write".to_string()]) else {
+        let Ok(approved) = parse(&["workspace-write".to_string()], Surface::Run) else {
             panic!("the wired scope must still approve");
         };
         assert!(approved.capabilities.workspace_write);
@@ -236,7 +479,7 @@ mod tests {
     /// steps that asked for it) lives beside the toolset builder's tests.
     #[test]
     fn scratch_is_wired_and_still_approves() {
-        let Ok(approved) = parse(&["scratch".to_string()]) else {
+        let Ok(approved) = parse(&["scratch".to_string()], Surface::Run) else {
             panic!("the wired scope must approve");
         };
         assert!(approved.capabilities.scratch);
@@ -255,7 +498,7 @@ mod tests {
     /// tests.
     #[test]
     fn runner_is_wired_and_still_approves() {
-        let Ok(approved) = parse(&["runner:bench".to_string()]) else {
+        let Ok(approved) = parse(&["runner:bench".to_string()], Surface::Run) else {
             panic!("the wired scope must approve");
         };
         let runner = approved
@@ -277,7 +520,7 @@ mod tests {
     /// boilerplate everyone types.
     #[test]
     fn none_states_the_empty_approval_for_a_read_only_run() {
-        let Ok(approved) = parse(&["none".to_string()]) else {
+        let Ok(approved) = parse(&["none".to_string()], Surface::Run) else {
             panic!("`none` must state the empty approval");
         };
         assert!(!approved.capabilities.workspace_write);
@@ -292,7 +535,10 @@ mod tests {
     /// nothing and something — refused, not resolved in the user's favour.
     #[test]
     fn none_must_be_the_only_token_when_stated() {
-        let Err(error) = parse(&["none".to_string(), "workspace-write".to_string()]) else {
+        let Err(error) = parse(
+            &["none".to_string(), "workspace-write".to_string()],
+            Surface::Run,
+        ) else {
             panic!("`none` beside a scope must refuse");
         };
         assert!(
@@ -307,7 +553,7 @@ mod tests {
     /// "no such thing".
     #[test]
     fn an_unknown_scope_is_still_a_usage_error_naming_the_grammar() {
-        let Err(error) = parse(&["wat".to_string()]) else {
+        let Err(error) = parse(&["wat".to_string()], Surface::Run) else {
             panic!("unknown scope must refuse");
         };
         assert!(error.contains("unknown scope `wat`"), "got: {error}");
@@ -323,7 +569,7 @@ mod tests {
     /// refuses at call time.
     #[test]
     fn a_refused_name_is_the_interpreter_family_s_not_the_runner_s() {
-        let Err(error) = parse(&["runner:python3".to_string()]) else {
+        let Err(error) = parse(&["runner:python3".to_string()], Surface::Run) else {
             panic!("`runner:python3` must be a typed usage error");
         };
         assert!(
@@ -335,7 +581,7 @@ mod tests {
             "the refusal must name the right family: {error}"
         );
 
-        let Err(error) = parse(&["interpreter:ripgrep".to_string()]) else {
+        let Err(error) = parse(&["interpreter:ripgrep".to_string()], Surface::Run) else {
             panic!("`interpreter:ripgrep` must be a typed usage error");
         };
         assert!(
@@ -357,7 +603,7 @@ mod tests {
     /// here.
     #[test]
     fn the_interpreter_family_approves_its_own_tokens() {
-        let Ok(approved) = parse(&["interpreter:python3".to_string()]) else {
+        let Ok(approved) = parse(&["interpreter:python3".to_string()], Surface::Run) else {
             panic!("`interpreter:python3` must approve");
         };
         let interpreters = approved
@@ -370,7 +616,7 @@ mod tests {
         assert!(!approved.capabilities.scratch);
         assert!(approved.capabilities.fetch.is_none());
 
-        let Ok(approved) = parse(&["interpreter:bash".to_string()]) else {
+        let Ok(approved) = parse(&["interpreter:bash".to_string()], Surface::Run) else {
             panic!("`interpreter:bash` parses — the family is the refusal list");
         };
         let interpreters = approved
@@ -380,31 +626,48 @@ mod tests {
         assert_eq!(interpreters.programs, vec!["bash".to_owned()]);
     }
 
-    /// The two help surfaces that enumerate the scope grammar — the clap
-    /// `--allow` doc comment and the `/run` slash help — and
-    /// [`NOT_YET_WIRED`] must agree, in both directions: a family the help
-    /// names as refused must sit in the refusal list, and every
-    /// refusal-list entry must be named as refused in the help. Each
-    /// S-slice deleted its entry here and updated `docs/commands.md` while
-    /// the clap and slash help kept claiming every remaining family was
-    /// refused — a help surface denying a capability the engine has, the
-    /// exact class this test turns red the day the lists diverge again,
-    /// either direction. The families come from [`KNOWN`] itself, so a
-    /// scope added to the grammar without touching both surfaces is caught
-    /// too. "Refused" is read per sentence: a wired family must never share
-    /// a sentence with a refusal word, and a refused family must.
+    /// The three help surfaces that enumerate the scope grammar — the clap
+    /// `--allow` doc comment, the `/run` slash help, and the `/allow` slash
+    /// help — and [`NOT_YET_WIRED`] must agree, surface by surface, in both
+    /// directions: a family the help names as refused on that surface must
+    /// sit in that surface's refusal list, and every refusal-list entry must
+    /// be named as refused in that surface's help. The surfaces are
+    /// *supposed* to disagree — `/allow` (a session) accepts `sql:` where a
+    /// run refuses it, and refuses `endpoint:` with its own reason — so the
+    /// expected refusal set is read per surface, and an accidental
+    /// disagreement is caught exactly where it lands: the run surfaces
+    /// claiming `sql:` accepted (a scope a run's decider consults nothing
+    /// for), or `/allow`'s help claiming `sql:` refused (a grant the session
+    /// can state), each fails this on its own surface while the other
+    /// surfaces stay green. Each S-slice deleted its entry here and updated
+    /// `docs/commands.md` while a help surface kept claiming every remaining
+    /// family was refused — a help surface denying a capability the surface
+    /// has, the exact class this test turns red the day the lists diverge
+    /// again, either direction, on either surface. The families come from
+    /// [`KNOWN`] itself, so a scope added to the grammar without touching
+    /// every surface is caught too. "Refused" is read per sentence: a wired
+    /// family must never share a sentence with a refusal word, and a
+    /// refused family must.
     #[test]
     fn the_help_surfaces_and_the_refusal_list_agree() {
         let surfaces = [
-            ("the clap `--allow` help", clap_allow_help()),
+            ("the clap `--allow` help", clap_allow_help(), Surface::Run),
             (
                 "the `/run` slash help",
                 crate::slash::command_help("run")
                     .expect("/run has per-command help")
                     .to_string(),
+                Surface::Run,
+            ),
+            (
+                "the `/allow` slash help",
+                crate::slash::command_help("allow")
+                    .expect("/allow has per-command help")
+                    .to_string(),
+                Surface::Session,
             ),
         ];
-        for (surface_name, text) in &surfaces {
+        for (surface_name, text, surface) in &surfaces {
             for (family, token) in grammar_tokens() {
                 assert!(
                     text.contains(token),
@@ -412,13 +675,16 @@ mod tests {
                      omits a scope leaves its status to the reader's guess, got: {text}"
                 );
                 let claimed = claims_refused(text, token);
-                let listed = NOT_YET_WIRED.iter().any(|(name, _)| *name == family);
+                let listed = NOT_YET_WIRED
+                    .iter()
+                    .any(|entry| entry.family == family && entry.surface == *surface);
                 assert_eq!(
                     claimed,
                     listed,
-                    "{surface_name} and NOT_YET_WIRED disagree about `{family}`: the help \
-                     {} while the refusal list {}. A scope the next slice wires must stop \
-                     being refused in the help; one still unwired must stay refused there.",
+                    "{surface_name} and NOT_YET_WIRED disagree about `{family}` on \
+                     {surface:?}: the help {} while the refusal list {}. A scope the \
+                     next slice wires must stop being refused in that surface's help; \
+                     one still unwired there must stay refused.",
                     if claimed {
                         "claims it is refused"
                     } else {

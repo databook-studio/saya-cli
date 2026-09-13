@@ -5,7 +5,7 @@
 //! recorded through one turn's decider stay in force for the next.
 
 use crate::agent::tools::DatabaseTools;
-use crate::grant_token::grant_token;
+use crate::grant_token::{TurnPrimary, grant_token};
 use crate::prompt_approval::{TerminalApproval, approval_prompt, terminal_choice};
 use saya_agent::{
     ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, LocalStateEffect,
@@ -39,7 +39,7 @@ fn database_tools() -> Vec<ToolDefinition> {
 
 #[tokio::test]
 async fn read_only_approval_denies_a_side_effecting_tool() {
-    let approval = TerminalApproval::new(ApprovalPolicy::ReadOnly, false);
+    let approval = TerminalApproval::new(ApprovalPolicy::ReadOnly, false, TurnPrimary::default());
     assert!(
         !approval
             .approve(&side_effecting_tool(), &serde_json::json!({}))
@@ -50,7 +50,7 @@ async fn read_only_approval_denies_a_side_effecting_tool() {
 
 #[tokio::test]
 async fn non_interactive_read_only_denies_render_chart_and_still_approves_sql() {
-    let approval = TerminalApproval::new(ApprovalPolicy::ReadOnly, false);
+    let approval = TerminalApproval::new(ApprovalPolicy::ReadOnly, false, TurnPrimary::default());
     let tools = database_tools();
     let render_chart = tools
         .iter()
@@ -87,13 +87,13 @@ async fn never_denies_and_ask_without_a_terminal_denies() {
         .iter()
         .find(|tool| tool.name == "bounded_sql_query")
         .expect("bounded_sql_query is defined");
-    let never = TerminalApproval::new(ApprovalPolicy::Never, false);
+    let never = TerminalApproval::new(ApprovalPolicy::Never, false, TurnPrimary::default());
     assert!(
         !never
             .approve(sql, &serde_json::json!({"sql": "SELECT 1"}))
             .await
     );
-    let ask = TerminalApproval::new(ApprovalPolicy::Ask, false);
+    let ask = TerminalApproval::new(ApprovalPolicy::Ask, false, TurnPrimary::default());
     assert!(
         !ask.approve(sql, &serde_json::json!({"sql": "SELECT 1"}))
             .await
@@ -148,9 +148,9 @@ fn ask_prompt_keeps_the_sql_sentence_for_sql_tools() {
 async fn a_granted_token_stops_the_ask_without_a_prompt() {
     let tool = workspace_write_tool();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
-    let token = grant_token(&tool.name, &arguments).expect("workspace_write is grantable");
+    let token = grant_token(&tool.name, &arguments, None).expect("workspace_write is grantable");
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
-    let before = TerminalApproval::from_session(policy.clone(), false);
+    let before = TerminalApproval::from_session(policy.clone(), false, TurnPrimary::default());
     assert!(
         !before.approve(&tool, &arguments).await,
         "an ungranted ask is decided by the mode: nobody to answer, so deny"
@@ -159,7 +159,7 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
         policy.record(ApprovalChoice::AllowSession { token }),
         "the first grant is new"
     );
-    let after = TerminalApproval::from_session(policy, false);
+    let after = TerminalApproval::from_session(policy, false, TurnPrimary::default());
     assert!(
         after.approve(&tool, &arguments).await,
         "the granted token pre-answers the same shape with no prompt"
@@ -219,6 +219,55 @@ fn the_terminal_answers_keep_their_meaning() {
     );
 }
 
+/// The SQL family's grant rides the turn's primary: a call naming no
+/// connection suggests `sql:<primary>` — the primary's real registry name —
+/// and a session grant recorded for it pre-answers that connection's calls
+/// while a different connection's call still asks. The ask is the decider's,
+/// the grant the engine's own `record`.
+#[tokio::test]
+async fn the_sql_family_s_grant_rides_the_turn_s_primary() {
+    let primary = TurnPrimary::default();
+    primary.bind(&crate::grant_token_tests::registry_with_primary(
+        "analytics",
+    ));
+    let policy = SessionPolicy::new(ApprovalPolicy::Ask);
+    let sql = database_tools()
+        .into_iter()
+        .find(|tool| tool.name == "bounded_sql_query")
+        .expect("bounded_sql_query is defined");
+    let here = serde_json::json!({"sql": "SELECT 1"});
+    assert_eq!(
+        policy.resolve(&sql.effect, Some("sql:analytics")),
+        ApprovalDecision::Ask,
+        "the ungranted ask is decided by the mode"
+    );
+    assert!(
+        policy.record(ApprovalChoice::AllowSession {
+            token: "sql:analytics".to_owned()
+        }),
+        "the first grant is new"
+    );
+    let after = TerminalApproval::from_session(policy.clone(), false, primary);
+    // The bound decider suggests `sql:analytics` for a connectionless call,
+    // so the grant pre-answers it with no prompt at all.
+    assert!(
+        after.approve(&sql, &here).await,
+        "the granted sql token pre-answers the primary's call with no prompt"
+    );
+    // A different connection suggests a different token, which is not
+    // granted — the grant allows nothing on a different connection.
+    assert_eq!(
+        policy.resolve(&sql.effect, Some("sql:staging")),
+        ApprovalDecision::Ask,
+        "the grant allows nothing on a different connection"
+    );
+    let offered = approval_prompt(&sql, &here, Some("sql:analytics"));
+    assert!(
+        offered.contains("[s] allow sql:analytics for this session"),
+        "the offered token is the primary's real name: {offered}"
+    );
+}
+
 /// The prompt offers the session grant only when it can name the token: the
 /// `[s]` answer appears with the token verbatim, and with no token the prompt
 /// offers two answers and says so.
@@ -226,7 +275,7 @@ fn the_terminal_answers_keep_their_meaning() {
 fn the_prompt_offers_a_session_grant_only_when_one_exists() {
     let tool = workspace_write_tool();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
-    let token = grant_token(&tool.name, &arguments);
+    let token = grant_token(&tool.name, &arguments, None);
     let with = approval_prompt(&tool, &arguments, token.as_deref());
     assert!(
         with.contains("[s] allow workspace-write for this session"),

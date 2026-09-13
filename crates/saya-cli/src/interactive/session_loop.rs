@@ -328,6 +328,30 @@ fn handle_line(
         block_on(store.save(state.redacted()))?;
         return Ok(false);
     }
+    if let SessionAction::Allow(tokens) = action {
+        // `/allow <scopes…>` seeds the session's one grant store through the
+        // shared behaviour — the same parser, the session surface. A refused
+        // scope is an error and seeds nothing; `/allow none` seeds nothing
+        // and says so.
+        let action = match super::session_grants::allow(&tokens, session.policy().grants()) {
+            Ok(message) => SessionAction::Message(message),
+            Err(error) => SessionAction::Error(error),
+        };
+        super::session_emit::emit_action(action, format, state, store)?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
+    if let SessionAction::Grants = action {
+        // `/grants` lists the store verbatim: the words are the record.
+        super::session_emit::emit_action(
+            SessionAction::Message(super::session_grants::listing(session.policy().grants())),
+            format,
+            state,
+            store,
+        )?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
     if let SessionAction::Run(tail) = action {
         // The nested run's stream passes through on the real stdout/stderr;
         // see `session_run` for the passthrough rule. The child's own settle

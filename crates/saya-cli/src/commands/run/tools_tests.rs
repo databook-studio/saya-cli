@@ -433,7 +433,10 @@ async fn the_harness_names_fall_through_to_the_same_typed_refusal() {
 fn fetch_is_wired_and_still_approves() {
     use super::scopes::parse;
 
-    let Ok(approved) = parse(&["fetch:https+example.com".to_string()]) else {
+    let Ok(approved) = parse(
+        &["fetch:https+example.com".to_string()],
+        super::scopes::Surface::Run,
+    ) else {
         panic!("the wired scope must approve");
     };
     let fetch = approved

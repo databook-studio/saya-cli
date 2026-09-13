@@ -45,7 +45,10 @@ pub(super) fn journal_grants(
         // family, which only a journal could have granted.
         return Ok(stripped_of_interpreters(spec_scopes));
     }
-    let approved = super::scopes::parse(scopes)
+    // A journal's payload was stated on a run, so it re-parses on the run
+    // surface: a `sql:` token in a journal would be refused here (a run's
+    // decider consults no session grant), not silently carried.
+    let approved = super::scopes::parse(scopes, super::scopes::Surface::Run)
         .map_err(|error| format!("the journal's approved scopes do not parse: {error}"))?;
     Ok(approved.capabilities)
 }
