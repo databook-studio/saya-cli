@@ -210,6 +210,7 @@ fn approval_name(policy: ApprovalPolicy) -> String {
         ApprovalPolicy::Ask => "ask",
         ApprovalPolicy::ReadOnly => "read-only",
         ApprovalPolicy::Never => "never",
+        ApprovalPolicy::Bypass => "bypass",
     }
     .into()
 }

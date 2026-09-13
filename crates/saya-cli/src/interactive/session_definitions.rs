@@ -161,10 +161,12 @@ pub(crate) fn run_program(source: ToolDefinition) -> ToolDefinition {
         description: "Run one allowlisted program with typed argv. Every argument is passed \
             verbatim as one argv element — no shell, no interpolation, no command-line \
             string anywhere. The allowlist is the configured [jobs.runner] allow set; bash, \
-            sh, wrappers, and paths are refused. The child runs sandboxed inside the \
-            session's workspace with its working directory pinned to the workspace root and \
-            no network egress; output is capped and redacted; a timeout kills the whole \
-            process group."
+            sh, wrappers, and paths are refused — unless the name is staged in \
+            [jobs.interpreter] allow, which opens the interpreter door on the same sandbox \
+            (the model writes the program the interpreter runs). The child runs sandboxed \
+            inside the session's workspace with its working directory pinned to the \
+            workspace root and no network egress; output is capped and redacted; a timeout \
+            kills the whole process group."
             .into(),
         effect: ToolEffect {
             requires_approval: true,

@@ -192,6 +192,41 @@ mod tests {
         );
     }
 
+    /// A swap into — and back out of — `bypass` carries the grants the same
+    /// way. Under bypass the grant is inert (no ask consults it, nothing
+    /// records through it), so the store rides the excursion unchanged: a
+    /// grant made under ask is still held after the return, and pre-answers
+    /// again the moment the mode is ask once more.
+    #[test]
+    fn a_mode_swap_into_and_out_of_bypass_carries_the_grants() {
+        let policy = policy_carrying(ApprovalPolicy::Ask, &["runner:bench".to_owned()]);
+        // Into bypass: the grant is held but never consulted — the mode
+        // allows on its own.
+        let bypassed = policy_carrying(ApprovalPolicy::Bypass, &policy.grants().tokens());
+        assert!(
+            bypassed.grants().is_granted("runner:bench"),
+            "the grant survives the swap into bypass"
+        );
+        assert_eq!(
+            bypassed.resolve(&side_effecting(), Some("runner:bench")),
+            saya_agent::ApprovalDecision::Allow,
+            "under bypass the mode allows, the grant is not the judge"
+        );
+        // Back out to ask: the grant pre-answers again, exactly as before the
+        // excursion — nothing under bypass recorded or revoked.
+        let back = policy_carrying(ApprovalPolicy::Ask, &bypassed.grants().tokens());
+        assert_eq!(
+            back.resolve(&side_effecting(), Some("runner:bench")),
+            saya_agent::ApprovalDecision::Allow,
+            "back under ask, the pre-bypass grant is intact and pre-answers"
+        );
+        assert_eq!(
+            back.resolve(&side_effecting(), Some("runner:deploy")),
+            saya_agent::ApprovalDecision::Ask,
+            "a shape the user never granted still asks"
+        );
+    }
+
     fn side_effecting() -> saya_agent::ToolEffect {
         saya_agent::ToolEffect {
             database_data: false,

@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod approval_text;
 mod chart;
 mod cli;
 mod commands;

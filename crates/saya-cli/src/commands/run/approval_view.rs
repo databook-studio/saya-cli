@@ -70,9 +70,11 @@ pub(super) fn view_of(
 /// not opt in, so the body a run without the grant shows is today's bytes
 /// exactly. The line states what the user is accepting in place of the
 /// typed-argv contract's behavioural half — no euphemism, no dilution into
-/// a generic "dangerous mode" banner. The headless receipt prints the same
-/// line before the first step: what the terminal shows and what the journal
-/// records agree.
+/// a generic "dangerous mode" banner. The sentence is built by the shared
+/// helper the session's activation line uses (`approval_text`), so the two
+/// surfaces cannot drift; the run's conditional process-fork clause is the
+/// fact true for runs, and the headless receipt prints the same line before
+/// the first step: what the terminal shows and what the journal records agree.
 pub(super) fn interpreter_warning(approved: &[String]) -> Option<String> {
     let mut programs = Vec::new();
     for token in approved {
@@ -83,13 +85,10 @@ pub(super) fn interpreter_warning(approved: &[String]) -> Option<String> {
     if programs.is_empty() {
         return None;
     }
-    Some(format!(
-        "interpreter approval: this run may execute {} as an interpreter. Its argv is typed \
-         and the sandbox still bounds its reads, writes, exec, and egress — but the model \
-         writes the program the interpreter runs, and (where process-fork is granted) any \
-         children it spawns run arbitrary argv. What the interpreter computes is not a \
-         reviewed, fixed binary.",
-        programs.join(", ")
+    Some(crate::approval_text::interpreter_warning(
+        "run",
+        &programs,
+        "(where process-fork is granted) any children it spawns run arbitrary argv.",
     ))
 }
 

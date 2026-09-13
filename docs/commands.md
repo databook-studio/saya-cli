@@ -22,7 +22,7 @@ saya query --profile analytics --sql "select 1"
 ```
 
 Global flags include `--config`, `--connections`, `--env-file`, `--profile`,
-`--include-profile <profile>` (repeatable flag to connect additional read-only databases), `--approval-mode ask|read-only|never`, `--format
+`--include-profile <profile>` (repeatable flag to connect additional read-only databases), `--approval-mode ask|read-only|never|bypass`, `--format
 text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
 and `--verbose`. `--workspace <dir>` (the interactive session only) binds the
 session's workspace root explicitly; without it the root is the git worktree
@@ -102,7 +102,9 @@ home.
 
 `saya run` never prompts per tool call, whatever the approval mode: a run has
 no per-call question. Scopes must be declared up front with `--allow <scopes>`;
-a run without `--allow` refuses to start with exit `2` and creates nothing.
+a run without `--allow` refuses to start with exit `2` and creates nothing,
+and `--approval-mode bypass` refuses at start too — a run's approval is its
+`--allow` scopes; bypass is a session mode.
 `--allow none` states the empty scope set — a deliberately read-only run: no
 capability is approved, and the episode's per-tool-call approval stays at its
 read-only default (read-shaped tools run, side-effecting tools are denied).
@@ -199,6 +201,54 @@ and `/grants` lists the store's tokens verbatim, one per line, sorted, under
 a header stating the lifetime. Grants die with the session: they are never
 persisted, and a resumed session starts empty. `/allow none` states the
 empty approval and seeds nothing — it is not a revoke.
+
+## The fourth approval mode: `bypass`
+
+`--approval-mode bypass` (or `/approvals bypass`) runs every tool call
+without asking: one typed, global, informed consent, given once at the flag
+instead of once per call, in the session's own vocabulary — never a euphemism
+and never a softened word. It is a **consent transformation, not a
+containment transformation**: every structural guard still applies, unchanged,
+under every mode. The SQL safety layer still refuses any write statement (a
+refusal from the safety layer, never an approval question); the sandbox, the
+placement guard, and the startup probe still gate `run_program`; path-shaped
+names, symlinks, and scripts still refuse; fetches stay HTTPS-only and
+private-range-refused; write-shaped tools still only appear where a workspace
+root binds; and the all-bounds discipline is untouched. Bypass changes only
+who answers the per-call question — and the answer is always yes.
+
+What bypass opens honestly: the write-shaped session tools (`workspace_write`,
+`scratch_sql`, `http_fetch`, `http_download`) are advertised whether or not a
+prompt surface exists — a piped REPL runs under bypass too — and the session's
+interpreter door opens to the interpreters the trusted config staged in
+`[jobs.interpreter] allow` (the project layer is untrusted without
+`--trust-project-config`; the door is the same staged universe under every
+mode — under `ask` it is reachable through a granted
+`interpreter:<program>` token, under bypass without the ask). An interpreter
+child is confined by the same sandbox as any runner child: same fs roots,
+same empty egress, no process-fork — a child an interpreter spawns is refused
+by the sandbox. What bypass does **not** open, said plainly: interpreters
+outside the staged allow, programs outside `[jobs.runner] allow`, unproven
+hosts (no runner in any mode — and the absence is said: "run_program is
+unavailable: the sandbox probe did not prove this host"), and write SQL.
+
+When bypass takes effect — at launch, at `/approvals bypass`, and again on a
+resume — the session prints its activation line: `bypass on: every tool call
+runs without asking; every structural guard still applies.` With interpreters
+staged, the line carries the interpreter warning in the session's wording
+(the staged names, the sandbox bounds, the model-written program, and "no
+process-fork is granted: children an interpreter spawns are refused by the
+sandbox"); with none staged, it says instead: `no interpreters are staged in
+[jobs.interpreter] allow, so interpreter calls still refuse.` The status bar
+and the headless status line render `approval:bypass` in red on every
+surface. `/approvals ask` leaves bypass mid-session, effective for turns
+started after the change; grants made before the toggle ride it and are
+consulted again under `ask` — bypass consults no grant and records none.
+
+A run never takes bypass: `saya run --approval-mode bypass` refuses at start
+(`2`) — a run's approval is its `--allow` scopes, and bypass is a session
+mode. A `/run` from a bypass session therefore forwards no mode to the child:
+the child states its own scopes or takes the run default (read-only).
 
 Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
 (`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
-    slash::parse_slash_command,
+    slash::{SlashCommand, parse_slash_command},
 };
 use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
 use std::io::{self, IsTerminal, Write};
@@ -135,9 +135,16 @@ fn run_plain_loop(
     session: &mut SessionRuntime,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // A startup fact the user must read once, in the loop they will see every
-    // turn: a pinned root that vanished, or any other composition notice.
+    // turn: a pinned root that vanished, or any other composition notice —
+    // and, under bypass, the mode's activation line with its no-euphemism
+    // wording and the probe/absence facts.
     if let Some(notice) = session.notice() {
         println!("{notice}");
+    }
+    if let Some(line) =
+        super::session_activation::line_if_bypass(state, runtime, &session.universe())
+    {
+        println!("{line}");
     }
     let mut input = String::new();
     loop {
@@ -192,6 +199,11 @@ fn handle_line(
             return Ok(false);
         }
     };
+    // A mode change through `/approvals` carries the activation line with it:
+    // under bypass the no-euphemism wording, the staged interpreter facts,
+    // and the probe's verdict — said where the mode is set, not just implied
+    // by the indicator.
+    let approvals_set = matches!(parsed, Some(SlashCommand::Approvals(Some(_))));
     let action = match parsed {
         Some(command) => state.apply(
             command,
@@ -399,6 +411,22 @@ fn handle_line(
                                 store,
                             )?;
                         }
+                        // A resumed bypass session re-prints its activation
+                        // line — the mode is real again, and the user reads
+                        // its wording once, not a bare `approval:bypass` on
+                        // the status bar.
+                        if let Some(line) = super::session_activation::line_if_bypass(
+                            state,
+                            runtime,
+                            &session.universe(),
+                        ) {
+                            super::session_emit::emit_action(
+                                SessionAction::Message(line),
+                                format,
+                                state,
+                                store,
+                            )?;
+                        }
                     }
                     Err(error) => super::session_emit::emit_action(
                         SessionAction::Error(error),
@@ -425,6 +453,12 @@ fn handle_line(
         return Ok(false);
     }
     super::session_emit::emit_action(action, format, state, store)?;
+    if approvals_set
+        && let Some(line) =
+            super::session_activation::line_if_bypass(state, runtime, &session.universe())
+    {
+        super::session_emit::emit_action(SessionAction::Message(line), format, state, store)?;
+    }
     block_on(store.save(state.redacted()))?;
     Ok(false)
 }

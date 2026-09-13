@@ -61,6 +61,7 @@ pub(super) async fn start(
         },
         runtime,
         format,
+        approval,
         state,
         None,
     )
@@ -126,7 +127,7 @@ pub(crate) async fn start_for_panel(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let token = host.cancellation.clone();
     let wire = host.journal_wire.clone();
-    let prepared = match prepare(&request, runtime, format, state, wire.clone()).await {
+    let prepared = match prepare(&request, runtime, format, approval, state, wire.clone()).await {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
@@ -168,6 +169,7 @@ async fn prepare(
     request: &RunRequest,
     runtime: &RuntimeConfig,
     format: RenderFormat,
+    approval: ApprovalPolicy,
     state: &SqliteStateStore,
     wire: Option<JournalWire>,
 ) -> Result<Prepared, Result<i32, Box<dyn std::error::Error>>> {
@@ -178,6 +180,13 @@ async fn prepare(
         .ok_or(Err(
             "run requires a goal: `saya run \"<goal>\" --allow <scopes>`".into(),
         ))?;
+    // A run's approval is its `--allow` scopes — typed, per-capability,
+    // journaled. Bypass is a session mode: a blanket per-call consent, and a
+    // run has no per-call consent to replace. Refused at start, beside the
+    // missing-`--allow` refusal, before anything exists on disk.
+    if let Err(error) = refuse_bypass_mode(approval) {
+        return Err(Err(error));
+    }
     // Refusal by construction, before anything exists on disk: a headless run
     // states its scopes up front or does not start — no run directory, no
     // store row, no prompt. The refusal is about *stating*: `--allow none`
@@ -210,6 +219,18 @@ async fn prepare(
         run_dir,
         lock,
     })
+}
+
+/// The run-start guard for a bypass mode: a run's approval is its `--allow`
+/// scopes; bypass is a session mode. Pure, so the test can drive the exact
+/// refusal both fresh-run entries share.
+pub(super) fn refuse_bypass_mode(
+    approval: ApprovalPolicy,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if approval == ApprovalPolicy::Bypass {
+        return Err("a run's approval is its `--allow` scopes; bypass is a session mode".into());
+    }
+    Ok(())
 }
 
 /// What a claim leaves the caller holding: the spec the drive reads, the

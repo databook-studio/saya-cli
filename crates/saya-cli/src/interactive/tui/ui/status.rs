@@ -12,16 +12,27 @@ use ratatui::{
     widgets::Paragraph,
 };
 
+/// The approval segment's colour, one explicit arm per mode the grammar
+/// parses — read-only green (auto-approves reads only), ask amber (a
+/// question is pending), never red (everything refuses), bypass red ("every
+/// call runs without asking" is the danger it is). The catch-all is a named
+/// hole, not a licence: a mode added to `FromStr` but not here would render
+/// grey with nothing failing, which is exactly what the colour-map test pins.
+fn approval_colour(mode: &str) -> Color {
+    match mode {
+        "read-only" => success(),
+        "ask" => warning(),
+        "never" => danger(),
+        "bypass" => danger(),
+        _ => secondary(),
+    }
+}
+
 /// Builds the coloured status-bar segments (profile, provider/model, approval, sharing),
 /// each on the bar background so they blend into the strip.
 fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     let base = Style::default().bg(bg);
-    let approval_color = match view.approval_mode.as_str() {
-        "read-only" => success(),
-        "ask" => warning(),
-        "never" => danger(),
-        _ => secondary(),
-    };
+    let approval_color = approval_colour(&view.approval_mode);
     let mut label = view.profile.clone();
     for inc in &view.included {
         label.push_str(&format!(" +{inc}"));
@@ -104,4 +115,83 @@ pub(super) fn draw_status(frame: &mut Frame<'_>, app: &App, status: &StatusView,
         Line::from(spans)
     };
     frame.render_widget(Paragraph::new(line).style(bar), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bypass_view() -> StatusView {
+        StatusView {
+            profile: "analytics".into(),
+            included: Vec::new(),
+            provider: "ollama".into(),
+            model: "m".into(),
+            approval_mode: "bypass".into(),
+            workspace_root: None,
+            sharing_on: false,
+        }
+    }
+
+    /// The colour map carries an explicit arm for every mode the grammar
+    /// parses; the catch-all (`secondary()`) is the quiet-drift hole a fourth
+    /// variant would fall into. `bypass` renders `danger()` red: the mode
+    /// that claims "everything runs" must read as the danger it is, in the
+    /// grammar's own word, on every surface.
+    #[test]
+    fn the_status_colour_map_has_an_arm_for_every_mode() {
+        for (mode, expected) in [
+            ("read-only", success()),
+            ("ask", warning()),
+            ("never", danger()),
+            ("bypass", danger()),
+        ] {
+            assert_eq!(
+                approval_colour(mode),
+                expected,
+                "{mode} must have its own colour arm"
+            );
+        }
+        assert_eq!(
+            approval_colour("whatever-a-future-parse-site-forgot"),
+            secondary(),
+            "the catch-all is named, not removed: unknown words stay grey"
+        );
+    }
+
+    /// The two status surfaces agree on the bypass mode: the headless
+    /// one-line header renders `approval:bypass`, and the TUI bar renders the
+    /// same word in the same `danger()` red — the parity the
+    /// `status_segments_mirror_status_line_polarity` precedent pins for
+    /// sharing, here for the mode the red indicator belongs to.
+    #[test]
+    fn the_status_surfaces_render_approval_colon_bypass_in_danger_colour() {
+        let mut state = crate::interactive::session_state::SessionState::new(
+            "s1",
+            Some(String::from("analytics")),
+            "m",
+        );
+        state.approval_mode = "bypass".into();
+        let headless = crate::interactive::session_prompt::status_line(&state);
+        assert!(
+            headless.contains("approval:bypass"),
+            "the headless status line says approval:bypass: {headless}"
+        );
+
+        let spans = status_spans(&bypass_view(), status_bg());
+        let approval = spans
+            .iter()
+            .find(|span| span.content.starts_with("approval:"))
+            .expect("the status bar carries an approval segment");
+        assert_eq!(
+            approval.content.as_ref(),
+            "approval:bypass ",
+            "the TUI bar says the same words as the headless line"
+        );
+        assert_eq!(
+            approval.style.fg,
+            Some(danger()),
+            "bypass renders in danger red, never a softening colour"
+        );
+    }
 }
