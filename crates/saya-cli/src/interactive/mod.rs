@@ -5,6 +5,11 @@ pub(crate) mod session_definitions;
 mod session_emit;
 mod session_loop;
 pub(crate) mod session_paths;
+// `/allow` and `/grants`: the session grant store's one behaviour, shared
+// by the headless loop and the TUI dispatch.
+mod session_grants;
+#[cfg(test)]
+mod session_grants_tests;
 mod session_prompt;
 mod session_request;
 mod session_resume;

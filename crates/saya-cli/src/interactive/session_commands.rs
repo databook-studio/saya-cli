@@ -39,6 +39,14 @@ pub enum SessionAction {
     /// `run_management` dispatcher, so the slash rendering is the headless
     /// rendering byte for byte.
     Runs(Option<String>),
+    /// `/allow <scopes…>` — the tokens as stated. The loops (headless and
+    /// TUI) hand them to the shared `session_grants::allow`, which parses
+    /// them on the session surface and seeds the session's one grant store;
+    /// the loops own the policy, so the seeding lives there.
+    Allow(Vec<String>),
+    /// `/grants` — the session grant store listed verbatim by the shared
+    /// `session_grants::listing`.
+    Grants,
     Exit,
 }
 
@@ -180,6 +188,8 @@ impl SessionState {
             SlashCommand::Run(args) => SessionAction::Run(args),
             SlashCommand::RunCancel(run_id) => SessionAction::RunCancel(run_id),
             SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
+            SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
+            SlashCommand::Grants => SessionAction::Grants,
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

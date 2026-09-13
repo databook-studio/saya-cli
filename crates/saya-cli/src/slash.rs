@@ -68,6 +68,16 @@ pub enum SlashCommand {
     /// through the same read path the headless `saya run list|show` commands
     /// use.
     Runs(Option<String>),
+    /// `/allow <scopes…>` — seed pre-authorisation into the session's grant
+    /// store: the same `--allow` grammar, judged on the session surface.
+    /// The tokens are carried as stated; the shared `session_grants`
+    /// behaviour does the parsing, the seeding, and the message (`none`
+    /// keeps its grammar meaning: the empty approval, alone — it seeds
+    /// nothing and is not a revoke).
+    Allow(Vec<String>),
+    /// `/grants` — the session's grant store listed verbatim: one token per
+    /// line, sorted, under a header stating the lifetime.
+    Grants,
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
     /// Show session token usage totals and cache hit rate.
@@ -179,6 +189,21 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             }
         }
         "runs" => SlashCommand::Runs((!arg.is_empty()).then_some(arg)),
+        "allow" => {
+            // `/allow <scopes…>` seeds the session's grant store; `/allow`
+            // alone is not a listing — `/grants` is the listing, and the
+            // error says where to find it.
+            if arg.is_empty() {
+                return Err(SlashParseError(
+                    "allow requires scopes to seed, e.g. /allow sql:analytics \
+                     (or `/allow none` for the empty approval); /allow alone is \
+                     not a listing — use /grants to list"
+                        .into(),
+                ));
+            }
+            SlashCommand::Allow(arg.split_whitespace().map(str::to_string).collect())
+        }
+        "grants" => SlashCommand::Grants,
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "exit" | "quit" => SlashCommand::Exit,
         other => {
@@ -428,6 +453,38 @@ mod tests {
         assert_eq!(
             parse_slash_command("/runs r-1"),
             Ok(Some(SlashCommand::Runs(Some("r-1".into()))))
+        );
+    }
+
+    /// `/allow` carries the scopes as stated, whitespace-separated, and
+    /// `/allow` alone is not a listing — it is a usage error pointing at
+    /// the listing (`/grants`), which parses bare.
+    #[test]
+    fn test_parse_allow_and_grants() {
+        assert_eq!(
+            parse_slash_command("/allow sql:analytics"),
+            Ok(Some(SlashCommand::Allow(vec!["sql:analytics".into()])))
+        );
+        assert_eq!(
+            parse_slash_command("/allow sql:analytics runner:bench"),
+            Ok(Some(SlashCommand::Allow(vec![
+                "sql:analytics".into(),
+                "runner:bench".into()
+            ])))
+        );
+        assert_eq!(
+            parse_slash_command("/grants"),
+            Ok(Some(SlashCommand::Grants))
+        );
+        // Trailing arguments are ignored, like /doctor's.
+        assert_eq!(
+            parse_slash_command("/grants now"),
+            Ok(Some(SlashCommand::Grants))
+        );
+        let error = parse_slash_command("/allow").unwrap_err();
+        assert!(
+            error.0.contains("not a listing") && error.0.contains("/grants"),
+            "the error points at the listing, got: {error}"
         );
     }
 }

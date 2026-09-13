@@ -207,7 +207,11 @@ pub(super) async fn assemble(
         fetch,
         runner: wiring.runner,
         plan_scopes: wiring.plan_scopes,
-        decider: TerminalApproval::new(approval, false),
+        // A run's decider is built unbound: a run's approval surface is the scope
+        // approval, not the session grant store, so its decider never suggests a
+        // SQL token (nothing could be granted into a per-run policy that no
+        // later turn shares) — and it never prompts anyway (`can_prompt: false`).
+        decider: TerminalApproval::new(approval, false, crate::grant_token::TurnPrimary::default()),
         model: ai.model,
         profile_names,
         allow_query_data,

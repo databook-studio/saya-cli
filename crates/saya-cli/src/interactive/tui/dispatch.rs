@@ -106,6 +106,27 @@ pub(crate) fn dispatch(
                     format,
                     crate::cli::RunCommand::Cancel { run_id },
                 ),
+                SessionAction::Allow(tokens) => {
+                    // `/allow <scopes…>` seeds the session's one grant store
+                    // through the shared behaviour — the same parser, the
+                    // session surface. A refused scope is an error and seeds
+                    // nothing; `/allow none` seeds nothing and says so.
+                    match crate::interactive::session_grants::allow(
+                        &tokens,
+                        session.policy().grants(),
+                    ) {
+                        Ok(message) => transcript.push(BlockKind::System, message),
+                        Err(error) => transcript.push(BlockKind::Error, error),
+                    }
+                }
+                SessionAction::Grants => {
+                    // `/grants` lists the store verbatim: the words are the
+                    // record, the same words the prompts offered.
+                    transcript.push(
+                        BlockKind::System,
+                        crate::interactive::session_grants::listing(session.policy().grants()),
+                    );
+                }
                 SessionAction::Run(tail) => {
                     // The child's own grammar parses the tail in-process (the
                     // parser stays the authority); a fresh run drives the
