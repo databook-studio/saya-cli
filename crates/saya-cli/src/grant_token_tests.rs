@@ -444,6 +444,28 @@ fn the_fetch_token_spells_the_host_the_run_engine_s_way() {
     }
 }
 
+/// A seeded token and a suggested token are the same string for the same
+/// destination: `/allow` parses through the grammar's parser, which
+/// normalises the fetch family to the URL parser's spelling — the spelling
+/// the suggester produces from the call's URL. Whatever casing the user
+/// types, the grant pre-answers the call it names (U6 defect 2: the verbatim
+/// seed never matched the lowercased suggestion, so `/grants` listed a
+/// grant that pre-answered nothing).
+#[test]
+fn a_seeded_token_and_a_suggested_token_are_the_same_string_for_a_destination() {
+    let suggested = token_for("http_fetch", json!({"url": "https://Example.com/x"}));
+    let approved = scopes::parse(
+        &["fetch:HTTPS+Example.com".to_string()],
+        scopes::Surface::Session,
+    )
+    .expect("a mixed-case fetch token parses on the session surface");
+    assert_eq!(
+        approved.tokens,
+        vec![suggested],
+        "the seeded token and the suggested token are one string for one destination"
+    );
+}
+
 /// A malformed or absent argument yields `None`, never a guessed token —
 /// and `None` means the tool keeps asking every call.
 #[test]

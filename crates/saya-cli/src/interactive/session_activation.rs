@@ -34,11 +34,15 @@ const SESSION_FORK_FACT: &str =
 /// The activation line for a bypass session: the mode fact, then — when
 /// interpreters are staged — the shared warning sentence naming them in the
 /// session's wording, or the none-staged sentence instead, and the probe's
-/// verdict where it refused.
+/// verdict where it refused. One line per fact: the none-staged sentence
+/// starts its own line, so the mode fact's sentence ends and the design's
+/// sentence begins — a space joined them once, and "applies. no
+/// interpreters" read as a run-on with a lowercase word starting a sentence
+/// (U6 defect 3). Both facts keep the design's bytes.
 pub(crate) fn bypass_line(staged_interpreters: &[String], probe_refused: bool) -> String {
     let mut line = String::from(BYPASS_ON);
     if staged_interpreters.is_empty() {
-        line.push(' ');
+        line.push('\n');
         line.push_str(NO_INTERPRETERS_STAGED);
     } else {
         line.push('\n');

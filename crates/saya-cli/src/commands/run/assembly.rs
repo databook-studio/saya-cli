@@ -26,6 +26,7 @@ use saya_types::Budgets;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::mode::RunApproval;
 use super::runner::{RunRunner, build as build_runner};
 use super::tools::RunFetch;
 
@@ -101,20 +102,23 @@ pub(super) struct Pieces {
 /// — and only when — the run approved `scratch`, and the runner wiring is
 /// built once per run the same way — the placement guard, the startup probe,
 /// and the admission check — when the run approved a runner scope, fresh and
-/// resume alike. `allow_tokens` are the run's stated scopes as the grammar's
-/// words — the frozen decider's seeds and the journal payload's carried
-/// words; a fresh run states them from `--allow`, a resume from the journal.
-/// `profile_override` is the host's active connection profile
-/// (what a nested child's `--profile` forwards); `None` keeps the resolved
-/// default. Errors are configuration, connection, or admission problems
-/// (exit-code class 3), reported as text for the caller to emit.
+/// resume alike. `approval` is the run boundary's admitted mode (`mode.rs`):
+/// the composition is unreachable in bypass mode, because no entry point can
+/// construct the admitted type around it. `allow_tokens` are the run's
+/// stated scopes as the grammar's words — the frozen decider's seeds and the
+/// journal payload's carried words; a fresh run states them from `--allow`,
+/// a resume from the journal. `profile_override` is the host's active
+/// connection profile (what a nested child's `--profile` forwards); `None`
+/// keeps the resolved default. Errors are configuration, connection, or
+/// admission problems (exit-code class 3), reported as text for the caller
+/// to emit.
 pub(super) async fn assemble(
     runtime: &RuntimeConfig,
     profile_override: Option<&String>,
     run_root: &std::path::Path,
     scopes: &saya_types::Capabilities,
     workspace: std::sync::Arc<saya_harness::workspace::Workspace>,
-    approval: saya_agent::ApprovalPolicy,
+    approval: RunApproval,
     allow_tokens: &[String],
 ) -> Result<Pieces, String> {
     let endpoint = runtime
@@ -221,7 +225,7 @@ pub(super) async fn assemble(
         // engine's own reason. The primary stays unbound — only a call that
         // names its connection suggests a token — and the policy cannot
         // accumulate: a headless session grant is impossible.
-        decider: TerminalApproval::frozen(approval, allow_tokens),
+        decider: TerminalApproval::frozen(approval.policy(), allow_tokens),
         model: ai.model,
         profile_names,
         allow_query_data,

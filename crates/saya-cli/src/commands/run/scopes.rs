@@ -106,14 +106,17 @@ fn not_yet_wired(token: &str, family: &str, surface: Surface) -> Option<String> 
         })
 }
 
-/// The scopes `--allow` approved.
+/// The scopes the approval carries: the stated tokens, with the fetch
+/// family normalised to the URL parser's spelling at parse — the run
+/// engine's fetch policy compares the lowercased destination, and the grant
+/// token suggester produces the same form from the call's URL, so a seeded
+/// token and a suggested token are one string for one destination. A
+/// session's `/allow` seeds these words, so `/grants` shows the grammar's
+/// form of what was granted. A run's approval is `capabilities` plus the
+/// frozen decider's seeds.
 #[derive(Debug)]
 pub(crate) struct Approved {
     pub(crate) capabilities: Capabilities,
-    /// The scopes exactly as stated — the session grant store's words. A
-    /// run's approval is `capabilities` plus the frozen decider's seeds;
-    /// a session's `/allow` seeds these verbatim, so `/grants` shows the
-    /// words the user typed.
     pub(crate) tokens: Vec<String>,
 }
 
@@ -159,12 +162,30 @@ pub(crate) fn parse(tokens: &[String], surface: Surface) -> Result<Approved, Str
             tokens: tokens.to_vec(),
         });
     }
+    // The grammar's words as the approval carries them, normalised where
+    // the engine normalises: a fetch destination's spelling is the URL
+    // parser's — lowercased scheme and host — and the run engine's fetch
+    // policy compares exactly that form, as does the grant token suggester
+    // spelling a call's URL. Normalising at parse, on both surfaces, makes
+    // a seeded token and a suggested token one string for one destination:
+    // whatever casing the user typed, the grant pre-answers the call it
+    // names (U6 defect 2). Every other family rides the stated spelling
+    // verbatim: runner programs and connection names are case-sensitive
+    // identifiers nothing in the engine folds, so normalising them would
+    // widen a grant across distinct names.
+    let stated: Vec<String> = tokens
+        .iter()
+        .map(|token| match token.split_once(':') {
+            Some(("fetch", rest)) => format!("fetch:{}", rest.to_ascii_lowercase()),
+            _ => token.clone(),
+        })
+        .collect();
     let mut capabilities = Capabilities::default();
     let mut destinations = Vec::new();
     let mut programs = Vec::new();
     let mut interpreters = Vec::new();
     let mut bindings = Vec::new();
-    for token in tokens {
+    for token in &stated {
         if token == "workspace-write" {
             capabilities.workspace_write = true;
         } else if token == "scratch" {
@@ -264,7 +285,7 @@ pub(crate) fn parse(tokens: &[String], surface: Surface) -> Result<Approved, Str
     }
     Ok(Approved {
         capabilities,
-        tokens: tokens.to_vec(),
+        tokens: stated,
     })
 }
 
@@ -474,6 +495,51 @@ mod tests {
             "the payload rides the token verbatim — /grants shows the word the \
              user typed, got: {:?}",
             approved.tokens
+        );
+    }
+
+    /// A fetch token is normalised at parse — the URL parser's spelling —
+    /// on both surfaces: the approval carries `fetch:https+example.com`
+    /// whatever casing the user typed, the parsed destination is the
+    /// lowercased one, and an already-lowercase token is today's bytes
+    /// unchanged. The run engine's fetch policy compares the URL parser's
+    /// lowercased form, and the grant token suggester produces it from the
+    /// call's URL, so the token the approval carries must be that same
+    /// string: a seeded token and a suggested token are one string for one
+    /// destination (U6 defect 2 — the verbatim seed never matched the
+    /// lowercased suggestion, so `/grants` listed a grant that pre-answered
+    /// nothing).
+    #[test]
+    fn a_fetch_token_is_normalised_at_parse_on_both_surfaces() {
+        for surface in [Surface::Run, Surface::Session] {
+            let Ok(approved) = parse(&["fetch:HTTPS+Example.com".to_string()], surface) else {
+                panic!("a mixed-case fetch token parses on {surface:?}");
+            };
+            assert_eq!(
+                approved.tokens,
+                vec!["fetch:https+example.com".to_owned()],
+                "the approval carries the URL parser's spelling on {surface:?}"
+            );
+            let fetch = approved
+                .capabilities
+                .fetch
+                .as_ref()
+                .expect("the fetch scope is approved");
+            assert_eq!(
+                fetch.destinations,
+                vec![
+                    Destination::new("https", "example.com")
+                        .expect("the normalised destination is shape-valid")
+                ],
+                "the parsed destination is the normalised one on {surface:?}"
+            );
+        }
+        let approved = parse(&["fetch:https+example.com".to_string()], Surface::Run)
+            .expect("a lowercase fetch token parses");
+        assert_eq!(
+            approved.tokens,
+            vec!["fetch:https+example.com".to_owned()],
+            "an already-lowercase token keeps its exact bytes"
         );
     }
 

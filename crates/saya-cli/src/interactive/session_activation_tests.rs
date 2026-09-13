@@ -2,7 +2,7 @@
 //! line, the staged names, the session fork fact, and the none-staged
 //! variant — every fact the surfaces must say, byte-pinned here.
 
-use super::{NO_INTERPRETERS_STAGED, bypass_line};
+use super::{BYPASS_ON, NO_INTERPRETERS_STAGED, bypass_line};
 
 /// Under bypass with interpreters staged, the line names the staged names
 /// inside the session wording of the run surface's warning: "bypass" (the
@@ -70,6 +70,29 @@ fn the_none_staged_variant_names_the_refusal_instead() {
     assert!(
         !line.contains("interpreter approval"),
         "the staged-interpreter warning must not appear when none are staged: {line}"
+    );
+}
+
+/// The none-staged sentence starts after the sentence break (U6 defect 3):
+/// the mode fact ends its own line, and the design's sentence follows
+/// verbatim on the next line — one line per fact, the join the staged
+/// branch and the probe notice use. The old join was a space, which read
+/// "applies. no interpreters" — a run-on with a lowercase word starting a
+/// sentence mid-line. The sentence's bytes are the design's, so the break
+/// is where the two facts meet, never inside a sentence.
+#[test]
+fn the_none_staged_sentence_starts_after_the_sentence_break() {
+    let line = bypass_line(&[], false);
+    let (mode_fact, rest) = line
+        .split_once('\n')
+        .expect("the none-staged sentence begins on its own line after the mode fact");
+    assert_eq!(
+        mode_fact, BYPASS_ON,
+        "the mode fact is the first line, whole: {line}"
+    );
+    assert!(
+        rest.starts_with(NO_INTERPRETERS_STAGED),
+        "the design's sentence follows verbatim: {rest}"
     );
 }
 
