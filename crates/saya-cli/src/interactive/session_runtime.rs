@@ -181,7 +181,7 @@ mod tests {
         );
         assert_eq!(
             carried.resolve(&side_effecting(), Some("runner:bench")),
-            saya_agent::ApprovalDecision::Deny,
+            saya_agent::ApprovalDecision::Deny { reason: None },
             "read-only never asks, so the carried grant still cannot move it"
         );
         let back = policy_carrying(ApprovalPolicy::Ask, &carried.grants().tokens());

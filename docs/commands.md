@@ -184,21 +184,29 @@ it — per-step roles are not bound yet, every episode calls the orchestrator
 endpoint, and this document does not describe a capability a run cannot
 reach.
 
-The grammar also parses `sql:<connection>`, and a run **refuses it with a
-usage error** for the same reason: a run's decider consults no session
-grant, so the scope would gate nothing. The scope is a session's word —
-`/allow sql:<connection>` in an interactive session pre-answers the
-read-shaped SQL tools' asks against that connection for the session's
-lifetime — and headless runs are put on that same engine by a later wiring
-item (U4). Until then a run states what it can act on, and `sql:` is not
-one of them.
+The grammar also parses `sql:<connection>`, and it is wired on both surfaces
+now that headless runs sit on the same approval engine as interactive
+sessions. On a run, the stated token seeds the run's decider — the frozen
+session policy built from `--allow` — so under `--approval-mode ask` the
+read-shaped SQL tools' calls that name that connection run without asking,
+and every other ask the seeds do not cover denies with the engine's own
+reason ("cannot prompt: a headless run's approval is its `--allow` scopes").
+The token builds no plan capability — it is a per-call grant word — and the
+run's journal carries it in the `PlanApproved` payload, so a resume
+re-derives the grant from the journal, never from an editable file. The
+scope is a session's word too — `/allow sql:<connection>` in an interactive
+session pre-answers the same asks for the session's lifetime.
 
 Interactive sessions grant these words without a run: `/allow <scopes>`
 seeds the session's grant store through the same grammar judged for the
 session surface (it accepts `sql:<connection>` and refuses
 `endpoint:<role>=<endpoint>` — a session binds no per-step endpoint roles),
 and `/grants` lists the store's tokens verbatim, one per line, sorted, under
-a header stating the lifetime. Grants die with the session: they are never
+a header stating the lifetime. Under `bypass`, `/grants` states the mode
+first — "mode bypass: every call runs without asking; grants are not
+consulted" — before the listing, because a token count alone would read as
+"nothing runs" when the truth is that everything does. Grants die with the
+session: they are never
 persisted, and a resumed session starts empty. `/allow none` states the
 empty approval and seeds nothing — it is not a revoke.
 

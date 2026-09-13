@@ -75,6 +75,7 @@ fn the_view_shows_plan_scopes_budgets_and_digests() {
         &budgets,
         &workspace,
         bounds(),
+        &[],
     )
     .unwrap();
     let text = approval_view::render(&view);
@@ -106,6 +107,50 @@ fn the_view_shows_plan_scopes_budgets_and_digests() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// The carried grant words the run stated (`sql:<connection>`) ride the
+/// approved scopes the view shows — so the journal's `PlanApproved` payload
+/// records every word the user approved, and a resume re-derives them from
+/// the journal. A run without carried tokens renders today's words exactly.
+#[test]
+fn the_view_s_approved_scopes_carry_the_stated_grant_words() {
+    let (root, workspace) = empty_workspace("carried");
+    let plan = one_step_plan("read only", Capabilities::default());
+    let view = approval_view::view_of(
+        "g",
+        &Capabilities::default(),
+        &plan,
+        &Budgets::default(),
+        &workspace,
+        bounds(),
+        &["sql:analytics".to_owned(), "sql:staging".to_owned()],
+    )
+    .unwrap();
+    assert_eq!(
+        view.approved,
+        vec!["sql:analytics".to_owned(), "sql:staging".to_owned()],
+        "the carried words are the approval the view (and the journal) states"
+    );
+    // Capability words first, carried words after: one deterministic order.
+    let mut approved = Capabilities::default();
+    approved.workspace_write = true;
+    let view = approval_view::view_of(
+        "g",
+        &approved,
+        &plan,
+        &Budgets::default(),
+        &workspace,
+        bounds(),
+        &["sql:analytics".to_owned()],
+    )
+    .unwrap();
+    assert_eq!(
+        view.approved,
+        vec!["workspace-write".to_owned(), "sql:analytics".to_owned()],
+        "the payload is the capability words plus the carried grant words"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 /// An empty workspace is shown as having no artifacts yet — never as a
 /// fabricated entry.
 #[test]
@@ -119,6 +164,7 @@ fn a_fresh_workspace_shows_no_artifacts_yet() {
         &Budgets::default(),
         &workspace,
         bounds(),
+        &[],
     )
     .unwrap();
     let text = approval_view::render(&view);

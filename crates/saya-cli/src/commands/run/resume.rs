@@ -101,8 +101,11 @@ async fn continue_run(
     // no fewer — and the persisted spec stands in only where the journal
     // states nothing (journals written before the payload existed). A
     // `spec.json` edited between invocations cannot widen what the journal
-    // stated: the grant is the journal's, never the file's.
-    let scopes = super::grants::journal_grants(&dir, &spec.scopes)?;
+    // stated: the grant is the journal's, never the file's. The payload's
+    // words are also the resumed decider's seeds — the frozen policy holds
+    // exactly what the journal approved, and a pre-payload journal seeds
+    // nothing.
+    let grants = super::grants::journal_grants(&dir, &spec.scopes)?;
     let workspace = match Workspace::open(&dir.join("workspace")) {
         Ok(workspace) => Arc::new(workspace),
         Err(error) => {
@@ -113,13 +116,20 @@ async fn continue_run(
             );
         }
     };
-    let pieces =
-        match super::assembly::assemble(runtime, None, &dir, &scopes, workspace.clone(), approval)
-            .await
-        {
-            Ok(pieces) => pieces,
-            Err(message) => return crate::commands::output::failure_message(3, message, format),
-        };
+    let pieces = match super::assembly::assemble(
+        runtime,
+        None,
+        &dir,
+        &grants.capabilities,
+        workspace.clone(),
+        approval,
+        &grants.tokens,
+    )
+    .await
+    {
+        Ok(pieces) => pieces,
+        Err(message) => return crate::commands::output::failure_message(3, message, format),
+    };
     // The per-step toolsets are prebuilt from the loaded plan, the same
     // fail-closed prebuild a fresh run does: the plan is known before
     // `engine_resume`, so a toolset that cannot be built refuses before

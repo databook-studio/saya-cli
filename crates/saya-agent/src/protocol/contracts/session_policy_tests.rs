@@ -37,7 +37,7 @@ fn read_only_allows_read_shaped_and_denies_the_rest() {
     );
     assert_eq!(
         policy.resolve(&side_effecting(), None),
-        ApprovalDecision::Deny,
+        ApprovalDecision::Deny { reason: None },
         "read-only must not allow a tool with an external side effect"
     );
 }
@@ -45,10 +45,13 @@ fn read_only_allows_read_shaped_and_denies_the_rest() {
 #[test]
 fn never_denies_everything() {
     let policy = SessionPolicy::new(ApprovalPolicy::Never);
-    assert_eq!(policy.resolve(&read_shaped(), None), ApprovalDecision::Deny);
+    assert_eq!(
+        policy.resolve(&read_shaped(), None),
+        ApprovalDecision::Deny { reason: None }
+    );
     assert_eq!(
         policy.resolve(&side_effecting(), None),
-        ApprovalDecision::Deny
+        ApprovalDecision::Deny { reason: None }
     );
 }
 
@@ -114,13 +117,13 @@ fn grants_cannot_move_read_only_or_never() {
     let read_only = SessionPolicy::new(ApprovalPolicy::ReadOnly);
     assert_eq!(
         read_only.resolve(&side_effecting(), Some("runner:bench")),
-        ApprovalDecision::Deny,
+        ApprovalDecision::Deny { reason: None },
         "read-only does not ask, so no grant can answer for it"
     );
     let never = SessionPolicy::new(ApprovalPolicy::Never);
     assert_eq!(
         never.resolve(&read_shaped(), Some("runner:bench")),
-        ApprovalDecision::Deny,
+        ApprovalDecision::Deny { reason: None },
         "never is a standing refusal"
     );
 }
@@ -186,4 +189,110 @@ fn write_shaped() -> ToolEffect {
         requires_approval: true,
         local_state: LocalStateEffect::WriteWorkspace,
     }
+}
+
+/// The headless policy (U4: the run's decider is this engine, frozen): an
+/// `Ask` the seeds do not cover cannot be answered — a headless surface has
+/// no reader — so it resolves to a structured deny that names why, in the
+/// words the task pins: the run's approval is its `--allow` scopes. The
+/// reason is on the decision, never a bare refusal.
+#[test]
+fn a_frozen_ask_denies_naming_the_run_s_approval() {
+    let policy = SessionPolicy::frozen(ApprovalPolicy::Ask, &[]);
+    let decision = policy.resolve(&read_shaped(), None);
+    let ApprovalDecision::Deny { reason } = decision else {
+        panic!("a headless ask denies, got {decision:?}");
+    };
+    let reason = reason.expect("the headless denial names why");
+    assert!(
+        reason.contains("cannot prompt"),
+        "the denial says why it cannot ask: {reason}"
+    );
+    assert!(
+        reason.contains("--allow"),
+        "the denial names what a run's approval is: {reason}"
+    );
+}
+
+/// A seed pre-answers exactly what `--allow` stated: `--allow sql:analytics`
+/// seeds the frozen policy, and a call naming that connection resolves
+/// `Allow` where the unseeded ask denied. Another connection's call is
+/// outside the seed and denies — grants are narrow, frozen or not.
+#[test]
+fn a_run_s_seeds_pre_answer_what_allow_stated() {
+    let policy = SessionPolicy::frozen(ApprovalPolicy::Ask, &["sql:analytics".to_owned()]);
+    assert_eq!(
+        policy.resolve(&read_shaped(), Some("sql:analytics")),
+        ApprovalDecision::Allow,
+        "the seeded token pre-answers the call it names"
+    );
+    assert!(
+        matches!(
+            policy.resolve(&read_shaped(), Some("sql:staging")),
+            ApprovalDecision::Deny { .. }
+        ),
+        "another connection is outside the seed: the headless ask denies"
+    );
+}
+
+/// A run's policy never accumulates: no decision is an `Ask` — there is
+/// nothing any frontend could answer — and `record` cannot move the store
+/// even if a caller tried. The store holds exactly the seeds, forever.
+#[test]
+fn a_frozen_policy_cannot_accumulate_a_grant() {
+    let policy = SessionPolicy::frozen(ApprovalPolicy::Ask, &["runner:bench".to_owned()]);
+    for (effect, label) in [
+        (read_shaped(), "read-shaped"),
+        (side_effecting(), "side-effecting"),
+        (write_shaped(), "write-shaped"),
+    ] {
+        assert!(
+            !matches!(policy.resolve(&effect, None), ApprovalDecision::Ask),
+            "a headless ask is unanswerable, so none is produced: {label}"
+        );
+    }
+    assert!(
+        !policy.record(ApprovalChoice::AllowSession {
+            token: "interpreter:python3".into(),
+        }),
+        "record cannot move the store on the run surface"
+    );
+    assert!(
+        !policy.record(ApprovalChoice::AllowOnce),
+        "allow once never records, frozen or not"
+    );
+    assert_eq!(
+        policy.grants().tokens(),
+        vec!["runner:bench".to_owned()],
+        "the store holds exactly the seeds — no answer could have added one"
+    );
+}
+
+/// The modes that never ask are unchanged by the freeze, exactly as in a
+/// session: read-only still allows exactly the read-shaped tools and denies
+/// the rest, `never` denies everything — the seeds ride along inert.
+#[test]
+fn a_frozen_read_only_or_never_run_is_unchanged_by_its_seeds() {
+    let seeds = ["runner:bench".to_owned(), "sql:analytics".to_owned()];
+    let read_only = SessionPolicy::frozen(ApprovalPolicy::ReadOnly, &seeds);
+    assert_eq!(
+        read_only.resolve(&read_shaped(), Some("sql:analytics")),
+        ApprovalDecision::Allow,
+        "read-only auto-approves the read-shaped tools as before"
+    );
+    assert!(
+        matches!(
+            read_only.resolve(&side_effecting(), Some("runner:bench")),
+            ApprovalDecision::Deny { .. }
+        ),
+        "read-only denies the rest; no seed can move it"
+    );
+    let never = SessionPolicy::frozen(ApprovalPolicy::Never, &seeds);
+    assert!(
+        matches!(
+            never.resolve(&read_shaped(), Some("sql:analytics")),
+            ApprovalDecision::Deny { .. }
+        ),
+        "never is a standing refusal under the freeze too"
+    );
 }

@@ -202,10 +202,11 @@ pub enum Command {
         /// `interpreter:<program>` grants a shell or interpreter — a program
         /// that can spawn arbitrary children, so the runner will not choose
         /// one on its own; naming it here is the only way a run may use one.
-        /// The grammar also parses `sql:<connection>` and
-        /// `endpoint:<role>=<endpoint>`, both refused with a usage error: a
-        /// run's decider consults no session grant yet (wiring item U4,
-        /// headless runs on the same engine, is what wires it), and
+        /// `sql:<connection>` seeds the run's decider with the connection's
+        /// per-call grant: under `--approval-mode ask`, the read-shaped SQL
+        /// tools' calls that name that connection run without asking, and a
+        /// resume re-derives the grant from the run's journal.
+        /// `endpoint:<role>=<endpoint>` is refused with a usage error:
         /// per-step endpoint roles are not bound. A run states its scopes
         /// up front or does not start —
         /// nothing runs unapproved.

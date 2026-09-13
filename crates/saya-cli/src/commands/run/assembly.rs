@@ -3,12 +3,15 @@
 //! the provider from the run's `orchestrator` endpoint, the connection
 //! registry from the resolved profile, the executor over the database tools.
 //!
-//! Runs are headless by construction: the approval decider never prompts
-//! (`can_prompt` false), so an `ask`-mode approval denies, `never` denies,
-//! and the default is read-only — read-shaped tools run, anything needing an
-//! interactive decision or an external side effect is denied. The run's
-//! scopes (not the per-call decider) are the approval surface for
-//! capabilities.
+//! Runs are headless by construction: the approval decider is the frozen
+//! session policy (`prompt_approval::TerminalApproval::frozen`) — seeded from
+//! the run's `--allow` tokens, unable to prompt, unable to accumulate — so an
+//! `ask`-mode call the seeds do not cover denies with the engine's own
+//! reason, `never` denies, and the default is read-only — read-shaped tools
+//! run, anything needing an interactive decision or an external side effect
+//! is denied. The run's scopes (not the per-call decider) are the approval
+//! surface for capabilities; the seeds are the per-call grant words the
+//! scopes' grammar stated.
 
 use crate::agent::runtime::query_data_allowed;
 use crate::agent::tools::DatabaseTools;
@@ -98,7 +101,10 @@ pub(super) struct Pieces {
 /// — and only when — the run approved `scratch`, and the runner wiring is
 /// built once per run the same way — the placement guard, the startup probe,
 /// and the admission check — when the run approved a runner scope, fresh and
-/// resume alike. `profile_override` is the host's active connection profile
+/// resume alike. `allow_tokens` are the run's stated scopes as the grammar's
+/// words — the frozen decider's seeds and the journal payload's carried
+/// words; a fresh run states them from `--allow`, a resume from the journal.
+/// `profile_override` is the host's active connection profile
 /// (what a nested child's `--profile` forwards); `None` keeps the resolved
 /// default. Errors are configuration, connection, or admission problems
 /// (exit-code class 3), reported as text for the caller to emit.
@@ -109,6 +115,7 @@ pub(super) async fn assemble(
     scopes: &saya_types::Capabilities,
     workspace: std::sync::Arc<saya_harness::workspace::Workspace>,
     approval: saya_agent::ApprovalPolicy,
+    allow_tokens: &[String],
 ) -> Result<Pieces, String> {
     let endpoint = runtime
         .resolved
@@ -207,11 +214,14 @@ pub(super) async fn assemble(
         fetch,
         runner: wiring.runner,
         plan_scopes: wiring.plan_scopes,
-        // A run's decider is built unbound: a run's approval surface is the scope
-        // approval, not the session grant store, so its decider never suggests a
-        // SQL token (nothing could be granted into a per-run policy that no
-        // later turn shares) — and it never prompts anyway (`can_prompt: false`).
-        decider: TerminalApproval::new(approval, false, crate::grant_token::TurnPrimary::default()),
+        // The run's decider is the frozen session policy (U4), seeded from
+        // the run's stated scopes: a `sql:<connection>` token pre-answers
+        // the read-shaped SQL calls that name the connection under `ask`
+        // mode, and every other ask the seeds do not cover denies with the
+        // engine's own reason. The primary stays unbound — only a call that
+        // names its connection suggests a token — and the policy cannot
+        // accumulate: a headless session grant is impossible.
+        decider: TerminalApproval::frozen(approval, allow_tokens),
         model: ai.model,
         profile_names,
         allow_query_data,

@@ -56,10 +56,11 @@ struct NotYetWired {
 ///
 /// Entries are per surface by design: `endpoint:` is refused on both, each
 /// with its own true reason (a run's episodes and a session's binding are
-/// different facts), and `sql:` is refused only on the run surface — the
-/// session's `/allow` accepts it. Each entry names the plan item that wires
-/// it. Deleting an entry is the whole of "turning the scope on" once its
-/// consumer lands.
+/// different facts). `sql:` left the list with U4: the run's decider is the
+/// frozen session policy seeded from `--allow` (`assembly.rs`), so the
+/// stated token gates the SQL family's asks on the connection it names —
+/// its consumer exists, on both surfaces. Deleting an entry is the whole of
+/// "turning the scope on" once its consumer lands.
 const NOT_YET_WIRED: &[NotYetWired] = &[
     NotYetWired {
         family: "endpoint",
@@ -73,14 +74,18 @@ const NOT_YET_WIRED: &[NotYetWired] = &[
         reason: "a session binds no per-step endpoint roles; a run plan is where roles bind",
         pinned: "binds no per-step endpoint roles",
     },
-    NotYetWired {
-        family: "sql",
-        surface: Surface::Run,
-        reason: "a run's decider consults no session grant; wiring item U4 (headless runs on \
-                 the same engine) is what wires it",
-        pinned: "wiring item U4",
-    },
 ];
+
+/// The tail that names the surface's own next step. A run re-runs the
+/// command without the scope; a slash command has nothing to re-run — the
+/// user re-issues `/allow`. The run surface's bytes are pinned by
+/// `the_refusal_s_tail_names_the_surface_s_own_next_step`.
+fn refusal_tail(surface: Surface) -> &'static str {
+    match surface {
+        Surface::Run => "Re-run without it.",
+        Surface::Session => "Re-issue /allow without it.",
+    }
+}
 
 /// The refusal for a scope that parses but binds nothing on `surface`.
 fn not_yet_wired(token: &str, family: &str, surface: Surface) -> Option<String> {
@@ -94,9 +99,9 @@ fn not_yet_wired(token: &str, family: &str, surface: Surface) -> Option<String> 
         .map(|entry| {
             format!(
                 "scope `{token}` is not available yet: {reason}. It parses, but nothing \
-                 {place} would consume it, so approving it would gate nothing. Re-run \
-                 without it.",
+                 {place} would consume it, so approving it would gate nothing. {tail}",
                 reason = entry.reason,
+                tail = refusal_tail(surface),
             )
         })
 }
@@ -106,9 +111,25 @@ fn not_yet_wired(token: &str, family: &str, surface: Surface) -> Option<String> 
 pub(crate) struct Approved {
     pub(crate) capabilities: Capabilities,
     /// The scopes exactly as stated — the session grant store's words. A
-    /// run's approval is `capabilities`; a session's `/allow` seeds these
-    /// verbatim, so `/grants` shows the words the user typed.
+    /// run's approval is `capabilities` plus the frozen decider's seeds;
+    /// a session's `/allow` seeds these verbatim, so `/grants` shows the
+    /// words the user typed.
     pub(crate) tokens: Vec<String>,
+}
+
+/// The stated tokens that are per-call grant words — the families that bind
+/// no run capability (`Capabilities` has no field for them), so they ride
+/// the approval's tokens verbatim: the frozen decider seeds them and the
+/// journal's `PlanApproved` payload carries them, in stated order, deduped.
+/// Today that family is `sql:` only.
+pub(crate) fn carried_tokens(tokens: &[String]) -> Vec<String> {
+    let mut carried = Vec::new();
+    for token in tokens {
+        if token.starts_with("sql:") && !carried.contains(token) {
+            carried.push(token.clone());
+        }
+    }
+    carried
 }
 
 /// Parses the `--allow` tokens. An empty list is the caller's refusal
@@ -206,15 +227,15 @@ pub(crate) fn parse(tokens: &[String], surface: Surface) -> Result<Approved, Str
             bindings.push((role.to_string(), endpoint.to_string()));
         } else if let Some(rest) = token.strip_prefix("sql:") {
             // The payload is a connection's registry name, judged by the
-            // same name-shape rule `endpoint:` payloads are.
+            // same name-shape rule `endpoint:` payloads are. The token builds
+            // no run capability: it is a per-call grant word, carried on
+            // `Approved::tokens` — the run's frozen decider seeds it and the
+            // journal records it (U4).
             if !is_name_shaped(rest) {
                 return Err(format!(
                     "scope `{token}` must be sql:<connection>, a connection's registry \
                      name; {KNOWN}"
                 ));
-            }
-            if let Some(refusal) = not_yet_wired(token, "sql", surface) {
-                return Err(refusal);
             }
         } else {
             return Err(format!("unknown scope `{token}`; {KNOWN}"));
@@ -256,9 +277,9 @@ mod tests {
     /// universe consumed any of them. Approving a capability that gates
     /// nothing tells the user something false about what the model may do,
     /// so each is refused until its wiring lands. `scratch` wired with its
-    /// tool (S1), `fetch` (S2) and `runner` (S3) left this list; the rest
-    /// stay refused, and this test keeps refusing them the day they are
-    /// typed.
+    /// tool (S1), `fetch` (S2), `runner` (S3) and `sql:` (U4 — the run's
+    /// frozen decider consults its seeds) left this list; the rest stay
+    /// refused, and this test keeps refusing them the day they are typed.
     #[test]
     fn a_scope_nothing_consumes_is_refused_rather_than_silently_approved() {
         let token = "endpoint:analyst=fast";
@@ -283,10 +304,9 @@ mod tests {
     /// user-facing reason text, so each entry is pinned to the one phrasing
     /// that is true **for that entry** — a family's reason rides the
     /// surface it is refused on (`endpoint:`'s run reason and session
-    /// reason differ; `sql:` exists only on the run surface) — and a future
-    /// drift from the pin is a diff in this test rather than a lie to the
-    /// user. The "never an absence claim" assertion applies to every entry,
-    /// on every surface.
+    /// reason differ) — and a future drift from the pin is a diff in this
+    /// test rather than a lie to the user. The "never an absence claim"
+    /// assertion applies to every entry, on every surface.
     #[test]
     fn a_refusal_names_the_wiring_reason_never_an_absence_claim() {
         for entry in NOT_YET_WIRED {
@@ -311,10 +331,10 @@ mod tests {
 
     /// Each surface's refusal entries are distinct facts, so the pins are
     /// per entry and must not collide: the session's `endpoint:` reason is
-    /// its own words (what a session binds), never the run's phrase, and
-    /// the run's `sql:` reason names its wiring item. One phrase pinned
-    /// onto two futures is how the run's words ended up describing a
-    /// session's refusal — this keeps every phrase its entry's own.
+    /// its own words (what a session binds), never the run's phrase. One
+    /// phrase pinned onto two futures is how the run's words ended up
+    /// describing a session's refusal — this keeps every phrase its
+    /// entry's own.
     #[test]
     fn every_refusal_pin_is_its_entry_s_own_phrase() {
         for entry in NOT_YET_WIRED {
@@ -338,12 +358,12 @@ mod tests {
 
     /// `sql:<connection>` joins the grammar on the session surface: `/allow
     /// sql:analytics` parses and carries the token verbatim — the session's
-    /// grant store seeds the words as stated — while a run refuses the same
-    /// token with its wiring reason: a run's decider consults no grant
-    /// token, so the scope would gate nothing. The refusal names the wiring
-    /// item (U4, headless runs on the same engine), never an absence claim.
+    /// grant store seeds the words as stated. (U4 put the run surface on the
+    /// same engine, so `sql:` is no longer run-refused; the run surface's
+    /// inverse pin is
+    /// `sql_gates_a_run_s_sql_family_asks`.)
     #[test]
-    fn sql_joins_the_grammar_on_the_session_surface_only() {
+    fn sql_joins_the_grammar_on_the_session_surface() {
         let Ok(approved) = parse(&["sql:analytics".to_string()], Surface::Session) else {
             panic!("`sql:analytics` must parse on the session surface");
         };
@@ -361,23 +381,36 @@ mod tests {
         assert!(approved.capabilities.runner.is_none());
         assert!(approved.capabilities.interpreter.is_none());
         assert!(approved.capabilities.endpoints.as_map().is_empty());
+    }
 
-        let Err(error) = parse(&["sql:analytics".to_string()], Surface::Run) else {
-            panic!("a run's decider consults no grant token, so a run must refuse `sql:`");
+    /// The inverse pin (U4): `sql:<connection>` now gates something on a run.
+    /// The run's decider is the frozen session policy seeded from `--allow`
+    /// (`assembly.rs`), so the stated token rides the approval verbatim and
+    /// the journal — which pre-answers nothing without it — carries it to a
+    /// resume. The scope builds no run capability: it is a per-call grant
+    /// word, seeded, not a plan capability. A run started with
+    /// `--allow sql:analytics` behaves differently from one without it — the
+    /// decider-level proof is
+    /// `a_run_started_with_allow_sql_gates_the_sql_family_s_asks`
+    /// (`prompt_approval_tests`).
+    #[test]
+    fn sql_gates_a_run_s_sql_family_asks() {
+        let Ok(approved) = parse(&["sql:analytics".to_string()], Surface::Run) else {
+            panic!("`sql:analytics` gates the run's SQL-family asks and must approve");
         };
         assert!(
-            error.contains("not available yet"),
-            "the refusal must say why, got: {error}"
+            approved.tokens.iter().any(|token| token == "sql:analytics"),
+            "the run's approval carries the token verbatim — the frozen decider's \
+             seed is the word the user typed: {:?}",
+            approved.tokens
         );
-        assert!(
-            error.contains("wiring item U4"),
-            "the run refusal must name the wiring item, never claim a tool is \
-             absent: {error}"
-        );
-        assert!(
-            error.contains("sql:analytics"),
-            "the refusal must name the scope, got: {error}"
-        );
+        // The scope is a grant word, not a capability: nothing else moved.
+        assert!(!approved.capabilities.workspace_write);
+        assert!(!approved.capabilities.scratch);
+        assert!(approved.capabilities.fetch.is_none());
+        assert!(approved.capabilities.runner.is_none());
+        assert!(approved.capabilities.interpreter.is_none());
+        assert!(approved.capabilities.endpoints.as_map().is_empty());
     }
 
     /// `endpoint:` is refused on the session surface too — a session binds
@@ -413,9 +446,8 @@ mod tests {
     /// The `sql:` payload is a connection's registry name, judged by the
     /// same name-shape rule `endpoint:` payloads are: non-empty, bounded,
     /// no control characters, no whitespace. A payload that fails the shape
-    /// is a typed usage error on the surface that accepts the family, and
-    /// the run surface still refuses a well-shaped one by wiring — the
-    /// shape rule is the grammar's, shared by both surfaces.
+    /// is a typed usage error on every surface that accepts the family —
+    /// the shape rule is the grammar's, shared by both surfaces.
     #[test]
     fn the_sql_payload_is_judged_by_the_name_shape_rule() {
         assert!(
@@ -430,6 +462,10 @@ mod tests {
             parse(&["sql:has\nnewline".to_string()], Surface::Session).is_err(),
             "control characters are never a connection name"
         );
+        assert!(
+            parse(&["sql:prod eu".to_string()], Surface::Run).is_err(),
+            "the shape rule is the grammar's, not a surface's"
+        );
         let Ok(approved) = parse(&["sql:Analytics_2".to_string()], Surface::Session) else {
             panic!("a name-shaped payload parses");
         };
@@ -438,6 +474,33 @@ mod tests {
             "the payload rides the token verbatim — /grants shows the word the \
              user typed, got: {:?}",
             approved.tokens
+        );
+    }
+
+    /// The refusal's tail names the surface's own next step. A run re-runs
+    /// `saya run` without the scope — those exact bytes are pinned. A slash
+    /// command has nothing to re-run: `/allow` is re-issued without the
+    /// token, so the session tail must not tell the user to re-run anything.
+    #[test]
+    fn the_refusal_s_tail_names_the_surface_s_own_next_step() {
+        let Err(run_error) = parse(&["endpoint:analyst=fast".to_string()], Surface::Run) else {
+            panic!("`endpoint:` is refused on the run surface");
+        };
+        assert!(
+            run_error.ends_with("Re-run without it."),
+            "the run surface's tail keeps its exact bytes: {run_error}"
+        );
+        let Err(session_error) = parse(&["endpoint:analyst=fast".to_string()], Surface::Session)
+        else {
+            panic!("`endpoint:` is refused on the session surface");
+        };
+        assert!(
+            session_error.ends_with("Re-issue /allow without it."),
+            "a slash command is re-issued, not re-run: {session_error}"
+        );
+        assert!(
+            !session_error.contains("Re-run"),
+            "nothing at a slash command is a re-run: {session_error}"
         );
     }
 

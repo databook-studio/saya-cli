@@ -59,7 +59,10 @@ pub enum SlashCommand {
     /// dual-tag hazard is documented where the child spawns,
     /// `interactive::session_run`). The child's own CLI parser stays the
     /// authority on `--allow`, `--budget`, and the `cancel`/`resume`/`show`
-    /// subcommands — the adapter parses nothing twice.
+    /// subcommands — the adapter parses nothing twice, except its one word:
+    /// a leading `--seed-grants` requests that the child's `--allow` be
+    /// seeded from this session's grants (accepted tokens forwarded, refused
+    /// ones named), and is stripped before the child parses.
     Run(String),
     /// `/run cancel <id>` — record a run cancelled through the same engine
     /// path `saya run cancel` uses, via the shared dispatcher.
