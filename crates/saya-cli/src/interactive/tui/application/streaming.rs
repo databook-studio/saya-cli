@@ -42,6 +42,7 @@ impl App {
             state_db: self.state_db.clone(),
             last_sql: self.last_query.as_ref().map(|lq| lq.sql.clone()),
             session: Arc::clone(&self.session),
+            journal: Some(session.journal()),
         }));
         self.request.started = Some(std::time::Instant::now());
     }
@@ -116,6 +117,13 @@ impl App {
                         _ => {}
                     }
                     apply_event(&mut self.transcript, event, state.show_thinking);
+                }
+                StreamMsg::Notice(message) => {
+                    // A system fact the decider said — today, that the
+                    // session journal could not record a grant the user
+                    // just made. The consent stands; the missing audit
+                    // line must not be silent.
+                    self.transcript.push(BlockKind::System, message);
                 }
                 StreamMsg::ApprovalRequest {
                     tool,

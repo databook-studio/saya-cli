@@ -171,6 +171,7 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        None,
     );
     assert!(
         !before.approve(&tool, &arguments).await,
@@ -185,6 +186,7 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        None,
     );
     assert!(
         after.approve(&tool, &arguments).await,
@@ -273,8 +275,13 @@ async fn the_sql_family_s_grant_rides_the_turn_s_primary() {
         }),
         "the first grant is new"
     );
-    let after =
-        TerminalApproval::from_session(policy.clone(), false, primary, ApprovalFacts::default());
+    let after = TerminalApproval::from_session(
+        policy.clone(),
+        false,
+        primary,
+        ApprovalFacts::default(),
+        None,
+    );
     // The bound decider suggests `sql:analytics` for a connectionless call,
     // so the grant pre-answers it with no prompt at all.
     assert!(

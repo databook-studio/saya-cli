@@ -6,12 +6,30 @@ use super::session_grants::{allow, listing};
 use crate::grant_token::TurnPrimary;
 use crate::grant_token_tests::registry_with_primary;
 use saya_agent::{ApprovalPolicy, SessionGrants, SessionPolicy};
+use saya_store::{GrantSource, JournalEvent, SessionJournal};
+use std::path::PathBuf;
 
 /// A store with one grant seeded through the engine's own record.
 fn store_with(token: &str) -> SessionGrants {
     let grants = SessionGrants::default();
     grants.grant(token);
     grants
+}
+
+/// A fresh state directory per test, the way a session's is created.
+fn state_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("saya-allow-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("state dir creates");
+    dir
+}
+
+/// A journal whose file cannot be written: the journal path is a directory,
+/// so every append fails.
+fn broken_journal(label: &str) -> SessionJournal {
+    let dir = state_dir(label);
+    std::fs::create_dir_all(dir.join("journal.ndjson")).expect("the block is made");
+    SessionJournal::open(&dir)
 }
 
 /// `/grants` on an empty store: the lifetime header with the zero count and
@@ -89,10 +107,13 @@ fn the_listing_prints_the_tokens_verbatim_sorted() {
 /// word.
 #[test]
 fn allow_seeds_the_stated_scopes_into_the_store() {
+    let dir = state_dir("seed");
     let grants = SessionGrants::default();
+    let journal = SessionJournal::open(&dir);
     let message = allow(
         &["sql:analytics".to_owned(), "runner:bench".to_owned()],
         &grants,
+        &journal,
     )
     .expect("the session surface accepts both scopes");
     assert!(
@@ -103,12 +124,95 @@ fn allow_seeds_the_stated_scopes_into_the_store() {
     assert!(grants.is_granted("runner:bench"));
 }
 
+/// The journal-once rule (property 1): a first grant writes exactly one
+/// line per token, and a second grant of the same token — a re-stated
+/// `/allow`, the store answering "already" — writes none. The line is the
+/// `seed` source: the token was stated before anything ran under it.
+#[test]
+fn allow_journals_each_newly_seeded_token_once_as_a_seed() {
+    let dir = state_dir("seed-journal");
+    let grants = SessionGrants::default();
+    let journal = SessionJournal::open(&dir);
+    allow(
+        &["sql:analytics".to_owned(), "runner:bench".to_owned()],
+        &grants,
+        &journal,
+    )
+    .expect("the session surface accepts both scopes");
+    assert_eq!(
+        journal.read().expect("the journal reads"),
+        vec![
+            JournalEvent::Granted {
+                token: "sql:analytics".to_owned(),
+                source: GrantSource::Seed,
+            },
+            JournalEvent::Granted {
+                token: "runner:bench".to_owned(),
+                source: GrantSource::Seed,
+            },
+        ],
+        "exactly one line per newly seeded token, in seed order"
+    );
+    // Re-stating the same token: the store answers "already", nothing
+    // changes, and the journal records nothing.
+    allow(&["sql:analytics".to_owned()], &grants, &journal)
+        .expect("a re-stated scope is not a usage error");
+    assert_eq!(
+        journal.read().expect("the journal reads").len(),
+        2,
+        "a second grant of the same token writes none"
+    );
+}
+
+/// `/allow none` seeds nothing, so it journals nothing; a refused scope is
+/// a usage error that seeds nothing and journals nothing.
+#[test]
+fn allow_none_and_refused_scopes_journal_nothing() {
+    let dir = state_dir("seed-none");
+    let grants = store_with("runner:bench");
+    let journal = SessionJournal::open(&dir);
+    allow(&["none".to_owned()], &grants, &journal).expect("`none` parses on the session surface");
+    allow(&["wat".to_owned()], &grants, &journal).expect_err("an unknown scope is a usage error");
+    assert_eq!(
+        journal.read().expect("the journal reads"),
+        Vec::new(),
+        "nothing seeded, nothing journalled"
+    );
+}
+
+/// A journal write that fails must not take the seeding down — the user's
+/// explicit grant stands — and must not fail silently: the message still
+/// names what was seeded and says the audit line could not be written.
+#[test]
+fn a_failed_journal_write_warns_and_does_not_take_the_seed_down() {
+    let grants = SessionGrants::default();
+    let message = allow(
+        &["sql:analytics".to_owned()],
+        &grants,
+        &broken_journal("seed-fail"),
+    )
+    .expect("the seeding itself stands");
+    assert!(
+        grants.is_granted("sql:analytics"),
+        "the grant lands in the store: a failed audit write does not revoke consent"
+    );
+    assert!(
+        message.contains("sql:analytics"),
+        "the message still names what was seeded: {message}"
+    );
+    assert!(
+        message.to_lowercase().contains("journal"),
+        "the failed write is said, never silent: {message}"
+    );
+}
+
 /// Seeding a scope the store already holds changes nothing and says so:
 /// the grant is the same explicit fact, additive only.
 #[test]
 fn allow_over_an_existing_grant_says_so_and_changes_nothing() {
     let grants = store_with("runner:bench");
-    let message = allow(&["runner:bench".to_owned()], &grants)
+    let journal = SessionJournal::open(state_dir("already"));
+    let message = allow(&["runner:bench".to_owned()], &grants, &journal)
         .expect("a re-stated scope is not a usage error");
     assert!(
         message.contains("runner:bench"),
@@ -126,7 +230,8 @@ fn allow_over_an_existing_grant_says_so_and_changes_nothing() {
 #[test]
 fn a_fetch_grant_seeded_in_any_casing_pre_answers_the_call_it_names() {
     let grants = SessionGrants::default();
-    let message = allow(&["fetch:HTTPS+Example.com".to_owned()], &grants)
+    let journal = SessionJournal::open(state_dir("fetch"));
+    let message = allow(&["fetch:HTTPS+Example.com".to_owned()], &grants, &journal)
         .expect("the session surface accepts the fetch scope");
     assert!(
         message.contains("fetch:https+example.com"),
@@ -143,8 +248,12 @@ fn a_fetch_grant_seeded_in_any_casing_pre_answers_the_call_it_names() {
     // (`session_definitions.rs`): an external side effect consented per
     // call.
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
-    allow(&["fetch:HTTPS+Example.com".to_owned()], policy.grants())
-        .expect("the session surface accepts the fetch scope");
+    allow(
+        &["fetch:HTTPS+Example.com".to_owned()],
+        policy.grants(),
+        &SessionJournal::open(state_dir("fetch2")),
+    )
+    .expect("the session surface accepts the fetch scope");
     let effect = saya_agent::ToolEffect {
         database_data: false,
         external_side_effect: true,
@@ -169,8 +278,9 @@ fn a_fetch_grant_seeded_in_any_casing_pre_answers_the_call_it_names() {
 #[test]
 fn allow_none_seeds_nothing_and_says_so() {
     let grants = store_with("runner:bench");
-    let message =
-        allow(&["none".to_owned()], &grants).expect("`none` parses on the session surface");
+    let journal = SessionJournal::open(state_dir("none"));
+    let message = allow(&["none".to_owned()], &grants, &journal)
+        .expect("`none` parses on the session surface");
     assert!(
         message.contains("nothing"),
         "the message says nothing was seeded: {message}"
@@ -191,7 +301,8 @@ fn allow_none_seeds_nothing_and_says_so() {
 #[test]
 fn allow_refuses_a_scope_the_session_surface_refuses() {
     let grants = store_with("runner:bench");
-    let error = allow(&["endpoint:analyst=fast".to_owned()], &grants)
+    let journal = SessionJournal::open(state_dir("refuse"));
+    let error = allow(&["endpoint:analyst=fast".to_owned()], &grants, &journal)
         .expect_err("a session binds no per-step endpoint roles");
     assert!(
         error.contains("binds no per-step endpoint roles"),
@@ -203,14 +314,18 @@ fn allow_refuses_a_scope_the_session_surface_refuses() {
         "a refused /allow seeds nothing"
     );
 
-    let error = allow(&["sql:bad name".to_owned()], &SessionGrants::default())
-        .expect_err("a non-name-shaped payload is a usage error");
+    let error = allow(
+        &["sql:bad name".to_owned()],
+        &SessionGrants::default(),
+        &journal,
+    )
+    .expect_err("a non-name-shaped payload is a usage error");
     assert!(
         error.contains("sql:<connection>"),
         "the refusal names the grammar: {error}"
     );
 
-    let error = allow(&["wat".to_owned()], &SessionGrants::default())
+    let error = allow(&["wat".to_owned()], &SessionGrants::default(), &journal)
         .expect_err("an unknown scope is a usage error");
     assert!(error.contains("unknown scope `wat`"), "got: {error}");
 }
@@ -221,8 +336,12 @@ fn allow_refuses_a_scope_the_session_surface_refuses() {
 #[test]
 fn a_seeded_grant_pre_answers_like_a_prompted_one() {
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
-    allow(&["sql:analytics".to_owned()], policy.grants())
-        .expect("the session surface accepts the scope");
+    allow(
+        &["sql:analytics".to_owned()],
+        policy.grants(),
+        &SessionJournal::open(state_dir("pre-answer")),
+    )
+    .expect("the session surface accepts the scope");
     let effect = saya_agent::ToolEffect {
         database_data: true,
         external_side_effect: false,

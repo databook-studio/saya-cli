@@ -34,6 +34,10 @@ pub(crate) enum StreamMsg {
         grant: Option<String>,
         respond: oneshot::Sender<ApprovalChoice>,
     },
+    /// A system fact the decider must say into the transcript — today, that
+    /// the session journal could not record a grant the user just made. The
+    /// consent stands; the line is missing, and silence would hide it.
+    Notice(String),
     Done(Result<AgentOutput, String>),
 }
 
@@ -74,6 +78,10 @@ pub(crate) struct ChannelApproval {
     /// may state. The same bundle the terminal decider renders, so the
     /// modal cannot state different facts.
     facts: ApprovalFacts,
+    /// The session journal, when this decider belongs to a session: a
+    /// `[s]` answer's new grant is journalled there, before the call it
+    /// allowed runs. `None` — test shapes — records grants with no journal.
+    journal: Option<Arc<saya_store::SessionJournal>>,
 }
 
 impl ChannelApproval {
@@ -82,12 +90,14 @@ impl ChannelApproval {
         policy: SessionPolicy,
         primary: TurnPrimary,
         facts: ApprovalFacts,
+        journal: Option<Arc<saya_store::SessionJournal>>,
     ) -> Self {
         Self {
             tx,
             policy,
             primary,
             facts,
+            journal,
         }
     }
 }
@@ -130,8 +140,19 @@ impl ApprovalDecider for ChannelApproval {
                     Ok(choice) => {
                         // The user's answer reaches the session's grant store
                         // here, where the policy lives; allow-once and deny
-                        // record nothing.
-                        self.policy.record(choice.clone());
+                        // record nothing. A *new* grant is journalled right
+                        // here — before this call is allowed to run — by the
+                        // shared operation, one wording. A failed journal
+                        // write changes no consent: it is said into the
+                        // transcript, never silent.
+                        let (_, warning) = crate::interactive::session_grants::record_prompt_answer(
+                            &self.policy,
+                            &choice,
+                            self.journal.as_deref(),
+                        );
+                        if let Some(warning) = warning {
+                            let _ = self.tx.send(StreamMsg::Notice(warning));
+                        }
                         !matches!(choice, ApprovalChoice::Deny)
                     }
                     // A UI that died mid-ask denies.
@@ -146,7 +167,8 @@ impl ApprovalDecider for ChannelApproval {
 /// positional parameters, so the call sites read by name. `policy` is the
 /// session's one approval policy, cloned into this turn's decider so the
 /// session's grant set is shared across turns; `approval` is the same
-/// policy's mode, for the turn's definition advertising.
+/// policy's mode, for the turn's definition advertising. `journal` is the
+/// session's journal, when the turn belongs to a session.
 pub(crate) struct StreamRequest {
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) prompt: String,
@@ -157,6 +179,7 @@ pub(crate) struct StreamRequest {
     pub(crate) state_db: SqliteStateStore,
     pub(crate) last_sql: Option<String>,
     pub(crate) session: Arc<SessionUniverse>,
+    pub(crate) journal: Option<Arc<saya_store::SessionJournal>>,
 }
 
 /// Spawns the agent on a background thread and returns the live stream handle.
@@ -171,6 +194,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
         state_db,
         last_sql,
         session,
+        journal,
     } = request;
     let (tx, rx) = unbounded_channel();
     let cancel = CancellationToken::new();
@@ -186,8 +210,13 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
 
     std::thread::spawn(move || {
         let sink = ChannelSink { tx: tx.clone() };
-        let decider: Arc<dyn ApprovalDecider> =
-            Arc::new(ChannelApproval::new(tx.clone(), policy, primary, facts));
+        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::new(
+            tx.clone(),
+            policy,
+            primary,
+            facts,
+            journal,
+        ));
         let runtime_handle = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

@@ -64,7 +64,12 @@ pub(crate) fn dispatch(
     let mut result = Dispatch::Handled;
     // A mode change through `/approvals` carries the activation line with
     // it: under bypass the no-euphemism wording, the staged interpreter
-    // facts, and the probe's verdict — said where the mode is set.
+    // facts, and the probe's verdict — said where the mode is set. The mode
+    // before the command decides whether this command newly activated
+    // bypass: only then is a consent recorded in the journal; a
+    // re-statement over an already-bypass session records none, and a
+    // failed journal write is said, not silent.
+    let before_mode = state.approval_mode.clone();
     let parsed = parse_slash_command(line);
     let approvals_set = matches!(parsed, Ok(Some(SlashCommand::Approvals(Some(_)))));
     match parsed {
@@ -115,10 +120,14 @@ pub(crate) fn dispatch(
                     // `/allow <scopes…>` seeds the session's one grant store
                     // through the shared behaviour — the same parser, the
                     // session surface. A refused scope is an error and seeds
-                    // nothing; `/allow none` seeds nothing and says so.
+                    // nothing; `/allow none` seeds nothing and says so. Each
+                    // newly seeded token is journalled once by the shared
+                    // behaviour; a failed journal write changes no grant and
+                    // is said in the message.
                     match crate::interactive::session_grants::allow(
                         &tokens,
                         session.policy().grants(),
+                        &session.journal(),
                     ) {
                         Ok(message) => transcript.push(BlockKind::System, message),
                         Err(error) => transcript.push(BlockKind::Error, error),
@@ -250,14 +259,26 @@ pub(crate) fn dispatch(
         },
         Ok(None) => result = Dispatch::Agent(line.to_string()),
     }
-    if approvals_set
-        && let Some(activation) = crate::interactive::session_activation::line_if_bypass(
+    if approvals_set {
+        if let Some(activation) = crate::interactive::session_activation::line_if_bypass(
             state,
             runtime,
             &session.universe(),
-        )
-    {
-        transcript.push(BlockKind::System, activation);
+        ) {
+            transcript.push(BlockKind::System, activation);
+        }
+        if crate::interactive::session_activation::bypass_activated_by_command(
+            &before_mode,
+            &state.approval_mode,
+        ) && let Err(error) = session
+            .journal()
+            .bypass_activated(saya_store::BypassSource::Command)
+        {
+            transcript.push(
+                BlockKind::Error,
+                crate::interactive::session_grants::journal_warning(&error),
+            );
+        }
     }
     transcript.scroll_to_bottom();
     result

@@ -13,6 +13,7 @@ mod migration;
 mod redaction;
 mod runs;
 mod schema_store;
+mod session_journal;
 mod sqlite;
 mod sqlite_support;
 mod state_contracts;
@@ -29,6 +30,7 @@ pub use runs::{
     NewRun, RunBudgets, RunCapabilityFlags, RunRecord, RunStatus, RunStepRecord, RunStepStatus,
     RunStore, RunSummary, RunUsage,
 };
+pub use session_journal::{BypassSource, GrantSource, JournalEvent, SessionJournal};
 pub use sqlite::{OPEN_BUSY_CEILING, SqliteStateStore};
 pub use sqlite_support::state_sidecar_path;
 pub use state_contracts::{
