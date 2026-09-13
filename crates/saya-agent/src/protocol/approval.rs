@@ -1,12 +1,21 @@
+//! The approval modes' vocabulary: one spelling per mode, parsed here and
+//! carried everywhere else as the type.
+
 use std::{fmt, str::FromStr};
 
-/// Controls whether the agent may execute bounded read-only queries.
+/// Controls what the approval engine answers for a tool call. `ask` renders
+/// a prompt per call; `read-only` auto-approves read-shaped tools only and
+/// denies the rest; `never` denies everything; `bypass` allows every call
+/// without asking — the per-call consent given once at launch, with every
+/// structural guard (the SQL safety layer, the sandbox, the allowlists)
+/// untouched.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ApprovalPolicy {
     #[default]
     Ask,
     ReadOnly,
     Never,
+    Bypass,
 }
 
 impl FromStr for ApprovalPolicy {
@@ -16,6 +25,7 @@ impl FromStr for ApprovalPolicy {
             "ask" => Ok(Self::Ask),
             "read-only" => Ok(Self::ReadOnly),
             "never" => Ok(Self::Never),
+            "bypass" => Ok(Self::Bypass),
             _ => Err(ApprovalPolicyParseError(value.into())),
         }
     }
@@ -30,3 +40,7 @@ impl fmt::Display for ApprovalPolicyParseError {
     }
 }
 impl std::error::Error for ApprovalPolicyParseError {}
+
+#[cfg(test)]
+#[path = "approval_policy_tests.rs"]
+mod tests;

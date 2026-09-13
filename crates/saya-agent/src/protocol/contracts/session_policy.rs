@@ -26,10 +26,10 @@ pub enum ApprovalDecision {
 pub enum ApprovalChoice {
     /// Approve this one call; nothing is remembered.
     AllowOnce,
-    /// Approve and grant the call's suggested token for the session. No
-    /// frontend produces this choice yet — nothing asks the question — so
-    /// the grant store stays empty and every decision still comes from the
-    /// mode alone.
+    /// Approve and grant the call's suggested token for the session. Both
+    /// interactive frontends produce this choice — the terminal's `[s]`
+    /// answer (`prompt_approval`) and the TUI modal's `[s]` key — so the
+    /// grant store holds what the user actually granted, one token per ask.
     AllowSession {
         /// The grammar token the grant records, in the `--allow` vocabulary.
         token: String,
@@ -106,9 +106,14 @@ impl SessionPolicy {
     /// have asked about, so it allows under `ask`; `read-only` and `never`
     /// never ask, so grants cannot move them — read-only still allows exactly
     /// the read-shaped tools (`read_only_permits`) and denies the rest, and
-    /// `never` denies everything.
+    /// `never` denies everything. `bypass` allows every call: it is the
+    /// per-call consent given once, in the launch flag, so no grant is
+    /// consulted and none is recorded — no ask occurs under it. The mode
+    /// judges *who answers*, never *what the tool is*: every structural guard
+    /// lives in the tools and the composition, untouched by any mode.
     pub fn resolve(&self, effect: &ToolEffect, grant_token: Option<&str>) -> ApprovalDecision {
         match self.mode {
+            ApprovalPolicy::Bypass => ApprovalDecision::Allow,
             ApprovalPolicy::ReadOnly if read_only_permits(effect) => ApprovalDecision::Allow,
             ApprovalPolicy::ReadOnly => ApprovalDecision::Deny,
             ApprovalPolicy::Never => ApprovalDecision::Deny,

@@ -62,9 +62,10 @@ pub struct GlobalOptions {
     /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
-    /// When tool calls need approval: ask | read-only | never. Read-only
-    /// auto-approves read-shaped tools only; tools with external side effects
-    /// are denied.
+    /// When tool calls need approval: ask | read-only | never | bypass.
+    /// Read-only auto-approves read-shaped tools only; tools with external
+    /// side effects are denied. `bypass` runs every call without asking;
+    /// every structural guard still applies.
     #[arg(long, value_name = "MODE", global = true)]
     pub approval_mode: Option<String>,
     /// Output format for subcommands: text | json | ndjson.

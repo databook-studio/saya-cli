@@ -69,9 +69,15 @@ pub(crate) fn spawn_run_child(
     if let Some(profile) = state.profile.as_deref() {
         command.arg("--profile").arg(profile);
     }
-    command
-        .arg("--approval-mode")
-        .arg(state.approval_mode.as_str());
+    // Forward the session's approval mode so the child resolves what the
+    // session resolved — except bypass: a run's approval is its `--allow`
+    // scopes (`commands/run/start.rs`), so a bypass session's blanket
+    // per-call consent never reaches the child, which takes its own default
+    // (read-only). The session's bypass never claimed to reach the child;
+    // the run states its own scopes.
+    if let Some(mode) = forwarded_approval_mode(state.approval_mode.as_str()) {
+        command.arg("--approval-mode").arg(mode);
+    }
     // The child never reads stdin (a headless run prompts for nothing), and
     // it must never consume the session's remaining input lines: null stdin.
     command
@@ -97,6 +103,15 @@ fn child_argv(tail: &str) -> Vec<String> {
     let mut argv = vec![tokens[..boundary].join(" ")];
     argv.extend(tokens[boundary..].iter().map(|token| token.to_string()));
     argv
+}
+
+/// The approval mode forwarded to a nested `saya run` child: the session's
+/// mode verbatim — except bypass. A run's approval is its `--allow` scopes;
+/// a bypass session's blanket consent never reaches the child, which states
+/// its own scopes or takes the run default (`app.rs`). `None` forwards
+/// nothing.
+fn forwarded_approval_mode(mode: &str) -> Option<&str> {
+    (mode != "bypass").then_some(mode)
 }
 
 /// The format flag the child inherits, so a piped session's `/run` speaks the
@@ -233,5 +248,31 @@ mod tests {
             }
             other => panic!("a budget tail parses to Start, got {other:?}"),
         }
+    }
+
+    /// A bypass session's nested `saya run` child gets no `--approval-mode`
+    /// flag: a run's approval is its `--allow` scopes, and a bypass session's
+    /// blanket per-call consent never claimed to reach the child. Every other
+    /// mode is forwarded verbatim, as before.
+    #[test]
+    fn a_bypass_session_s_nested_run_child_gets_no_bypass_mode() {
+        assert_eq!(forwarded_approval_mode("bypass"), None);
+        for (mode, expected) in [
+            ("ask", Some("ask")),
+            ("read-only", Some("read-only")),
+            ("never", Some("never")),
+        ] {
+            assert_eq!(
+                forwarded_approval_mode(mode),
+                expected,
+                "a {mode} session's child resolves what the session resolved"
+            );
+        }
+        // The guard is the vocabulary's own word, not a prefix match: a mode
+        // that merely contains "bypass" is not bypass.
+        assert!(
+            forwarded_approval_mode("bypassish").is_some(),
+            "an unknown mode word is forwarded verbatim, never treated as bypass"
+        );
     }
 }

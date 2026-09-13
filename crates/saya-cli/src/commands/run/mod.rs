@@ -39,6 +39,8 @@ mod runner_tests;
 // parser is the grammar's single authority, never duplicated.
 pub(crate) mod scopes;
 mod start;
+#[cfg(test)]
+mod start_tests;
 mod tools;
 #[cfg(test)]
 mod tools_tests;

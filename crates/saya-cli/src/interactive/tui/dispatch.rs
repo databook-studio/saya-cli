@@ -62,7 +62,12 @@ pub(crate) fn dispatch(
         return Dispatch::OpenSessionPicker;
     }
     let mut result = Dispatch::Handled;
-    match parse_slash_command(line) {
+    // A mode change through `/approvals` carries the activation line with
+    // it: under bypass the no-euphemism wording, the staged interpreter
+    // facts, and the probe's verdict — said where the mode is set.
+    let parsed = parse_slash_command(line);
+    let approvals_set = matches!(parsed, Ok(Some(SlashCommand::Approvals(Some(_)))));
+    match parsed {
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),
         Ok(Some(command)) => match command {
             SlashCommand::Columns(arg) => {
@@ -219,6 +224,15 @@ pub(crate) fn dispatch(
             },
         },
         Ok(None) => result = Dispatch::Agent(line.to_string()),
+    }
+    if approvals_set
+        && let Some(activation) = crate::interactive::session_activation::line_if_bypass(
+            state,
+            runtime,
+            &session.universe(),
+        )
+    {
+        transcript.push(BlockKind::System, activation);
     }
     transcript.scroll_to_bottom();
     result

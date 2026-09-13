@@ -128,7 +128,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("provider", "/provider [name]"),
             ("model", "/model [name]"),
             ("privacy", "/privacy [on|off]"),
-            ("approvals", "/approvals [ask|read-only|never]"),
+            ("approvals", "/approvals [ask|read-only|never|bypass]"),
             ("allow", "/allow <scopes…>"),
             ("grants", "/grants"),
         ],
@@ -204,7 +204,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             Some("privacy [on|off] — view or toggle cloud data sharing. Example: /privacy off")
         }
         "approvals" => Some(
-            "approvals [ask|read-only|never] — view or set tool execution approval policy. Example: /approvals ask",
+            "approvals [ask|read-only|never|bypass] — view or set tool execution approval policy. \
+             `bypass` runs every call without asking (a typed, global consent given at the flag or \
+             this command); every structural guard still applies. Example: /approvals ask",
         ),
         "schema" => Some(
             "schema [refresh] — display or refresh database schema context. Example: /schema refresh",
@@ -586,6 +588,43 @@ mod tests {
         assert!(
             contract.contains("show one object's contract"),
             "/contract help must describe the merged show form, got: {contract}"
+        );
+    }
+
+    /// The approvals grammar has one authority (`ApprovalPolicy::from_str`)
+    /// and every help surface must name the whole vocabulary it parses —
+    /// including `bypass`. A mode that parses but no help names is the exact
+    /// drift the run grammar's parity test (`scopes.rs`) exists to catch, on
+    /// the session's own mode word. The clap doc, the `/approvals` per-command
+    /// help, and the `/help` listing must all carry it.
+    #[test]
+    fn every_help_surface_names_bypass() {
+        use clap::CommandFactory as _;
+        let cmd = crate::cli::Cli::command();
+        let approval_mode = cmd
+            .get_arguments()
+            .find(|arg| arg.get_id() == "approval_mode")
+            .expect("`--approval-mode` is declared on the global options");
+        let clap_doc = approval_mode
+            .get_long_help()
+            .or_else(|| approval_mode.get_help())
+            .expect("the --approval-mode doc comment reaches clap")
+            .to_string();
+        assert!(
+            clap_doc.contains("bypass"),
+            "the clap `--approval-mode` doc must name the `bypass` value, got: {clap_doc}"
+        );
+
+        let help = command_help("approvals").expect("approvals has per-command help");
+        assert!(
+            help.contains("bypass"),
+            "the /approvals help must name the `bypass` value, got: {help}"
+        );
+
+        let listing = help_text();
+        assert!(
+            listing.contains("/approvals [ask|read-only|never|bypass]"),
+            "the /help listing must show the full mode vocabulary: {listing}"
         );
     }
 }

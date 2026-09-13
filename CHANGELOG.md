@@ -7,6 +7,46 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+**The fourth approval mode: `bypass` (sessions).** `--approval-mode bypass`
+(or `/approvals bypass`) runs every tool call without asking — one typed,
+global, informed consent, given once at the flag instead of once per call,
+in the mode's own word (never "yolo", "danger", or a softened "auto"). It is
+a consent transformation, not a containment transformation: the SQL safety
+layer, the sandbox, the placement guard, the probe, the allowlists, and every
+bound are untouched, and a run never takes bypass (`saya run --approval-mode
+bypass` refuses at start — a run's approval is its `--allow` scopes).
+
+- **Honest advertisement.** Under bypass the session advertises the
+  write-shaped tools whether or not a prompt surface exists — a piped REPL
+  runs under bypass too, which is the point of the demo surface. The
+  advertised-but-unusable anti-pattern cannot return: bypass's advertised
+  tools are usable, because the engine resolves `Allow`.
+- **The activation line.** At launch, at `/approvals bypass`, and again on a
+  resume, the session prints the mode's own words: what bypass does, what
+  still applies, the staged interpreter facts (the run surface's interpreter
+  warning adapted to the session — including "no process-fork is granted:
+  children an interpreter spawns are refused by the sandbox"), or the
+  none-staged sentence, and — where the host did not prove — "run_program is
+  unavailable: the sandbox probe did not prove this host", said under every
+  mode on the startup notice.
+- **The interpreter door is real.** The session's executor now composes the
+  interpreter scope from the trusted config's staged `[jobs.interpreter]
+  allow`, mode-independently. Before this release the session's prompt
+  offered `[s] allow interpreter:python3 for this session`, recorded the
+  grant, and the granted call still refused with the family refusal — a
+  lying approval. The fix is capability in the composition, consent in the
+  approval engine: under `ask`, a granted `interpreter:<program>` token now
+  actually runs; unstaged names keep the byte-identical family refusal.
+- **The red indicator.** The status bar and the headless status line render
+  `approval:bypass` in `danger()` red; the colour map carries an explicit
+  bypass arm, and a parity test closes the catch-all hole that would have
+  greyed a fourth variant silently.
+- `/approvals ask` leaves bypass mid-session (effective for turns started
+  after the change); grants made before the toggle ride it and are consulted
+  again under `ask` — bypass consults no grant and records none. A bypass
+  session's nested `/run` forwards no approval mode to the child, which
+  states its own scopes or takes the run default (read-only).
+
 **`saya run` — headless, resumable, budgeted runs.** A run takes a goal, proposes a
 plan, and executes it step by step without a person at the keyboard. It is the
 answer to a benchmark that dies at question 900 and has to start over.

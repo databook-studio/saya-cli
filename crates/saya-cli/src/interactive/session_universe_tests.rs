@@ -163,6 +163,46 @@ fn write_shaped_tools_stay_hidden_where_a_prompt_is_impossible() {
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
 
+/// The anti-silent-degradation pin (DESIGN §3): under `bypass` the session
+/// advertises every write-shaped tool with no prompt surface at all — that is
+/// the mode's meaning. Advertised-but-unusable cannot return under bypass,
+/// because the advertised tools *are* usable: the engine resolves `Allow`.
+/// A variant added without restating the advertisement rule would degrade
+/// silently into "read-only with auto-approved SQL", hiding every
+/// write-shaped tool while claiming everything runs.
+#[test]
+fn bypass_advertises_the_write_shaped_tools_without_a_prompt_surface() {
+    let project = worktree("bypass-advertise");
+    let state = temp_dir("bypass-advertise-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    for can_prompt in [true, false] {
+        let names = advertised(&universe, ApprovalPolicy::Bypass, can_prompt);
+        for tool in [
+            "workspace_write",
+            "scratch_sql",
+            "http_fetch",
+            "http_download",
+        ] {
+            assert!(
+                names.contains(&tool.to_string()),
+                "bypass advertises {tool} whether or not a prompt surface exists \
+                 (can_prompt={can_prompt}): {names:?}"
+            );
+        }
+        let definitions =
+            universe.definitions(ApprovalPolicy::Bypass, can_prompt, true, false, false);
+        let write = definitions
+            .iter()
+            .find(|definition| definition.name == "workspace_write")
+            .expect("workspace_write is advertised under bypass");
+        assert!(
+            write.effect.requires_approval,
+            "the definition still declares its approval shape honestly: the engine resolves it"
+        );
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
 // ---------------------------------------------------------------------------
 // red test 3 — outside a worktree no root binds
 // ---------------------------------------------------------------------------
@@ -424,6 +464,270 @@ async fn a_session_child_runs_with_the_workspace_root_as_its_cwd() {
     );
     let _ = fs::remove_dir_all(&project);
     let _ = fs::remove_dir_all(&state);
+}
+
+// ---------------------------------------------------------------------------
+// the interpreter door — the seam fix (DESIGN §8.1)
+// ---------------------------------------------------------------------------
+
+/// The seam-fix regression (DESIGN §8.1): under `ask`, a granted
+/// `interpreter:<program>` token resolves the engine's `Allow` — and the
+/// granted interpreter actually reaches execution. The ask offers the token
+/// (`grant_token.rs`), the engine honours the grant — but the composition
+/// must carry the door too, or the user approved a capability the
+/// composition never constructed: a lying approval. The family refusal
+/// (an unstaged name) is test 8's pin.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_granted_interpreter_actually_runs_under_ask() {
+    let project = worktree("interpreter-grant");
+    let state = temp_dir("interpreter-grant-state");
+    // The trusted config stages the interpreter universe: [jobs.interpreter]
+    // allow carries python3, staged beside the runner programs.
+    let mut runtime = session_runtime(Some((
+        vec!["touch".to_string()],
+        Some(PathBuf::from("/usr/bin")),
+    )));
+    runtime.resolved.jobs.interpreter.allow = vec!["python3".to_string()];
+    let universe = compose(&runtime, &project, &state);
+    assert!(
+        universe.runner.is_some(),
+        "the probe proves this host (macOS): the runner composes"
+    );
+
+    // The engine half: under ask, the granted token pre-answers the call.
+    let definitions = universe.definitions(ApprovalPolicy::Ask, true, true, false, false);
+    let run_program = definitions
+        .iter()
+        .find(|definition| definition.name == "run_program")
+        .expect("a proven runner advertises run_program");
+    let policy = saya_agent::SessionPolicy::new(ApprovalPolicy::Ask);
+    policy.grants().grant("interpreter:python3");
+    assert_eq!(
+        policy.resolve(&run_program.effect, Some("interpreter:python3")),
+        saya_agent::ApprovalDecision::Allow,
+        "the granted interpreter token pre-answers the ask"
+    );
+
+    // The door half: the granted interpreter call must reach the interpreter
+    // door and be admitted — the child's own outcome (whatever it is) is the
+    // report, never the family refusal. Today the composition carries no
+    // interpreter scope, so the call falls to the runner door and refuses
+    // with INTERPRETER_REFUSAL: the user approved a capability the
+    // composition never constructed.
+    let database = Arc::new(crate::agent::tools::DatabaseTools::new(None, 100, true));
+    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new());
+    let result = executor
+        .execute(
+            "run_program",
+            serde_json::json!({"program": "python3", "args": ["-c", "print(41 + 1)"]}),
+        )
+        .await;
+    let value = match result {
+        Ok(value) => value,
+        Err(error) => panic!(
+            "the granted interpreter call was refused: {error:?} — the ask approved a \
+             capability the composition never constructed"
+        ),
+    };
+    let outcome = serde_json::to_value(&value).unwrap();
+    assert!(
+        outcome.get("error").is_none(),
+        "the call was admitted: the child's own outcome is the report, not a refusal: {outcome}"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The interpreter door's universe is the trusted config's staged
+/// `[jobs.interpreter] allow` — built at composition, mode-independently:
+/// capability in the composition, consent in the approval engine. With
+/// nothing staged, the door does not exist at all (`None`), so an interpreter
+/// call keeps the runner door's family refusal.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_session_s_interpreter_door_is_the_staged_config_universe() {
+    let project = worktree("interpreter-door");
+    let state = temp_dir("interpreter-door-state");
+    let mut staged = session_runtime(Some((
+        vec!["touch".to_string()],
+        Some(PathBuf::from("/usr/bin")),
+    )));
+    staged.resolved.jobs.interpreter.allow = vec!["python3".to_string(), "perl".to_string()];
+    let universe = compose(&staged, &project, &state);
+    let runner = universe
+        .runner
+        .as_ref()
+        .expect("the probe proves this host (macOS)");
+    let door = runner
+        .interpreters
+        .as_ref()
+        .expect("staged interpreters open the door");
+    assert_eq!(door.programs, vec!["python3", "perl"]);
+
+    let unstaged = compose(
+        &session_runtime(Some((
+            vec!["touch".to_string()],
+            Some(PathBuf::from("/usr/bin")),
+        ))),
+        &project,
+        &state,
+    );
+    let doorless = unstaged
+        .runner
+        .expect("the runner composes regardless of interpreters");
+    assert!(
+        doorless.interpreters.is_none(),
+        "nothing staged in [jobs.interpreter] allow: the door does not exist"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// An unstaged interpreter keeps the byte-identical family refusal even
+/// while the interpreter door is open: the door exists only for names the
+/// runner refuses *and* the staged scope carries, so `bash` — refused, not
+/// staged — falls back to the runner's own words. (The bytes are pinned on
+/// the run surface, `runner/mod.rs`; this pins the session side of the same
+/// constant.)
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn an_unstaged_interpreter_keeps_the_byte_identical_family_refusal() {
+    const FAMILY_REFUSAL: &str = "shells and interpreters are refused by name: \
+         an interpreter can spawn arbitrary children with arbitrary argv and would void \
+         the typed-argv contract from inside the allowlist";
+    let project = worktree("interpreter-family");
+    let state = temp_dir("interpreter-family-state");
+    let mut runtime = session_runtime(Some((
+        vec!["touch".to_string()],
+        Some(PathBuf::from("/usr/bin")),
+    )));
+    runtime.resolved.jobs.interpreter.allow = vec!["python3".to_string()];
+    let universe = compose(&runtime, &project, &state);
+    assert!(universe.runner.is_some(), "the probe proves this host");
+    let database = Arc::new(crate::agent::tools::DatabaseTools::new(None, 100, true));
+    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new());
+    let result = executor
+        .execute(
+            "run_program",
+            serde_json::json!({"program": "bash", "args": ["-c", "echo hi"]}),
+        )
+        .await
+        .expect_err("bash is not staged: the family refusal stands");
+    assert!(
+        result.to_string().contains(FAMILY_REFUSAL),
+        "the unstaged interpreter keeps the byte-identical family refusal: {result}"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The probe gates every door, and its refusal is *said* (DESIGN §2, test
+/// 15): a config that declared a program dir and an allow can compose no
+/// runner for exactly one reason — the probe did not prove this host — and
+/// the absence lands on the notice seam, referenced by the bypass activation
+/// line. On a proven host the positive control holds: the runner composes,
+/// the notice stays silent, and `run_program` is advertised.
+#[test]
+fn bypass_composes_no_runner_where_the_probe_refuses_and_says_so() {
+    use super::super::session_runner::PROBE_REFUSED_NOTICE;
+    let project = worktree("probe-refusal");
+    let state = temp_dir("probe-refusal-state");
+    let tools = temp_dir("probe-refusal-tools");
+    let runtime = session_runtime(Some((vec!["bench".to_string()], Some(tools))));
+    let universe = compose(&runtime, &project, &state);
+    match universe.runner.as_ref() {
+        Some(_) => {
+            // Positive control (a proven host): the runner is there, nothing
+            // is said, and bypass advertises the tool.
+            assert!(
+                !universe.probe_refused && universe.notice.is_none(),
+                "a proven probe is silent: {:?}",
+                universe.notice
+            );
+            assert!(
+                advertised(&universe, ApprovalPolicy::Bypass, false)
+                    .contains(&"run_program".to_string()),
+                "bypass advertises the proven runner with no prompt surface"
+            );
+        }
+        None => {
+            // The config declared program_dir and allow, and the placement
+            // guard passed (composition did not Err) — so the only possible
+            // cause of an absent runner is the refused probe. It must be
+            // said, and run_program must be absent from every mode's list.
+            let notice = universe
+                .notice
+                .as_deref()
+                .expect("a refused probe is said, never silent");
+            assert_eq!(notice, PROBE_REFUSED_NOTICE);
+            assert!(universe.probe_refused, "the activation line's fact rides");
+            assert!(
+                !advertised(&universe, ApprovalPolicy::Bypass, false)
+                    .contains(&"run_program".to_string()),
+                "no runner, no run_program advertisement — under bypass like any mode"
+            );
+        }
+    }
+    // The words the refusal emits are the design's line, whatever host this
+    // test runs on.
+    assert!(
+        PROBE_REFUSED_NOTICE.contains("run_program is unavailable")
+            && PROBE_REFUSED_NOTICE.contains("the sandbox probe did not prove this host"),
+        "the notice names the probe: {PROBE_REFUSED_NOTICE}"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+// ---------------------------------------------------------------------------
+// the SQL safety layer is untouchable under bypass
+// ---------------------------------------------------------------------------
+
+/// The SQL safety layer is not an approval question, so bypass does not move
+/// it (DESIGN §4, test 14): a write statement through the query tools still
+/// refuses under a bypass policy — and the refusal is the safety layer's own
+/// words, not the approval engine's, because the engine resolved `Allow` and
+/// handed the call to the tool. A real DuckDB connector backs the registry,
+/// so the statement meets the actual `prepare_*` gate.
+#[tokio::test]
+async fn bypass_leaves_the_sql_safety_layer_untouched() {
+    use saya_connectors::{ConnectorOptions, DuckDbConnector};
+    let project = worktree("safety-layer");
+    let state = temp_dir("safety-layer-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let connector = DuckDbConnector::open(":memory:", false, ConnectorOptions::default())
+        .await
+        .expect("an in-memory duckdb opens");
+    let database = Arc::new(crate::agent::tools::DatabaseTools::new(
+        Some(Box::new(connector)),
+        100,
+        true,
+    ));
+    // The engine half: under bypass the write-shaped SQL call is *allowed* —
+    // the refusal cannot come from approval.
+    let sql = universe
+        .definitions(ApprovalPolicy::Bypass, false, true, false, false)
+        .iter()
+        .find(|definition| definition.name == "bounded_sql_query")
+        .expect("the read-shaped SQL tools are always advertised")
+        .clone();
+    assert_eq!(
+        saya_agent::SessionPolicy::new(ApprovalPolicy::Bypass).resolve(&sql.effect, None),
+        saya_agent::ApprovalDecision::Allow,
+        "bypass allows the SQL call: the safety layer is the next line of defence, not approval"
+    );
+    let executor = universe.executor(database, &CancellationToken::new());
+    let refused = executor
+        .execute(
+            "bounded_sql_query",
+            serde_json::json!({"sql": "DROP TABLE users"}),
+        )
+        .await
+        .expect_err("a write statement still refuses under bypass");
+    let refusal = format!("{refused:?}");
+    assert!(
+        refusal.contains("read-only safety policy")
+            || refusal.contains("not parseable as one read-only statement"),
+        "the refusal is the safety layer's own: {refusal}"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
 
 // ---------------------------------------------------------------------------

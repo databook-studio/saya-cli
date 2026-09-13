@@ -79,6 +79,45 @@ pub(crate) fn bind(
     }))
 }
 
+/// Binds the session universe's workspace from its three statements: an
+/// explicit `--workspace` first; on a resume, the recorded pin; on a fresh
+/// session, the git worktree top. A recorded root that no longer exists
+/// binds nothing and says so — fail closed, never re-derive-and-hope. The
+/// returned notice is the composition fact the session must say at startup.
+pub(crate) fn bind_from_pins(
+    explicit: Option<&Path>,
+    pinned_root: Option<&str>,
+    walk_when_unpinned: bool,
+    cwd: &Path,
+) -> Result<(Option<SessionWorkspace>, Option<String>), String> {
+    if let Some(dir) = explicit {
+        let bound = bind(Some(dir), cwd)?.expect("an explicit bind returns the root");
+        return Ok((Some(bound), None));
+    }
+    let Some(pin) = pinned_root else {
+        let bound = if walk_when_unpinned {
+            bind(None, cwd)?
+        } else {
+            // A resumed session whose record predates the workspace: it
+            // resumes unbound — exactly its old behaviour — never re-derived
+            // from wherever the shell happens to be.
+            None
+        };
+        return Ok((bound, None));
+    };
+    let recorded = PathBuf::from(pin);
+    if !recorded.exists() {
+        return Ok((
+            None,
+            Some(format!(
+                "the recorded workspace root {pin} no longer exists: no workspace is bound, \
+                 so file reads and writes are unavailable this session"
+            )),
+        ));
+    }
+    Ok((bind(Some(&recorded), cwd)?, None))
+}
+
 /// Walks up from `start` looking for a `.git` directory or worktree file;
 /// the directory containing it is the worktree top. No new dependency, and
 /// `git worktree`/submodule layouts resolve to the tree actually entered.

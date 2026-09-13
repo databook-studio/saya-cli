@@ -96,9 +96,15 @@ pub(crate) fn run(
         session.universe(),
     );
     // A startup fact the user must read: a pinned root that vanished, or any
-    // other composition notice, said once into the transcript.
+    // other composition notice, said once into the transcript — and, under
+    // bypass, the mode's activation line with the probe/absence facts.
     if let Some(notice) = session.notice() {
         app.transcript.push(BlockKind::System, notice.to_string());
+    }
+    if let Some(line) =
+        super::session_activation::line_if_bypass(state, runtime, &session.universe())
+    {
+        app.transcript.push(BlockKind::System, line);
     }
     app.reload_at_refs(state);
     // A session resumed via --resume/--continue arrives with its turns already
@@ -376,6 +382,15 @@ pub(crate) fn run(
                             }
                             if let Some(notice) = session.notice() {
                                 app.transcript.push(BlockKind::System, notice.to_string());
+                            }
+                            // A resumed bypass session re-prints its
+                            // activation line: the mode is real again.
+                            if let Some(line) = super::session_activation::line_if_bypass(
+                                state,
+                                runtime,
+                                &session.universe(),
+                            ) {
+                                app.transcript.push(BlockKind::System, line);
                             }
                         }
                         Err(error) => app.transcript.push(BlockKind::Error, error),

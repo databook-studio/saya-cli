@@ -18,7 +18,7 @@
 //!   corrupt its own session's state, and the runner's outcome records land
 //!   there instead of in the user's project.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use saya_agent::{ApprovalPolicy, CancellationToken, ToolDefinition, ToolExecutor};
@@ -29,8 +29,8 @@ use saya_harness::runner::{RunProgram, SharedCredentialSource, StaticCredentialS
 use saya_harness::scratch::ScratchSql;
 
 use super::session_definitions;
-use super::session_runner::{SessionRunner, compose_runner};
-use super::session_workspace::SessionWorkspace;
+use super::session_runner::{PROBE_REFUSED_NOTICE, SessionRunner, compose_runner};
+use super::session_workspace::{SessionWorkspace, bind_from_pins};
 use crate::agent::tools::{DatabaseTools, RunTools};
 
 /// One interactive session's tool universe.
@@ -46,8 +46,13 @@ pub(crate) struct SessionUniverse {
     /// turn, never stale.
     pub(crate) primary: crate::grant_token::TurnPrimary,
     /// A startup fact the user must see: a pinned root that no longer
-    /// exists. Reported, never silent.
+    /// exists, or a sandbox probe that did not prove this host. Reported,
+    /// never silent.
     pub(crate) notice: Option<String>,
+    /// The probe refused this host: `run_program` is absent for the session
+    /// and the fact is on the notice. The bypass activation line references
+    /// it — under a mode that claims everything runs, the exception is said.
+    pub(crate) probe_refused: bool,
 }
 
 impl SessionUniverse {
@@ -63,6 +68,7 @@ impl SessionUniverse {
             runner: None,
             primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
+            probe_refused: false,
         }
     }
 
@@ -79,7 +85,7 @@ impl SessionUniverse {
         cwd: &Path,
         state_dir: &Path,
     ) -> Result<Self, String> {
-        let (workspace, notice) = bind_workspace(explicit, pinned_root, walk_when_unpinned, cwd)?;
+        let (workspace, notice) = bind_from_pins(explicit, pinned_root, walk_when_unpinned, cwd)?;
         // Scratch: one DuckDB file per session state directory, the pinned
         // scratch semantics (external access off, 0600) either way. It is
         // engine state — a file tool cannot reach it and neither can a child.
@@ -98,17 +104,21 @@ impl SessionUniverse {
             workspace.as_ref().map(|bound| Arc::clone(&bound.workspace)),
             DownloadBudget::default(),
         ));
-        let runner = match workspace.as_ref() {
-            Some(bound) => compose_runner(runtime, &bound.root, state_dir)?,
-            None => None,
-        };
+        let mut runner_composed = None;
+        let mut probe_refused = false;
+        if let Some(bound) = workspace.as_ref() {
+            let composition = compose_runner(runtime, &bound.root, state_dir)?;
+            probe_refused = composition.probe_notice.is_some();
+            runner_composed = composition.runner;
+        }
         Ok(Self {
             workspace,
             scratch: Some(Arc::new(scratch)),
             fetch: Some(fetch),
-            runner,
+            runner: runner_composed,
             primary: crate::grant_token::TurnPrimary::default(),
-            notice,
+            notice: notice.or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned())),
+            probe_refused,
         })
     }
 
@@ -142,7 +152,7 @@ impl SessionUniverse {
                 RunProgram::for_step(
                     runner.spawn.clone(),
                     Some(runner.scope.clone()),
-                    None,
+                    runner.interpreters.clone(),
                     runner.timeout,
                     resolver,
                 )
@@ -159,9 +169,12 @@ impl SessionUniverse {
     }
 
     /// The turn's definitions: the database tools' own surface plus this
-    /// session's write-shaped members — advertised only where a prompt is
-    /// possible (the mode can ask and the surface can prompt), each
-    /// ask-gated through the approval engine.
+    /// session's write-shaped members — advertised exactly where the mode's
+    /// consent shape makes them usable: `ask` needs a prompt surface to
+    /// answer its asks; `bypass` **is** the consent (no ask, no surface —
+    /// the piped-REPL demo runs on this); `read-only` and `never` can
+    /// neither prompt nor allow. Each write-shaped call is decided through
+    /// the approval engine per call.
     pub(crate) fn definitions(
         &self,
         mode: ApprovalPolicy,
@@ -170,7 +183,11 @@ impl SessionUniverse {
         has_state_store: bool,
         permit_candidate_writes: bool,
     ) -> Vec<ToolDefinition> {
-        let asks = matches!(mode, ApprovalPolicy::Ask) && can_prompt;
+        let advertises = match mode {
+            ApprovalPolicy::Ask => can_prompt,
+            ApprovalPolicy::Bypass => true,
+            _ => false,
+        };
         // The database surface, always with the write permit off — the
         // session's own workspace_write below is the advertised one, and the
         // run-worded definition must not leak into the session's list.
@@ -180,9 +197,11 @@ impl SessionUniverse {
             permit_candidate_writes,
             false,
         );
-        if !asks {
+        if !advertises {
             // Read-only and never cannot prompt: everything write-shaped
-            // stays hidden, not advertised.
+            // stays hidden, not advertised. Bypass never lands here — its
+            // advertised tools are usable, so the advertised-but-unusable
+            // anti-pattern cannot return under it.
             return defs;
         }
         if self.workspace.is_some() {
@@ -200,45 +219,6 @@ impl SessionUniverse {
         }
         defs
     }
-}
-
-/// Binds the workspace: an explicit `--workspace` first; on a resume, the
-/// recorded pin; on a fresh session, the git worktree top. A recorded root
-/// that no longer exists binds nothing and says so — fail closed, never
-/// re-derive-and-hope.
-fn bind_workspace(
-    explicit: Option<&Path>,
-    pinned_root: Option<&str>,
-    walk_when_unpinned: bool,
-    cwd: &Path,
-) -> Result<(Option<SessionWorkspace>, Option<String>), String> {
-    if let Some(dir) = explicit {
-        let bound = super::session_workspace::bind(Some(dir), cwd)?
-            .expect("an explicit bind returns the root");
-        return Ok((Some(bound), None));
-    }
-    let Some(pin) = pinned_root else {
-        let bound = if walk_when_unpinned {
-            super::session_workspace::bind(None, cwd)?
-        } else {
-            // A resumed session whose record predates the workspace: it
-            // resumes unbound — exactly its old behaviour — never re-derived
-            // from wherever the shell happens to be.
-            None
-        };
-        return Ok((bound, None));
-    };
-    let recorded = PathBuf::from(pin);
-    if !recorded.exists() {
-        return Ok((
-            None,
-            Some(format!(
-                "the recorded workspace root {pin} no longer exists: no workspace is bound, \
-                 so file reads and writes are unavailable this session"
-            )),
-        ));
-    }
-    Ok((super::session_workspace::bind(Some(&recorded), cwd)?, None))
 }
 
 #[cfg(test)]

@@ -61,6 +61,15 @@ pub(super) fn resume(
                     if let Some(notice) = session.notice() {
                         transcript.push(BlockKind::System, notice.to_string());
                     }
+                    // A resumed bypass session re-prints its activation line
+                    // — the mode is real again, in its own words.
+                    if let Some(line) = crate::interactive::session_activation::line_if_bypass(
+                        state,
+                        runtime,
+                        &session.universe(),
+                    ) {
+                        transcript.push(BlockKind::System, line);
+                    }
                 }
                 Err(error) => transcript.push(BlockKind::Error, error),
             }

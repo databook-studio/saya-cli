@@ -139,3 +139,51 @@ fn allow_once_and_deny_leave_no_state() {
         "an answered ask does not pre-answer the next one"
     );
 }
+
+/// Under `bypass` every effect resolves `Allow` — read-shaped, write-shaped,
+/// and side-effecting alike — and no grant is consulted: the per-call consent
+/// was given once, in the launch flag. The store stays untouched because no
+/// ask ever occurs, so nothing `record` could carry exists.
+#[test]
+fn bypass_allows_every_effect_without_asking_or_grants() {
+    let policy = SessionPolicy::new(ApprovalPolicy::Bypass);
+    for (effect, label) in [
+        (read_shaped(), "read-shaped"),
+        (write_shaped(), "write-shaped"),
+        (side_effecting(), "side-effecting"),
+    ] {
+        assert_eq!(
+            policy.resolve(&effect, None),
+            ApprovalDecision::Allow,
+            "bypass allows every effect without asking: {label}"
+        );
+    }
+    // Grants are inert under bypass — never consulted, and nothing to consult
+    // with: no ask fires, so `record` never fires either.
+    policy.grants().grant("workspace-write");
+    assert_eq!(
+        policy.resolve(&side_effecting(), Some("workspace-write")),
+        ApprovalDecision::Allow,
+        "bypass allows the same either way: grants are not the judge, the mode is"
+    );
+    assert!(
+        !policy.grants().is_empty(),
+        "the pre-existing grant stays held — bypass consults nothing, it revokes nothing"
+    );
+    assert_eq!(
+        policy.resolve(&side_effecting(), None),
+        ApprovalDecision::Allow,
+        "an ungranted call allows identically: the grant never moved anything"
+    );
+}
+
+fn write_shaped() -> ToolEffect {
+    // The session's workspace_write shape: requires approval, writes the
+    // workspace, no external side effect.
+    ToolEffect {
+        database_data: false,
+        external_side_effect: false,
+        requires_approval: true,
+        local_state: LocalStateEffect::WriteWorkspace,
+    }
+}
