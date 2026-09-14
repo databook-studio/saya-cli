@@ -49,6 +49,16 @@ fn reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
         _ if token.starts_with("runner:") || token.starts_with("interpreter:") => {
             runner_family_reason(token, facts)
         }
+        // The host lane's own gate: a `command:` token parses under the
+        // grammar on the session surface, and gates something only when the
+        // lane composed. With the lane off, `/allow command:<x>` refuses
+        // with the launch wording — in this surface-aware refusal register.
+        _ if token.starts_with("command:") && facts.host.is_none() => Some(
+            "the host-command lane is not composed in this session, so the token gates \
+             nothing in this session; relaunch with `--host-commands` (or seed \
+             `--allow command:<program>`, or enable user-layer `[host_commands]`)"
+                .to_owned(),
+        ),
         _ => None,
     }
 }

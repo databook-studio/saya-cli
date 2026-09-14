@@ -697,3 +697,52 @@ fn jobs_interpreter_allow_without_program_dir_refuses() {
         "expected InterpreterAllowWithoutProgramDir, got {error:?}"
     );
 }
+
+/// H1 red: `[host_commands]` resolves `enable`, `pass_env`, and
+/// `timeout_seconds` from the user layer. Written before the section exists,
+/// so the fixture's unknown section fails parse today.
+#[test]
+fn host_commands_resolve_from_the_user_layer() {
+    let resolved = resolve(
+        ResolutionInput::new(ConnectionsFile::default()).with_user(
+            ConfigFile::from_toml(
+                "[host_commands]\nenable = true\npass_env = ['CI_TOKEN']\ntimeout_seconds = 42\n",
+            )
+            .expect("fixture parses"),
+        ),
+    )
+    .expect("resolution succeeds");
+    assert!(
+        resolved.host_commands.enabled,
+        "the user layer enables the lane"
+    );
+    assert_eq!(
+        resolved.host_commands.pass_env,
+        vec!["CI_TOKEN".to_owned()],
+        "pass_env resolves verbatim"
+    );
+    assert_eq!(
+        resolved.host_commands.timeout_seconds, 42,
+        "timeout_seconds resolves"
+    );
+}
+
+/// H1 red: `[host_commands]` defaults resolve to lane-off with an empty
+/// `pass_env` and the executor's ceiling. Written before the fields exist.
+#[test]
+fn host_commands_default_to_lane_off() {
+    let resolved =
+        resolve(ResolutionInput::new(ConnectionsFile::default())).expect("resolution succeeds");
+    assert!(
+        !resolved.host_commands.enabled,
+        "the lane is off unless stated"
+    );
+    assert!(
+        resolved.host_commands.pass_env.is_empty(),
+        "no pass_env by default"
+    );
+    assert_eq!(
+        resolved.host_commands.timeout_seconds, 600,
+        "the default ceiling is the executor's own"
+    );
+}

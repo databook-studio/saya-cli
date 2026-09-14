@@ -202,8 +202,8 @@ pub(crate) mod tests_support {
     pub(crate) fn unused_runtime() -> RuntimeConfig {
         use saya_config::{
             AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi,
-            ResolvedConfig, ResolvedFetchJobs, ResolvedInterpreterJobs, ResolvedJobs,
-            ResolvedMemory, ResolvedRunnerJobs, ThemeChoice,
+            ResolvedConfig, ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs,
+            ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs, ThemeChoice,
         };
         RuntimeConfig {
             resolved: ResolvedConfig {
@@ -247,6 +247,7 @@ pub(crate) mod tests_support {
                     max_claims_per_contract: 12,
                     max_context_bytes: 16384,
                 },
+                host_commands: ResolvedHostCommands::default(),
                 ignored_project_overrides: Vec::new(),
                 endpoints: BTreeMap::new(),
             },

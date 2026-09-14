@@ -18,6 +18,12 @@ pub struct ConfigFile {
     pub run: RunFile,
     #[serde(default)]
     pub jobs: JobsFile,
+    /// The `[host_commands]` section (H1): the unsandboxed second lane's own
+    /// opt-in — `enable`, `pass_env`, `timeout_seconds`. User-layer only; a
+    /// project-layer declaration is a typed resolve error (see `layers.rs`),
+    /// because a model-writable file must never enable unsandboxed execution.
+    #[serde(default)]
+    pub host_commands: HostCommandsFile,
     #[serde(default)]
     pub output: OutputFile,
     #[serde(default)]
@@ -297,6 +303,22 @@ pub struct InterpreterJobsFile {
     /// bounded like every set-valued approval surface, and required to be
     /// a name the runner refuses — the family's own mirror.
     pub allow: Option<Vec<String>>,
+}
+
+/// The `[host_commands]` section: the unsandboxed second lane's own opt-in.
+/// `enable` states the lane at launch-equivalent strength (user-layer only);
+/// `pass_env` names parent variables the built child environment carries;
+/// `timeout_seconds` is the per-call ceiling a call may narrow, never widen.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HostCommandsFile {
+    /// Whether the user layer enables the lane. `None` is off.
+    pub enable: Option<bool>,
+    /// Parent variables the child receives, by name.
+    #[serde(default)]
+    pub pass_env: Vec<String>,
+    /// Per-call ceiling in seconds. `None` resolves to the executor default.
+    pub timeout_seconds: Option<u64>,
 }
 
 /// The `[jobs.fetch]` sub-table: the download budgets a run's

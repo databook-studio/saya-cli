@@ -151,6 +151,46 @@ pub(crate) fn http_download() -> ToolDefinition {
     }
 }
 
+/// `run_command` over the session's host lane: one PATH-resolved program
+/// with typed argv, **unsandboxed** — the user's uid, whole filesystem, full
+/// network. Nothing here claims containment: H0's module header is the
+/// register this description matches. When a program is allowlisted in
+/// `[jobs.runner]`, prefer `run_program`: the contained lane is strictly
+/// safer. Ask-gated like every other write-shaped tool; the engine decides
+/// every call.
+pub(crate) fn run_command() -> ToolDefinition {
+    ToolDefinition {
+        name: "run_command".into(),
+        description: "Run one program from your PATH with typed argv — unsandboxed: as \
+            your user, with your whole filesystem and your network, unconfined. Every \
+            argument is passed verbatim as one argv element — no shell, no interpolation, \
+            no command-line string anywhere. The grant names the program only (`command:<program>`); \
+            any argv runs under it, and what the program spawns, downloads, or executes is not \
+            bounded. When a program is allowlisted in [jobs.runner], prefer run_program — the \
+            contained lane is strictly safer. Output is capped and redacted; a timeout kills \
+            the whole process group."
+            .into(),
+        read_only: false,
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "program": { "type": "string" },
+                "args": { "type": "array", "items": { "type": "string" } },
+                "timeout_seconds": { "type": "integer", "minimum": 1 }
+            },
+            "required": ["program"],
+            "additionalProperties": false
+        }),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: true,
+            local_state: LocalStateEffect::WriteWorkspace,
+        },
+        completion: Some("host command ran".into()),
+    }
+}
+
 /// `run_program` over the session's proven spawn: the allowlist is the
 /// config's `[jobs.runner] allow`, the sandbox is the session's one
 /// workspace root with no egress, and the ask is the per-call consent.
@@ -184,6 +224,25 @@ mod tests {
     use saya_agent::ApprovalPolicy;
     use saya_agent::SessionPolicy;
 
+    /// True when `text` states `phrase` as a standalone claim: the phrase
+    /// with no letter glued to either side. The honest "unsandboxed" must
+    /// never trip the "sandboxed" ban — "un" is a letter — while "runs
+    /// sandboxed" must, so the check is character-class matching, not
+    /// substring matching.
+    fn states_claim(text: &str, phrase: &str) -> bool {
+        text.match_indices(phrase).any(|(start, _)| {
+            let glued_before = text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphabetic());
+            let glued_after = text[start + phrase.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic());
+            !glued_before && !glued_after
+        })
+    }
+
     /// The scratch database's lifetime, stated truthfully (U7): the old
     /// description claimed the database "dies with" the session, which was
     /// the one sentence in the toolset that was not true — nothing deletes
@@ -214,6 +273,97 @@ mod tests {
         assert!(
             !description.contains("dies with"),
             "the false claim must not come back in any wording: {description}"
+        );
+    }
+
+    /// The session's `run_command` is ask-gated: the engine decides every
+    /// call, and the description steers the model to the contained lane when
+    /// a program is allowlisted there — while never implying the lane is
+    /// contained.
+    #[test]
+    fn the_session_s_run_command_is_ask_gated_and_honest() {
+        let definition = run_command();
+        assert_eq!(definition.name, "run_command");
+        assert!(
+            definition.effect.requires_approval,
+            "the session's run_command is ask-gated: the engine decides every call"
+        );
+        assert!(
+            definition.effect.external_side_effect,
+            "unsandboxed network and filesystem are an external side effect"
+        );
+        let description = &definition.description;
+        assert!(
+            description.contains("unsandboxed"),
+            "the posture is said in the sandbox line's slot: {description}"
+        );
+        assert!(
+            description.contains("prefer run_program"),
+            "the description steers to the contained lane: {description}"
+        );
+        // "contained" appears only in the steering clause ("the contained
+        // lane is strictly safer" — the *other* lane's property, naming
+        // where to go instead); the ban is on implying *this* lane contains.
+        // Matched as a standalone claim, not a substring: the honest
+        // "unsandboxed" carries "sandboxed" inside it, and a substring ban
+        // would fail on the truthful posture it exists to protect.
+        for contained in [
+            "sandboxed",
+            "contained execution",
+            "bounded to",
+            "no network",
+            "egress: none",
+        ] {
+            assert!(
+                !states_claim(description, contained),
+                "never imply containment ({contained}): {description}"
+            );
+        }
+        // The check still bites: the honest word reworded into a genuine
+        // containment claim must trip it, so the matcher above cannot pass
+        // vacuously on a weakened predicate. Every other banned phrase
+        // trips on the description with its honest guards stripped, in the
+        // same test that asserts the honest description passes.
+        let claiming = description.replace("unsandboxed", "runs sandboxed");
+        assert!(
+            states_claim(&claiming, "sandboxed"),
+            "a genuine containment claim must trip the check: {claiming}"
+        );
+        for (honest, claiming, phrase) in [
+            (
+                "prefer run_program — the contained lane is strictly safer",
+                "prefer run_program — contained execution for this lane",
+                "contained execution",
+            ),
+            (
+                "what the program spawns, downloads, or executes is not bounded",
+                "what the program spawns is bounded to the workspace",
+                "bounded to",
+            ),
+            (
+                "as your user, with your whole filesystem and your network, unconfined",
+                "with your whole filesystem and no network",
+                "no network",
+            ),
+            (
+                "with your whole filesystem and your network, unconfined",
+                "egress: none for this lane",
+                "egress: none",
+            ),
+        ] {
+            assert!(
+                description.contains(honest),
+                "the honest guard the case rewrites must be present: {description}"
+            );
+            let rewritten = description.replace(honest, claiming);
+            assert!(
+                states_claim(&rewritten, phrase),
+                "a genuine {phrase:?} claim must trip the check: {rewritten}"
+            );
+        }
+        assert!(
+            !description.contains("command:*") && !description.contains("prefix"),
+            "no blanket or prefix fiction in the description: {description}"
         );
     }
 

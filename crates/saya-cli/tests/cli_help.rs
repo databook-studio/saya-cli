@@ -263,3 +263,22 @@ fn continue_still_parses_for_the_bare_repl() {
     assert!(parsed.command.is_none(), "no subcommand: the REPL path");
     assert!(parsed.options.continue_session, "the flag reached options");
 }
+
+/// H1 red: the session-only `--host-commands` launch flag parses on the bare
+/// REPL. Written before the flag exists, so clap errors today.
+#[test]
+fn host_commands_flag_parses_for_the_bare_repl() {
+    let parsed = Cli::try_parse_from(["saya", "--host-commands"]).expect("bare flag parses");
+    assert!(parsed.command.is_none(), "no subcommand: the REPL path");
+    assert!(parsed.options.host_commands, "the flag reached options");
+}
+
+/// H1 red: the session-only `--allow command:<x>` launch seed parses on the
+/// bare REPL. Written before the flag exists, so clap errors today.
+#[test]
+fn session_allow_launch_seed_parses_for_the_bare_repl() {
+    let parsed =
+        Cli::try_parse_from(["saya", "--allow", "command:npm"]).expect("the launch seed parses");
+    assert!(parsed.command.is_none(), "no subcommand: the REPL path");
+    assert_eq!(parsed.options.allow, vec!["command:npm".to_owned()]);
+}

@@ -53,6 +53,11 @@ pub(crate) const FETCH_TIMEOUT_SECONDS: u64 = 60;
 /// measures real runs (U8).
 pub(crate) const RUNNER_TIMEOUT_SECONDS: u64 = 300;
 
+/// The `[host_commands]` default per-call ceiling in seconds: the executor's
+/// own conservative number, the same value a user-layer section resolves to
+/// when it declares nothing. A declared zero is a typed resolve error.
+pub(crate) const HOST_COMMANDS_TIMEOUT_SECONDS: u64 = 600;
+
 /// Effective download budget defaults, resolved from `[jobs.fetch]`.
 /// Always concrete: a run with nothing declared is bounded by these
 /// conservative defaults rather than unbounded — the point of the download
@@ -164,6 +169,29 @@ impl Default for ResolvedInterpreterJobs {
     /// `[jobs.interpreter]` resolves to: no interpreter approved.
     fn default() -> Self {
         Self { allow: Vec::new() }
+    }
+}
+
+/// Effective host-command defaults, resolved from `[host_commands]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedHostCommands {
+    /// Whether the lane is stated on: the launch flag, a launch
+    /// `--allow command:<x>` seed, or user-layer `enable` — never the
+    /// project layer, which is a typed resolve error.
+    pub enabled: bool,
+    /// Parent variables the built child environment carries, by name.
+    pub pass_env: Vec<String>,
+    /// Per-call ceiling in seconds; a call may narrow it, never widen it.
+    pub timeout_seconds: u64,
+}
+
+impl Default for ResolvedHostCommands {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pass_env: Vec::new(),
+            timeout_seconds: HOST_COMMANDS_TIMEOUT_SECONDS,
+        }
     }
 }
 
@@ -354,6 +382,45 @@ fn resolve_interpreter(
         return Err(ConfigError::InterpreterAllowWithoutProgramDir);
     }
     Ok(ResolvedInterpreterJobs { allow })
+}
+
+/// Resolves `[host_commands]`: `enable` is a plain bool, `pass_env` names
+/// must be well-formed `NAME=value` names (the child's own rule, checked
+/// here so a typo fails at resolve, not at spawn), and `timeout_seconds`
+/// follows the one-second-floor discipline. Every key is optional.
+pub(crate) fn resolve_host_commands(
+    file: crate::model::HostCommandsFile,
+) -> Result<ResolvedHostCommands, ConfigError> {
+    for name in &file.pass_env {
+        if !is_host_env_name(name) {
+            return Err(ConfigError::InvalidHostPassEnv { name: name.clone() });
+        }
+    }
+    let mut pass_env = file.pass_env;
+    pass_env.sort();
+    pass_env.dedup();
+    let timeout_seconds = file
+        .timeout_seconds
+        .unwrap_or(HOST_COMMANDS_TIMEOUT_SECONDS);
+    require_at_least_one("host_commands.timeout_seconds", timeout_seconds)?;
+    Ok(ResolvedHostCommands {
+        enabled: file.enable.unwrap_or(false),
+        pass_env,
+        timeout_seconds,
+    })
+}
+
+/// True when `name` can appear on the left of `NAME=value`: the child's own
+/// rule (see `saya-harness`' host env), checked at resolve so a typo fails
+/// with the section's name on it, not at spawn.
+fn is_host_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && !name
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Rejects a `[run] max_iterations` of zero. It is now the run-episode

@@ -43,6 +43,19 @@ pub struct GlobalOptions {
     /// workspace reads refuse.
     #[arg(long, value_name = "DIR")]
     pub workspace: Option<std::path::PathBuf>,
+    /// Enable the host-command lane for the interactive session: `run_command`
+    /// runs PATH-resolved programs unsandboxed — as your user, with your whole
+    /// filesystem and network. Session-only: `saya ask` refuses it, and runs
+    /// never get the lane. A workspace root is still required — no root, no
+    /// lane, even with the flag.
+    #[arg(long = "host-commands")]
+    pub host_commands: bool,
+    /// Seed session grants at launch, stated in the `--allow` grammar
+    /// (`command:<program>` seeds imply the host-command lane's composition).
+    /// Session-only: a subcommand is not a session — `saya ask` and `saya run`
+    /// refuse it rather than silently ignoring a stated intent.
+    #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
+    pub allow: Vec<String>,
     /// Connection profile to use (overrides `default_profile` in config).
     #[arg(long, global = true)]
     pub profile: Option<String>,
@@ -206,6 +219,8 @@ pub enum Command {
         /// per-call grant: under `--approval-mode ask`, the read-shaped SQL
         /// tools' calls that name that connection run without asking, and a
         /// resume re-derives the grant from the run's journal.
+        /// `command:<program>` is refused with a usage error: a run is
+        /// unattended and this scope names unconfined host execution.
         /// `endpoint:<role>=<endpoint>` is refused with a usage error:
         /// per-step endpoint roles are not bound. A run states its scopes
         /// up front or does not start —

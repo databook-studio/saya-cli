@@ -82,6 +82,10 @@ fn session_facts() -> ApprovalFacts {
             timeout_seconds: 30,
         }),
         workspace_root: Some(PathBuf::from(WORKSPACE_ROOT)),
+        // The host lane is uncomposed here: these snapshots pin the
+        // contained postures, and the lane's own facts arrive with H2's
+        // prompt body — H1 adds grammar, composition, and the tool only.
+        host: None,
     }
 }
 

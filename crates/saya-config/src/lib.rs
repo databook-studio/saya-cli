@@ -22,9 +22,14 @@ pub use endpoints::{ORCHESTRATOR_ROLE, ResolvedEndpoint};
 pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
 pub use input::{CliOverrides, ResolutionInput};
-pub use jobs::{ResolvedFetchJobs, ResolvedInterpreterJobs, ResolvedJobs, ResolvedRunnerJobs};
+pub use jobs::{
+    ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs,
+    ResolvedRunnerJobs,
+};
 pub use memory::ResolvedMemory;
-pub use model::{ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, JobsFile};
+pub use model::{
+    ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, HostCommandsFile, JobsFile,
+};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::SecretRef;
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};

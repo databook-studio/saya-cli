@@ -67,6 +67,10 @@ pub(super) fn for_frozen_decider(
         // the per-step toolsets gate `workspace_write` on the step's
         // capability, which plan validation keeps inside the run's scopes.
         workspace_root: scopes.workspace_write.then(|| workspace_root.to_path_buf()),
+        // Runs never get the host lane: the run surface refuses command:
+        // scopes at parse (permanent policy refusal), so the frozen decider
+        // carries no host member to consult.
+        host: None,
         ..ApprovalFacts::default()
     }
 }

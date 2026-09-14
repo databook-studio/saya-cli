@@ -9,8 +9,8 @@ use std::sync::Arc;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedFetchJobs, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs,
-    ThemeChoice,
+    ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
+    ResolvedRunnerJobs, ThemeChoice,
 };
 
 use super::SessionUniverse;
@@ -88,6 +88,7 @@ fn session_runtime(
                 max_claims_per_contract: 12,
                 max_context_bytes: 16384,
             },
+            host_commands: ResolvedHostCommands::default(),
             ignored_project_overrides: Vec::new(),
             endpoints: Default::default(),
         },
@@ -129,6 +130,87 @@ fn advertised(universe: &SessionUniverse, mode: ApprovalPolicy, can_prompt: bool
         .into_iter()
         .map(|definition| definition.name)
         .collect()
+}
+
+/// The lane's advertisement follows the mode rule — read-only and never
+/// sessions never see the tool — and a stated lane advertises under ask
+/// (with a prompt) and under bypass. The universe helper composes the lane
+/// here through the stated-launch helper below.
+#[test]
+fn the_lane_s_advertisement_follows_the_mode_rule() {
+    let project = worktree("host-advertise");
+    let state = temp_dir("host-advertise-state");
+    let runtime = session_runtime(None);
+    let launch = crate::interactive::session_host::HostLaunch::for_tests_stated(&runtime);
+    let universe = SessionUniverse::compose_with_launch(
+        &runtime,
+        None,
+        None,
+        true,
+        &project,
+        &state,
+        Some(&launch),
+    )
+    .expect("composition succeeds on a plain worktree");
+    for (mode, can_prompt, label) in [
+        (ApprovalPolicy::ReadOnly, true, "read-only"),
+        (ApprovalPolicy::Never, true, "never"),
+        (ApprovalPolicy::Ask, false, "no prompt surface"),
+    ] {
+        let names = advertised(&universe, mode, can_prompt);
+        assert!(
+            !names.contains(&"run_command".to_string()),
+            "{label} never sees the tool: {names:?}"
+        );
+    }
+    let ask_names = advertised(&universe, ApprovalPolicy::Ask, true);
+    assert!(
+        ask_names.contains(&"run_command".to_string()),
+        "a stated lane advertises under ask with a prompt: {ask_names:?}"
+    );
+    let bypass_names = advertised(&universe, ApprovalPolicy::Bypass, false);
+    assert!(
+        bypass_names.contains(&"run_command".to_string()),
+        "a stated lane advertises under bypass: {bypass_names:?}"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// No workspace root, no lane — even with the stated flag. The tool stays
+/// hidden, not advertised.
+#[test]
+fn no_workspace_no_lane_even_with_the_flag() {
+    let plain = temp_dir("host-no-worktree");
+    let state = temp_dir("host-no-worktree-state");
+    let runtime = session_runtime(None);
+    let launch = crate::interactive::session_host::HostLaunch::for_tests_stated(&runtime);
+    let universe = SessionUniverse::compose_with_launch(
+        &runtime,
+        None,
+        None,
+        true,
+        &plain,
+        &state,
+        Some(&launch),
+    )
+    .expect("composition succeeds without a root");
+    assert!(
+        universe.host_composed_for_tests().is_none(),
+        "no workspace root: the lane does not compose even when stated"
+    );
+    // The unstated shape composes the same way: the helper exists so the
+    // pin reads as one call.
+    let unstated = SessionUniverse::compose_host_for_tests(&runtime, &plain, &state);
+    assert!(
+        unstated.host_composed_for_tests().is_none(),
+        "unstated: no lane either"
+    );
+    let names = advertised(&universe, ApprovalPolicy::Ask, true);
+    assert!(
+        !names.contains(&"run_command".to_string()),
+        "hidden, not advertised: {names:?}"
+    );
+    let _ = (fs::remove_dir_all(&plain), fs::remove_dir_all(&state));
 }
 
 // ---------------------------------------------------------------------------

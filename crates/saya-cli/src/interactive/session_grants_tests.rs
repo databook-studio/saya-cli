@@ -437,6 +437,31 @@ fn the_primary_handle_names_the_registry_s_primary() {
     );
 }
 
+/// H1 red: a session's `/run` child never inherits a `command:` token, and
+/// the parent names what it dropped. Written before the family exists: the
+/// run surface's unknown-scope refusal already drops it, but the test pins
+/// the forward-compat shape H1 must keep.
+#[test]
+fn run_seed_names_command_tokens_as_dropped() {
+    use super::session_grants::{run_seed, seed_message};
+    let seed = run_seed(&["command:npm".to_owned(), "workspace-write".to_owned()]);
+    assert!(
+        seed.forwarded.contains(&"workspace-write".to_owned()),
+        "a run-accepted token still forwards: {:?}",
+        seed.forwarded
+    );
+    assert!(
+        seed.dropped.contains(&"command:npm".to_owned()),
+        "a session's /run child never inherits a command: token: {:?}",
+        seed.dropped
+    );
+    let message = seed_message(&seed);
+    assert!(
+        message.contains("not forwarded") && message.contains("command:npm"),
+        "the parent names what it dropped: {message}"
+    );
+}
+
 /// `/run --seed-grants` (test: the child's --allow is seeded from this
 /// session's grants **on request**): only tokens a run's own parser accepts
 /// are forwarded — each forwarded token parses on the run surface — and the
@@ -496,6 +521,69 @@ fn a_seed_request_over_an_empty_store_says_so() {
     assert!(
         message.contains("no session grants to seed"),
         "an empty store is said, not silent: {message}"
+    );
+}
+
+/// A launch allowing `command:x` composes the lane and seeds the token: the
+/// seed implies composition, so the launch helper admits it against a lane
+/// composed for the seed. The bare composition still refuses — pinned by
+/// `command_tokens_parse_on_a_composed_session_and_refuse_on_a_bare_one`.
+#[test]
+fn a_launch_allowing_command_x_composes_the_lane_and_seeds_the_token() {
+    use crate::approval_facts::{ApprovalFacts, HostFacts};
+    let grants = saya_agent::SessionGrants::default();
+    let composed = ApprovalFacts {
+        host: Some(HostFacts::for_tests()),
+        ..ApprovalFacts::default()
+    };
+    let seeded = crate::interactive::session_grants::seed_launch_allow(
+        &["command:npm".to_owned()],
+        &composed,
+        &grants,
+    );
+    let seeded = seeded.expect("a launch seed parses on the session surface");
+    assert!(
+        seeded.iter().any(|token| token == "command:npm"),
+        "the launch seeds the token: {seeded:?}"
+    );
+    assert!(
+        grants.is_granted("command:npm"),
+        "the seed token is in force from launch"
+    );
+}
+
+/// `command:` tokens parse on a composed session and refuse on a bare one —
+/// with the lane off, `/allow command:<x>` refuses with the launch wording,
+/// in the surface-aware refusal register.
+#[test]
+fn command_tokens_parse_on_a_composed_session_and_refuse_on_a_bare_one() {
+    use crate::approval_facts::{ApprovalFacts, HostFacts};
+    let composed = ApprovalFacts {
+        host: Some(HostFacts::for_tests()),
+        ..ApprovalFacts::default()
+    };
+    let dir = state_dir("command-composed");
+    let grants = saya_agent::SessionGrants::default();
+    let journal = SessionJournal::open(&dir);
+    let message = allow(&["command:npm".to_owned()], &composed, &grants, &journal)
+        .expect("a composed session parses command: tokens");
+    assert!(
+        message.contains("command:npm"),
+        "the composed session seeds the token: {message}"
+    );
+    assert!(grants.is_granted("command:npm"));
+
+    let bare = ApprovalFacts::default();
+    let grants = saya_agent::SessionGrants::default();
+    let journal = SessionJournal::open(state_dir("command-bare"));
+    let error = match allow(&["command:npm".to_owned()], &bare, &grants, &journal) {
+        Err(error) => error,
+        Ok(message) => panic!("a bare session must refuse `command:npm`: {message}"),
+    };
+    assert!(
+        error.contains("gates nothing in this session")
+            && error.contains("relaunch with `--host-commands`"),
+        "the bare-session refusal names launch composition: {error}"
     );
 }
 
