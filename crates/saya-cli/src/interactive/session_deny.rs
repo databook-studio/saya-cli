@@ -83,6 +83,24 @@ pub(crate) fn call_program(tool: &str, arguments: &serde_json::Value) -> Option<
         .map(str::to_owned)
 }
 
+/// The deciders' shared deny-first seam: the denied program a `run_command` /
+/// `run_program` call names, when the session's list refuses it — `None` for
+/// every other call (other tools, no program, or a name outside the list). A
+/// `Some` refuses before grant lookup, before the prompt, before bypass: deny
+/// holds in every mode because the decider answers `false` for it, never by
+/// skipping the engine. Pure — no prompt, no grant, no journal — so both the
+/// `approve` verdict and the loop's follow-up wording read may consult it.
+pub(crate) fn denied_call_program(
+    tool: &str,
+    arguments: &serde_json::Value,
+    denied_programs: &[String],
+) -> Option<String> {
+    let program = call_program(tool, arguments)?;
+    denied_programs
+        .iter()
+        .any(|denied| denied == &program)
+        .then_some(program)
+}
 /// The door a tool call execs through, for the journal's per-firing payload:
 /// the tool's own name. The interpreter door rides `run_program` and journals
 /// as `run_program` — the journal names the door the ask entered, not the

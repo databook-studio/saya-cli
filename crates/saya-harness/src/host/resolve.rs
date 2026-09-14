@@ -50,26 +50,36 @@ pub enum HostError {
 }
 
 /// The host executor's configuration: the PATH the child receives, the
-/// timeout ceiling a call may narrow but never widen, and the explicitly
-/// passed environment. Built once, shared across calls.
+/// workspace root the child runs with as its cwd, the timeout ceiling a
+/// call may narrow but never widen, and the explicitly passed environment.
+/// Built once, shared across calls.
 #[derive(Debug, Clone)]
 pub struct HostConfig {
     path: String,
+    workspace_root: PathBuf,
     timeout: Duration,
     env: HostEnv,
 }
 
 impl HostConfig {
     /// Builds the config. `path` is the exact PATH value the child
-    /// receives — resolution searches it, in order. The timeout is the
-    /// ceiling; zero is refused.
-    pub fn new(path: impl Into<String>, timeout: Duration) -> Result<Self, HostError> {
+    /// receives — resolution searches it, in order. `workspace_root` is the
+    /// directory the child runs with as its cwd: the no-room-to-run-anywhere
+    /// shape — a child that needs a different cwd is a child this lane has
+    /// no room for, and the prompt's `cwd: pinned to <root>` line states
+    /// this field. The timeout is the ceiling; zero is refused.
+    pub fn new(
+        path: impl Into<String>,
+        workspace_root: PathBuf,
+        timeout: Duration,
+    ) -> Result<Self, HostError> {
         let timeout_secs = timeout.as_secs();
         if timeout_secs == 0 {
             return Err(HostError::TimeoutNotPositive);
         }
         Ok(Self {
             path: path.into(),
+            workspace_root,
             timeout,
             env: HostEnv::default(),
         })
@@ -91,6 +101,11 @@ impl HostConfig {
     /// The ceiling a call may narrow but never widen.
     pub fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    /// The workspace root the child runs with as its cwd.
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
     }
 
     /// Narrows the ceiling for one call. Zero is refused; widening is

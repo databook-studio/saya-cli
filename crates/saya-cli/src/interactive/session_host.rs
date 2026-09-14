@@ -148,8 +148,9 @@ pub(crate) fn compose_host(
         );
     }
     let timeout = std::time::Duration::from_secs(launch.config.timeout_seconds);
-    let mut config = saya_harness::host::HostConfig::new(path_value, timeout)
-        .map_err(|error| format!("the host-command lane could not be composed: {error}"))?;
+    let mut config =
+        saya_harness::host::HostConfig::new(path_value, root.to_path_buf(), timeout)
+            .map_err(|error| format!("the host-command lane could not be composed: {error}"))?;
     let mut pass_env = Vec::new();
     for name in &launch.config.pass_env {
         let value = std::env::var(name).map_err(|_| {

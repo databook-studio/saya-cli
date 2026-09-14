@@ -83,9 +83,9 @@ fn session_facts() -> ApprovalFacts {
         }),
         workspace_root: Some(PathBuf::from(WORKSPACE_ROOT)),
         // The host lane is uncomposed here: these snapshots pin the
-        // contained postures, and the lane's own facts arrive with H2's
-        // prompt body — H1 adds grammar, composition, and the tool only.
+        // contained postures, and no host command ran — no integrity line.
         host: None,
+        host_ran: false,
         denied_programs: Vec::new(),
     }
 }
