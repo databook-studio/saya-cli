@@ -86,6 +86,21 @@ const NOT_YET_WIRED: &[NotYetWired] = &[
 #[cfg_attr(not(test), allow(dead_code))]
 const RUN_COMMAND_REFUSAL_PIN: &str = "not available on runs, by design";
 
+/// The run-surface refusal for `--deny`: deny is session-shaped, and a run's
+/// programs are pre-declared scopes. Its own pinned wording, in the same
+/// permanent class as the `command:` refusal above. Read by the run entry
+/// (`start.rs`) and `app`'s launch-flag guard; the test seam below pins its
+/// bytes.
+pub(crate) fn refuse_deny_on_run() -> String {
+    crate::interactive::session_deny::run_surface_refusal()
+}
+
+/// The test seam: the run-surface `--deny` refusal's bytes.
+#[cfg(test)]
+pub(crate) fn refuse_deny_on_run_for_tests() -> String {
+    refuse_deny_on_run()
+}
+
 /// The run-surface refusal for a `command:` scope: a permanent policy
 /// refusal in its own class.
 fn run_command_refusal(token: &str) -> String {

@@ -56,6 +56,15 @@ pub struct GlobalOptions {
     /// refuse it rather than silently ignoring a stated intent.
     #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
     pub allow: Vec<String>,
+    /// Deny programs for the session, by bare name (repeatable): a
+    /// user-stated refusal evaluated before every grant, every approval
+    /// prompt, and bypass, at every session door that execs a program by
+    /// name — `run_command`, `run_program`, the interpreter door.
+    /// Refusal-only: it composes nothing, so the host lane stays off unless
+    /// stated separately. Session-only: `saya ask` and `saya run` refuse it
+    /// rather than silently ignoring a stated intent.
+    #[arg(long = "deny", value_name = "PROGRAM")]
+    pub deny: Vec<String>,
     /// Connection profile to use (overrides `default_profile` in config).
     #[arg(long, global = true)]
     pub profile: Option<String>,

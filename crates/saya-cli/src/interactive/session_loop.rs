@@ -67,6 +67,22 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // restarts unstated: grants die with the process, and the launch
     // statement belonged to the previous process.
     let launch = super::session_host::HostLaunch::from_options(&cli.options, &runtime);
+    // The launch contradiction: `--allow command:x` together with `--deny
+    // x` grants what it refuses — an exit-2 usage error, before anything
+    // exists. Every `--deny` entry is a bare name first: a path-shaped,
+    // traversal, prefix, or glob entry is a typed launch error.
+    for entry in &cli.options.deny {
+        if let Err(error) = super::session_deny::validate_deny_entry(entry) {
+            return Err(format!("invalid --deny entry: {error}").into());
+        }
+    }
+    for seed in &cli.options.allow {
+        if let Some(name) = seed.strip_prefix("command:")
+            && cli.options.deny.iter().any(|denied| denied == name)
+        {
+            return Err(super::session_deny::launch_contradiction(name).into());
+        }
+    }
     let mut session = SessionRuntime::acquire(
         &runtime,
         cli.options.workspace.as_deref(),
@@ -81,9 +97,11 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     )?;
     // Recompose with the launch statement on a fresh start: `acquire`
     // composed unstated (off by construction), and the lane composes only
-    // when stated **and** a workspace root binds. This keeps one composer —
+    // when stated **and** a workspace root binds. The deny list rides the
+    // same recomposition — refusal-only, composes nothing — so a deny-only
+    // launch still composes its refusals. This keeps one composer —
     // `compose_with_launch` — behind both paths.
-    if fresh && launch.composes_lane() {
+    if fresh && (launch.composes_lane() || !launch.deny_list().is_empty()) {
         let recomposed = super::session_universe::SessionUniverse::compose_with_launch(
             &runtime,
             cli.options.workspace.as_deref(),
@@ -94,6 +112,16 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             Some(&launch),
         )?;
         session.replace_universe(recomposed);
+    }
+    // The deny list journals once at session start when non-empty — no noise
+    // when empty — through the existing seam, never a second rule set.
+    if fresh {
+        let denied = session.universe().deny_programs();
+        if !denied.is_empty()
+            && let Err(error) = session.journal().deny_list(&denied)
+        {
+            eprintln!("{}", super::session_grants::journal_warning(&error));
+        }
     }
     if fresh && !cli.options.allow.is_empty() {
         // The launch helper seeds the store through the same grammar; the

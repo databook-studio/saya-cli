@@ -86,6 +86,7 @@ fn session_facts() -> ApprovalFacts {
         // contained postures, and the lane's own facts arrive with H2's
         // prompt body — H1 adds grammar, composition, and the tool only.
         host: None,
+        denied_programs: Vec::new(),
     }
 }
 

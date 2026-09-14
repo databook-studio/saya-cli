@@ -100,6 +100,7 @@ pub(super) async fn run_command(
         budget,
         command,
     } = invocation;
+
     match command {
         Some(crate::cli::RunCommand::List) => reads::list(runtime, format, state).await,
         Some(crate::cli::RunCommand::Show { run_id }) => {

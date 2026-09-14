@@ -106,6 +106,27 @@ pub enum ConfigError {
              names are ASCII letters, digits, and underscores, not starting with a digit"
     )]
     InvalidHostPassEnv { name: String },
+    /// A `[session_commands] deny` entry that is not a bare program name: a
+    /// path, traversal, prefix, or glob. Deny bounds the direct ask, so an
+    /// entry that reads wider than one name is the prefix fiction in the
+    /// comforting direction — strictly weaker than the name deny offered
+    /// instead.
+    #[error("setting session_commands.deny has an invalid program {program:?}: {reason}")]
+    InvalidSessionDeny {
+        program: String,
+        reason: &'static str,
+    },
+    /// A project-layer `[session_commands]` section: a model-writable file
+    /// must never state the deny list. A model-writable deny could name every
+    /// `[jobs.runner] allow` entry, herding the session's work off the
+    /// contained doors onto the unsandboxed lane — refusal as escalation.
+    /// A hard refusal — `--trust-project-config` does not unlock it.
+    #[error(
+        "project-layer [session_commands] is refused: the project config is model-writable once \
+         workspace_write is granted, and a model-writable file must never state the session \
+         deny list; state it in your user config or at launch instead"
+    )]
+    SessionCommandsFromProject,
     /// A project-layer `[host_commands]` section: a model-writable file must
     /// never enable (or shape) unsandboxed execution. A hard refusal — the
     /// project file is model-writable once `workspace_write` is granted, and

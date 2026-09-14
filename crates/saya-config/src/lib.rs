@@ -24,11 +24,12 @@ pub use error::ConfigError;
 pub use input::{CliOverrides, ResolutionInput};
 pub use jobs::{
     ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs,
-    ResolvedRunnerJobs,
+    ResolvedRunnerJobs, ResolvedSessionDeny,
 };
 pub use memory::ResolvedMemory;
 pub use model::{
     ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, HostCommandsFile, JobsFile,
+    SessionCommandsFile,
 };
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::SecretRef;

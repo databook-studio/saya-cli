@@ -24,6 +24,13 @@ pub struct ConfigFile {
     /// because a model-writable file must never enable unsandboxed execution.
     #[serde(default)]
     pub host_commands: HostCommandsFile,
+    /// The `[session_commands]` section (H1b): the user-stated deny list of
+    /// bare program names. User-layer only; a project-layer declaration is a
+    /// typed resolve error (see `layers.rs`), because a model-writable deny
+    /// could herd the session's work off the contained doors onto the
+    /// unsandboxed lane — refusal as escalation.
+    #[serde(default)]
+    pub session_commands: SessionCommandsFile,
     #[serde(default)]
     pub output: OutputFile,
     #[serde(default)]
@@ -319,6 +326,18 @@ pub struct HostCommandsFile {
     pub pass_env: Vec<String>,
     /// Per-call ceiling in seconds. `None` resolves to the executor default.
     pub timeout_seconds: Option<u64>,
+}
+
+/// The `[session_commands]` section: the user-stated deny list of bare
+/// program names. Refusal-only: it composes nothing and gates the doors
+/// every session already has, even with the host lane off. Entries are bare
+/// names — never paths, traversals, prefixes, or globs — checked at resolve.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCommandsFile {
+    /// The denied programs, by bare name. Absent or empty: nothing denied.
+    #[serde(default)]
+    pub deny: Vec<String>,
 }
 
 /// The `[jobs.fetch]` sub-table: the download budgets a run's

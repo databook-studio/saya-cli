@@ -37,6 +37,14 @@ pub(crate) struct RunTools {
     /// workspace root bound. Its absence refuses `run_command` as an
     /// unknown tool.
     host: Option<HostCommandMember>,
+    /// The session deny list: bare program names refused before grant,
+    /// prompt, and bypass at every program-named door. Runs never carry it
+    /// (deny is session-shaped); an empty list refuses nothing.
+    deny: crate::interactive::session_deny::SessionDeny,
+    /// The session journal, when this executor belongs to a session: a deny
+    /// firing is journalled there before the refusal is relayed. `None` —
+    /// test shapes — refuses without journaling.
+    journal: Option<std::sync::Arc<saya_store::SessionJournal>>,
 }
 
 impl RunTools {
@@ -55,7 +63,31 @@ impl RunTools {
             fetch,
             runner,
             host: None,
+            deny: crate::interactive::session_deny::SessionDeny::default(),
+            journal: None,
         }
+    }
+
+    /// Composes with the session deny list: refused at the `run_command`,
+    /// `run_program`, and interpreter doors before anything else. The
+    /// session surface is the only caller — runs never get the list.
+    pub(crate) fn with_session_deny(
+        mut self,
+        deny: crate::interactive::session_deny::SessionDeny,
+    ) -> Self {
+        self.deny = deny;
+        self
+    }
+
+    /// Composes with the session journal: a deny firing is written there
+    /// before the refusal is relayed. Wired by `SessionUniverse`'s
+    /// journal-carrying executor; the deny tests attach it directly.
+    pub(crate) fn with_session_journal(
+        mut self,
+        journal: std::sync::Arc<saya_store::SessionJournal>,
+    ) -> Self {
+        self.journal = Some(journal);
+        self
     }
 
     /// Composes with the host lane: the executor config plus the workspace
@@ -83,6 +115,32 @@ impl ToolExecutor for RunTools {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
+        // Deny first, at every program-named door: before grant lookup,
+        // before the approval prompt, before bypass's auto-allow. Deny is a
+        // structural refusal — it holds in every mode, bypass included.
+        if matches!(name, "run_command" | "run_program") {
+            let door = crate::interactive::session_deny::call_door(name);
+            if let Some(program) = crate::interactive::session_deny::call_program(name, &arguments)
+                && self.deny.contains(&program)
+            {
+                let argv: Vec<String> = arguments
+                    .get("args")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Some(journal) = self.journal.as_ref() {
+                    let _ = journal.command_denied(&program, &argv, door);
+                }
+                return Err(ToolError::Runner(
+                    crate::interactive::session_deny::denied_refusal(&program),
+                ));
+            }
+        }
         match name {
             "scratch_sql" => match &self.scratch {
                 Some(scratch) => scratch.execute(name, arguments).await,

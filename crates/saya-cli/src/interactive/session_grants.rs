@@ -82,8 +82,12 @@ pub(crate) fn allow(
     // A token the composition cannot carry is a usage error with its own
     // reason, checked over the whole statement before anything seeds — a
     // refusal never half-seeds. The grammar accepted the word; the
-    // composition is the second gate.
+    // composition is the second gate. A token naming a denied program
+    // refuses first: a grant cannot override the deny list.
     for token in &approved.tokens {
+        if denied_payload(token, composition).is_some() {
+            return Err(super::session_deny::allow_of_denied_refusal(token));
+        }
         if let Some(refusal) = super::allow_refusal::composition_refusal(token, composition) {
             return Err(refusal);
         }
@@ -128,6 +132,24 @@ pub(crate) fn allow(
     Ok(message)
 }
 
+/// The denied program a token's payload names, when the session's deny
+/// list carries it: the payload of `command:`, `runner:`, and
+/// `interpreter:` tokens is the program the door would exec.
+fn denied_payload(
+    token: &str,
+    composition: &crate::approval_facts::ApprovalFacts,
+) -> Option<String> {
+    let payload = token
+        .strip_prefix("command:")
+        .or_else(|| token.strip_prefix("runner:"))
+        .or_else(|| token.strip_prefix("interpreter:"))?;
+    composition
+        .denied_programs
+        .iter()
+        .any(|denied| denied == payload)
+        .then(|| payload.to_owned())
+}
+
 /// Seeds the launch's `command:` tokens into the session's grant store:
 /// the grammar stays the authority (each token parses on the session
 /// surface), then the composition gate admits it — a token the composition
@@ -141,6 +163,9 @@ pub(crate) fn seed_launch_allow(
     let approved = scopes::parse(tokens, Surface::Session)?;
     let mut seeded = Vec::new();
     for token in &approved.tokens {
+        if denied_payload(token, composition).is_some() {
+            return Err(super::session_deny::allow_of_denied_refusal(token));
+        }
         if let Some(refusal) = super::allow_refusal::composition_refusal(token, composition) {
             return Err(refusal);
         }
