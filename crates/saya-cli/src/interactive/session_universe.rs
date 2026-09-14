@@ -12,6 +12,10 @@
 //!   fetch need no root and still work.
 //! - **`run_program` once per session** — the sandbox, the placement guard,
 //!   and the probe are the runner module's (`session_runner`).
+//! - **The host-command lane composes once per session** (`session_host`):
+//!   off unless stated at launch (`--host-commands`, a `--allow command:<x>`
+//!   seed, or user-layer `[host_commands] enable`), and never without a
+//!   bound workspace root — no root, no lane, even with the flag.
 //! - **Session state is not a child root.** `fs_roots` is the workspace
 //!   root exactly — the session state directory (`sessions/<id>/`, holding
 //!   the scratch DuckDB and the lock) is outside it, so a child cannot
@@ -29,6 +33,7 @@ use saya_harness::runner::{RunProgram, SharedCredentialSource, StaticCredentialS
 use saya_harness::scratch::ScratchSql;
 
 use super::session_definitions;
+use super::session_host::{self, SessionHost};
 use super::session_runner::{PROBE_REFUSED_NOTICE, SessionRunner, compose_runner};
 use super::session_workspace::{SessionWorkspace, bind_from_pins};
 use crate::agent::tools::{DatabaseTools, RunTools};
@@ -39,6 +44,10 @@ pub(crate) struct SessionUniverse {
     scratch: Option<Arc<ScratchSql>>,
     fetch: Option<Arc<FetchTools>>,
     runner: Option<SessionRunner>,
+    /// The host-command lane, when the launch stated it and a workspace root
+    /// bound: the executor config plus the facts the prompts consult. `None`
+    /// hides the tool everywhere — hidden, not advertised.
+    host: Option<SessionHost>,
     /// The turn's primary connection handle. The approval deciders hold a
     /// clone, and each turn binds the registry `prepare_turn` builds into
     /// it, so a grant suggestion names the database the session is actually
@@ -66,6 +75,7 @@ impl SessionUniverse {
             scratch: None,
             fetch: None,
             runner: None,
+            host: None,
             primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
             probe_refused: false,
@@ -76,7 +86,8 @@ impl SessionUniverse {
     /// (explicit `--workspace`, or the recorded pin on a resume, or the git
     /// worktree top on a fresh start), the scratch database over the
     /// session's state directory, the session fetch wiring, and the runner
-    /// where the host proves.
+    /// where the host proves. The host lane stays unstated here — off by
+    /// construction; the launch path composes through `compose_with_launch`.
     pub(crate) fn compose(
         runtime: &crate::config::runtime::RuntimeConfig,
         explicit: Option<&Path>,
@@ -84,6 +95,30 @@ impl SessionUniverse {
         walk_when_unpinned: bool,
         cwd: &Path,
         state_dir: &Path,
+    ) -> Result<Self, String> {
+        Self::compose_with_launch(
+            runtime,
+            explicit,
+            pinned_root,
+            walk_when_unpinned,
+            cwd,
+            state_dir,
+            None,
+        )
+    }
+
+    /// Composes with the launch's host-command statement: the flag, the
+    /// `--allow command:<x>` seeds, and the user-layer `[host_commands]`.
+    /// `None` is the unstated lane — off by construction. The lane composes
+    /// only when stated **and** a workspace root binds.
+    pub(crate) fn compose_with_launch(
+        runtime: &crate::config::runtime::RuntimeConfig,
+        explicit: Option<&Path>,
+        pinned_root: Option<&str>,
+        walk_when_unpinned: bool,
+        cwd: &Path,
+        state_dir: &Path,
+        launch: Option<&session_host::HostLaunch>,
     ) -> Result<Self, String> {
         let (workspace, notice) = bind_from_pins(explicit, pinned_root, walk_when_unpinned, cwd)?;
         // Scratch: one DuckDB file per session state directory, the pinned
@@ -111,15 +146,63 @@ impl SessionUniverse {
             probe_refused = composition.probe_notice.is_some();
             runner_composed = composition.runner;
         }
+        // The host lane, once per session: stated at launch (or in the user
+        // layer) and a workspace root bound — no root, no lane, even with
+        // the flag. The child's PATH is the parent's own. Unstated (`None`)
+        // composes no lane without touching the environment.
+        let host = match launch {
+            Some(launch) => {
+                let path_value = std::env::var("PATH")
+                    .map_err(|_| "the host-command lane needs PATH".to_owned())?;
+                session_host::compose_host(
+                    launch,
+                    workspace.as_ref().map(|bound| bound.root.as_path()),
+                    path_value,
+                )?
+            }
+            None => None,
+        };
+        let host_notice = match (&host, launch) {
+            (Some(_), Some(launch)) => session_host::launch_notice(
+                launch,
+                workspace.as_ref().map(|bound| bound.root.clone()),
+            ),
+            _ => None,
+        };
+        let notice = notice
+            .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()))
+            .or(host_notice);
         Ok(Self {
             workspace,
             scratch: Some(Arc::new(scratch)),
             fetch: Some(fetch),
             runner: runner_composed,
+            host,
             primary: crate::grant_token::TurnPrimary::default(),
-            notice: notice.or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned())),
+            notice,
             probe_refused,
         })
+    }
+
+    /// The test seam for the no-root pin: composes the unstated lane over
+    /// an unbound workspace — which is exactly the no-root-no-lane shape.
+    /// The caller passes its own runtime (the test module's
+    /// `session_runtime`); this helper only exists so the pin reads as one
+    /// call. Unused outside tests.
+    #[cfg(test)]
+    pub(crate) fn compose_host_for_tests(
+        runtime: &crate::config::runtime::RuntimeConfig,
+        cwd: &Path,
+        state_dir: &Path,
+    ) -> Self {
+        Self::compose(runtime, None, None, true, cwd, state_dir)
+            .expect("the unstated lane composes without a root")
+    }
+
+    /// Whether the host lane composed — the test seam the red tests read.
+    #[cfg(test)]
+    pub(crate) fn host_composed_for_tests(&self) -> Option<()> {
+        self.host.as_ref().map(|_| ())
     }
 
     /// The canonical workspace root, when one binds — the status header's
@@ -162,6 +245,7 @@ impl SessionUniverse {
                 }
             }),
             workspace_root: self.root().map(|root| root.to_path_buf()),
+            host: self.host.as_ref().map(|host| host.facts.clone()),
         }
     }
 
@@ -197,12 +281,16 @@ impl SessionUniverse {
                 .with_cancellation(cancellation.clone()),
             )
         });
-        Arc::new(RunTools::compose(
-            database,
-            self.scratch.clone(),
-            self.fetch.clone(),
-            runner,
-        ))
+        let tools = RunTools::compose(database, self.scratch.clone(), self.fetch.clone(), runner);
+        let tools = match self.host.as_ref() {
+            Some(host) => tools.with_host(
+                host.config.clone(),
+                host.facts.workspace_root.clone(),
+                cancellation,
+            ),
+            None => tools,
+        };
+        Arc::new(tools)
     }
 
     /// The turn's definitions: the database tools' own surface plus this
@@ -253,6 +341,13 @@ impl SessionUniverse {
         }
         if let Some(runner) = self.runner.as_ref() {
             defs.push(session_definitions::run_program(runner.definition.clone()));
+        }
+        // The host lane advertises under the same mode rule as every other
+        // write-shaped member: ask-with-prompt or bypass. Read-only and
+        // never never see the tool — hidden, not advertised — and an
+        // uncomposed lane advertises nothing anywhere.
+        if self.host.is_some() {
+            defs.push(session_definitions::run_command());
         }
         defs
     }

@@ -55,9 +55,18 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     }
     // The session's engine side, once per process: the state directory
     // (`sessions/<id>/`), the single-writer lock, and the tool universe —
-    // workspace binding, scratch, fetch, runner — plus the session's one
-    // approval policy, built from the session's mode. Held for the process;
-    // the lock releases when it drops.
+    // workspace binding, scratch, fetch, runner, host lane — plus the
+    // session's one approval policy, built from the session's mode. Held for
+    // the process; the lock releases when it drops.
+    //
+    // The host lane composes here, once per session: the launch statement
+    // (the flag, the `--allow command:<x>` seeds, the user-layer config) is
+    // read, the universe composes with it, and the seeds land in the grant
+    // store before anything runs. A seed the composition cannot carry is a
+    // launch usage error — never a silently dropped token. A resumed session
+    // restarts unstated: grants die with the process, and the launch
+    // statement belonged to the previous process.
+    let launch = super::session_host::HostLaunch::from_options(&cli.options, &runtime);
     let mut session = SessionRuntime::acquire(
         &runtime,
         cli.options.workspace.as_deref(),
@@ -70,6 +79,45 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             .unwrap_or(saya_agent::ApprovalPolicy::Ask),
         &default_session_dir(),
     )?;
+    // Recompose with the launch statement on a fresh start: `acquire`
+    // composed unstated (off by construction), and the lane composes only
+    // when stated **and** a workspace root binds. This keeps one composer —
+    // `compose_with_launch` — behind both paths.
+    if fresh && launch.composes_lane() {
+        let recomposed = super::session_universe::SessionUniverse::compose_with_launch(
+            &runtime,
+            cli.options.workspace.as_deref(),
+            state.workspace_root.as_deref(),
+            true,
+            &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            &session.state_dir(),
+            Some(&launch),
+        )?;
+        session.replace_universe(recomposed);
+    }
+    if fresh && !cli.options.allow.is_empty() {
+        // The launch helper seeds the store through the same grammar; the
+        // shared behaviour below journals each token. A seed the composition
+        // cannot carry is a launch usage error — never silently dropped.
+        let launch_seeded = launch
+            .seed_grants(session.policy().grants())
+            .map_err(|error| format!("invalid --allow seed: {error}"))?;
+        let seeded = super::session_grants::seed_launch_allow(
+            &launch_seeded,
+            &session.universe().approval_facts(&runtime),
+            session.policy().grants(),
+        )
+        .map_err(|error| format!("invalid --allow seed: {error}"))?;
+        for token in seeded {
+            if let Err(error) = session
+                .journal()
+                .granted(&token, saya_store::GrantSource::Seed)
+            {
+                eprintln!("{}", super::session_grants::journal_warning(&error));
+                break;
+            }
+        }
+    };
     // The pin the record carries: resolved fresh, or re-bound by an explicit
     // `--workspace`; a resumed session re-opening its recorded pin keeps it
     // untouched (even where the root has vanished, so the record remembers).

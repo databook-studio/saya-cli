@@ -76,6 +76,10 @@ pub struct ResolvedConfig {
     /// The engine layers RunSpec and step budgets over these per dimension;
     /// there is deliberately no environment input to any of it (plan G3).
     pub jobs: ResolvedJobs,
+    /// The `[host_commands]` opt-in: user-layer `enable` plus `pass_env` and
+    /// the per-call ceiling. The project layer may never state it (typed
+    /// resolve error) — see `HostCommandsFromProject`.
+    pub host_commands: crate::jobs::ResolvedHostCommands,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
@@ -137,6 +141,15 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let protected = snapshot_protected(&file);
     if let Some(project) = input.project.as_ref() {
         require_unique_endpoints(&project.ai.endpoints)?;
+        // A project-layer `[host_commands]` is a hard refusal — not a revert:
+        // a model-writable file must never enable (or shape) unsandboxed
+        // execution, and `--trust-project-config` does not unlock it.
+        if project.host_commands.enable.is_some()
+            || !project.host_commands.pass_env.is_empty()
+            || project.host_commands.timeout_seconds.is_some()
+        {
+            return Err(ConfigError::HostCommandsFromProject);
+        }
         merge(&mut file, project);
     }
     let ignored_project_overrides = if input.cli.trust_project_config {
@@ -190,6 +203,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let max_iterations = file.run.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
     require_max_iterations(max_iterations)?;
     let jobs = crate::jobs::resolve(&file.jobs, max_iterations as u64)?;
+    let host_commands = crate::jobs::resolve_host_commands(file.host_commands.clone())?;
     let ai = ResolvedAi {
         provider: file.ai.provider.unwrap_or(AiProvider::Ollama),
         model: file
@@ -221,6 +235,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         max_iterations,
         candidates,
         jobs,
+        host_commands,
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),

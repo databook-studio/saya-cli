@@ -44,6 +44,9 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     }
     refuse_continue_on_run(&command, cli.options.continue_session)?;
     refuse_workspace_on_subcommand(Some(&command), cli.options.workspace.as_deref())?;
+    refuse_session_launch_flags_on_subcommand(&command, &cli.options)?;
+    refuse_host_commands_for_ask(&cli)
+        .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
     let options = command_options(&cli.options, &command);
     let runtime = config::runtime::load(&options, Path::new("."))?;
     let approval = config::runtime::approval_mode(&options)?;
@@ -76,6 +79,66 @@ fn refuse_continue_on_run(command: &Command, continue_session: bool) -> Result<(
         );
     }
     Ok(())
+}
+
+/// The session-launch guard. `--host-commands` and `--allow` state the
+/// interactive session's lane — the only surface that reads them. A
+/// subcommand is not a session: `saya ask` composes no session state at all
+/// and `saya run` is headless by construction, so both refuse the flags
+/// rather than silently ignoring a stated intent.
+pub(crate) fn refuse_session_launch_flags_on_subcommand(
+    command: &Command,
+    options: &crate::cli::GlobalOptions,
+) -> Result<(), String> {
+    if options.host_commands {
+        return match command {
+            Command::Ask { .. } => Err(refuse_host_commands_for_ask_text()),
+            _ => Err(
+                "`--host-commands` states the interactive session's lane, not a subcommand: \
+                 launch the session (`saya --host-commands`) or run the subcommand without it"
+                    .into(),
+            ),
+        };
+    }
+    if !options.allow.is_empty() {
+        return Err(match command {
+            Command::Ask { .. } => {
+                "`--allow` states the interactive session's launch grants, not a one-shot ask: \
+                 launch the session (`saya --allow <scopes>`) or run the ask without it"
+                    .to_owned()
+            }
+            Command::Run { .. } => {
+                "`--allow` on `saya run` is the run's own flag, not the session's: \
+                 `saya run --allow <scopes>` states the run's scopes"
+                    .to_owned()
+            }
+            _ => "`--allow` states the interactive session's launch grants, not a subcommand: \
+                 launch the session (`saya --allow <scopes>`) or run the subcommand without it"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// `saya ask` refuses the host-commands launch flag (wrong universe): the
+/// lane is interactive-session-shaped.
+pub(crate) fn refuse_host_commands_for_ask(cli: &Cli) -> Result<(), String> {
+    if cli
+        .command
+        .as_ref()
+        .is_some_and(|command| matches!(command, Command::Ask { .. }))
+        && cli.options.host_commands
+    {
+        return Err(refuse_host_commands_for_ask_text());
+    }
+    Ok(())
+}
+
+fn refuse_host_commands_for_ask_text() -> String {
+    "`--host-commands` states the interactive session's lane: `saya ask` is a one-shot \
+     question with no session state, so the flag has no universe there — launch the \
+     interactive session (`saya --host-commands`) instead"
+        .into()
 }
 
 /// The `--workspace` guard. The flag binds the interactive session's
@@ -129,6 +192,21 @@ fn command_options(
 mod tests {
     use super::*;
     use clap::Parser as _;
+
+    /// `saya ask` refuses the host-commands launch flag (H1 red): the lane is
+    /// interactive-session-shaped. Written before the flag exists, so the
+    /// guard it calls does not exist yet.
+    #[test]
+    fn ask_refuses_the_host_commands_flag() {
+        let cli = Cli::try_parse_from(["saya", "--host-commands", "ask", "count orders"])
+            .expect("the flag parses before the subcommand");
+        let error =
+            refuse_host_commands_for_ask(&cli).expect_err("ask must refuse the host-commands flag");
+        assert!(
+            error.contains("interactive session"),
+            "the refusal names the surface that reads the flag: {error}"
+        );
+    }
 
     /// `--continue` continues the REPL session only; a run must never
     /// receive it silently. The flag is declared for the bare REPL (not

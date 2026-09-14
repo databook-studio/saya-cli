@@ -98,6 +98,25 @@ pub enum ConfigError {
         program: String,
         reason: &'static str,
     },
+    /// A `[host_commands]` `pass_env` entry that is not a well-formed
+    /// `NAME=value` name. The child's own rule, checked at resolve so the
+    /// refusal names the section, not the spawn.
+    #[error(
+        "setting host_commands.pass_env has an invalid variable name {name:?}: \
+             names are ASCII letters, digits, and underscores, not starting with a digit"
+    )]
+    InvalidHostPassEnv { name: String },
+    /// A project-layer `[host_commands]` section: a model-writable file must
+    /// never enable (or shape) unsandboxed execution. A hard refusal — the
+    /// project file is model-writable once `workspace_write` is granted, and
+    /// `--trust-project-config` does not unlock it. No deny-list stub rides
+    /// along: H2 owns deny.
+    #[error(
+        "project-layer [host_commands] is refused: the project config is model-writable once \
+         workspace_write is granted, and a model-writable file must never enable unsandboxed \
+         execution; state host commands in your user config or at launch instead"
+    )]
+    HostCommandsFromProject,
     /// A `[jobs.runner] program_dir` that is a relative path. The canonical
     /// form must not depend on the working directory the config was loaded
     /// from — a relative path would resolve to a different directory per

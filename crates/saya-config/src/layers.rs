@@ -31,6 +31,18 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(jobs.fetch);
     apply!(jobs.runner);
     apply!(jobs.interpreter);
+    // `[host_commands]` merges like any ordinary user-layer section here —
+    // the project layer never reaches this merge with the section set (the
+    // typed refusal in `resolve.rs` fires first).
+    if layer.host_commands.enable.is_some() {
+        base.host_commands.enable = layer.host_commands.enable;
+    }
+    if !layer.host_commands.pass_env.is_empty() {
+        base.host_commands.pass_env = layer.host_commands.pass_env.clone();
+    }
+    if layer.host_commands.timeout_seconds.is_some() {
+        base.host_commands.timeout_seconds = layer.host_commands.timeout_seconds;
+    }
     apply!(output.format);
     apply!(output.color);
     apply!(ui.theme);

@@ -41,6 +41,10 @@ pub(crate) struct ApprovalFacts {
     pub(crate) scratch: Option<ScratchFacts>,
     /// The bound workspace root, where one binds.
     pub(crate) workspace_root: Option<PathBuf>,
+    /// The host-command lane's facts, when the lane composed (H1): a
+    /// workspace root bound plus a launch-or-user-layer statement. `None`
+    /// contributes no lines and parses no `command:` token.
+    pub(crate) host: Option<HostFacts>,
 }
 
 impl ApprovalFacts {
@@ -92,6 +96,43 @@ pub(crate) struct FetchFacts {
 pub(crate) struct ScratchFacts {
     pub(crate) row_cap: usize,
     pub(crate) timeout_seconds: u64,
+}
+
+/// The host-command lane's composition facts (H1): what the lane's own
+/// prompt may state, and what `/allow command:<x>` consults. The lane is
+/// off unless stated at launch or in the user layer, and it never composes
+/// without a bound workspace root.
+///
+/// H1 carries the facts the composition gate and the universe read; the
+/// per-call prompt body that states `timeout_seconds` and `pass_env` lands
+/// with H2 (facts slice), which is why no prompt code reads them yet.
+#[derive(Clone)]
+pub(crate) struct HostFacts {
+    /// The workspace root the child runs with as its cwd.
+    pub(crate) workspace_root: PathBuf,
+    /// The per-call timeout ceiling, in seconds — a call may narrow it,
+    /// never widen it. Read by H2's prompt body; H1 composes and stores it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) timeout_seconds: u64,
+    /// The parent variable names the built child environment carries. Read
+    /// by H2's prompt body; H1 composes and stores it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) pass_env: Vec<String>,
+}
+
+impl HostFacts {
+    /// The test seam: a composed lane over a fixed root, the executor's own
+    /// ceiling, and no passed variables.
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self {
+            workspace_root: PathBuf::from("/home/user/proj"),
+            timeout_seconds: saya_harness::host::resolve::DEFAULT_HOST_TIMEOUT.as_secs(),
+            pass_env: Vec::new(),
+        }
+    }
 }
 
 /// The per-call fact body both frontends render: the family's risk lines —

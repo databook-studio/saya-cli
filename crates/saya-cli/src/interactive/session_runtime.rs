@@ -40,6 +40,9 @@ pub(crate) struct SessionRuntime {
     /// Where `sessions/<id>/` lives, carried so a mid-session `/resume`
     /// claims the resumed state directory in the same root the launch did.
     sessions_root: PathBuf,
+    /// The state directory this session holds (`sessions/<id>/`), carried
+    /// so a fresh-start host-lane recomposition re-enters it.
+    state_dir: PathBuf,
     /// A journal write that failed at the launch site, said once by the
     /// notice seam the surfaces already print. Later failures are said by
     /// the site that made the consent.
@@ -92,6 +95,7 @@ impl SessionRuntime {
             _lock: lock,
             explicit,
             sessions_root: sessions_root.to_path_buf(),
+            state_dir: state_dir.clone(),
             journal: Arc::new(SessionJournal::open(&state_dir)),
             journal_failure: Mutex::new(None),
         })
@@ -101,6 +105,18 @@ impl SessionRuntime {
     /// bypass activation sites write through. Clones share the file.
     pub(crate) fn journal(&self) -> Arc<SessionJournal> {
         Arc::clone(&self.journal)
+    }
+
+    /// The state directory this session holds (`sessions/<id>/`) — what a
+    /// fresh-start recomposition re-enters.
+    pub(crate) fn state_dir(&self) -> PathBuf {
+        self.state_dir.clone()
+    }
+
+    /// Swaps the composed universe: the fresh-start host-lane recomposition.
+    /// The lock, policy, journal, and pins ride the swap untouched.
+    pub(crate) fn replace_universe(&mut self, universe: super::session_universe::SessionUniverse) {
+        self.universe = Arc::new(universe);
     }
 
     /// Journals one bypass activation and records a failure for the notice

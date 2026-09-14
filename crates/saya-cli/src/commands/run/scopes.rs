@@ -9,7 +9,7 @@
 
 use saya_types::{
     Capabilities, Destination, EndpointBindings, FetchScope, InterpreterScope, RunnerScope,
-    is_name_shaped, is_refused_runner_program,
+    is_bare_name, is_name_shaped, is_refused_runner_program,
 };
 
 /// The surface a scope list is stated on: one grammar, parsed by one
@@ -28,7 +28,7 @@ pub(crate) enum Surface {
 /// The scope grammar, for the error message that names what was refused.
 const KNOWN: &str = "known scopes: none, workspace-write, scratch, \
                      fetch:<scheme>+<host>, runner:<program>, interpreter:<program>, \
-                     endpoint:<role>=<endpoint>, sql:<connection>";
+                     command:<program>, endpoint:<role>=<endpoint>, sql:<connection>";
 
 /// One family-surface refusal: the family parses under the grammar but the
 /// named surface binds nothing for it, so approving one there would gate
@@ -76,6 +76,26 @@ const NOT_YET_WIRED: &[NotYetWired] = &[
     },
 ];
 
+/// A run-surface policy refusal that is permanent by design: the run is
+/// unattended and this scope names unconfined host execution. Not a
+/// `NOT_YET_WIRED` entry — that list's discipline is wiring-shaped and its
+/// entries leave when their consumer lands; this one never leaves. Its own
+/// pinned reason, and never an absence claim.
+///
+/// Read by tests only; production reads `reason`.
+#[cfg_attr(not(test), allow(dead_code))]
+const RUN_COMMAND_REFUSAL_PIN: &str = "not available on runs, by design";
+
+/// The run-surface refusal for a `command:` scope: a permanent policy
+/// refusal in its own class.
+fn run_command_refusal(token: &str) -> String {
+    format!(
+        "scope `{token}` is not available on runs, by design: a run is unattended and this \
+         scope names unconfined host execution; state a sandboxed scope instead (`runner:`, \
+         `interpreter:`). Re-run without it."
+    )
+}
+
 /// The tail that names the surface's own next step. A run re-runs the
 /// command without the scope; a slash command has nothing to re-run — the
 /// user re-issues `/allow`. The run surface's bytes are pinned by
@@ -113,7 +133,9 @@ fn not_yet_wired(token: &str, family: &str, surface: Surface) -> Option<String> 
 /// token and a suggested token are one string for one destination. A
 /// session's `/allow` seeds these words, so `/grants` shows the grammar's
 /// form of what was granted. A run's approval is `capabilities` plus the
-/// frozen decider's seeds.
+/// frozen decider's seeds. `command:` tokens build no run capability and
+/// ride the tokens verbatim (the run surface never produces them — it
+/// refuses them above — so they only flow on the session surface).
 #[derive(Debug)]
 pub(crate) struct Approved {
     pub(crate) capabilities: Capabilities,
@@ -228,6 +250,23 @@ pub(crate) fn parse(tokens: &[String], surface: Surface) -> Result<Approved, Str
                 ));
             }
             interpreters.push(rest.to_string());
+        } else if let Some(rest) = token.strip_prefix("command:") {
+            // The host lane's own family: payload a bare name, shells
+            // included — the `runner:`/`interpreter:` family mirror
+            // deliberately does not apply here (`command:bash` is the token,
+            // and the warning rides the prompt). On the run surface this is
+            // a permanent policy refusal in its own class, never an absence
+            // claim; on the session surface it parses and the composition
+            // gate (`allow_refusal`) decides whether this session carries it.
+            if !is_bare_name(rest) {
+                return Err(format!(
+                    "scope `{token}` must be command:<program>, a bare name — never a path \
+                     or traversal; {KNOWN}"
+                ));
+            }
+            if surface == Surface::Run {
+                return Err(run_command_refusal(token));
+            }
         } else if let Some(rest) = token.strip_prefix("endpoint:") {
             // The payload is judged by the grammar's own shape rule first:
             // a refusal message that says "it parses" must be true.
@@ -774,9 +813,21 @@ mod tests {
     /// has, the exact class this test turns red the day the lists diverge
     /// again, either direction, on either surface. The families come from
     /// [`KNOWN`] itself, so a scope added to the grammar without touching
-    /// every surface is caught too. "Refused" is read per sentence: a wired
-    /// family must never share a sentence with a refusal word, and a
-    /// refused family must.
+    /// every surface is caught too. "Refused" is read per clause (a
+    /// `.`-sentence cut at `;` and parentheses — see [`claims_refused`]):
+    /// a wired family must never share its own clause with a refusal word,
+    /// and a refused family must. The clause cut exists because the `/allow`
+    /// help lists the wired scopes in one sentence whose `command:`
+    /// parenthetical carries that family's own lane gate; a sentence-wide
+    /// reader attributes that gate to every listed scope.
+    ///
+    /// `command:` is deliberately outside this agreement: it is refused on
+    /// runs by permanent policy (`run_command_refusal`, its own class — the
+    /// wiring-shaped list never carries it) and parsed on sessions subject
+    /// to the composition gate, so no `NOT_YET_WIRED` entry can state its
+    /// status. Its help wording is pinned by
+    /// `a_run_refuses_command_scopes_by_design` (run surfaces) and the
+    /// `/allow` help names the lane gate instead.
     #[test]
     fn the_help_surfaces_and_the_refusal_list_agree() {
         let surfaces = [
@@ -803,6 +854,12 @@ mod tests {
                     "{surface_name} must name the scope `{token}` — a surface that \
                      omits a scope leaves its status to the reader's guess, got: {text}"
                 );
+                // `command:` is outside the wiring-shaped agreement (see the
+                // doc comment): its run refusal is permanent policy and its
+                // session status is a composition gate, not a list entry.
+                if family == "command" {
+                    continue;
+                }
                 let claimed = claims_refused(text, token);
                 let listed = NOT_YET_WIRED
                     .iter()
@@ -865,11 +922,148 @@ mod tests {
             .collect()
     }
 
-    /// True when some `.`-sentence of the surface pairs the scope token with
-    /// a refusal word — the shape a refusal claim takes in these surfaces.
+    /// True when some clause of the surface pairs the scope token with a
+    /// refusal word — the shape a refusal claim takes in these surfaces. A
+    /// clause is a `.`-sentence cut further at `;`, `:` (outside the token's
+    /// own shape), and `(`/`)`, so a refusal scoped to one family inside a
+    /// parenthetical (the `/allow` help's `command:` lane gate) does not leak
+    /// onto every token the outer sentence lists ("the wired scopes are …").
+    /// A real disagreement still reads: a token sharing its own clause with a
+    /// refusal word stays red in both directions.
     fn claims_refused(surface: &str, token: &str) -> bool {
-        surface
-            .split('.')
-            .any(|sentence| sentence.contains(token) && sentence.contains("refus"))
+        surface.split('.').any(|sentence| {
+            sentence.contains(token)
+                && sentence
+                    .split([';', '(', ')'])
+                    .any(|clause| clause.contains(token) && clause.contains("refus"))
+        })
+    }
+
+    /// The reader above must stay able to tell a scoped refusal from list
+    /// prose: a refusal word that shares the token's own parenthetical is a
+    /// claim about that token, while one cut off by the same boundaries —
+    /// the `/allow` lane gate living one clause away from the wired list — is
+    /// not. A reader that could not make that distinction either cries wolf
+    /// on every listed scope or goes blind to a real disagreement; both
+    /// halves are pinned here so a future edit cannot weaken one into the
+    /// other.
+    #[test]
+    fn the_refusal_reader_attributes_a_refusal_to_its_own_clause() {
+        let allow = crate::slash::command_help("allow").expect("/allow has per-command help");
+        assert!(allow.contains("workspace-write"));
+        assert!(
+            !claims_refused(allow, "workspace-write"),
+            "the /allow lane gate sits in command:'s own clause, not workspace-write's: {allow}"
+        );
+        assert!(
+            claims_refused(allow, "endpoint:<role>=<endpoint>"),
+            "endpoint:'s own clause does refuse it, and the reader must say so: {allow}"
+        );
+        let scoped = "the wired scopes are `workspace-write`, and `sql:<connection>`. \
+            `endpoint:<role>=<endpoint>` is refused here: nothing binds it.";
+        assert!(
+            claims_refused(scoped, "endpoint:<role>=<endpoint>"),
+            "a real refusal claim must still read as one: {scoped}"
+        );
+        assert!(
+            !claims_refused(scoped, "workspace-write"),
+            "a listed scope one sentence away must not read as refused: {scoped}"
+        );
+    }
+
+    /// H1 red: the `command:<program>` family joins the grammar on the
+    /// session surface — payload a bare name, shells included, no family
+    /// mirror. Written before the family exists, so the token is refused as
+    /// unknown today (the failure is the grammar, not the composition seam;
+    /// the composed-vs-bare half is pinned at the `/allow` level by
+    /// `command_tokens_parse_on_a_composed_session_and_refuse_on_a_bare_one`).
+    #[test]
+    fn command_joins_the_grammar_on_the_session_surface() {
+        let Ok(approved) = parse(&["command:npm".to_string()], Surface::Session) else {
+            panic!("`command:npm` must parse on the session surface once H1 lands");
+        };
+        assert!(
+            approved.tokens.iter().any(|token| token == "command:npm"),
+            "the approval carries the token verbatim: {:?}",
+            approved.tokens
+        );
+        // The family mirror deliberately does not apply here: shells ride
+        // `command:`, never `interpreter:`-by-mirror.
+        let Ok(shell) = parse(&["command:bash".to_string()], Surface::Session) else {
+            panic!("`command:bash` parses — shells are included, no mirror");
+        };
+        assert!(
+            shell.tokens.iter().any(|token| token == "command:bash"),
+            "the shell token rides verbatim: {:?}",
+            shell.tokens
+        );
+    }
+
+    /// H1 red: the `command:` payload is a bare name — never a path or a
+    /// traversal. Written before the family exists, so the refusal today is
+    /// the unknown-scope error rather than the shape rule.
+    #[test]
+    fn the_command_payload_is_a_bare_name_never_a_path() {
+        for token in ["command:", "command:bin/npm", "command:../npm"] {
+            let Err(error) = parse(&[token.to_string()], Surface::Session) else {
+                panic!("`{token}` must refuse: the payload is a bare name");
+            };
+            assert!(
+                error.contains("bare name"),
+                "the refusal states the shape rule: {error}"
+            );
+        }
+    }
+
+    /// H1 red: on the run surface `command:` is a permanent policy refusal in
+    /// its own class — never an absence claim, with its own pinned wording.
+    /// Written before the refusal exists, so the run parser's unknown-scope
+    /// error is what fires today.
+    #[test]
+    fn a_run_refuses_command_scopes_by_design() {
+        for token in ["command:npm", "command:bash"] {
+            let Err(error) = parse(&[token.to_string()], Surface::Run) else {
+                panic!("a run never gets this lane");
+            };
+            assert!(
+                error.contains("not available on runs, by design"),
+                "the run refusal is policy, pinned: {error}"
+            );
+            assert!(
+                error.contains(super::RUN_COMMAND_REFUSAL_PIN),
+                "the pin rides the production constant: {error}"
+            );
+            assert!(
+                error.contains("unconfined host execution"),
+                "the refusal says what the scope names: {error}"
+            );
+            assert!(
+                error.contains("runner:") && error.contains("interpreter:"),
+                "the refusal steers to a sandboxed scope: {error}"
+            );
+            assert!(
+                !error.contains("not available yet"),
+                "never an absence claim — this refusal never leaves: {error}"
+            );
+            assert!(
+                error.contains(token),
+                "the refusal names the scope: {error}"
+            );
+            assert!(error.contains("Re-run without it."), "got: {error}");
+        }
+    }
+
+    /// The permanent refusal is its own class: the wiring-shaped list never
+    /// carries the `command` family on any surface — the run refusal above is
+    /// policy, and the session surface parses the family rather than
+    /// refusing it.
+    #[test]
+    fn the_command_family_is_never_a_wiring_refusal() {
+        for entry in NOT_YET_WIRED {
+            assert!(
+                entry.family != "command",
+                "`command` must not join the wiring-shaped list on any surface"
+            );
+        }
     }
 }

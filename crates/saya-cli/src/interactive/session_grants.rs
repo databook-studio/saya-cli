@@ -128,6 +128,28 @@ pub(crate) fn allow(
     Ok(message)
 }
 
+/// Seeds the launch's `command:` tokens into the session's grant store:
+/// the grammar stays the authority (each token parses on the session
+/// surface), then the composition gate admits it — a token the composition
+/// cannot carry is a launch usage error with its own reason, never a seeded
+/// grant. Returns the seeded tokens verbatim, in stated order.
+pub(crate) fn seed_launch_allow(
+    tokens: &[String],
+    composition: &crate::approval_facts::ApprovalFacts,
+    grants: &SessionGrants,
+) -> Result<Vec<String>, String> {
+    let approved = scopes::parse(tokens, Surface::Session)?;
+    let mut seeded = Vec::new();
+    for token in &approved.tokens {
+        if let Some(refusal) = super::allow_refusal::composition_refusal(token, composition) {
+            return Err(refusal);
+        }
+        grants.grant(token);
+        seeded.push(token.clone());
+    }
+    Ok(seeded)
+}
+
 /// `/grants`: the store's tokens verbatim, one per line, sorted, under a
 /// header stating the lifetime, with a count — and an explicit empty state,
 /// never a bare nothing. The words are the record, and they are the same

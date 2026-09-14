@@ -264,3 +264,24 @@ fn trusted_layers_may_declare_the_interpreter_universe() {
     );
     assert!(resolved.ignored_project_overrides.is_empty());
 }
+
+/// H1 red: a project-layer `[host_commands]` must be a typed resolve error — a
+/// model-writable file must never enable unsandboxed execution. This test is
+/// written before the section exists, so the fixture's unknown section fails
+/// parse today rather than resolve.
+#[test]
+fn the_project_layer_cannot_enable_host_commands() {
+    use saya_config::ResolutionInput;
+    let input = ResolutionInput::new(saya_config::ConnectionsFile::default()).with_project(
+        saya_config::ConfigFile::from_toml("[host_commands]\nenable = true\n")
+            .expect("fixture parses"),
+    );
+    let error = match saya_config::resolve(input) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a project-layer [host_commands] must be a typed resolve error"),
+    };
+    assert!(
+        error.contains("host_commands") && error.contains("project"),
+        "the refusal names the section and the layer: {error}"
+    );
+}

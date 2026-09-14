@@ -25,8 +25,8 @@ use saya_agent::{
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedFetchJobs, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs,
-    ThemeChoice,
+    ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
+    ResolvedRunnerJobs, ThemeChoice,
 };
 use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -255,6 +255,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
             output_color: ColorChoice::Auto,
             ui_theme: ThemeChoice::Auto,
             memory,
+            host_commands: ResolvedHostCommands::default(),
             ignored_project_overrides: Vec::new(),
             endpoints: BTreeMap::new(),
         },

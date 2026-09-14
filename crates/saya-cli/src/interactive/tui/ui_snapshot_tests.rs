@@ -26,8 +26,8 @@ use saya_agent::{
 };
 use saya_config::{
     AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedFetchJobs, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs,
-    ThemeChoice,
+    ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
+    ResolvedRunnerJobs, ThemeChoice,
 };
 use saya_store::SqliteStateStore;
 use saya_types::ClaimStatus;
@@ -96,6 +96,7 @@ pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 max_claims_per_contract: 12,
                 max_context_bytes: 16384,
             },
+            host_commands: ResolvedHostCommands::default(),
             ignored_project_overrides: Vec::new(),
             endpoints: BTreeMap::new(),
         },
