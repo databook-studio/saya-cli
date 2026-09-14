@@ -14,9 +14,11 @@
 pub mod endpoints;
 pub mod engine;
 pub mod fetch;
+pub mod host;
 pub mod journal;
 pub mod lock;
 pub mod paths;
+pub mod proc;
 pub mod run_dir;
 pub mod runner;
 pub mod scratch;
