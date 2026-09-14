@@ -90,6 +90,17 @@ pub(crate) fn refuse_session_launch_flags_on_subcommand(
     command: &Command,
     options: &crate::cli::GlobalOptions,
 ) -> Result<(), String> {
+    if !options.deny.is_empty() {
+        return match command {
+            Command::Ask { .. } => Err(crate::interactive::session_deny::ask_surface_refusal()),
+            Command::Run { .. } => Err(crate::commands::run::scopes::refuse_deny_on_run()),
+            _ => Err(
+                "`--deny` states the interactive session's deny list, not a subcommand: \
+                 launch the session (`saya --deny <program>`) or run the subcommand without it"
+                    .into(),
+            ),
+        };
+    }
     if options.host_commands {
         return match command {
             Command::Ask { .. } => Err(refuse_host_commands_for_ask_text()),

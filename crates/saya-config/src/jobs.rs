@@ -172,6 +172,38 @@ impl Default for ResolvedInterpreterJobs {
     }
 }
 
+/// The resolved session deny list, from user-layer `[session_commands]
+/// deny`. Refusal-only: bare program names, sorted and deduped, that every
+/// session door refuses before grant, prompt, and bypass. Empty when nothing
+/// is denied.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedSessionDeny {
+    /// The denied programs, sorted, deduped.
+    pub programs: Vec<String>,
+}
+
+/// Resolves `[session_commands] deny`: every entry is a bare name — never a
+/// path, traversal, prefix, or glob — refused at resolve time with a typed
+/// error. Sorted and deduped, so the journal's start event and the status
+/// line carry one canonical order.
+pub(crate) fn resolve_session_deny(
+    file: crate::model::SessionCommandsFile,
+) -> Result<ResolvedSessionDeny, ConfigError> {
+    let mut programs: Vec<String> = file.deny;
+    for program in &programs {
+        if !is_bare_name(program) {
+            return Err(ConfigError::InvalidSessionDeny {
+                program: program.clone(),
+                reason: "a deny entry is a bare program name, never a path, traversal, \
+                         prefix, or glob",
+            });
+        }
+    }
+    programs.sort();
+    programs.dedup();
+    Ok(ResolvedSessionDeny { programs })
+}
+
 /// Effective host-command defaults, resolved from `[host_commands]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedHostCommands {

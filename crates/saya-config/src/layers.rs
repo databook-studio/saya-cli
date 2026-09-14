@@ -43,6 +43,12 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     if layer.host_commands.timeout_seconds.is_some() {
         base.host_commands.timeout_seconds = layer.host_commands.timeout_seconds;
     }
+    // `[session_commands] deny` merges like any ordinary user-layer section
+    // here — the project layer never reaches this merge with the section set
+    // (the typed refusal in `resolve.rs` fires first).
+    if !layer.session_commands.deny.is_empty() {
+        base.session_commands.deny = layer.session_commands.deny.clone();
+    }
     apply!(output.format);
     apply!(output.color);
     apply!(ui.theme);

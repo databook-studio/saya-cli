@@ -15,17 +15,20 @@
 use std::path::PathBuf;
 
 /// What the launch stated about the lane: the flag, the `--allow` seeds,
-/// and the user-layer config — read together, once, at composition.
+/// the `--deny` refusals, and the user-layer config — read together, once,
+/// at composition.
 pub(crate) struct HostLaunch {
     flag: bool,
     seeds: Vec<String>,
+    deny: Vec<String>,
     config_enabled: bool,
     config: saya_config::ResolvedHostCommands,
 }
 
 impl HostLaunch {
     /// Reads the launch statement: the `--host-commands` flag, the session's
-    /// `--allow` seeds, and the resolved user-layer `[host_commands]`.
+    /// `--allow` seeds and `--deny` refusals, and the resolved user-layer
+    /// `[host_commands]`.
     pub(crate) fn from_options(
         options: &crate::cli::GlobalOptions,
         runtime: &RuntimeConfig,
@@ -33,6 +36,7 @@ impl HostLaunch {
         Self {
             flag: options.host_commands,
             seeds: options.allow.clone(),
+            deny: options.deny.clone(),
             config_enabled: runtime.resolved.host_commands.enabled,
             config: runtime.resolved.host_commands.clone(),
         }
@@ -62,9 +66,28 @@ impl HostLaunch {
         Self {
             flag: true,
             seeds: Vec::new(),
+            deny: Vec::new(),
             config_enabled: runtime.resolved.host_commands.enabled,
             config: runtime.resolved.host_commands.clone(),
         }
+    }
+
+    /// The test seam: an unstated lane carrying only `--deny` refusals —
+    /// refusal-only, composes nothing.
+    #[cfg(test)]
+    pub(crate) fn from_deny_for_tests(deny: Vec<String>) -> Self {
+        Self {
+            flag: false,
+            seeds: Vec::new(),
+            deny,
+            config_enabled: false,
+            config: saya_config::ResolvedHostCommands::default(),
+        }
+    }
+
+    /// The launch's `--deny` refusals, verbatim and in order.
+    pub(crate) fn deny_list(&self) -> Vec<String> {
+        self.deny.clone()
     }
 
     /// Seeds the launch's `command:` tokens into the provided grant store:

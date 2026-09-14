@@ -130,6 +130,20 @@ pub(crate) fn terminal_choice(answer: &str, grant: Option<&str>) -> ApprovalChoi
 #[async_trait::async_trait]
 impl saya_agent::ApprovalDecider for TerminalApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
+        // Deny first, at every program-named door: a denied name never
+        // reaches the approval prompt — the tool returns the typed refusal
+        // the model relays. Deny holds in every mode, bypass included.
+        if matches!(tool.name.as_str(), "run_command" | "run_program")
+            && let Some(program) =
+                crate::interactive::session_deny::call_program(&tool.name, arguments)
+            && self
+                .facts
+                .denied_programs
+                .iter()
+                .any(|denied| denied == &program)
+        {
+            return true;
+        }
         let primary = self.primary.get();
         let grant = grant_token(&tool.name, arguments, primary.as_deref(), &self.facts);
         match self.policy.resolve(&tool.effect, grant.as_deref()) {

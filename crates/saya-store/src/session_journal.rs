@@ -50,6 +50,19 @@ pub enum JournalEvent {
     Granted { token: String, source: GrantSource },
     #[serde(rename = "session-bypass")]
     Bypass { source: BypassSource },
+    /// The session's deny list, once at session start when non-empty: the
+    /// denied programs, sorted, in the order the list carries them.
+    #[serde(rename = "session-deny-list")]
+    DenyList { programs: Vec<String> },
+    /// One deny firing: the program named in the ask, its argv, and the door
+    /// the ask entered through. Redacted through the existing seam, written
+    /// before the refusal is relayed — journal-before-spawn's mirror.
+    #[serde(rename = "session-command-denied")]
+    CommandDenied {
+        program: String,
+        argv: Vec<String>,
+        door: String,
+    },
 }
 
 /// The append-only event journal of one session. One writer at a time: the
@@ -90,6 +103,34 @@ impl SessionJournal {
         self.append(&JournalEvent::Bypass { source })
     }
 
+    /// Journals the session's deny list once at session start, when
+    /// non-empty: the denied programs, sorted. No noise when empty.
+    pub fn deny_list(&self, programs: &[String]) -> Result<(), StoreError> {
+        if programs.is_empty() {
+            return Ok(());
+        }
+        self.append(&JournalEvent::DenyList {
+            programs: programs.iter().map(|program| redact(program)).collect(),
+        })
+    }
+
+    /// Journals one deny firing — the program named in the ask, its argv,
+    /// and the door the ask entered through — redacted at write through the
+    /// repo's existing seam, never a second rule set. Written before the
+    /// refusal is relayed: journal-before-refusal.
+    pub fn command_denied(
+        &self,
+        program: &str,
+        argv: &[String],
+        door: &str,
+    ) -> Result<(), StoreError> {
+        self.append(&JournalEvent::CommandDenied {
+            program: redact(program),
+            argv: argv.iter().map(|arg| redact(arg)).collect(),
+            door: door.to_owned(),
+        })
+    }
+
     /// Appends one event as exactly one newline-terminated NDJSON line and
     /// fsyncs it. The line bytes go through order-preserving struct
     /// serialization — serde's internally-tagged buffering would reorder the
@@ -104,6 +145,20 @@ impl SessionJournal {
             JournalEvent::Bypass { source } => serde_json::to_string(&BypassLine {
                 event: "session-bypass",
                 source: *source,
+            }),
+            JournalEvent::DenyList { programs } => serde_json::to_string(&DenyListLine {
+                event: "session-deny-list",
+                programs,
+            }),
+            JournalEvent::CommandDenied {
+                program,
+                argv,
+                door,
+            } => serde_json::to_string(&CommandDeniedLine {
+                event: "session-command-denied",
+                program,
+                argv,
+                door,
             }),
         }
         .map_err(|_| StoreError::Invalid)?;
@@ -144,6 +199,24 @@ struct GrantedLine<'a> {
 struct BypassLine {
     event: &'static str,
     source: BypassSource,
+}
+
+/// The written form of the session-start deny list, in the settled key
+/// order (`event`, then `programs`).
+#[derive(serde::Serialize)]
+struct DenyListLine<'a> {
+    event: &'static str,
+    programs: &'a [String],
+}
+
+/// The written form of one deny firing, in the settled key order (`event`,
+/// then `program`, `argv`, `door`).
+#[derive(serde::Serialize)]
+struct CommandDeniedLine<'a> {
+    event: &'static str,
+    program: &'a str,
+    argv: &'a [String],
+    door: &'a str,
 }
 
 /// Drops a torn trailing line — the half-written event a crash left — so a

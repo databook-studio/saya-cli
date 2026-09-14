@@ -256,6 +256,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
             ui_theme: ThemeChoice::Auto,
             memory,
             host_commands: ResolvedHostCommands::default(),
+            session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
             endpoints: BTreeMap::new(),
         },

@@ -3,6 +3,9 @@ pub(crate) mod session_activation;
 // nothing in this session's composition.
 pub(crate) mod allow_refusal;
 mod session_commands;
+pub(crate) mod session_deny;
+#[cfg(test)]
+mod session_deny_red_tests;
 pub(crate) mod session_host;
 // The session's write-shaped definitions are crate-reachable: the approval
 // tests build the real grantable shapes the frontends are asked about.

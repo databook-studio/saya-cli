@@ -248,6 +248,7 @@ pub(crate) mod tests_support {
                     max_context_bytes: 16384,
                 },
                 host_commands: ResolvedHostCommands::default(),
+                session_deny: Default::default(),
                 ignored_project_overrides: Vec::new(),
                 endpoints: BTreeMap::new(),
             },

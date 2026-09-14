@@ -48,6 +48,11 @@ pub(crate) struct SessionUniverse {
     /// bound: the executor config plus the facts the prompts consult. `None`
     /// hides the tool everywhere — hidden, not advertised.
     host: Option<SessionHost>,
+    /// The session's deny list: bare program names every door refuses
+    /// before grant, prompt, and bypass — session-wide, lane-blind. Composed
+    /// even when the host lane is off: deny gates the doors every session
+    /// already has.
+    deny: super::session_deny::SessionDeny,
     /// The turn's primary connection handle. The approval deciders hold a
     /// clone, and each turn binds the registry `prepare_turn` builds into
     /// it, so a grant suggestion names the database the session is actually
@@ -76,6 +81,7 @@ impl SessionUniverse {
             fetch: None,
             runner: None,
             host: None,
+            deny: super::session_deny::SessionDeny::default(),
             primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
             probe_refused: false,
@@ -120,6 +126,17 @@ impl SessionUniverse {
         state_dir: &Path,
         launch: Option<&session_host::HostLaunch>,
     ) -> Result<Self, String> {
+        // The deny list, once per session: the launch's `--deny` refusals
+        // plus the user-layer `[session_commands] deny`. Launch-only — a
+        // mid-session deny over a held grant would leave a journaled token
+        // that gates nothing — so deny precedes every grant by construction.
+        // `[jobs.runner] allow` ∩ deny is not an error: the allowlist also
+        // governs runs, where deny does not ride; in a session deny wins at
+        // the door.
+        let mut deny_names: Vec<String> =
+            launch.map(|launch| launch.deny_list()).unwrap_or_default();
+        deny_names.extend(runtime.resolved.session_deny.programs.iter().cloned());
+        let deny = super::session_deny::SessionDeny::from_names(deny_names)?;
         let (workspace, notice) = bind_from_pins(explicit, pinned_root, walk_when_unpinned, cwd)?;
         // Scratch: one DuckDB file per session state directory, the pinned
         // scratch semantics (external access off, 0600) either way. It is
@@ -178,6 +195,7 @@ impl SessionUniverse {
             fetch: Some(fetch),
             runner: runner_composed,
             host,
+            deny,
             primary: crate::grant_token::TurnPrimary::default(),
             notice,
             probe_refused,
@@ -215,6 +233,8 @@ impl SessionUniverse {
     /// members and the resolved config. The prompt states what these
     /// enforce and nothing else: a member that was not composed contributes
     /// no fact lines, and every stated number is the enforcement's own.
+    /// The deny list rides along: it gates every program-named door even
+    /// with the host lane off, so the deciders read it from here too.
     pub(crate) fn approval_facts(
         &self,
         runtime: &crate::config::runtime::RuntimeConfig,
@@ -246,6 +266,7 @@ impl SessionUniverse {
             }),
             workspace_root: self.root().map(|root| root.to_path_buf()),
             host: self.host.as_ref().map(|host| host.facts.clone()),
+            denied_programs: self.deny.programs(),
         }
     }
 
@@ -258,13 +279,32 @@ impl SessionUniverse {
             .map(|bound| Arc::clone(&bound.workspace))
     }
 
+    /// The deny list this universe carries — the programs every door
+    /// refuses. Read by the session loop's start-event journal site.
+    pub(crate) fn deny_programs(&self) -> Vec<String> {
+        self.deny.programs()
+    }
+
     /// The executor: the shared `RunTools` composite over this session's
-    /// database tools and members. The runner member is composed per call
-    /// onto the proven spawn, carrying the turn's cancellation.
+    /// database tools and members, carrying the session deny list. The
+    /// runner member is composed per call onto the proven spawn, carrying
+    /// the turn's cancellation.
     pub(crate) fn executor(
         &self,
         database: Arc<DatabaseTools>,
         cancellation: &CancellationToken,
+    ) -> Arc<dyn ToolExecutor> {
+        self.executor_with_journal(database, cancellation, None)
+    }
+
+    /// The executor with the session journal attached: a deny firing is
+    /// journalled there before the refusal is relayed. The session runtime
+    /// is the caller; the journal rides the turn, not the universe.
+    pub(crate) fn executor_with_journal(
+        &self,
+        database: Arc<DatabaseTools>,
+        cancellation: &CancellationToken,
+        journal: Option<std::sync::Arc<saya_store::SessionJournal>>,
     ) -> Arc<dyn ToolExecutor> {
         let runner = self.runner.as_ref().map(|runner| {
             let resolver: SharedCredentialSource =
@@ -281,7 +321,12 @@ impl SessionUniverse {
                 .with_cancellation(cancellation.clone()),
             )
         });
-        let tools = RunTools::compose(database, self.scratch.clone(), self.fetch.clone(), runner);
+        let mut tools =
+            RunTools::compose(database, self.scratch.clone(), self.fetch.clone(), runner)
+                .with_session_deny(self.deny.clone());
+        if let Some(journal) = journal {
+            tools = tools.with_session_journal(journal);
+        }
         let tools = match self.host.as_ref() {
             Some(host) => tools.with_host(
                 host.config.clone(),

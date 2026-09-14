@@ -45,6 +45,11 @@ pub(crate) struct ApprovalFacts {
     /// workspace root bound plus a launch-or-user-layer statement. `None`
     /// contributes no lines and parses no `command:` token.
     pub(crate) host: Option<HostFacts>,
+    /// The session's deny list: bare program names every door refuses
+    /// before grant, prompt, and bypass — session-wide, lane-blind. Empty
+    /// refuses nothing. Present even when the host lane is off: deny gates
+    /// the doors every session already has.
+    pub(crate) denied_programs: Vec<String>,
 }
 
 impl ApprovalFacts {

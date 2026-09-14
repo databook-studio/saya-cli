@@ -80,6 +80,10 @@ pub struct ResolvedConfig {
     /// the per-call ceiling. The project layer may never state it (typed
     /// resolve error) — see `HostCommandsFromProject`.
     pub host_commands: crate::jobs::ResolvedHostCommands,
+    /// The user-layer `[session_commands] deny` list: bare program names
+    /// every session door refuses before grant, prompt, and bypass. The
+    /// project layer may never state it (typed resolve error).
+    pub session_deny: crate::jobs::ResolvedSessionDeny,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
@@ -150,6 +154,12 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         {
             return Err(ConfigError::HostCommandsFromProject);
         }
+        // A project-layer `[session_commands]` is a hard refusal — not a
+        // revert: a model-writable deny could name every `[jobs.runner]`
+        // allow entry, herding the session's work onto the unsandboxed lane.
+        if !project.session_commands.deny.is_empty() {
+            return Err(ConfigError::SessionCommandsFromProject);
+        }
         merge(&mut file, project);
     }
     let ignored_project_overrides = if input.cli.trust_project_config {
@@ -204,6 +214,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     require_max_iterations(max_iterations)?;
     let jobs = crate::jobs::resolve(&file.jobs, max_iterations as u64)?;
     let host_commands = crate::jobs::resolve_host_commands(file.host_commands.clone())?;
+    let session_deny = crate::jobs::resolve_session_deny(file.session_commands.clone())?;
     let ai = ResolvedAi {
         provider: file.ai.provider.unwrap_or(AiProvider::Ollama),
         model: file
@@ -236,6 +247,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         candidates,
         jobs,
         host_commands,
+        session_deny,
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
