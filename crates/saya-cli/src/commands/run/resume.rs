@@ -105,14 +105,14 @@ async fn continue_run(
     let store: Arc<dyn RunStore> = Arc::new(state.clone());
     // The journal is the authority a resume re-grants from: the approved
     // capabilities come from the journal's `PlanApproved` payload when it
-    // carries scopes — exactly what the original approval carried, no more,
-    // no fewer — and the persisted spec stands in only where the journal
-    // states nothing (journals written before the payload existed). A
-    // `spec.json` edited between invocations cannot widen what the journal
-    // stated: the grant is the journal's, never the file's. The payload's
-    // words are also the resumed decider's seeds — the frozen policy holds
-    // exactly what the journal approved, and a pre-payload journal seeds
-    // nothing.
+    // states scopes — words or the stated empty set of a `--allow none`
+    // run, exactly what the original approval carried, no more, no fewer —
+    // and the persisted spec stands in only where the journal predates the
+    // payload field. A `spec.json` edited between invocations cannot widen
+    // what the journal stated: the grant is the journal's, never the
+    // file's. The payload's words are also the resumed decider's seeds —
+    // the frozen policy holds exactly what the journal approved, and a
+    // pre-payload journal seeds nothing.
     let grants = super::grants::journal_grants(&dir, &spec.scopes)?;
     let workspace = match Workspace::open(&dir.join("workspace")) {
         Ok(workspace) => Arc::new(workspace),

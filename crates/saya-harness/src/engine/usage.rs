@@ -180,7 +180,7 @@ mod tests {
     fn seeding_folds_usage_events_only() {
         let seeded = UsageTotals::from_journal(&[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::Paused {
                 reason: saya_types::PauseReason::BudgetExhausted,
             },
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(
             UsageTotals::from_journal(&[
                 RunEvent::RunStarted,
-                RunEvent::PlanApproved { scopes: vec![] },
+                RunEvent::PlanApproved { scopes: None },
             ]),
             UsageTotals::default()
         );

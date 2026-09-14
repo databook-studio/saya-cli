@@ -102,24 +102,42 @@ fn run_program_prompt_pins_the_program_s_facts() {
     let tool = session_tool("run_program");
     let arguments =
         serde_json::json!({"program": "bench", "args": ["--json", "--out", "state/bench.json"]});
-    let grant = grant_token(&tool.name, &arguments, None);
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
     let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
     insta::assert_snapshot!(prompt);
 }
 
 /// The interpreter door's prompt carries the no-euphemism warning — the
-/// session's own clause, since sessions grant no process-fork.
+/// session's own clause, the running platform's process-fork fact (U8:
+/// the clause is per platform; the full body is snapshot-pinned on macOS,
+/// where the committed snapshot lives, and the fork clause is pinned on
+/// every platform by `the_fork_fact_says_only_what_the_running_platform_
+/// enforces`).
 #[test]
 fn interpreter_run_program_prompt_carries_the_no_euphemism_warning() {
     let facts = session_facts();
     let tool = session_tool("run_program");
     let arguments = serde_json::json!({"program": "python3", "args": ["-c", "print(1)"]});
-    let grant = grant_token(&tool.name, &arguments, None);
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
     let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
+    // (Moved assertion, U8: the snapshot pins the macOS body — the fork
+    // clause became the platform's own, so a non-macOS body differs in
+    // exactly that clause and is pinned by the platform's own tests.)
+    #[cfg(target_os = "macos")]
     insta::assert_snapshot!(prompt);
+    #[cfg(not(target_os = "macos"))]
     assert!(
-        prompt.contains("no process-fork is granted"),
-        "the session's fork clause, not the run's conditional: {prompt}"
+        prompt.contains("interpreter approval: this session may execute python3"),
+        "the warning's body renders: {prompt}"
+    );
+    assert!(
+        prompt.contains(crate::interactive::session_activation::SESSION_FORK_FACT),
+        "the session's fork clause for this platform, not the run's \
+         conditional: {prompt}"
+    );
+    assert!(
+        !prompt.contains("where process-fork is granted"),
+        "the run surface's parenthetical is a run's clause: {prompt}"
     );
 }
 
@@ -130,7 +148,7 @@ fn bounded_sql_query_prompt_pins_the_sql_family_s_facts() {
     let arguments = serde_json::json!(
         {"sql": "SELECT region, count(*) FROM orders GROUP BY 1", "connection": "analytics"}
     );
-    let grant = grant_token(&tool.name, &arguments, None);
+    let grant = grant_token(&tool.name, &arguments, None, &sql_facts());
     let prompt = approval_prompt(
         &tool,
         &arguments,
@@ -148,7 +166,7 @@ fn workspace_write_prompt_pins_the_containment_facts() {
     let facts = session_facts();
     let tool = session_tool("workspace_write");
     let arguments = serde_json::json!({"path": "notes/summary.md", "content": "hello world"});
-    let grant = grant_token(&tool.name, &arguments, None);
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
     let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
     insta::assert_snapshot!(prompt);
 }
@@ -159,7 +177,7 @@ fn scratch_sql_prompt_pins_the_scratch_facts() {
     let facts = session_facts();
     let tool = session_tool("scratch_sql");
     let arguments = serde_json::json!({"sql": "CREATE TABLE t AS SELECT 1"});
-    let grant = grant_token(&tool.name, &arguments, None);
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
     let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
     insta::assert_snapshot!(prompt);
 }
@@ -171,7 +189,7 @@ fn http_fetch_prompt_pins_the_destination_and_the_untrusted_lane() {
     let facts = session_facts();
     let tool = session_tool("http_fetch");
     let arguments = serde_json::json!({"url": "https://api.github.com/repos/x/y"});
-    let grant = grant_token(&tool.name, &arguments, None);
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
     let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
     insta::assert_snapshot!(prompt);
 }
@@ -183,7 +201,7 @@ fn http_download_prompt_pins_the_remaining_budget() {
     let facts = session_facts();
     let tool = session_tool("http_download");
     let arguments = serde_json::json!({"url": "https://example.com/model.bin", "destination": "artifacts/model.bin"});
-    let grant = grant_token(&tool.name, &arguments, None);
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
     let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
     insta::assert_snapshot!(prompt);
 }
@@ -239,6 +257,60 @@ fn the_session_line_shows_the_family_s_held_grants_and_call_counts() {
 }
 
 // --- The properties -----------------------------------------------------------
+
+/// The task's explicit case at the prompt surface: with `[jobs.interpreter]`
+/// empty — the default — a `python3` call's fact line says "refused by
+/// name" and its answers line offers the two answers, never a third
+/// offering a token the composition cannot carry (U8). The fact body keeps
+/// its own honesty (the refusal line stays); only the dead offer is gone.
+#[test]
+fn an_unstaged_interpreter_call_offers_two_answers_not_three() {
+    let mut facts = session_facts();
+    if let Some(runner) = facts.runner.as_mut() {
+        runner.interpreter_programs = Vec::new();
+    }
+    let tool = session_tool("run_program");
+    let arguments = serde_json::json!({"program": "python3", "args": ["-c", "print(1)"]});
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
+    assert_eq!(
+        grant, None,
+        "an unstaged interpreter suggests no token, whatever the fact body says"
+    );
+    let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
+    assert!(
+        prompt.contains("refused by name"),
+        "the fact body keeps stating the door's own truth: {prompt}"
+    );
+    assert!(
+        !prompt.contains("[s]"),
+        "no token, no session-grant offer — two answers, not three: {prompt}"
+    );
+    assert!(
+        prompt.contains("(no session grant for this tool)"),
+        "the two-answer line says why the third is absent: {prompt}"
+    );
+}
+
+/// The honest case the fix must not silence: with the interpreter staged
+/// the same call offers the token the grant records — three answers, the
+/// third naming `interpreter:python3` verbatim.
+#[test]
+fn a_staged_interpreter_call_still_offers_the_session_grant() {
+    let facts = session_facts();
+    let tool = session_tool("run_program");
+    let arguments = serde_json::json!({"program": "python3", "args": ["-c", "print(1)"]});
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
+    assert_eq!(
+        grant.as_deref(),
+        Some("interpreter:python3"),
+        "a staged interpreter is offered, not silenced"
+    );
+    let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
+    assert!(
+        prompt.contains("[s] allow interpreter:python3 for this session"),
+        "the third answer names the token verbatim: {prompt}"
+    );
+}
 
 /// Call shapes to generate: (tool, arguments) over the ask-gated families.
 fn proptest_calls() -> impl Strategy<Value = (ToolDefinition, serde_json::Value)> {

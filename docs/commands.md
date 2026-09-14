@@ -234,19 +234,26 @@ interpreter door opens to the interpreters the trusted config staged in
 mode — under `ask` it is reachable through a granted
 `interpreter:<program>` token, under bypass without the ask). An interpreter
 child is confined by the same sandbox as any runner child: same fs roots,
-same empty egress, no process-fork — a child an interpreter spawns is refused
-by the sandbox. What bypass does **not** open, said plainly: interpreters
-outside the staged allow, programs outside `[jobs.runner] allow`, unproven
-hosts (no runner in any mode — and the absence is said: "run_program is
-unavailable: the sandbox probe did not prove this host"), and write SQL.
+same empty egress — and the process-fork fact is the platform's own: on
+macOS the Seatbelt profile denies fork by omission, so a child an
+interpreter spawns is refused by the sandbox; on Linux nothing in the
+Landlock + namespace confinement restricts fork, so children run, under
+the same bounds as the interpreter itself. What bypass does **not** open,
+said plainly: interpreters outside the staged allow, programs outside
+`[jobs.runner] allow`, unproven hosts (no runner in any mode — and the
+absence is said: "run_program is unavailable: the sandbox probe did not
+prove this host"), and write SQL.
 
 When bypass takes effect — at launch, at `/approvals bypass`, and again on a
 resume — the session prints its activation line: `bypass on: every tool call
 runs without asking; every structural guard still applies.` With interpreters
 staged, the line carries the interpreter warning in the session's wording
-(the staged names, the sandbox bounds, the model-written program, and "no
-process-fork is granted: children an interpreter spawns are refused by the
-sandbox"); with none staged, it says instead: `no interpreters are staged in
+(the staged names, the sandbox bounds, the model-written program, and the
+platform's process-fork fact — on macOS "no process-fork is granted:
+children an interpreter spawns are refused by the sandbox", on Linux
+"nothing in the Linux confinement restricts process-fork: children an
+interpreter spawns run, under the same bounds as the interpreter itself");
+with none staged, it says instead: `no interpreters are staged in
 [jobs.interpreter] allow, so interpreter calls still refuse.` The status bar
 and the headless status line render `approval:bypass` in red on every
 surface. `/approvals ask` leaves bypass mid-session, effective for turns

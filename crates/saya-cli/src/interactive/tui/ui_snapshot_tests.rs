@@ -681,7 +681,6 @@ fn approval_modal_renders_the_shared_fact_body() {
     let mut app = empty_app();
     let tool = crate::interactive::session_definitions::http_fetch();
     let arguments = serde_json::json!({"url": "https://api.github.com/repos/x/y"});
-    let grant = crate::grant_token::grant_token(&tool.name, &arguments, None);
     let facts = crate::approval_facts::ApprovalFacts {
         fetch: Some(crate::approval_facts::FetchFacts {
             fetch_body_bytes: 61_440,
@@ -691,6 +690,7 @@ fn approval_modal_renders_the_shared_fact_body() {
         }),
         ..crate::approval_facts::ApprovalFacts::default()
     };
+    let grant = crate::grant_token::grant_token(&tool.name, &arguments, None, &facts);
     let detail = crate::approval_facts::call_facts(
         &tool.name,
         &arguments,

@@ -629,13 +629,16 @@ fn usage_event_serializes_absence_as_null_never_zero() {
 #[test]
 fn plan_approved_journal_line_without_scopes_replays_as_scopes_unstated() {
     // A journal written before the `scopes` payload existed carries no
-    // `scopes` field; `#[serde(default)]` keeps it parseable as an empty
-    // list — "scopes unstated here" — so old runs resume unchanged.
+    // `scopes` field; `#[serde(default)]` keeps it parseable as `None` —
+    // "scopes unstated here" — so old runs resume unchanged, on the
+    // documented spec fallback. (Moved assertion, U8: the field became
+    // `Option<Vec<String>>` so this line can no longer fold into the
+    // stated-empty case below; the pre-field meaning it pins is the same.)
     let legacy = r#"{"type":"plan_approved"}"#;
     let old: RunEvent = serde_json::from_str(legacy).unwrap();
     assert_eq!(
         old,
-        RunEvent::PlanApproved { scopes: vec![] },
+        RunEvent::PlanApproved { scopes: None },
         "an old PlanApproved line must replay as scopes unstated, not fail to parse"
     );
 
@@ -643,7 +646,7 @@ fn plan_approved_journal_line_without_scopes_replays_as_scopes_unstated() {
     // declaration order — the journal is the authority a resume re-grants
     // from, so the field must survive the round trip exactly.
     let approved = RunEvent::PlanApproved {
-        scopes: vec!["interpreter:python3".to_string()],
+        scopes: Some(vec!["interpreter:python3".to_string()]),
     };
     let json = serde_json::to_string(&approved).unwrap();
     let back: RunEvent = serde_json::from_str(&json).unwrap();
@@ -654,16 +657,58 @@ fn plan_approved_journal_line_without_scopes_replays_as_scopes_unstated() {
     );
 }
 
+/// The two ways a `PlanApproved` line can state no scopes mean different
+/// things, and the field keeps them apart (U8): a `--allow none` run writes
+/// the explicit empty payload — `"scopes":[]` — which replays as the stated
+/// empty approval (`Some(vec![])`, the resume re-grants nothing from it),
+/// while the pre-field line stays `None`. The bytes distinguish them on
+/// disk; the type must not fold them back together, or a `spec.json`
+/// edited between invocations could widen a none run's resume.
+#[test]
+fn a_none_run_s_journal_line_parses_as_the_stated_empty_approval() {
+    let none_run = r#"{"type":"plan_approved","scopes":[]}"#;
+    let stated: RunEvent = serde_json::from_str(none_run).unwrap();
+    assert_eq!(
+        stated,
+        RunEvent::PlanApproved {
+            scopes: Some(vec![])
+        },
+        "an empty payload is the stated empty approval — a `--allow none` run — \
+         never the pre-field fallback shape"
+    );
+
+    // The stated empty approval round-trips as the exact bytes drive
+    // writes for a none run: the payload is present and empty.
+    let json = serde_json::to_string(&stated).unwrap();
+    let back: RunEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(stated, back);
+    assert!(
+        json.contains("\"scopes\":[]"),
+        "the none run's journal line carries the empty payload: {json}"
+    );
+
+    // And `None` never reaches the wire as `null`: a line a pre-payload
+    // saya could parse must remain what older readers can parse.
+    let legacy = serde_json::to_string(&RunEvent::PlanApproved { scopes: None }).unwrap();
+    assert_eq!(
+        legacy, r#"{"type":"plan_approved"}"#,
+        "the unstated shape serializes field-less, the old line's own bytes"
+    );
+}
+
 #[test]
 fn every_event_variant_round_trips_through_serde() {
     let events = vec![
         RunEvent::RunStarted,
-        RunEvent::PlanApproved { scopes: vec![] },
+        RunEvent::PlanApproved { scopes: None },
         RunEvent::PlanApproved {
-            scopes: vec![
+            scopes: Some(vec![]),
+        },
+        RunEvent::PlanApproved {
+            scopes: Some(vec![
                 "fetch:https+example.com".to_string(),
                 "interpreter:python3".to_string(),
-            ],
+            ]),
         },
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepCompleted { step: 0 },
@@ -743,7 +788,7 @@ proptest! {
         let event = match kind {
             0 => RunEvent::RunStarted,
             1 => RunEvent::PlanApproved {
-                scopes: vec![format!("fetch:https+{endpoint}")],
+                scopes: Some(vec![format!("fetch:https+{endpoint}")]),
             },
             2 => RunEvent::StepStarted { step: step_index },
             3 => RunEvent::StepCompleted { step: step_index },

@@ -53,6 +53,29 @@ fn side_effecting_tool() -> ToolDefinition {
     }
 }
 
+/// A composition that carries what these tests' calls name: runner doors
+/// over `bench`/`deploy`, the fetch member, and a bound workspace root —
+/// the facts a session composes for those programs (U8: the suggestion
+/// gates on the composition, so a test asserting an offer must stage the
+/// capability it offers).
+fn composed_facts() -> ApprovalFacts {
+    ApprovalFacts {
+        runner: Some(crate::approval_facts::RunnerFacts {
+            runner_programs: vec!["bench".into(), "deploy".into()],
+            interpreter_programs: Vec::new(),
+            ..crate::approval_facts::RunnerFacts::default()
+        }),
+        fetch: Some(crate::approval_facts::FetchFacts {
+            fetch_body_bytes: 61_440,
+            fetch_seconds: 30,
+            fetch_redirects: 5,
+            download: None,
+        }),
+        workspace_root: Some(std::path::PathBuf::from("/home/user/proj")),
+        ..ApprovalFacts::default()
+    }
+}
+
 #[tokio::test]
 async fn the_four_approval_paths_decide_what_the_engine_decides() {
     for tool in [read_shaped_tool(), side_effecting_tool()] {
@@ -298,7 +321,7 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
         tx,
         policy.clone(),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         None,
     );
     let answerer = tokio::spawn(async move {
@@ -327,7 +350,7 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
         tx,
         policy.clone(),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         None,
     );
     assert!(
@@ -357,7 +380,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         tx,
         policy.clone(),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         None,
     );
     let answerer = tokio::spawn(async move {
@@ -378,7 +401,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         tx,
         policy.clone(),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         None,
     );
     assert!(
@@ -391,7 +414,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         tx,
         policy.clone(),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         None,
     );
     let answerer = tokio::spawn(async move {
@@ -419,7 +442,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         tx,
         policy.clone(),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         None,
     );
     let answerer = tokio::spawn(async move {
@@ -438,7 +461,7 @@ async fn a_grant_does_not_answer_a_different_shape() {
         tx,
         policy.clone(),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         None,
     );
     assert!(
@@ -469,7 +492,7 @@ async fn a_prompted_grant_journals_once_before_the_call_it_allowed_runs() {
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         Some(journal.clone()),
     );
     let tool = crate::interactive::session_definitions::workspace_write();
@@ -528,7 +551,7 @@ async fn a_failed_journal_write_says_so_and_does_not_take_the_call_down() {
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
-        crate::approval_facts::ApprovalFacts::default(),
+        composed_facts(),
         Some(journal),
     );
     let tool = crate::interactive::session_definitions::workspace_write();

@@ -138,6 +138,36 @@ behavioural reader.
 
 ### Fixed
 
+**A grant offer named a capability the composition could not carry (U8).**
+The `[s]` answer offered `interpreter:<program>` for any interpreter-shaped
+call — with `[jobs.interpreter]` empty (the default) the fact line said
+"refused by name" while the answers line below offered the grant; pressing
+it recorded a dead token that pre-answered every later identical ask into
+the same refusal, with no further prompt, for the rest of the session. The
+suggester now consults the session's composed doors — a token is offered
+only for a program the composed `[jobs.runner]`/`[jobs.interpreter]` allow
+carries, a workspace root, scratch, or fetch member that exists — and the
+prompt falls back to its two answers when nothing is carried. `/allow`
+refuses a token the composition cannot carry, with its reason, in the
+surface-aware refusal register. The headless run's frozen decider is
+composed from the run's own scopes and wiring, so a `--allow` seed still
+pre-answers exactly what it always did.
+
+**A `--allow none` run's resume re-granted from the edited `spec.json`
+(U8).** The empty `PlanApproved` payload was indistinguishable from a
+journal written before the payload field existed, so the none run took the
+pre-field spec fallback. The payload is now `Option<Vec<String>>`: the
+field-less line stays "scopes unstated" (the documented back-compat
+fallback, unchanged), and `"scopes":[]` is the stated empty approval — a
+none run's resume re-grants exactly nothing, whatever the file says.
+
+**The session's process-fork fact was macOS's, stated on every platform
+(U8).** "Children an interpreter spawns are refused by the sandbox" is the
+macOS Seatbelt measurement; on Linux nothing in the Landlock + namespace
+confinement restricts fork, so the warning told the user children are
+refused while they ran. The clause is now the running platform's own: on
+Linux it says children run, under the same bounds as the interpreter.
+
 **`--approval-mode read-only` auto-approved every gated tool.** The decider
 returned true by construction, so a side-effecting tool would have run without
 asking. It now reads the tool's declared effect. This was harmless only while

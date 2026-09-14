@@ -3,6 +3,7 @@
 //! operation, two adapters.
 
 use super::session_grants::{allow, listing};
+use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::TurnPrimary;
 use crate::grant_token_tests::registry_with_primary;
 use saya_agent::{ApprovalPolicy, SessionGrants, SessionPolicy};
@@ -14,6 +15,34 @@ fn store_with(token: &str) -> SessionGrants {
     let grants = SessionGrants::default();
     grants.grant(token);
     grants
+}
+
+/// A composition that carries the scopes these tests seed: a bound
+/// workspace root, the scratch and fetch members, a runner door over
+/// `bench`, and a staged `python3` interpreter door — the session shape in
+/// which every seeded token below gates something (U8: `/allow` refuses a
+/// token the composition cannot carry, so a test that seeds one must
+/// compose it).
+fn composed_facts() -> ApprovalFacts {
+    ApprovalFacts {
+        runner: Some(crate::approval_facts::RunnerFacts {
+            runner_programs: vec!["bench".into()],
+            interpreter_programs: vec!["python3".into()],
+            ..crate::approval_facts::RunnerFacts::default()
+        }),
+        workspace_root: Some(PathBuf::from("/home/user/proj")),
+        scratch: Some(crate::approval_facts::ScratchFacts {
+            row_cap: 50,
+            timeout_seconds: 30,
+        }),
+        fetch: Some(crate::approval_facts::FetchFacts {
+            fetch_body_bytes: 61_440,
+            fetch_seconds: 30,
+            fetch_redirects: 5,
+            download: None,
+        }),
+        ..ApprovalFacts::default()
+    }
 }
 
 /// A fresh state directory per test, the way a session's is created.
@@ -112,6 +141,7 @@ fn allow_seeds_the_stated_scopes_into_the_store() {
     let journal = SessionJournal::open(&dir);
     let message = allow(
         &["sql:analytics".to_owned(), "runner:bench".to_owned()],
+        &composed_facts(),
         &grants,
         &journal,
     )
@@ -135,6 +165,7 @@ fn allow_journals_each_newly_seeded_token_once_as_a_seed() {
     let journal = SessionJournal::open(&dir);
     allow(
         &["sql:analytics".to_owned(), "runner:bench".to_owned()],
+        &composed_facts(),
         &grants,
         &journal,
     )
@@ -155,8 +186,13 @@ fn allow_journals_each_newly_seeded_token_once_as_a_seed() {
     );
     // Re-stating the same token: the store answers "already", nothing
     // changes, and the journal records nothing.
-    allow(&["sql:analytics".to_owned()], &grants, &journal)
-        .expect("a re-stated scope is not a usage error");
+    allow(
+        &["sql:analytics".to_owned()],
+        &composed_facts(),
+        &grants,
+        &journal,
+    )
+    .expect("a re-stated scope is not a usage error");
     assert_eq!(
         journal.read().expect("the journal reads").len(),
         2,
@@ -171,8 +207,10 @@ fn allow_none_and_refused_scopes_journal_nothing() {
     let dir = state_dir("seed-none");
     let grants = store_with("runner:bench");
     let journal = SessionJournal::open(&dir);
-    allow(&["none".to_owned()], &grants, &journal).expect("`none` parses on the session surface");
-    allow(&["wat".to_owned()], &grants, &journal).expect_err("an unknown scope is a usage error");
+    allow(&["none".to_owned()], &composed_facts(), &grants, &journal)
+        .expect("`none` parses on the session surface");
+    allow(&["wat".to_owned()], &composed_facts(), &grants, &journal)
+        .expect_err("an unknown scope is a usage error");
     assert_eq!(
         journal.read().expect("the journal reads"),
         Vec::new(),
@@ -188,6 +226,7 @@ fn a_failed_journal_write_warns_and_does_not_take_the_seed_down() {
     let grants = SessionGrants::default();
     let message = allow(
         &["sql:analytics".to_owned()],
+        &composed_facts(),
         &grants,
         &broken_journal("seed-fail"),
     )
@@ -212,8 +251,13 @@ fn a_failed_journal_write_warns_and_does_not_take_the_seed_down() {
 fn allow_over_an_existing_grant_says_so_and_changes_nothing() {
     let grants = store_with("runner:bench");
     let journal = SessionJournal::open(state_dir("already"));
-    let message = allow(&["runner:bench".to_owned()], &grants, &journal)
-        .expect("a re-stated scope is not a usage error");
+    let message = allow(
+        &["runner:bench".to_owned()],
+        &composed_facts(),
+        &grants,
+        &journal,
+    )
+    .expect("a re-stated scope is not a usage error");
     assert!(
         message.contains("runner:bench"),
         "the message still names the word: {message}"
@@ -231,8 +275,13 @@ fn allow_over_an_existing_grant_says_so_and_changes_nothing() {
 fn a_fetch_grant_seeded_in_any_casing_pre_answers_the_call_it_names() {
     let grants = SessionGrants::default();
     let journal = SessionJournal::open(state_dir("fetch"));
-    let message = allow(&["fetch:HTTPS+Example.com".to_owned()], &grants, &journal)
-        .expect("the session surface accepts the fetch scope");
+    let message = allow(
+        &["fetch:HTTPS+Example.com".to_owned()],
+        &composed_facts(),
+        &grants,
+        &journal,
+    )
+    .expect("the session surface accepts the fetch scope");
     assert!(
         message.contains("fetch:https+example.com"),
         "the echo names the grammar's spelling of the token: {message}"
@@ -250,6 +299,7 @@ fn a_fetch_grant_seeded_in_any_casing_pre_answers_the_call_it_names() {
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
     allow(
         &["fetch:HTTPS+Example.com".to_owned()],
+        &composed_facts(),
         policy.grants(),
         &SessionJournal::open(state_dir("fetch2")),
     )
@@ -279,7 +329,7 @@ fn a_fetch_grant_seeded_in_any_casing_pre_answers_the_call_it_names() {
 fn allow_none_seeds_nothing_and_says_so() {
     let grants = store_with("runner:bench");
     let journal = SessionJournal::open(state_dir("none"));
-    let message = allow(&["none".to_owned()], &grants, &journal)
+    let message = allow(&["none".to_owned()], &composed_facts(), &grants, &journal)
         .expect("`none` parses on the session surface");
     assert!(
         message.contains("nothing"),
@@ -302,8 +352,13 @@ fn allow_none_seeds_nothing_and_says_so() {
 fn allow_refuses_a_scope_the_session_surface_refuses() {
     let grants = store_with("runner:bench");
     let journal = SessionJournal::open(state_dir("refuse"));
-    let error = allow(&["endpoint:analyst=fast".to_owned()], &grants, &journal)
-        .expect_err("a session binds no per-step endpoint roles");
+    let error = allow(
+        &["endpoint:analyst=fast".to_owned()],
+        &composed_facts(),
+        &grants,
+        &journal,
+    )
+    .expect_err("a session binds no per-step endpoint roles");
     assert!(
         error.contains("binds no per-step endpoint roles"),
         "the refusal is the session surface's own reason: {error}"
@@ -316,6 +371,7 @@ fn allow_refuses_a_scope_the_session_surface_refuses() {
 
     let error = allow(
         &["sql:bad name".to_owned()],
+        &composed_facts(),
         &SessionGrants::default(),
         &journal,
     )
@@ -325,8 +381,13 @@ fn allow_refuses_a_scope_the_session_surface_refuses() {
         "the refusal names the grammar: {error}"
     );
 
-    let error = allow(&["wat".to_owned()], &SessionGrants::default(), &journal)
-        .expect_err("an unknown scope is a usage error");
+    let error = allow(
+        &["wat".to_owned()],
+        &composed_facts(),
+        &SessionGrants::default(),
+        &journal,
+    )
+    .expect_err("an unknown scope is a usage error");
     assert!(error.contains("unknown scope `wat`"), "got: {error}");
 }
 
@@ -338,6 +399,7 @@ fn a_seeded_grant_pre_answers_like_a_prompted_one() {
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
     allow(
         &["sql:analytics".to_owned()],
+        &composed_facts(),
         policy.grants(),
         &SessionJournal::open(state_dir("pre-answer")),
     )
@@ -453,5 +515,91 @@ fn a_seed_request_names_every_token_it_does_not_forward() {
     assert!(
         !message.contains("seeded"),
         "nothing was forwarded, so the message claims no seeding: {message}"
+    );
+}
+
+/// A token that would gate nothing in this session's composition is
+/// refused at `/allow`, with the reason that says why — never seeded
+/// (U8): a grant the composition cannot honour would pre-answer asks into
+/// refusals and silence every ask that would say something is wrong. Each
+/// family's refusal names the token and the composed door it falls outside
+/// of; the store keeps exactly what it held.
+#[test]
+fn allow_refuses_a_token_the_composition_cannot_carry() {
+    // A composition whose runner door carries `bench` only — no staged
+    // interpreters, no workspace root — refuses every other family member,
+    // each with its own true reason.
+    let bare = ApprovalFacts {
+        runner: Some(crate::approval_facts::RunnerFacts {
+            runner_programs: vec!["bench".into()],
+            interpreter_programs: Vec::new(),
+            ..crate::approval_facts::RunnerFacts::default()
+        }),
+        ..ApprovalFacts::default()
+    };
+    let grants = store_with("runner:bench");
+    let journal = SessionJournal::open(state_dir("composition-refusal"));
+    let cases = [
+        (
+            "interpreter:python3",
+            "[jobs.interpreter] allow staged no `python3`",
+        ),
+        (
+            "runner:deploy",
+            "the composed [jobs.runner] allow carries no `deploy`",
+        ),
+        ("workspace-write", "no workspace root is bound"),
+    ];
+    for (token, reason) in cases {
+        let error = match allow(&[token.to_owned()], &bare, &grants, &journal) {
+            Err(error) => error,
+            Ok(message) => panic!(
+                "`{token}` gates nothing in this composition and must refuse; it seeded: {message}"
+            ),
+        };
+        assert!(
+            error.contains(&format!("scope `{token}`")),
+            "the refusal names the token: {error}"
+        );
+        assert!(
+            error.contains(reason),
+            "the refusal states its own true reason: {error}"
+        );
+        assert!(
+            error.contains("approving it would gate nothing"),
+            "the refusal says what approving would do: {error}"
+        );
+        assert!(
+            error.ends_with("Re-issue /allow without it."),
+            "the session tail names the slash surface's next step: {error}"
+        );
+    }
+    assert_eq!(
+        grants.tokens(),
+        vec!["runner:bench".to_owned()],
+        "a refused /allow seeds nothing — the store keeps exactly what it held"
+    );
+    assert!(
+        journal.read().expect("the journal reads").is_empty(),
+        "nothing refused was journalled"
+    );
+
+    // With the interpreter staged — the composed case — the same token
+    // seeds: the refusal is the composition's, never a blanket family ban.
+    let facts = composed_facts();
+    let message = allow(
+        &["interpreter:python3".to_owned()],
+        &facts,
+        &grants,
+        &journal,
+    )
+    .expect("a staged interpreter is carried, so it seeds");
+    assert!(
+        message.contains("interpreter:python3"),
+        "the carried token seeds: {message}"
+    );
+    assert!(
+        grants.is_granted("interpreter:python3"),
+        "the composed case is not refused"
     );
 }

@@ -6,6 +6,7 @@
 //! the tool keeps asking every call.
 
 use crate::agent::tools::DatabaseTools;
+use crate::approval_facts::{ApprovalFacts, RunnerFacts};
 use crate::commands::run::scopes;
 use crate::connection::ConnectionRegistry;
 use crate::grant_token::{SQL_FAMILY, grant_token, session_answers_line};
@@ -15,18 +16,66 @@ use saya_connectors::DatabaseConnector;
 use saya_harness::fetch::FetchDestination;
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use serde_json::{Value, json};
+use std::path::PathBuf;
+
+/// The runner facts of a composition that staged exactly these doors —
+/// `[jobs.runner] allow` and `[jobs.interpreter] allow` as the session
+/// would compose them. What the suggestion gates on is the composed
+/// universe, never the call's arguments alone (U8).
+fn runner_facts(runner: &[&str], interpreters: &[&str]) -> Option<RunnerFacts> {
+    Some(RunnerFacts {
+        runner_programs: runner.iter().map(|p| (*p).to_owned()).collect(),
+        interpreter_programs: interpreters.iter().map(|p| (*p).to_owned()).collect(),
+        ..RunnerFacts::default()
+    })
+}
+
+/// The composition facts over runner doors — the shape a session composes
+/// from `[jobs.runner]` / `[jobs.interpreter]` and nothing else.
+fn facts_with_runner(runner: Option<RunnerFacts>) -> ApprovalFacts {
+    ApprovalFacts {
+        runner,
+        ..ApprovalFacts::default()
+    }
+}
+
+/// The fully composed session shape: every member carried — every family
+/// the grammar grants exists in this composition.
+fn composed_facts() -> ApprovalFacts {
+    ApprovalFacts {
+        runner: runner_facts(&["bench", "ripgrep"], &["python3", "bash"]),
+        workspace_root: Some(PathBuf::from("/home/user/proj")),
+        scratch: Some(crate::approval_facts::ScratchFacts {
+            row_cap: 50,
+            timeout_seconds: 30,
+        }),
+        fetch: Some(crate::approval_facts::FetchFacts {
+            fetch_body_bytes: 61_440,
+            fetch_seconds: 30,
+            fetch_redirects: 5,
+            download: None,
+        }),
+        ..ApprovalFacts::default()
+    }
+}
 
 /// The token a call suggests, for the tests that need it as a value. The
-/// suggester reads the turn's primary through the third argument; `None`
-/// here means no primary is bound.
-fn token_for(tool: &str, arguments: Value) -> String {
-    grant_token(tool, &arguments, None)
+/// suggester reads the turn's primary through the third argument and the
+/// composition through the fourth; `None` there means none is bound or
+/// composed.
+fn token_for(tool: &str, arguments: Value, facts: &ApprovalFacts) -> String {
+    grant_token(tool, &arguments, None, facts)
         .unwrap_or_else(|| panic!("{tool} with {arguments} must suggest a token for this test"))
 }
 
 /// The suggester's answer for one SQL-family call shape.
 fn sql_suggestion(tool: &str, arguments: Value, registry: &ConnectionRegistry) -> Option<String> {
-    grant_token(tool, &arguments, registry.primary())
+    grant_token(
+        tool,
+        &arguments,
+        registry.primary(),
+        &ApprovalFacts::default(),
+    )
 }
 
 /// True when the parsed approval actually contains what `token` names —
@@ -159,7 +208,7 @@ fn every_suggestible_token_parses_to_the_capability_it_names() {
         ),
     ];
     for (tool, arguments) in cases {
-        let token = token_for(&tool, arguments);
+        let token = token_for(&tool, arguments, &composed_facts());
         let approved = scopes::parse(std::slice::from_ref(&token), scopes::Surface::Session)
             .unwrap_or_else(|error| panic!("`{token}` must parse under /allow: {error}"));
         assert!(
@@ -255,7 +304,8 @@ fn render_chart_and_the_fan_out_suggest_no_token() {
         grant_token(
             "bounded_sql_query_all",
             &json!({"sql": "SELECT 1"}),
-            registry.primary()
+            registry.primary(),
+            &composed_facts()
         ),
         None,
         "the fan-out's referent can grow after approval — it suggests no token"
@@ -264,7 +314,8 @@ fn render_chart_and_the_fan_out_suggest_no_token() {
         grant_token(
             "render_chart",
             &json!({"sql": "SELECT 1", "chart_type": "bar", "connection": "analytics"}),
-            registry.primary()
+            registry.primary(),
+            &composed_facts()
         ),
         None,
         "render_chart writes a file and opens a browser — not a `sql:` grant's \
@@ -410,7 +461,12 @@ fn tools_outside_the_grammar_s_families_get_no_token() {
         "no_such_tool",
     ] {
         assert_eq!(
-            grant_token(tool, &json!({"sql": "SELECT 1"}), registry.primary()),
+            grant_token(
+                tool,
+                &json!({"sql": "SELECT 1"}),
+                registry.primary(),
+                &composed_facts()
+            ),
             None,
             "{tool} must keep asking every call — no token names it"
         );
@@ -430,7 +486,7 @@ fn the_fetch_token_spells_the_host_the_run_engine_s_way() {
         "https://a.example:8443/x",
         "https://a.example",
     ] {
-        let token = token_for("http_fetch", json!({"url": url}));
+        let token = token_for("http_fetch", json!({"url": url}), &composed_facts());
         let parsed = url::Url::parse(url).expect("the test URL parses");
         let engine = FetchDestination::new(
             parsed.scheme(),
@@ -453,7 +509,11 @@ fn the_fetch_token_spells_the_host_the_run_engine_s_way() {
 /// grant that pre-answered nothing).
 #[test]
 fn a_seeded_token_and_a_suggested_token_are_the_same_string_for_a_destination() {
-    let suggested = token_for("http_fetch", json!({"url": "https://Example.com/x"}));
+    let suggested = token_for(
+        "http_fetch",
+        json!({"url": "https://Example.com/x"}),
+        &composed_facts(),
+    );
     let approved = scopes::parse(
         &["fetch:HTTPS+Example.com".to_string()],
         scopes::Surface::Session,
@@ -467,12 +527,20 @@ fn a_seeded_token_and_a_suggested_token_are_the_same_string_for_a_destination() 
 }
 
 /// A malformed or absent argument yields `None`, never a guessed token —
-/// and `None` means the tool keeps asking every call.
+/// and `None` means the tool keeps asking every call. Judged against the
+/// fully composed facts: a malformed argument yields nothing even where the
+/// composition could have carried the program — the shape rule is the
+/// runner's own, before any composition is consulted.
 #[test]
 fn a_malformed_or_absent_argument_yields_none_never_a_token() {
-    assert_eq!(grant_token("http_fetch", &json!({}), None), None, "no url");
+    let facts = composed_facts();
     assert_eq!(
-        grant_token("http_fetch", &json!({"url": "not a url"}), None),
+        grant_token("http_fetch", &json!({}), None, &facts),
+        None,
+        "no url"
+    );
+    assert_eq!(
+        grant_token("http_fetch", &json!({"url": "not a url"}), None, &facts),
         None,
         "not a URL"
     );
@@ -480,48 +548,59 @@ fn a_malformed_or_absent_argument_yields_none_never_a_token() {
         grant_token(
             "http_fetch",
             &json!({"url": "mailto:someone@example.com"}),
-            None
+            None,
+            &facts
         ),
         None,
         "a scheme with no host"
     );
     assert_eq!(
-        grant_token("http_fetch", &json!({"url": ""}), None),
+        grant_token("http_fetch", &json!({"url": ""}), None, &facts),
         None,
         "empty url"
     );
     assert_eq!(
-        grant_token("http_fetch", &json!({"url": 7}), None),
+        grant_token("http_fetch", &json!({"url": 7}), None, &facts),
         None,
         "non-string url"
     );
     assert_eq!(
-        grant_token("http_download", &json!({"destination": "f.bin"}), None),
+        grant_token(
+            "http_download",
+            &json!({"destination": "f.bin"}),
+            None,
+            &facts
+        ),
         None,
         "download without url"
     );
     assert_eq!(
-        grant_token("run_program", &json!({}), None),
+        grant_token("run_program", &json!({}), None, &facts),
         None,
         "no program"
     );
     assert_eq!(
-        grant_token("run_program", &json!({"program": ""}), None),
+        grant_token("run_program", &json!({"program": ""}), None, &facts),
         None,
         "empty program"
     );
     assert_eq!(
-        grant_token("run_program", &json!({"program": "/usr/bin/env"}), None),
+        grant_token(
+            "run_program",
+            &json!({"program": "/usr/bin/env"}),
+            None,
+            &facts
+        ),
         None,
         "paths are never programs"
     );
     assert_eq!(
-        grant_token("run_program", &json!({"program": ".."}), None),
+        grant_token("run_program", &json!({"program": ".."}), None, &facts),
         None,
         "traversal is never a program"
     );
     assert_eq!(
-        grant_token("run_program", &json!({"program": 7}), None),
+        grant_token("run_program", &json!({"program": 7}), None, &facts),
         None,
         "non-string program"
     );
@@ -529,9 +608,16 @@ fn a_malformed_or_absent_argument_yields_none_never_a_token() {
 
 /// The interpreter/runner split is the run engine's own rule (the grammar
 /// mirror at parse time), not an invented one: a name the runner refuses is
-/// the interpreter family's member, everything else rides the runner family.
+/// the interpreter family's member, everything else rides the runner
+/// family. (Moved construction, U8: the rule is now asserted through a
+/// composition that stages both doors — the family split alone no longer
+/// produces a token, the composed membership does.)
 #[test]
 fn run_program_s_family_rule_is_the_run_engine_s() {
+    let both_doors = facts_with_runner(runner_facts(
+        &["ripgrep", "ls", "git"],
+        &["python3", "python", "bash", "sh", "node", "script"],
+    ));
     for (program, family) in [
         ("python3", "interpreter"),
         ("python", "interpreter"),
@@ -544,7 +630,7 @@ fn run_program_s_family_rule_is_the_run_engine_s() {
         ("script", "interpreter"),
     ] {
         assert_eq!(
-            token_for("run_program", json!({"program": program})),
+            token_for("run_program", json!({"program": program}), &both_doors),
             format!("{family}:{program}"),
             "the family must match the run engine's refusal list"
         );
@@ -564,5 +650,134 @@ fn the_answers_line_names_the_token_only_when_one_exists() {
     assert_eq!(
         without, "[a] allow once   [d] deny   (no session grant for this tool)",
         "with no token the line offers two answers and says so"
+    );
+}
+
+// --- The composition carries what a token names (U8) --------------------------
+
+/// A token the composition cannot carry is never offered: with
+/// `[jobs.interpreter]` empty — the default — a `python3` call suggests no
+/// token, so the prompt offers its two answers, never a third that would
+/// record a grant pre-answering asks into refusals. The runner door may be
+/// fully composed; the interpreter door's universe is what the
+/// interpreter family gates on.
+#[test]
+fn an_unstaged_interpreter_is_never_offered() {
+    let runner_composed = facts_with_runner(runner_facts(&["bench"], &[]));
+    assert_eq!(
+        grant_token(
+            "run_program",
+            &json!({"program": "python3", "args": ["-c", "print(1)"]}),
+            None,
+            &runner_composed
+        ),
+        None,
+        "an unstaged interpreter is never offered — `[jobs.interpreter]` \
+         carries nothing it could run"
+    );
+    // And the prompt the two answers produce, not three: no [s] offer at
+    // an ask the grant could only pre-answer into a refusal.
+    let answers = session_answers_line(None);
+    assert!(
+        !answers.contains("[s]"),
+        "no token, no session-grant offer: {answers}"
+    );
+    assert!(
+        answers.contains("(no session grant for this tool)"),
+        "the two-answer line says why the third is absent: {answers}"
+    );
+}
+
+/// A `runner:` program outside `[jobs.runner] allow` is never offered: the
+/// composed allowlist is the door a grant would open, and a program the
+/// composition does not carry would refuse at execution — every call, for
+/// the rest of the session, with the asks silenced by the grant.
+#[test]
+fn a_runner_program_outside_the_allowlist_is_never_offered() {
+    let runner_composed = facts_with_runner(runner_facts(&["bench"], &[]));
+    assert_eq!(
+        grant_token(
+            "run_program",
+            &json!({"program": "deploy"}),
+            None,
+            &runner_composed
+        ),
+        None,
+        "a program outside the composed [jobs.runner] allow is never offered"
+    );
+    // No composed runner at all — an unproven host, no workspace root —
+    // offers nothing from either family: no run_program call can succeed.
+    assert_eq!(
+        grant_token(
+            "run_program",
+            &json!({"program": "bench"}),
+            None,
+            &ApprovalFacts::default()
+        ),
+        None,
+        "no composed runner, no runner offer at all"
+    );
+}
+
+/// The write-shaped family gates on the bound workspace root: with no root
+/// the tools are not composed, so `workspace-write` names a capability no
+/// call could exercise — never offered.
+#[test]
+fn a_workspace_write_call_with_no_workspace_root_is_never_offered() {
+    assert_eq!(
+        grant_token(
+            "workspace_write",
+            &json!({"path": "notes.md", "content": "hello"}),
+            None,
+            &ApprovalFacts::default()
+        ),
+        None,
+        "no workspace root, no workspace-write offer"
+    );
+    // Scratch and fetch ride the same rule: a composition without the
+    // member offers nothing from it.
+    assert_eq!(
+        grant_token(
+            "scratch_sql",
+            &json!({"sql": "SELECT 1"}),
+            None,
+            &ApprovalFacts::default()
+        ),
+        None,
+        "no scratch member, no scratch offer"
+    );
+    assert_eq!(
+        grant_token(
+            "http_fetch",
+            &json!({"url": "https://a.example/x"}),
+            None,
+            &ApprovalFacts::default()
+        ),
+        None,
+        "no fetch member, no fetch offer"
+    );
+}
+
+/// A composed, staged interpreter **is** still offered — the fix silences
+/// only the offer that cannot work, never the honest one. With `python3`
+/// staged in `[jobs.interpreter] allow` the call suggests the token the
+/// grant records, and an allowlisted runner program its own.
+#[test]
+fn a_composed_staged_interpreter_is_still_offered() {
+    let staged = facts_with_runner(runner_facts(&["bench"], &["python3"]));
+    assert_eq!(
+        grant_token(
+            "run_program",
+            &json!({"program": "python3", "args": ["-c", "print(1)"]}),
+            None,
+            &staged
+        ),
+        Some("interpreter:python3".to_owned()),
+        "a staged interpreter is offered — the honest case must not go silent"
+    );
+    assert_eq!(
+        grant_token("run_program", &json!({"program": "bench"}), None, &staged),
+        Some("runner:bench".to_owned()),
+        "an allowlisted runner program is offered"
     );
 }

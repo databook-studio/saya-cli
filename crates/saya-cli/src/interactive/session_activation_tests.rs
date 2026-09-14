@@ -2,13 +2,13 @@
 //! line, the staged names, the session fork fact, and the none-staged
 //! variant — every fact the surfaces must say, byte-pinned here.
 
-use super::{BYPASS_ON, NO_INTERPRETERS_STAGED, bypass_line};
+use super::{BYPASS_ON, NO_INTERPRETERS_STAGED, SESSION_FORK_FACT, bypass_line};
 
 /// Under bypass with interpreters staged, the line names the staged names
 /// inside the session wording of the run surface's warning: "bypass" (the
-/// grammar's own word — no euphemism), the names, and the measured fork
-/// fact. The run surface's "(where process-fork is granted)" parenthetical
-/// is false for sessions and must not appear.
+/// grammar's own word — no euphemism), the names, and the running
+/// platform's fork fact. The run surface's "(where process-fork is
+/// granted)" parenthetical is a run's clause and must not appear.
 #[test]
 fn bypass_activation_states_the_no_euphemism_line_naming_the_staged_interpreters() {
     let line = bypass_line(&["python3".to_string(), "perl".to_string()], false);
@@ -28,11 +28,13 @@ fn bypass_activation_states_the_no_euphemism_line_naming_the_staged_interpreters
         line.contains("this session may execute python3, perl as an interpreter"),
         "the line names the staged interpreters: {line}"
     );
+    // (Moved assertion, U8: the fork fact is the running platform's own —
+    // the pin asserts the platform's clause appears, and
+    // `the_fork_fact_says_only_what_the_running_platform_enforces` below
+    // pins that clause's content per platform. The macOS bytes this
+    // asserted are that platform's clause verbatim.)
     assert!(
-        line.contains(
-            "no process-fork is granted: children an interpreter spawns are refused by \
-             the sandbox"
-        ),
+        line.contains(SESSION_FORK_FACT),
         "the session fork fact is stated, not the run's conditional: {line}"
     );
     assert!(
@@ -41,12 +43,58 @@ fn bypass_activation_states_the_no_euphemism_line_naming_the_staged_interpreters
     );
     assert!(
         !line.contains("where process-fork is granted"),
-        "the run surface's parenthetical is false for sessions: {line}"
+        "the run surface's parenthetical is a run's clause: {line}"
     );
     for euphemism in ["yolo", "danger mode", "auto", "unrestricted"] {
         assert!(
             !line.to_ascii_lowercase().contains(euphemism),
             "no friendlier word than bypass appears: {line}"
+        );
+    }
+}
+
+/// The fork fact says only what the running platform enforces (U8): the
+/// macOS Seatbelt profile denies fork by omission — a child dies with
+/// `fork: Operation not permitted` (`sandbox/macos.rs`, measured) — so
+/// the clause says refused; the Linux confinement bounds reads, writes,
+/// exec, and egress and nothing in it restricts fork
+/// (`sandbox/mod.rs`: "a deliberate no-op"), so the clause says children
+/// run — never "refused", the stronger false thing the clause once stated
+/// on every platform.
+#[test]
+fn the_fork_fact_says_only_what_the_running_platform_enforces() {
+    #[cfg(target_os = "macos")]
+    {
+        assert!(
+            SESSION_FORK_FACT.contains("refused by the sandbox"),
+            "macOS denies fork by profile omission — the clause states the refusal"
+        );
+        assert!(
+            !SESSION_FORK_FACT.contains("restricts process-fork"),
+            "macOS's clause is the denial, not an absence-of-restriction claim"
+        );
+    }
+    #[cfg(target_os = "linux")]
+    {
+        assert!(
+            SESSION_FORK_FACT.contains("restricts process-fork"),
+            "Linux's confinement restricts no fork — the clause must say so"
+        );
+        assert!(
+            SESSION_FORK_FACT.contains("children an interpreter spawns run"),
+            "Linux children run; the clause states it"
+        );
+        assert!(
+            !SESSION_FORK_FACT.contains("refused"),
+            "Linux's clause must not claim the macOS denial — that is the \
+             overstatement this fix exists to remove"
+        );
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        assert!(
+            SESSION_FORK_FACT.contains("no sandbox on this platform is proven"),
+            "a platform without a proven sandbox path claims no fork fact"
         );
     }
 }

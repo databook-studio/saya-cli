@@ -106,7 +106,7 @@ impl ChannelApproval {
 impl ApprovalDecider for ChannelApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
         let primary = self.primary.get();
-        let grant = grant_token(&tool.name, arguments, primary.as_deref());
+        let grant = grant_token(&tool.name, arguments, primary.as_deref(), &self.facts);
         match self.policy.resolve(&tool.effect, grant.as_deref()) {
             ApprovalDecision::Allow => true,
             ApprovalDecision::Deny { .. } => false,

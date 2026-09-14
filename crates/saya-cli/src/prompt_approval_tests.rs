@@ -38,6 +38,15 @@ fn database_tools() -> Vec<ToolDefinition> {
     DatabaseTools::definitions(true, false, false, false)
 }
 
+/// A composition that carries the write-shaped family: a bound workspace
+/// root, the one fact `workspace_write`'s suggestion gates on (U8).
+fn workspace_rooted_facts() -> ApprovalFacts {
+    ApprovalFacts {
+        workspace_root: Some(std::path::PathBuf::from("/home/user/proj")),
+        ..ApprovalFacts::default()
+    }
+}
+
 #[tokio::test]
 async fn read_only_approval_denies_a_side_effecting_tool() {
     let approval = TerminalApproval::new(
@@ -164,13 +173,14 @@ fn ask_prompt_uses_the_generic_sentence_for_non_sql_tools() {
 async fn a_granted_token_stops_the_ask_without_a_prompt() {
     let tool = workspace_write_tool();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
-    let token = grant_token(&tool.name, &arguments, None).expect("workspace_write is grantable");
+    let token = grant_token(&tool.name, &arguments, None, &workspace_rooted_facts())
+        .expect("workspace_write is grantable");
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
     let before = TerminalApproval::from_session(
         policy.clone(),
         false,
         TurnPrimary::default(),
-        ApprovalFacts::default(),
+        workspace_rooted_facts(),
         None,
     );
     assert!(
@@ -185,7 +195,7 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
         policy,
         false,
         TurnPrimary::default(),
-        ApprovalFacts::default(),
+        workspace_rooted_facts(),
         None,
     );
     assert!(
@@ -316,12 +326,12 @@ async fn the_sql_family_s_grant_rides_the_turn_s_primary() {
 fn the_prompt_offers_a_session_grant_only_when_one_exists() {
     let tool = workspace_write_tool();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
-    let token = grant_token(&tool.name, &arguments, None);
+    let token = grant_token(&tool.name, &arguments, None, &workspace_rooted_facts());
     let with = approval_prompt(
         &tool,
         &arguments,
         token.as_deref(),
-        &ApprovalFacts::default(),
+        &workspace_rooted_facts(),
         None,
         None,
     );
@@ -364,15 +374,20 @@ async fn a_run_started_with_allow_sql_gates_the_sql_family_s_asks() {
         .find(|tool| tool.name == "bounded_sql_query")
         .expect("bounded_sql_query is defined");
     let call = serde_json::json!({"sql": "SELECT 1", "connection": "analytics"});
-    let token = grant_token(&sql.name, &call, None).expect("the call names its connection");
+    let token = grant_token(&sql.name, &call, None, &ApprovalFacts::default())
+        .expect("the call names its connection");
     assert_eq!(token, "sql:analytics", "the token is the call's connection");
 
-    let granted = TerminalApproval::frozen(ApprovalPolicy::Ask, &["sql:analytics".to_owned()]);
+    let granted = TerminalApproval::frozen(
+        ApprovalPolicy::Ask,
+        &["sql:analytics".to_owned()],
+        ApprovalFacts::default(),
+    );
     assert!(
         granted.approve(&sql, &call).await,
         "the seeded `--allow sql:analytics` pre-answers the connection's call"
     );
-    let unseeded = TerminalApproval::frozen(ApprovalPolicy::Ask, &[]);
+    let unseeded = TerminalApproval::frozen(ApprovalPolicy::Ask, &[], ApprovalFacts::default());
     assert!(
         !unseeded.approve(&sql, &call).await,
         "without the seed, the same call on a headless run denies"
@@ -394,12 +409,14 @@ async fn a_run_started_with_allow_sql_gates_the_sql_family_s_asks() {
 async fn the_run_s_frozen_decider_cannot_accumulate() {
     let tool = workspace_write_tool();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
-    let token = grant_token(&tool.name, &arguments, None).expect("workspace_write is grantable");
-    let decider = TerminalApproval::frozen(ApprovalPolicy::Ask, &[]);
+    let token = grant_token(&tool.name, &arguments, None, &workspace_rooted_facts())
+        .expect("workspace_write is grantable");
+    let decider = TerminalApproval::frozen(ApprovalPolicy::Ask, &[], workspace_rooted_facts());
     let first = decider.approve(&tool, &arguments).await;
     let second = decider.approve(&tool, &arguments).await;
     assert!(!first && !second, "an ungranted headless ask denies, twice");
-    let with_seed = TerminalApproval::frozen(ApprovalPolicy::Ask, &[token]);
+    let with_seed =
+        TerminalApproval::frozen(ApprovalPolicy::Ask, &[token], workspace_rooted_facts());
     assert!(
         with_seed.approve(&tool, &arguments).await,
         "the seed pre-answers, and the seeds are the only grants a run holds"
@@ -416,7 +433,8 @@ async fn the_run_s_frozen_decider_under_read_only_and_never() {
         .find(|tool| tool.name == "bounded_sql_query")
         .expect("bounded_sql_query is defined");
     let seeds = ["sql:analytics".to_owned()];
-    let read_only = TerminalApproval::frozen(ApprovalPolicy::ReadOnly, &seeds);
+    let read_only =
+        TerminalApproval::frozen(ApprovalPolicy::ReadOnly, &seeds, ApprovalFacts::default());
     assert!(
         read_only
             .approve(&sql, &serde_json::json!({"sql": "SELECT 1"}))
@@ -436,7 +454,7 @@ async fn the_run_s_frozen_decider_under_read_only_and_never() {
             .await,
         "read-only denies the side-effecting tool; no seed can move it"
     );
-    let never = TerminalApproval::frozen(ApprovalPolicy::Never, &seeds);
+    let never = TerminalApproval::frozen(ApprovalPolicy::Never, &seeds, ApprovalFacts::default());
     assert!(
         !never
             .approve(
