@@ -28,8 +28,9 @@ fn approval_colour(mode: &str) -> Color {
     }
 }
 
-/// Builds the coloured status-bar segments (profile, provider/model, approval, sharing),
-/// each on the bar background so they blend into the strip.
+/// Builds the coloured status-bar segments (profile, provider/model, approval,
+/// workspace, host, sharing), each on the bar background so they blend into
+/// the strip.
 fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     let base = Style::default().bg(bg);
     let approval_color = approval_colour(&view.approval_mode);
@@ -58,6 +59,19 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
         Some(root) => spans.push(Span::styled(format!("ws:{root} "), base.fg(secondary()))),
         None => spans.push(Span::styled("ws:unbound ", base.fg(secondary()))),
     }
+    // The host segment names the lane: unsandboxed where the host-command
+    // lane composed, off where it did not, plus the denied names where the
+    // session's deny list is non-empty — the same words the headless status
+    // header carries, so the two surfaces cannot drift.
+    let mut host = if view.host_composed {
+        "host:unsandboxed".to_string()
+    } else {
+        "host:off".to_string()
+    };
+    if !view.denied_programs.is_empty() {
+        host.push_str(&format!(" deny:{}", view.denied_programs.join(",")));
+    }
+    spans.push(Span::styled(format!("{host} "), base.fg(secondary())));
     spans.push(Span::styled(
         format!("sharing:{}", if view.sharing_on { "on" } else { "off" }),
         base.fg(if view.sharing_on {
@@ -130,6 +144,8 @@ mod tests {
             approval_mode: "bypass".into(),
             workspace_root: None,
             sharing_on: false,
+            host_composed: false,
+            denied_programs: Vec::new(),
         }
     }
 

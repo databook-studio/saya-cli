@@ -38,6 +38,17 @@ pub struct SessionState {
     /// a resumed session starts with a fresh total. `/clear` resets it.
     #[serde(skip)]
     pub(crate) usage: SessionUsage,
+    /// Whether the host-command lane composed for this session: the status
+    /// header's `host:` segment reads this. In-memory only — a resumed
+    /// session recomposes the lane from its launch statement, never from
+    /// the record — so `#[serde(skip)]` keeps it out of persisted files.
+    #[serde(skip)]
+    pub host_composed: bool,
+    /// The session's deny list: bare program names every door refuses. The
+    /// status header lists them. In-memory only — recomposed from the launch
+    /// statement and user-layer config, never from the record.
+    #[serde(skip)]
+    pub denied_programs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,6 +73,8 @@ impl SessionState {
             turns: Vec::new(),
             show_thinking: false,
             usage: SessionUsage::default(),
+            host_composed: false,
+            denied_programs: Vec::new(),
         }
     }
 

@@ -230,6 +230,12 @@ impl SessionUniverse {
         self.host.as_ref().map(|_| ())
     }
 
+    /// Whether the host lane composed: the bypass activation line's lane
+    /// fact and the status header's `host:` segment read this.
+    pub(crate) fn host_composed(&self) -> bool {
+        self.host.is_some()
+    }
+
     /// The canonical workspace root, when one binds — the status header's
     /// and the session record's fact.
     pub(crate) fn root(&self) -> Option<&Path> {

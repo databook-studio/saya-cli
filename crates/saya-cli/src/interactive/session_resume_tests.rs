@@ -354,7 +354,12 @@ fn a_resumed_session_carries_bypass_and_reprints_the_line() {
         crate::interactive::session_activation::is_bypass_mode(&state),
         "the resumed session is a bypass session"
     );
-    let line = crate::interactive::session_activation::bypass_line(&["python3".to_owned()], false);
+    let line = crate::interactive::session_activation::bypass_line(
+        &["python3".to_owned()],
+        false,
+        false,
+        &[],
+    );
     assert!(
         line.contains("bypass on:") && line.contains("python3"),
         "the line the resume path re-prints is the activation line: {line}"
