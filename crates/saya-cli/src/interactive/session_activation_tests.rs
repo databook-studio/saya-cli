@@ -2,7 +2,7 @@
 //! line, the staged names, the session fork fact, and the none-staged
 //! variant — every fact the surfaces must say, byte-pinned here.
 
-use super::{BYPASS_ON, NO_INTERPRETERS_STAGED, SESSION_FORK_FACT, bypass_line};
+use super::{BYPASS_ON, HOST_LANE_FACT, NO_INTERPRETERS_STAGED, SESSION_FORK_FACT, bypass_line};
 
 /// Under bypass with interpreters staged, the line names the staged names
 /// inside the session wording of the run surface's warning: "bypass" (the
@@ -11,7 +11,12 @@ use super::{BYPASS_ON, NO_INTERPRETERS_STAGED, SESSION_FORK_FACT, bypass_line};
 /// granted)" parenthetical is a run's clause and must not appear.
 #[test]
 fn bypass_activation_states_the_no_euphemism_line_naming_the_staged_interpreters() {
-    let line = bypass_line(&["python3".to_string(), "perl".to_string()], false);
+    let line = bypass_line(
+        &["python3".to_string(), "perl".to_string()],
+        false,
+        false,
+        &[],
+    );
     assert!(
         line.contains("bypass on:"),
         "the line opens with the mode's own word, no euphemism: {line}"
@@ -104,7 +109,7 @@ fn the_fork_fact_says_only_what_the_running_platform_enforces() {
 /// named — never a silence.
 #[test]
 fn the_none_staged_variant_names_the_refusal_instead() {
-    let line = bypass_line(&[], false);
+    let line = bypass_line(&[], false, false, &[]);
     assert!(
         line.contains("bypass on:") && line.contains(NO_INTERPRETERS_STAGED),
         "the none-staged line names the door that stays shut: {line}"
@@ -119,6 +124,10 @@ fn the_none_staged_variant_names_the_refusal_instead() {
         !line.contains("interpreter approval"),
         "the staged-interpreter warning must not appear when none are staged: {line}"
     );
+    assert!(
+        !line.contains(HOST_LANE_FACT),
+        "the uncomposed line states no lane fact: {line}"
+    );
 }
 
 /// The none-staged sentence starts after the sentence break (U6 defect 3):
@@ -130,7 +139,7 @@ fn the_none_staged_variant_names_the_refusal_instead() {
 /// is where the two facts meet, never inside a sentence.
 #[test]
 fn the_none_staged_sentence_starts_after_the_sentence_break() {
-    let line = bypass_line(&[], false);
+    let line = bypass_line(&[], false, false, &[]);
     let (mode_fact, rest) = line
         .split_once('\n')
         .expect("the none-staged sentence begins on its own line after the mode fact");
@@ -149,12 +158,12 @@ fn the_none_staged_sentence_starts_after_the_sentence_break() {
 /// session must qualify, at the moment it says bypass on.
 #[test]
 fn the_activation_line_references_the_probe_refusal() {
-    let line = bypass_line(&["python3".to_string()], true);
+    let line = bypass_line(&["python3".to_string()], true, false, &[]);
     assert!(
         line.contains("run_program is unavailable: the sandbox probe did not prove this host"),
         "the probe-refused fact is carried on the activation line: {line}"
     );
-    let proven = bypass_line(&["python3".to_string()], false);
+    let proven = bypass_line(&["python3".to_string()], false, false, &[]);
     assert!(
         !proven.contains("run_program is unavailable"),
         "a proven host says nothing about the probe: {proven}"

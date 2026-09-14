@@ -105,6 +105,15 @@ saya query --sql "SELECT count(*) FROM orders"
   trade is stated where you make it: if users rubber-stamp plans, the
   security story leans on the sandbox, the bounds, and the sentinel tests.
   → [commands](docs/commands.md)
+- 🖥️ **Host commands (opt-in, unsandboxed)** — `saya --host-commands` enables
+  the `run_command` lane: PATH-resolved programs run as your user with your
+  whole filesystem and network. `run_command` claims no containment — the
+  contained lane's guarantees are `run_program`'s, not this one's. Under
+  bypass, a hostile workspace file is effectively arbitrary code execution
+  as the user. `--deny <program>` (repeatable) refuses named programs at
+  every session door before every grant, prompt, and bypass; the deny list
+  bounds the direct ask only — a denied `curl` does not stop an allowed
+  `make` from invoking curl. → [commands](docs/commands.md)
 
 ## Safety
 

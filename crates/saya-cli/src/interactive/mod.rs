@@ -21,7 +21,7 @@ pub(crate) mod session_paths;
 pub(crate) mod session_grants;
 #[cfg(test)]
 mod session_grants_tests;
-mod session_prompt;
+pub(crate) mod session_prompt;
 mod session_request;
 mod session_resume;
 mod session_run;

@@ -177,6 +177,35 @@ that declares a key replaces that key's whole value from the lower layers, so
 the `tokens_per_endpoint` map and the `[jobs.fetch]` sub-table are replaced
 wholesale rather than merged field-wise.
 
+`[host_commands]` opts the interactive session into the unsandboxed host
+lane. User-layer only — a project-layer `[host_commands]` is a typed resolve
+error, because a model-writable file must never enable unsandboxed execution:
+
+```toml
+[host_commands]
+enable = true              # default false: the lane is off unless stated
+pass_env = ["CI_TOKEN"]    # parent variable names the built child env carries
+timeout_seconds = 600      # per-call ceiling; a call may narrow, never widen
+```
+
+`run_command` claims no containment: the child runs as your user with your
+whole filesystem and network, resolved on your PATH. The contained lane's
+guarantees are `run_program`'s, not this one's. Under bypass, a hostile
+workspace file is effectively arbitrary code execution as the user.
+
+`[session_commands] deny` states the session's deny list of bare program
+names. User-layer only — a project-layer `[session_commands]` is a typed
+resolve error — and refusal-only: it composes nothing, and gates every
+session door that execs a program by name (`run_command`, `run_program`, the
+interpreter door), before every grant, every approval prompt, and bypass, in
+every mode. The deny list bounds the direct ask only — a denied `curl` does
+not stop an allowed `make` from invoking curl:
+
+```toml
+[session_commands]
+deny = ["curl", "ssh"]
+```
+
 The `[ui]` table sets the interactive TUI's colour palette:
 
 ```toml

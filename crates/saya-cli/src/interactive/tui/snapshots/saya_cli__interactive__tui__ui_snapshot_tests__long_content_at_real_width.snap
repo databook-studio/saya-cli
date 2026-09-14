@@ -1,6 +1,6 @@
 ---
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
-assertion_line: 436
+assertion_line: 440
 expression: buffer
 ---
 "▸   select order_id, customer_id, placed_at, fulfilled_at, shipped_at, total_amount, tax_amount,   ║"
@@ -29,7 +29,7 @@ expression: buffer
 "·     ki-lon…  table_description  Free-text notes captured by support agents during customer       ║"
 "· interactions including follow-up reminders, escalation flags, and the internal handling summary  ║"
 "· used by the tier-two team when triaging escalations, plus the resolved-action log  confirmed     ║"
-" [analytics] ollama/qwen approval:read-only ws:/home/user/proj sharing:on  ·  ? for help            "
+" [analytics] ollama/qwen approval:read-only ws:/home/user/proj host:off sharing:on  ·  ? for help   "
 "╭ saya ────────────────────────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                                       │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"

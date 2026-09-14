@@ -2,13 +2,18 @@ use crate::SessionState;
 
 /// Builds a compact one-line status header shown with the interactive prompt:
 /// the active profile, any included databases, the provider/model, the
-/// approval mode, the workspace root, and the cloud data-sharing state. The
+/// approval mode, the workspace root, the host lane, and the cloud
+/// data-sharing state. The
 /// sharing segment names what is happening (`sharing:on` = row values are
 /// sent to the provider), not a protection claim — `allow_data_sharing ==
 /// true` means data *is* shared, so the label must not read as protection.
 /// The workspace segment names the tree the session can touch: the bound
 /// canonical root, or `ws:none` — the no-root shape where the write-shaped
-/// tools are absent and workspace reads refuse. This is where the binding
+/// tools are absent and workspace reads refuse. The host segment names the
+/// lane: `host:unsandboxed` where the host-command lane composed (host
+/// commands run unsandboxed — as the user, their network, their filesystem),
+/// `host:off` where it did not, plus `deny:<names>` where the session's deny
+/// list is non-empty. This is where the binding
 /// is visible at every moment it matters, including on a resume whose cwd
 /// differs from the launch one.
 pub(crate) fn status_line(state: &SessionState) -> String {
@@ -35,8 +40,16 @@ pub(crate) fn status_line(state: &SessionState) -> String {
         Some(root) => format!("ws:{root}"),
         None => "ws:unbound".to_string(),
     };
+    let mut host = if state.host_composed {
+        "host:unsandboxed".to_string()
+    } else {
+        "host:off".to_string()
+    };
+    if !state.denied_programs.is_empty() {
+        host.push_str(&format!(" deny:{}", state.denied_programs.join(",")));
+    }
     format!(
-        "[{profile}{included}] {}/{} approval:{} {workspace} {sharing}",
+        "[{profile}{included}] {}/{} approval:{} {workspace} {host} {sharing}",
         state.provider, state.model, state.approval_mode
     )
 }
@@ -53,6 +66,11 @@ pub(crate) struct StatusView {
     pub(crate) workspace_root: Option<String>,
     /// Mirrors `status_line`'s mapping: `allow_data_sharing` => `sharing:on`.
     pub(crate) sharing_on: bool,
+    /// Whether the host-command lane composed — mirrors `status_line`'s
+    /// `host:` segment.
+    pub(crate) host_composed: bool,
+    /// The session's deny list — mirrors `status_line`'s `deny:` listing.
+    pub(crate) denied_programs: Vec<String>,
 }
 
 /// Returns structured status bar segments for the active session state.
@@ -68,6 +86,8 @@ pub(crate) fn status_segments(state: &SessionState) -> StatusView {
         approval_mode: state.approval_mode.clone(),
         workspace_root: state.workspace_root.clone(),
         sharing_on: state.allow_data_sharing,
+        host_composed: state.host_composed,
+        denied_programs: state.denied_programs.clone(),
     }
 }
 

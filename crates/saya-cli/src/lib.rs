@@ -13,6 +13,8 @@ mod grant_token;
 #[cfg(test)]
 mod grant_token_tests;
 #[cfg(test)]
+mod host_h3_red_tests;
+#[cfg(test)]
 mod host_red_tests;
 mod interactive;
 mod render;

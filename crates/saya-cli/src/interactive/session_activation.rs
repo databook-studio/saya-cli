@@ -19,6 +19,13 @@ use crate::interactive::session_universe::SessionUniverse;
 const BYPASS_ON: &str =
     "bypass on: every tool call runs without asking; every structural guard still applies.";
 
+/// The host lane's fact: what the lane is when composed — unsandboxed, as
+/// the user, their network, their filesystem. Stated on the bypass
+/// activation line when the lane composed (DESIGN §5), so the moment of
+/// choice carries the exposure, never a softened word.
+pub(crate) const HOST_LANE_FACT: &str =
+    "host commands run unsandboxed: as your user, your network, your filesystem.";
+
 /// The interpreter fact when nothing is staged in the trusted config
 /// (DESIGN §5, verbatim): the mode's honesty about what it does *not* open.
 pub(crate) const NO_INTERPRETERS_STAGED: &str =
@@ -64,7 +71,17 @@ pub(crate) const SESSION_FORK_FACT: &str =
 /// sentence begins — a space joined them once, and "applies. no
 /// interpreters" read as a run-on with a lowercase word starting a sentence
 /// (U6 defect 3). Both facts keep the design's bytes.
-pub(crate) fn bypass_line(staged_interpreters: &[String], probe_refused: bool) -> String {
+///
+/// The host lane's fact rides when the lane composed (DESIGN §5): host
+/// commands run unsandboxed — as the user, their network, their filesystem.
+/// The denied-names segment rides when the list is non-empty; an empty list
+/// keeps today's bytes — no segment at all.
+pub(crate) fn bypass_line(
+    staged_interpreters: &[String],
+    probe_refused: bool,
+    host_composed: bool,
+    denied: &[String],
+) -> String {
     let mut line = String::from(BYPASS_ON);
     if staged_interpreters.is_empty() {
         line.push('\n');
@@ -77,11 +94,30 @@ pub(crate) fn bypass_line(staged_interpreters: &[String], probe_refused: bool) -
             SESSION_FORK_FACT,
         ));
     }
+    if host_composed {
+        line.push('\n');
+        line.push_str(HOST_LANE_FACT);
+    }
+    let segment = denied_segment(denied);
+    if !segment.is_empty() {
+        line.push('\n');
+        line.push_str(&segment);
+    }
     if probe_refused {
         line.push('\n');
         line.push_str(PROBE_REFUSED_NOTICE);
     }
     line
+}
+
+/// The denied-names segment of the activation line: the names the session
+/// refuses in every mode, bypass included. Empty when the list is empty —
+/// an empty list keeps today's bytes.
+pub(crate) fn denied_segment(denied: &[String]) -> String {
+    if denied.is_empty() {
+        return String::new();
+    }
+    format!("denied for this session: {}", denied.join(", "))
 }
 
 /// Whether the session's mode parses to bypass — the one decision every
@@ -130,6 +166,8 @@ pub(crate) fn line_if_bypass(
         bypass_line(
             &runtime.resolved.jobs.interpreter.allow,
             universe.probe_refused,
+            universe.host_composed(),
+            &universe.deny_programs(),
         )
     })
 }

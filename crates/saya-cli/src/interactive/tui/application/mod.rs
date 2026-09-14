@@ -411,6 +411,8 @@ mod tests {
             approval_mode: "read-only".into(),
             workspace_root: None,
             sharing_on: true,
+            host_composed: false,
+            denied_programs: Vec::new(),
         };
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).expect("test backend builds");

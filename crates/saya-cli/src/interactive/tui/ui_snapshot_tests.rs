@@ -168,6 +168,8 @@ pub(crate) fn fixed_status() -> StatusView {
         approval_mode: "read-only".into(),
         workspace_root: Some("/home/user/proj".into()),
         sharing_on: true,
+        host_composed: false,
+        denied_programs: Vec::new(),
     }
 }
 

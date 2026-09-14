@@ -24,9 +24,16 @@ saya query --profile analytics --sql "select 1"
 Global flags include `--config`, `--connections`, `--env-file`, `--profile`,
 `--include-profile <profile>` (repeatable flag to connect additional read-only databases), `--approval-mode ask|read-only|never|bypass`, `--format
 text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
-and `--verbose`. `--workspace <dir>` (the interactive session only) binds the
+`--host-commands`, `--allow <scopes>`, `--deny <program>` (repeatable), and
+`--verbose`. `--workspace <dir>` (the interactive session only) binds the
 session's workspace root explicitly; without it the root is the git worktree
 top above the launch directory, and outside any worktree nothing binds.
+`--host-commands` enables the host-command lane for the interactive session
+(`run_command` runs PATH-resolved programs unsandboxed — as your user, with
+your whole filesystem and network); `--deny` states the session's deny list
+of bare program names, evaluated before every grant, every approval prompt,
+and bypass. Under bypass, a hostile workspace file is effectively arbitrary
+code execution as the user.
 
 Automation never prompts. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake `connection
 test`, `connection schema`, and `query` commands are live; Snowflake
@@ -57,7 +64,7 @@ in recent-first order. The slash commands `/connect <profile>`, `/include <profi
 providers are `ollama`, `openai`, `openai_compatible`, `anthropic`, and `gemini`.
 When attached to a terminal, each interactive prompt shows a one-line status
 header (active profile, any included databases, provider/model, approval mode,
-workspace root, and privacy/cloud data-sharing state) followed by the
+workspace root, host lane, and privacy/cloud data-sharing state) followed by the
 `saya> ` input marker,
 with command history recall (Up/Down) and standard line editing. Piped input
 uses a plain line reader so scripts and CI behave predictably. Interactive prompts carry bounded prior user/assistant
@@ -72,7 +79,15 @@ shape where the write-shaped tools are absent and the workspace reads refuse.
 A session's workspace is what the file tools and `run_program` children are
 contained to; the session's scratch database and lock live outside it, at
 `~/.local/share/saya/sessions/<id>/`, where no file tool and no child can
-reach them.
+reach them. The status header's `host:` segment names the host-command lane:
+`host:unsandboxed` where the lane composed, `host:off` where it did not, plus
+`deny:<names>` where the session's deny list is non-empty. The host lane is
+the unsandboxed second lane: `run_command` runs PATH-resolved programs
+unsandboxed — as your user, with your whole filesystem and network. Its
+guarantees are not `run_program`'s: the contained lane's sandbox bounds do
+not apply here. Under bypass, a hostile workspace file is effectively
+arbitrary code execution as the user. The deny list bounds the direct ask
+only — a denied `curl` does not stop an allowed `make` from invoking curl.
 
 `connection schema PROFILE` and interactive `/schema` authenticate and fetch
 live metadata before updating the local schema cache. If a later live attempt
@@ -202,7 +217,10 @@ seeds the session's grant store through the same grammar judged for the
 session surface (it accepts `sql:<connection>` and refuses
 `endpoint:<role>=<endpoint>` — a session binds no per-step endpoint roles),
 and `/grants` lists the store's tokens verbatim, one per line, sorted, under
-a header stating the lifetime. Under `bypass`, `/grants` states the mode
+a header stating the lifetime. A scope naming a denied program refuses at
+`/allow` parse: a grant cannot override the deny list. The deny list bounds
+the direct ask only — a denied `curl` does not stop an allowed `make` from
+invoking curl. Under `bypass`, `/grants` states the mode
 first — "mode bypass: every call runs without asking; grants are not
 consulted" — before the listing, because a token count alone would read as
 "nothing runs" when the truth is that everything does. Grants die with the
@@ -254,7 +272,14 @@ children an interpreter spawns are refused by the sandbox", on Linux
 "nothing in the Linux confinement restricts process-fork: children an
 interpreter spawns run, under the same bounds as the interpreter itself");
 with none staged, it says instead: `no interpreters are staged in
-[jobs.interpreter] allow, so interpreter calls still refuse.` The status bar
+[jobs.interpreter] allow, so interpreter calls still refuse.` Where the
+host-command lane composed, the line also states
+`host commands run unsandboxed: as your user, your network, your filesystem.`
+Where the session's deny list is non-empty, the line lists the denied names
+(`denied for this session: <names>`); an empty list adds no line. What still
+refuses under bypass: the lane when not composed, no workspace bound,
+path-shaped and traversal names, names not on the passed PATH, timeout 0 or
+over the ceiling, and programs on the session deny list. The status bar
 and the headless status line render `approval:bypass` in red on every
 surface. `/approvals ask` leaves bypass mid-session, effective for turns
 started after the change; grants made before the toggle ride it and are

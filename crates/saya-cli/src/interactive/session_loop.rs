@@ -114,8 +114,12 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         session.replace_universe(recomposed);
     }
     // The deny list journals once at session start when non-empty — no noise
-    // when empty — through the existing seam, never a second rule set.
+    // when empty — through the existing seam, never a second rule set. The
+    // status header's facts ride the session state: the lane bit and the
+    // deny list, so every prompt carries the `host:` segment.
     if fresh {
+        state.host_composed = session.universe().host_composed();
+        state.denied_programs = session.universe().deny_programs();
         let denied = session.universe().deny_programs();
         if !denied.is_empty()
             && let Err(error) = session.journal().deny_list(&denied)
