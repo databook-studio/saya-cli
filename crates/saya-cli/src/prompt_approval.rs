@@ -130,19 +130,19 @@ pub(crate) fn terminal_choice(answer: &str, grant: Option<&str>) -> ApprovalChoi
 #[async_trait::async_trait]
 impl saya_agent::ApprovalDecider for TerminalApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
-        // Deny first, at every program-named door: a denied name never
-        // reaches the approval prompt — the tool returns the typed refusal
-        // the model relays. Deny holds in every mode, bypass included.
-        if matches!(tool.name.as_str(), "run_command" | "run_program")
-            && let Some(program) =
-                crate::interactive::session_deny::call_program(&tool.name, arguments)
-            && self
-                .facts
-                .denied_programs
-                .iter()
-                .any(|denied| denied == &program)
+        // Deny first, at every program-named door: a denied name refuses
+        // (`false`) before grant lookup, before the prompt, before bypass —
+        // the loop then relays this decider's typed refusal (see
+        // `refusal_detail` below), and the executor's own deny check stays
+        // as the second door for any caller that executes without approving.
+        if crate::interactive::session_deny::denied_call_program(
+            &tool.name,
+            arguments,
+            &self.facts.denied_programs,
+        )
+        .is_some()
         {
-            return true;
+            return false;
         }
         let primary = self.primary.get();
         let grant = grant_token(&tool.name, arguments, primary.as_deref(), &self.facts);
@@ -191,5 +191,22 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                 !matches!(choice, ApprovalChoice::Deny)
             }
         }
+    }
+
+    fn refusal_detail(
+        &self,
+        tool: &ToolDefinition,
+        arguments: &serde_json::Value,
+    ) -> Option<String> {
+        // The loop reads this only after `approve` denied, so the same pure
+        // seam answers the wording: the typed refusal for a denied program,
+        // `None` for every denial this decider did not word (mode denials,
+        // the user's `n`), where the loop's generic denial stands.
+        crate::interactive::session_deny::denied_call_program(
+            &tool.name,
+            arguments,
+            &self.facts.denied_programs,
+        )
+        .map(|program| crate::interactive::session_deny::denied_refusal(&program))
     }
 }

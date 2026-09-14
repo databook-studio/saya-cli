@@ -105,6 +105,7 @@ pub(crate) fn grant_token(
             .then(|| fetch_token(arguments))
             .flatten(),
         "run_program" => runner_token(arguments, facts.runner.as_ref()),
+        "run_command" => command_token(arguments, facts.host.as_ref()),
         name if SQL_FAMILY.contains(&name) => sql_token(arguments, primary),
         // Every other tool — the fan-out, render_chart, the never-asked
         // read tools — keeps asking.
@@ -148,6 +149,26 @@ fn fetch_token(arguments: &Value) -> Option<String> {
     )
     .ok()?;
     Some(format!("fetch:{}+{}", destination.scheme, destination.host))
+}
+
+/// `command:<program>` for a `run_command` call: the bare name, shells
+/// included — the `runner:`/`interpreter:` family mirror deliberately does
+/// not apply here (`command:bash` is the token, and the warning rides the
+/// prompt). Suggested only when the lane composed (`host`): a token for a
+/// program the composition cannot carry would record a grant that silences
+/// the ask and refuses at execution — the U8 defect in this lane's shape.
+/// A program argument that is absent, non-string, or not a bare name (never
+/// a path, traversal, or prefix) yields `None`.
+fn command_token(
+    arguments: &Value,
+    host: Option<&crate::approval_facts::HostFacts>,
+) -> Option<String> {
+    let program = arguments.get("program")?.as_str()?;
+    if !is_bare_name(program) {
+        return None;
+    }
+    host?;
+    Some(format!("command:{program}"))
 }
 
 /// `runner:<program>` for a program the composition's runner door carries
@@ -199,6 +220,8 @@ pub(crate) fn grant_family(token: &str) -> Option<&'static str> {
         Some("runner")
     } else if token.starts_with("fetch:") {
         Some("fetch")
+    } else if token.starts_with("command:") {
+        Some("command")
     } else if token == "workspace-write" {
         Some("workspace-write")
     } else if token == "scratch" {

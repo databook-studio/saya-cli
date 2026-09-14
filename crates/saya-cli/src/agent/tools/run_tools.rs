@@ -42,8 +42,9 @@ pub(crate) struct RunTools {
     /// (deny is session-shaped); an empty list refuses nothing.
     deny: crate::interactive::session_deny::SessionDeny,
     /// The session journal, when this executor belongs to a session: a deny
-    /// firing is journalled there before the refusal is relayed. `None` —
-    /// test shapes — refuses without journaling.
+    /// firing is journalled there before the refusal is relayed, and a host
+    /// call before the child spawns. `None` — test shapes — refuses without
+    /// journaling.
     journal: Option<std::sync::Arc<saya_store::SessionJournal>>,
 }
 
@@ -90,20 +91,33 @@ impl RunTools {
         self
     }
 
-    /// Composes with the host lane: the executor config plus the workspace
+    /// Composes with the host lane: the executor config, whose workspace
     /// root the child runs with as its cwd. The session surface is the only
     /// caller — runs never get the lane.
     pub(crate) fn with_host(
         mut self,
         config: saya_harness::host::HostConfig,
-        workspace_root: std::path::PathBuf,
         cancellation: &CancellationToken,
     ) -> Self {
         self.host = Some(HostCommandMember {
             config,
-            workspace_root,
             cancellation: cancellation.clone(),
+            host_ran: None,
         });
+        self
+    }
+
+    /// Shares the session's host-ran flag with the host member: set after a
+    /// host call settles, read by later `run_program` prompts (§3 rule 6).
+    /// A no-op without the lane — the flag rides the member, not the
+    /// composite.
+    pub(crate) fn with_host_ran(
+        mut self,
+        host_ran: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        if let Some(host) = self.host.as_mut() {
+            host.host_ran = Some(host_ran);
+        }
         self
     }
 }
@@ -155,7 +169,10 @@ impl ToolExecutor for RunTools {
                 None => Err(ToolError::UnsupportedTool),
             },
             "run_command" => match &self.host {
-                Some(host) => host.execute(arguments).await,
+                Some(host) => {
+                    host.execute_with_journal(arguments, self.journal.as_deref())
+                        .await
+                }
                 None => Err(ToolError::UnsupportedTool),
             },
             _ => self.database.execute(name, arguments).await,
@@ -163,17 +180,38 @@ impl ToolExecutor for RunTools {
     }
 }
 
-/// The host lane's executor member: the composed config plus the workspace
+/// The host lane's executor member: the composed config, whose workspace
 /// root the child runs with as its cwd, carrying the turn's cancellation.
 /// One program per call, typed argv — the runner's own contract reused.
 struct HostCommandMember {
     config: saya_harness::host::HostConfig,
-    workspace_root: std::path::PathBuf,
     cancellation: CancellationToken,
+    /// The session's host-ran flag, set after a host call settles so later
+    /// `run_program` prompts gain the staged-binary integrity line.
+    host_ran: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl HostCommandMember {
-    async fn execute(&self, arguments: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+    /// Runs one host call: journals `session-command` before the child
+    /// spawns — consent-before-action for the one lane where it matters
+    /// most — then resolves, builds, and spawns. A failed journal write
+    /// changes no consent: the call still runs, like every other journaling
+    /// site's posture (the consent stands, the audit line is missing).
+    /// Test shapes without a journal reach the same path with `None`: parse
+    /// and spawn with no journal line.
+    async fn execute_with_journal(
+        &self,
+        arguments: serde_json::Value,
+        journal: Option<&saya_store::SessionJournal>,
+    ) -> Result<serde_json::Value, ToolError> {
+        let parsed = self.parse(&arguments)?;
+        if let Some(journal) = journal {
+            let _ = journal.command(&parsed.program, &parsed.argv, "run_command");
+        }
+        self.spawn(parsed).await
+    }
+
+    fn parse(&self, arguments: &serde_json::Value) -> Result<ParsedHostCall, ToolError> {
         let object = arguments.as_object().ok_or(ToolError::ArgumentsNotObject)?;
         for key in object.keys() {
             if !matches!(key.as_str(), "program" | "args" | "timeout_seconds") {
@@ -203,16 +241,42 @@ impl HostCommandMember {
             }
             Some(_) => return Err(ToolError::UnsupportedProperty),
         };
+        Ok(ParsedHostCall {
+            program: program.to_owned(),
+            argv,
+            timeout_seconds,
+        })
+    }
+
+    async fn spawn(&self, parsed: ParsedHostCall) -> Result<serde_json::Value, ToolError> {
         // The lane has no staging directory; the child's cwd pins to the
-        // workspace root — a usability fact, never a bound.
-        let _cwd = self.workspace_root.clone();
-        let command = saya_harness::host::HostCommand::new(program.to_owned(), argv)
+        // workspace root through the config — `HostConfig::workspace_root`
+        // applied as `current_dir` in `HostCommand::run` — so the prompt's
+        // `cwd: pinned to <root>` line is the executor's own fact.
+        let command = saya_harness::host::HostCommand::new(parsed.program, parsed.argv)
             .map_err(|error| ToolError::Runner(error.to_string()))?;
-        let outcome = command
-            .run(&self.config, timeout_seconds, &self.cancellation)
+        let result = command
+            .run(&self.config, parsed.timeout_seconds, &self.cancellation)
             .await
-            .map_err(|error| ToolError::Runner(error.to_string()))?;
+            .map_err(|error| ToolError::Runner(error.to_string()));
+        // A settled host call — success or child failure — means a host
+        // child ran: later `run_program` prompts gain the integrity line. A
+        // refusal (validation, resolution) ran nothing, so the flag stays.
+        if result.is_ok()
+            && let Some(host_ran) = self.host_ran.as_ref()
+        {
+            host_ran.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        let outcome = result?;
         serde_json::to_value(&outcome)
             .map_err(|_| ToolError::Runner("host outcome failed to render".into()))
     }
+}
+
+/// One parsed host call: the bare program, its typed argv, and the call's
+/// own timeout narrowing.
+struct ParsedHostCall {
+    program: String,
+    argv: Vec<String>,
+    timeout_seconds: Option<u64>,
 }

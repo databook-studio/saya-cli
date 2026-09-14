@@ -52,7 +52,8 @@ impl HostCommand {
     }
 
     /// Runs the call: resolves the name against the config's PATH, builds
-    /// the child's environment, and spawns under the stated timeout. The
+    /// the child's environment, and spawns under the stated timeout with the
+    /// config's workspace root as the child's cwd. The
     /// config's timeout is the ceiling — a call may narrow it, never widen
     /// it, and zero is refused. Cancellation kills the whole process group
     /// and is reported.
@@ -71,6 +72,9 @@ impl HostCommand {
         // Typed argv, verbatim: every element is one argv element. There is
         // no string here that becomes a command line.
         command.args(&self.argv);
+        // The child's cwd pins to the workspace root: the prompt's `cwd:
+        // pinned to <root>` fact holds because this line applies it.
+        command.current_dir(config.workspace_root());
         config.apply_env(&mut command);
         command
             .stdin(Stdio::null())

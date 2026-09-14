@@ -54,6 +54,16 @@ pub enum JournalEvent {
     /// denied programs, sorted, in the order the list carries them.
     #[serde(rename = "session-deny-list")]
     DenyList { programs: Vec<String> },
+    /// One host call: the program named in the ask and its argv, on the door
+    /// the ask entered through. Redacted through the existing seam, written
+    /// before the child spawns — consent-before-action for the one lane
+    /// where it matters most.
+    #[serde(rename = "session-command")]
+    Command {
+        program: String,
+        argv: Vec<String>,
+        door: String,
+    },
     /// One deny firing: the program named in the ask, its argv, and the door
     /// the ask entered through. Redacted through the existing seam, written
     /// before the refusal is relayed — journal-before-spawn's mirror.
@@ -114,6 +124,18 @@ impl SessionJournal {
         })
     }
 
+    /// Journals one host call — the program named in the ask, its argv, and
+    /// the door the ask entered through — redacted at write through the
+    /// repo's existing seam, never a second rule set. Written before the
+    /// child spawns: journal-before-spawn.
+    pub fn command(&self, program: &str, argv: &[String], door: &str) -> Result<(), StoreError> {
+        self.append(&JournalEvent::Command {
+            program: redact(program),
+            argv: argv.iter().map(|arg| redact(arg)).collect(),
+            door: door.to_owned(),
+        })
+    }
+
     /// Journals one deny firing — the program named in the ask, its argv,
     /// and the door the ask entered through — redacted at write through the
     /// repo's existing seam, never a second rule set. Written before the
@@ -156,6 +178,16 @@ impl SessionJournal {
                 door,
             } => serde_json::to_string(&CommandDeniedLine {
                 event: "session-command-denied",
+                program,
+                argv,
+                door,
+            }),
+            JournalEvent::Command {
+                program,
+                argv,
+                door,
+            } => serde_json::to_string(&CommandLine {
+                event: "session-command",
                 program,
                 argv,
                 door,
@@ -213,6 +245,16 @@ struct DenyListLine<'a> {
 /// then `program`, `argv`, `door`).
 #[derive(serde::Serialize)]
 struct CommandDeniedLine<'a> {
+    event: &'static str,
+    program: &'a str,
+    argv: &'a [String],
+    door: &'a str,
+}
+
+/// The written form of one host call, in the settled key order (`event`,
+/// then `program`, `argv`, `door`).
+#[derive(serde::Serialize)]
+struct CommandLine<'a> {
     event: &'static str,
     program: &'a str,
     argv: &'a [String],

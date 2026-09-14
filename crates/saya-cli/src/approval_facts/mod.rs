@@ -13,6 +13,7 @@
 //! member, not re-typed).
 
 mod fetch_tools;
+mod run_command;
 mod run_program;
 mod session_line;
 mod session_tools;
@@ -45,6 +46,11 @@ pub(crate) struct ApprovalFacts {
     /// workspace root bound plus a launch-or-user-layer statement. `None`
     /// contributes no lines and parses no `command:` token.
     pub(crate) host: Option<HostFacts>,
+    /// The session's host lane ran a command — the fact `run_program`'s
+    /// prompt states (§3 rule 6): a prior host child can have rewritten a
+    /// staged binary, so staged-binary integrity is outside saya's control.
+    /// Set by the runtime after a host call settles; prompts read it.
+    pub(crate) host_ran: bool,
     /// The session's deny list: bare program names every door refuses
     /// before grant, prompt, and bypass — session-wide, lane-blind. Empty
     /// refuses nothing. Present even when the host lane is off: deny gates
@@ -163,6 +169,7 @@ pub(crate) fn call_facts(
         | "join_check" => sql_family::sql_facts(name, arguments, facts, primary, session_line),
         "render_chart" => sql_family::chart_facts(arguments, primary),
         "run_program" => run_program::facts(arguments, facts, session_line),
+        "run_command" => run_command::facts(arguments, facts, session_line),
         "workspace_write" => session_tools::workspace_write_facts(arguments, facts, session_line),
         "scratch_sql" => session_tools::scratch_facts(arguments, facts, session_line),
         "http_fetch" | "http_download" => {

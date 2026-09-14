@@ -118,6 +118,12 @@ pub(super) fn facts(
     lines.push("  typed argv: no shell, no interpolation, one element per argument".to_string());
     if let Some(runner) = facts.runner.as_ref() {
         lines.push(sandbox_line(runner));
+        if facts.host_ran {
+            lines.push(
+                "  a host command ran in this session; staged program integrity is outside saya's control"
+                    .to_string(),
+            );
+        }
         if runner.timeout_seconds > 0 {
             lines.push(format!(
                 "  timeout: {}s — the call may narrow it, never widen it",

@@ -12,6 +12,20 @@ pub trait ApprovalDecider: Send + Sync {
     /// Decides whether a tool call may run. `arguments` is the raw call payload
     /// so implementations can show the user what they are approving.
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool;
+
+    /// The typed refusal the model should relay when [`approve`] denied this
+    /// exact call — `None` when the decider carries no per-call wording and
+    /// the loop's generic denial stands. Called only after a `false` verdict,
+    /// so a decider observes each refused call twice (once to decide, once to
+    /// word); deciders must keep this side-effect free — no prompt, no grant,
+    /// no journal — because the loop calls it on every denial path.
+    fn refusal_detail(
+        &self,
+        _tool: &ToolDefinition,
+        _arguments: &serde_json::Value,
+    ) -> Option<String> {
+        None
+    }
 }
 
 /// Whether read-only approval may auto-approve a tool with this effect: only

@@ -48,6 +48,11 @@ pub(crate) struct SessionUniverse {
     /// bound: the executor config plus the facts the prompts consult. `None`
     /// hides the tool everywhere — hidden, not advertised.
     host: Option<SessionHost>,
+    /// Whether a host command ran this session: `run_program`'s prompt gains
+    /// the staged-binary integrity line from that moment (§3 rule 6). Shared
+    /// by the executor's host member, which sets it after a host child
+    /// settles, and the prompt facts, which read it per turn.
+    host_ran: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The session's deny list: bare program names every door refuses
     /// before grant, prompt, and bypass — session-wide, lane-blind. Composed
     /// even when the host lane is off: deny gates the doors every session
@@ -81,6 +86,7 @@ impl SessionUniverse {
             fetch: None,
             runner: None,
             host: None,
+            host_ran: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             deny: super::session_deny::SessionDeny::default(),
             primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
@@ -195,6 +201,7 @@ impl SessionUniverse {
             fetch: Some(fetch),
             runner: runner_composed,
             host,
+            host_ran: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             deny,
             primary: crate::grant_token::TurnPrimary::default(),
             notice,
@@ -266,6 +273,7 @@ impl SessionUniverse {
             }),
             workspace_root: self.root().map(|root| root.to_path_buf()),
             host: self.host.as_ref().map(|host| host.facts.clone()),
+            host_ran: self.host_ran.load(std::sync::atomic::Ordering::SeqCst),
             denied_programs: self.deny.programs(),
         }
     }
@@ -283,6 +291,12 @@ impl SessionUniverse {
     /// refuses. Read by the session loop's start-event journal site.
     pub(crate) fn deny_programs(&self) -> Vec<String> {
         self.deny.programs()
+    }
+
+    /// The shared host-ran flag — the executor's host member sets it after a
+    /// host call settles. Cloned into `RunTools` once per executor.
+    pub(crate) fn host_ran_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.host_ran)
     }
 
     /// The executor: the shared `RunTools` composite over this session's
@@ -328,11 +342,9 @@ impl SessionUniverse {
             tools = tools.with_session_journal(journal);
         }
         let tools = match self.host.as_ref() {
-            Some(host) => tools.with_host(
-                host.config.clone(),
-                host.facts.workspace_root.clone(),
-                cancellation,
-            ),
+            Some(host) => tools
+                .with_host(host.config.clone(), cancellation)
+                .with_host_ran(self.host_ran_flag()),
             None => tools,
         };
         Arc::new(tools)

@@ -205,6 +205,22 @@ pub(super) async fn run_turn_tools(
         .await;
         let approved = !definition.effect.requires_approval
             || approval.approve(definition, &call.arguments).await;
+        // A decider that refuses with its own typed wording (today, the
+        // session deny list's refusal) names it here; `None` keeps the
+        // loop's generic denial. The read is side-effect free by contract
+        // (`ApprovalDecider::refusal_detail`), so observing the refused call
+        // a second time prompts, grants, and journals nothing. The detail
+        // reaches both the user (the `ToolDenied` reason) and the model (the
+        // tool result): one refusal, in the right words, at both surfaces.
+        // The detail wins over the structural gates' own reasons below: a
+        // denied call was refused for being denied, not for needing a permit
+        // the session never grants — the gates still bind execution either
+        // way, only the wording prefers the decider.
+        let refusal_detail = if approved {
+            None
+        } else {
+            approval.refusal_detail(definition, &call.arguments)
+        };
         // Apply the same policy the batch path consults (`auto_runnable`),
         // split into its gates so the denial can name which one refused.
         // `requires_approval` was already resolved into `approved`, so a
@@ -238,7 +254,9 @@ pub(super) async fn run_turn_tools(
                 sink,
                 AgentEvent::ToolDenied {
                     name: call.name.clone(),
-                    reason: if side_effect_denied {
+                    reason: if let Some(detail) = refusal_detail.clone() {
+                        detail
+                    } else if side_effect_denied {
                         "external side effect requires approval".into()
                     } else if candidate_denied {
                         "candidate writes are not permitted".into()
@@ -251,7 +269,12 @@ pub(super) async fn run_turn_tools(
             )
             .await;
             (
-                serde_json::json!({"error":"tool call denied by approval policy"}),
+                match refusal_detail {
+                    Some(detail) => {
+                        serde_json::json!({"error":format!("tool call denied by approval policy: {detail}")})
+                    }
+                    None => serde_json::json!({"error":"tool call denied by approval policy"}),
+                },
                 "read-only database tool denied".to_owned(),
             )
         };
