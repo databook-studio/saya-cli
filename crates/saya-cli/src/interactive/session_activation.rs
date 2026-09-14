@@ -24,14 +24,37 @@ const BYPASS_ON: &str =
 pub(crate) const NO_INTERPRETERS_STAGED: &str =
     "no interpreters are staged in [jobs.interpreter] allow, so interpreter calls still refuse.";
 
-/// The session interpreter warning's process-fork clause — the measured
-/// fact, in place of the run surface's conditional parenthetical, which is
-/// false for sessions (`session_runner.rs` grants no process-fork; a forked
-/// child dies with `fork: Operation not permitted`, `sandbox/mod.rs`).
-/// `pub(crate)` so the run_program approval prompt states the same clause —
-/// one wording, no drift.
+/// The session interpreter warning's process-fork clause — **the running
+/// platform's own fact**, never a stronger one (U8: the clause previously
+/// stated the macOS measurement unconditionally, and on Linux — where
+/// nothing in the Landlock + namespace confinement restricts fork
+/// (`sandbox/mod.rs`) — it told the user children are refused while they
+/// ran). One clause per platform, each saying only what that platform's
+/// enforcement does; `pub(crate)` so the run_program approval prompt
+/// states the same clause — one wording, no drift.
+#[cfg(target_os = "macos")]
 pub(crate) const SESSION_FORK_FACT: &str =
     "no process-fork is granted: children an interpreter spawns are refused by the sandbox.";
+
+/// The Linux clause: the confinement bounds the interpreter's reads,
+/// writes, exec, and egress, and nothing in it restricts fork — a child
+/// runs, under the same bounds as the interpreter itself. The weaker true
+/// thing, per the sandbox's own words ("nothing in the Landlock + namespace
+/// confinement restricts fork", `sandbox/mod.rs`) — the Linux confinement
+/// is itself unverified on any host (`linux.rs`), and the clause claims
+/// only the design's absence of a fork restriction, never a denial.
+#[cfg(target_os = "linux")]
+pub(crate) const SESSION_FORK_FACT: &str = "nothing in the Linux confinement restricts \
+     process-fork: children an interpreter spawns run, under the same bounds as the \
+     interpreter itself.";
+
+/// The clause for a platform with no proven sandbox path: the probe
+/// refuses there, so no `run_program` call exists — but the bypass
+/// activation line still names staged interpreters, and the clause must
+/// not overstate. It claims nothing.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) const SESSION_FORK_FACT: &str =
+    "no sandbox on this platform is proven to restrict process-fork.";
 
 /// The activation line for a bypass session: the mode fact, then — when
 /// interpreters are staged — the shared warning sentence naming them in the

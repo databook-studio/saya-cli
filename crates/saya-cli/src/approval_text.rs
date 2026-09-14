@@ -7,11 +7,12 @@
 //! half.
 
 /// The warning sentence for `programs`, named by the surface's subject
-/// ("run", "session") and that surface's process-fork fact. The run may
-/// grant process-fork, so its clause is conditional; sessions grant none —
-/// a forked child dies with `fork: Operation not permitted` (`sandbox/mod.rs`,
-/// measured) — and the run's parenthetical would be false for them, so the
-/// clause is the caller's, not a shared half-truth.
+/// ("run", "session") and that surface's process-fork clause. The run may
+/// grant process-fork, so its clause is conditional; the session's clause
+/// is the running platform's own fact — on macOS a forked child dies with
+/// `fork: Operation not permitted` (`sandbox/mod.rs`, measured), on Linux
+/// nothing in the confinement restricts fork — so the clause is the
+/// caller's, never a shared half-truth.
 pub(crate) fn interpreter_warning(subject: &str, programs: &[String], fork_fact: &str) -> String {
     format!(
         "interpreter approval: this {subject} may execute {} as an interpreter. Its argv is \
@@ -46,10 +47,12 @@ mod tests {
         );
     }
 
-    /// The session's clause states the measured fact: no process-fork is
-    /// granted, and children are refused by the sandbox. The run's
-    /// parenthetical — "(where process-fork is granted)" — is false for
-    /// sessions and must not ride along.
+    /// The clause rides the builder verbatim — the sample here is the
+    /// macOS clause's bytes; the platform's own clause is pinned in
+    /// `session_activation_tests`
+    /// (`the_fork_fact_says_only_what_the_running_platform_enforces`).
+    /// The run's parenthetical — "(where process-fork is granted)" — is a
+    /// run's clause and must not ride along with a session subject.
     #[test]
     fn the_session_s_clause_names_the_fork_fact() {
         let warning = interpreter_warning(

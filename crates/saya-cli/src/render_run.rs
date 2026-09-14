@@ -82,11 +82,18 @@ pub(crate) fn run_event_text(event: &RunEvent) -> String {
         RunEvent::RunStarted => "run started\n".into(),
         // The approval line carries the scopes the run was granted, when the
         // journal states them — the durable record a resume re-grants from,
-        // printed where a reader looks for what happened. Old journals
-        // carry no payload and render today's line unchanged.
-        RunEvent::PlanApproved { scopes } if scopes.is_empty() => "plan approved\n".into(),
-        RunEvent::PlanApproved { scopes } => {
-            format!("plan approved · {}\n", scopes.join(", "))
+        // printed where a reader looks for what happened. Old journals carry
+        // no payload and render today's line unchanged; a stated empty
+        // approval (`--allow none`) is stated as such, in the approval
+        // view's own "(none)" spelling — the two must not read alike.
+        RunEvent::PlanApproved { scopes: None } => "plan approved\n".into(),
+        RunEvent::PlanApproved {
+            scopes: Some(words),
+        } if words.is_empty() => "plan approved · (none)\n".into(),
+        RunEvent::PlanApproved {
+            scopes: Some(words),
+        } => {
+            format!("plan approved · {}\n", words.join(", "))
         }
         RunEvent::StepStarted { step } => format!("step {} started\n", step + 1),
         RunEvent::StepCompleted { step } => format!("step {} completed\n", step + 1),

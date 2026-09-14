@@ -44,16 +44,20 @@ impl TerminalApproval {
     /// [`SessionPolicy::frozen`] seeded from the run's `--allow` tokens — the
     /// stated scopes are the approval — so a seed pre-answers the asks it
     /// names and everything else an `ask` mode would raise denies with the
-    /// engine's own reason. It prompts nothing and records nothing: a
-    /// headless session grant is impossible, not merely unused. The primary
-    /// stays unbound — the run's fail-closed rule: only a call that names its
+    /// engine's own reason. `facts` is the run's own composition (built in
+    /// `commands/run` from the approved scopes and the runner wiring), so a
+    /// seed pre-answers exactly the calls the composition carries (U8): a
+    /// token the composition cannot honour is never suggested, on this
+    /// surface either. It prompts nothing and records nothing: a headless
+    /// session grant is impossible, not merely unused. The primary stays
+    /// unbound — the run's fail-closed rule: only a call that names its
     /// connection suggests a token, never a guessed one.
-    pub(crate) fn frozen(mode: ApprovalPolicy, seeds: &[String]) -> Self {
+    pub(crate) fn frozen(mode: ApprovalPolicy, seeds: &[String], facts: ApprovalFacts) -> Self {
         Self {
             policy: SessionPolicy::frozen(mode, seeds),
             can_prompt: false,
             primary: TurnPrimary::default(),
-            facts: ApprovalFacts::default(),
+            facts,
             journal: None,
         }
     }
@@ -127,7 +131,7 @@ pub(crate) fn terminal_choice(answer: &str, grant: Option<&str>) -> ApprovalChoi
 impl saya_agent::ApprovalDecider for TerminalApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
         let primary = self.primary.get();
-        let grant = grant_token(&tool.name, arguments, primary.as_deref());
+        let grant = grant_token(&tool.name, arguments, primary.as_deref(), &self.facts);
         match self.policy.resolve(&tool.effect, grant.as_deref()) {
             ApprovalDecision::Allow => true,
             ApprovalDecision::Deny { .. } => false,

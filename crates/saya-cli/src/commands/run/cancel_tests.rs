@@ -70,7 +70,7 @@ async fn seed_claimed_run(root: &Path, store: &SqliteStateStore, id: &str) -> Ru
     let journal = Journal::open(run_dir.root());
     for event in [
         RunEvent::RunStarted,
-        RunEvent::PlanApproved { scopes: vec![] },
+        RunEvent::PlanApproved { scopes: None },
     ] {
         journal.append(&event).unwrap();
     }

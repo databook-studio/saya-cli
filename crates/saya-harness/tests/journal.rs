@@ -120,7 +120,7 @@ fn resume_reads_back_the_last_state() {
     let journal = Journal::open(&dir);
     journal.append(&RunEvent::RunStarted).unwrap();
     journal
-        .append(&RunEvent::PlanApproved { scopes: vec![] })
+        .append(&RunEvent::PlanApproved { scopes: None })
         .unwrap();
     journal.append(&RunEvent::StepStarted { step: 0 }).unwrap();
     journal
@@ -145,7 +145,7 @@ fn resume_reads_back_the_last_state() {
 fn replay_records_a_bounded_retry_and_lets_usage_stand_aside() {
     let events = vec![
         RunEvent::RunStarted,
-        RunEvent::PlanApproved { scopes: vec![] },
+        RunEvent::PlanApproved { scopes: None },
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepFailed { step: 0 },
         RunEvent::StepStarted { step: 0 },
@@ -179,7 +179,7 @@ fn replay_records_a_bounded_retry_and_lets_usage_stand_aside() {
 fn replay_records_terminal_states_and_their_failure_code() {
     let events = vec![
         RunEvent::RunStarted,
-        RunEvent::PlanApproved { scopes: vec![] },
+        RunEvent::PlanApproved { scopes: None },
         RunEvent::StepStarted { step: 0 },
         RunEvent::Failed {
             code: RunFailureCode::SafetyQuery,
@@ -211,7 +211,7 @@ fn a_torn_tail_left_by_a_crash_is_ignored_but_complete_lines_must_parse() {
     let journal = Journal::open(&dir);
     journal.append(&RunEvent::RunStarted).unwrap();
     journal
-        .append(&RunEvent::PlanApproved { scopes: vec![] })
+        .append(&RunEvent::PlanApproved { scopes: None })
         .unwrap();
 
     // Simulate a crash mid-append: a partial final line with no newline.
@@ -227,7 +227,7 @@ fn a_torn_tail_left_by_a_crash_is_ignored_but_complete_lines_must_parse() {
         events,
         vec![
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] }
+            RunEvent::PlanApproved { scopes: None }
         ],
         "a torn tail was never a complete event; it must not poison the read"
     );

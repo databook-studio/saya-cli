@@ -159,6 +159,7 @@ pub(super) async fn assemble(
     // Shared per run: one registry and one executor the per-step toolsets
     // all wrap. The definitions themselves are built per step by the
     // toolset builder (`tools.rs`), from these same flags.
+    let workspace_root = workspace.root().to_path_buf();
     let tools = Arc::new(
         DatabaseTools::with_learning(
             registry,
@@ -211,6 +212,27 @@ pub(super) async fn assemble(
         run_root,
         scopes,
     )?;
+    // The run's decider is the frozen session policy (U4), seeded from the
+    // run's stated scopes: a `sql:<connection>` token pre-answers
+    // the read-shaped SQL calls that name the connection under `ask`
+    // mode, and every other ask the seeds do not cover denies with the
+    // engine's own reason. The composition facts are the run's own —
+    // built from the approved scopes and the wiring, the same gates the
+    // per-step toolsets build from — so a seed pre-answers exactly the
+    // calls the composition carries (U8). The primary stays unbound —
+    // only a call that names its connection suggests a token — and the
+    // policy cannot accumulate: a headless session grant is impossible.
+    let decider = TerminalApproval::frozen(
+        approval.policy(),
+        allow_tokens,
+        super::decider_facts::for_frozen_decider(
+            scopes,
+            &wiring,
+            fetch.as_ref(),
+            &workspace_root,
+            runtime,
+        ),
+    );
     Ok(Pieces {
         provider,
         tools,
@@ -218,14 +240,7 @@ pub(super) async fn assemble(
         fetch,
         runner: wiring.runner,
         plan_scopes: wiring.plan_scopes,
-        // The run's decider is the frozen session policy (U4), seeded from
-        // the run's stated scopes: a `sql:<connection>` token pre-answers
-        // the read-shaped SQL calls that name the connection under `ask`
-        // mode, and every other ask the seeds do not cover denies with the
-        // engine's own reason. The primary stays unbound — only a call that
-        // names its connection suggests a token — and the policy cannot
-        // accumulate: a headless session grant is impossible.
-        decider: TerminalApproval::frozen(approval.policy(), allow_tokens),
+        decider,
         model: ai.model,
         profile_names,
         allow_query_data,

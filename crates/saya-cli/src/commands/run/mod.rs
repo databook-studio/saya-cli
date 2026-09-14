@@ -23,6 +23,7 @@ mod assembly;
 mod budget;
 mod cancel;
 mod claim;
+mod decider_facts;
 mod drive;
 #[cfg(test)]
 mod entry_tests;

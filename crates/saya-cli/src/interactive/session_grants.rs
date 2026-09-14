@@ -46,8 +46,15 @@ pub(crate) fn record_prompt_answer(
     }
 }
 
-/// `/allow <scopes…>`: parse the tokens on the session surface, seed the
-/// store with the stated tokens verbatim, and say what was seeded.
+/// `/allow <scopes…>`: parse the tokens on the session surface, refuse the
+/// ones this session's composition cannot carry, seed the store with the
+/// stated tokens verbatim, and say what was seeded.
+///
+/// `composition` is what this session composed — the same facts the
+/// approval prompts state — and a token that gates nothing in it is a
+/// usage error with its own reason, never a seeded grant: a grant the
+/// composition cannot honour would pre-answer asks into refusals and
+/// silence every ask that would say something is wrong (U8).
 ///
 /// `none` keeps its grammar meaning — the empty approval, alone — and
 /// seeds nothing, saying so. It is not a revoke: the store is additive
@@ -60,6 +67,7 @@ pub(crate) fn record_prompt_answer(
 /// is folded into the message, never silent.
 pub(crate) fn allow(
     tokens: &[String],
+    composition: &crate::approval_facts::ApprovalFacts,
     grants: &SessionGrants,
     journal: &SessionJournal,
 ) -> Result<String, String> {
@@ -70,6 +78,15 @@ pub(crate) fn allow(
                    the store keeps whatever this session already holds."
                 .to_owned(),
         );
+    }
+    // A token the composition cannot carry is a usage error with its own
+    // reason, checked over the whole statement before anything seeds — a
+    // refusal never half-seeds. The grammar accepted the word; the
+    // composition is the second gate.
+    for token in &approved.tokens {
+        if let Some(refusal) = super::allow_refusal::composition_refusal(token, composition) {
+            return Err(refusal);
+        }
     }
     let mut seeded = Vec::new();
     let mut already = Vec::new();

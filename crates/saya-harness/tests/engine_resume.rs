@@ -563,7 +563,7 @@ async fn a_step_executing_at_the_crash_restarts_from_its_start() {
         "restart",
         &[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
         ],
         RunStatus::Executing,
@@ -590,7 +590,7 @@ async fn a_step_executing_at_the_crash_restarts_from_its_start() {
         events,
         vec![
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             RunEvent::Paused {
                 reason: PauseReason::ProcessDeath
@@ -618,7 +618,7 @@ async fn a_second_engine_on_the_same_run_directory_is_refused() {
         "locked",
         &[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
         ],
         RunStatus::Executing,
@@ -673,7 +673,7 @@ async fn a_torn_final_line_replays_to_the_last_whole_event() {
         "torn",
         &[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             RunEvent::StepCompleted { step: 0 },
         ],
@@ -709,7 +709,7 @@ async fn a_torn_final_line_replays_to_the_last_whole_event() {
         run.journal(),
         vec![
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             RunEvent::StepCompleted { step: 0 },
             RunEvent::Paused {
@@ -770,7 +770,7 @@ async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumula
         "budget-resume",
         &[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             journaled_usage(100),
             journaled_usage(60),
@@ -805,7 +805,7 @@ async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumula
         run.journal(),
         vec![
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             journaled_usage(100),
             journaled_usage(60),
@@ -861,7 +861,7 @@ async fn a_torn_usage_line_never_counts_toward_the_carried_spend() {
         "torn-usage",
         &[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             journaled_usage(100),
         ],
@@ -900,7 +900,7 @@ async fn a_torn_usage_line_never_counts_toward_the_carried_spend() {
         run.journal(),
         vec![
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             journaled_usage(100),
             RunEvent::Paused {
@@ -1057,7 +1057,7 @@ async fn a_download_paused_run_resumed_without_a_fresh_wallet_continues_against_
         "download-resume",
         &[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             RunEvent::DownloadedBytes { bytes: 60 },
             RunEvent::DownloadedBytes { bytes: 97 },
@@ -1116,7 +1116,7 @@ async fn a_download_paused_run_resumed_without_a_fresh_wallet_continues_against_
         run.journal(),
         vec![
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             RunEvent::DownloadedBytes { bytes: 60 },
             RunEvent::DownloadedBytes { bytes: 97 },
@@ -1147,7 +1147,7 @@ async fn a_resumed_download_claims_the_carried_headroom_and_records_the_level_it
         "download-headroom",
         &[
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             RunEvent::DownloadedBytes { bytes: 60 },
             RunEvent::DownloadedBytes { bytes: 97 },
@@ -1199,7 +1199,7 @@ async fn a_resumed_download_claims_the_carried_headroom_and_records_the_level_it
         run.journal(),
         vec![
             RunEvent::RunStarted,
-            RunEvent::PlanApproved { scopes: vec![] },
+            RunEvent::PlanApproved { scopes: None },
             RunEvent::StepStarted { step: 0 },
             RunEvent::DownloadedBytes { bytes: 60 },
             RunEvent::DownloadedBytes { bytes: 97 },

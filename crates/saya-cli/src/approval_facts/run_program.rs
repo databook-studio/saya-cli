@@ -1,8 +1,9 @@
 //! `run_program`'s fact lines: the containment, then the argv. The
 //! interpreter door additionally carries the no-euphemism warning — the
-//! session's own clause, because sessions grant no process-fork. A fact the
-//! composition does not carry produces no line; the program, its argv, and
-//! the typed-argv contract are the call's own facts and always render.
+//! session's own clause, the running platform's process-fork fact (U8:
+//! per platform, never a stronger one). A fact the composition does not
+//! carry produces no line; the program, its argv, and the typed-argv
+//! contract are the call's own facts and always render.
 
 use serde_json::Value;
 

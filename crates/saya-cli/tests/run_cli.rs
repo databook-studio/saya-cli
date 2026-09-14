@@ -327,6 +327,18 @@ fn allow_none_starts_a_read_only_run_that_approves_no_write_capability() {
         journal.contains("run_started") && journal.contains("\"completed\""),
         "the read-only run started and completed: {journal}"
     );
+    // The journal states the empty approval explicitly — the payload a
+    // resume re-grants from, so an edited `spec.json` can widen nothing
+    // (U8): the `plan_approved` line carries `"scopes":[]`, the stated
+    // empty set, never the pre-field fallback shape (a field-less line).
+    let plan_approved = journal
+        .lines()
+        .find(|line| line.contains("\"plan_approved\""))
+        .expect("the journal records the approval");
+    assert!(
+        plan_approved.contains("\"scopes\":[]"),
+        "the none run's approval is journaled as the stated empty set: {plan_approved}"
+    );
     let _ = fs::remove_dir_all(&env.root);
 }
 

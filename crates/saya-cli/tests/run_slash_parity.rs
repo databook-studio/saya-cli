@@ -139,7 +139,7 @@ async fn seed_run(root: &Path, store: &SqliteStateStore, id: &str, goal: &str, u
     // completion — the durable record the show stanza folds.
     for event in [
         RunEvent::RunStarted,
-        RunEvent::PlanApproved { scopes: vec![] },
+        RunEvent::PlanApproved { scopes: None },
         RunEvent::StepStarted { step: 0 },
         RunEvent::StepCompleted { step: 0 },
     ] {

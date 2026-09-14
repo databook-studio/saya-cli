@@ -44,8 +44,13 @@ impl TransitionEvent {
         match self {
             Self::Approve { scopes } => (
                 RunTransition::Approve,
+                // `Some` always: this transition fires at the moment of an
+                // approval this process stated, so the journal states the
+                // scopes — the empty list verbatim for a `--allow none`
+                // approval. `None` is reserved for the pre-field lines only
+                // old journals carry.
                 Some(RunEvent::PlanApproved {
-                    scopes: scopes.clone(),
+                    scopes: Some(scopes.clone()),
                 }),
                 RunStatus::Approved,
                 None,

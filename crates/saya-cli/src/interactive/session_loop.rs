@@ -360,13 +360,16 @@ fn handle_line(
     }
     if let SessionAction::Allow(tokens) = action {
         // `/allow <scopes…>` seeds the session's one grant store through the
-        // shared behaviour — the same parser, the session surface. A refused
+        // shared behaviour — the same parser, the session surface, and the
+        // same composition the prompts state: a token the session composed
+        // no capability for is refused there too, never seeded. A refused
         // scope is an error and seeds nothing; `/allow none` seeds nothing
         // and says so. Each newly seeded token is journalled once by the
         // shared behaviour; a failed journal write changes no grant and is
         // said in the message.
         let action = match super::session_grants::allow(
             &tokens,
+            &session.universe().approval_facts(runtime),
             session.policy().grants(),
             &session.journal(),
         ) {

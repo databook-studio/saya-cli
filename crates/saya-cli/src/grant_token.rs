@@ -7,11 +7,20 @@
 //! the grammar's authority, never a duplicate. `None` is a deliberate
 //! answer, not a gap: it means the tool keeps asking every call.
 //!
+//! A token is suggested only when the surface's composition carries what it
+//! names (`facts`, the same `ApprovalFacts` the prompts state): an offer of
+//! a capability the composition cannot honour would record a grant that
+//! pre-answers asks into refusals — worse than a dead offer, it silences
+//! the asks that would say something is wrong (U8). A composition that
+//! carries nothing of a family offers nothing from it: the prompt falls
+//! back to its two answers, exactly as it does when no token exists.
+//!
 //! The host spelling for `fetch:` is the run engine's: the engine's fetch
 //! policy compares `FetchDestination::new(url.scheme(), url.host_str())`,
 //! and the shape is judged by the grammar's own `Destination` rule, so a
 //! granted token names the destination the engine would fetch.
 
+use crate::approval_facts::ApprovalFacts;
 use crate::connection::ConnectionRegistry;
 use saya_types::{Destination, is_bare_name, is_name_shaped, is_refused_runner_program};
 use serde_json::Value;
@@ -75,13 +84,27 @@ impl TurnPrimary {
 /// would record, or `None` when this slice does not grant the tool (which
 /// means it keeps asking every call). `primary` is the turn's primary
 /// connection, bound by the turn that owns the decider; the SQL family
-/// names it when the call itself names no connection.
-pub(crate) fn grant_token(tool: &str, arguments: &Value, primary: Option<&str>) -> Option<String> {
+/// names it when the call itself names no connection. `facts` is the
+/// surface's composition — a token is suggested only when the composition
+/// carries what it names.
+pub(crate) fn grant_token(
+    tool: &str,
+    arguments: &Value,
+    primary: Option<&str>,
+    facts: &ApprovalFacts,
+) -> Option<String> {
     match tool {
-        "workspace_write" => Some("workspace-write".to_owned()),
-        "scratch_sql" => Some("scratch".to_owned()),
-        "http_fetch" | "http_download" => fetch_token(arguments),
-        "run_program" => runner_token(arguments),
+        "workspace_write" => facts
+            .workspace_root
+            .is_some()
+            .then(|| "workspace-write".to_owned()),
+        "scratch_sql" => facts.scratch.is_some().then(|| "scratch".to_owned()),
+        "http_fetch" | "http_download" => facts
+            .fetch
+            .is_some()
+            .then(|| fetch_token(arguments))
+            .flatten(),
+        "run_program" => runner_token(arguments, facts.runner.as_ref()),
         name if SQL_FAMILY.contains(&name) => sql_token(arguments, primary),
         // Every other tool — the fan-out, render_chart, the never-asked
         // read tools — keeps asking.
@@ -127,22 +150,40 @@ fn fetch_token(arguments: &Value) -> Option<String> {
     Some(format!("fetch:{}+{}", destination.scheme, destination.host))
 }
 
-/// `runner:<program>` for a program the run engine's runner can run,
-/// `interpreter:<program>` for one it refuses by name — the engine's own
-/// family rule, mirrored at grammar-parse time, not an invented one. A
-/// program argument that is absent, non-string, or not a bare name (the
-/// runner's own rule: programs, never paths) yields `None`.
-fn runner_token(arguments: &Value) -> Option<String> {
+/// `runner:<program>` for a program the composition's runner door carries
+/// in `[jobs.runner] allow`, `interpreter:<program>` for one its interpreter
+/// door carries in `[jobs.interpreter] allow` — the family rule is the
+/// engine's own (mirrored at grammar-parse time), and the membership is the
+/// composed door's, because a grant can only pre-answer a call the
+/// composition would actually run: a token for a program outside the
+/// composed doors would record a grant that silences the ask and refuses at
+/// execution — every time, for the rest of the session. No composed runner
+/// (`None`) — an unproven host, no workspace root, nothing staged — offers
+/// nothing: no `run_program` call can succeed. A program argument that is
+/// absent, non-string, or not a bare name (the runner's own rule: programs,
+/// never paths) yields `None`.
+fn runner_token(
+    arguments: &Value,
+    runner: Option<&crate::approval_facts::RunnerFacts>,
+) -> Option<String> {
     let program = arguments.get("program")?.as_str()?;
     if !is_bare_name(program) {
         return None;
     }
-    let family = if is_refused_runner_program(program) {
-        "interpreter"
+    let runner = runner?;
+    if is_refused_runner_program(program) {
+        runner
+            .interpreter_programs
+            .iter()
+            .any(|staged| staged == program)
+            .then(|| format!("interpreter:{program}"))
     } else {
-        "runner"
-    };
-    Some(format!("{family}:{program}"))
+        runner
+            .runner_programs
+            .iter()
+            .any(|allowed| allowed == program)
+            .then(|| format!("runner:{program}"))
+    }
 }
 
 /// The session-history family a granted token belongs to — the prefix group

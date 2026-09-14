@@ -19,16 +19,25 @@ pub enum RunEvent {
     /// The run was created and claimed its directory.
     RunStarted,
     /// The plan, scopes, and budgets were approved (or pre-authorised
-    /// headless). No implicit approval exists. Carries the approved scopes as
-    /// the `--allow` grammar's words, in declaration order — the journal is
-    /// the durable authority a resume re-grants from, so a resumed run
-    /// carries exactly the capabilities the original approval carried. Old
-    /// journals carry no field and parse as "scopes unstated here":
-    /// `#[serde(default)]` keeps journals written before the field existed
-    /// parseable, exactly the `Usage` precedent.
+    /// headless). No implicit approval exists. Carries the approved scopes
+    /// as the `--allow` grammar's words, in declaration order — the journal
+    /// is the durable authority a resume re-grants from, so a resumed run
+    /// carries exactly the capabilities the original approval carried.
+    ///
+    /// The field is [`Option`] because the two ways a journal can state no
+    /// scopes mean different things, and a resume must tell them apart:
+    /// `None` is the line a journal written **before the field existed**
+    /// carries (the field is absent; `#[serde(default)]` keeps the old
+    /// line parseable, exactly the `Usage` precedent) — "scopes unstated
+    /// here", where the documented spec fallback stands in; `Some(words)`
+    /// is an approval the journal **did state** — and `Some(vec![])` is
+    /// the `--allow none` approval, the stated empty set, from which a
+    /// resume re-grants exactly nothing. Folding the two back together
+    /// would let a `spec.json` edited between invocations widen a none
+    /// run's resume — the payload exists so it cannot.
     PlanApproved {
-        #[serde(default)]
-        scopes: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scopes: Option<Vec<String>>,
     },
     /// A step's episode began.
     StepStarted { step: usize },
