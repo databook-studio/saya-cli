@@ -95,7 +95,12 @@ pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -
 /// memory derive their failure signal from it. `None` (no definition found)
 /// falls back to the write wording, matching the pre-definition lookup
 /// behavior for a call whose definition is absent.
-pub(super) fn completion_summaries(definition: Option<&ToolDefinition>) -> (String, String) {
+pub(super) fn completion_summaries(
+    definition: Option<&ToolDefinition>,
+    name: &str,
+    arguments: &Value,
+    result: Option<&Value>,
+) -> (String, String) {
     let read_only = definition.is_some_and(|definition| definition.read_only);
     let (completed, failed) = if read_only {
         (
@@ -106,8 +111,89 @@ pub(super) fn completion_summaries(definition: Option<&ToolDefinition>) -> (Stri
         ("local-state write completed", "local-state write failed")
     };
     match definition.and_then(|definition| definition.completion.as_deref()) {
-        Some(text) => (text.to_owned(), format!("failed to complete: {text}")),
+        Some(text) => (
+            completion_detail(name, text, arguments, result, false),
+            completion_detail(name, text, arguments, result, true),
+        ),
         None => (completed.to_owned(), failed.to_owned()),
+    }
+}
+
+/// Shapes one completion summary for the two tools this slice covers,
+/// leaving every other tool's text byte-exact.
+///
+/// `workspace_write` names the file from the call's `path` argument
+/// (`notes.md written`); `run_command` names the program from `program` plus
+/// the outcome from the tool result's `exit_code` (`pytest exited 1`).
+/// The failure arm never carries the success completion text: with a key
+/// fact it reads `failed <key fact>` (e.g. `failed notes.md`,
+/// `failed pytest`), and without one it reads `failed <name>` — both keep
+/// the substring "failed" without reusing the success verb. This also fixes
+/// the old contradiction, where a failed host call read as
+/// `failed to complete: host command ran` (failed *and* "ran").
+///
+/// Only the model-supplied arguments and the tool's own typed result feed
+/// the key fact — never stdout/stderr or file content — so the detail rides
+/// the same redaction the rest of the output does: there is no tool output
+/// in the line to redact. A failure carries no reason beyond the key fact:
+/// the `Err` path reaches `completion_summaries` with `result: None`, so no
+/// exit code is reachable there (a non-zero exit is an `Ok` outcome, not a
+/// failure), and the `ToolError` itself is not threaded into the summary —
+/// a bare `failed <key fact>` is the honest form. Uncovered tools fall
+/// back to today's text untouched; a covered tool missing its key still
+/// must not reuse the success text, so it reads `failed <name>`.
+fn completion_detail(
+    name: &str,
+    base: &str,
+    arguments: &Value,
+    result: Option<&Value>,
+    failed: bool,
+) -> String {
+    if failed {
+        let key: Option<String> = match name {
+            "workspace_write" => arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            "run_command" => arguments
+                .get("program")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            _ => None,
+        };
+        return match (name, key) {
+            ("workspace_write" | "run_command", Some(key)) => format!("failed {key}"),
+            ("workspace_write" | "run_command", None) => format!("failed {name}"),
+            (_, _) => format!("failed to complete: {base}"),
+        };
+    }
+    let key = match name {
+        "workspace_write" => arguments
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(|path| format!("{path} written")),
+        "run_command" => arguments
+            .get("program")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(|program| {
+                let outcome = match result.and_then(|value| value.get("exit_code")) {
+                    Some(Value::Number(code)) => code
+                        .as_i64()
+                        .map(|code| format!("exited {code}"))
+                        .unwrap_or_else(|| "ran".to_owned()),
+                    _ => "ran".to_owned(),
+                };
+                format!("{program} {outcome}")
+            }),
+        _ => None,
+    };
+    match key {
+        Some(key) => key,
+        None => base.to_owned(),
     }
 }
 
@@ -121,12 +207,17 @@ pub(super) async fn execute(
     arguments: Value,
     definition: Option<&ToolDefinition>,
 ) -> (Value, String) {
-    let (completed, failed) = completion_summaries(definition);
-    match tools.execute(name, arguments).await {
-        Ok(value) => (value, completed),
+    match tools.execute(name, arguments.clone()).await {
+        Ok(value) => {
+            let (completed, _) = completion_summaries(definition, name, &arguments, Some(&value));
+            (value, completed)
+        }
         // The reason reaches the model so it can adjust (e.g. a
         // safety-layer rejection naming what is not allowed).
-        Err(error) => (serde_json::json!({"error": error.to_string()}), failed),
+        Err(error) => {
+            let (_, failed) = completion_summaries(definition, name, &arguments, None);
+            (serde_json::json!({"error": error.to_string()}), failed)
+        }
     }
 }
 /// Executes already-validated, auto-runnable calls concurrently while
