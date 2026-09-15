@@ -173,6 +173,35 @@ mod tests {
         transcript.blocks().last().map(|b| b.text.as_str())
     }
 
+    /// C0 property 4 (TUI half): the `→` request block names the same file
+    /// the piped half pins beside the shared seam — both adapters render
+    /// from `tool_call_detail`, so they cannot drift.
+    #[test]
+    fn tui_request_block_names_the_same_file_as_the_piped_line() {
+        use saya_agent::{LocalStateEffect, ToolEffect};
+
+        let mut transcript = Transcript::new();
+        apply_event(
+            &mut transcript,
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::WriteWorkspace,
+                }),
+            ),
+            false,
+        );
+        let block = last_block_text(&transcript).expect("a block was pushed");
+        assert!(
+            block.contains("notes.md"),
+            "the TUI request block must name the file: {block:?}"
+        );
+    }
+
     /// KnowledgeSupplied pushes a System block whose text names the supplied
     /// claims. Asserts on the rendered transcript, not state.
     #[test]

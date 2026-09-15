@@ -397,8 +397,8 @@ mod tests {
             &mut false,
         );
         assert_eq!(
-            rendered.stdout, "Using tool: workspace_write\n",
-            "a write-shaped tool gets the claim-free line: {:?}",
+            rendered.stdout, "Using tool: workspace_write\n  notes.md\n",
+            "a write-shaped tool gets the claim-free line with the named file: {:?}",
             rendered.stdout
         );
         assert!(
