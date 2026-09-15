@@ -9,12 +9,14 @@ use std::{
 pub(crate) struct TerminalSink {
     format: RenderFormat,
     text_open: Mutex<bool>,
+    group: Mutex<TextGroupState>,
 }
 impl TerminalSink {
     pub(crate) fn new(format: RenderFormat) -> Self {
         Self {
             format,
             text_open: Mutex::new(false),
+            group: Mutex::new(TextGroupState::new()),
         }
     }
 }
@@ -22,16 +24,116 @@ impl TerminalSink {
 #[async_trait]
 impl AgentEventSink for TerminalSink {
     async fn emit(&self, event: AgentEvent) {
-        let rendered = render_agent(
+        let rendered = render_text_stream(
             event,
             self.format,
             &mut self.text_open.lock().expect("terminal state"),
+            &mut self.group.lock().expect("terminal state"),
         );
         print!("{}", rendered.stdout);
         eprint!("{}", rendered.stderr);
         let _ = io::stdout().flush();
         let _ = io::stderr().flush();
     }
+}
+
+/// Append-only text groups collapse by buffer-then-decide: tool events
+/// accumulate from group-open until the next boundary event, then the shaped
+/// summary flushes where the group's first line would have printed. The
+/// buffer is bounded — a force-flush every [`GROUP_CALL_BOUND`] completed
+/// calls degrades a runaway group into chunk summaries, never unbounded
+/// memory. Only the `Text` adapter groups; `Json`/`Ndjson` bypass entirely.
+const GROUP_CALL_BOUND: usize = 32;
+
+/// The pending run the text adapter has buffered but not yet decided on.
+/// `completed` counts completed calls purely to bound the buffer (see
+/// `GROUP_CALL_BOUND`); rendering decisions come from the shared grouper at
+/// flush time, never from this counter.
+#[derive(Debug, Default)]
+struct TextGroupState {
+    pending: Vec<AgentEvent>,
+    completed: usize,
+}
+
+impl TextGroupState {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+fn is_group_member(event: &AgentEvent) -> bool {
+    matches!(
+        event,
+        AgentEvent::ToolRequested { .. } | AgentEvent::ToolCompleted { .. }
+    )
+}
+
+/// The stream entry point: `Text` groups tool runs through the shared
+/// grouper before rendering; `Json`/`Ndjson` bypass the grouper entirely so
+/// the machine surface stays event-for-event. The boundary rule mirrors the
+/// grouper exactly — every non-member event flushes the open group, including
+/// silent ones — so the pipe renders the shared grouping, never a second one.
+fn render_text_stream(
+    event: AgentEvent,
+    format: RenderFormat,
+    text_open: &mut bool,
+    group: &mut TextGroupState,
+) -> Rendered {
+    if !matches!(format, RenderFormat::Text) {
+        return render_agent(event, format, text_open);
+    }
+    if is_group_member(&event) {
+        let completed_call = matches!(event, AgentEvent::ToolCompleted { .. });
+        group.pending.push(event);
+        if completed_call {
+            group.completed += 1;
+        }
+        if group.completed >= GROUP_CALL_BOUND {
+            return flush_group(group, text_open);
+        }
+        return Rendered {
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+    }
+    let mut out = flush_group(group, text_open);
+    let rendered = render_agent(event, format, text_open);
+    out.stdout.push_str(&rendered.stdout);
+    out.stderr.push_str(&rendered.stderr);
+    out
+}
+
+/// Shapes the buffered run into the Decision-2 summary (or today's verbatim
+/// lines for a single call) and renders it through the text adapter,
+/// preserving the assistant-delta close the ungrouped path applies.
+fn flush_group(group: &mut TextGroupState, text_open: &mut bool) -> Rendered {
+    if group.pending.is_empty() {
+        return Rendered {
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+    }
+    let pending = std::mem::take(&mut group.pending);
+    group.completed = 0;
+    let mut out = Rendered {
+        stdout: String::new(),
+        stderr: String::new(),
+    };
+    let groups = crate::render::tool_groups::group_tool_events(&pending);
+    for shaped in &groups {
+        for line in crate::render::tool_groups::shape_group(shaped) {
+            let line = crate::render::sanitize_terminal(&line);
+            if *text_open {
+                out.stdout.push('\n');
+                *text_open = false;
+            }
+            out.stdout.push_str(&line);
+            if !line.ends_with('\n') {
+                out.stdout.push('\n');
+            }
+        }
+    }
+    out
 }
 
 fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -> Rendered {
@@ -964,6 +1066,344 @@ mod tests {
         assert!(
             !json.stdout.contains("not_implemented"),
             "must not fall through to NotImplemented: {json:?}"
+        );
+    }
+
+    fn drain_text_stream(events: Vec<AgentEvent>) -> String {
+        let mut open = false;
+        let mut group = TextGroupState::new();
+        let mut stdout = String::new();
+        for event in events {
+            let rendered = render_text_stream(event, RenderFormat::Text, &mut open, &mut group);
+            stdout.push_str(&rendered.stdout);
+        }
+        stdout.push_str(&flush_group(&mut group, &mut open).stdout);
+        stdout
+    }
+
+    fn drain_ndjson_stream(events: Vec<AgentEvent>) -> String {
+        let mut open = false;
+        let mut group = TextGroupState::new();
+        let mut stdout = String::new();
+        for event in events {
+            let rendered = render_text_stream(event, RenderFormat::Ndjson, &mut open, &mut group);
+            stdout.push_str(&rendered.stdout);
+        }
+        stdout.push_str(&flush_group(&mut group, &mut open).stdout);
+        stdout
+    }
+
+    fn write_effect() -> ToolEffect {
+        ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::WriteWorkspace,
+        }
+    }
+
+    fn run_effect() -> ToolEffect {
+        ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: false,
+            local_state: LocalStateEffect::WriteWorkspace,
+        }
+    }
+
+    fn mixed_sequence() -> Vec<AgentEvent> {
+        vec![
+            AgentEvent::assistant_text("the plan"),
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "run_command",
+                serde_json::json!({"program": "pytest", "args": ["-q"]}),
+                Some(run_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "run_command".into(),
+                summary: "failed pytest".into(),
+            },
+            AgentEvent::assistant_text("done"),
+            AgentEvent::complete(),
+        ]
+    }
+
+    /// C2 property 1: a run of successful calls through the piped text
+    /// surface emits one summary line, not a line per call.
+    #[test]
+    fn piped_text_run_of_successful_calls_emits_one_summary_line() {
+        let write = ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::WriteWorkspace,
+        };
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "other.md", "content": "hi"}),
+                Some(write),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "other.md written".into(),
+            },
+        ];
+        let stdout = drain_text_stream(events);
+        assert_eq!(
+            stdout.lines().count(),
+            1,
+            "a run of successful calls is one summary line, not a line per call: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("2 tool calls · ok"),
+            "the summary line collapses the run: {stdout:?}"
+        );
+    }
+
+    /// C2 property 2: a group with a failure emits the header plus that
+    /// failure's full pair — today's request and completion lines verbatim.
+    #[test]
+    fn piped_text_group_with_failure_emits_header_plus_full_pair() {
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "run_command",
+                serde_json::json!({"program": "pytest", "args": ["-q"]}),
+                Some(run_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "run_command".into(),
+                summary: "failed pytest".into(),
+            },
+            AgentEvent::complete(),
+        ];
+        let stdout = drain_text_stream(events);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "▸ 2 tool calls · 1 failed (run_command [pytest -q]) — details below",
+                "Using tool: run_command",
+                "  [pytest -q]",
+                "run_command: failed pytest",
+            ],
+            "header plus the failure's full pair, successes collapsed: {stdout:?}"
+        );
+    }
+
+    /// C2 property 3: a one-member group emits today's lines, byte for byte.
+    #[test]
+    fn piped_text_single_call_matches_todays_lines_byte_for_byte() {
+        let arguments = serde_json::json!({"path": "notes.md", "content": "hi"});
+        let events = vec![
+            AgentEvent::tool_requested("workspace_write", arguments, Some(write_effect())),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::complete(),
+        ];
+        let grouped = drain_text_stream(events);
+        let mut open = false;
+        let ungrouped = format!(
+            "{}{}",
+            render_agent(
+                AgentEvent::tool_requested(
+                    "workspace_write",
+                    serde_json::json!({"path": "notes.md", "content": "hi"}),
+                    Some(write_effect()),
+                ),
+                RenderFormat::Text,
+                &mut open,
+            )
+            .stdout,
+            render_agent(
+                AgentEvent::ToolCompleted {
+                    name: "workspace_write".into(),
+                    summary: "notes.md written".into(),
+                },
+                RenderFormat::Text,
+                &mut open,
+            )
+            .stdout,
+        );
+        assert_eq!(
+            grouped, ungrouped,
+            "a one-member group must keep today's bytes: grouped={grouped:?}"
+        );
+    }
+
+    /// C2 property 4: NDJSON output is byte-identical to before this slice —
+    /// the same event sequence renders event-for-event through the bypass,
+    /// with no grouping applied.
+    #[test]
+    fn ndjson_output_is_byte_identical_with_groups_failures_and_boundaries() {
+        let events = mixed_sequence();
+        let grouped = drain_ndjson_stream(events.clone());
+        let mut open = false;
+        let ungrouped: String = events
+            .into_iter()
+            .map(|event| render_agent(event, RenderFormat::Ndjson, &mut open).stdout)
+            .collect();
+        assert_eq!(
+            grouped, ungrouped,
+            "NDJSON must bypass the grouper entirely"
+        );
+        assert!(
+            grouped.lines().count() >= 6,
+            "the sequence must contain groups, failures and boundaries: {grouped:?}"
+        );
+        assert!(
+            grouped.contains(r#""event":"tool_requested""#)
+                && grouped.contains(r#""event":"tool_completed""#),
+            "tool events stay one-per-line on the machine surface: {grouped:?}"
+        );
+        assert!(
+            !grouped.contains("tool calls ·"),
+            "no summary line may leak into NDJSON: {grouped:?}"
+        );
+    }
+
+    /// C2 property 5: text ordering is preserved — the summary appears where
+    /// the group's first line would have, relative to surrounding text.
+    #[test]
+    fn piped_text_summary_keeps_position_relative_to_surrounding_text() {
+        let events = vec![
+            AgentEvent::assistant_text("before"),
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "other.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "other.md written".into(),
+            },
+            AgentEvent::assistant_text("after"),
+            AgentEvent::complete(),
+        ];
+        let stdout = drain_text_stream(events);
+        let before = stdout.find("before").expect("leading text renders");
+        let summary = stdout.find("2 tool calls · ok").expect("summary renders");
+        let after = stdout.find("after").expect("trailing text renders");
+        assert!(
+            before < summary && summary < after,
+            "the flush happens where the first line would have printed: {stdout:?}"
+        );
+    }
+
+    /// C2 property 6: a group exceeding the bound flushes rather than
+    /// growing — 40 completed calls degrade into chunk summaries.
+    #[test]
+    fn piped_text_group_exceeding_the_bound_flushes_in_chunks() {
+        let mut events = Vec::new();
+        for index in 0..40 {
+            events.push(AgentEvent::tool_requested(
+                "schema_discovery",
+                serde_json::json!({"n": index}),
+                None,
+            ));
+            events.push(AgentEvent::ToolCompleted {
+                name: "schema_discovery".into(),
+                summary: "discovered".into(),
+            });
+        }
+        events.push(AgentEvent::complete());
+        let stdout = drain_text_stream(events);
+        assert!(
+            stdout.contains("32 tool calls · ok"),
+            "the bound force-flushes a full chunk: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("8 tool calls · ok"),
+            "the remainder flushes as its own chunk: {stdout:?}"
+        );
+        assert_eq!(
+            stdout.lines().count(),
+            2,
+            "a runaway group degrades into chunk summaries: {stdout:?}"
+        );
+    }
+
+    /// Extra: a ToolDenied boundary flushes the open group first, so consent
+    /// flow can never sit inside a collapsed summary (why: approvals are
+    /// boundaries by Decision 1, and the pipe must show the same split).
+    #[test]
+    fn piped_text_denial_closes_the_open_group() {
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "a.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "a.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "b.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "b.md written".into(),
+            },
+            AgentEvent::ToolDenied {
+                name: "run_command".into(),
+                reason: "denied".into(),
+            },
+            AgentEvent::complete(),
+        ];
+        let stdout = drain_text_stream(events);
+        assert!(
+            stdout.contains("2 tool calls · ok"),
+            "the pre-denial run collapses on its own: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("Approval denied for run_command: denied"),
+            "the denial renders verbatim after the flush: {stdout:?}"
+        );
+        assert!(
+            stdout.find("2 tool calls · ok").expect("summary")
+                < stdout.find("Approval denied").expect("denial"),
+            "the summary flushes before the boundary: {stdout:?}"
         );
     }
 }
