@@ -71,7 +71,15 @@ pub(super) fn facts(
         "  program: {program} — host command: resolved on your PATH, unsandboxed"
     ));
     lines.push(argv_line(program, arguments));
-    lines.push("  typed argv: no shell, no interpolation, one element per argument".to_string());
+    if is_refused_runner_program(program) {
+        lines.push(
+            "  typed argv: no shell of saya's own, one element per argument — the program is itself a shell or interpreter, unsandboxed like the lane, and it interprets what it receives: metacharacters, pipes, redirects and all"
+                .to_string(),
+        );
+    } else {
+        lines
+            .push("  typed argv: no shell, no interpolation, one element per argument".to_string());
+    }
     lines.push(
         "  no sandbox: runs as your user — your whole filesystem, your network, unconfined"
             .to_string(),
