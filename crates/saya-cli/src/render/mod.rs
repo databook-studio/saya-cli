@@ -13,9 +13,8 @@ mod render_io;
 mod render_json;
 mod render_learned;
 mod render_memory;
-/// The shared tool-call grouper and shaper both adapters consume. Not yet
-/// wired into an adapter (slices 2 and 3 do that); covered by its unit tests.
-#[allow(dead_code)]
+/// The shared tool-call grouper and shaper both adapters consume: the piped
+/// text renderer buffers through it, the TUI transcript follows in slice 3.
 pub(crate) mod tool_groups;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
@@ -224,7 +223,7 @@ pub fn render_event(event: &TerminalEvent, format: RenderFormat) -> Rendered {
     }
 }
 
-pub(super) fn sanitize_terminal(s: &str) -> String {
+pub(crate) fn sanitize_terminal(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
