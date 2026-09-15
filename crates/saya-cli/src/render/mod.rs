@@ -13,6 +13,10 @@ mod render_io;
 mod render_json;
 mod render_learned;
 mod render_memory;
+/// The shared tool-call grouper and shaper both adapters consume. Not yet
+/// wired into an adapter (slices 2 and 3 do that); covered by its unit tests.
+#[allow(dead_code)]
+pub(crate) mod tool_groups;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
