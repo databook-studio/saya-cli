@@ -83,6 +83,9 @@ struct State {
     usage: TokenUsage,
     content: bool,
     done: bool,
+    /// Text the wire emitted before any truncation signal, kept so the typed
+    /// error can carry the partial answer without re-walking emitted events.
+    text: String,
 }
 impl State {
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
@@ -124,11 +127,13 @@ impl State {
             if let Some(reason) = choice.finish_reason.as_deref()
                 && !matches!(reason, "stop" | "tool_calls")
             {
-                // `length` is diagnosable (raise the output cap); anything
-                // else stays a generic protocol failure.
+                // `length` is deterministic (raise the output cap); anything
+                // else stays a generic protocol failure. Truncation is typed
+                // and carries the partial output, never retried upstream.
                 if reason == "length" {
-                    return Err(ProviderError::Request(
-                        "output truncated: the model hit its output-token limit".into(),
+                    return Err(ProviderError::output_truncated(
+                        std::mem::take(&mut self.text),
+                        self.tools.partial_json(),
                     ));
                 }
                 return Err(ProviderError::InvalidResponse);
@@ -137,6 +142,7 @@ impl State {
                 && !text.is_empty()
             {
                 self.content = true;
+                self.text.push_str(&text);
                 self.pending.push_back(ProviderEvent::TextDelta(text));
             }
             if let Some(reasoning) = choice.delta.reasoning_content

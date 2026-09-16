@@ -44,7 +44,11 @@ impl ChatProvider for OpenAiCompatibleProvider {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
-        let body = OpenAiRequest::from_request(request, self.settings.temperature);
+        let body = OpenAiRequest::from_request(
+            request,
+            self.settings.temperature,
+            self.settings.max_output_tokens,
+        );
         let url = endpoint(
             self.settings.base_url.as_deref(),
             "https://api.openai.com/v1",
@@ -83,6 +87,11 @@ struct OpenAiRequest {
     /// Sampling temperature (configurable via `[ai].temperature`, default 0.1).
     /// Lower keeps answers concise and deterministic (fewer tokens/loops).
     temperature: f32,
+    /// Per-response output-token ceiling. Sent as `max_completion_tokens`:
+    /// `max_tokens` is deprecated and rejected by newer reasoning models,
+    /// while `max_completion_tokens` covers visible output plus reasoning
+    /// tokens on every model.
+    max_completion_tokens: u32,
     /// Stable key derived from the **system message** so a caching gateway can
     /// reuse the prompt prefix across turns instead of reprocessing it each time.
     ///
@@ -135,7 +144,7 @@ struct StreamOptions {
 }
 
 impl OpenAiRequest {
-    fn from_request(request: ChatRequest, temperature: f32) -> Self {
+    fn from_request(request: ChatRequest, temperature: f32, max_output_tokens: u32) -> Self {
         // The cache key derives from the system message — the session-stable
         // prefix a gateway caches. See `prompt_cache_key` for why the system
         // message is stable across turns (the per-turn SQL hint rides the user
@@ -151,6 +160,7 @@ impl OpenAiRequest {
             tools: tools(request.tools),
             stream: true,
             temperature,
+            max_completion_tokens: max_output_tokens,
             prompt_cache_key,
             stream_options: StreamOptions {
                 include_usage: true,
@@ -217,11 +227,34 @@ mod tests {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::JsonObject, ReasoningEffort::Default),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
             json.contains(r#""response_format":{"type":"json_object"}"#),
             "json_object must appear on the wire: {json}"
+        );
+    }
+
+    /// The configured output ceiling rides the OpenAI body as
+    /// `max_completion_tokens` (`max_tokens` is deprecated and rejected by
+    /// newer reasoning models). The default path sends the settings default,
+    /// so the ceiling is always explicit — never an unknown server default.
+    #[test]
+    fn configured_output_ceiling_rides_the_body_as_max_completion_tokens() {
+        let body = OpenAiRequest::from_request(
+            request_with(ResponseFormat::Text, ReasoningEffort::Default),
+            0.1,
+            1234,
+        );
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            json.contains(r#""max_completion_tokens":1234"#),
+            "configured ceiling must ride the body: {json}"
+        );
+        assert!(
+            !json.contains("max_tokens\":") || json.contains("max_completion_tokens"),
+            "no bare max_tokens spelling: {json}"
         );
     }
 
@@ -233,6 +266,7 @@ mod tests {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::Text, ReasoningEffort::Default),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
@@ -257,6 +291,7 @@ mod tests {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::Text, ReasoningEffort::Minimal),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
@@ -274,6 +309,7 @@ mod tests {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::Text, ReasoningEffort::Default),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
@@ -296,6 +332,7 @@ mod tests {
                 vec![system.clone(), ChatMessage::text("user", "first question")],
             ),
             0.1,
+            4096,
         );
         let req_b = OpenAiRequest::from_request(
             ChatRequest::new(
@@ -306,6 +343,7 @@ mod tests {
                 ],
             ),
             0.1,
+            4096,
         );
         assert_eq!(
             req_a.prompt_cache_key, req_b.prompt_cache_key,
@@ -329,6 +367,7 @@ mod tests {
                 vec![ChatMessage::text("system", "system prompt A")],
             ),
             0.1,
+            4096,
         );
         let b = OpenAiRequest::from_request(
             ChatRequest::new(
@@ -336,6 +375,7 @@ mod tests {
                 vec![ChatMessage::text("system", "system prompt B")],
             ),
             0.1,
+            4096,
         );
         assert_ne!(
             a.prompt_cache_key, b.prompt_cache_key,
@@ -350,6 +390,7 @@ mod tests {
         let body = OpenAiRequest::from_request(
             ChatRequest::new("test-model", vec![ChatMessage::text("user", "hi")]),
             0.1,
+            4096,
         );
         assert!(body.prompt_cache_key.is_none());
     }

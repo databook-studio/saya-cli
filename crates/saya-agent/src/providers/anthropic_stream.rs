@@ -95,6 +95,12 @@ struct State {
     tools: BTreeMap<usize, ToolUseBlock>,
     usage: TokenUsage,
     done: bool,
+    /// Text the wire emitted before any truncation signal, kept so the typed
+    /// error can carry the partial answer without re-walking emitted events.
+    text: String,
+    /// The `stop_reason` the final `message_delta` reported, checked at
+    /// `message_stop`. A capped response reports `"max_tokens"`.
+    stop_reason: Option<String>,
 }
 
 impl State {
@@ -175,6 +181,7 @@ impl State {
                         let text = json["delta"]["text"]
                             .as_str()
                             .ok_or(ProviderError::InvalidResponse)?;
+                        self.text.push_str(text);
                         self.pending
                             .push_back(ProviderEvent::TextDelta(text.to_string()));
                     } else if delta_type == "thinking_delta" {
@@ -199,6 +206,15 @@ impl State {
                     }
                 }
                 "message_stop" => {
+                    if self.stop_reason.as_deref() == Some("max_tokens") {
+                        return Err(ProviderError::output_truncated(
+                            std::mem::take(&mut self.text),
+                            self.tools
+                                .values()
+                                .map(|block| block.json.clone())
+                                .collect(),
+                        ));
+                    }
                     let mut calls = Vec::new();
                     for (_index, block) in std::mem::take(&mut self.tools) {
                         let arguments = if block.json.trim().is_empty() {
@@ -230,6 +246,9 @@ impl State {
                     let usage = &json["usage"];
                     if apply_usage(&mut self.usage, usage) {
                         self.pending.push_back(ProviderEvent::Usage(self.usage));
+                    }
+                    if let Some(reason) = json["delta"]["stop_reason"].as_str() {
+                        self.stop_reason = Some(reason.to_string());
                     }
                 }
                 "error" => {

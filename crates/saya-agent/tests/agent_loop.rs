@@ -2716,6 +2716,157 @@ impl AgentEventSink for NoopSink {
     async fn emit(&self, _: AgentEvent) {}
 }
 
+/// O1 property 5: a truncation is never retried — exactly one attempt, and no
+/// `TurnReset` (the renderer prints "interrupted — retrying" per reset). The
+/// cap is deterministic, so re-sending the identical request is pure waste.
+struct TruncatingProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for TruncatingProvider {
+    fn name(&self) -> &str {
+        "truncating"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            Ok(ProviderEvent::TextDelta("partial".into())),
+            Err(saya_agent::ProviderError::output_truncated(
+                "partial".into(),
+                Vec::new(),
+            )),
+        ])))
+    }
+}
+
+#[tokio::test]
+async fn truncation_is_never_retried_and_emits_no_reset() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = TruncatingProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::OutputTruncated { .. })
+        ),
+        "the typed truncation error reaches the caller: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "a truncation is deterministic: exactly one attempt"
+    );
+    let seen = events.lock().unwrap().clone();
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TurnReset)),
+        "no reset means no 'interrupted — retrying' line: {seen:?}"
+    );
+}
+
+/// O1 property 6: a genuine transport failure still retries on the existing
+/// schedule — one attempt plus the three scheduled retries — and the sink saw
+/// a reset per retry. The truncation fix must not change this path.
+struct AlwaysFailingProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for AlwaysFailingProvider {
+    fn name(&self) -> &str {
+        "always-failing"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![Err(
+            saya_agent::ProviderError::Request("network request failed".into()),
+        )])))
+    }
+}
+
+#[tokio::test]
+async fn genuine_transport_failure_still_retries_on_the_existing_schedule() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = AlwaysFailingProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::Request(_))
+        ),
+        "the transport error falls through after the schedule: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        4,
+        "one attempt plus the three scheduled retries"
+    );
+    assert_eq!(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::TurnReset))
+            .count(),
+        3,
+        "one reset per retry"
+    );
+}
+
 /// A provider that records every request, answers the first call with one
 /// `schema_discovery` tool call, and answers the next with a plain final text.
 struct ToolThenAnswerProvider {

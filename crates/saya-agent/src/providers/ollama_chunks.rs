@@ -6,6 +6,11 @@ pub(super) struct Chunk {
     pub(super) message: Option<Message>,
     #[serde(default)]
     pub(super) done: bool,
+    /// Why the model stopped, on the final done record. Ollama's `/api/chat`
+    /// spells a capped response `"length"`, mirroring the OpenAI
+    /// `finish_reason` vocabulary; absent on older servers.
+    #[serde(default)]
+    pub(super) done_reason: Option<String>,
     /// Prompt token count from the final done record.
     #[serde(default)]
     pub(super) prompt_eval_count: Option<u64>,

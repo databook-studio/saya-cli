@@ -7,6 +7,20 @@ pub enum ProviderError {
     Request(String),
     #[error("provider returned an invalid response")]
     InvalidResponse,
+    /// The model hit its per-response output-token limit mid-answer. Distinct
+    /// from a transport failure: re-sending the identical request fails
+    /// identically, so the loop must not retry it. Carries the redacted
+    /// partial output the wire had already emitted. Construct via
+    /// [`ProviderError::output_truncated`], which redacts both partials —
+    /// a struct literal would bypass that.
+    #[error("provider response truncated: the model hit its output-token limit")]
+    OutputTruncated {
+        /// Text the wire emitted before the cap, redacted at construction.
+        partial_text: String,
+        /// Raw tool-argument fragments assembled before the cap, one per
+        /// partial call, redacted at construction.
+        partial_tool_json: Vec<String>,
+    },
     #[error("provider is not configured: {0}")]
     Configuration(String),
     #[error("provider stream was cancelled")]
@@ -16,6 +30,19 @@ pub enum ProviderError {
 impl ProviderError {
     pub fn configuration(message: impl Into<String>) -> Self {
         Self::Configuration(message.into())
+    }
+
+    /// Builds the truncation signal with both partials passed through the
+    /// same redaction as every other model output, so a credential-shaped
+    /// substring in a cut-off answer cannot leak through the error path.
+    pub fn output_truncated(partial_text: String, partial_tool_json: Vec<String>) -> Self {
+        Self::OutputTruncated {
+            partial_text: saya_types::redact(&partial_text),
+            partial_tool_json: partial_tool_json
+                .iter()
+                .map(|json| saya_types::redact(json))
+                .collect(),
+        }
     }
 }
 
