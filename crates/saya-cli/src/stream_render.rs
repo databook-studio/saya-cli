@@ -1361,11 +1361,17 @@ mod tests {
         );
     }
 
-    /// Extra: a ToolDenied boundary flushes the open group first, so consent
-    /// flow can never sit inside a collapsed summary (why: approvals are
-    /// boundaries by Decision 1, and the pipe must show the same split).
+    /// Property 2 (piped half): `approvals_are_untouched` — a ToolDenied
+    /// boundary flushes the open group first and renders the denial line
+    /// byte-identical to the ungrouped path, so a call can never collapse
+    /// into a group that swallows a consent moment. The prompt/answer half
+    /// lives beside the seam that owns it
+    /// (`prompt_approval_tests::ask_prompt_keeps_its_bytes_and_answers_under_grouping`);
+    /// the bypass-line half beside its seam
+    /// (`session_activation_tests::bypass_line_keeps_its_bytes_under_grouping`):
+    /// the grouper never sees either string, so grouping cannot touch them.
     #[test]
-    fn piped_text_denial_closes_the_open_group() {
+    fn approvals_are_untouched() {
         let events = vec![
             AgentEvent::tool_requested(
                 "workspace_write",
@@ -1396,14 +1402,28 @@ mod tests {
             stdout.contains("2 tool calls · ok"),
             "the pre-denial run collapses on its own: {stdout:?}"
         );
+        let denied = AgentEvent::ToolDenied {
+            name: "run_command".into(),
+            reason: "denied".into(),
+        };
+        let mut open = false;
+        let ungrouped = render_agent(denied, RenderFormat::Text, &mut open).stdout;
+        assert_eq!(
+            ungrouped, "Approval denied for run_command: denied\n",
+            "precondition: the denial line under test"
+        );
         assert!(
-            stdout.contains("Approval denied for run_command: denied"),
-            "the denial renders verbatim after the flush: {stdout:?}"
+            stdout.contains(&ungrouped),
+            "the denial renders byte-identical after the flush: {stdout:?}"
         );
         assert!(
             stdout.find("2 tool calls · ok").expect("summary")
                 < stdout.find("Approval denied").expect("denial"),
             "the summary flushes before the boundary: {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("▸ 3 tool calls"),
+            "the denied call never joins the collapsed count: {stdout:?}"
         );
     }
 }

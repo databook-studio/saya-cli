@@ -51,7 +51,18 @@ optional `connection` argument to its schema-inspection and query tools (with th
 `3`; provider/agent failures return `5`. JSON writes result envelopes to
 stdout and diagnostics to stderr; NDJSON uses one stable envelope per line.
 `ask` streams provider text deltas. Text output writes deltas immediately, while JSON and NDJSON
-write one valid stable JSON event envelope per delta. When the provider reports token
+write one valid stable JSON event envelope per delta. A run of tool calls
+collapses on the text surface into one summary line (`▸ N tool calls · ok —
+…`; a single call still prints its `Using tool:` / completion lines as
+before), so piped-text consumers that grepped `Using tool:` one line per
+call must match the `▸` summary or switch to NDJSON, the supported machine
+surface — NDJSON is unchanged, one `tool_requested` / `tool_completed`
+envelope per call, which is what `bench/spider/bench.py` already parses.
+Two live limits worth knowing: only the newest collapsed TUI group can be
+expanded (the transcript has no per-block cursor, so older groups cannot be
+reached), and groups are sparse in practice (assistant text between calls
+is a boundary, so most calls stay one-member groups — a real session
+collapsed exactly one group). When the provider reports token
 usage for a call, `ask` also emits a `usage` event carrying those counts — one per
 provider call, labelled `call: "answer"` for the answering rounds and
 `call: "extraction"` for the post-turn learning call, so a script can sum the answer's
