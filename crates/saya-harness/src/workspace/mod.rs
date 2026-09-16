@@ -58,6 +58,7 @@ pub(crate) mod download;
 #[cfg(unix)]
 pub(crate) mod fd;
 pub mod manifest;
+pub mod patch;
 pub mod pattern;
 pub mod search;
 pub mod walk;

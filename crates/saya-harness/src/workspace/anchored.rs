@@ -7,15 +7,7 @@
 //! so a swap of an intermediate directory between the walk and the open
 //! cannot split the two.
 
-use std::{
-    ffi::OsStr,
-    fs, io,
-    io::{Read, Write},
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, PermissionsExt},
-    },
-};
+use std::{ffi::OsStr, io, io::Read, os::fd::AsRawFd};
 
 use super::anchor::Anchor;
 use super::contain::{EntryKind, ListEntry, ReadFile, Workspace};
@@ -77,32 +69,7 @@ pub(crate) fn write(ws: &Workspace, rel: &str, bytes: &[u8]) -> Result<(), Harne
             });
         }
     }
-    let (temp_name, mut temp) = anchor.create_temp(rel)?;
-    let temp_path = anchor.path().join(&temp_name);
-    temp.write_all(bytes)
-        .map_err(|error| io_error("write workspace temp", &temp_path, error))?;
-    temp.sync_all()
-        .map_err(|error| io_error("sync workspace temp", &temp_path, error))?;
-    let written = {
-        let meta = temp
-            .metadata()
-            .map_err(|error| io_error("stat workspace temp", &temp_path, error))?;
-        (meta.dev(), meta.ino())
-    };
-    // Mode belt: the temp was created at 0600; enforce it on the descriptor.
-    temp.set_permissions(fs::Permissions::from_mode(0o600))
-        .map_err(|error| io_error("set mode on", &temp_path, error))?;
-    drop(temp);
-    anchor.rename_over(&temp_name)?;
-    let final_stat = anchor
-        .stat_final()
-        .map_err(|error| io_error("verify written workspace file", anchor.path(), error))?;
-    if final_stat.identity() != written || !final_stat.is_file() || final_stat.has_exec_bits() {
-        return Err(HarnessError::IdentityChanged {
-            path: rel.to_string(),
-        });
-    }
-    Ok(())
+    anchor.commit_bytes(rel, bytes)
 }
 
 /// Lists a workspace directory, bounded by `max_entries`. The empty argument

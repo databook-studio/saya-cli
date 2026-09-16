@@ -351,9 +351,14 @@ impl Workspace {
     /// Opens a fresh temp file at 0600 inside the validated parent with
     /// `O_CREAT|O_EXCL`, so a pre-planted name (even a link) can never be
     /// adopted. The non-unix shape; the unix write anchors the temp to the
-    /// walked parent descriptor instead.
+    /// walked parent descriptor instead. Shared with the range patch's
+    /// non-unix commit path.
     #[cfg(not(unix))]
-    fn create_temp(&self, parent: &Path, rel: &str) -> Result<(PathBuf, fs::File), HarnessError> {
+    pub(crate) fn create_temp(
+        &self,
+        parent: &Path,
+        rel: &str,
+    ) -> Result<(PathBuf, fs::File), HarnessError> {
         for attempt in 0..8 {
             let name = format!(".saya-tmp-{}-{}-{attempt}", process::id(), nanos());
             let candidate = parent.join(name);
@@ -580,14 +585,32 @@ fn create_dir_component(path: &Path, rel: &str) -> Result<(), HarnessError> {
 }
 
 #[cfg(unix)]
-fn identity(metadata: &fs::Metadata) -> (u64, u64) {
+pub(crate) fn identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-#[cfg(windows)]
-fn identity(metadata: &fs::Metadata) -> (u64, u64) {
-    use std::os::windows::fs::MetadataExt;
-    (metadata.len(), metadata.creation_time())
+/// File identity for the non-unix commit paths: (length, creation time),
+/// the weaker stated posture — length stands in where unix has (dev, inode).
+/// Shared with the range patch's non-unix commit path.
+#[cfg(not(unix))]
+pub(crate) fn identity_of(metadata: &fs::Metadata) -> (u64, u64) {
+    use std::os::windows::fs::MetadataExt as _;
+    #[cfg(windows)]
+    {
+        (metadata.len(), metadata.creation_time())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        (metadata.len(), 0)
+    }
+}
+
+/// Atomic replace for the non-unix commit paths, shared with the range
+/// patch: rename on unix-shaped targets, copy+remove on Windows.
+#[cfg(not(unix))]
+pub(crate) fn replace_workspace_file(temp: &Path, target: &Path) -> Result<(), HarnessError> {
+    replace_file(temp, target)
 }
 
 #[cfg(not(unix))]

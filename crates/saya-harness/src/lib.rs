@@ -77,6 +77,28 @@ pub enum HarnessError {
     #[error("workspace path is not a regular file: {path}")]
     NotRegularFile { path: String },
 
+    /// A range patch names bytes outside the file: the range's end lies past
+    /// the file's size, or its start lies past its end. The file is untouched.
+    #[error("workspace patch range {start}..{end} lies outside the {size}-byte file: {path}")]
+    RangeOutOfBounds {
+        path: String,
+        start: u64,
+        end: u64,
+        size: u64,
+    },
+
+    /// A range patch's positional precondition failed: the file no longer has
+    /// the size the caller measured when choosing the range. The file is
+    /// untouched; the caller re-reads and retries.
+    #[error(
+        "workspace file changed size since it was measured: expected {expected} bytes, found {current}: {path}"
+    )]
+    LengthMismatch {
+        path: String,
+        expected: u64,
+        current: u64,
+    },
+
     #[error("{context}: {source}")]
     Io {
         context: String,
