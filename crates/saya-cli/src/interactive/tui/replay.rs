@@ -160,4 +160,58 @@ mod tests {
             blocks[8].1
         );
     }
+
+    /// Property 5: `journal_and_replay_unchanged` — replay renders through
+    /// this module, never the grouper, so grouping cannot touch it. There is
+    /// no "grouping off" toggle to compare against (the slice constraint
+    /// forbids inventing one); the equivalent pin is structural: replay reads
+    /// only the persisted `SessionState` (role + content + per-call
+    /// `ToolMetadata`), which the grouping slices never write — `git diff`
+    /// C0–C3 touches no journal or replay path — and its output carries no
+    /// group marker, before or after a grouped live session.
+    #[test]
+    fn journal_and_replay_unchanged() {
+        use saya_agent::{ToolMetadata, ToolResultShape};
+
+        let mut state = SessionState::new("sess-9", None, "m");
+        state.record_turn(
+            "run it twice",
+            "ran both",
+            false,
+            vec![
+                ToolMetadata {
+                    name: "workspace_write".into(),
+                    status: "completed".into(),
+                    arguments: r#"{"path":"notes.md"}"#.into(),
+                    result_shape: None,
+                },
+                ToolMetadata {
+                    name: "run_command".into(),
+                    status: "failed".into(),
+                    arguments: r#"{"program":"pytest"}"#.into(),
+                    result_shape: Some(ToolResultShape {
+                        row_count: 0,
+                        columns: vec![],
+                    }),
+                },
+            ],
+        );
+        let first = history_blocks(&state);
+        let second = history_blocks(&state);
+        assert_eq!(
+            first, second,
+            "replay is a pure function of the persisted turn: no group state leaks in"
+        );
+        assert!(
+            first.iter().all(|(_, text)| !text.contains("tool calls ·")),
+            "replay carries no group marker: {first:?}"
+        );
+        assert!(
+            first
+                .iter()
+                .any(|(_, text)| text.contains("workspace_write"))
+                && first.iter().any(|(_, text)| text.contains("run_command")),
+            "every recorded call replays per-call, never collapsed: {first:?}"
+        );
+    }
 }

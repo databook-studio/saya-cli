@@ -576,11 +576,16 @@ mod tests {
         );
     }
 
-    /// Extra: a denial is a boundary, and the approval modal is untouched —
-    /// the `→` line stayed live before the denial and the denial renders as
-    /// today's `✗` line. (Why: consent flow can never sit inside a group.)
+    /// Property 2 (TUI half): `approvals_are_untouched` — the denial is a
+    /// boundary that splits the surrounding calls into one-member groups
+    /// (today's `→` / `✓` lines, no toggle), and the denial itself renders
+    /// as today's `✗` line. The key half of the property lives beside the
+    /// keys (`keys::approval_modal_tests::grouping_leaves_approval_keys_untouched`):
+    /// Enter still toggles a group and never approves. Prompt bytes and the
+    /// bypass line live beside their seams (see the piped half for the
+    /// pointers); the transcript path never renders either string.
     #[test]
-    fn denial_is_a_boundary_and_renders_as_today() {
+    fn approvals_are_untouched() {
         let mut transcript = Transcript::new();
         apply_event(
             &mut transcript,
@@ -620,6 +625,10 @@ mod tests {
                 "✗ run_command denied: denied",
             ],
             "one-member groups stay verbatim and the denial is its own line"
+        );
+        assert!(
+            transcript.blocks().iter().all(|b| !b.is_collapsible()),
+            "the denial splits the run: no collapsible group may span it"
         );
     }
 

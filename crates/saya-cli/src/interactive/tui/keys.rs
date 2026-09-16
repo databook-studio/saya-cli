@@ -270,6 +270,39 @@ mod approval_modal_tests {
         assert_eq!(approval_answer(KeyCode::Tab), None);
     }
 
+    /// Property 2 (key half): `approvals_are_untouched` — grouping leaves the
+    /// approval keys untouched. The group toggle rides Enter on an empty line
+    /// (`handle_key` line 231); the modal answers ride `y`/`a`/`s`/`n`/`d`/Esc
+    /// (`approval_choice`), and Enter is never an answer. A collapsed group
+    /// therefore cannot steal a consent keystroke, and a consent keystroke
+    /// cannot toggle a group: the modal arm runs first and returns.
+    #[test]
+    fn grouping_leaves_approval_keys_untouched() {
+        assert_eq!(
+            approval_choice(KeyCode::Enter, Some("workspace-write")),
+            None,
+            "Enter never answers, so it can keep toggling groups"
+        );
+        assert_eq!(
+            approval_choice(KeyCode::Char('e'), None),
+            None,
+            "bare e stays a typed character, never a toggle"
+        );
+        for code in [
+            KeyCode::Char('y'),
+            KeyCode::Char('a'),
+            KeyCode::Char('s'),
+            KeyCode::Char('n'),
+            KeyCode::Char('d'),
+            KeyCode::Esc,
+        ] {
+            assert!(
+                approval_choice(code, Some("workspace-write")).is_some(),
+                "consent keys stay answers: {code:?}"
+            );
+        }
+    }
+
     /// The tool modal's three answers: `y`/`a` allow once, `s` grants exactly
     /// the offered token, `n`/`d`/Esc deny. Enter is still not an approval,
     /// and an unoffered `s` is not an answer at all — the modal never offered
