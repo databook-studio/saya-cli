@@ -85,6 +85,9 @@ struct State {
     tools: ToolAssembly,
     content: bool,
     done: bool,
+    /// Text the wire emitted before any truncation signal, kept so the typed
+    /// error can carry the partial answer without re-walking emitted events.
+    text: String,
 }
 impl State {
     fn finish(&mut self) -> Result<(), ProviderError> {
@@ -134,6 +137,7 @@ impl State {
         if let Some(message) = chunk.message {
             if !message.content.is_empty() {
                 self.content = true;
+                self.text.push_str(&message.content);
                 self.pending
                     .push_back(ProviderEvent::TextDelta(message.content));
             }
@@ -156,6 +160,12 @@ impl State {
         }
         if chunk.done {
             self.done = true;
+            if chunk.done_reason.as_deref() == Some("length") {
+                return Err(ProviderError::output_truncated(
+                    std::mem::take(&mut self.text),
+                    self.tools.partial_json(),
+                ));
+            }
             if let Some(input) = chunk.prompt_eval_count {
                 self.usage.input_tokens = input;
             }

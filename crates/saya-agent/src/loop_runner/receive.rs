@@ -34,7 +34,9 @@ use std::time::Duration;
 /// retries until the response is established, and a refused request (bad key,
 /// bad model) stays an error. Neither is a stream that **completed** but
 /// carried no usable response — the model answered nothing, and every retry
-/// would fail the same way. Cancellation is never retried.
+/// would fail the same way. A **truncated** response (the model hit its
+/// output-token limit) is likewise never retried: the cap is deterministic,
+/// so the identical request fails identically. Cancellation is never retried.
 /// How one streaming attempt ended. The retry policy in [`receive`] acts on
 /// the distinction: a stream that failed **mid-response** — an error event (a
 /// stall, a parse failure, a dropped connection), an end without `Done`, or a
@@ -48,6 +50,8 @@ enum AttemptError {
     /// The stream failed mid-response; the turn may be retried.
     MidStream(ProviderError),
     /// Not a mid-stream failure; the existing error path applies immediately.
+    /// This includes truncation: the output cap is deterministic, so retrying
+    /// the identical request is pure waste.
     Fatal(ProviderError),
 }
 
@@ -130,8 +134,12 @@ async fn stream_attempt(
             return Err(AttemptError::Cancelled);
         }
         // An error surfaced by the stream itself (stall, dropped connection,
-        // unparseable chunk) is the definition of a mid-stream failure.
-        let event = event.map_err(AttemptError::MidStream)?;
+        // unparseable chunk) is the definition of a mid-stream failure —
+        // except truncation, which is deterministic and never retried.
+        let event = event.map_err(|error| match error {
+            error @ ProviderError::OutputTruncated { .. } => AttemptError::Fatal(error),
+            error => AttemptError::MidStream(error),
+        })?;
         match event {
             ProviderEvent::TextDelta(text) => {
                 if content.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {

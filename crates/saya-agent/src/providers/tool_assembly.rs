@@ -61,4 +61,14 @@ impl ToolAssembly {
     pub(super) fn is_empty(&self) -> bool {
         self.calls.is_empty()
     }
+
+    /// Raw argument fragments assembled so far, one per partial call, for the
+    /// truncation signal. A capped tool call never parses, so the fragments
+    /// ride the error for diagnosis rather than becoming calls.
+    pub(super) fn partial_json(&self) -> Vec<String> {
+        self.calls
+            .values()
+            .map(|call| call.arguments.clone())
+            .collect()
+    }
 }
