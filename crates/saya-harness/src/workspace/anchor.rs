@@ -11,7 +11,7 @@ use std::{
     fs, io,
     os::{
         fd::{AsRawFd, OwnedFd},
-        unix::fs::MetadataExt,
+        unix::fs::{MetadataExt, PermissionsExt},
     },
     path::{Path, PathBuf},
     process,
@@ -142,6 +142,41 @@ impl Anchor {
     pub(crate) fn rename_over(&self, from: &OsStr) -> Result<(), HarnessError> {
         rename_at(self.dir.as_raw_fd(), from, self.dir.as_raw_fd(), &self.name)
             .map_err(|error| io_error("replace workspace file", &self.path, error))
+    }
+
+    /// Commits `bytes` as the final component's new content: temp file at
+    /// 0600 inside the anchored parent, fsync, anchored rename over the
+    /// target, then post-write re-verification that the destination still
+    /// holds what was placed. Shared by the whole-file write and the range
+    /// patch so both commit through one path; anything before the rename
+    /// leaves the old content untouched, never a partial file.
+    pub(crate) fn commit_bytes(&self, rel: &str, bytes: &[u8]) -> Result<(), HarnessError> {
+        use std::io::Write as _;
+        let (temp_name, mut temp) = self.create_temp(rel)?;
+        let temp_path = self.path.join(&temp_name);
+        temp.write_all(bytes)
+            .map_err(|error| io_error("write workspace temp", &temp_path, error))?;
+        temp.sync_all()
+            .map_err(|error| io_error("sync workspace temp", &temp_path, error))?;
+        let written = {
+            let meta = temp
+                .metadata()
+                .map_err(|error| io_error("stat workspace temp", &temp_path, error))?;
+            (meta.dev(), meta.ino())
+        };
+        temp.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| io_error("set mode on", &temp_path, error))?;
+        drop(temp);
+        self.rename_over(&temp_name)?;
+        let final_stat = self
+            .stat_final()
+            .map_err(|error| io_error("verify written workspace file", &self.path, error))?;
+        if final_stat.identity() != written || !final_stat.is_file() || final_stat.has_exec_bits() {
+            return Err(HarnessError::IdentityChanged {
+                path: rel.to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Renames another anchor's final component over this anchor's — the
