@@ -220,6 +220,15 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         KeyCode::Char('w') if ctrl => app.input.delete_word_left(),
         KeyCode::Char(c) if !ctrl => app.input.insert_char(c),
         KeyCode::Enter if alt || mods.contains(KeyModifiers::SHIFT) => app.input.insert_newline(),
+        // Enter on an empty line toggles the most recent collapsed tool
+        // group instead of submitting a blank prompt: there is no per-block
+        // cursor on the transcript, so "the block at the cursor" does not
+        // exist and the newest group is the one just watched stream in. A
+        // bare `e` stays a typed character — stealing it would break every
+        // prompt containing the letter — and Enter with any input still
+        // submits. Ctrl+E (move-to-end) is untouched: this arm only fires
+        // without Ctrl.
+        KeyCode::Enter if app.input.is_empty() && app.toggle_tool_group() => return,
         KeyCode::Enter => return app.submit(),
         KeyCode::Backspace => app.input.backspace(),
         KeyCode::Delete => app.input.delete(),
