@@ -165,6 +165,15 @@ impl App {
         self.refresh_menu();
     }
 
+    /// Toggles the most recent collapsed tool group between its one-line
+    /// summary and its full per-call sequence. No-op when the transcript
+    /// holds no group: the user pressed the key with nothing to expand, and
+    /// an honest silence beats a notice line that would itself scroll the
+    /// transcript they are reading.
+    pub(crate) fn toggle_tool_group(&mut self) -> bool {
+        self.transcript.toggle_latest_group()
+    }
+
     /// Pushes a blank separator line, unless the transcript is empty or already ends in one.
     fn push_spacer(&mut self) {
         match self.transcript.blocks().last() {

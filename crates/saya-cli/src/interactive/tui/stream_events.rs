@@ -11,7 +11,111 @@ use saya_agent::AgentEvent;
 /// When on, reasoning is pushed as a dimmed `Thinking` block — visually
 /// subordinate to the answer, never mistakable for it. Either way reasoning is
 /// in-memory only and never persisted.
+///
+/// Tool events buffer behind the shared grouper and flush at the next boundary
+/// event: a run of tool calls lands as one collapsed block carrying the
+/// Decision-2 summary (the same string the piped surface emits), expandable to
+/// today's per-call `→` / `✓` lines. Streaming with the tail followed shows the
+/// per-call lines as they arrive (a collapse imposed mid-stream would rewrite
+/// history the user just watched); the group collapses when the boundary event
+/// that ends it arrives.
 pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_thinking: bool) {
+    // A caller that ends the stream after a tool run (tests, the panel's
+    // final `Complete`) flushes on the boundary below. A caller that stops
+    // mid-run with no boundary leaves buffered calls unrendered, so a trailing
+    // flush would misattribute the next turn's text as this group's boundary —
+    // keep the buffer, don't flush it here.
+    if is_group_member(&event) {
+        if let Some(other) = buffer_tool_event(transcript, event) {
+            apply_boundary_event(transcript, other, show_thinking);
+        }
+        return;
+    }
+    // The retry discards the run in flight: the failure it reports belongs to
+    // the transport, never to a collapsed summary.
+    if matches!(event, AgentEvent::TurnReset) {
+        transcript.discard_tool_buffer();
+    } else {
+        flush_tool_buffer(transcript);
+    }
+    apply_boundary_event(transcript, event, show_thinking);
+}
+
+/// Buffers one member event and, while the group is still open, mirrors the
+/// per-call line onto the tail block so the running stream stays legible.
+/// Returns a boundary event to re-dispatch when the stream's legibility and
+/// the buffer disagree (never today: the open group always shows calls live).
+fn is_group_member(event: &AgentEvent) -> bool {
+    matches!(
+        event,
+        AgentEvent::ToolRequested { .. } | AgentEvent::ToolCompleted { .. }
+    )
+}
+
+/// Mirrors one member event onto the tail as today's per-call line (so the
+/// running stream stays legible) and buffers the call's facts for the grouper.
+/// `TurnReset` discards the buffer: it retries the turn, never completes a run.
+///
+/// Returns a stray completion that arrived with no open request: it renders as
+/// today's `✓` line and stays out of the buffer, so it can never join a group.
+fn buffer_tool_event(transcript: &mut Transcript, event: AgentEvent) -> Option<AgentEvent> {
+    match event {
+        AgentEvent::ToolRequested {
+            name,
+            arguments,
+            effect,
+        } => {
+            transcript.buffer_tool_request(name, arguments, effect);
+            None
+        }
+        AgentEvent::ToolCompleted { name, summary } => {
+            if transcript.buffer_tool_completion(&name, &summary) {
+                None
+            } else {
+                // Stray completion: no open request to pair it with. Render
+                // today's line and keep it out of the group.
+                transcript.push(BlockKind::Tool, format!("✓ {name}: {summary}"));
+                None
+            }
+        }
+        other => Some(other),
+    }
+}
+
+/// Folds the buffered run into blocks at the boundary: one collapsed block
+/// for a multi-call group, today's verbatim lines for a single call or a
+/// group with a failure.
+fn flush_tool_buffer(transcript: &mut Transcript) {
+    transcript.flush_tool_buffer(request_lines, |name, summary| {
+        format!("✓ {name}: {summary}")
+    });
+}
+
+/// Today's verbatim request rendering, one block per line: the SQL block or
+/// the `→` line, exactly as the TUI rendered before this slice.
+fn request_lines(name: &str, arguments: &serde_json::Value) -> Vec<String> {
+    if let Some(call) = crate::agent::tools::sql_tool_call(name, arguments) {
+        let header = match &call.target {
+            Some(t) => format!("SQL · {t}"),
+            None => "SQL".to_string(),
+        };
+        let body = call
+            .sql
+            .lines()
+            .map(|l| format!("  {l}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return vec![format!("{header}\n{body}")];
+    }
+    vec![
+        match crate::agent::tools::tool_call_detail(name, arguments) {
+            Some(detail) => format!("→ {name}: {detail}"),
+            None => format!("→ {name}"),
+        },
+    ]
+}
+
+fn apply_boundary_event(transcript: &mut Transcript, event: AgentEvent, show_thinking: bool) {
     match event {
         AgentEvent::AssistantText { text } => {
             if !matches!(
@@ -137,6 +241,11 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_t
         AgentEvent::Complete => {
             transcript.reformat_last(BlockKind::Assistant, table::format_markdown_tables);
         }
+        // Silent bookkeeping the grouper must still treat as a boundary.
+        // `Usage` arrives after the answer finished streaming and carries no
+        // content — but a group cannot span it, exactly as the piped adapter
+        // flushes on every non-member event including silent ones.
+        AgentEvent::KnowledgeLearningStarted => {}
         _ => {}
     }
 }
@@ -171,6 +280,372 @@ mod tests {
 
     fn last_block_text(transcript: &Transcript) -> Option<&str> {
         transcript.blocks().last().map(|b| b.text.as_str())
+    }
+
+    fn write_effect() -> Option<saya_agent::ToolEffect> {
+        Some(saya_agent::ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: saya_agent::LocalStateEffect::WriteWorkspace,
+        })
+    }
+
+    /// C3 property 1: a collapsed group renders one block whose text equals
+    /// the shaper's output — the same string the piped surface would emit, so
+    /// the two surfaces cannot drift.
+    #[test]
+    fn collapsed_group_renders_one_block_equal_to_the_shaper_output() {
+        let events = two_write_calls();
+        let groups = crate::render::tool_groups::group_tool_events(&events);
+        assert_eq!(groups.len(), 1, "precondition: one run is one group");
+        let shaped = crate::render::tool_groups::shape_group(&groups[0]);
+        assert_eq!(shaped.len(), 1, "precondition: the shaper collapses it");
+
+        let mut transcript = Transcript::new();
+        for event in events {
+            apply_event(&mut transcript, event, false);
+        }
+        apply_event(&mut transcript, AgentEvent::complete(), false);
+        let texts: Vec<&str> = transcript
+            .blocks()
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![shaped[0].as_str()],
+            "a collapsed group must render one block equal to the shaper's output"
+        );
+    }
+
+    /// C3 property 2: toggling expands to the per-call `→` / `✓` lines and
+    /// toggling again collapses back to the one-line summary.
+    #[test]
+    fn toggling_expands_to_the_per_call_lines_and_back() {
+        let mut transcript = Transcript::new();
+        for event in two_write_calls() {
+            apply_event(&mut transcript, event, false);
+        }
+        apply_event(&mut transcript, AgentEvent::complete(), false);
+        assert_eq!(transcript.blocks().len(), 1, "collapsed to one block");
+
+        assert!(
+            transcript.toggle_latest_group(),
+            "a group is there to expand"
+        );
+        let wrapped = transcript.wrapped(200);
+        let shown: Vec<&str> = wrapped.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(
+            shown,
+            vec![
+                "▾ 2 tool calls · ok — workspace_write notes.md, other.md",
+                "→ workspace_write: notes.md",
+                "✓ workspace_write: notes.md written",
+                "→ workspace_write: other.md",
+                "✓ workspace_write: other.md written",
+            ],
+            "expanded shows today's per-call lines verbatim under a ▾ header"
+        );
+
+        assert!(transcript.toggle_latest_group(), "toggling again collapses");
+        let wrapped = transcript.wrapped(200);
+        let shown: Vec<&str> = wrapped.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(
+            shown,
+            vec!["▸ 2 tool calls · ok — workspace_write notes.md, other.md"],
+            "collapsed again to the one-line summary"
+        );
+    }
+
+    /// C3 property 3: expansion survives a re-render and a newly streamed
+    /// event — it is view state on the block, not a render-time flag.
+    #[test]
+    fn expansion_survives_rerender_and_a_newly_streamed_event() {
+        let mut transcript = Transcript::new();
+        for event in two_write_calls() {
+            apply_event(&mut transcript, event, false);
+        }
+        apply_event(&mut transcript, AgentEvent::complete(), false);
+        assert!(transcript.toggle_latest_group(), "expand the group");
+
+        // A re-render: the same wrapped lines, still expanded.
+        let first: Vec<String> = transcript
+            .wrapped(200)
+            .iter()
+            .map(|(_, s)| s.clone())
+            .collect();
+        let second: Vec<String> = transcript
+            .wrapped(200)
+            .iter()
+            .map(|(_, s)| s.clone())
+            .collect();
+        assert_eq!(first, second, "re-render must not reset expansion");
+        assert!(first[0].starts_with('▾'), "still expanded: {first:?}");
+
+        // A newly streamed event lands after the group without resetting it.
+        apply_event(&mut transcript, AgentEvent::assistant_text("done"), false);
+        let wrapped = transcript.wrapped(200);
+        let shown: Vec<&str> = wrapped.iter().map(|(_, s)| s.as_str()).collect();
+        assert!(shown[0].starts_with('▾'), "expansion survives: {shown:?}");
+        assert_eq!(
+            shown.last(),
+            Some(&"done"),
+            "the new event lands: {shown:?}"
+        );
+    }
+
+    /// C3 property 4: a one-member group renders exactly as today — the same
+    /// blocks, byte for byte — with no toggle affordance.
+    #[test]
+    fn one_member_group_renders_as_today_with_no_toggle() {
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                write_effect(),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+        ];
+        let mut grouped = Transcript::new();
+        for event in events {
+            apply_event(&mut grouped, event, false);
+        }
+        apply_event(&mut grouped, AgentEvent::complete(), false);
+
+        assert_eq!(grouped.blocks().len(), 2, "two per-call blocks, not one");
+        assert_eq!(grouped.blocks()[0].text, "→ workspace_write: notes.md");
+        assert_eq!(
+            grouped.blocks()[1].text,
+            "✓ workspace_write: notes.md written"
+        );
+        assert!(
+            grouped.blocks().iter().all(|b| !b.is_collapsible()),
+            "no block may offer a toggle"
+        );
+        assert!(
+            !grouped.toggle_latest_group(),
+            "toggling with no group is a no-op"
+        );
+        assert_eq!(grouped.blocks().len(), 2, "the no-op toggled nothing");
+    }
+
+    /// C3 property 5: a group with a failure is not collapsible into a count —
+    /// the failure's full pair renders as it does today: today's `→` / `✓`
+    /// lines, never the piped text's `Using tool:` rendering.
+    #[test]
+    fn group_with_a_failure_renders_the_full_pair() {
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                write_effect(),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "run_command",
+                serde_json::json!({"program": "pytest", "args": ["-q"]}),
+                Some(saya_agent::ToolEffect {
+                    database_data: false,
+                    external_side_effect: true,
+                    requires_approval: false,
+                    local_state: saya_agent::LocalStateEffect::WriteWorkspace,
+                }),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "run_command".into(),
+                summary: "failed pytest".into(),
+            },
+        ];
+        let groups = crate::render::tool_groups::group_tool_events(&events);
+        assert_eq!(groups.len(), 1, "precondition: one run is one group");
+        assert!(
+            groups[0].calls.iter().any(|call| call.failed),
+            "precondition: the group carries a failure"
+        );
+
+        let mut transcript = Transcript::new();
+        for event in events {
+            apply_event(&mut transcript, event, false);
+        }
+        apply_event(&mut transcript, AgentEvent::complete(), false);
+
+        let texts: Vec<&str> = transcript
+            .blocks()
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "→ workspace_write: notes.md",
+                "✓ workspace_write: notes.md written",
+                "→ run_command: pytest",
+                "✓ run_command: failed pytest",
+            ],
+            "the failure's full pair renders as today, successes uncollapsed"
+        );
+        assert!(
+            transcript.blocks().iter().all(|b| !b.is_collapsible()),
+            "a group with a failure offers no toggle"
+        );
+        assert!(
+            texts.iter().any(|line| line.contains("failed pytest")),
+            "the failure text is visible: {texts:?}"
+        );
+    }
+
+    /// C3 property 6: expansion state is never written to the session file,
+    /// and a resumed session does not carry it — replay renders through
+    /// `replay.rs`, unchanged, with no group state. (Why: the transcript is
+    /// never serialized — `SessionState` carries role + content only — so the
+    /// strongest check available is the serialized session plus the replay
+    /// path both showing no group text.)
+    #[test]
+    fn expansion_state_is_not_persisted_and_resume_carries_none_of_it() {
+        use crate::interactive::session_state::SessionState;
+
+        let mut transcript = Transcript::new();
+        for event in two_write_calls() {
+            apply_event(&mut transcript, event, false);
+        }
+        apply_event(&mut transcript, AgentEvent::complete(), false);
+        assert!(transcript.toggle_latest_group(), "expand the group");
+
+        let mut session =
+            SessionState::new("s1", Some(String::from("analytics")), String::from("m"));
+        session.record_turn("do the writes", "wrote both files", false, Vec::new());
+        let json = serde_json::to_string(&session).expect("serializes");
+        assert!(
+            !json.contains("expanded"),
+            "expansion state leaked into the session file: {json}"
+        );
+
+        let replayed = crate::interactive::tui::replay::history_blocks(&session);
+        assert!(
+            replayed.iter().all(|(_, text)| !text.starts_with('▸')),
+            "replay renders through replay.rs, not the grouper: {replayed:?}"
+        );
+    }
+
+    /// Extra: while the group is still streaming, the tail shows the per-call
+    /// lines live — collapsing mid-stream would rewrite history the user just
+    /// watched. (Why: the boundary rule says a group closes at the next
+    /// content event; until then the calls are still arriving.)
+    #[test]
+    fn open_group_shows_per_call_lines_live_until_the_boundary() {
+        let mut transcript = Transcript::new();
+        for event in two_write_calls() {
+            apply_event(&mut transcript, event, false);
+        }
+        let texts: Vec<&str> = transcript
+            .blocks()
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "→ workspace_write: notes.md",
+                "✓ workspace_write: notes.md written",
+                "→ workspace_write: other.md",
+                "✓ workspace_write: other.md written",
+            ],
+            "before the boundary the stream shows today's lines live"
+        );
+        apply_event(&mut transcript, AgentEvent::assistant_text("done"), false);
+        let texts: Vec<&str> = transcript
+            .blocks()
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "▸ 2 tool calls · ok — workspace_write notes.md, other.md",
+                "",
+                "done",
+            ],
+            "the boundary collapses the run and the text follows"
+        );
+    }
+
+    /// Extra: a denial is a boundary, and the approval modal is untouched —
+    /// the `→` line stayed live before the denial and the denial renders as
+    /// today's `✗` line. (Why: consent flow can never sit inside a group.)
+    #[test]
+    fn denial_is_a_boundary_and_renders_as_today() {
+        let mut transcript = Transcript::new();
+        apply_event(
+            &mut transcript,
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "a.md", "content": "hi"}),
+                write_effect(),
+            ),
+            false,
+        );
+        apply_event(
+            &mut transcript,
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "a.md written".into(),
+            },
+            false,
+        );
+        apply_event(
+            &mut transcript,
+            AgentEvent::ToolDenied {
+                name: "run_command".into(),
+                reason: "denied".into(),
+            },
+            false,
+        );
+        let texts: Vec<&str> = transcript
+            .blocks()
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "→ workspace_write: a.md",
+                "✓ workspace_write: a.md written",
+                "✗ run_command denied: denied",
+            ],
+            "one-member groups stay verbatim and the denial is its own line"
+        );
+    }
+
+    /// Two successful workspace writes: the shared fixture every C3 property
+    /// builds its group from.
+    fn two_write_calls() -> Vec<AgentEvent> {
+        vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                write_effect(),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "other.md", "content": "hi"}),
+                write_effect(),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "other.md written".into(),
+            },
+        ]
     }
 
     /// C0 property 4 (TUI half): the `→` request block names the same file
