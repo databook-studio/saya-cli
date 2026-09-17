@@ -254,6 +254,7 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
             "workspace_list",
             "glob",
             "grep",
+            "workspace_edit",
             "workspace_write",
             "bounded_sql_query",
             "bounded_sql_query_all",
@@ -263,7 +264,7 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
             "render_chart",
             "designate_answer",
         ],
-        "the approved write tool must keep its place in the universe"
+        "the approved write tools must keep their place in the universe"
     );
 }
 

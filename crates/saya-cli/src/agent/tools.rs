@@ -66,3 +66,7 @@ mod workspace_search_tests;
 #[cfg(test)]
 #[path = "tools/workspace_write_tests.rs"]
 mod workspace_write_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_edit_tests.rs"]
+mod workspace_edit_tests;
