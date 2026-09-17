@@ -102,6 +102,81 @@ pub enum ToolError {
     /// written file is worse than a refused one.
     #[error("workspace write refused: content is over the {limit}-byte write bound")]
     WorkspaceWriteTooLarge { limit: usize },
+    /// A workspace edit found no anchor match. Typed, naming the count plus
+    /// the file's current size and digest so the model can re-anchor — and
+    /// writing nothing. Never carries file content.
+    #[error(
+        "workspace edit refused: anchor matched {matches} time(s), need exactly 1 (size: {size}, digest: {digest}): {path}"
+    )]
+    WorkspaceEditNoMatch {
+        path: String,
+        matches: usize,
+        size: u64,
+        digest: String,
+    },
+    /// A workspace edit found the anchor more than once. Typed, naming the
+    /// count plus bounded line numbers — never "first wins", never file
+    /// content. The model retries with a longer `old_text`.
+    #[error(
+        "workspace edit refused: anchor is ambiguous (matches: {matches}, lines: {lines:?}, size: {size}, digest: {digest}): {path}"
+    )]
+    WorkspaceEditAmbiguous {
+        path: String,
+        matches: usize,
+        lines: Vec<u64>,
+        size: u64,
+        digest: String,
+    },
+    /// A workspace edit's `expected_size`/`expected_digest` precondition no
+    /// longer matches the file's current state: the anchor moved under the
+    /// model. No write. The model re-reads and retries.
+    #[error(
+        "workspace edit refused: file changed since measured (expected size: {expected_size:?}, current size: {current_size}, expected digest: {expected_digest:?}, current digest: {current_digest}): {path}"
+    )]
+    WorkspaceEditMoved {
+        path: String,
+        expected_size: Option<u64>,
+        current_size: u64,
+        expected_digest: Option<String>,
+        current_digest: String,
+    },
+    /// An empty `old_text` matches everywhere, so it is a validation error —
+    /// never an edit. No write.
+    #[error("workspace edit refused: anchor must not be empty: {path}")]
+    WorkspaceEditEmptyAnchor { path: String },
+    /// The anchor or the replacement of a workspace edit exceeded the
+    /// tool's byte bound. Typed — refused whole, never truncated.
+    #[error(
+        "workspace edit refused: argument is over the {limit}-byte bound (found {found}): {path}"
+    )]
+    WorkspaceEditTooLarge {
+        path: String,
+        limit: usize,
+        found: usize,
+    },
+    /// A workspace edit refused a non-UTF-8 target: anchors are byte-exact
+    /// strings and reads are lossy, so the anchor cannot be trusted. No
+    /// write. Binary support is a later slice, not this one.
+    #[error("workspace edit refused: file is not UTF-8 text: {path}")]
+    WorkspaceEditNotText { path: String },
+    /// A workspace edit failed inside the harness containment layer. The
+    /// detail is the harness error's own text, so the model reads the real
+    /// reason rather than a guess. Carries counts and sizes, never content.
+    #[error("workspace edit failed: {0}")]
+    WorkspaceEdit(String),
+    /// A workspace edit's `old_text` argument was not a string.
+    #[error("invalid tool arguments: old_text must be a string")]
+    OldTextNotString,
+    /// A workspace edit's `new_text` argument was not a string.
+    #[error("invalid tool arguments: new_text must be a string")]
+    NewTextNotString,
+    /// A workspace edit's `expected_size` argument was not a non-negative
+    /// integer.
+    #[error("invalid tool arguments: expected_size must be a non-negative integer")]
+    ExpectedSizeNotUint,
+    /// A workspace edit's `expected_digest` argument was not a string.
+    #[error("invalid tool arguments: expected_digest must be a string")]
+    ExpectedDigestNotString,
     /// A runner tool refused or failed. The detail is the harness runner
     /// error's own text — the typed refusal (allowlist, argv shape, sandbox,
     /// timeout) or failure, so the model reads the real reason, never a

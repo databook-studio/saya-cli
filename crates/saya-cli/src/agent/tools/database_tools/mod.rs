@@ -19,6 +19,8 @@ mod result_shape;
 // A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
 // runtime drains it after the loop to emit one `KnowledgeOverridden` event.
 mod override_log;
+mod workspace_edit;
+mod workspace_edit_anchor;
 mod workspace_glob;
 mod workspace_grep;
 mod workspace_list;
@@ -54,6 +56,8 @@ pub(crate) use workspace_read::WORKSPACE_READ_MAX_BYTES;
 // `WORKSPACE_WRITE_MAX_BYTES` is not test-gated: the approval prompt states
 // the exact per-write bound the tool enforces (`approval_facts`), so the
 // prompt's number is this constant, never a copy of it.
+#[cfg(test)]
+pub(crate) use workspace_edit::WORKSPACE_EDIT_MAX_BYTES;
 pub(crate) use workspace_write::WORKSPACE_WRITE_MAX_BYTES;
 
 /// Agent tools for inspecting and querying configured database connections.

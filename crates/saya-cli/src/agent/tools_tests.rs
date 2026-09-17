@@ -492,6 +492,30 @@ fn every_tool_declares_its_local_state_effect() {
         "no tool may declare WriteCandidate when writes are not permitted"
     );
 
+    // The workspace write tools declare `WriteWorkspace` when permitted.
+    // `workspace_write` is the pre-existing row; `workspace_edit` (the
+    // replace-only variant, this slice) shares its permit and its effect —
+    // the loop's gate keys on the effect, not the tool name.
+    let tools = DatabaseTools::definitions(true, true, false, true);
+    let edit = tools
+        .iter()
+        .find(|tool| tool.name == "workspace_edit")
+        .expect("workspace_edit must be registered when workspace writes are permitted");
+    assert_eq!(
+        edit.effect.local_state,
+        LocalStateEffect::WriteWorkspace,
+        "workspace_edit must declare local_state == WriteWorkspace"
+    );
+    let write = tools
+        .iter()
+        .find(|tool| tool.name == "workspace_write")
+        .expect("workspace_write must be registered when workspace writes are permitted");
+    assert_eq!(
+        write.effect.local_state,
+        LocalStateEffect::WriteWorkspace,
+        "workspace_write must keep declaring local_state == WriteWorkspace"
+    );
+
     // No agent tool writes local state any more. Phase F retired
     // `contract_propose`: the harness extracts proposals post-turn from a bounded
     // turn record, so learning no longer depends on the model volunteering a call.

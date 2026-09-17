@@ -42,12 +42,18 @@ impl DatabaseTools {
         // routing decides where it runs, never whether.)
         if matches!(
             name,
-            "workspace_read" | "workspace_list" | "workspace_write" | "glob" | "grep"
+            "workspace_read"
+                | "workspace_list"
+                | "workspace_write"
+                | "workspace_edit"
+                | "glob"
+                | "grep"
         ) {
             return match name {
                 "workspace_read" => self.workspace_read(&arguments).await,
                 "workspace_list" => self.workspace_list(&arguments).await,
                 "workspace_write" => self.workspace_write(&arguments).await,
+                "workspace_edit" => self.workspace_edit(&arguments).await,
                 "glob" => self.workspace_glob(&arguments).await,
                 "grep" => self.workspace_grep(&arguments).await,
                 _ => Err(ToolError::UnsupportedTool),

@@ -11,7 +11,7 @@ use super::sql_format::{collapse_whitespace, format_sql};
 /// the request detail carries no argument values beyond the key fact.
 pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Option<String> {
     match name {
-        "workspace_write" => {
+        "workspace_write" | "workspace_edit" => {
             let path = arguments
                 .get("path")
                 .and_then(serde_json::Value::as_str)

@@ -119,12 +119,14 @@ pub(super) fn completion_summaries(
     }
 }
 
-/// Shapes one completion summary for the two tools this slice covers,
+/// Shapes one completion summary for the tools this slice covers,
 /// leaving every other tool's text byte-exact.
 ///
 /// `workspace_write` names the file from the call's `path` argument
-/// (`notes.md written`); `run_command` names the program from `program` plus
-/// the outcome from the tool result's `exit_code` (`pytest exited 1`).
+/// (`notes.md written`); `workspace_edit` names the file from `path` plus
+/// the edit's own completion (`notes.md edited`); `run_command` names the
+/// program from `program` plus the outcome from the tool result's `exit_code`
+/// (`pytest exited 1`).
 /// The failure arm never carries the success completion text: with a key
 /// fact it reads `failed <key fact>` (e.g. `failed notes.md`,
 /// `failed pytest`), and without one it reads `failed <name>` — both keep
@@ -151,7 +153,7 @@ fn completion_detail(
 ) -> String {
     if failed {
         let key: Option<String> = match name {
-            "workspace_write" => arguments
+            "workspace_write" | "workspace_edit" => arguments
                 .get("path")
                 .and_then(Value::as_str)
                 .filter(|value| !value.is_empty())
@@ -164,8 +166,12 @@ fn completion_detail(
             _ => None,
         };
         return match (name, key) {
-            ("workspace_write" | "run_command", Some(key)) => format!("failed {key}"),
-            ("workspace_write" | "run_command", None) => format!("failed {name}"),
+            ("workspace_write" | "workspace_edit" | "run_command", Some(key)) => {
+                format!("failed {key}")
+            }
+            ("workspace_write" | "workspace_edit" | "run_command", None) => {
+                format!("failed {name}")
+            }
             (_, _) => format!("failed to complete: {base}"),
         };
     }
@@ -175,6 +181,11 @@ fn completion_detail(
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
             .map(|path| format!("{path} written")),
+        "workspace_edit" => arguments
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(|path| format!("{path} edited")),
         "run_command" => arguments
             .get("program")
             .and_then(Value::as_str)

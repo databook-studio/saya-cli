@@ -194,6 +194,57 @@ impl DatabaseTools {
         // absent — whole-file writes only).
         if permit_workspace_writes {
             tools.push(ToolDefinition {
+                name: "workspace_edit".into(),
+                description: "Replace one anchored string in this run's workspace — the \
+                    contained directory holding this run's files. Pass `path` relative \
+                    to the workspace root, `old_text` as the exact text to find, and \
+                    `new_text` as its replacement; the anchor must match exactly once \
+                    — zero matches or multiple matches refuse and change nothing, \
+                    never \"first wins\". An empty anchor is rejected, anchor and \
+                    replacement over the bound refuse whole, and a non-UTF-8 target \
+                    is refused. Pass `expected_size` and/or `expected_digest` from \
+                    a fresh read to guard a moved anchor: a mismatch refuses with \
+                    no write. Returns the `path`, `bytes_replaced`, \
+                    `bytes_written`, `size`, and `digest`."
+                    .into(),
+                read_only: false,
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path relative to the workspace root."
+                        },
+                        "old_text": {
+                            "type": "string",
+                            "description": "The exact text to find; must occur exactly once."
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "description": "The replacement text stored in place of the anchor."
+                        },
+                        "expected_size": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Optional. The file size in bytes the anchor was measured against; a mismatch refuses with no write."
+                        },
+                        "expected_digest": {
+                            "type": "string",
+                            "description": "Optional. The file's sha256 hex digest the anchor was measured against; a mismatch refuses with no write."
+                        }
+                    },
+                    "required": ["path", "old_text", "new_text"],
+                    "additionalProperties": false
+                }),
+                effect: ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::WriteWorkspace,
+                },
+                completion: Some("workspace file edited".into()),
+            });
+            tools.push(ToolDefinition {
                 name: "workspace_write".into(),
                 description: "Write one file into this run's workspace — the contained \
                     directory holding this run's files. Pass `path` relative to the workspace \
@@ -457,6 +508,16 @@ pub(super) fn validate_arguments(
         "workspace_read" => (&["path"][..], false),
         "workspace_list" => (&["path"][..], false),
         "workspace_write" => (&["path", "content"][..], false),
+        "workspace_edit" => (
+            &[
+                "path",
+                "old_text",
+                "new_text",
+                "expected_size",
+                "expected_digest",
+            ][..],
+            false,
+        ),
         "glob" => (&["pattern"][..], false),
         "grep" => (&["pattern", "case_insensitive"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
@@ -485,6 +546,40 @@ pub(super) fn validate_arguments(
     }
     if name == "workspace_read" && !object.get("path").is_some_and(serde_json::Value::is_string) {
         return Err(ToolError::PathNotString);
+    }
+    // The `workspace_edit` arguments are typed the same way: required
+    // strings name their own error, and the optional `expected_*`
+    // precondition names its own when present-but-malformed — so the model
+    // can fix the right argument. No `append`, no read-side digest, no D15
+    // edit: this slice is the `replace` variant only.
+    if name == "workspace_edit" {
+        if !object.get("path").is_some_and(serde_json::Value::is_string) {
+            return Err(ToolError::PathNotString);
+        }
+        if !object
+            .get("old_text")
+            .is_some_and(serde_json::Value::is_string)
+        {
+            return Err(ToolError::OldTextNotString);
+        }
+        if !object
+            .get("new_text")
+            .is_some_and(serde_json::Value::is_string)
+        {
+            return Err(ToolError::NewTextNotString);
+        }
+        if object
+            .get("expected_size")
+            .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
+        {
+            return Err(ToolError::ExpectedSizeNotUint);
+        }
+        if object
+            .get("expected_digest")
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+        {
+            return Err(ToolError::ExpectedDigestNotString);
+        }
     }
     // Both `workspace_write` arguments are required strings; each names its
     // own typed error so the model can fix the right one.
