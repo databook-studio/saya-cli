@@ -13,9 +13,8 @@
 //! - **`run_program` once per session** — the sandbox, the placement guard,
 //!   and the probe are the runner module's (`session_runner`).
 //! - **The host-command lane composes once per session** (`session_host`):
-//!   off unless stated at launch (`--host-commands`, a `--allow command:<x>`
-//!   seed, or user-layer `[host_commands] enable`), and never without a
-//!   bound workspace root — no root, no lane, even with the flag.
+//!   wherever a workspace root binds — and never without one: no root, no
+//!   lane, structural, because the child's cwd is pinned to the root.
 //! - **Session state is not a child root.** `fs_roots` is the workspace
 //!   root exactly — the session state directory (`sessions/<id>/`, holding
 //!   the scratch DuckDB and the lock) is outside it, so a child cannot
@@ -38,15 +37,30 @@ use super::session_runner::{PROBE_REFUSED_NOTICE, SessionRunner, compose_runner}
 use super::session_workspace::{SessionWorkspace, bind_from_pins};
 use crate::agent::tools::{DatabaseTools, RunTools};
 
+/// The full composition's inputs, including the PATH seam: `path: None`
+/// is the no-PATH environment. Production fills it from the environment in
+/// [`SessionUniverse::compose_with_launch`]; the no-PATH test seam passes
+/// `None` directly, so no test mutates process-global state.
+pub(crate) struct SessionComposition<'a> {
+    pub(crate) runtime: &'a crate::config::runtime::RuntimeConfig,
+    pub(crate) explicit: Option<&'a Path>,
+    pub(crate) pinned_root: Option<&'a str>,
+    pub(crate) walk_when_unpinned: bool,
+    pub(crate) cwd: &'a Path,
+    pub(crate) state_dir: &'a Path,
+    pub(crate) launch: Option<&'a session_host::HostLaunch>,
+    pub(crate) path: Option<String>,
+}
+
 /// One interactive session's tool universe.
 pub(crate) struct SessionUniverse {
     workspace: Option<SessionWorkspace>,
     scratch: Option<Arc<ScratchSql>>,
     fetch: Option<Arc<FetchTools>>,
     runner: Option<SessionRunner>,
-    /// The host-command lane, when the launch stated it and a workspace root
-    /// bound: the executor config plus the facts the prompts consult. `None`
-    /// hides the tool everywhere — hidden, not advertised.
+    /// The host-command lane, when a workspace root bound: the executor
+    /// config plus the facts the prompts consult. `None` hides the tool
+    /// everywhere — hidden, not advertised.
     host: Option<SessionHost>,
     /// Whether a host command ran this session: `run_program`'s prompt gains
     /// the staged-binary integrity line from that moment (§3 rule 6). Shared
@@ -119,10 +133,12 @@ impl SessionUniverse {
         )
     }
 
-    /// Composes with the launch's host-command statement: the flag, the
-    /// `--allow command:<x>` seeds, and the user-layer `[host_commands]`.
-    /// `None` is the unstated lane — off by construction. The lane composes
-    /// only when stated **and** a workspace root binds.
+    /// Composes with the launch's host-command statement: the `--allow
+    /// command:<x>` seeds (which still seed the grant), the `--deny`
+    /// refusals, and the user-layer `[host_commands]` shaping. The lane
+    /// itself composes wherever a workspace root binds — a seed only seeds,
+    /// it no longer implies composition. `None` means no launch statement,
+    /// and the lane still composes where a root binds.
     pub(crate) fn compose_with_launch(
         runtime: &crate::config::runtime::RuntimeConfig,
         explicit: Option<&Path>,
@@ -132,6 +148,37 @@ impl SessionUniverse {
         state_dir: &Path,
         launch: Option<&session_host::HostLaunch>,
     ) -> Result<Self, String> {
+        Self::compose_with_launch_and_path(SessionComposition {
+            runtime,
+            explicit,
+            pinned_root,
+            walk_when_unpinned,
+            cwd,
+            state_dir,
+            launch,
+            path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
+        })
+    }
+
+    /// The full composer with the PATH seam explicit: `None` is the no-PATH
+    /// environment. Production reads the environment once at the seam above;
+    /// the no-PATH property pins this struct-carrying function with
+    /// `path: None` directly, so no test mutates the process environment.
+    /// One struct argument keeps the arity lint's budget (the struct is one
+    /// parameter); the seven-argument public seams above are untouched.
+    pub(crate) fn compose_with_launch_and_path(
+        composition: SessionComposition<'_>,
+    ) -> Result<Self, String> {
+        let SessionComposition {
+            runtime,
+            explicit,
+            pinned_root,
+            walk_when_unpinned,
+            cwd,
+            state_dir,
+            launch,
+            path,
+        } = composition;
         // The deny list, once per session: the launch's `--deny` refusals
         // plus the user-layer `[session_commands] deny`. Launch-only — a
         // mid-session deny over a held grant would leave a journaled token
@@ -169,32 +216,38 @@ impl SessionUniverse {
             probe_refused = composition.probe_notice.is_some();
             runner_composed = composition.runner;
         }
-        // The host lane, once per session: stated at launch (or in the user
-        // layer) and a workspace root bound — no root, no lane, even with
-        // the flag. The child's PATH is the parent's own. Unstated (`None`)
-        // composes no lane without touching the environment.
-        let host = match launch {
-            Some(launch) => {
-                let path_value = std::env::var("PATH")
-                    .map_err(|_| "the host-command lane needs PATH".to_owned())?;
-                session_host::compose_host(
-                    launch,
-                    workspace.as_ref().map(|bound| bound.root.as_path()),
-                    path_value,
-                )?
+        // The host lane, once per session: wherever a workspace root binds
+        // — no root, no lane, structural, because the child's cwd is pinned
+        // to the root. The child's PATH is the parent's own. With no root
+        // bound the lane composes nothing without touching the environment.
+        // A root-bound session with no PATH in the environment composes the
+        // lane away with the no-PATH notice instead of refusing the
+        // session: a missing PATH disables an optional lane, never startup.
+        let root = workspace.as_ref().map(|bound| bound.root.as_path());
+        let unstated;
+        let lane = match launch {
+            Some(lane) => lane,
+            None => {
+                unstated = session_host::HostLaunch::unstated(runtime);
+                &unstated
             }
-            None => None,
         };
-        let host_notice = match (&host, launch) {
-            (Some(_), Some(launch)) => session_host::launch_notice(
-                launch,
-                workspace.as_ref().map(|bound| bound.root.clone()),
-            ),
-            _ => None,
+        let (host, no_path_notice) = match root {
+            Some(_) => session_host::compose_host_lane(lane, root, path)?,
+            None => (session_host::compose_host(lane, None, String::new())?, None),
         };
+        // The startup notice names the exceptional shapes: a vanished pin,
+        // a refused probe, a missing PATH on a root-bound session. The
+        // composed lane is not exceptional — the lane composes wherever a
+        // root binds, and the status header's `host:` segment
+        // (`host:unsandboxed` / `host:off`) already carries the fact — so
+        // it rides no notice. The per-call ask under `ask`, and the bypass
+        // activation line's lane fact under `bypass`, carry the consent
+        // surfaces; there is nothing left for a "stated" frame to say, so
+        // `launch_notice` (which named it) deleted with the flag.
         let notice = notice
-            .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()))
-            .or(host_notice);
+            .or(no_path_notice)
+            .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()));
         Ok(Self {
             workspace,
             scratch: Some(Arc::new(scratch)),

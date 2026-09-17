@@ -19,9 +19,9 @@ pub struct ConfigFile {
     #[serde(default)]
     pub jobs: JobsFile,
     /// The `[host_commands]` section (H1): the unsandboxed second lane's own
-    /// opt-in — `enable`, `pass_env`, `timeout_seconds`. User-layer only; a
+    /// shaping — `pass_env`, `timeout_seconds`. User-layer only; a
     /// project-layer declaration is a typed resolve error (see `layers.rs`),
-    /// because a model-writable file must never enable unsandboxed execution.
+    /// because a model-writable file must never shape unsandboxed execution.
     #[serde(default)]
     pub host_commands: HostCommandsFile,
     /// The `[session_commands]` section (H1b): the user-stated deny list of
@@ -312,15 +312,15 @@ pub struct InterpreterJobsFile {
     pub allow: Option<Vec<String>>,
 }
 
-/// The `[host_commands]` section: the unsandboxed second lane's own opt-in.
-/// `enable` states the lane at launch-equivalent strength (user-layer only);
-/// `pass_env` names parent variables the built child environment carries;
-/// `timeout_seconds` is the per-call ceiling a call may narrow, never widen.
+/// The `[host_commands]` section: the unsandboxed second lane's own
+/// shaping. `pass_env` names parent variables the built child environment
+/// carries; `timeout_seconds` is the per-call ceiling a call may narrow,
+/// never widen. Neither shapes whether the lane composes — it composes
+/// wherever a workspace root binds — so there is no `enable` key: unknown
+/// fields (a stale `enable = true` included) refuse at parse.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct HostCommandsFile {
-    /// Whether the user layer enables the lane. `None` is off.
-    pub enable: Option<bool>,
     /// Parent variables the child receives, by name.
     #[serde(default)]
     pub pass_env: Vec<String>,

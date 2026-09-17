@@ -60,10 +60,11 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // the process; the lock releases when it drops.
     //
     // The host lane composes here, once per session: the launch statement
-    // (the flag, the `--allow command:<x>` seeds, the user-layer config) is
-    // read, the universe composes with it, and the seeds land in the grant
-    // store before anything runs. A seed the composition cannot carry is a
-    // launch usage error — never a silently dropped token. A resumed session
+    // (the `--allow command:<x>` seeds — which seed the grant, never imply
+    // composition — the `--deny` refusals, the user-layer config) is read,
+    // the universe composes with it, and the seeds land in the grant store
+    // before anything runs. A seed the composition cannot carry is a launch
+    // usage error — never a silently dropped token. A resumed session
     // restarts unstated: grants die with the process, and the launch
     // statement belonged to the previous process.
     let launch = super::session_host::HostLaunch::from_options(&cli.options, &runtime);
@@ -96,12 +97,12 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         &default_session_dir(),
     )?;
     // Recompose with the launch statement on a fresh start: `acquire`
-    // composed unstated (off by construction), and the lane composes only
-    // when stated **and** a workspace root binds. The deny list rides the
+    // composed without the launch's deny refusals. The deny list rides the
     // same recomposition — refusal-only, composes nothing — so a deny-only
-    // launch still composes its refusals. This keeps one composer —
-    // `compose_with_launch` — behind both paths.
-    if fresh && (launch.composes_lane() || !launch.deny_list().is_empty()) {
+    // launch still composes its refusals. The lane itself composes wherever
+    // a root binds regardless, through the same composer — one composer
+    // behind both paths — so every fresh start recomposes.
+    if fresh {
         let recomposed = super::session_universe::SessionUniverse::compose_with_launch(
             &runtime,
             cli.options.workspace.as_deref(),

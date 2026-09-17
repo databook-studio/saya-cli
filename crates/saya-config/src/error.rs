@@ -128,13 +128,14 @@ pub enum ConfigError {
     )]
     SessionCommandsFromProject,
     /// A project-layer `[host_commands]` section: a model-writable file must
-    /// never enable (or shape) unsandboxed execution. A hard refusal — the
-    /// project file is model-writable once `workspace_write` is granted, and
+    /// never shape unsandboxed execution — not enable it, not widen its
+    /// timeout, not name its env. A hard refusal — the project file is
+    /// model-writable once `workspace_write` is granted, and
     /// `--trust-project-config` does not unlock it. No deny-list stub rides
     /// along: H2 owns deny.
     #[error(
         "project-layer [host_commands] is refused: the project config is model-writable once \
-         workspace_write is granted, and a model-writable file must never enable unsandboxed \
+         workspace_write is granted, and a model-writable file must never shape unsandboxed \
          execution; state host commands in your user config or at launch instead"
     )]
     HostCommandsFromProject,

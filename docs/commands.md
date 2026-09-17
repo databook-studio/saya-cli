@@ -24,13 +24,14 @@ saya query --profile analytics --sql "select 1"
 Global flags include `--config`, `--connections`, `--env-file`, `--profile`,
 `--include-profile <profile>` (repeatable flag to connect additional read-only databases), `--approval-mode ask|read-only|never|bypass`, `--format
 text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
-`--host-commands`, `--allow <scopes>`, `--deny <program>` (repeatable), and
+`--allow <scopes>`, `--deny <program>` (repeatable), and
 `--verbose`. `--workspace <dir>` (the interactive session only) binds the
 session's workspace root explicitly; without it the root is the git worktree
 top above the launch directory, and outside any worktree nothing binds.
-`--host-commands` enables the host-command lane for the interactive session
-(`run_command` runs PATH-resolved programs unsandboxed — as your user, with
-your whole filesystem and network); `--deny` states the session's deny list
+The host-command lane composes in the interactive session wherever a
+workspace root binds (`run_command` runs PATH-resolved programs
+unsandboxed — as your user, with your whole filesystem and network; no root,
+no lane); `--deny` states the session's deny list
 of bare program names, evaluated before every grant, every approval prompt,
 and bypass. Under bypass, a hostile workspace file is effectively arbitrary
 code execution as the user.

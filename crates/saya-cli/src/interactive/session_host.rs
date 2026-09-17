@@ -1,53 +1,41 @@
 //! The session's host-command lane composition, once per session process:
-//! the unsandboxed second lane's own opt-in. The lane is off unless stated
-//! at launch — `--host-commands`, a `--allow command:<x>` seed (which
-//! implies composition), or user-layer `[host_commands] enable` — and it
-//! never composes without a bound workspace root: no root, no lane, even
-//! with the flag. A project-layer `[host_commands]` is a typed resolve
-//! error before this module ever runs (see `saya-config`), because a
-//! model-writable file must never enable unsandboxed execution.
+//! the unsandboxed second lane, composed wherever a workspace root binds.
+//! The lane needs no declaration: the per-call ask is the gate under `ask`,
+//! and choosing `--approval-mode bypass` is itself the deliberate act, so
+//! the lane composes with no root-bound session unstated. It never composes
+//! without a bound workspace root: no root, no lane — structural, not
+//! ceremony, because the child's cwd is pinned to the root. A
+//! project-layer `[host_commands]` is a typed resolve error before this
+//! module ever runs (see `saya-config`), because a model-writable file must
+//! never shape unsandboxed execution.
 //!
 //! The lane is **not contained**: the child runs as the user's uid with the
 //! whole filesystem and network, resolved on the user's PATH. Nothing here
 //! claims a bound the code does not apply — H0's module header is the
 //! register this module matches.
 
-use std::path::PathBuf;
-
-/// What the launch stated about the lane: the flag, the `--allow` seeds,
-/// the `--deny` refusals, and the user-layer config — read together, once,
-/// at composition.
+/// What the launch stated about the lane: the `--allow` seeds, the `--deny`
+/// refusals, and the user-layer config — read together, once, at
+/// composition. Nothing here decides whether the lane composes: a bound
+/// root does.
 pub(crate) struct HostLaunch {
-    flag: bool,
     seeds: Vec<String>,
     deny: Vec<String>,
-    config_enabled: bool,
     config: saya_config::ResolvedHostCommands,
 }
 
 impl HostLaunch {
-    /// Reads the launch statement: the `--host-commands` flag, the session's
-    /// `--allow` seeds and `--deny` refusals, and the resolved user-layer
-    /// `[host_commands]`.
+    /// Reads the launch statement: the session's `--allow` seeds and
+    /// `--deny` refusals, and the resolved user-layer `[host_commands]`.
     pub(crate) fn from_options(
         options: &crate::cli::GlobalOptions,
         runtime: &RuntimeConfig,
     ) -> Self {
         Self {
-            flag: options.host_commands,
             seeds: options.allow.clone(),
             deny: options.deny.clone(),
-            config_enabled: runtime.resolved.host_commands.enabled,
             config: runtime.resolved.host_commands.clone(),
         }
-    }
-
-    /// True when the launch stated the lane: the flag, any `command:` seed
-    /// (the seed implies composition), or user-layer `enable`.
-    pub(crate) fn composes_lane(&self) -> bool {
-        self.flag
-            || self.config_enabled
-            || self.seeds.iter().any(|seed| seed.starts_with("command:"))
     }
 
     /// The `command:` seeds the launch stated, verbatim and in order.
@@ -59,28 +47,38 @@ impl HostLaunch {
             .collect()
     }
 
-    /// The test seam: a stated lane (flag-equivalent) over the runtime's own
-    /// resolved `[host_commands]`.
-    #[cfg(test)]
-    pub(crate) fn for_tests_stated(runtime: &RuntimeConfig) -> Self {
+    /// A launch with no statement: no seeds, no refusals, over the
+    /// runtime's own resolved `[host_commands]` shaping. The lane still
+    /// composes wherever a root binds — unstated is not off.
+    pub(crate) fn unstated(runtime: &RuntimeConfig) -> Self {
         Self {
-            flag: true,
             seeds: Vec::new(),
             deny: Vec::new(),
-            config_enabled: runtime.resolved.host_commands.enabled,
             config: runtime.resolved.host_commands.clone(),
         }
     }
 
-    /// The test seam: an unstated lane carrying only `--deny` refusals —
-    /// refusal-only, composes nothing.
+    /// The test seam: a launch over the runtime's own resolved
+    /// `[host_commands]`.
+    #[cfg(test)]
+    pub(crate) fn for_tests_stated(runtime: &RuntimeConfig) -> Self {
+        Self::from_options(
+            &crate::cli::GlobalOptions {
+                allow: Vec::new(),
+                deny: Vec::new(),
+                ..Default::default()
+            },
+            runtime,
+        )
+    }
+
+    /// The test seam: a launch carrying only `--deny` refusals —
+    /// refusal-only, composes nothing on its own.
     #[cfg(test)]
     pub(crate) fn from_deny_for_tests(deny: Vec<String>) -> Self {
         Self {
-            flag: false,
             seeds: Vec::new(),
             deny,
-            config_enabled: false,
             config: saya_config::ResolvedHostCommands::default(),
         }
     }
@@ -95,7 +93,7 @@ impl HostLaunch {
     /// surface). The session loop seeds through
     /// `session_grants::seed_launch_allow` instead (which journals); this
     /// stays as the launch helper's unit — exercised by the host tests
-    /// below — so the seed-implies-composition half has a direct pin.
+    /// below.
     pub(crate) fn seed_grants(
         &self,
         grants: &saya_agent::SessionGrants,
@@ -114,9 +112,36 @@ impl HostLaunch {
 
 use crate::config::runtime::RuntimeConfig;
 
+/// The no-PATH fact, said on the composition notice seam at startup: the
+/// lane needs the parent's PATH to resolve the child's programs, so without
+/// one the lane composes nothing — and the session continues without it.
+/// The register matches the unbound-workspace notice: the fact, why the
+/// tool is absent, and the remedy.
+pub(crate) const NO_PATH_NOTICE: &str = "No PATH is set, so the host-command lane is not composed: \
+    run_command is unavailable; set PATH to reach host programs.";
+
+/// Composes the lane from an explicit PATH value: `None` — no PATH in the
+/// environment — composes the lane away with the no-PATH notice, never an
+/// error. A missing PATH disables the lane, not the session: cron jobs,
+/// systemd units, and minimal containers start fine, minus `run_command`.
+/// `Some` composes through [`compose_host`] unchanged.
+pub(crate) fn compose_host_lane(
+    launch: &HostLaunch,
+    workspace_root: Option<&std::path::Path>,
+    path: Option<String>,
+) -> Result<(Option<SessionHost>, Option<String>), String> {
+    let Some(root) = workspace_root else {
+        return Ok((None, None));
+    };
+    let Some(path_value) = path else {
+        return Ok((None, Some(NO_PATH_NOTICE.to_owned())));
+    };
+    Ok((compose_host(launch, Some(root), path_value)?, None))
+}
+
 /// What composing the lane produced: the executor config plus the facts the
-/// prompts and `/allow` consult — or nothing, when the launch did not state
-/// the lane or no workspace root bound.
+/// prompts and `/allow` consult — or nothing, when no workspace root bound
+/// or no PATH is set (the no-PATH seam above composes the lane away).
 pub(crate) struct SessionHost {
     /// The executor configuration: the child's PATH, ceiling, and passed
     /// variables — built once, shared across calls.
@@ -125,18 +150,16 @@ pub(crate) struct SessionHost {
     pub(crate) facts: crate::approval_facts::HostFacts,
 }
 
-/// Composes the lane once: stated at launch (or in the user layer) **and** a
-/// workspace root bound — no root, no lane, even with the flag. `path_value`
-/// is the exact PATH the child receives; under Windows the lane fails
-/// closed (the group-kill core is unix-verified, the runner's posture).
+/// Composes the lane once: wherever a workspace root binds — no root, no
+/// lane, structural, because the child's cwd is pinned to the root.
+/// `path_value` is the exact PATH the child receives; under Windows the
+/// lane fails closed (the group-kill core is unix-verified, the runner's
+/// posture).
 pub(crate) fn compose_host(
     launch: &HostLaunch,
     workspace_root: Option<&std::path::Path>,
     path_value: String,
 ) -> Result<Option<SessionHost>, String> {
-    if !launch.composes_lane() {
-        return Ok(None);
-    }
     let Some(root) = workspace_root else {
         return Ok(None);
     };
@@ -169,25 +192,4 @@ pub(crate) fn compose_host(
             pass_env: launch.config.pass_env.clone(),
         },
     }))
-}
-
-/// The launch's own words about what it stated: the flag, the seeds, and the
-/// user-layer enable — for the session-startup notice. Nothing secret rides
-/// it: `pass_env` names travel, values never do.
-pub(crate) fn launch_notice(launch: &HostLaunch, _root: Option<PathBuf>) -> Option<String> {
-    if !launch.composes_lane() {
-        return None;
-    }
-    let mut parts = vec!["host commands: unsandboxed lane stated".to_owned()];
-    if launch.flag {
-        parts.push("`--host-commands`".to_owned());
-    }
-    let seeds = launch.command_seeds();
-    if !seeds.is_empty() {
-        parts.push(format!("seeded: {}", seeds.join(", ")));
-    }
-    if launch.config_enabled {
-        parts.push("user `[host_commands] enable`".to_owned());
-    }
-    Some(parts.join(" — "))
 }

@@ -207,10 +207,6 @@ pub(crate) fn resolve_session_deny(
 /// Effective host-command defaults, resolved from `[host_commands]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedHostCommands {
-    /// Whether the lane is stated on: the launch flag, a launch
-    /// `--allow command:<x>` seed, or user-layer `enable` — never the
-    /// project layer, which is a typed resolve error.
-    pub enabled: bool,
     /// Parent variables the built child environment carries, by name.
     pub pass_env: Vec<String>,
     /// Per-call ceiling in seconds; a call may narrow it, never widen it.
@@ -220,7 +216,6 @@ pub struct ResolvedHostCommands {
 impl Default for ResolvedHostCommands {
     fn default() -> Self {
         Self {
-            enabled: false,
             pass_env: Vec::new(),
             timeout_seconds: HOST_COMMANDS_TIMEOUT_SECONDS,
         }
@@ -416,10 +411,11 @@ fn resolve_interpreter(
     Ok(ResolvedInterpreterJobs { allow })
 }
 
-/// Resolves `[host_commands]`: `enable` is a plain bool, `pass_env` names
-/// must be well-formed `NAME=value` names (the child's own rule, checked
-/// here so a typo fails at resolve, not at spawn), and `timeout_seconds`
-/// follows the one-second-floor discipline. Every key is optional.
+/// Resolves `[host_commands]`: `pass_env` names must be well-formed
+/// `NAME=value` names (the child's own rule, checked here so a typo fails
+/// at resolve, not at spawn), and `timeout_seconds` follows the
+/// one-second-floor discipline. Every key is optional; shaping keys only —
+/// neither decides whether the lane composes.
 pub(crate) fn resolve_host_commands(
     file: crate::model::HostCommandsFile,
 ) -> Result<ResolvedHostCommands, ConfigError> {
@@ -436,7 +432,6 @@ pub(crate) fn resolve_host_commands(
         .unwrap_or(HOST_COMMANDS_TIMEOUT_SECONDS);
     require_at_least_one("host_commands.timeout_seconds", timeout_seconds)?;
     Ok(ResolvedHostCommands {
-        enabled: file.enable.unwrap_or(false),
         pass_env,
         timeout_seconds,
     })

@@ -33,15 +33,22 @@ fn a_denied_name_refuses_at_every_door_before_prompt_grant_and_bypass() {
     );
 }
 
-/// 2. `--deny` alone composes nothing and gates the contained doors
-///    (refusal-only; gates the doors every session has, lane off included).
+/// 2. `--deny` alone seeds no grant and gates the contained doors
+///    (refusal-only; gates the doors every session has). It carries no
+///    `command:` seed, so it seeds nothing — composition itself is the
+///    root's job now, not the launch's. Kept whole (reason: the deny-only
+///    half never keyed on the deleted `composes_lane`; only the lane-off
+///    assertion's vocabulary moved).
 #[test]
 fn the_deny_flag_composes_nothing_and_gates_the_contained_doors() {
+    // G2 property 6's unit half lives here (reason: the deny-only launch
+    // is the natural home for "seeds nothing, still refuses"); the
+    // end-to-end ask/bypass refusal half pins in `host_h3_red_tests`.
     let launch =
         crate::interactive::session_host::HostLaunch::from_deny_for_tests(vec!["curl".to_owned()]);
     assert!(
-        !launch.composes_lane(),
-        "--deny alone must not compose the host lane"
+        launch.command_seeds().is_empty(),
+        "--deny alone seeds nothing"
     );
     assert_eq!(
         launch.deny_list(),

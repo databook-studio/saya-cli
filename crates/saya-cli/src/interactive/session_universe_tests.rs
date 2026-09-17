@@ -134,7 +134,7 @@ fn advertised(universe: &SessionUniverse, mode: ApprovalPolicy, can_prompt: bool
 }
 
 /// The lane's advertisement follows the mode rule — read-only and never
-/// sessions never see the tool — and a stated lane advertises under ask
+/// sessions never see the tool — and a composed lane advertises under ask
 /// (with a prompt) and under bypass. The universe helper composes the lane
 /// here through the stated-launch helper below.
 #[test]
@@ -167,20 +167,131 @@ fn the_lane_s_advertisement_follows_the_mode_rule() {
     let ask_names = advertised(&universe, ApprovalPolicy::Ask, true);
     assert!(
         ask_names.contains(&"run_command".to_string()),
-        "a stated lane advertises under ask with a prompt: {ask_names:?}"
+        "a composed lane advertises under ask with a prompt: {ask_names:?}"
     );
     let bypass_names = advertised(&universe, ApprovalPolicy::Bypass, false);
     assert!(
         bypass_names.contains(&"run_command".to_string()),
-        "a stated lane advertises under bypass: {bypass_names:?}"
+        "a composed lane advertises under bypass: {bypass_names:?}"
     );
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
 
-/// No workspace root, no lane — even with the stated flag. The tool stays
-/// hidden, not advertised.
+/// No-PATH property 1 — a session without PATH still starts: no host
+/// lane, and everything else works (SQL, schema, workspace file tools,
+/// approvals).
 #[test]
-fn no_workspace_no_lane_even_with_the_flag() {
+fn a_session_without_path_still_starts() {
+    let project = worktree("no-path-starts");
+    let state = temp_dir("no-path-starts-state");
+    let runtime = session_runtime(None);
+    // The full composer with the PATH seam explicit: `None` is the no-PATH
+    // environment (no process-environment mutation — the seam carries it).
+    let universe = SessionUniverse::compose_with_launch_and_path(
+        crate::interactive::session_universe::SessionComposition {
+            runtime: &runtime,
+            explicit: None,
+            pinned_root: None,
+            walk_when_unpinned: true,
+            cwd: &project,
+            state_dir: &state,
+            launch: None,
+            path: None,
+        },
+    )
+    .expect("a session without PATH still starts");
+    assert!(
+        universe.host_composed_for_tests().is_none(),
+        "no PATH: the lane composes nothing"
+    );
+    assert!(
+        universe.root().is_some(),
+        "the root still binds without PATH"
+    );
+    let notice = universe
+        .notice
+        .as_deref()
+        .expect("no PATH says so at startup");
+    assert!(
+        notice.contains("No PATH is set"),
+        "the notice states the fact: {notice:?}"
+    );
+    // Everything else works: the session's own surface is intact — SQL,
+    // schema reads, workspace file tools, and approvals.
+    let ask_names = advertised(&universe, ApprovalPolicy::Ask, true);
+    for tool in [
+        "scratch_sql",
+        "http_fetch",
+        "workspace_write",
+        "http_download",
+    ] {
+        assert!(
+            ask_names.contains(&tool.to_string()),
+            "no PATH keeps {tool}: {ask_names:?}"
+        );
+    }
+    assert!(
+        !ask_names.contains(&"run_command".to_string()),
+        "only the lane is gone: {ask_names:?}"
+    );
+    assert!(
+        universe.workspace().is_some(),
+        "workspace file tools still compose without PATH"
+    );
+    assert!(
+        universe.approval_facts(&runtime).host.is_none(),
+        "the host lane contributes no approval facts without PATH"
+    );
+    // Deny still composes: the lane-blind list gates every session's own
+    // doors even with the lane off.
+    let launch =
+        crate::interactive::session_host::HostLaunch::from_deny_for_tests(vec!["curl".to_owned()]);
+    let denied = SessionUniverse::compose_with_launch_and_path(
+        crate::interactive::session_universe::SessionComposition {
+            runtime: &runtime,
+            explicit: None,
+            pinned_root: None,
+            walk_when_unpinned: true,
+            cwd: &project,
+            state_dir: &state,
+            launch: Some(&launch),
+            path: None,
+        },
+    )
+    .expect("deny composes without PATH too");
+    assert!(
+        denied.deny_programs().contains(&"curl".to_string()),
+        "the deny list rides the no-PATH session: {:?}",
+        denied.deny_programs()
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// No-PATH property 2 — the missing-PATH notice names the fact, the
+/// consequence, and the remedy, in the unbound-workspace register.
+#[test]
+fn the_missing_path_notice_names_fact_consequence_and_remedy() {
+    use crate::interactive::session_host::NO_PATH_NOTICE;
+    assert!(
+        NO_PATH_NOTICE.contains("No PATH is set"),
+        "the notice states the fact: {NO_PATH_NOTICE:?}"
+    );
+    assert!(
+        NO_PATH_NOTICE.contains("run_command is unavailable"),
+        "the notice names the consequence: {NO_PATH_NOTICE:?}"
+    );
+    assert!(
+        NO_PATH_NOTICE.contains("set PATH"),
+        "the notice names the remedy: {NO_PATH_NOTICE:?}"
+    );
+}
+
+/// G2 property 2 — no workspace root, no lane. The tool stays hidden,
+/// not advertised. Moved from `no_workspace_no_lane_even_with_the_flag`
+/// (reason: there is no flag to state any more; the pin is the no-root
+/// shape, unstated included).
+#[test]
+fn no_root_still_no_lane() {
     let plain = temp_dir("host-no-worktree");
     let state = temp_dir("host-no-worktree-state");
     let runtime = session_runtime(None);
@@ -197,7 +308,7 @@ fn no_workspace_no_lane_even_with_the_flag() {
     .expect("composition succeeds without a root");
     assert!(
         universe.host_composed_for_tests().is_none(),
-        "no workspace root: the lane does not compose even when stated"
+        "no workspace root: the lane does not compose"
     );
     // The unstated shape composes the same way: the helper exists so the
     // pin reads as one call.
@@ -210,6 +321,11 @@ fn no_workspace_no_lane_even_with_the_flag() {
     assert!(
         !names.contains(&"run_command".to_string()),
         "hidden, not advertised: {names:?}"
+    );
+    let bypass_names = advertised(&universe, ApprovalPolicy::Bypass, false);
+    assert!(
+        !bypass_names.contains(&"run_command".to_string()),
+        "hidden under bypass too, not advertised: {bypass_names:?}"
     );
     let _ = (fs::remove_dir_all(&plain), fs::remove_dir_all(&state));
 }
@@ -1100,6 +1216,34 @@ fn a_bound_session_carries_no_such_notice() {
         universe.notice.is_none(),
         "a bound session stays silent: {:?}",
         universe.notice
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// G2 property 1 (slices 3-5) — the unstated lane composes wherever a
+/// workspace root binds: the plain `compose` path (no launch statement)
+/// over a worktree carries the lane, and advertises `run_command` under
+/// ask-with-prompt and under bypass.
+#[test]
+fn unstated_lane_composes_where_a_root_binds() {
+    let project = worktree("unstated-lane");
+    let state = temp_dir("unstated-lane-state");
+    let universe =
+        SessionUniverse::compose(&session_runtime(None), None, None, true, &project, &state)
+            .expect("composition succeeds on a worktree");
+    assert!(
+        universe.host_composed_for_tests().is_some(),
+        "a bound root composes the lane with no statement"
+    );
+    let ask_names = advertised(&universe, ApprovalPolicy::Ask, true);
+    assert!(
+        ask_names.contains(&"run_command".to_string()),
+        "the unstated lane advertises under ask with a prompt: {ask_names:?}"
+    );
+    let bypass_names = advertised(&universe, ApprovalPolicy::Bypass, false);
+    assert!(
+        bypass_names.contains(&"run_command".to_string()),
+        "the unstated lane advertises under bypass: {bypass_names:?}"
     );
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
