@@ -42,6 +42,10 @@ pub struct ReadFile {
     pub size: u64,
     /// Whether `bytes` was capped at the read bound.
     pub truncated: bool,
+    /// Lowercase hex sha256 of the file's whole bytes — streamed in one
+    /// open, so the digest never costs the model a second read and never
+    /// serves content beyond the bound.
+    pub digest: String,
 }
 
 /// The kind of one directory entry as [`Workspace::list`] reports it.
@@ -101,13 +105,17 @@ impl Workspace {
     /// Reads a workspace file under containment: validation, a no-follow
     /// open, and a post-open identity check so the bytes served belong to
     /// the file that was scanned. At most `max_bytes` are returned, with
-    /// `truncated` set when the file holds more.
+    /// `truncated` set when the file holds more; the digest covers the whole
+    /// file — hashed in the same open, streamed in chunks — so a truncated
+    /// read still names the state an edit precondition can state.
     pub fn read(&self, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
         #[cfg(unix)]
         return super::anchored::read(self, rel, max_bytes);
 
         #[cfg(not(unix))]
         {
+            use sha2::{Digest, Sha256};
+
             let path = self.target(rel, false)?;
             let pre = fs::symlink_metadata(&path)
                 .map_err(|error| io_error("read workspace file", &path, error))?;
@@ -123,18 +131,34 @@ impl Workspace {
             }
             let file = self.open_verified(&path, &pre, rel)?;
             let mut bytes = Vec::new();
-            (&file)
-                .take(max_bytes.saturating_add(1))
-                .read_to_end(&mut bytes)
-                .map_err(|error| io_error("read workspace file", &path, error))?;
-            let truncated = bytes.len() as u64 > max_bytes;
-            if truncated {
-                bytes.truncate(max_bytes as usize);
+            let mut hasher = Sha256::new();
+            let mut chunk = [0u8; 64 * 1024];
+            let mut kept = 0u64;
+            loop {
+                use std::io::Read as _;
+
+                let read = (&file)
+                    .read(&mut chunk)
+                    .map_err(|error| io_error("read workspace file", &path, error))?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&chunk[..read]);
+                let room = max_bytes.saturating_sub(kept) as usize;
+                let take = read.min(room);
+                bytes.extend_from_slice(&chunk[..take]);
+                kept += take as u64;
             }
+            let digest: String = hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
             Ok(ReadFile {
                 bytes,
                 size: pre.len(),
-                truncated,
+                truncated: pre.len() > max_bytes,
+                digest,
             })
         }
     }

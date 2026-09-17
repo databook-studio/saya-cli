@@ -13,9 +13,9 @@ use saya_agent::{LocalStateEffect, ToolError, ToolExecutor};
 use saya_harness::workspace::Workspace;
 
 use super::database_tools::{
-    WORKSPACE_GLOB_MAX_MATCHES, WORKSPACE_GLOB_MAX_VISITED, WORKSPACE_GREP_MAX_LINE_BYTES,
-    WORKSPACE_GREP_MAX_MATCHES, WORKSPACE_GREP_MAX_VISITED, WORKSPACE_LIST_MAX_ENTRIES,
-    WORKSPACE_READ_MAX_BYTES,
+    WORKSPACE_GLOB_MAX_MATCHES, WORKSPACE_GLOB_MAX_VISITED, WORKSPACE_GREP_MAX_FILE_BYTES,
+    WORKSPACE_GREP_MAX_LINE_BYTES, WORKSPACE_GREP_MAX_MATCHES, WORKSPACE_GREP_MAX_VISITED,
+    WORKSPACE_LIST_MAX_ENTRIES,
 };
 
 /// A sandbox workspace under the OS temp dir, removed on drop. The root sits
@@ -449,14 +449,14 @@ async fn grep_honours_the_case_insensitive_flag() {
     assert_eq!(hits[0]["line"].as_u64(), Some(1));
 }
 
-/// A file bigger than the per-file read bound is skipped whole, never
+/// A file bigger than the per-file search horizon is skipped whole, never
 /// half-searched: a hit list over a prefix would read as full coverage. A
 /// non-UTF-8 file is skipped rather than served as mojibake. Both land in
 /// `files_skipped`, so a miss is never mistaken for proof of absence.
 #[tokio::test]
 async fn grep_skips_oversized_and_non_utf8_files_and_counts_the_skips() {
     let sandbox = Sandbox::new("grep-skip");
-    let mut oversized = vec![b'a'; WORKSPACE_READ_MAX_BYTES as usize];
+    let mut oversized = vec![b'a'; WORKSPACE_GREP_MAX_FILE_BYTES as usize];
     oversized.extend_from_slice(b"needle");
     sandbox
         .ws

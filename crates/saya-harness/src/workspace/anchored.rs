@@ -9,6 +9,8 @@
 
 use std::{ffi::OsStr, io, io::Read, os::fd::AsRawFd};
 
+use sha2::{Digest, Sha256};
+
 use super::anchor::Anchor;
 use super::contain::{EntryKind, ListEntry, ReadFile, Workspace};
 use super::fd::{DirStream, FinalStat, open_dir_at, stat_at};
@@ -17,7 +19,9 @@ use crate::{HarnessError, io_error};
 /// Reads a workspace file under containment: the anchored walk, a no-follow
 /// open, and a post-open identity check so the bytes served belong to the
 /// file that was scanned. At most `max_bytes` are returned, with `truncated`
-/// set when the file holds more.
+/// set when the file holds more. The digest covers the whole file — hashed
+/// in the same open, streamed in 64 KiB chunks — so a truncated read still
+/// names the state an edit precondition can state.
 pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
     let anchor = ws.anchor(rel, false)?;
     let stat = final_stat(&anchor, "read workspace file")?;
@@ -33,19 +37,34 @@ pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile
     }
     let file = anchor.open_verified(stat.identity(), rel)?;
     let mut bytes = Vec::new();
-    (&file)
-        .take(max_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|error| io_error("read workspace file", anchor.path(), error))?;
-    let truncated = bytes.len() as u64 > max_bytes;
-    if truncated {
-        bytes.truncate(max_bytes as usize);
+    let mut hasher = Sha256::new();
+    let mut chunk = [0u8; 64 * 1024];
+    let mut kept = 0u64;
+    loop {
+        let read = (&file)
+            .read(&mut chunk)
+            .map_err(|error| io_error("read workspace file", anchor.path(), error))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&chunk[..read]);
+        let room = max_bytes.saturating_sub(kept) as usize;
+        let take = read.min(room);
+        bytes.extend_from_slice(&chunk[..take]);
+        kept += take as u64;
     }
+    let truncated = stat.len() > max_bytes;
     Ok(ReadFile {
         bytes,
         size: stat.len(),
         truncated,
+        digest: hex_digest(&hasher.finalize()),
     })
+}
+
+/// Lowercase hex of a sha256 digest.
+fn hex_digest(digest: &[u8]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Writes a workspace file atomically: temp file at 0600 inside the anchored

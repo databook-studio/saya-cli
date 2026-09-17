@@ -56,10 +56,13 @@ impl DatabaseTools {
             description: "Read one file from this run's workspace — the contained \
                 directory holding this run's files. Pass `path` relative to the \
                 workspace root; absolute paths, `..` escapes, and symlinks are \
-                refused. Returns `content`, the file's full `size` in bytes, and \
-                `truncated`. Read `truncated` first: when it is true, `content` is \
-                only a prefix capped at the read bound — use `size` to judge how \
-                much was cut, and never present capped content as the whole file."
+                refused. Returns `content`, the file's full `size` in bytes, \
+                `truncated`, and `digest` — the sha256 of the file's whole \
+                bytes, so a truncated read still names the state an \
+                `expected_digest` edit precondition can state. Read `truncated` \
+                first: when it is true, `content` is only a prefix capped at \
+                the read bound — use `size` to judge how much was cut, and \
+                never present capped content as the whole file."
                 .into(),
             read_only: true,
             parameters: serde_json::json!({
