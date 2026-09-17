@@ -54,7 +54,7 @@ fn membership_line(program: &str, facts: &RunnerFacts) -> (&'static str, String)
             (
                 "",
                 format!(
-                    "  program: {program} — refused by name: shells and interpreters are refused"
+                    "  program: {program} — refused by name: shells and interpreters are refused — stage it in `[jobs.interpreter] allow`"
                 ),
             )
         }

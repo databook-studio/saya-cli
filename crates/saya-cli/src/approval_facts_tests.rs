@@ -296,6 +296,50 @@ fn an_unstaged_interpreter_call_offers_two_answers_not_three() {
     );
 }
 
+/// Slice 1: the unstaged-interpreter membership line names the staging fix.
+/// With `[jobs.interpreter]` empty the `python3` prompt keeps "refused by
+/// name" and additionally names `[jobs.interpreter] allow` as the fix, in
+/// the `/allow` refusal's register; the staged prompt keeps its own
+/// "staged in …" wording and stays a non-refusal. `contains`-shaped only —
+/// the session line may drift, never byte-pinned.
+#[test]
+fn an_unstaged_interpreter_prompt_names_the_staging_fix() {
+    let mut facts = session_facts();
+    if let Some(runner) = facts.runner.as_mut() {
+        runner.interpreter_programs = Vec::new();
+    }
+    let tool = session_tool("run_program");
+    let arguments = serde_json::json!({"program": "python3", "args": ["-c", "print(1)"]});
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
+    let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
+    assert!(
+        prompt.contains("refused by name"),
+        "the refusal stands: {prompt}"
+    );
+    assert!(
+        prompt.contains("[jobs.interpreter] allow"),
+        "the unstaged line names the staging fix: {prompt}"
+    );
+    let staged = session_facts();
+    let staged_grant = grant_token(&tool.name, &arguments, None, &staged);
+    let staged_prompt = approval_prompt(
+        &tool,
+        &arguments,
+        staged_grant.as_deref(),
+        &staged,
+        None,
+        None,
+    );
+    assert!(
+        staged_prompt.contains("staged in [jobs.interpreter] allow"),
+        "the staged line keeps its own state: {staged_prompt}"
+    );
+    assert!(
+        !staged_prompt.contains("refused by name"),
+        "the staged call is not a refusal: {staged_prompt}"
+    );
+}
+
 /// The honest case the fix must not silence: with the interpreter staged
 /// the same call offers the token the grant records — three answers, the
 /// third naming `interpreter:python3` verbatim.
