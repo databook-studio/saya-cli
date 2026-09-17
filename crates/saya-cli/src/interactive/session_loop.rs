@@ -331,9 +331,11 @@ fn run_plain_loop(ctx: &mut TurnContext) -> Result<(), Box<dyn std::error::Error
     // A startup fact the user must read once, in the loop they will see every
     // turn: a pinned root that vanished, or any other composition notice —
     // and, under bypass, the mode's activation line with its no-euphemism
-    // wording and the probe/absence facts.
+    // wording and the probe/absence facts. Said as a diagnostic: the loop's
+    // stdout contract is the turn stream (JSON under `--format`), and a bare
+    // notice line would corrupt it.
     if let Some(notice) = ctx.session.notice() {
-        println!("{notice}");
+        eprintln!("{notice}");
     }
     if let Some(line) =
         super::session_activation::line_if_bypass(ctx.state, ctx.runtime, &ctx.session.universe())

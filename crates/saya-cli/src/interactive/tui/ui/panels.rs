@@ -1,7 +1,9 @@
 //! Transcript and empty-state rendering.
 
 use super::markdown::markdown_spans_fenced;
-use super::splash::{NO_DATABASE_FOOTER, NO_DATABASE_HEADLINE, NO_DATABASE_STEPS, splash_art};
+use super::splash::{
+    NO_DATABASE_FOOTER, NO_DATABASE_HEADLINE, NO_DATABASE_STEPS, NO_WORKSPACE_LINES, splash_art,
+};
 use super::theme::{accent, kind_style, rail_style, secondary, warning};
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
@@ -72,7 +74,16 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 /// Draws a centered splash/empty state shown before the first conversation turn.
-pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
+///
+/// `workspace_bound` decides the workspace paragraph: `None` (no root
+/// bound) draws the unbound line beside — never instead of — the
+/// no-database guidance, so the two orthogonal absences both read.
+pub(super) fn draw_empty_state(
+    frame: &mut Frame<'_>,
+    app: &App,
+    area: Rect,
+    workspace_bound: Option<bool>,
+) {
     let mut content = Vec::with_capacity(11);
 
     content.push(Line::from(Span::styled(
@@ -119,6 +130,19 @@ pub(super) fn draw_empty_state(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ));
         }
         content.push(Line::from(spans));
+    }
+    // The unbound-workspace paragraph, beside — never instead of — the
+    // no-database guidance above: the two absences are orthogonal and both
+    // must read. `Some(true)` (a root bound) draws nothing, keeping a bound
+    // session's splash byte-identical.
+    if workspace_bound == Some(false) {
+        content.push(Line::from(""));
+        for line in NO_WORKSPACE_LINES {
+            content.push(Line::from(Span::styled(
+                line,
+                Style::default().fg(warning()).add_modifier(Modifier::BOLD),
+            )));
+        }
     }
     content.push(Line::from(""));
 

@@ -79,6 +79,13 @@ pub(crate) fn bind(
     }))
 }
 
+/// The fresh-unbound fact, said on the composition notice seam at startup:
+/// outside any worktree with no `--workspace`, nothing binds — so the
+/// write-shaped file tools stay hidden and workspace reads refuse — and the
+/// session names the absence and the remedy rather than staying silent.
+pub(crate) const NO_WORKSPACE_NOTICE: &str = "No workspace is bound (outside any worktree, no `--workspace`): \
+    file tools are unavailable; launch inside a git worktree or pass `--workspace <dir>`.";
+
 /// Binds the session universe's workspace from its three statements: an
 /// explicit `--workspace` first; on a resume, the recorded pin; on a fresh
 /// session, the git worktree top. A recorded root that no longer exists
@@ -103,7 +110,14 @@ pub(crate) fn bind_from_pins(
             // from wherever the shell happens to be.
             None
         };
-        return Ok((bound, None));
+        let notice = match (&bound, walk_when_unpinned) {
+            // A fresh session that bound nothing says so at startup; a
+            // pre-workspace resume keeps its old silence, and a bound
+            // session stays silent either way.
+            (None, true) => Some(NO_WORKSPACE_NOTICE.to_owned()),
+            _ => None,
+        };
+        return Ok((bound, notice));
     };
     let recorded = PathBuf::from(pin);
     if !recorded.exists() {

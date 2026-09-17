@@ -7,7 +7,7 @@ mod overlays;
 mod panels;
 mod plan_approval_view;
 mod run_panel_view;
-mod splash;
+pub(super) mod splash;
 mod status;
 pub(crate) mod theme;
 
@@ -67,7 +67,10 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     if has_turns {
         draw_transcript(frame, app, chunks[0]);
     } else {
-        draw_empty_state(frame, app, chunks[0]);
+        // The empty state names the unbound workspace when the status bar's
+        // view carries no root: `None` renders the no-root shape beside the
+        // no-database guidance, never instead of it.
+        draw_empty_state(frame, app, chunks[0], Some(status.workspace_root.is_some()));
     }
     if run_panel_h > 0 {
         draw_run_panel(frame, app, chunks[1]);
