@@ -60,6 +60,7 @@ fn is_rejection(error: &HarnessError) -> bool {
             | HarnessError::BoundsExceeded { .. }
             | HarnessError::IdentityChanged { .. }
             | HarnessError::NotRegularFile { .. }
+            | HarnessError::NotFound { .. }
             | HarnessError::Io { .. }
     )
 }

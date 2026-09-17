@@ -24,7 +24,7 @@ use crate::{HarnessError, io_error};
 /// names the state an edit precondition can state.
 pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
     let anchor = ws.anchor(rel, false)?;
-    let stat = final_stat(&anchor, "read workspace file")?;
+    let stat = final_stat(&anchor, "read workspace file", rel)?;
     if stat.is_symlink() {
         return Err(HarnessError::SymlinkRefused {
             path: rel.to_string(),
@@ -112,7 +112,7 @@ pub(crate) fn list(
         )
     } else {
         let anchor = ws.anchor(rel, false)?;
-        let stat = final_stat(&anchor, "list workspace directory")?;
+        let stat = final_stat(&anchor, "list workspace directory", rel)?;
         if !stat.is_dir() {
             return Err(HarnessError::NotRegularFile {
                 path: rel.to_string(),
@@ -185,15 +185,10 @@ pub(crate) fn list(
 
 pub(crate) fn final_stat<'a>(
     anchor: &'a Anchor,
-    context: &'static str,
+    _context: &'static str,
+    rel: &str,
 ) -> Result<&'a FinalStat, HarnessError> {
-    anchor
-        .stat()
-        .ok_or_else(|| io_error(context, anchor.path(), not_found()))
-}
-
-/// `ENOENT` as an io error, for a missing file where the pre-open scan finds
-/// nothing — the same kind the scan's own syscalls would surface.
-pub(crate) fn not_found() -> io::Error {
-    io::Error::from_raw_os_error(libc::ENOENT)
+    anchor.stat().ok_or_else(|| HarnessError::NotFound {
+        path: rel.to_string(),
+    })
 }

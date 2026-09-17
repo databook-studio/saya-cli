@@ -128,6 +128,28 @@ fn the_denied_refusal_carries_the_pinned_bytes_and_the_not_bounded_clause() {
     }
 }
 
+/// H3 reproduction (documents the confirmed limit, must fail before the
+/// fix): a deny entry refuses its own exact spelling only — a renamed copy
+/// (`mycurl` for denied `curl`) is outside the list. Until content-based
+/// detection exists (explicitly not this product), the refusal text must say
+/// so rather than read as an execution block.
+#[test]
+fn the_deny_refusal_states_the_exact_name_limit() {
+    let deny =
+        session_deny::SessionDeny::from_names(["curl".to_owned()]).expect("a bare name builds");
+    assert!(
+        !deny.contains("mycurl"),
+        "deny is exact-name: a renamed copy is outside the list"
+    );
+    let refusal = session_deny::denied_refusal("curl");
+    assert!(
+        refusal.contains("exact")
+            && refusal.contains("name")
+            && (refusal.contains("renamed") || refusal.contains("spelling")),
+        "the refusal must state the exact-name limit rather than overstate what deny bounds: {refusal}"
+    );
+}
+
 /// 8. The deny journal events carry shape, ordering, and redaction
 ///    (`session-deny-list` once at start when non-empty;
 ///    `session-command-denied` per firing; redacted; before refusal).

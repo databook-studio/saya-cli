@@ -105,6 +105,15 @@ pub enum HarnessError {
         #[source]
         source: std::io::Error,
     },
+    /// A workspace path expected to exist was absent: the harness's own
+    /// scan found no final component. Typed so callers distinguish absence
+    /// from refusal (permission, symlink, traversal) without sniffing
+    /// rendered error strings. Carries the caller-supplied
+    /// workspace-relative name — like every other typed workspace error —
+    /// never the absolute host path, which appears only inside `Io`
+    /// contexts.
+    #[error("workspace path does not exist: {path}")]
+    NotFound { path: String },
 
     /// A newline-terminated line in the run journal does not parse as a
     /// `RunEvent` — corruption, or an event written by a build that knows
@@ -125,5 +134,21 @@ pub(crate) fn io_error(context: &str, path: &Path, error: std::io::Error) -> Har
     HarnessError::Io {
         context: format!("{context} {}", path.display()),
         source: error,
+    }
+}
+
+impl HarnessError {
+    /// Whether this error reports an absent path — the harness's own scan
+    /// found no final component — as opposed to a refusal (permission,
+    /// symlink, traversal, identity). Callers deciding absence must consult
+    /// this structure, never rendered error strings: the `Io` contexts wrap
+    /// every I/O kind, so substring-matching them cannot tell "no such file"
+    /// from "permission denied".
+    pub fn is_not_found(&self) -> bool {
+        match self {
+            HarnessError::NotFound { .. } => true,
+            HarnessError::Io { source, .. } => source.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        }
     }
 }

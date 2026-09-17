@@ -390,17 +390,15 @@ fn workspace_probe(
     match workspace.read(rel, 0) {
         Ok(probe) => Ok(Some(probe.size)),
         Err(error) => {
-            let text = error.to_string();
-            // The harness reports a missing final component as an I/O
-            // "scan"/"open" failure naming the path; anything else is a real
-            // refusal, not absence.
-            let missing = text.contains("scan workspace path")
-                || text.contains("open workspace file")
-                || text.contains("No such file");
-            if missing {
+            // Absence is the harness's own structure (`NotFound` or an I/O
+            // error of kind `NotFound`) — never rendered strings, whose
+            // "scan"/"open" contexts wrap every I/O failure including
+            // permission denials. Anything else is a real refusal, not
+            // absence.
+            if error.is_not_found() {
                 Ok(None)
             } else {
-                Err(ToolError::WorkspaceEdit(text))
+                Err(ToolError::WorkspaceEdit(error.to_string()))
             }
         }
     }

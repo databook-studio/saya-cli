@@ -9,8 +9,10 @@
 //! grant by construction, not by ordering discipline.
 //!
 //! Deny bounds only the direct ask: a denied `curl` does not stop an allowed
-//! `make` from invoking curl. The refusal says so, or the list becomes its
-//! own comforting fiction.
+//! `make` from invoking curl, nor a renamed copy (`mycurl`, a symlink or copy
+//! of curl) asked under its own spelling — deny matches the exact program
+//! name named in the ask, never content or resolved identity. The refusal
+//! says so, or the list becomes its own comforting fiction.
 
 use std::collections::BTreeSet;
 
@@ -121,7 +123,9 @@ pub(crate) fn denied_refusal(program: &str) -> String {
     format!(
         "refused: {program} is on this session's deny list — stated at launch or in \
          user config; this is saya's refusal, not a program failure. The deny list \
-         bounds only the program named in the ask; allowed programs may still invoke it."
+         bounds only the program named in the ask: it matches that exact name's \
+         spelling, so a renamed copy asked under its own name still runs; allowed \
+         programs may still invoke it."
     )
 }
 

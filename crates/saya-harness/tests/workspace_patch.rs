@@ -66,6 +66,7 @@ fn is_rejection(error: &HarnessError) -> bool {
             | HarnessError::NotRegularFile { .. }
             | HarnessError::RangeOutOfBounds { .. }
             | HarnessError::LengthMismatch { .. }
+            | HarnessError::NotFound { .. }
             | HarnessError::Io { .. }
     )
 }
@@ -123,7 +124,11 @@ fn a_refused_patch_leaves_the_bytes_identical() {
     );
     assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), before);
 
-    // Traversal, missing file, and directory target.
+    // Traversal, missing file, and directory target. The traversal pins the
+    // escape variant, the absent file pins the typed `NotFound` (carrying
+    // the workspace-relative name), and the directory pins
+    // `NotRegularFile` — the same three properties the generic
+    // `is_rejection` gate checked before, now spelled per case.
     for (rel, range) in [
         ("../outside.txt", 0..1u64),
         ("absent.txt", 0..0u64),
@@ -135,6 +140,13 @@ fn a_refused_patch_leaves_the_bytes_identical() {
             .expect_err("must refuse");
         assert!(is_rejection(&error), "{rel} → {error:?}");
     }
+    assert!(matches!(
+        sandbox
+            .ws
+            .patch_range("absent.txt", 0..0, 0, b"x")
+            .expect_err("absent target must refuse"),
+        HarnessError::NotFound { path } if path == "absent.txt"
+    ));
     assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), before);
 
     // Symlinked target: refused, outside file untouched. The walk itself
@@ -204,7 +216,9 @@ fn patch_range_splices_mid_insert_delete_and_eof_append_shapes() {
     assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"replaced");
 }
 
-/// A refused patch never creates the file it names.
+/// A refused patch never creates the file it names: the absent target pins
+/// the typed `NotFound` (workspace-relative name), and a patch that would
+/// need parent creation pins a refusal while creating no directory.
 #[test]
 fn a_refused_patch_never_creates_a_file() {
     let sandbox = Sandbox::new("no-create");
@@ -212,7 +226,10 @@ fn a_refused_patch_never_creates_a_file() {
         .ws
         .patch_range("absent.txt", 0..0, 0, b"x")
         .expect_err("absent target must refuse");
-    assert!(is_rejection(&error), "{error:?}");
+    assert!(
+        matches!(&error, HarnessError::NotFound { path } if path == "absent.txt"),
+        "{error:?}"
+    );
     assert!(!sandbox.root().join("absent.txt").exists());
 
     let error = sandbox

@@ -396,6 +396,45 @@ async fn an_append_error_payload_never_carries_file_content() {
     );
 }
 
+/// H1 reproduction (must fail before the fix): an existing but unreadable
+/// file appended at offset 0 must refuse and leave the bytes byte-identical.
+/// The probe must not classify a permission refusal as absence and take the
+/// create branch.
+#[tokio::test]
+async fn append_to_an_unreadable_file_refuses_and_preserves_bytes() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let sandbox = Sandbox::new("h1-unreadable");
+    let target = sandbox.ws_root().join("secret.txt");
+    sandbox
+        .ws
+        .write("secret.txt", b"do-not-destroy;")
+        .expect("seed write must succeed");
+    let before = fs::read(&target).expect("seed file must exist");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o000)).expect("chmod 000 must apply");
+    let tools = sandbox.tools();
+    let outcome = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "secret.txt",
+                "offset": 0,
+                "chunk": "attacker bytes;",
+            }),
+        )
+        .await;
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o644))
+        .expect("chmod restore must apply");
+    assert!(
+        outcome.is_err(),
+        "appending at offset 0 to an existing but unreadable file must refuse, not create"
+    );
+    assert_eq!(
+        fs::read(&target).expect("file must survive"),
+        before,
+        "a refused append leaves the file byte-identical"
+    );
+}
+
 /// Mixed halves are a validation error, never a guess: `old_text` with
 /// `chunk`, or half of one variant, is rejected before any filesystem
 /// contact, and a mistyped `offset`/`chunk` names its own error.

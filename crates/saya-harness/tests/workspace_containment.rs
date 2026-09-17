@@ -67,6 +67,7 @@ fn is_rejection(error: &HarnessError) -> bool {
             | HarnessError::BoundsExceeded { .. }
             | HarnessError::IdentityChanged { .. }
             | HarnessError::NotRegularFile { .. }
+            | HarnessError::NotFound { .. }
             | HarnessError::Io { .. }
     )
 }
@@ -652,7 +653,10 @@ fn nfd_and_case_aliases_resolve_inside_the_root_or_refuse() {
     let aliased = sandbox.ws.read(nfd, 4096);
     assert!(
         aliased.as_ref().is_ok_and(|file| file.bytes == INSIDE) || {
-            matches!(aliased, Err(HarnessError::Io { .. }))
+            matches!(
+                aliased,
+                Err(HarnessError::NotFound { .. }) | Err(HarnessError::Io { .. })
+            )
         },
         "NFC/NFD aliasing must stay contained: {aliased:?}"
     );
@@ -682,8 +686,31 @@ fn nfd_and_case_aliases_resolve_inside_the_root_or_refuse() {
 fn case_variants_do_not_alias_on_case_sensitive_filesystems() {
     let sandbox = Sandbox::new("case-sensitive");
     sandbox.plant();
+    // An absent case variant is absence, not an escape: the typed `NotFound`
+    // carries the workspace-relative name, exactly as the old `Io`-kind
+    // `NotFound` did.
     assert!(matches!(
         sandbox.ws.read("OK.TXT"),
-        Err(HarnessError::Io { .. })
+        Err(HarnessError::NotFound { path }) if path == "OK.TXT"
+    ));
+}
+
+/// Absence keeps the workspace-relative name in the typed error: no absolute
+/// host path reaches the `NotFound` payload.
+#[test]
+fn a_missing_file_reports_its_workspace_relative_name() {
+    let sandbox = Sandbox::new("not-found-path");
+    sandbox.plant();
+    assert!(matches!(
+        sandbox.ws.read("absent.txt", 4096),
+        Err(HarnessError::NotFound { path }) if path == "absent.txt"
+    ));
+    assert!(matches!(
+        sandbox.ws.read("sub/absent.txt", 4096),
+        Err(HarnessError::NotFound { path }) if path == "sub/absent.txt"
+    ));
+    assert!(matches!(
+        sandbox.ws.read("no/such/dir.txt", 4096),
+        Err(HarnessError::NotFound { path }) if path == "no/such/dir.txt"
     ));
 }

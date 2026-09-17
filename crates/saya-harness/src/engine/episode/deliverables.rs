@@ -12,8 +12,6 @@
 //! for one file, so containment applies to a deliverable exactly as it does
 //! to any workspace read.
 
-use std::io::ErrorKind;
-
 use saya_types::{Deliverable, StepSpec};
 
 use crate::{HarnessError, workspace::Workspace, workspace::manifest};
@@ -31,9 +29,7 @@ pub(super) fn resolve(
     for hint in &spec.expects {
         let deliverable = match manifest::entry(workspace, &hint.name, bounds.max_file_bytes) {
             Ok(entry) => Deliverable::present(&hint.name, entry.size, entry.digest),
-            Err(HarnessError::Io { source, .. }) if source.kind() == ErrorKind::NotFound => {
-                Deliverable::missing(&hint.name)
-            }
+            Err(error) if error.is_not_found() => Deliverable::missing(&hint.name),
             Err(source) => return Err(source),
         };
         entries.push(deliverable);

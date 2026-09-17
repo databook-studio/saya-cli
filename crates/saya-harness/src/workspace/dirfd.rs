@@ -85,7 +85,9 @@ impl Workspace {
                         return Err(io_error("scan workspace path", &path, error));
                     }
                     if !allow_create {
-                        return Err(io_error("scan workspace path", &path, error));
+                        return Err(HarnessError::NotFound {
+                            path: rel.to_string(),
+                        });
                     }
                     // Lost a creation race to a winner that must be a real
                     // directory: the no-follow, directory-only reopen maps a
