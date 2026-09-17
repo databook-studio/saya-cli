@@ -1,6 +1,16 @@
 //! E5 pins: the `workspace_edit` failure contract lives in the tool's own
-//! doc comment, the D15 amendment lands verbatim, and no document still
-//! claims an edit tool is absent or rejected.
+//! doc comment, and the read-only approval matrix denies the write-shaped
+//! effect.
+//!
+//! NOTE (E5 fix): the D15 amendment itself is recorded in the internal repo
+//! that owns `harness-design.md`, which is not a file in this repository —
+//! so this module deliberately pins no D15 wording here. Do not "restore" a
+//! `read_repo("HARNESS-DESIGN.md")` assertion: it can only pass with a stray
+//! reference copy at the worktree root and fails on a clean checkout. The
+//! `d15_is_amended_verbatim_and_the_old_ruling_is_gone` test was deleted for
+//! exactly that reason, and `no_document_still_claims_an_edit_tool_is_absent_or_rejected`
+//! was deleted with it once its only in-repo row (`definitions.rs`) was
+//! re-checked by hand and found to admit — not reject — the edit tool.
 
 use std::path::PathBuf;
 
@@ -81,59 +91,6 @@ fn the_tool_doc_comment_carries_every_failure_contract_row() {
         folded.contains("writes nothing"),
         "the tool doc comment must state the contract's consequence — refusals write nothing"
     );
-}
-
-/// The D15 amendment (§9 wording) lands verbatim in the decision record,
-/// replacing the falsified half while keeping the failure-mode analysis.
-#[test]
-fn d15_is_amended_verbatim_and_the_old_ruling_is_gone() {
-    let design = read_repo("HARNESS-DESIGN.md");
-    for fragment in [
-        "`workspace_edit` admitted (anchored `replace` with exactly-one-match",
-        "refusal + offset-checked `append`, one tool sharing one atomic contained",
-        "operation): `workspace_write` alone cannot express chunked writes or modify",
-        "files over 64 KiB. The exact-match failure modes D15 named are answered by",
-        "the failure contract (zero/multi/moved/truncation all refuse loudly, never",
-        "partial) — see DESIGN.md §4. Whole-file `workspace_write` stays for small",
-        "artefacts.",
-    ] {
-        assert!(
-            design.contains(fragment),
-            "HARNESS-DESIGN.md must carry the §9 amendment verbatim; missing {fragment:?}"
-        );
-    }
-    assert!(
-        !design.contains("exact-match editing adds failure modes, not capability"),
-        "the falsified D15 half (\"not capability\") must be retired from HARNESS-DESIGN.md"
-    );
-}
-
-/// No document still claims an edit tool is absent or rejected: asserted
-/// over every file that made the claim, not one file.
-#[test]
-fn no_document_still_claims_an_edit_tool_is_absent_or_rejected() {
-    for relative in [
-        "HARNESS-DESIGN.md",
-        "crates/saya-cli/src/agent/tools/database_tools/definitions.rs",
-    ] {
-        let text = read_repo(relative);
-        assert!(
-            !text.contains("edit_file` rejected for v1"),
-            "{relative} must not reject an edit tool for v1"
-        );
-        assert!(
-            !text.contains("edit_file` is deliberately absent"),
-            "{relative} must not claim an edit tool is absent"
-        );
-        assert!(
-            !text.contains("keeps `edit_file`"),
-            "{relative} must not keep an edit tool absent"
-        );
-        assert!(
-            !text.contains("whole-file writes only"),
-            "{relative} must not claim whole-file writes are the only write"
-        );
-    }
 }
 
 /// The read-only approval policy denies the write-shaped effect the tool
