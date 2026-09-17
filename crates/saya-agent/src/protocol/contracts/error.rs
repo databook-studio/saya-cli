@@ -170,6 +170,27 @@ pub enum ToolError {
     /// A workspace edit's `new_text` argument was not a string.
     #[error("invalid tool arguments: new_text must be a string")]
     NewTextNotString,
+    /// A workspace append's `chunk` argument was not a string. Distinct from
+    /// [`ToolError::NewTextNotString`] so the model fixes the right argument
+    /// of the right variant.
+    #[error("invalid tool arguments: chunk must be a string")]
+    ChunkNotString,
+    /// A workspace append's `offset` argument was not a non-negative integer.
+    #[error("invalid tool arguments: offset must be a non-negative integer")]
+    OffsetNotUint,
+    /// A workspace append's `offset` no longer matches the file's current
+    /// size: the model measured stale state. No write. The refusal names the
+    /// current size and digest so the model resumes from `offset` — never a
+    /// guess, never a partial chunk. Never carries file content.
+    #[error(
+        "workspace append refused: offset moved (expected offset: {expected_offset}, current size: {current_size}, current digest: {current_digest}): {path}"
+    )]
+    WorkspaceAppendOffset {
+        path: String,
+        expected_offset: u64,
+        current_size: u64,
+        current_digest: String,
+    },
     /// A workspace edit's `expected_size` argument was not a non-negative
     /// integer.
     #[error("invalid tool arguments: expected_size must be a non-negative integer")]

@@ -1,10 +1,12 @@
-//! The model-facing anchored edit (`replace` variant only): resolves
-//! `old_text` to exactly one byte range of a contained workspace file and
-//! commits the splice through `Workspace::patch_range`. Path resolution, the
-//! no-follow open, and the atomic commit are the harness's — never
-//! re-derived here. This tool's own jobs are argument typing, the byte
-//! bounds, the `expected_*` precondition, and typed refusals that carry
-//! counts, line numbers, sizes and digests — never file content.
+//! The model-facing anchored edit (`replace` and `append` variants): the
+//! replace variant resolves `old_text` to exactly one byte range of a
+//! contained workspace file; the append variant splices `chunk` at an empty
+//! range at EOF guarded by `offset`. Both commit through
+//! `Workspace::patch_range` — append *is* a range replace, not a second write
+//! path. Path resolution, the no-follow open, and the atomic commit are the
+//! harness's — never re-derived here. This tool's own jobs are argument
+//! typing, the byte bounds, the `expected_*` precondition, and typed refusals
+//! that carry counts, line numbers, sizes and digests — never file content.
 
 use saya_agent::ToolError;
 
@@ -32,6 +34,13 @@ impl DatabaseTools {
     /// optional `expected_size`/`expected_digest` precondition refuses with a
     /// typed error when the file's current state no longer matches what the
     /// model measured, so a moved anchor cannot splice against stale offsets.
+    /// With `offset`+`chunk` instead, appends `chunk` at EOF under the
+    /// positional precondition `offset == current size` (offset 0 on an
+    /// absent path creates the file); a mismatch refuses with the current
+    /// size so the model resumes from `offset` rather than guessing. Both
+    /// variants commit the same way, through `Workspace::patch_range`:
+    /// append is the empty range `size..size` with `offset` as the
+    /// precondition, never a second write path.
     /// Like the workspace read tools this never touches a connection —
     /// dispatch routes it before connection resolution — and it records
     /// nothing into the knowledge store: a workspace edit is not evidence
@@ -45,6 +54,21 @@ impl DatabaseTools {
             .get("path")
             .and_then(serde_json::Value::as_str)
             .ok_or(ToolError::PathNotString)?;
+        let is_append = arguments.get("offset").is_some() || arguments.get("chunk").is_some();
+        if is_append {
+            return self.workspace_append(rel, arguments).await;
+        }
+        self.workspace_replace(rel, arguments).await
+    }
+
+    /// The `replace` half of [`DatabaseTools::workspace_edit`]: resolve
+    /// `old_text` to exactly one byte range, then commit the splice through
+    /// `Workspace::patch_range`.
+    async fn workspace_replace(
+        &self,
+        rel: &str,
+        arguments: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
         let old_text = arguments
             .get("old_text")
             .and_then(serde_json::Value::as_str)
@@ -155,9 +179,7 @@ impl DatabaseTools {
         }
         let start = hits[0] as u64;
         let end = start + old_text.len() as u64;
-        workspace
-            .patch_range(rel, start..end, size, new_text.as_bytes())
-            .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
+        commit_splice(workspace, rel, start..end, size, new_text.as_bytes())?;
         let after = workspace
             .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
             .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
@@ -169,6 +191,152 @@ impl DatabaseTools {
             "digest": hex_digest(&after.bytes),
         }))
     }
+
+    /// The `append` half of [`DatabaseTools::workspace_edit`]: an empty
+    /// range at EOF with `offset` as the positional precondition, committed
+    /// through the same [`Workspace::patch_range`] the replace half uses.
+    /// Offset 0 on an absent path creates the file; any mismatch refuses,
+    /// writes nothing, and reports the current size and digest.
+    async fn workspace_append(
+        &self,
+        rel: &str,
+        arguments: &serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
+        let offset = arguments
+            .get("offset")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(ToolError::OffsetNotUint)?;
+        let chunk = arguments
+            .get("chunk")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(ToolError::ChunkNotString)?;
+        let expected_digest = match arguments.get("expected_digest") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .ok_or(ToolError::ExpectedDigestNotString)?
+                    .to_owned(),
+            ),
+        };
+        if chunk.len() > WORKSPACE_EDIT_MAX_BYTES {
+            return Err(ToolError::WorkspaceEditTooLarge {
+                path: rel.to_string(),
+                limit: WORKSPACE_EDIT_MAX_BYTES,
+                found: chunk.len(),
+            });
+        }
+        let Some(workspace) = &self.workspace else {
+            return Err(ToolError::WorkspaceUnavailable);
+        };
+        let target_size = match workspace_probe(workspace, rel)? {
+            None => {
+                // Absent path: only offset 0 creates. Anything else is a
+                // mismatch against the (empty, absent) current state.
+                if offset != 0 {
+                    return Err(ToolError::WorkspaceAppendOffset {
+                        path: rel.to_string(),
+                        expected_offset: offset,
+                        current_size: 0,
+                        current_digest: hex_digest(&[]),
+                    });
+                }
+                write_new(workspace, rel, chunk.as_bytes())?;
+                let after = workspace
+                    .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
+                    .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
+                return Ok(serde_json::json!({
+                    "path": rel,
+                    "size": after.size,
+                    "digest": hex_digest(&after.bytes),
+                }));
+            }
+            Some(size) => size,
+        };
+        if target_size > WORKSPACE_EDIT_MAX_FILE_BYTES {
+            return Err(ToolError::WorkspaceEdit(
+                saya_harness::HarnessError::BoundsExceeded {
+                    path: rel.to_string(),
+                    found: target_size,
+                    max: WORKSPACE_EDIT_MAX_FILE_BYTES,
+                }
+                .to_string(),
+            ));
+        }
+        let file = workspace
+            .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
+            .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
+        if std::str::from_utf8(&file.bytes).is_err() {
+            return Err(ToolError::WorkspaceEditNotText {
+                path: rel.to_string(),
+            });
+        }
+        let size = file.size;
+        let digest = hex_digest(&file.bytes);
+        if let Some(want) = expected_digest.as_deref()
+            && want != digest
+        {
+            return Err(ToolError::WorkspaceEditMoved {
+                path: rel.to_string(),
+                expected_size: None,
+                current_size: size,
+                expected_digest,
+                current_digest: digest,
+            });
+        }
+        if offset != size {
+            return Err(ToolError::WorkspaceAppendOffset {
+                path: rel.to_string(),
+                expected_offset: offset,
+                current_size: size,
+                current_digest: digest,
+            });
+        }
+        commit_splice(workspace, rel, size..size, size, chunk.as_bytes())?;
+        let after = workspace
+            .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
+            .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
+        Ok(serde_json::json!({
+            "path": rel,
+            "size": after.size,
+            "digest": hex_digest(&after.bytes),
+        }))
+    }
+}
+
+/// The one commit seam both variants share: the harness's anchored
+/// temp+rename commit behind [`Workspace::patch_range`], never a second
+/// write path. A positional race that trips the harness's own size check
+/// surfaces as the tool's typed mismatch, never a partial chunk.
+fn commit_splice(
+    workspace: &saya_harness::workspace::Workspace,
+    rel: &str,
+    range: std::ops::Range<u64>,
+    expected_len: u64,
+    bytes: &[u8],
+) -> Result<(), ToolError> {
+    workspace
+        .patch_range(rel, range, expected_len, bytes)
+        .map_err(|error| {
+            match error {
+                saya_harness::HarnessError::LengthMismatch { current, .. } => {
+                    // The read above measured `expected_len`; the file moved
+                    // before the commit. Re-probe the current state so the
+                    // refusal names the size the model resumes from.
+                    let (size, digest) = match workspace.read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES) {
+                        Ok(file) => (file.size, hex_digest(&file.bytes)),
+                        Err(_) => (current, hex_digest(&[])),
+                    };
+                    ToolError::WorkspaceAppendOffset {
+                        path: rel.to_string(),
+                        expected_offset: expected_len,
+                        current_size: size,
+                        current_digest: digest,
+                    }
+                }
+                other => ToolError::WorkspaceEdit(other.to_string()),
+            }
+        })
 }
 
 /// The target's pre-read size probe: the contained scan behind
@@ -184,4 +352,44 @@ fn workspace_size(
         .read(rel, 0)
         .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
     Ok(probe.size)
+}
+
+/// The append half's existence probe: `Some(size)` when the path names an
+/// existing target, `None` when it is absent (offset 0 then creates). Any
+/// other refusal — traversal, symlink, directory — surfaces as the edit's
+/// own containment error, never as absence.
+fn workspace_probe(
+    workspace: &saya_harness::workspace::Workspace,
+    rel: &str,
+) -> Result<Option<u64>, ToolError> {
+    match workspace.read(rel, 0) {
+        Ok(probe) => Ok(Some(probe.size)),
+        Err(error) => {
+            let text = error.to_string();
+            // The harness reports a missing final component as an I/O
+            // "scan"/"open" failure naming the path; anything else is a real
+            // refusal, not absence.
+            let missing = text.contains("scan workspace path")
+                || text.contains("open workspace file")
+                || text.contains("No such file");
+            if missing {
+                Ok(None)
+            } else {
+                Err(ToolError::WorkspaceEdit(text))
+            }
+        }
+    }
+}
+
+/// Creates the absent path the append half names, through the same atomic
+/// temp+rename commit the splice uses: the harness's contained write, never
+/// a second mechanism. The parent walk still refuses escapes and links.
+fn write_new(
+    workspace: &saya_harness::workspace::Workspace,
+    rel: &str,
+    bytes: &[u8],
+) -> Result<(), ToolError> {
+    workspace
+        .write(rel, bytes)
+        .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))
 }
