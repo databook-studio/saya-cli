@@ -70,3 +70,7 @@ mod workspace_write_tests;
 #[cfg(test)]
 #[path = "tools/workspace_edit_tests.rs"]
 mod workspace_edit_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_edit_append_tests.rs"]
+mod workspace_edit_append_tests;

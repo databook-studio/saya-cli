@@ -200,12 +200,17 @@ impl DatabaseTools {
                     to the workspace root, `old_text` as the exact text to find, and \
                     `new_text` as its replacement; the anchor must match exactly once \
                     — zero matches or multiple matches refuse and change nothing, \
-                    never \"first wins\". An empty anchor is rejected, anchor and \
-                    replacement over the bound refuse whole, and a non-UTF-8 target \
-                    is refused. Pass `expected_size` and/or `expected_digest` from \
-                    a fresh read to guard a moved anchor: a mismatch refuses with \
-                    no write. Returns the `path`, `bytes_replaced`, \
-                    `bytes_written`, `size`, and `digest`."
+                    never \"first wins\". Or append one chunk: pass `offset` (the \
+                    file size you measured) and `chunk`; the offset must equal the \
+                    current size — a mismatch refuses with the current size and \
+                    digest so you resume from there — and offset 0 on an absent \
+                    path creates the file. An empty anchor is rejected, anchor and \
+                    replacement and chunk over the bound refuse whole, and a \
+                    non-UTF-8 target is refused. Pass `expected_size` and/or \
+                    `expected_digest` from a fresh read to guard a moved anchor: \
+                    a mismatch refuses with no write. Returns the `path`, `size`, \
+                    and `digest` (the replace variant also reports \
+                    `bytes_replaced` and `bytes_written`)."
                     .into(),
                 read_only: false,
                 parameters: serde_json::json!({
@@ -222,6 +227,15 @@ impl DatabaseTools {
                         "new_text": {
                             "type": "string",
                             "description": "The replacement text stored in place of the anchor."
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Append only. The file size in bytes the chunk continues from; must equal the current size."
+                        },
+                        "chunk": {
+                            "type": "string",
+                            "description": "Append only. The bytes to store at the end of the file."
                         },
                         "expected_size": {
                             "type": "integer",
@@ -513,6 +527,8 @@ pub(super) fn validate_arguments(
                 "path",
                 "old_text",
                 "new_text",
+                "offset",
+                "chunk",
                 "expected_size",
                 "expected_digest",
             ][..],
@@ -547,26 +563,53 @@ pub(super) fn validate_arguments(
     if name == "workspace_read" && !object.get("path").is_some_and(serde_json::Value::is_string) {
         return Err(ToolError::PathNotString);
     }
-    // The `workspace_edit` arguments are typed the same way: required
-    // strings name their own error, and the optional `expected_*`
+    // The `workspace_edit` arguments are a tagged union of two variants:
+    // `replace` (`old_text`+`new_text`) and `append` (`offset`+`chunk`).
+    // Required strings name their own error, and the optional `expected_*`
     // precondition names its own when present-but-malformed — so the model
-    // can fix the right argument. No `append`, no read-side digest, no D15
-    // edit: this slice is the `replace` variant only.
+    // can fix the right argument. The structural rule is enforced here, not
+    // only in the body: mixing the two halves, or half of one, is a typed
+    // validation error, never a guess about which variant was meant. No
+    // read-side digest, no D15 edit: this slice adds the `append` variant to
+    // the existing `replace` shape.
     if name == "workspace_edit" {
         if !object.get("path").is_some_and(serde_json::Value::is_string) {
             return Err(ToolError::PathNotString);
         }
-        if !object
-            .get("old_text")
-            .is_some_and(serde_json::Value::is_string)
-        {
-            return Err(ToolError::OldTextNotString);
-        }
-        if !object
-            .get("new_text")
-            .is_some_and(serde_json::Value::is_string)
-        {
-            return Err(ToolError::NewTextNotString);
+        let has_old = object.contains_key("old_text");
+        let has_new = object.contains_key("new_text");
+        let has_offset = object.contains_key("offset");
+        let has_chunk = object.contains_key("chunk");
+        if has_offset || has_chunk {
+            // Append: both halves, neither replace half.
+            if !object
+                .get("offset")
+                .is_some_and(|value| !value.is_null() && value.as_u64().is_some())
+            {
+                return Err(ToolError::OffsetNotUint);
+            }
+            if !object
+                .get("chunk")
+                .is_some_and(serde_json::Value::is_string)
+            {
+                return Err(ToolError::ChunkNotString);
+            }
+            if has_old || has_new {
+                return Err(ToolError::UnsupportedProperty);
+            }
+        } else {
+            if !object
+                .get("old_text")
+                .is_some_and(serde_json::Value::is_string)
+            {
+                return Err(ToolError::OldTextNotString);
+            }
+            if !object
+                .get("new_text")
+                .is_some_and(serde_json::Value::is_string)
+            {
+                return Err(ToolError::NewTextNotString);
+            }
         }
         if object
             .get("expected_size")
