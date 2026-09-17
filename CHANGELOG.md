@@ -112,7 +112,7 @@ answer to a benchmark that dies at question 900 and has to start over.
   the stream cannot drift from the durable record.
 
 **Workspace tools.** `workspace_read`, `workspace_list`, `workspace_write`,
-`glob` and `grep`, all through one containment seam: arguments validated before
+`workspace_edit`, `glob` and `grep`, all through one containment seam: arguments validated before
 any filesystem call, symlinks refused at every component, no-follow opens with a
 post-open identity check, atomic `0600` writes that are never executable.
 `grep` reports what it *skipped* alongside its matches, because a capped search

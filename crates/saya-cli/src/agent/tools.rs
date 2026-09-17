@@ -74,3 +74,7 @@ mod workspace_edit_tests;
 #[cfg(test)]
 #[path = "tools/workspace_edit_append_tests.rs"]
 mod workspace_edit_append_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_edit_docs_tests.rs"]
+mod workspace_edit_docs_tests;

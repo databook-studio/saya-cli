@@ -190,8 +190,9 @@ impl DatabaseTools {
         // plus the permit are the gate — there is deliberately no per-call
         // prompt (D7). It is pushed only when workspace writes are permitted:
         // advertised-but-unusable would waste context and invite retries, so
-        // the definition is hidden, not merely dead (D15 keeps `edit_file`
-        // absent — whole-file writes only).
+        // the definition is hidden, not merely dead (D15 admits
+        // `workspace_edit` beside it — anchored replace plus offset-checked
+        // append over one atomic contained operation).
         if permit_workspace_writes {
             tools.push(ToolDefinition {
                 name: "workspace_edit".into(),
@@ -208,7 +209,12 @@ impl DatabaseTools {
                     replacement and chunk over the bound refuse whole, and a \
                     non-UTF-8 target is refused. Pass `expected_size` and/or \
                     `expected_digest` from a fresh read to guard a moved anchor: \
-                    a mismatch refuses with no write. Returns the `path`, `size`, \
+                    a mismatch refuses with no write. Concurrent writers are \
+                    last-writer-wins unless `expected_*` is supplied. This tool \
+                    never resumes a stopped response on its own: after an \
+                    output-token cap, resume by appending from the reported size \
+                    and digest. For small whole-file writes use `workspace_write` \
+                    instead. Returns the `path`, `size`, \
                     and `digest` (the replace variant also reports \
                     `bytes_replaced` and `bytes_written`)."
                     .into(),
