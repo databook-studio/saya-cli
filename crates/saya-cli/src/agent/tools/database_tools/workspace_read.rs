@@ -36,10 +36,14 @@ impl DatabaseTools {
         // Content is served as text (lossy for stray non-UTF-8 bytes); `size`
         // is the file's full size and `truncated` says whether `content` was
         // capped at the bound, so the model can tell a prefix from the file.
+        // `digest` is the sha256 of the file's whole bytes — hashed in the
+        // same contained open — so a truncated read still names the state an
+        // `expected_digest` edit precondition can state.
         Ok(serde_json::json!({
             "path": rel,
             "size": file.size,
             "truncated": file.truncated,
+            "digest": file.digest,
             "content": String::from_utf8_lossy(&file.bytes),
         }))
     }

@@ -47,7 +47,8 @@ pub(crate) use override_log::OverrideLog;
 pub(crate) use workspace_glob::{WORKSPACE_GLOB_MAX_MATCHES, WORKSPACE_GLOB_MAX_VISITED};
 #[cfg(test)]
 pub(crate) use workspace_grep::{
-    WORKSPACE_GREP_MAX_LINE_BYTES, WORKSPACE_GREP_MAX_MATCHES, WORKSPACE_GREP_MAX_VISITED,
+    WORKSPACE_GREP_MAX_FILE_BYTES, WORKSPACE_GREP_MAX_LINE_BYTES, WORKSPACE_GREP_MAX_MATCHES,
+    WORKSPACE_GREP_MAX_VISITED,
 };
 #[cfg(test)]
 pub(crate) use workspace_list::WORKSPACE_LIST_MAX_ENTRIES;

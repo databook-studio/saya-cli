@@ -9,7 +9,6 @@
 use saya_agent::ToolError;
 
 use super::DatabaseTools;
-use super::workspace_read::WORKSPACE_READ_MAX_BYTES;
 
 /// The walk bound passed to the workspace: how many entries (files plus
 /// directories) the contained walk may visit before refusing. Matches the
@@ -29,14 +28,23 @@ pub(crate) const WORKSPACE_GREP_MAX_MATCHES: usize = 500;
 /// context, small enough that one enormous line cannot blow the context.
 pub(crate) const WORKSPACE_GREP_MAX_LINE_BYTES: usize = 2_000;
 
+/// The per-file search horizon: a file larger than this is skipped whole,
+/// never half-searched, because hits over a prefix would read as full
+/// coverage. It matches the edit target cap, so every file an edit can
+/// anchor is searchable whole — the locate half of the >64 KiB workflow.
+/// Only bounded hit lines reach the model, never the scanned bytes.
+pub(crate) const WORKSPACE_GREP_MAX_FILE_BYTES: u64 =
+    saya_harness::workspace::patch::PATCH_MAX_FILE_BYTES;
+
 impl DatabaseTools {
     /// Searches workspace files for a literal substring. This tool never
     /// touches a connection — a workspace-only run has no selected profile —
     /// so dispatch routes it before connection resolution (see `dispatch`).
-    /// Each file is read under [`WORKSPACE_READ_MAX_BYTES`], the same bound
-    /// `workspace_read` serves: a file that bound would truncate is skipped
-    /// whole, never half-searched, because hits over a prefix would read as
-    /// full coverage. `case_insensitive` defaults to false. With no
+    /// Each file is read under [`WORKSPACE_GREP_MAX_FILE_BYTES`], the same
+    /// horizon an edit can anchor: a file that horizon would truncate is
+    /// skipped whole, never half-searched, because hits over a prefix would
+    /// read as full coverage. Only bounded hit lines reach the model, never
+    /// the scanned bytes. `case_insensitive` defaults to false. With no
     /// workspace attached it denies with a typed error: no workspace, no
     /// search.
     pub(super) async fn workspace_grep(
@@ -60,7 +68,7 @@ impl DatabaseTools {
                 case_insensitive,
                 WORKSPACE_GREP_MAX_VISITED,
                 WORKSPACE_GREP_MAX_MATCHES,
-                WORKSPACE_READ_MAX_BYTES,
+                WORKSPACE_GREP_MAX_FILE_BYTES,
                 WORKSPACE_GREP_MAX_LINE_BYTES,
             )
             .map_err(|error| ToolError::Workspace(error.to_string()))?;
