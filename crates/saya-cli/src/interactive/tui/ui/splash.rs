@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 /// The headline shown when no connection profile is configured.
-pub(super) const NO_DATABASE_HEADLINE: &str = "No database is configured yet.";
+pub(crate) const NO_DATABASE_HEADLINE: &str = "No database is configured yet.";
 
 /// The steps under that headline.
 ///
@@ -26,6 +26,16 @@ pub(super) const NO_DATABASE_STEPS: [&str; 3] = [
 
 /// The closing line, after a blank row.
 pub(super) const NO_DATABASE_FOOTER: &str = "`saya config doctor` explains anything still missing.";
+
+/// The headline shown when no workspace root is bound, beside the
+/// no-database guidance when both absences hold: the session names the
+/// unbound shape rather than staying silent about it. Two wrapped rows:
+/// the centred renderer wraps, it does not clip, so the copy is one
+/// logical line rendered as its own paragraph below the database guidance.
+pub(crate) const NO_WORKSPACE_LINES: [&str; 2] = [
+    "No workspace is bound: file tools are unavailable;",
+    "launch inside a git worktree or pass `--workspace <dir>`.",
+];
 
 /// The splash mascot: an owl whose pupils are terminal cursors.
 ///
@@ -169,6 +179,30 @@ mod tests {
         }
     }
 
+    /// The unbound-workspace line states the fact and the same two remedies
+    /// the startup notice carries, without claiming the session is broken:
+    /// SQL, schema, and the database tools are unaffected.
+    #[test]
+    fn unbound_workspace_line_names_the_fact_and_the_remedy() {
+        let all = NO_WORKSPACE_LINES.join(" ");
+        assert!(
+            all.contains("No workspace is bound"),
+            "the line states the fact: {all}"
+        );
+        assert!(
+            all.contains("file tools are unavailable"),
+            "the line names why the file tools are absent: {all}"
+        );
+        assert!(
+            all.contains("--workspace <dir>"),
+            "the line names the explicit-bind remedy: {all}"
+        );
+        assert!(
+            all.contains("git worktree"),
+            "the line names the worktree remedy: {all}"
+        );
+    }
+
     /// The splash is centred, so a line wider than a narrow terminal wraps and
     /// breaks the centring for every line under it.
     #[test]
@@ -176,6 +210,7 @@ mod tests {
         for line in NO_DATABASE_STEPS
             .iter()
             .chain([&NO_DATABASE_HEADLINE, &NO_DATABASE_FOOTER])
+            .chain(&NO_WORKSPACE_LINES)
         {
             assert!(line.chars().count() <= 64, "too wide to centre: {line}");
         }
