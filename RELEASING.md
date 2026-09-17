@@ -3,7 +3,8 @@
 SAYA CLI is distributed through several channels, all fed by one tag-triggered
 pipeline:
 
-- **GitHub Releases** — prebuilt archives for Linux x86_64, macOS arm64, macOS
+- **GitHub Releases** — prebuilt archives for Linux x86_64, Linux arm64,
+  macOS arm64, macOS
   x86_64, and Windows x86_64, each with a SHA-256 sidecar plus a `SHA256SUMS`
   manifest.
 - **crates.io** — `cargo install saya-cli` (from source) and
@@ -23,8 +24,9 @@ pipeline:
 Pushing a `vX.Y.Z` tag runs `.github/workflows/release-candidate.yml`, whose jobs
 run in order:
 
-1. **build** — a matrix over Linux / macOS-arm64 / macOS-x86_64 / Windows builds
-   `saya` in release mode (macOS x86_64 is cross-compiled on the Apple Silicon
+1. **build** — a matrix over Linux x86_64 / Linux arm64 / macOS-arm64 / macOS-x86_64 / Windows builds
+   `saya` in release mode (Linux arm64 builds natively on `ubuntu-24.04-arm`;
+   macOS x86_64 is cross-compiled on the Apple Silicon
    runner — GitHub's Intel runners are scarce), smoke-tests the native binaries,
    and packages an archive + `.sha256`. Tests and Clippy are **not** re-run here;
    the branch ruleset already gates `main` on the full suite.
