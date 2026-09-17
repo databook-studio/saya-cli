@@ -87,6 +87,18 @@ impl TurnPrimary {
 /// names it when the call itself names no connection. `facts` is the
 /// surface's composition — a token is suggested only when the composition
 /// carries what it names.
+///
+/// Failure contract, per family: an `interpreter:<p>` token is suggested
+/// only when the composed `[jobs.interpreter] allow`
+/// (`facts.runner.interpreter_programs`) holds `p`; a `runner:<p>` token
+/// only when the composed `[jobs.runner] allow`
+/// (`facts.runner.runner_programs`) holds `p`; `workspace-write` only when
+/// a workspace root is bound; `scratch` only when a scratch member is
+/// composed; `fetch:` only when a fetch member is composed; `command:`
+/// only when the host lane is composed; `sql:` only for a call-named (or
+/// primary-bound) connection. Pinned both directions for the runner family
+/// (`grant_token_tests.rs:665` unstaged never offered, `:696` runner
+/// outside the allowlist never offered, `:766` staged still offered).
 pub(crate) fn grant_token(
     tool: &str,
     arguments: &Value,

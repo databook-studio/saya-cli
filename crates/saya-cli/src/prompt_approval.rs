@@ -49,7 +49,11 @@ impl TerminalApproval {
     /// seed pre-answers exactly the calls the composition carries (U8): a
     /// token the composition cannot honour is never suggested, on this
     /// surface either. It prompts nothing and records nothing: a headless
-    /// session grant is impossible, not merely unused. The primary stays
+    /// session grant is impossible, not merely unused. The computed grant
+    /// token feeds seed matching, not an offer — no offer renders headlessly
+    /// (`can_prompt=false`, `Ask` denies at `approve`): removing the grant
+    /// computation would break `--allow` seed pre-answering (pinned at
+    /// `prompt_approval_tests.rs:409-424`). The primary stays
     /// unbound — the run's fail-closed rule: only a call that names its
     /// connection suggests a token, never a guessed one.
     pub(crate) fn frozen(mode: ApprovalPolicy, seeds: &[String], facts: ApprovalFacts) -> Self {
