@@ -334,7 +334,9 @@ impl Workspace {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         if !last {
                             if !allow_create {
-                                return Err(io_error("scan workspace path", &path, error));
+                                return Err(HarnessError::NotFound {
+                                    path: rel.to_string(),
+                                });
                             }
                             create_dir_component(&path, rel)?;
                             depth += 1;

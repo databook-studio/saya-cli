@@ -199,7 +199,9 @@ resolve error — and refusal-only: it composes nothing, and gates every
 session door that execs a program by name (`run_command`, `run_program`, the
 interpreter door), before every grant, every approval prompt, and bypass, in
 every mode. The deny list bounds the direct ask only — a denied `curl` does
-not stop an allowed `make` from invoking curl:
+not stop an allowed `make` from invoking curl, nor a renamed copy (`mycurl`,
+a symlink or copy of curl) asked under its own spelling: deny matches the
+exact program name named in the ask, never content or resolved identity:
 
 ```toml
 [session_commands]

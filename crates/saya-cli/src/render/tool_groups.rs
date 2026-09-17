@@ -17,6 +17,7 @@ pub(crate) struct ToolCallPair {
     pub(crate) effect: Option<ToolEffect>,
     pub(crate) summary: Option<String>,
     pub(crate) failed: bool,
+    pub(crate) nonzero_exit: bool,
 }
 
 /// A maximal run of tool events between two content boundaries.
@@ -30,6 +31,25 @@ pub(crate) struct ToolGroup {
 /// the same predicate, never a second definition.
 pub(crate) fn is_failure_summary(summary: &str) -> bool {
     summary.contains("failed")
+}
+
+/// A nonzero host exit as reported on the piped surface: an `Ok` outcome
+/// whose completion summary reads `<program> exited <nonzero>` — no
+/// "failed" substring, so `is_failure_summary` (and `tool_metadata.status`,
+/// which derives from the same predicate) still reads it as completed. The
+/// group shaper consults this separately so the exit code stays visible on
+/// the default surface without changing the "failed" contract.
+pub(crate) fn is_nonzero_exit_summary(summary: &str) -> bool {
+    run_command_exit_code(summary).is_some_and(|code| code != 0)
+}
+
+/// The exit code a `run_command` completion summary carries, when it carries
+/// one: `<program> exited <code>`. `None` for every other summary shape —
+/// including the failure arm (`failed <program>`), which names the call but
+/// never the code.
+fn run_command_exit_code(summary: &str) -> Option<i64> {
+    let (_, code) = summary.rsplit_once(" exited ")?;
+    code.parse().ok()
 }
 
 /// Splits the event stream into maximal runs of tool events. Every
@@ -52,6 +72,7 @@ pub(crate) fn group_tool_events(events: &[AgentEvent]) -> Vec<ToolGroup> {
             }
             AgentEvent::ToolCompleted { name, summary } => {
                 let failed = is_failure_summary(summary);
+                let nonzero_exit = !failed && is_nonzero_exit_summary(summary);
                 let position = pending
                     .iter()
                     .position(|(pending_name, _, _)| pending_name == name);
@@ -67,6 +88,7 @@ pub(crate) fn group_tool_events(events: &[AgentEvent]) -> Vec<ToolGroup> {
                     effect,
                     summary: Some(summary.clone()),
                     failed,
+                    nonzero_exit,
                 });
             }
             _ => {
@@ -87,14 +109,26 @@ pub(crate) fn group_tool_events(events: &[AgentEvent]) -> Vec<ToolGroup> {
 
 /// Shapes one group into the lines an adapter renders: today's lines verbatim
 /// for a single call, one header for an all-ok group, a header plus one
-/// verbatim pair per failed call otherwise.
+/// verbatim pair per failed call otherwise. A nonzero host exit is not a
+/// `failed` summary (the "failed" substring contract is unchanged), but it is
+/// still surfaced: its group carries the exit outcome in the header and
+/// prints the call's verbatim pair below, so the code is never dropped from
+/// the default surface.
 pub(crate) fn shape_group(group: &ToolGroup) -> Vec<String> {
     if group.calls.len() <= 1 {
         return group.calls.iter().flat_map(pair_lines).collect();
     }
     let failed: Vec<&ToolCallPair> = group.calls.iter().filter(|call| call.failed).collect();
     if failed.is_empty() {
-        return vec![all_ok_header(group)];
+        let exited: Vec<&ToolCallPair> = group
+            .calls
+            .iter()
+            .filter(|call| call.nonzero_exit)
+            .collect();
+        if exited.is_empty() {
+            return vec![all_ok_header(group)];
+        }
+        return nonzero_exit_lines(group, &exited);
     }
     let failures = failed
         .iter()
@@ -219,6 +253,25 @@ fn ok_segment(
         segment.push_str(&format!(" +{} more", entry.len() - 3));
     }
     segment
+}
+
+/// The nonzero-exit group shape: a header carrying the outcome (program and
+/// exit code per call) plus one verbatim pair per exited call — the same
+/// never-collapse posture as the failure shape, without reclassifying the
+/// summary as "failed".
+fn nonzero_exit_lines(group: &ToolGroup, exited: &[&ToolCallPair]) -> Vec<String> {
+    let outcomes = exited
+        .iter()
+        .map(|call| call.summary.as_deref().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut lines = vec![format!(
+        "▸ {} tool calls · exited nonzero ({}) — details below",
+        group.calls.len(),
+        outcomes
+    )];
+    lines.extend(exited.iter().flat_map(|call| pair_lines(call)));
+    lines
 }
 
 fn failure_label(call: &ToolCallPair) -> String {

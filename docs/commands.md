@@ -98,7 +98,10 @@ unsandboxed — as your user, with your whole filesystem and network. Its
 guarantees are not `run_program`'s: the contained lane's sandbox bounds do
 not apply here. Under bypass, a hostile workspace file is effectively
 arbitrary code execution as the user. The deny list bounds the direct ask
-only — a denied `curl` does not stop an allowed `make` from invoking curl.
+only — a denied `curl` does not stop an allowed `make` from invoking curl,
+nor a renamed copy (`mycurl`, a symlink or copy of curl) asked under its own
+spelling: deny matches the exact program name named in the ask, never content
+or resolved identity.
 
 `connection schema PROFILE` and interactive `/schema` authenticate and fetch
 live metadata before updating the local schema cache. If a later live attempt
@@ -231,7 +234,8 @@ and `/grants` lists the store's tokens verbatim, one per line, sorted, under
 a header stating the lifetime. A scope naming a denied program refuses at
 `/allow` parse: a grant cannot override the deny list. The deny list bounds
 the direct ask only — a denied `curl` does not stop an allowed `make` from
-invoking curl. Under `bypass`, `/grants` states the mode
+invoking curl, nor a renamed copy (`mycurl`) asked under its own spelling:
+deny matches the exact program name named in the ask. Under `bypass`, `/grants` states the mode
 first — "mode bypass: every call runs without asking; grants are not
 consulted" — before the listing, because a token count alone would read as
 "nothing runs" when the truth is that everything does. Grants die with the

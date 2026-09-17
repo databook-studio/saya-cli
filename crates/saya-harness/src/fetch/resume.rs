@@ -16,7 +16,7 @@ use std::io;
 use std::path::PathBuf;
 
 use super::partial::{PartialMeta, READ_CHUNK, hex, part_rel};
-use crate::{HarnessError, workspace::Workspace};
+use crate::workspace::Workspace;
 
 /// A verified resume plan: the recorded partial is digest-checked against
 /// the disk, and the hasher is already fed the verified prefix — so
@@ -49,9 +49,7 @@ pub(super) fn verify_resume(
     let opened = {
         let anchor = match workspace.anchor(&part_rel, false) {
             Ok(anchor) => anchor,
-            Err(HarnessError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
+            Err(error) if error.is_not_found() => {
                 // A zero-length sidecar with no part file is an empty start
                 // that crashed before its first byte — nothing to resume, and
                 // the caller starts fresh. A recorded length with no file is
@@ -90,9 +88,7 @@ pub(super) fn verify_resume(
     let opened = {
         let path = match workspace.target(&part_rel, false) {
             Ok(path) => path,
-            Err(HarnessError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
+            Err(error) if error.is_not_found() => {
                 if meta.len == 0 {
                     return Ok(None);
                 }

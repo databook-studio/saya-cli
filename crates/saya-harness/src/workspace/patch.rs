@@ -101,7 +101,7 @@ impl Workspace {
         replacement: &[u8],
     ) -> Result<(), HarnessError> {
         let anchor = self.anchor(rel, false)?;
-        let stat = super::anchored::final_stat(&anchor, "patch workspace file")?;
+        let stat = super::anchored::final_stat(&anchor, "patch workspace file", rel)?;
         if stat.is_symlink() {
             return Err(HarnessError::SymlinkRefused {
                 path: rel.to_string(),

@@ -60,10 +60,10 @@ pub(crate) fn open_download_part(
 /// completed download is never pretended onto a swapped path.
 pub(crate) fn promote(ws: &Workspace, part_rel: &str, dest_rel: &str) -> Result<(), HarnessError> {
     let part = ws.anchor(part_rel, false)?;
-    let part_stat = final_stat(&part, "stat download part")?;
+    let part_stat = final_stat(&part, "stat download part", part_rel)?;
     if !part_stat.is_file() {
         return Err(HarnessError::NotRegularFile {
-            path: part.path().display().to_string(),
+            path: part_rel.to_string(),
         });
     }
     let dest = ws.anchor(dest_rel, true)?;

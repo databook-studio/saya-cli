@@ -20,7 +20,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::HarnessError;
 use crate::workspace::Workspace;
 
 use super::download_error::DownloadError;
@@ -84,9 +83,7 @@ pub(super) fn load_meta(
                 .map_err(|_| mismatch("download sidecar does not parse".to_owned()))?;
             Ok(Some(meta))
         }
-        Err(HarnessError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-            Ok(None)
-        }
+        Err(error) if error.is_not_found() => Ok(None),
         Err(error) => Err(error.into()),
     }
 }
