@@ -535,7 +535,9 @@ impl Transcript {
     /// summary and its full per-call sequence. Returns true when a group was
     /// toggled. There is no per-block cursor on the transcript, so this is the
     /// smallest honest affordance: the newest group is the one the user just
-    /// watched stream in. Returns false (no-op) when no group exists; nothing
+    /// watched stream in. Newest-only is the decided affordance, not an
+    /// unfinished one: the boundary rule stands and per-block cursor is
+    /// deliberately not built. Returns false (no-op) when no group exists; nothing
     /// is pushed either way.
     pub(crate) fn toggle_latest_group(&mut self) -> bool {
         let toggled = self
