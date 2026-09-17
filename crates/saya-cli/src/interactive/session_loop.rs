@@ -186,15 +186,52 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         return Ok(code);
     }
     // Piped / non-TTY input (scripts, CI) uses the headless line executor.
-    let outcome = run_plain_loop(
-        terminal,
-        &mut state,
-        &runtime,
-        &store,
-        &state_db,
+    // `--turn-file` runs one verbatim turn instead: the file bytes reach the
+    // same per-turn entry (`handle_line`) with no line splitting, no
+    // trimming, and no blank-line skipping, then the process exits.
+    if let Some(path) = &cli.options.turn_file {
+        let turn = match read_turn_file(path) {
+            Ok(turn) => turn,
+            Err(error) => {
+                let rendered = crate::render_event(
+                    &crate::TerminalEvent::Error {
+                        message: error.clone(),
+                    },
+                    format,
+                );
+                print!("{}", rendered.stdout);
+                eprint!("{}", rendered.stderr);
+                return Err(error.into());
+            }
+        };
+        let mut ctx = TurnContext {
+            state: &mut state,
+            runtime: &runtime,
+            store: &store,
+            state_db: &state_db,
+            format,
+            terminal: false,
+            session: &mut session,
+        };
+        let outcome = run_single_turn(turn, &mut ctx);
+        crate::chart::cleanup_session_charts();
+        block_on(store.save(state.redacted()))?;
+        return match outcome? {
+            TurnOutcome::Completed => Ok(0),
+            TurnOutcome::Errored => Ok(5),
+            TurnOutcome::Exit => Ok(0),
+        };
+    }
+    let mut ctx = TurnContext {
+        state: &mut state,
+        runtime: &runtime,
+        store: &store,
+        state_db: &state_db,
         format,
-        &mut session,
-    );
+        terminal,
+        session: &mut session,
+    };
+    let outcome = run_plain_loop(&mut ctx);
     crate::chart::cleanup_session_charts();
     outcome?;
     block_on(store.save(state.redacted()))?;
@@ -215,34 +252,98 @@ pub(crate) fn resume_approval_mode(
     }
 }
 
+/// Reads one turn verbatim from `path`: the bytes reach the turn unaltered —
+/// blank lines, trailing whitespace, code fences. Only a trailing `\n` or
+/// `\r\n` (the file's own line ending) is stripped, since the per-turn entry
+/// below treats a trailing newline as the end of input, not content.
+fn read_turn_file(path: &std::path::Path) -> Result<String, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("cannot read --turn-file {}: {error}", path.display()))?;
+    let mut text = String::from_utf8(bytes)
+        .map_err(|error| format!("--turn-file {} is not valid UTF-8: {error}", path.display()))?;
+    if text.ends_with("\r\n") {
+        text.truncate(text.len() - 2);
+    } else if text.ends_with('\n') {
+        text.truncate(text.len() - 1);
+    }
+    if text.trim().is_empty() {
+        return Err(format!("--turn-file {} is empty", path.display()));
+    }
+    Ok(text)
+}
+
+/// The outcome of the single `--turn-file` turn: completed (exit 0),
+/// errored (exit 5, the streamed `TerminalEvent::Error` names it), or an
+/// explicit `/exit` (still exit 0 — the turn ran and asked to leave).
+enum TurnOutcome {
+    Completed,
+    Errored,
+    Exit,
+}
+
+/// Everything one headless turn runs with. A bundle rather than seven
+/// positional parameters, so the call sites read by name. `state` is the
+/// session being turned; `session` is its engine side (universe, policy,
+/// journal). `terminal` decides whether the loop prints the status header
+/// and whether turns may prompt.
+struct TurnContext<'a> {
+    state: &'a mut SessionState,
+    runtime: &'a RuntimeConfig,
+    store: &'a FsSessionStore,
+    state_db: &'a SqliteStateStore,
+    format: RenderFormat,
+    terminal: bool,
+    session: &'a mut SessionRuntime,
+}
+
+/// Runs exactly one turn through the session's one per-turn entry
+/// (`handle_line`), preserving the file bytes verbatim: no line splitting,
+/// no trimming, no blank-line skipping. Returns the turn outcome so the
+/// caller maps it to the process exit code.
+fn run_single_turn(
+    turn: String,
+    ctx: &mut TurnContext,
+) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+    // The one per-turn entry decides the outcome: `/exit` asks to leave
+    // (exit 0), an errored turn — the stream it emitted names it — is exit
+    // 5, and anything that left a mark ran to completion (exit 0). The
+    // piped loop swallows these into the loop; the single-turn path maps
+    // them to the process exit code instead. Both marks matter: an agent
+    // turn records `turns`, while a slash turn records only `messages` —
+    // the error test's unknown slash records neither, which is how the
+    // outcome tells the two apart without re-parsing the turn.
+    let before_turns = ctx.state.turns.len();
+    let before_messages = ctx.state.messages.len();
+    let should_exit = handle_line_verbatim(&turn, ctx)?;
+    if should_exit {
+        return Ok(TurnOutcome::Exit);
+    }
+    if ctx.state.turns.len() > before_turns || ctx.state.messages.len() > before_messages {
+        return Ok(TurnOutcome::Completed);
+    }
+    Ok(TurnOutcome::Errored)
+}
+
 /// Reads lines from stdin without the rich editor, printing the status header
 /// and `saya> ` marker when attached to a terminal. Used for piped input and as
 /// a graceful fallback when the rich editor cannot initialize.
-fn run_plain_loop(
-    terminal: bool,
-    state: &mut SessionState,
-    runtime: &RuntimeConfig,
-    store: &FsSessionStore,
-    state_db: &SqliteStateStore,
-    format: RenderFormat,
-    session: &mut SessionRuntime,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn run_plain_loop(ctx: &mut TurnContext) -> Result<(), Box<dyn std::error::Error>> {
     // A startup fact the user must read once, in the loop they will see every
     // turn: a pinned root that vanished, or any other composition notice —
     // and, under bypass, the mode's activation line with its no-euphemism
     // wording and the probe/absence facts.
-    if let Some(notice) = session.notice() {
+    if let Some(notice) = ctx.session.notice() {
         println!("{notice}");
     }
     if let Some(line) =
-        super::session_activation::line_if_bypass(state, runtime, &session.universe())
+        super::session_activation::line_if_bypass(ctx.state, ctx.runtime, &ctx.session.universe())
     {
         println!("{line}");
     }
     let mut input = String::new();
     loop {
-        if terminal {
-            println!("{}", super::session_prompt::status_line(state));
+        if ctx.terminal {
+            println!("{}", super::session_prompt::status_line(ctx.state));
             print!("saya> ");
             io::stdout().flush()?;
         }
@@ -250,9 +351,7 @@ fn run_plain_loop(
         if io::stdin().read_line(&mut input)? == 0 {
             break;
         }
-        if handle_line(
-            &input, state, runtime, store, state_db, format, terminal, session,
-        )? {
+        if handle_line(&input, ctx)? {
             break;
         }
     }
@@ -262,18 +361,28 @@ fn run_plain_loop(
 /// Processes one input line: dispatches a slash command or an agent prompt,
 /// renders the resulting action, and persists the redacted session. Returns
 /// `Ok(true)` when the session should exit.
-#[allow(clippy::too_many_arguments)]
-fn handle_line(
+fn handle_line(line: &str, ctx: &mut TurnContext) -> Result<bool, Box<dyn std::error::Error>> {
+    // Piped stdin reads line by line: trim the line ending here, keep the
+    // blank-line skip in the shared entry below so both paths share it.
+    handle_line_verbatim(line.trim_end(), ctx)
+}
+
+/// The one per-turn entry every headless path shares: the piped loop
+/// pre-trims each line (`handle_line`), while `--turn-file` passes the file
+/// bytes verbatim (no trimming, no blank-line skipping). An empty turn here
+/// is an errored turn — the stream names it and the caller exits non-zero —
+/// never silent success.
+fn handle_line_verbatim(
     line: &str,
-    state: &mut SessionState,
-    runtime: &RuntimeConfig,
-    store: &FsSessionStore,
-    state_db: &SqliteStateStore,
-    format: RenderFormat,
-    terminal: bool,
-    session: &mut SessionRuntime,
+    ctx: &mut TurnContext,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let line = line.trim_end();
+    let state = &mut *ctx.state;
+    let runtime = ctx.runtime;
+    let store = ctx.store;
+    let state_db = ctx.state_db;
+    let format = ctx.format;
+    let terminal = ctx.terminal;
+    let session = &mut *ctx.session;
     if line.trim().is_empty() {
         return Ok(false);
     }
