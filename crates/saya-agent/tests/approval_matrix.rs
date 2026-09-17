@@ -100,6 +100,17 @@ fn cases() -> Vec<(&'static str, ToolEffect, bool)> {
             },
             false,
         ),
+        (
+            "workspace write shape: no approval prompt, no side effect, but a \
+             local-state write (`workspace_write`, `workspace_edit`)",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::WriteWorkspace,
+            },
+            false,
+        ),
     ]
 }
 

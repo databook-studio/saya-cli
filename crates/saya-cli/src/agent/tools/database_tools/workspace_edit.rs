@@ -7,6 +7,31 @@
 //! harness's — never re-derived here. This tool's own jobs are argument
 //! typing, the byte bounds, the `expected_*` precondition, and typed refusals
 //! that carry counts, line numbers, sizes and digests — never file content.
+//!
+//! Failure contract (DESIGN.md §4): every row refuses loudly and writes nothing.
+//! Zero matches refuses (`NoMatch`, with the current
+//! size and digest so the model re-anchors); multiple matches refuses
+//! (`Ambiguous`, with bounded line numbers only, excerpts within 2 KiB —
+//! never "first wins"); a moved anchor refuses (`expected_size` or
+//! `expected_digest` no longer matching the current file — no write); a
+//! replacement or chunk over the bound refuses whole, never truncated; an
+//! offset mismatch refuses (`OffsetMismatch`, reporting the current size and
+//! digest so the model resumes from `offset`); a mid-edit truncation lands
+//! nothing (a truncated tool-call argument never parses or validates; a
+//! crashed commit leaves the old file — temp+rename is atomic with
+//! post-write re-verification); a non-UTF-8 target is refused (`NotText` —
+//! reads are lossy, so byte-exact anchors cannot be trusted); concurrent writers
+//! are last-writer-wins unless `expected_*` is supplied, in which
+//! case the loser gets the moved-anchor refusal (no locking, no merge); an
+//! empty anchor is rejected (it matches everywhere).
+//!
+//! What this does not do: it does not recover from an output-token cap on
+//! its own — the continuation loop is unbuilt, so a stopped response resumes
+//! only when the model is told to resume from the reported size and digest.
+//! Chunking does not beat the context window: every continuation re-sends
+//! history, so a task needing more total output than the window allows still
+//! fails. `workspace_write` remains for small whole-file writes; this is not
+//! its replacement.
 
 use saya_agent::ToolError;
 
