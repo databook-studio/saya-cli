@@ -44,6 +44,7 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     }
     refuse_continue_on_run(&command, cli.options.continue_session)?;
     refuse_workspace_on_subcommand(Some(&command), cli.options.workspace.as_deref())?;
+    refuse_turn_file_on_subcommand(cli.options.turn_file.as_deref())?;
     refuse_session_launch_flags_on_subcommand(&command, &cli.options)?;
     refuse_host_commands_for_ask(&cli)
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
@@ -167,6 +168,21 @@ fn refuse_workspace_on_subcommand(
         return Err(
             "`--workspace` binds the interactive session's workspace, not a subcommand: \
              launch the session (`saya --workspace <dir>`) or run the subcommand without it"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// The `--turn-file` guard. The flag reads one turn for the interactive
+/// session — the only surface that reads it, and only when no subcommand is
+/// present. A subcommand is not a session, so the pre-subcommand spelling is
+/// refused rather than silently ignoring a stated intent.
+fn refuse_turn_file_on_subcommand(turn_file: Option<&Path>) -> Result<(), String> {
+    if turn_file.is_some() {
+        return Err(
+            "`--turn-file` reads one turn for the interactive session, not a subcommand: \
+             launch the session (`saya --turn-file <path>`) or run the subcommand without it"
                 .into(),
         );
     }

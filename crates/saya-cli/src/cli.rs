@@ -65,6 +65,13 @@ pub struct GlobalOptions {
     /// rather than silently ignoring a stated intent.
     #[arg(long = "deny", value_name = "PROGRAM")]
     pub deny: Vec<String>,
+    /// Read one turn from this file instead of stdin, run exactly that turn,
+    /// then exit. The bytes reach the turn unaltered — blank lines, trailing
+    /// whitespace, code fences — where piped stdin reads line by line and
+    /// folds layout. Session-surface only: `saya ask` and `saya run` refuse
+    /// it rather than silently ignoring a stated intent.
+    #[arg(long = "turn-file", value_name = "PATH")]
+    pub turn_file: Option<std::path::PathBuf>,
     /// Connection profile to use (overrides `default_profile` in config).
     #[arg(long, global = true)]
     pub profile: Option<String>,
