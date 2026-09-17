@@ -25,6 +25,11 @@ raise "top-level write permission" unless workflow.dig("permissions", "contents"
 raise "publish write permission missing" unless jobs.dig("publish", "permissions", "contents") == "write"
 raise "publish gate missing" unless jobs["publish"]["if"].include?("inputs.publish == true")
 raise "publish dependencies missing" unless jobs["publish"]["needs"].sort == %w[build checksums]
+matrix = jobs.dig("build", "strategy", "matrix", "include")
+arm64 = matrix.find { |entry| entry["platform"] == "linux-arm64" }
+raise "linux-arm64 matrix entry missing" if arm64.nil?
+raise "linux-arm64 must build natively (no target key)" if arm64.key?("target")
+raise "linux-arm64 must run on a native ARM runner" unless arm64["os"] == "ubuntu-24.04-arm"
 text = File.read(path)
 release = 'gh release create "v${{ steps.version.outputs.version }}" release-assets/* --target "${{ github.sha }}" --generate-notes'
 raise "release target is not github.sha" unless text.include?(release)

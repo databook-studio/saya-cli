@@ -28,7 +28,8 @@ it. `ci.yml` runs on pull requests and pushes to `main`.
 
 Releases use `.github/workflows/release-candidate.yml`, triggered by pushing a
 `vX.Y.Z` tag (or manually with `publish: false` to validate without releasing).
-Its build matrix covers Linux x86_64, macOS arm64, macOS x86_64 (cross-compiled
+Its build matrix covers Linux x86_64, Linux arm64 (native `ubuntu-24.04-arm`
+runner), macOS arm64, macOS x86_64 (cross-compiled
 on the Apple Silicon runner, since GitHub's Intel runners are scarce), and
 Windows x86_64. Each build compiles `saya` in release mode, smoke-tests
 `saya --version` and `--non-interactive config doctor` on native targets, and
