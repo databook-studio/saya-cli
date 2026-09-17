@@ -43,15 +43,7 @@ pub struct GlobalOptions {
     /// workspace reads refuse.
     #[arg(long, value_name = "DIR")]
     pub workspace: Option<std::path::PathBuf>,
-    /// Enable the host-command lane for the interactive session: `run_command`
-    /// runs PATH-resolved programs unsandboxed — as your user, with your whole
-    /// filesystem and network. Session-only: `saya ask` refuses it, and runs
-    /// never get the lane. A workspace root is still required — no root, no
-    /// lane, even with the flag.
-    #[arg(long = "host-commands")]
-    pub host_commands: bool,
-    /// Seed session grants at launch, stated in the `--allow` grammar
-    /// (`command:<program>` seeds imply the host-command lane's composition).
+    /// Seed session grants at launch, stated in the `--allow` grammar.
     /// Session-only: a subcommand is not a session — `saya ask` and `saya run`
     /// refuse it rather than silently ignoring a stated intent.
     #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
@@ -60,9 +52,8 @@ pub struct GlobalOptions {
     /// user-stated refusal evaluated before every grant, every approval
     /// prompt, and bypass, at every session door that execs a program by
     /// name — `run_command`, `run_program`, the interpreter door.
-    /// Refusal-only: it composes nothing, so the host lane stays off unless
-    /// stated separately. Session-only: `saya ask` and `saya run` refuse it
-    /// rather than silently ignoring a stated intent.
+    /// Refusal-only: it composes nothing. Session-only: `saya ask` and
+    /// `saya run` refuse it rather than silently ignoring a stated intent.
     #[arg(long = "deny", value_name = "PROGRAM")]
     pub deny: Vec<String>,
     /// Read one turn from this file instead of stdin, run exactly that turn,

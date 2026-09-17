@@ -264,13 +264,29 @@ fn continue_still_parses_for_the_bare_repl() {
     assert!(parsed.options.continue_session, "the flag reached options");
 }
 
-/// H1 red: the session-only `--host-commands` launch flag parses on the bare
-/// REPL. Written before the flag exists, so clap errors today.
+/// G2 slice 5 — `saya --host-commands` is a clap usage error: the flag was
+/// deleted with no no-op alias, so a stale invocation gets exit 2. Moved
+/// from `host_commands_flag_parses_for_the_bare_repl` (reason: the flag the
+/// old test pinned no longer exists).
 #[test]
-fn host_commands_flag_parses_for_the_bare_repl() {
-    let parsed = Cli::try_parse_from(["saya", "--host-commands"]).expect("bare flag parses");
-    assert!(parsed.command.is_none(), "no subcommand: the REPL path");
-    assert!(parsed.options.host_commands, "the flag reached options");
+fn host_commands_flag_is_now_a_usage_error() {
+    let error = Cli::try_parse_from(["saya", "--host-commands"])
+        .expect_err("--host-commands must not parse after G2");
+    assert_eq!(
+        error.kind(),
+        clap::error::ErrorKind::UnknownArgument,
+        "a stale flag is a usage error"
+    );
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("host-commands"),
+        "the usage error names the stale spelling: {rendered}"
+    );
+    let help = saya_cli::Cli::command().render_help().to_string();
+    assert!(
+        !help.contains("--host-commands"),
+        "the root help no longer names the deleted flag"
+    );
 }
 
 /// H1 red: the session-only `--allow command:<x>` launch seed parses on the

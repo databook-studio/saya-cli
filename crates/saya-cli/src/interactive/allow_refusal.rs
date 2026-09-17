@@ -51,12 +51,13 @@ fn reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
         }
         // The host lane's own gate: a `command:` token parses under the
         // grammar on the session surface, and gates something only when the
-        // lane composed. With the lane off, `/allow command:<x>` refuses
-        // with the launch wording — in this surface-aware refusal register.
+        // lane composed. With the lane off — no workspace root bound — the
+        // refusal states the workspace-root fact, in this surface-aware
+        // refusal register.
         _ if token.starts_with("command:") && facts.host.is_none() => Some(
             "the host-command lane is not composed in this session, so the token gates \
-             nothing in this session; relaunch with `--host-commands` (or seed \
-             `--allow command:<program>`, or enable user-layer `[host_commands]`)"
+             nothing in this session; no workspace root is bound, so the lane composed \
+             nothing — bind one with `--workspace <dir>` or launch inside a worktree"
                 .to_owned(),
         ),
         _ => None,

@@ -76,7 +76,7 @@ pub struct ResolvedConfig {
     /// The engine layers RunSpec and step budgets over these per dimension;
     /// there is deliberately no environment input to any of it (plan G3).
     pub jobs: ResolvedJobs,
-    /// The `[host_commands]` opt-in: user-layer `enable` plus `pass_env` and
+    /// The `[host_commands]` shaping: user-layer `pass_env` and
     /// the per-call ceiling. The project layer may never state it (typed
     /// resolve error) — see `HostCommandsFromProject`.
     pub host_commands: crate::jobs::ResolvedHostCommands,
@@ -145,11 +145,11 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let protected = snapshot_protected(&file);
     if let Some(project) = input.project.as_ref() {
         require_unique_endpoints(&project.ai.endpoints)?;
-        // A project-layer `[host_commands]` is a hard refusal — not a revert:
-        // a model-writable file must never enable (or shape) unsandboxed
-        // execution, and `--trust-project-config` does not unlock it.
-        if project.host_commands.enable.is_some()
-            || !project.host_commands.pass_env.is_empty()
+        // A project-layer `[host_commands]` is a hard refusal — not a
+        // revert: a model-writable file must never shape unsandboxed
+        // execution (not enable it, not widen its timeout, not name its
+        // env), and `--trust-project-config` does not unlock it.
+        if !project.host_commands.pass_env.is_empty()
             || project.host_commands.timeout_seconds.is_some()
         {
             return Err(ConfigError::HostCommandsFromProject);

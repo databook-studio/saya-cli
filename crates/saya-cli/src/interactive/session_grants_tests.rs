@@ -524,10 +524,12 @@ fn a_seed_request_over_an_empty_store_says_so() {
     );
 }
 
-/// A launch allowing `command:x` composes the lane and seeds the token: the
-/// seed implies composition, so the launch helper admits it against a lane
-/// composed for the seed. The bare composition still refuses — pinned by
+/// A launch allowing `command:x` seeds the token: the seed seeds the grant
+/// (it no longer implies composition — the root composes the lane). The
+/// bare composition still refuses — pinned by
 /// `command_tokens_parse_on_a_composed_session_and_refuse_on_a_bare_one`.
+/// Kept whole (reason: only the implies-composition clause moved; the seed
+/// behaviour stays).
 #[test]
 fn a_launch_allowing_command_x_composes_the_lane_and_seeds_the_token() {
     use crate::approval_facts::{ApprovalFacts, HostFacts};
@@ -582,8 +584,12 @@ fn command_tokens_parse_on_a_composed_session_and_refuse_on_a_bare_one() {
     };
     assert!(
         error.contains("gates nothing in this session")
-            && error.contains("relaunch with `--host-commands`"),
-        "the bare-session refusal names launch composition: {error}"
+            && error.contains("no workspace root is bound"),
+        "the bare-session refusal names the workspace-root fact: {error}"
+    );
+    assert!(
+        !error.contains("--host-commands"),
+        "no deleted flag in the refusal: {error}"
     );
 }
 

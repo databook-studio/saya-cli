@@ -177,13 +177,13 @@ that declares a key replaces that key's whole value from the lower layers, so
 the `tokens_per_endpoint` map and the `[jobs.fetch]` sub-table are replaced
 wholesale rather than merged field-wise.
 
-`[host_commands]` opts the interactive session into the unsandboxed host
-lane. User-layer only — a project-layer `[host_commands]` is a typed resolve
-error, because a model-writable file must never enable unsandboxed execution:
+`[host_commands]` shapes the interactive session's unsandboxed host lane,
+which composes wherever a workspace root binds — no declaration needed.
+User-layer only — a project-layer `[host_commands]` is a typed resolve
+error, because a model-writable file must never shape unsandboxed execution:
 
 ```toml
 [host_commands]
-enable = true              # default false: the lane is off unless stated
 pass_env = ["CI_TOKEN"]    # parent variable names the built child env carries
 timeout_seconds = 600      # per-call ceiling; a call may narrow, never widen
 ```
