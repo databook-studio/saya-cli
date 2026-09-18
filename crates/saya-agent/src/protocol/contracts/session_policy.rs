@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::ToolEffect;
-use super::approval::read_only_permits;
+use super::approval::{AgentMode, read_only_permits};
 use crate::protocol::approval::ApprovalPolicy;
 
 /// How the engine resolves one tool call.
@@ -122,6 +122,7 @@ impl SessionGrants {
 #[derive(Debug, Clone)]
 pub struct SessionPolicy {
     mode: ApprovalPolicy,
+    agent_mode: AgentMode,
     grants: SessionGrants,
     /// Whether the policy accepts answers. `false` — the interactive shape —
     /// asks and records; `true` — the headless run's — resolves what its
@@ -133,9 +134,18 @@ impl SessionPolicy {
     pub fn new(mode: ApprovalPolicy) -> Self {
         Self {
             mode,
+            agent_mode: AgentMode::Build,
             grants: SessionGrants::default(),
             frozen: false,
         }
+    }
+
+    /// Sets the agent's task posture, leaving the approval policy and the
+    /// grants untouched — a grant made in `Build` rides along inert under
+    /// `Plan` and answers again on return.
+    pub fn with_agent_mode(mut self, agent_mode: AgentMode) -> Self {
+        self.agent_mode = agent_mode;
+        self
     }
 
     /// The headless run's policy, frozen: seeded from the run's `--allow`
@@ -146,6 +156,7 @@ impl SessionPolicy {
     pub fn frozen(mode: ApprovalPolicy, seeds: &[String]) -> Self {
         let policy = Self {
             mode,
+            agent_mode: AgentMode::Build,
             grants: SessionGrants::default(),
             frozen: true,
         };
@@ -159,6 +170,12 @@ impl SessionPolicy {
     /// the store sits under.
     pub fn mode(&self) -> ApprovalPolicy {
         self.mode
+    }
+
+    /// The agent's task posture — what a session listing reads to state
+    /// whether this session builds or plans.
+    pub fn agent_mode(&self) -> AgentMode {
+        self.agent_mode
     }
 
     /// The session's grant store — what a prompt's "already allowed" facts
@@ -181,10 +198,19 @@ impl SessionPolicy {
     /// frozen policy — the headless run's — an `Ask` the seeds do not cover
     /// resolves to [`ApprovalDecision::Deny`] naming [`HEADLESS_ASK_REASON`],
     /// never to an ask: a headless surface has no reader, and its approval is
-    /// its seeds. The mode judges *who answers*, never *what the tool is*:
-    /// every structural guard lives in the tools and the composition,
-    /// untouched by any mode.
+    /// its seeds. The agent mode narrows, never widens: under [`AgentMode::Plan`]
+    /// a call whose effect fails [`read_only_permits`] denies before the
+    /// approval match runs — under every policy including `bypass` — so it
+    /// consults no grant and records no call, and a grant made in `Build` is
+    /// inert under `Plan` and live again on return. `Plan` is a task posture
+    /// and `read-only` is a consent posture, and they compose: the mode judges
+    /// *what the task may touch*, the policy judges *who answers*, never
+    /// *what the tool is*: every structural guard lives in the tools and the
+    /// composition, untouched by any mode.
     pub fn resolve(&self, effect: &ToolEffect, grant_token: Option<&str>) -> ApprovalDecision {
+        if self.agent_mode == AgentMode::Plan && !read_only_permits(effect) {
+            return ApprovalDecision::Deny { reason: None };
+        }
         match self.mode {
             ApprovalPolicy::Bypass => ApprovalDecision::Allow,
             ApprovalPolicy::ReadOnly if read_only_permits(effect) => ApprovalDecision::Allow,
