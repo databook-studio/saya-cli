@@ -155,6 +155,7 @@ impl SessionState {
             model: self.model.clone(),
             allow_data_sharing: self.allow_data_sharing,
             approval_mode: self.approval_mode.clone(),
+            agent_mode: self.agent_mode.clone(),
             workspace_root: self.workspace_root.clone(),
             turns: self.turns.clone(),
             profile_names: self.profile_names(),
@@ -378,6 +379,34 @@ mod tests {
                 "replayed history carried a tool_call_id: {message:?}"
             );
         }
+    }
+
+    /// The persisted mode carries the task posture and nothing secret: `plan`
+    /// round-trips through `redacted()`, and the serialized form carries the
+    /// mode word with no secret-shaped keys beside the ones the redaction
+    /// tests already pin.
+    #[test]
+    fn redacted_carries_the_mode_and_no_secret_shaped_data() {
+        use saya_agent::AgentMode;
+        let mut planned = SessionState::new("s-mode", None, "m");
+        planned.agent_mode = AgentMode::Plan.as_str().into();
+        let saved = planned.redacted();
+        assert_eq!(saved.agent_mode, "plan");
+        assert_eq!(saved.approval_mode, "ask");
+        let json = serde_json::to_string(&saved).unwrap();
+        assert!(
+            json.contains(r#""agent_mode":"plan""#),
+            "mode missing: {json}"
+        );
+        for key in ["password", "api_key", "rows", "reasoning"] {
+            assert!(
+                !json.contains(key),
+                "`{key}` leaked into the record: {json}"
+            );
+        }
+
+        let built = SessionState::new("s-build", None, "m");
+        assert_eq!(built.redacted().agent_mode, "build");
     }
 
     /// A session with no tool calls serializes to today's shape: no

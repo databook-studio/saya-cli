@@ -70,6 +70,12 @@ pub(crate) fn state_from_redacted(
         } else {
             value.approval_mode
         };
+    state.agent_mode = if value.version < saya_store::SESSION_VERSION || value.agent_mode.is_empty()
+    {
+        saya_agent::AgentMode::Build.as_str().to_owned()
+    } else {
+        value.agent_mode
+    };
     state.included_profiles = if value.included_profiles.is_empty() {
         value.profile_names.into_iter().skip(1).collect()
     } else {

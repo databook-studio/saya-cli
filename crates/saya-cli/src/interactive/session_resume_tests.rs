@@ -218,6 +218,116 @@ fn resume_without_the_flag_keeps_the_persisted_mode() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A Plan session survives the persist/resume round trip with its posture
+/// and its status-line word intact: the user who set Plan is not silently
+/// handed write tools on return.
+#[test]
+fn a_plan_session_resumes_as_plan_with_its_status_word() {
+    use saya_agent::AgentMode;
+    let root = std::env::temp_dir().join(format!("saya-mode-resume-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    let mut state = crate::SessionState::new("planned", None, "m");
+    state.agent_mode = AgentMode::Plan.as_str().into();
+    super::block_on(store.save(state.redacted())).unwrap();
+    let resumed = load_session(
+        &store,
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(resumed.agent_mode, "plan");
+    assert_eq!(resumed.agent_mode_parsed(), AgentMode::Plan);
+    assert!(
+        super::super::session_prompt::status_line(&resumed).contains("mode:plan"),
+        "the status line names the resumed posture"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A session file written before the mode field existed resumes as Build
+/// without error: the default is today's behaviour for every existing
+/// session, not a silent read-only session the user never chose. The
+/// fixture is raw JSON with no mode key, so deserialization — not struct
+/// construction — proves the old record loads.
+#[test]
+fn a_session_file_without_the_mode_field_resumes_as_build() {
+    use saya_agent::AgentMode;
+    let root = std::env::temp_dir().join(format!("saya-mode-legacy-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("old.json"),
+        r#"{"version":2,"id":"old","profile_names":[],"turns":[],"messages":[]}"#,
+    )
+    .unwrap();
+    let state = load_session(
+        &FsSessionStore::new(&root),
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(state.agent_mode, "build");
+    assert_eq!(state.agent_mode_parsed(), AgentMode::Build);
+    assert!(
+        super::super::session_prompt::status_line(&state).contains("mode:build"),
+        "the old session reads exactly as before"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A resumed Plan session starts with an empty grant store: the mode rides
+/// the record, and grants still die with the process — the persisted plan
+/// posture never re-grants anything.
+#[test]
+fn a_resumed_plan_session_starts_with_an_empty_grant_store() {
+    let state = super::state_from_redacted(
+        RedactedSession {
+            version: saya_store::SESSION_VERSION,
+            id: "planned-grants".into(),
+            agent_mode: "plan".into(),
+            ..Default::default()
+        },
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    );
+    assert_eq!(state.agent_mode, "plan");
+    let policy = saya_agent::SessionPolicy::new(saya_agent::ApprovalPolicy::Ask);
+    assert!(
+        policy.grants().is_empty(),
+        "a resumed session builds its policy empty, from the mode alone"
+    );
+}
+
+/// The additive-field rule for session files: a new persisted field stays
+/// `#[serde(default)]` at `SESSION_VERSION` 2 — absence deserializes to the
+/// old behaviour — so a pre-slice record resumes without error and without
+/// the version-skew fallback rewriting its live fields.
+#[test]
+fn the_mode_is_an_additive_field_at_the_current_session_version() {
+    assert_eq!(saya_store::SESSION_VERSION, 2);
+    let record: RedactedSession = serde_json::from_str(
+        r#"{"version":2,"id":"old","profile_names":[],"turns":[],"messages":[]}"#,
+    )
+    .expect("a record without the mode field deserializes");
+    assert!(
+        record.agent_mode.is_empty(),
+        "a pre-slice record carries no mode"
+    );
+}
+
 /// An older session file written before the `arguments` and `result_shape`
 /// fields existed still loads: the new fields are `#[serde(default)]`, so a
 /// tool record carrying only `name` and `status` deserializes with empty

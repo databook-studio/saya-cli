@@ -58,6 +58,14 @@ pub struct RedactedSession {
     pub allow_data_sharing: bool,
     #[serde(default)]
     pub approval_mode: String,
+    /// The session's task posture (`"build"` or `"plan"`), beside
+    /// `approval_mode`. An empty or missing value resumes as build — the
+    /// behaviour of every session written before this field existed. New
+    /// values stay additive `#[serde(default)]` fields, never a version
+    /// bump: the restore path treats absence as the default, and version 2
+    /// already marks the shape the `version < SESSION_VERSION` guards read.
+    #[serde(default)]
+    pub agent_mode: String,
     /// The session's pinned workspace root, canonical, resolved once at
     /// first start. Absent (`None`) on every session written before the
     /// workspace existed — such a session resumes unbound, its old
@@ -83,6 +91,7 @@ impl Default for RedactedSession {
             model: String::new(),
             allow_data_sharing: false,
             approval_mode: String::new(),
+            agent_mode: String::new(),
             workspace_root: None,
             turns: Vec::new(),
             profile_names: Vec::new(),
