@@ -60,12 +60,6 @@ pub struct SessionState {
     /// usage rather than persisting a stale flag.
     #[serde(skip, default = "default_context_warned")]
     pub context_warned: bool,
-    /// Whether the context-window warning already fired for the current
-    /// above-threshold stretch. Set on the upward crossing of
-    /// `CONTEXT_WARN_PERCENT`, cleared when utilisation falls back below it
-    /// and by `/clear`. In-memory only (`#[serde(skip)]`, the `show_thinking`
-    /// precedent): a resumed session re-derives it from the next turn's
-    /// usage rather than persisting a stale flag.
     /// The session's deny list: bare program names every door refuses. The
     /// status header lists them. In-memory only — recomposed from the launch
     /// statement and user-layer config, never from the record.
