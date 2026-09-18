@@ -191,7 +191,26 @@ impl SessionState {
                 SessionAction::Message(crate::slash::help_for(topic.as_deref()))
             }
             SlashCommand::Contracts(command) => SessionAction::Contracts(command),
-            SlashCommand::Run(args) => SessionAction::Run(args),
+            SlashCommand::Run(args) => {
+                // Plan's escape hatch stays shut here: a run writes through
+                // its own declared capabilities rather than the session's
+                // mode, so a Plan session that spawned one would step around
+                // the posture it just set. The refusal names both facts — the
+                // session is in Plan mode, and the run would carry its own
+                // capabilities — and the remedy (`/mode build`), in the voice
+                // of the run-boundary precedent (`RunMode::admit`): never a
+                // silently narrowed run, never a silent allow. Cancelling a
+                // run and listing runs are read-shaped and pass through.
+                if self.agent_mode_parsed() == saya_agent::AgentMode::Plan {
+                    return SessionAction::Error(
+                        "this session is in Plan mode, and a run writes through its \
+                         own declared capabilities rather than the session's mode — \
+                         switch to Build with `/mode build` if the run is intended"
+                            .into(),
+                    );
+                }
+                SessionAction::Run(args)
+            }
             SlashCommand::RunCancel(run_id) => SessionAction::RunCancel(run_id),
             SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
             SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
@@ -458,5 +477,55 @@ mod tests {
             plan.contains(PLAN_BYPASS_SENTENCE),
             "plan answer must carry the bypass sentence verbatim: {plan}"
         );
+    }
+
+    /// `/run …` from a Plan session refuses — a run writes through its
+    /// own declared capabilities rather than the session's mode, so a Plan
+    /// session that spawned one would step around the posture it just set.
+    /// The refusal names the mode and the remedy (`/mode build`), never
+    /// silently narrowing the run, and never silently allowing it. Cancelling
+    /// a run and listing runs are read-shaped and stay available.
+    #[test]
+    fn run_from_a_plan_session_refuses_with_mode_and_remedy() {
+        use saya_agent::AgentMode;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        state.apply(SlashCommand::Mode(Some(AgentMode::Plan)), &[]);
+        let action = state.apply(
+            SlashCommand::Run("survey the data --allow workspace-write".into()),
+            &[],
+        );
+        let SessionAction::Error(message) = action else {
+            panic!("a Plan session must refuse /run, got {action:?}");
+        };
+        assert!(
+            message.contains("Plan mode"),
+            "the refusal names the mode, got:\n{message}"
+        );
+        assert!(
+            message.contains("/mode build"),
+            "the refusal names the remedy, got:\n{message}"
+        );
+        // `/runs` and `/run cancel` are read-shaped: still available.
+        let action = state.apply(SlashCommand::Runs(None), &[]);
+        assert_eq!(action, SessionAction::Runs(None));
+        let action = state.apply(SlashCommand::RunCancel("r-1".into()), &[]);
+        assert_eq!(action, SessionAction::RunCancel("r-1".into()));
+    }
+
+    /// `/mode build` then `/run …` works exactly as today: the guard reads
+    /// only Plan, so a Build session's `/run` family is byte-identical to
+    /// `release/0.4.1` on every path.
+    #[test]
+    fn run_after_mode_build_matches_today() {
+        use saya_agent::AgentMode;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        state.apply(SlashCommand::Mode(Some(AgentMode::Plan)), &[]);
+        state.apply(SlashCommand::Mode(Some(AgentMode::Build)), &[]);
+        let action = state.apply(SlashCommand::Run("survey the data".into()), &[]);
+        assert_eq!(action, SessionAction::Run("survey the data".into()));
+        let action = state.apply(SlashCommand::Runs(Some("r-1".into())), &[]);
+        assert_eq!(action, SessionAction::Runs(Some("r-1".into())));
+        let action = state.apply(SlashCommand::RunCancel("r-1".into()), &[]);
+        assert_eq!(action, SessionAction::RunCancel("r-1".into()));
     }
 }
