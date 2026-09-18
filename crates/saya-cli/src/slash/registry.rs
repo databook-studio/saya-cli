@@ -13,6 +13,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "model",
     "privacy",
     "approvals",
+    "mode",
     "schema",
     "sql",
     "export",

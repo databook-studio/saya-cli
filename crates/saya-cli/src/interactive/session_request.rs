@@ -41,8 +41,8 @@ pub(crate) async fn run(
     format: RenderFormat,
     state_db: &SqliteStateStore,
     session: Arc<SessionUniverse>,
-    // The agent's task posture, threaded like `approval`: the real source
-    // arrives with `/mode` in the next slice.
+    // The agent's task posture, threaded like `approval`: the session's
+    // `/mode` state at the composition root.
     agent_mode: AgentMode,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = CancellationToken::new();

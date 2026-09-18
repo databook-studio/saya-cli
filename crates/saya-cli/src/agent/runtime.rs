@@ -35,9 +35,8 @@ pub(crate) async fn run_prompt_with_sink(
     // `None` (the one-shot `ask` path) leaves `workspace_read` denying with
     // a typed error and the write-shaped tools hidden.
     session: Option<Arc<SessionUniverse>>,
-    // The agent's task posture, threaded like `approval`: the real source
-    // arrives with `/mode` in the next slice, so every entry point passes
-    // `AgentMode::Build` until then.
+    // The agent's task posture, threaded like `approval`: the session's
+    // `/mode` state at the composition root.
     agent_mode: AgentMode,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let inputs = prepare_turn(runtime, &overrides, can_prompt)

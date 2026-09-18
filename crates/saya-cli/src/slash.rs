@@ -1,5 +1,5 @@
 use crate::cli::ContractsCommand;
-use saya_agent::ApprovalPolicy;
+use saya_agent::{AgentMode, ApprovalPolicy};
 use std::{fmt, str::FromStr};
 
 mod contracts;
@@ -36,6 +36,7 @@ pub enum SlashCommand {
     Model(Option<String>),
     Privacy(Option<bool>),
     Approvals(Option<ApprovalPolicy>),
+    Mode(Option<AgentMode>),
     Schema(bool),
     Sql(String),
     Export(String),
@@ -126,6 +127,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "model" => SlashCommand::Model((!arg.is_empty()).then_some(arg)),
         "privacy" => SlashCommand::Privacy(parse_bool(&arg)?),
         "approvals" => SlashCommand::Approvals(parse_approval(&arg)?),
+        "mode" => SlashCommand::Mode(parse_mode(&arg)?),
         "schema" => SlashCommand::Schema(arg == "refresh"),
         "sql" => {
             let query = trimmed.strip_prefix("/sql").unwrap_or("").trim();
@@ -238,6 +240,17 @@ fn parse_approval(value: &str) -> Result<Option<ApprovalPolicy>, SlashParseError
     ApprovalPolicy::from_str(value)
         .map(Some)
         .map_err(|error| SlashParseError(error.to_string()))
+}
+
+fn parse_mode(value: &str) -> Result<Option<AgentMode>, SlashParseError> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    AgentMode::from_str(value).map(Some).map_err(|_| {
+        SlashParseError(format!(
+            "invalid agent mode: {value} (expected plan or build)"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -488,6 +501,61 @@ mod tests {
         assert!(
             error.0.contains("not a listing") && error.0.contains("/grants"),
             "the error points at the listing, got: {error}"
+        );
+    }
+
+    /// `/mode` reports bare, switches on `plan`/`build` through the
+    /// `AgentMode::FromStr` grammar, and refuses anything else naming both
+    /// valid values. Matching `/approvals`'s case handling: the parse is
+    /// case-sensitive, so `Plan` is an error, not a mode.
+    #[test]
+    fn test_parse_mode_reports_switches_and_refuses() {
+        use saya_agent::AgentMode;
+        assert_eq!(
+            parse_slash_command("/mode"),
+            Ok(Some(SlashCommand::Mode(None)))
+        );
+        assert_eq!(
+            parse_slash_command("/mode plan"),
+            Ok(Some(SlashCommand::Mode(Some(AgentMode::Plan))))
+        );
+        assert_eq!(
+            parse_slash_command("/mode build"),
+            Ok(Some(SlashCommand::Mode(Some(AgentMode::Build))))
+        );
+        let error = parse_slash_command("/mode nonsense").unwrap_err();
+        assert!(
+            error.0.contains("plan") && error.0.contains("build"),
+            "the error names both valid values, got: {error}"
+        );
+        assert!(
+            parse_slash_command("/mode Plan").is_err(),
+            "the parse is case-sensitive like /approvals"
+        );
+    }
+
+    /// `/mode` is not bypass consent: it must not trip the journalling gate
+    /// the two executors consult (`session_loop.rs` and `tui/dispatch.rs`
+    /// match on `SlashCommand::Approvals(Some(_))`). A mode change — report
+    /// or switch — never matches that shape.
+    #[test]
+    fn mode_never_matches_the_bypass_consent_gate() {
+        for command in [
+            parse_slash_command("/mode").unwrap().unwrap(),
+            parse_slash_command("/mode plan").unwrap().unwrap(),
+            parse_slash_command("/mode build").unwrap().unwrap(),
+        ] {
+            assert!(
+                !matches!(command, SlashCommand::Approvals(Some(_))),
+                "a mode change is not bypass consent: {command:?}"
+            );
+        }
+        assert!(
+            matches!(
+                parse_slash_command("/approvals bypass").unwrap().unwrap(),
+                SlashCommand::Approvals(Some(_))
+            ),
+            "the gate still matches its own /approvals shape"
         );
     }
 }
