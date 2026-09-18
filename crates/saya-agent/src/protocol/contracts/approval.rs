@@ -1,11 +1,60 @@
 //! Tool-call approval: the decider trait a caller implements to gate a tool
 //! call, and the read-only-policy implementation.
 
+use std::{fmt, str::FromStr};
+
 use async_trait::async_trait;
 
 use super::session_policy::{ApprovalDecision, SessionPolicy};
 use super::{LocalStateEffect, ToolDefinition, ToolEffect};
 use crate::protocol::approval::ApprovalPolicy;
+
+/// The agent's task posture: `build` does the work, `plan` investigates and
+/// answers with a plan — write-shaped tools refuse before the approval match
+/// runs. Orthogonal to [`ApprovalPolicy`], which is the consent posture: the
+/// mode narrows, never widens, so `plan` denies writes under every policy
+/// including `bypass`, and a grant made in `build` is inert under `plan` and
+/// live again on return.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AgentMode {
+    /// Do the work: resolve exactly as the approval policy says.
+    #[default]
+    Build,
+    /// Investigate and answer with a plan: refuse write-shaped calls before
+    /// the approval match runs, whatever the policy would have said.
+    Plan,
+}
+
+impl AgentMode {
+    /// The mode's own spelling, rendered wherever the mode is named.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Build => "build",
+            Self::Plan => "plan",
+        }
+    }
+}
+
+impl FromStr for AgentMode {
+    type Err = AgentModeParseError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "build" => Ok(Self::Build),
+            "plan" => Ok(Self::Plan),
+            _ => Err(AgentModeParseError(value.into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModeParseError(String);
+
+impl fmt::Display for AgentModeParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid agent mode: {}", self.0)
+    }
+}
+impl std::error::Error for AgentModeParseError {}
 
 #[async_trait]
 pub trait ApprovalDecider: Send + Sync {

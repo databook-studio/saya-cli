@@ -3,9 +3,11 @@
 //! Nothing grants a token yet, so the grant tests drive the store directly —
 //! the seam must work before any frontend asks its question.
 
+use super::approval::AgentMode;
 use super::session_policy::{ApprovalChoice, ApprovalDecision, SessionPolicy};
 use super::{LocalStateEffect, ToolEffect};
 use crate::protocol::approval::ApprovalPolicy;
+use std::str::FromStr;
 
 fn read_shaped() -> ToolEffect {
     // The SQL tools' shape: requires approval, but no side effect and no
@@ -234,6 +236,192 @@ fn write_shaped() -> ToolEffect {
         requires_approval: true,
         local_state: LocalStateEffect::WriteWorkspace,
     }
+}
+
+fn external_effect() -> ToolEffect {
+    ToolEffect {
+        database_data: false,
+        external_side_effect: true,
+        requires_approval: true,
+        local_state: LocalStateEffect::None,
+    }
+}
+
+fn with_mode(policy: ApprovalPolicy, mode: AgentMode) -> SessionPolicy {
+    SessionPolicy::new(policy).with_agent_mode(mode)
+}
+
+fn with_frozen_mode(policy: SessionPolicy, mode: AgentMode) -> SessionPolicy {
+    policy.with_agent_mode(mode)
+}
+
+/// Plan narrows, never widens: under every approval policy a read-shaped
+/// call resolves as it does under Build, while a workspace write or an
+/// external side effect denies outright. Build is byte-identical to today.
+#[test]
+fn plan_narrows_every_approval_policy_without_moving_reads() {
+    for policy in [
+        ApprovalPolicy::Ask,
+        ApprovalPolicy::ReadOnly,
+        ApprovalPolicy::Never,
+        ApprovalPolicy::Bypass,
+    ] {
+        for (effect, label) in [
+            (read_shaped(), "read-shaped"),
+            (write_shaped(), "workspace-write"),
+            (external_effect(), "external side effect"),
+        ] {
+            let build = SessionPolicy::new(policy).resolve(&effect, None);
+            let plan = with_mode(policy, AgentMode::Plan).resolve(&effect, None);
+            if label == "read-shaped" {
+                assert_eq!(
+                    plan, build,
+                    "Plan leaves reads exactly as {policy:?} resolves them: {label}"
+                );
+            } else {
+                assert_eq!(
+                    plan,
+                    ApprovalDecision::Deny { reason: None },
+                    "Plan denies what the approval policy would have allowed: {policy:?} {label}"
+                );
+            }
+        }
+    }
+}
+
+/// Bypass auto-allows reads only under Plan: a write-shaped call denies
+/// where Build allows every effect without asking.
+#[test]
+fn plan_denies_writes_under_bypass() {
+    let build = SessionPolicy::new(ApprovalPolicy::Bypass);
+    assert_eq!(
+        build.resolve(&write_shaped(), None),
+        ApprovalDecision::Allow,
+        "bypass allows a workspace write under Build, as today"
+    );
+    let plan = with_mode(ApprovalPolicy::Bypass, AgentMode::Plan);
+    assert_eq!(
+        plan.resolve(&write_shaped(), None),
+        ApprovalDecision::Deny { reason: None },
+        "Plan denies the write bypass would have allowed"
+    );
+    assert_eq!(
+        plan.resolve(&external_effect(), None),
+        ApprovalDecision::Deny { reason: None },
+        "Plan denies the side effect bypass would have allowed"
+    );
+    assert_eq!(
+        plan.resolve(&read_shaped(), None),
+        ApprovalDecision::Allow,
+        "Plan keeps the read bypass auto-allows"
+    );
+}
+
+/// A grant made in Build is inert under Plan and live again on return: the
+/// same write denies under Plan without touching the grant's call count,
+/// then allows under Build and counts exactly that call.
+#[test]
+fn a_grant_does_not_rescue_a_write_under_plan() {
+    let plan = with_mode(ApprovalPolicy::Ask, AgentMode::Plan);
+    assert!(plan.record(ApprovalChoice::AllowSession {
+        token: "workspace:write".into(),
+    }));
+    assert_eq!(
+        plan.resolve(&write_shaped(), Some("workspace:write")),
+        ApprovalDecision::Deny { reason: None },
+        "the grant cannot move Plan's write denial"
+    );
+    assert_eq!(
+        plan.grants().calls("workspace:write"),
+        0,
+        "the denied call records nothing under its token"
+    );
+    let build = plan.with_agent_mode(AgentMode::Build);
+    assert_eq!(
+        build.resolve(&write_shaped(), Some("workspace:write")),
+        ApprovalDecision::Allow,
+        "the same grant allows the same call back under Build"
+    );
+    assert_eq!(
+        build.grants().calls("workspace:write"),
+        1,
+        "only the Build-allowed call counts"
+    );
+}
+
+/// Plan + frozen + a seed covering the write still denies: the seed cannot
+/// answer for a write Plan refuses before the approval match runs.
+#[test]
+fn a_frozen_plan_denies_a_seeded_write() {
+    let policy = with_frozen_mode(
+        SessionPolicy::frozen(ApprovalPolicy::Ask, &["workspace:write".to_owned()]),
+        AgentMode::Plan,
+    );
+    assert_eq!(
+        policy.resolve(&write_shaped(), Some("workspace:write")),
+        ApprovalDecision::Deny { reason: None },
+        "Plan denies the seeded write the frozen ask would have allowed"
+    );
+    assert_eq!(
+        policy.grants().calls("workspace:write"),
+        0,
+        "the denied call records nothing under its seed"
+    );
+}
+
+/// The default is Build: a policy built the old way resolves every effect
+/// exactly as it does on `release/0.4.1` — `Ask` hands every call to the
+/// frontend, `ReadOnly` allows exactly reads, `Never` denies, and `Bypass`
+/// allows.
+#[test]
+fn the_default_mode_is_build_and_resolves_as_before() {
+    assert_eq!(AgentMode::default(), AgentMode::Build);
+    for policy in [
+        ApprovalPolicy::Ask,
+        ApprovalPolicy::ReadOnly,
+        ApprovalPolicy::Never,
+        ApprovalPolicy::Bypass,
+    ] {
+        let built = SessionPolicy::new(policy);
+        assert_eq!(
+            built.agent_mode(),
+            AgentMode::Build,
+            "the old constructor defaults to Build under {policy:?}"
+        );
+        for (effect, label) in [
+            (read_shaped(), "read-shaped"),
+            (write_shaped(), "workspace-write"),
+            (external_effect(), "external side effect"),
+        ] {
+            let expected = match policy {
+                ApprovalPolicy::Ask => ApprovalDecision::Ask,
+                ApprovalPolicy::ReadOnly if label == "read-shaped" => ApprovalDecision::Allow,
+                ApprovalPolicy::ReadOnly | ApprovalPolicy::Never => {
+                    ApprovalDecision::Deny { reason: None }
+                }
+                ApprovalPolicy::Bypass => ApprovalDecision::Allow,
+            };
+            assert_eq!(
+                built.resolve(&effect, None),
+                expected,
+                "Build resolves as before under {policy:?}: {label}"
+            );
+        }
+    }
+}
+
+/// The mode vocabulary parses and names itself: `plan` and `build` round-trip
+/// through the same spelling every surface renders.
+#[test]
+fn agent_mode_parses_and_names_itself() {
+    assert_eq!(AgentMode::from_str("plan"), Ok(AgentMode::Plan));
+    assert_eq!(AgentMode::from_str("build"), Ok(AgentMode::Build));
+    assert_eq!(AgentMode::Build.as_str(), "build");
+    assert_eq!(AgentMode::Plan.as_str(), "plan");
+    assert!(
+        AgentMode::from_str("readonly").is_err(),
+        "consent spellings are not task spellings"
+    );
 }
 
 /// The headless policy (U4: the run's decider is this engine, frozen): an

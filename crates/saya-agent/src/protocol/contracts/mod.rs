@@ -17,7 +17,9 @@ mod usage;
 #[cfg(test)]
 mod session_policy_tests;
 
-pub use approval::{AllowReadOnlyApproval, ApprovalDecider, read_only_permits};
+pub use approval::{
+    AgentMode, AgentModeParseError, AllowReadOnlyApproval, ApprovalDecider, read_only_permits,
+};
 pub use chat::{
     AgentRequest, ChatMessage, ChatRequest, ChatResponse, ContextBlock, ReasoningEffort,
     ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,
