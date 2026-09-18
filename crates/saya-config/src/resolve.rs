@@ -117,6 +117,10 @@ pub struct ResolvedAi {
     pub idle_timeout_seconds: u64,
     /// Per-response output-token ceiling requested from the provider.
     pub max_output_tokens: u32,
+    /// True when `max_output_tokens` is the built-in default because no layer
+    /// stated it. Data, not presentation: callers that report the ceiling
+    /// (doctor) need the distinction, and only resolution can see it.
+    pub max_output_tokens_is_default: bool,
     /// Provider retry backoff in milliseconds, tried in order before the
     /// provider gives up. An empty list means one attempt with no sleeps.
     pub retry_delays_ms: Vec<u64>,
@@ -231,6 +235,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         timeout_seconds: file.ai.timeout_seconds.unwrap_or(60),
         idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
         max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
+        max_output_tokens_is_default: file.ai.max_output_tokens.is_none(),
         context_byte_budget,
         context_window_tokens: file.ai.context_window_tokens,
         show_thinking: file.ai.show_thinking.unwrap_or(false),

@@ -105,9 +105,11 @@ read_only = true""")
         provider = os.environ.get("SAYA_BENCH_PROVIDER", "openai_compatible")
         model = os.environ.get("SAYA_BENCH_MODEL", "glm-5.2")
         base = os.environ.get("SAYA_BENCH_BASE_URL", "")
+        max_output_tokens = os.environ.get("SAYA_BENCH_MAX_OUTPUT_TOKENS", "4096")
         cfg = [f'[ai]\nprovider = "{provider}"\nmodel = "{model}"']
         if base:
             cfg.append(f'base_url = "{base}"')
+        cfg.append(f"max_output_tokens = {max_output_tokens}")
         # Spider is a public corpus, so rows may go to the model.
         cfg.append("allow_data_sharing = true")
         open(f"{HOME}/config.toml", "w").write("\n".join(cfg) + "\n")

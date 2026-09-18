@@ -46,6 +46,7 @@ fn session_runtime() -> crate::config::runtime::RuntimeConfig {
                 timeout_seconds: 60,
                 idle_timeout_seconds: 90,
                 max_output_tokens: 4096,
+                max_output_tokens_is_default: true,
                 context_byte_budget: 256 * 1024,
                 context_window_tokens: None,
                 show_thinking: false,
