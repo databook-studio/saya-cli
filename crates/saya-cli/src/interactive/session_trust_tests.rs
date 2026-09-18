@@ -59,7 +59,7 @@ fn session_runtime() -> crate::config::runtime::RuntimeConfig {
             jobs: ResolvedJobs {
                 wall_clock_seconds: None,
                 tokens_per_endpoint: Default::default(),
-                turns: 4,
+                turns: Some(4),
                 tool_calls: None,
                 fetch: ResolvedFetchJobs::default(),
                 interpreter: ResolvedInterpreterJobs::default(),

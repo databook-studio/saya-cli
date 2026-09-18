@@ -86,7 +86,7 @@ pub struct ResolvedDiagnostics {
     pub candidates: usize,
     pub jobs_wall_clock_seconds: Option<u64>,
     pub jobs_tokens_per_endpoint: BTreeMap<String, u64>,
-    pub jobs_turns: u64,
+    pub jobs_turns: Option<u64>,
     pub jobs_tool_calls: Option<u64>,
     pub jobs_runner_allow: Vec<String>,
     pub jobs_runner_program_dir: Option<String>,

@@ -234,7 +234,7 @@ pub(crate) mod tests_support {
                 jobs: ResolvedJobs {
                     wall_clock_seconds: None,
                     tokens_per_endpoint: BTreeMap::new(),
-                    turns: 4,
+                    turns: Some(4),
                     tool_calls: None,
                     fetch: ResolvedFetchJobs::default(),
                     interpreter: ResolvedInterpreterJobs::default(),

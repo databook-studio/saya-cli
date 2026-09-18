@@ -27,7 +27,7 @@ pub use redaction::{CREDENTIAL_ENV_PREFIX, redact};
 pub use run::{
     Budgets, Capabilities, Deliverable, DeliverableArtifact, Destination, EndpointBindings,
     FetchScope, InterpreterScope, MAX_BUDGET_ENDPOINTS, MAX_ENDPOINT_BINDINGS,
-    MAX_FETCH_DESTINATIONS, MAX_GOAL_BYTES, MAX_OUTPUT_HINTS, MAX_PLAN_STEPS, MAX_RUNNER_PROGRAMS,
+    MAX_FETCH_DESTINATIONS, MAX_GOAL_BYTES, MAX_OUTPUT_HINTS, MAX_RUNNER_PROGRAMS,
     MAX_STEP_CREDENTIALS, OutputHint, PauseReason, RunContractError, RunEvent, RunFailureCode,
     RunId, RunPlan, RunSpec, RunnerScope, StepSpec, is_bare_name, is_name_shaped,
     is_refused_runner_program,

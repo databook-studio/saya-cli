@@ -140,6 +140,13 @@ mod tests {
         );
     }
 
+    /// `--budget turns=5` still declares a turn ceiling over an unlimited base.
+    #[test]
+    fn a_declared_turns_budget_still_binds() {
+        let budgets = parse(&["turns=5".to_string()], &Budgets::default()).unwrap();
+        assert_eq!(budgets.turns, Some(5));
+    }
+
     /// min() binds the tightest declared ceiling when a map carries several
     /// keys. The parser refuses all but the orchestrator's, but this
     /// function also sees specs loaded with plain serde on resume

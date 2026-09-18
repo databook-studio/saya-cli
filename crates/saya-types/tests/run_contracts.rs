@@ -13,8 +13,8 @@ use proptest::prelude::*;
 
 use saya_types::{
     Budgets, Capabilities, Deliverable, Destination, EndpointBindings, FetchScope,
-    InterpreterScope, MAX_GOAL_BYTES, MAX_PLAN_STEPS, OutputHint, PauseReason, RunContractError,
-    RunEvent, RunFailureCode, RunId, RunPlan, RunSpec, RunnerScope, StepSpec,
+    InterpreterScope, MAX_GOAL_BYTES, OutputHint, PauseReason, RunContractError, RunEvent,
+    RunFailureCode, RunId, RunPlan, RunSpec, RunnerScope, StepSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -375,16 +375,27 @@ fn endpoint_bindings_reject_unshaped_names() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn plan_rejects_no_steps_or_too_many() {
+fn plan_rejects_no_steps() {
     assert!(matches!(
         RunPlan::new(Vec::new()),
         Err(RunContractError::EmptyPlan)
     ));
-    let steps: Vec<StepSpec> = (0..=MAX_PLAN_STEPS).map(|_| step("one step")).collect();
-    assert!(matches!(
-        RunPlan::new(steps),
-        Err(RunContractError::TooManySteps)
-    ));
+}
+
+#[test]
+fn plan_accepts_two_hundred_steps() {
+    let steps: Vec<StepSpec> = (0..200).map(|i| step(&format!("step {i}"))).collect();
+    plan(steps)
+        .validate(&approved_scopes(), &run_budgets())
+        .expect("a 200-step plan validates: length alone never refuses");
+}
+
+#[test]
+fn plan_accepts_one_thousand_steps() {
+    let steps: Vec<StepSpec> = (0..1000).map(|i| step(&format!("step {i}"))).collect();
+    plan(steps)
+        .validate(&approved_scopes(), &run_budgets())
+        .expect("a 1000-step plan validates: length alone never refuses");
 }
 
 #[test]

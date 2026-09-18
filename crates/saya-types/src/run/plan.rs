@@ -5,6 +5,11 @@
 //! keep hand-built plans honest, but a plan arriving as JSON skips them —
 //! which is why [`RunPlan::validate`] re-checks every bound itself and is
 //! the gate the engine binds a plan behind.
+//!
+//! A plan's step count carries no ceiling of its own: a plan reaches the
+//! parser only as a model response (`saya-harness/src/engine/plan/mod.rs:70`),
+//! already bounded by the model's own output cap and the stream cap
+//! (`saya-agent/src/protocol/streaming.rs:16`), so no constant second-guesses it.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,10 +17,6 @@ use super::RunContractError;
 use super::budget::Budgets;
 use super::scope::{Capabilities, is_bare_name, is_name_shaped};
 use super::spec::validate_goal;
-
-/// A plan is a bounded list: an orchestrating episode proposes it, and no
-/// plausible run needs an unbounded number of steps.
-pub const MAX_PLAN_STEPS: usize = 64;
 
 /// How many artifacts one step may declare as expected outputs.
 pub const MAX_OUTPUT_HINTS: usize = 16;
@@ -210,9 +211,6 @@ impl RunPlan {
         if steps.is_empty() {
             return Err(RunContractError::EmptyPlan);
         }
-        if steps.len() > MAX_PLAN_STEPS {
-            return Err(RunContractError::TooManySteps);
-        }
         Ok(Self { steps })
     }
 
@@ -229,9 +227,6 @@ impl RunPlan {
     ) -> Result<(), RunContractError> {
         if self.steps.is_empty() {
             return Err(RunContractError::EmptyPlan);
-        }
-        if self.steps.len() > MAX_PLAN_STEPS {
-            return Err(RunContractError::TooManySteps);
         }
         for (index, step) in self.steps.iter().enumerate() {
             validate_goal(&step.goal)?;
