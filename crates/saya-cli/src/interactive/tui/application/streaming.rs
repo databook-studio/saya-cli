@@ -174,6 +174,32 @@ impl App {
                                         window,
                                     ),
                                 );
+                                // The one-shot context warning: fire on the
+                                // upward crossing of the warn threshold, stay
+                                // silent while above it, re-arm below it. No
+                                // window (or no per-call report) means no
+                                // percentage, so the flag is untouched —
+                                // absence is not zero.
+                                if let Some(percent) = saya_agent::context_utilisation_percent(
+                                    self.request.last_answering_input,
+                                    window,
+                                ) {
+                                    if percent >= saya_agent::CONTEXT_WARN_PERCENT {
+                                        if !state.context_warned {
+                                            state.context_warned = true;
+                                            if let Some(window) = window
+                                                && let Some(notice) =
+                                                    usage_footer::context_warn_notice(
+                                                        percent, window,
+                                                    )
+                                            {
+                                                self.transcript.push(BlockKind::System, notice);
+                                            }
+                                        }
+                                    } else {
+                                        state.context_warned = false;
+                                    }
+                                }
                             }
                             // Fold the extraction call's usage into a separate
                             // learning total. `learning_usage` is `None` when

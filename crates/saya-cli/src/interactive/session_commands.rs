@@ -152,6 +152,7 @@ impl SessionState {
                 self.messages.clear();
                 self.turns.clear();
                 self.usage = Default::default();
+                self.context_warned = false;
                 // The transcript keeps what was said; the model's working
                 // memory does not. Say so, since there is no undo.
                 SessionAction::Message(

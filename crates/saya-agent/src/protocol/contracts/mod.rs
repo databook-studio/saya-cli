@@ -6,6 +6,7 @@
 mod approval;
 mod builders;
 mod chat;
+mod context;
 mod error;
 mod event;
 mod knowledge;
@@ -24,6 +25,7 @@ pub use chat::{
     AgentRequest, ChatMessage, ChatRequest, ChatResponse, ContextBlock, ReasoningEffort,
     ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,
 };
+pub use context::{CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, context_utilisation_percent};
 pub use error::{ProviderError, ToolError};
 pub use event::AgentEvent;
 pub use knowledge::{
