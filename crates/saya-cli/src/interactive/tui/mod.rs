@@ -38,7 +38,7 @@ mod terminal;
 pub(crate) mod transcript;
 mod trust;
 pub(super) mod types;
-mod ui;
+pub(crate) mod ui;
 #[cfg(test)]
 mod ui_snapshot_tests;
 mod usage_footer;

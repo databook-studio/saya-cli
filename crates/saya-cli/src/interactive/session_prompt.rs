@@ -48,8 +48,14 @@ pub(crate) fn status_line(state: &SessionState) -> String {
     if !state.denied_programs.is_empty() {
         host.push_str(&format!(" deny:{}", state.denied_programs.join(",")));
     }
+    // The task segment names the done count while anything is tracked, and
+    // is absent entirely on an empty list — the other conditional segments'
+    // shape, so an untracked session reads exactly as before.
+    let tasks = super::session_tasks_view::tasks_summary(&state.task_list)
+        .map(|summary| format!(" {summary}"))
+        .unwrap_or_default();
     format!(
-        "[{profile}{included}] {}/{} approval:{} mode:{} {workspace} {host} {sharing}",
+        "[{profile}{included}] {}/{} approval:{} mode:{}{tasks} {workspace} {host} {sharing}",
         state.provider, state.model, state.approval_mode, state.agent_mode
     )
 }
@@ -74,6 +80,9 @@ pub(crate) struct StatusView {
     pub(crate) host_composed: bool,
     /// The session's deny list — mirrors `status_line`'s `deny:` listing.
     pub(crate) denied_programs: Vec<String>,
+    /// The session task list's done count — mirrors `status_line`'s
+    /// `tasks:` segment; `None` renders no segment, the empty-list shape.
+    pub(crate) task_summary: Option<String>,
 }
 
 /// Returns structured status bar segments for the active session state.
@@ -92,6 +101,7 @@ pub(crate) fn status_segments(state: &SessionState) -> StatusView {
         sharing_on: state.allow_data_sharing,
         host_composed: state.host_composed,
         denied_programs: state.denied_programs.clone(),
+        task_summary: super::session_tasks_view::tasks_summary(&state.task_list),
     }
 }
 

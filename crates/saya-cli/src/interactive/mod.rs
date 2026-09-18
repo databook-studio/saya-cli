@@ -21,6 +21,10 @@ mod session_tasks_plan_tests;
 #[path = "session_tasks_red_tests.rs"]
 mod session_tasks_red_tests;
 pub(crate) mod session_tasks_render;
+pub(crate) mod session_tasks_view;
+#[cfg(test)]
+#[path = "session_tasks_view_tests.rs"]
+mod session_tasks_view_tests;
 // The session's write-shaped definitions are crate-reachable: the approval
 // tests build the real grantable shapes the frontends are asked about.
 pub(crate) mod session_definitions;

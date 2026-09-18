@@ -419,6 +419,7 @@ mod tests {
             sharing_on: true,
             host_composed: false,
             denied_programs: Vec::new(),
+            task_summary: None,
         };
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).expect("test backend builds");

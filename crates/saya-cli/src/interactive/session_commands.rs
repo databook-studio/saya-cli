@@ -193,6 +193,18 @@ impl SessionState {
             }
             SlashCommand::Sessions => SessionAction::History,
             SlashCommand::Resume(id) => SessionAction::Resume(id),
+            SlashCommand::Tasks(subcommand) => match subcommand.as_deref() {
+                // `/tasks clear` empties the stored list, so the next turn
+                // injects no task block. Nothing else edits from here: the
+                // model owns the content, the user owns whether it exists.
+                Some("clear") => {
+                    self.task_list = Default::default();
+                    SessionAction::Message("Task list cleared.".into())
+                }
+                _ => SessionAction::Message(super::session_tasks_view::render_tasks_view(
+                    &self.task_list,
+                )),
+            },
             SlashCommand::Columns(_) => {
                 SessionAction::Message("Column selection applies in the interactive TUI.".into())
             }

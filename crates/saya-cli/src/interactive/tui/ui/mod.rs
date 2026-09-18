@@ -8,7 +8,7 @@ mod panels;
 mod plan_approval_view;
 mod run_panel_view;
 pub(super) mod splash;
-mod status;
+pub(crate) mod status;
 pub(crate) mod theme;
 mod trust_modal;
 
