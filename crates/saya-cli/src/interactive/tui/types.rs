@@ -189,10 +189,20 @@ pub(crate) struct TrustPrompt {
 /// plain failure message (the session is unchanged on every failure path).
 /// Carries the compaction call's usage apart from the answering total, folded
 /// into the learning total exactly like the post-turn extraction call's.
+/// `automatic` names the trigger: a manual `/compact` renders the manual
+/// strings, an automatic firing prefixes them so the user knows it was
+/// automatic rather than something they typed. The summary rides along so the
+/// poll path can apply the working-memory change to the live session — the
+/// worker compacted a clone, and the live session must gain exactly what the
+/// clone gained, or the transcript would claim a compaction that never
+/// happened.
 pub(crate) struct CompactOutcome {
     pub(crate) message: String,
     pub(crate) failed: bool,
     pub(crate) usage: Option<saya_agent::TokenUsage>,
+    pub(crate) automatic: bool,
+    pub(crate) summary: Option<String>,
+    pub(crate) compacted_turns: usize,
 }
 
 /// A native clipboard helper running in the background alongside an OSC 52 write.

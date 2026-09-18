@@ -236,6 +236,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
                 context_byte_budget: 256 * 1024,
                 context_window_tokens: None,
                 show_thinking: false,
+                compaction: saya_config::CompactionMode::Auto,
                 retry_delays_ms: vec![250, 500, 1000],
             },
             max_rows: 100,
@@ -382,6 +383,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -487,6 +489,7 @@ async fn knowledge_supplied_precedes_the_provider_request() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -712,6 +715,7 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -927,6 +931,7 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -1058,6 +1063,7 @@ async fn the_extraction_call_reports_its_usage_on_the_stream() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -1193,6 +1199,7 @@ async fn an_extraction_with_no_response_emits_no_usage_event() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -1268,6 +1275,7 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -1395,6 +1403,7 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SharedProvider(provider.clone())),
@@ -1493,6 +1502,7 @@ async fn test_anti_self_reinforcement_end_to_end() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -1595,6 +1605,7 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -1666,6 +1677,7 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -1863,6 +1875,7 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -1938,6 +1951,7 @@ async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -2002,6 +2016,7 @@ async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -2067,6 +2082,7 @@ async fn a_candidate_claim_contradicted_emits_nothing() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -2140,6 +2156,7 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -2270,6 +2287,7 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SleepingExtractionProvider {
@@ -2392,6 +2410,7 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SharedProvider(provider.clone())),
@@ -2475,6 +2494,7 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -2691,6 +2711,7 @@ async fn an_interactive_session_queries_writes_and_scratches_each_via_one_ask() 
             context_byte_budget: 256 * 1024,
             context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(ThreeCallsProvider),

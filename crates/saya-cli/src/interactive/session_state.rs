@@ -78,6 +78,16 @@ pub struct SessionState {
     /// usage rather than persisting a stale flag.
     #[serde(skip, default = "default_context_warned")]
     pub context_warned: bool,
+    /// Whether an automatic compaction already tried and failed this session.
+    /// Set on an automatic failure, cleared by `/clear` and by any
+    /// successful compaction (manual or automatic). In-memory only
+    /// (`#[serde(skip)]`): a resumed session re-derives it from the next
+    /// turn's outcome rather than persisting a stale refusal. While set the
+    /// automatic trigger stays silent — a session that fails to summarise
+    /// every turn forever would burn the budget it was trying to save — and
+    /// only an explicit `/compact` (or a fresh context) re-arms it.
+    #[serde(skip, default = "default_auto_compact_failed")]
+    pub auto_compact_failed: bool,
     /// The session's deny list: bare program names every door refuses. The
     /// status header lists them. In-memory only — recomposed from the launch
     /// statement and user-layer config, never from the record.
@@ -113,6 +123,7 @@ impl SessionState {
             usage: SessionUsage::default(),
             host_composed: false,
             context_warned: default_context_warned(),
+            auto_compact_failed: default_auto_compact_failed(),
             denied_programs: Vec::new(),
         }
     }
@@ -241,6 +252,13 @@ fn default_agent_mode() -> String {
 /// `#[serde(skip)]`, so nothing on disk sets it, and an armed start means the
 /// next turn's usage re-derives the flag from a live report.
 fn default_context_warned() -> bool {
+    false
+}
+
+/// A deserialized session starts with automatic compaction armed: the flag is
+/// `#[serde(skip)]`, so nothing on disk sets it, and an armed start means the
+/// next crossing may fire from a live report.
+fn default_auto_compact_failed() -> bool {
     false
 }
 

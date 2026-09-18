@@ -12,6 +12,9 @@ use crate::interactive::session_state::SessionState;
 use saya_agent::{AgentEvent, UsageCall};
 
 #[cfg(test)]
+#[path = "auto_compact_tests.rs"]
+mod auto_compact_tests;
+#[cfg(test)]
 #[path = "streaming_tests.rs"]
 mod tests;
 
@@ -140,6 +143,21 @@ impl App {
                     });
                 }
                 StreamMsg::Done(result) => {
+                    // Whether this run continued after the provider capped a
+                    // response mid-answer: the loop re-instructs, the partial
+                    // stays discarded, and the resume anchors live in earlier
+                    // tool results. A finished turn that continued is not a
+                    // turn boundary for compaction — compacting there risks
+                    // the very lines the resume needs. `TurnReset` (retried
+                    // transport attempts) re-streams the same answer and is
+                    // not a continuation; only the output-cap re-instruction
+                    // counts. `output.truncated` is that signal: it is set
+                    // only when a run salvaged an answer after a ceiling ran
+                    // out, never on a natural completion.
+                    let continued = result
+                        .as_ref()
+                        .map(|output| output.truncated)
+                        .unwrap_or(false);
                     match result {
                         Ok(output) => {
                             state.record_turn(
@@ -179,8 +197,11 @@ impl App {
                                 // silent while above it, re-arm below it. No
                                 // window (or no per-call report) means no
                                 // percentage, so the flag is untouched —
-                                // absence is not zero.
-                                if let Some(percent) = saya_agent::context_utilisation_percent(
+                                // absence is not zero. `off` silences it
+                                // along with the automatic trigger.
+                                if crate::interactive::auto_compact::warning_enabled(
+                                    self.runtime.resolved.ai.compaction,
+                                ) && let Some(percent) = saya_agent::context_utilisation_percent(
                                     self.request.last_answering_input,
                                     window,
                                 ) {
@@ -199,6 +220,28 @@ impl App {
                                     } else {
                                         state.context_warned = false;
                                     }
+                                }
+                                // The automatic trigger: the same numerator
+                                // and window as the warning and the footer —
+                                // no second measurement — read at the turn
+                                // boundary only, when no continuation is
+                                // outstanding and no compaction is running.
+                                // Unknown window or no report never fires.
+                                // Capture the values before the finish block
+                                // below clears the per-turn numerator.
+                                let auto_input = self.request.last_answering_input;
+                                let fire = crate::interactive::auto_compact::should_auto_compact(
+                                    &crate::interactive::auto_compact::AutoCompactInput {
+                                        mode: self.runtime.resolved.ai.compaction,
+                                        answering_input: auto_input,
+                                        window,
+                                        continued,
+                                        compact_running: self.compact_task.is_some(),
+                                        auto_failed: state.auto_compact_failed,
+                                    },
+                                );
+                                if fire {
+                                    crate::interactive::compact_task::start_automatic(self, state);
                                 }
                             }
                             // Fold the extraction call's usage into a separate

@@ -334,8 +334,12 @@ fn compact_is_registered_listed_described_and_helped() {
         "the help states the transcript guarantee: {help}"
     );
     assert!(
-        help.contains("Manual only"),
-        "the help states nothing triggers it automatically: {help}"
+        help.contains("Automatic at 95%"),
+        "the help states the automatic trigger and its threshold: {help}"
+    );
+    assert!(
+        help.contains("`manual`") && help.contains("`off`"),
+        "the help states the two non-automatic modes: {help}"
     );
 }
 

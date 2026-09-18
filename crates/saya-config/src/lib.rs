@@ -34,4 +34,4 @@ pub use model::{
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::SecretRef;
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};
-pub use values::{AiProvider, ColorChoice, MemoryMode, OutputFormat, ThemeChoice};
+pub use values::{AiProvider, ColorChoice, CompactionMode, MemoryMode, OutputFormat, ThemeChoice};

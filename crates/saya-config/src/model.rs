@@ -165,6 +165,12 @@ pub struct AiFile {
     /// get it. Display only — reasoning is never persisted regardless of this
     /// setting.
     pub show_thinking: Option<bool>,
+    /// How context compaction behaves once the window fills: `auto`
+    /// (summarise on crossing the compact threshold), `manual` (only an
+    /// explicit `/compact`), or `off` (no automatic trigger and no context
+    /// warning). Absent keeps `auto`. An ordinary setting like `show_thinking`:
+    /// it shapes local working memory, never where traffic goes.
+    pub compaction: Option<crate::CompactionMode>,
     /// Named endpoints a run's roles can bind to (`[[ai.endpoints]]`). Empty
     /// by default: an absent section changes nothing for anyone, and every
     /// role keeps the plain `[ai]` block through the `orchestrator` fallback
