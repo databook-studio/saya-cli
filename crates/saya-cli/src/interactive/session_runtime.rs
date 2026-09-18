@@ -32,6 +32,10 @@ pub(crate) struct SessionRuntime {
     /// The explicit `--workspace` statement, carried so a mid-session
     /// `/resume` re-binds the same way the launch did.
     explicit: Option<PathBuf>,
+    /// Whether this runtime is a fresh start: only a fresh start can answer
+    /// the startup trust question, and only once — answering records the
+    /// trusted directory as the launch's statement (see `bind_trusted`).
+    fresh_start: bool,
     /// The session journal: `sessions/<id>/journal.ndjson`, the audit record
     /// of what the user consented to. Opened under this runtime's lock; a
     /// torn tail from a crashed process is healed at open. Never read back
@@ -47,6 +51,21 @@ pub(crate) struct SessionRuntime {
     /// notice seam the surfaces already print. Later failures are said by
     /// the site that made the consent.
     journal_failure: Mutex<Option<String>>,
+}
+
+/// The acquisition's inputs, including the trust seam: `trusted: None` is
+/// every path that did not answer the startup trust prompt. Production
+/// fills it from the prompt's answer in `session_loop`; `acquire` passes
+/// `None` directly.
+pub(crate) struct Acquire<'a> {
+    pub(crate) runtime: &'a crate::config::runtime::RuntimeConfig,
+    pub(crate) explicit: Option<&'a Path>,
+    pub(crate) fresh: bool,
+    pub(crate) pinned_root: Option<&'a str>,
+    pub(crate) id: &'a str,
+    pub(crate) mode: ApprovalPolicy,
+    pub(crate) sessions_root: &'a Path,
+    pub(crate) trusted: Option<&'a Path>,
 }
 
 impl SessionRuntime {
@@ -69,6 +88,34 @@ impl SessionRuntime {
         mode: ApprovalPolicy,
         sessions_root: &Path,
     ) -> Result<Self, String> {
+        Self::acquire_inner(Acquire {
+            runtime,
+            explicit,
+            fresh,
+            pinned_root,
+            id,
+            mode,
+            sessions_root,
+            trusted: None,
+        })
+    }
+
+    /// The composed acquisition behind both paths: `acquire` (no trust
+    /// answer) and the startup trust prompt's answer in `session_loop`,
+    /// which fills `Acquire.trusted` directly. One struct argument keeps the
+    /// arity lint's budget; the seven-argument public seam above is
+    /// untouched.
+    pub(crate) fn acquire_inner(args: Acquire<'_>) -> Result<Self, String> {
+        let Acquire {
+            runtime,
+            explicit,
+            fresh,
+            pinned_root,
+            id,
+            mode,
+            sessions_root,
+            trusted,
+        } = args;
         let state_dir = create_state_dir(sessions_root, id)?;
         let lock = RunLock::acquire(state_dir.join("lock")).map_err(|error| match error {
             // The same words a run's second writer reads, with the same pid.
@@ -79,26 +126,79 @@ impl SessionRuntime {
             other => format!("could not claim the session lock: {other}"),
         })?;
         let walk_when_unpinned = fresh;
+        // The trusted directory binds exactly like an explicit
+        // `--workspace` — but only where no explicit statement exists, and
+        // only on a fresh start: a resume re-opens its recorded pin and never
+        // re-prompts (G3: re-trust is per-process, never persisted).
+        let trusted_explicit = match (fresh, explicit, trusted) {
+            (true, None, Some(dir)) => Some(dir.to_path_buf()),
+            _ => None,
+        };
+        let asked = trusted_explicit.clone();
+        let effective_explicit: Option<&Path> =
+            explicit.or(trusted_explicit.as_deref().map(Path::new));
         let universe = SessionUniverse::compose(
             runtime,
-            explicit.map(Path::new),
+            effective_explicit,
             pinned_root,
             walk_when_unpinned,
             &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             &state_dir,
         )?;
-        let explicit = explicit.map(Path::to_path_buf);
+        let explicit = explicit.map(Path::to_path_buf).or(asked);
         Ok(Self {
             universe: Arc::new(universe),
             policy: SessionPolicy::new(mode),
             policy_mode: mode,
             _lock: lock,
             explicit,
+            fresh_start: fresh,
             sessions_root: sessions_root.to_path_buf(),
             state_dir: state_dir.clone(),
             journal: Arc::new(SessionJournal::open(&state_dir)),
             journal_failure: Mutex::new(None),
         })
+    }
+
+    /// Swaps the composed universe for a startup trust answer given
+    /// inside the TUI: recomposes with the trusted directory bound exactly
+    /// like an explicit `--workspace`. Only on a fresh start with no
+    /// explicit statement — the same rule `acquire_inner` applies — so a
+    /// resume or an explicit bind can never reach here.
+    pub(crate) fn bind_trusted(
+        &mut self,
+        runtime: &crate::config::runtime::RuntimeConfig,
+        trusted: &Path,
+    ) -> Result<(), String> {
+        if !self.fresh_start() || self.explicit_statement().is_some() {
+            return Err(
+                "the trust answer applies only to a fresh start with no --workspace".into(),
+            );
+        }
+        let universe = SessionUniverse::compose(
+            runtime,
+            Some(trusted),
+            None,
+            true,
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            &self.state_dir,
+        )?;
+        self.explicit = Some(trusted.to_path_buf());
+        self.universe = Arc::new(universe);
+        Ok(())
+    }
+
+    /// Whether this runtime is a fresh start: only a fresh start can answer
+    /// the startup trust question, and only once — answering records the
+    /// trusted directory as the launch's statement (see `bind_trusted`).
+    pub(crate) fn fresh_start(&self) -> bool {
+        self.fresh_start
+    }
+
+    /// The launch's explicit `--workspace` statement, when one exists: the
+    /// trust answer binds only where this is `None`.
+    pub(crate) fn explicit_statement(&self) -> Option<&Path> {
+        self.explicit.as_deref()
     }
 
     /// The session's journal handle — what `/allow`, the deciders, and the

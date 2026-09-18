@@ -53,6 +53,7 @@ impl App {
             state_db,
             session,
             should_quit: false,
+            pending_trust_answer: None,
         }
     }
 
@@ -175,6 +176,7 @@ pub(crate) mod tests_support {
                 crate::interactive::session_universe::SessionUniverse::empty(),
             ),
             should_quit: false,
+            pending_trust_answer: None,
         }
     }
 

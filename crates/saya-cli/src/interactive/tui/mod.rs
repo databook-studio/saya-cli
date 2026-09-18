@@ -36,6 +36,7 @@ mod stream_events;
 mod table;
 mod terminal;
 mod transcript;
+mod trust;
 pub(super) mod types;
 mod ui;
 #[cfg(test)]
@@ -62,15 +63,45 @@ use terminal::TerminalGuard;
 use transcript::BlockKind;
 use types::{App, ClipboardCopy};
 
+/// The TUI session's inputs: the runtime, stores, format, live session
+/// state and engine, the plain-REPL trust echo (said only where the
+/// plain-REPL prompt bound a directory — never on the TUI path), whether
+/// the startup trust modal opens after the splash paints, and the launch's
+/// host statement for a modal trust answer's recomposition. A bundle
+/// rather than nine positional parameters, so the call sites read by name.
+pub(crate) struct TuiSession<'a> {
+    pub(crate) runtime: &'a RuntimeConfig,
+    pub(crate) store: &'a FsSessionStore,
+    pub(crate) state_db: &'a SqliteStateStore,
+    pub(crate) format: RenderFormat,
+    pub(crate) state: &'a mut SessionState,
+    pub(crate) session: &'a mut SessionRuntime,
+    pub(crate) trusted_echo: Option<&'a str>,
+    pub(crate) trust_pending: bool,
+    pub(crate) launch: &'a super::session_host::HostLaunch,
+}
+
 /// Runs the full-screen TUI session. Returns the process exit code.
-pub(crate) fn run(
-    runtime: &RuntimeConfig,
-    store: &FsSessionStore,
-    state_db: &SqliteStateStore,
-    format: RenderFormat,
-    state: &mut SessionState,
-    session: &mut SessionRuntime,
-) -> Result<i32, Box<dyn std::error::Error>> {
+///
+/// `trusted_echo` carries the startup trust prompt's echo — the moment of
+/// choice names the just-trusted tree beside the bypass line's lane fact.
+/// `None` on every path that did not trust. `trust_pending` opens the
+/// startup trust modal once after the splash paints — the TUI's rendering
+/// of the one trust decision, never a raw stdin read in front of the
+/// interface. `launch` recomposes the universe behind a modal trust answer
+/// so the bound session carries the launch's deny list and host statement.
+pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::error::Error>> {
+    let TuiSession {
+        runtime,
+        store,
+        state_db,
+        format,
+        state,
+        session,
+        trusted_echo,
+        trust_pending,
+        launch,
+    } = args;
     let mut guard = TerminalGuard::new()?;
     let choice = runtime.resolved.output_color;
     use std::io::IsTerminal as _;
@@ -96,24 +127,46 @@ pub(crate) fn run(
         session.universe(),
     );
     // A startup fact the user must read: a pinned root that vanished, or any
-    // other composition notice, said once into the transcript — and, under
-    // bypass, the mode's activation line with the probe/absence facts.
+    // other composition notice, said once into the transcript — the trust
+    // answer's echo beside it where this launch trusted a folder — and,
+    // under bypass, the mode's activation line with the probe/absence facts.
     if let Some(notice) = session.notice() {
         app.transcript.push(BlockKind::System, notice.to_string());
+    }
+    if let Some(echo) = trusted_echo {
+        app.transcript.push(BlockKind::System, echo.to_string());
     }
     if let Some(line) =
         super::session_activation::line_if_bypass(state, runtime, &session.universe())
     {
         app.transcript.push(BlockKind::System, line);
     }
+    // Bypass × unbound × non-terminal cannot reach the TUI (the TUI needs a
+    // terminal), but the headless loop's twin below keeps the one wording —
+    // `bypass_no_lane_note` — so the two surfaces cannot drift.
+    if let Some(note) = super::session_trust::bypass_no_lane_note(
+        super::session_activation::is_bypass_mode(state),
+        session.universe().host_composed(),
+    ) {
+        app.transcript.push(BlockKind::System, note);
+    }
     app.reload_at_refs(state);
     // A session resumed via --resume/--continue arrives with its turns already
     // loaded; replay them so the panel opens on the prior conversation.
     app.show_history(state);
+    // The startup trust modal opens after the splash paints — never before
+    // it — so the PTY splash assertion holds on every launch and the
+    // question is answered inside the interface, not in front of it.
+    if trust_pending {
+        app.overlays.trust = Some(types::TrustPrompt::default());
+    }
 
     // Tracks the terminal's actual mouse-capture state; TerminalGuard enables it.
     let mut mouse_captured = true;
     let mut mouse_capture_error_reported = false;
+    // A modal trust answer, when one binds a directory: the live runtime
+    // recomposes behind the app's snapshot once the answer lands.
+    let mut trusted_dir: Option<std::path::PathBuf> = None;
 
     while !app.should_quit {
         app.poll_session_picker();
@@ -126,7 +179,45 @@ pub(crate) fn run(
         if event::poll(Duration::from_millis(60))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    handle_key(&mut app, key.code, key.modifiers)
+                    let before_trust = app.overlays.trust.is_some();
+                    handle_key(&mut app, key.code, key.modifiers);
+                    // A modal answer that bound a directory recomposes the
+                    // live session behind the app's snapshot — exactly like
+                    // an explicit `--workspace`, through the same composer
+                    // with the launch's statement — and refreshes the view.
+                    if before_trust
+                        && app.overlays.trust.is_none()
+                        && let Some(dir) = app.take_trust_answer()
+                    {
+                        match session.bind_trusted(runtime, &dir) {
+                            Ok(()) => {
+                                let recomposed =
+                                    super::session_universe::SessionUniverse::compose_with_launch(
+                                        runtime,
+                                        session.explicit_statement(),
+                                        state.workspace_root.as_deref(),
+                                        true,
+                                        &std::env::current_dir()
+                                            .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                                        &session.state_dir(),
+                                        Some(launch),
+                                    )?;
+                                session.replace_universe(recomposed);
+                                app.session = session.universe();
+                                if let Some(line) = super::session_activation::line_if_bypass(
+                                    state,
+                                    runtime,
+                                    &session.universe(),
+                                ) {
+                                    app.transcript.push(BlockKind::System, line);
+                                }
+                                trusted_dir = Some(dir);
+                            }
+                            Err(error) => {
+                                app.transcript.push(BlockKind::Error, error);
+                            }
+                        }
+                    }
                 }
                 // Bracketed paste arrives as one event, so a multi-line paste
                 // lands in the input instead of submitting on the first newline.
@@ -410,5 +501,25 @@ pub(crate) fn run(
     // paths drain the same registry in `session_loop`.
     crate::chart::cleanup_session_charts();
 
-    Ok(0)
+    Ok(match trusted_dir {
+        Some(dir) => TrustOutcome::Answered(dir),
+        None => TrustOutcome::Unasked,
+    })
+}
+
+/// What the TUI's startup trust modal decided: the trusted directory when
+/// the modal bound one, or `Unasked` on every other path — modal dismissed
+/// unbound, or never opened. `session_loop` pins the record and refreshes
+/// the header facts from the rebound session behind an `Answered`.
+pub(crate) enum TrustOutcome {
+    Answered(std::path::PathBuf),
+    Unasked,
+}
+
+impl TrustOutcome {
+    /// The process exit code: the TUI always exits cleanly here; the trust
+    /// answer rides the session, never the exit status.
+    pub(crate) fn exit_code(self) -> i32 {
+        0
+    }
 }

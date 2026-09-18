@@ -127,6 +127,17 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         return;
     }
+    // The startup trust modal captures input until answered: one decision —
+    // trust this folder, name another directory, or continue unbound — with
+    // the same words the plain REPL's line prompt carries. Answering binds
+    // through `SessionRuntime::bind_trusted`, exactly like `--workspace`;
+    // a bad directory refuses inline (the modal stays, with the error).
+    if app.overlays.trust.is_some() {
+        if let Some(dir) = app.answer_trust(code, mods) {
+            let _ = dir;
+        }
+        return;
+    }
     // When the popup is open these keys drive it.
     if app.overlays.menu.is_some() {
         match code {

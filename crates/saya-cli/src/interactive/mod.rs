@@ -30,6 +30,9 @@ pub(crate) mod session_runtime;
 mod session_schema;
 mod session_sql;
 mod session_state;
+pub(crate) mod session_trust;
+#[cfg(test)]
+mod session_trust_tests;
 pub(crate) mod session_universe;
 mod session_workspace;
 mod tui;
