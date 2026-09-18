@@ -52,6 +52,20 @@ pub struct SessionState {
     /// the record — so `#[serde(skip)]` keeps it out of persisted files.
     #[serde(skip)]
     pub host_composed: bool,
+    /// Whether the context-window warning already fired for the current
+    /// above-threshold stretch. Set on the upward crossing of
+    /// `CONTEXT_WARN_PERCENT`, cleared when utilisation falls back below it
+    /// and by `/clear`. In-memory only (`#[serde(skip)]`, the `show_thinking`
+    /// precedent): a resumed session re-derives it from the next turn's
+    /// usage rather than persisting a stale flag.
+    #[serde(skip, default = "default_context_warned")]
+    pub context_warned: bool,
+    /// Whether the context-window warning already fired for the current
+    /// above-threshold stretch. Set on the upward crossing of
+    /// `CONTEXT_WARN_PERCENT`, cleared when utilisation falls back below it
+    /// and by `/clear`. In-memory only (`#[serde(skip)]`, the `show_thinking`
+    /// precedent): a resumed session re-derives it from the next turn's
+    /// usage rather than persisting a stale flag.
     /// The session's deny list: bare program names every door refuses. The
     /// status header lists them. In-memory only — recomposed from the launch
     /// statement and user-layer config, never from the record.
@@ -83,6 +97,7 @@ impl SessionState {
             show_thinking: false,
             usage: SessionUsage::default(),
             host_composed: false,
+            context_warned: default_context_warned(),
             denied_programs: Vec::new(),
         }
     }
@@ -188,10 +203,54 @@ fn default_agent_mode() -> String {
     saya_agent::AgentMode::Build.as_str().into()
 }
 
+/// A deserialized session starts with the context warning armed: the flag is
+/// `#[serde(skip)]`, so nothing on disk sets it, and an armed start means the
+/// next turn's usage re-derives the flag from a live report.
+fn default_context_warned() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use saya_agent::ToolResultShape;
+
+    /// A resumed session carries no stale warn flag: a fresh session starts
+    /// armed, and an old session file (no such key) deserializes armed too,
+    /// so the next turn's usage re-derives the flag from a live report.
+    #[test]
+    fn the_context_warn_flag_starts_armed_and_stays_out_of_persisted_sessions() {
+        let fresh = SessionState::new("s1", None, "m");
+        assert!(
+            !fresh.context_warned,
+            "a fresh session starts with the warning armed (unfired)"
+        );
+        let json = serde_json::to_string(&fresh).expect("serializes");
+        assert!(
+            !json.contains("context_warned"),
+            "the flag must stay out of persisted sessions: {json}"
+        );
+        // An old session file predates the flag: it deserializes armed.
+        let old = r#"{"id":"s1","profile":null,"included_profiles":[],"provider":"ollama","model":"m","allow_data_sharing":false,"approval_mode":"ask","agent_mode":"build","workspace_root":null,"messages":[],"turns":[]}"#;
+        let loaded: SessionState = serde_json::from_str(old).expect("old form deserializes");
+        assert!(
+            !loaded.context_warned,
+            "an old session file resumes with the warning armed (unfired)"
+        );
+    }
+
+    /// `/clear` re-arms the context warning along with the conversation: the
+    /// working memory is fresh, so the next crossing must warn again.
+    #[test]
+    fn clear_re_arms_the_context_warning() {
+        let mut state = SessionState::new("s1", None, "m");
+        state.context_warned = true;
+        state.apply(crate::SlashCommand::Clear, &[]);
+        assert!(
+            !state.context_warned,
+            "/clear must re-arm the warning, not leave it fired"
+        );
+    }
 
     /// A turn that carried chain-of-thought must leave none of it in a
     /// persisted session. The reasoning lives on `ChatResponse.reasoning`

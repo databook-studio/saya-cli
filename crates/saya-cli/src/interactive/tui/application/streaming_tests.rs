@@ -34,12 +34,16 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
 }
 
 /// Runs one turn through `drain_stream` and returns the footer text it pushed.
+/// The footer is the `tokens in` system block — not necessarily the last
+/// block, since the context warning (when it fires) is pushed after it.
 fn run_turn(app: &mut App, state: &mut SessionState, messages: Vec<StreamMsg>) -> String {
     app.request.stream = Some(stream_with(messages));
     assert!(app.drain_stream(state), "the turn finished");
     app.transcript
         .blocks()
-        .last()
+        .iter()
+        .rev()
+        .find(|b| b.text.contains("tokens in"))
         .expect("the footer was pushed")
         .text
         .clone()
@@ -237,6 +241,205 @@ fn a_turn_that_reported_no_usage_pushes_no_footer() {
         before,
         "a usage-less turn pushes no footer"
     );
+}
+
+/// Crossing the warn threshold upward emits exactly one notice; staying above
+/// it for three more turns emits none. The notice teaches the behaviour
+/// before it happens: percentage, window, and what fires at 95%.
+#[test]
+fn crossing_the_warn_threshold_emits_one_notice_then_stays_silent() {
+    use saya_agent::CONTEXT_WARN_PERCENT;
+    let (mut app, mut state) = app_with_model("gpt-4o");
+    // 89_600 / 128_000 = exactly 70%.
+    let warned = (CONTEXT_WARN_PERCENT * 128_000) / 100;
+    let first = run_turn(
+        &mut app,
+        &mut state,
+        vec![
+            answering_report(warned),
+            StreamMsg::Done(Ok(output(TokenUsage::new(warned, 20)))),
+        ],
+    );
+    assert!(
+        first.contains("· ctx 70% of 128k"),
+        "the footer's existing output is unchanged: {first}"
+    );
+    let notices = notice_texts(&app);
+    assert_eq!(notices.len(), 1, "one notice on the crossing: {notices:?}");
+    let notice = &notices[0];
+    assert!(
+        notice.contains("70%"),
+        "the notice states the percentage: {notice}"
+    );
+    assert!(
+        notice.contains("128k"),
+        "the notice states the window: {notice}"
+    );
+    assert!(
+        notice.contains(&saya_agent::CONTEXT_COMPACT_PERCENT.to_string()),
+        "the notice names what happens at the compact threshold: {notice}"
+    );
+
+    for turn in 1..=3 {
+        let footer = run_turn(
+            &mut app,
+            &mut state,
+            vec![
+                answering_report(warned + 1_000),
+                StreamMsg::Done(Ok(output(TokenUsage::new(warned + 1_000, 20)))),
+            ],
+        );
+        assert!(
+            footer.contains("ctx"),
+            "staying above keeps the footer figure: {footer}"
+        );
+        assert_eq!(
+            notice_texts(&app).len(),
+            1,
+            "turn {turn} above the threshold emits no second notice"
+        );
+    }
+}
+
+/// Falling below the threshold re-arms the warning; crossing again emits a
+/// second notice. A turn with no provider report of the input leaves the flag
+/// untouched — absence is not zero, so it neither fires nor re-arms.
+#[test]
+fn falling_below_re_arms_and_crossing_again_emits_a_second_notice() {
+    use saya_agent::CONTEXT_WARN_PERCENT;
+    let (mut app, mut state) = app_with_model("gpt-4o");
+    let warned = (CONTEXT_WARN_PERCENT * 128_000) / 100;
+    let _ = run_turn(
+        &mut app,
+        &mut state,
+        vec![
+            answering_report(warned),
+            StreamMsg::Done(Ok(output(TokenUsage::new(warned, 20)))),
+        ],
+    );
+    assert_eq!(notice_texts(&app).len(), 1);
+
+    let below = run_turn(
+        &mut app,
+        &mut state,
+        vec![
+            answering_report(10_000),
+            StreamMsg::Done(Ok(output(TokenUsage::new(10_000, 20)))),
+        ],
+    );
+    assert!(
+        below.contains("ctx 8% of 128k"),
+        "below the threshold the footer still renders: {below}"
+    );
+    assert_eq!(
+        notice_texts(&app).len(),
+        1,
+        "falling below re-arms silently, with no new notice"
+    );
+
+    // A silent turn (no per-call report) neither fires nor re-arms: after it,
+    // crossing again still emits exactly the second notice.
+    let silent = run_turn(
+        &mut app,
+        &mut state,
+        vec![StreamMsg::Done(Ok(output(TokenUsage::new(10_000, 20))))],
+    );
+    assert!(
+        !silent.contains("ctx"),
+        "no per-call report means no ctx figure: {silent}"
+    );
+    assert_eq!(
+        notice_texts(&app).len(),
+        1,
+        "a silent turn leaves the armed flag untouched"
+    );
+
+    let _ = run_turn(
+        &mut app,
+        &mut state,
+        vec![
+            answering_report(warned),
+            StreamMsg::Done(Ok(output(TokenUsage::new(warned, 20)))),
+        ],
+    );
+    assert_eq!(
+        notice_texts(&app).len(),
+        2,
+        "the second crossing emits a second notice"
+    );
+}
+
+/// An unknown window emits no notice at any usage level. The input here
+/// (126_720) would be 99% under gpt-4o's window, so silence proves the
+/// missing denominator — not the number — is what suppresses the warning.
+#[test]
+fn an_unknown_window_emits_no_notice_at_any_usage_level() {
+    let (mut app, mut state) = app_with_model("mystery-model");
+    let footer = run_turn(
+        &mut app,
+        &mut state,
+        vec![
+            answering_report(126_720),
+            StreamMsg::Done(Ok(output(TokenUsage::new(126_720, 20)))),
+        ],
+    );
+    assert!(
+        !footer.contains("ctx"),
+        "no window means no ctx figure: {footer}"
+    );
+    assert!(
+        notice_texts(&app).is_empty(),
+        "no window means no warning, even at 99%-of-a-known-window usage"
+    );
+}
+
+/// A provider reporting no usage (all-zero, the silent-provider encoding)
+/// emits no notice and does not fire the flag: absence means unknown, never
+/// zero. A later crossing still warns exactly once.
+#[test]
+fn a_provider_reporting_no_usage_emits_no_notice_and_does_not_fire() {
+    let (mut app, mut state) = app_with_model("gpt-4o");
+    let before = app.transcript.blocks().len();
+    app.request.stream = Some(stream_with(vec![StreamMsg::Done(Ok(output(
+        TokenUsage::new(0, 0),
+    )))]));
+    assert!(app.drain_stream(&mut state), "the silent turn finished");
+    assert_eq!(
+        app.transcript.blocks().len(),
+        before,
+        "a usage-less turn pushes no footer"
+    );
+    assert!(
+        notice_texts(&app).is_empty(),
+        "absence of usage is not a zero to warn about"
+    );
+
+    use saya_agent::CONTEXT_WARN_PERCENT;
+    let warned = (CONTEXT_WARN_PERCENT * 128_000) / 100;
+    let _ = run_turn(
+        &mut app,
+        &mut state,
+        vec![
+            answering_report(warned),
+            StreamMsg::Done(Ok(output(TokenUsage::new(warned, 20)))),
+        ],
+    );
+    assert_eq!(
+        notice_texts(&app).len(),
+        1,
+        "the silent turn left the flag unfired, so the crossing warns"
+    );
+}
+
+/// Every context notice the transcript carries (the footer's own `· ctx …`
+/// segment excluded): the system blocks the warning path pushed.
+fn notice_texts(app: &App) -> Vec<String> {
+    app.transcript
+        .blocks()
+        .iter()
+        .filter(|b| b.kind == BlockKind::System && !b.text.contains("tokens in"))
+        .map(|b| b.text.clone())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

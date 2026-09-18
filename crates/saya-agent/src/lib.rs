@@ -20,11 +20,12 @@ pub use loop_runner::{
 pub use protocol::approval::{ApprovalPolicy, ApprovalPolicyParseError};
 pub use protocol::contracts::{
     AgentEvent, AgentMode, AgentModeParseError, AgentRequest, AllowReadOnlyApproval,
-    ApprovalChoice, ApprovalDecider, ApprovalDecision, ChatMessage, ChatRequest, ChatResponse,
-    ContextBlock, KnowledgeOutcome, LearningSkipReason, LocalStateEffect, OverrideFindingDto,
-    ProposedClaimDto, ProviderError, ReasoningEffort, ResponseFormat, SessionGrants, SessionPolicy,
-    SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolDefinition, ToolEffect, ToolError,
-    ToolExecutor, ToolMetadata, ToolResultShape, UsageCall, read_only_permits,
+    ApprovalChoice, ApprovalDecider, ApprovalDecision, CONTEXT_COMPACT_PERCENT,
+    CONTEXT_WARN_PERCENT, ChatMessage, ChatRequest, ChatResponse, ContextBlock, KnowledgeOutcome,
+    LearningSkipReason, LocalStateEffect, OverrideFindingDto, ProposedClaimDto, ProviderError,
+    ReasoningEffort, ResponseFormat, SessionGrants, SessionPolicy, SuppliedClaimDto,
+    SuppliedContractDto, ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
+    ToolMetadata, ToolResultShape, UsageCall, context_utilisation_percent, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::streaming::{

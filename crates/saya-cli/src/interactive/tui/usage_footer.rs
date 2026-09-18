@@ -10,7 +10,7 @@
 //! that rendered `0%` for "we do not know" would be a lie, not a default.
 
 use super::usage_totals::UsageTotals;
-use saya_agent::TokenUsage;
+use saya_agent::{CONTEXT_COMPACT_PERCENT, TokenUsage, context_utilisation_percent};
 
 /// Builds the footer pushed to the transcript after a turn that reported
 /// usage: the per-turn counts, the cumulative answering totals (this turn
@@ -37,15 +37,33 @@ pub(crate) fn transcript_footer(
         " · session {} in / {} out",
         session.input_tokens, session.output_tokens
     ));
-    if let (Some(input), Some(window)) = (last_answering_input, window) {
-        let percent = (input as f64 / window as f64) * 100.0;
+    if let (Some(input), Some(window)) = (last_answering_input, window)
+        && let Some(percent) = context_utilisation_percent(Some(input), Some(window))
+    {
         footer.push_str(&format!(
             " · ctx {}% of {}",
-            percent.round() as u64,
+            percent,
             compact_tokens(window)
         ));
     }
     footer
+}
+
+/// Builds the one-shot context-window warning pushed after the footer when
+/// utilisation crosses the warn threshold upward. States the percentage, the
+/// window, and what fires at the compact threshold — the user learns the
+/// behaviour before it happens, not when it fires.
+///
+/// Returns `None` below the threshold; the armed/fired crossing lives in the
+/// caller (`SessionState::context_warned`), so this stays a pure renderer.
+pub(crate) fn context_warn_notice(percent: u64, window: u64) -> Option<String> {
+    if percent < saya_agent::CONTEXT_WARN_PERCENT {
+        return None;
+    }
+    Some(format!(
+        "Context is at {percent}% of {} tokens. At {CONTEXT_COMPACT_PERCENT}% saya will summarise older turns to keep going; /clear resets the working memory now if you prefer.",
+        compact_tokens(window)
+    ))
 }
 
 /// Renders a token count compactly for the footer: exact below a thousand,
@@ -155,6 +173,27 @@ mod tests {
         assert!(
             footer.contains("ctx 0% of 128k"),
             "a reported zero input is a fact, so 0% renders: {footer}"
+        );
+    }
+
+    /// The notice states the percentage, the window, and what happens at the
+    /// compact threshold — the user learns the behaviour before it fires.
+    /// The trigger and the text both derive from the shared thresholds, so a
+    /// later slice cannot drift one without the other.
+    #[test]
+    fn the_notice_derives_from_the_shared_thresholds() {
+        let notice = context_warn_notice(72, 200_000).expect("a notice renders");
+        assert!(
+            notice.contains("72%"),
+            "the notice states the percentage: {notice}"
+        );
+        assert!(
+            notice.contains("200k"),
+            "the notice states the window: {notice}"
+        );
+        assert!(
+            notice.contains(&saya_agent::CONTEXT_COMPACT_PERCENT.to_string()),
+            "the notice names the compact threshold: {notice}"
         );
     }
 }
