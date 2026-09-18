@@ -584,6 +584,8 @@ fn handle_line_verbatim(
                 format,
                 state_db,
                 session.universe(),
+                // The real source arrives with `/mode` in the next slice.
+                saya_agent::AgentMode::Build,
             )) {
                 Ok(PromptResult::Completed(output)) => {
                     state.record_turn(

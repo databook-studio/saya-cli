@@ -426,6 +426,7 @@ mod esc_run_panel_tests {
                 last_sql: None,
                 session: std::sync::Arc::clone(&app.session),
                 journal: None,
+                agent_mode: saya_agent::AgentMode::Build,
             });
         app.request.stream = Some(stream);
         handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);

@@ -4,7 +4,7 @@ use crate::{
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
-use saya_agent::{ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken};
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::{ConnectionError, QueryRequest};
 use std::{path::PathBuf, time::Instant};
@@ -48,6 +48,8 @@ pub(super) async fn ask(
         None,
         None,
         None,
+        // The real source arrives with `/mode` in the next slice.
+        AgentMode::Build,
         runtime.resolved.candidates,
     );
     tokio::pin!(work);

@@ -16,7 +16,7 @@ mod live;
 mod orchestrate;
 
 use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
-use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
 use saya_store::SqliteStateStore;
 use std::future::Future;
 use std::pin::Pin;
@@ -60,6 +60,8 @@ pub(crate) async fn run_with_candidates(
     // The run's contained session, when a run engine opened one. `None`
     // leaves `workspace_read` denying with a typed error.
     session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+    // The agent's task posture, threaded like `approval`.
+    agent_mode: AgentMode,
     candidates: usize,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
@@ -76,6 +78,7 @@ pub(crate) async fn run_with_candidates(
             decider,
             last_sql,
             session,
+            agent_mode,
         )
         .await;
     }
@@ -92,6 +95,7 @@ pub(crate) async fn run_with_candidates(
         decider,
         last_sql,
         session,
+        agent_mode,
     );
     orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await
 }

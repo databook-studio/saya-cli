@@ -9,8 +9,9 @@ use crate::grant_token::{TurnPrimary, grant_token};
 use crate::interactive::session_universe::SessionUniverse;
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentOutput, ApprovalChoice, ApprovalDecider, ApprovalDecision,
-    ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy, ToolDefinition,
+    AgentEvent, AgentEventSink, AgentMode, AgentOutput, ApprovalChoice, ApprovalDecider,
+    ApprovalDecision, ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy,
+    ToolDefinition,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -211,6 +212,9 @@ pub(crate) struct StreamRequest {
     pub(crate) last_sql: Option<String>,
     pub(crate) session: Arc<SessionUniverse>,
     pub(crate) journal: Option<Arc<saya_store::SessionJournal>>,
+    // The agent's task posture, threaded like `approval`: the real source
+    // arrives with `/mode` in the next slice.
+    pub(crate) agent_mode: AgentMode,
 }
 
 /// Spawns the agent on a background thread and returns the live stream handle.
@@ -226,6 +230,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
         last_sql,
         session,
         journal,
+        agent_mode,
     } = request;
     let (tx, rx) = unbounded_channel();
     let cancel = CancellationToken::new();
@@ -271,6 +276,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
             Some(decider),
             last_sql,
             Some(session),
+            agent_mode,
         ));
         let _ = tx.send(StreamMsg::Done(result.map_err(|error| error.to_string())));
     });
