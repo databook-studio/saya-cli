@@ -86,6 +86,17 @@ pub(crate) fn state_from_redacted(
     // workspace existed carries no root and resumes unbound — exactly its
     // old behaviour.
     state.workspace_root = value.workspace_root;
+    // The task list rides the record the same way, restored behind its own
+    // `validate()` gate. A record without the field resumes with an empty
+    // list (`#[serde(default)]`, the `agent_mode` precedent). A record whose
+    // stored list fails validation — hand-edited, or written by an older
+    // buggy build — resumes empty rather than failing the session: a corrupt
+    // todo list must never make a session unopenable.
+    state.task_list = if value.task_list.validate().is_ok() {
+        value.task_list
+    } else {
+        saya_types::SessionTaskList::default()
+    };
     state.messages = value
         .messages
         .into_iter()
