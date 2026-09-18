@@ -3,8 +3,9 @@
 //! failure path below leaves the conversation exactly as it was.
 
 use super::session_compact::{
-    apply, failure_message, pinned_tokens, plan, success_message, summarise, validate,
+    apply, failure_message, pinned_tokens, plan, success_message, validate,
 };
+use super::session_compact_call::summarise;
 use super::session_state::SessionState;
 use async_trait::async_trait;
 use saya_agent::{ChatMessage, ChatProvider, ChatRequest, ChatResponse, ProviderError};

@@ -5,6 +5,7 @@ pub(crate) mod allow_refusal;
 pub(crate) mod compact_task;
 mod session_commands;
 pub(crate) mod session_compact;
+pub(crate) mod session_compact_call;
 #[cfg(test)]
 #[path = "session_compact_tests.rs"]
 mod session_compact_tests;

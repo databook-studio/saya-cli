@@ -5,6 +5,7 @@
 //! drives [`start`] + [`poll`] so the event loop never blocks on the model.
 
 use super::session_compact::{self, COMPACT_MIN_TURNS};
+use super::session_compact_call;
 use super::session_state::SessionState;
 use super::session_universe::SessionUniverse;
 use crate::agent::provider;
@@ -58,7 +59,7 @@ pub(crate) async fn run(
             };
         }
     };
-    match session_compact::summarise(&*provider, &ai.model, &plan).await {
+    match session_compact_call::summarise(&*provider, &ai.model, &plan).await {
         Ok(outcome) => match session_compact::apply(state, &plan, &outcome.summary) {
             Ok(()) => CompactResult {
                 message: session_compact::success_message(plan.compacted_turns, &outcome.summary),
