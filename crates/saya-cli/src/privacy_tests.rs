@@ -178,6 +178,7 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         context_byte_budget: 256 * 1024,
         context_window_tokens: None,
         show_thinking: false,
+        compaction: saya_config::CompactionMode::Auto,
         retry_delays_ms: vec![250, 500, 1000],
     };
     let to_openai = crate::agent::runtime::PromptOverrides {

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{AiProvider, CliOverrides, ConfigError, ConfigFile, OutputFormat};
+use crate::{AiProvider, CliOverrides, CompactionMode, ConfigError, ConfigFile, OutputFormat};
 use saya_types::SecretRef;
 
 pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
@@ -19,6 +19,7 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(ai.context_byte_budget);
     apply!(ai.context_window_tokens);
     apply!(ai.show_thinking);
+    apply!(ai.compaction);
     apply!(run.read_only);
     apply!(run.max_rows);
     apply!(run.max_iterations);
@@ -111,6 +112,12 @@ pub(crate) fn apply_env(
         env,
         "SAYA_ALLOW_DATA_SHARING",
         parse_value,
+    )?;
+    apply_parsed(
+        &mut file.ai.compaction,
+        env,
+        "SAYA_COMPACTION",
+        CompactionMode::parse,
     )?;
     apply_parsed(&mut file.run.read_only, env, "SAYA_READ_ONLY", parse_value)?;
     apply_parsed(&mut file.run.max_rows, env, "SAYA_MAX_ROWS", parse_value)?;

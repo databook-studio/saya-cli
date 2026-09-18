@@ -255,9 +255,10 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "compact" => Some(
             "compact — summarise the older turns into a short summary the model replays ahead of \
              the newest verbatim turns. Working memory only: the transcript is unchanged \
-             (/export first if you want the full text). Manual only — nothing triggers it \
-             automatically — and a failed compaction leaves the conversation exactly as it was. \
-             Example: /compact",
+             (/export first if you want the full text). Automatic at 95% of the known context \
+             window when `[ai] compaction` is `auto` (the default); `manual` keeps only this \
+             command, `off` additionally silences the 70% warning — and a failed compaction \
+             leaves the conversation exactly as it was. Example: /compact",
         ),
         "history" => Some("history — list saved sessions as text. Example: /history"),
         "sessions" => {

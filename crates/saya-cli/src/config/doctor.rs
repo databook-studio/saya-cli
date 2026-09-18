@@ -46,6 +46,7 @@ pub(crate) fn report(runtime: &RuntimeConfig) -> DoctorReport {
         runtime.resolved.ai.api_key.is_some(),
         runtime.resolved.ai.max_output_tokens,
         runtime.resolved.ai.max_output_tokens_is_default,
+        runtime.resolved.ai.compaction,
     ));
     lines.extend(advice_lines(runtime, selected_unresolved));
     DoctorReport {
@@ -254,6 +255,7 @@ fn provider_lines(
     has_key_ref: bool,
     max_output_tokens: u32,
     max_output_tokens_is_default: bool,
+    compaction: saya_config::CompactionMode,
 ) -> Vec<String> {
     let mut lines = vec![format!(
         "ai provider: {} model: (from config)",
@@ -266,6 +268,7 @@ fn provider_lines(
     } else {
         lines.push(format!("ai max_output_tokens: {max_output_tokens}"));
     }
+    lines.push(format!("ai compaction: {}", compaction.as_str()));
     if matches!(
         provider,
         AiProvider::Openai | AiProvider::Anthropic | AiProvider::Gemini
@@ -319,9 +322,23 @@ mod tests {
 
     #[test]
     fn cloud_provider_without_key_reference_warns() {
-        let lines = provider_lines(AiProvider::Anthropic, None, false, 4096, true);
+        let lines = provider_lines(
+            AiProvider::Anthropic,
+            None,
+            false,
+            4096,
+            true,
+            saya_config::CompactionMode::Auto,
+        );
         assert!(lines.iter().any(|line| line.contains("unauthenticated")));
-        let lines = provider_lines(AiProvider::Anthropic, None, true, 4096, true);
+        let lines = provider_lines(
+            AiProvider::Anthropic,
+            None,
+            true,
+            4096,
+            true,
+            saya_config::CompactionMode::Auto,
+        );
         assert!(!lines.iter().any(|line| line.contains("unauthenticated")));
     }
 
@@ -379,7 +396,14 @@ mod tests {
 
     #[test]
     fn provider_lines_probe_an_ipv6_endpoint_without_an_explicit_port() {
-        let lines = provider_lines(AiProvider::Ollama, Some("http://[::1]"), true, 4096, true);
+        let lines = provider_lines(
+            AiProvider::Ollama,
+            Some("http://[::1]"),
+            true,
+            4096,
+            true,
+            saya_config::CompactionMode::Auto,
+        );
         assert!(
             lines.iter().any(|line| line.contains("probe: ::1:80")),
             "doctor should probe the IPv6 endpoint on the http default port: {lines:?}"
@@ -388,7 +412,14 @@ mod tests {
 
     #[test]
     fn provider_lines_names_the_stated_output_token_ceiling_without_a_default_note() {
-        let lines = provider_lines(AiProvider::Ollama, None, true, 2048, false);
+        let lines = provider_lines(
+            AiProvider::Ollama,
+            None,
+            true,
+            2048,
+            false,
+            saya_config::CompactionMode::Auto,
+        );
         assert!(
             lines
                 .iter()
@@ -399,7 +430,14 @@ mod tests {
 
     #[test]
     fn provider_lines_notes_the_default_output_token_ceiling_when_unset() {
-        let lines = provider_lines(AiProvider::Ollama, None, true, 4096, true);
+        let lines = provider_lines(
+            AiProvider::Ollama,
+            None,
+            true,
+            4096,
+            true,
+            saya_config::CompactionMode::Auto,
+        );
         assert!(
             lines
                 .iter()
@@ -411,7 +449,14 @@ mod tests {
     #[test]
     fn the_output_token_ceiling_line_is_informational_only() {
         for (tokens, from_default) in [(2048, false), (4096, true)] {
-            let lines = provider_lines(AiProvider::Ollama, None, true, tokens, from_default);
+            let lines = provider_lines(
+                AiProvider::Ollama,
+                None,
+                true,
+                tokens,
+                from_default,
+                saya_config::CompactionMode::Auto,
+            );
             assert!(
                 !lines.iter().any(|line| line.starts_with('!')),
                 "the ceiling line must never warn: {lines:?}"

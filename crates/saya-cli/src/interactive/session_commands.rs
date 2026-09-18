@@ -161,6 +161,7 @@ impl SessionState {
                 self.compacted_turns = 0;
                 self.usage = Default::default();
                 self.context_warned = false;
+                self.auto_compact_failed = false;
                 // The transcript keeps what was said; the model's working
                 // memory does not. Say so, since there is no undo.
                 SessionAction::Message(

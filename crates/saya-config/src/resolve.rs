@@ -138,6 +138,11 @@ pub struct ResolvedAi {
     /// Show the model's chain-of-thought in the transcript. Off by default;
     /// display only — reasoning is never persisted regardless of this setting.
     pub show_thinking: bool,
+    /// How context compaction behaves once the window fills. `auto` (the
+    /// default) summarises older turns on crossing the compact threshold;
+    /// `manual` keeps `/compact` working and never fires on its own; `off`
+    /// additionally silences the 70% warning.
+    pub compaction: crate::CompactionMode,
 }
 
 pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
@@ -239,6 +244,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         context_byte_budget,
         context_window_tokens: file.ai.context_window_tokens,
         show_thinking: file.ai.show_thinking.unwrap_or(false),
+        compaction: file.ai.compaction.unwrap_or_default(),
         retry_delays_ms,
     };
     let endpoints = resolve_endpoints(&file.ai, &ai)?;

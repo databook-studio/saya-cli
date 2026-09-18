@@ -227,6 +227,7 @@ pub(crate) mod tests_support {
                     context_byte_budget: 256 * 1024,
                     context_window_tokens: None,
                     show_thinking: false,
+                    compaction: saya_config::CompactionMode::Auto,
                     retry_delays_ms: vec![250, 500, 1000],
                 },
                 max_rows: 100,

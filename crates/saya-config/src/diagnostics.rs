@@ -1,6 +1,8 @@
 use serde::Serialize;
 
-use crate::{ColorChoice, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig, ThemeChoice};
+use crate::{
+    ColorChoice, CompactionMode, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig, ThemeChoice,
+};
 use std::collections::BTreeMap;
 
 /// A display-safe view of what a config *file* declares; references are
@@ -55,6 +57,7 @@ pub struct RedactedDiagnostics {
     pub output_format: Option<OutputFormat>,
     pub output_color: Option<ColorChoice>,
     pub ui_theme: Option<ThemeChoice>,
+    pub compaction: Option<CompactionMode>,
     pub memory_mode: Option<MemoryMode>,
     pub memory_max_contracts: Option<u32>,
     pub memory_max_claims_per_contract: Option<u32>,
@@ -95,6 +98,7 @@ pub struct ResolvedDiagnostics {
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
     pub ui_theme: ThemeChoice,
+    pub compaction: CompactionMode,
     pub memory_mode: MemoryMode,
     pub memory_max_contracts: u32,
     pub memory_max_claims_per_contract: u32,
@@ -148,6 +152,7 @@ impl RedactedDiagnostics {
             output_format: file.output.format,
             output_color: file.output.color,
             ui_theme: file.ui.theme,
+            compaction: file.ai.compaction,
             memory_mode: file.memory.mode,
             memory_max_contracts: file.memory.max_contracts,
             memory_max_claims_per_contract: file.memory.max_claims_per_contract,
@@ -210,6 +215,7 @@ impl ResolvedConfig {
             output_format: self.output_format,
             output_color: self.output_color,
             ui_theme: self.ui_theme,
+            compaction: self.ai.compaction,
             memory_mode: self.memory.mode,
             memory_max_contracts: self.memory.max_contracts,
             memory_max_claims_per_contract: self.memory.max_claims_per_contract,
