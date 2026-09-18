@@ -41,6 +41,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("usage", "Show session token usage and cache hit rate"),
     ("workspace", "Show the session's bound workspace root"),
     ("thinking", "Toggle display of the model's chain-of-thought"),
+    (
+        "tasks",
+        "Show the session's task list, or clear it with /tasks clear",
+    ),
     ("sql", "Run a raw SQL query against the active profile"),
     ("export", "Export the last query result as CSV or JSON"),
     ("chart", "Render the last query as an HTML chart"),
@@ -169,6 +173,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("usage", "/usage"),
             ("workspace", "/workspace"),
             ("thinking", "/thinking [on|off]"),
+            ("tasks", "/tasks [clear]"),
             ("help", "/help [command]"),
             ("exit", "/exit  (alias /quit)"),
         ],
@@ -277,6 +282,9 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "thinking" => Some(
             "thinking [on|off] — toggle display of the model's chain-of-thought in the transcript. Off by default: thinking is verbose (often longer than the answer) and restates database contents in prose. With no argument, toggles; with on/off, sets explicitly. Display only — reasoning is never written to a saved session, and the copy keys (Ctrl+Y, Ctrl+B) leave it out. Selection mode (Ctrl+O) hands the screen to your terminal, so a mouse drag can still copy thinking that is visible. Example: /thinking on",
+        ),
+        "tasks" => Some(
+            "tasks [clear] — show the session's task list: what the model is tracking, one line per task with its state. Bare /tasks shows the list (No tasks are being tracked. when empty); /tasks clear empties it, so the next turn injects no task block. The model's list to write, yours to inspect or clear — no per-task editing lives here. Example: /tasks   or   /tasks clear",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
         "contracts" => Some(
@@ -658,6 +666,37 @@ mod tests {
         assert!(
             listing.contains("/approvals [ask|read-only|never|bypass]"),
             "the /help listing must show the full mode vocabulary: {listing}"
+        );
+    }
+
+    /// `/tasks` is wired at every hand-maintained touchpoint the
+    /// cli-application standard names: the registry, the description table
+    /// (the popup's single source), the `/help` listing, and the per-command
+    /// help. The detailed entry states the ownership split: the model's list
+    /// to write, the user's to inspect or clear — no per-task editing here.
+    #[test]
+    fn tasks_is_registered_listed_and_described() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"tasks"),
+            "tasks is registered"
+        );
+        assert!(
+            description_for("tasks").is_some(),
+            "tasks has a popup description"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/tasks [clear]"),
+            "the listing shows the /tasks usage: {listing}"
+        );
+        let help = command_help("tasks").expect("tasks has per-command help");
+        assert!(
+            help.contains("/tasks clear"),
+            "the /tasks help names the clear form: {help}"
+        );
+        assert!(
+            help.contains("No tasks are being tracked."),
+            "the /tasks help names the empty-list words: {help}"
         );
     }
 

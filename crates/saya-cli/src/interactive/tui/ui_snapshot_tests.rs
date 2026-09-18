@@ -175,6 +175,7 @@ pub(crate) fn fixed_status() -> StatusView {
         sharing_on: true,
         host_composed: false,
         denied_programs: Vec::new(),
+        task_summary: None,
     }
 }
 

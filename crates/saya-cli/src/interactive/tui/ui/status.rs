@@ -28,8 +28,31 @@ fn approval_colour(mode: &str) -> Color {
     }
 }
 
+/// The status bar's plain-text words, in bar order — the seam the headless
+/// parity test reads. The headless header's task words are a substring of
+/// this line when a list is tracked, and absent from it when none is.
+/// Test seam: the bar's plain-text words for the parity test. Reachable as
+/// `crate::interactive::tui::ui::status_words_for_test`.
+#[cfg(test)]
+pub(crate) fn status_words_for_test(view: &StatusView) -> String {
+    status_words(view)
+}
+
+#[cfg(test)]
+fn status_words(view: &StatusView) -> String {
+    let mut words = format!(
+        "[{}] {}/{} approval:{} mode:{}",
+        view.profile, view.provider, view.model, view.approval_mode, view.agent_mode
+    );
+    if let Some(summary) = view.task_summary.as_deref() {
+        words.push(' ');
+        words.push_str(summary);
+    }
+    words
+}
+
 /// Builds the coloured status-bar segments (profile, provider/model, approval,
-/// mode, workspace, host, sharing), each on the bar background so they blend
+/// mode, tasks, workspace, host, sharing), each on the bar background so they blend
 /// into the strip. The `mode:` segment mirrors the headless header's, so the
 /// two surfaces cannot drift.
 fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
@@ -54,6 +77,12 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
         ),
         Span::styled(format!("mode:{} ", view.agent_mode), base.fg(secondary())),
     ];
+    // The task segment names the done count while anything is tracked, and
+    // is absent on an empty list — the headless header's `tasks:` shape, so
+    // the two surfaces cannot drift.
+    if let Some(summary) = view.task_summary.as_deref() {
+        spans.push(Span::styled(format!("{summary} "), base.fg(secondary())));
+    }
     // The workspace segment names the tree the session can touch, so the
     // binding is visible at every moment it matters — including on a resume
     // from a different directory.
@@ -149,6 +178,7 @@ mod tests {
             sharing_on: false,
             host_composed: false,
             denied_programs: Vec::new(),
+            task_summary: None,
         }
     }
 

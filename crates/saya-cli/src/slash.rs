@@ -96,6 +96,10 @@ pub enum SlashCommand {
     /// the no-root shape where nothing binds.
     Workspace,
     Help(Option<String>),
+    /// `/tasks [clear]` — the user's view of the session task list: bare
+    /// shows it through the shared renderer, `clear` empties it. The model
+    /// owns the list's content; no per-task editing lives here.
+    Tasks(Option<String>),
     Exit,
 }
 
@@ -215,6 +219,15 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         }
         "grants" => SlashCommand::Grants,
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
+        "tasks" => match arg.as_str() {
+            "" => SlashCommand::Tasks(None),
+            "clear" => SlashCommand::Tasks(Some("clear".into())),
+            other => {
+                return Err(SlashParseError(format!(
+                    "unknown /tasks subcommand: {other} (usage: /tasks or /tasks clear)"
+                )));
+            }
+        },
         "exit" | "quit" => SlashCommand::Exit,
         other => {
             let msg = match registry::closest_command(other) {
@@ -536,6 +549,26 @@ mod tests {
         assert!(
             parse_slash_command("/mode Plan").is_err(),
             "the parse is case-sensitive like /approvals"
+        );
+    }
+
+    /// `/tasks` shows the list bare and clears it on `clear`; anything else
+    /// is a usage error naming the one subcommand, so a typo cannot read as
+    /// a silent show.
+    #[test]
+    fn test_parse_tasks_shows_clears_and_refuses() {
+        assert_eq!(
+            parse_slash_command("/tasks"),
+            Ok(Some(SlashCommand::Tasks(None)))
+        );
+        assert_eq!(
+            parse_slash_command("/tasks clear"),
+            Ok(Some(SlashCommand::Tasks(Some("clear".into()))))
+        );
+        let error = parse_slash_command("/tasks bogus").unwrap_err();
+        assert!(
+            error.0.contains("/tasks clear"),
+            "the error names the one subcommand, got: {error}"
         );
     }
 
