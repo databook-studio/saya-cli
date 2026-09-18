@@ -1,10 +1,8 @@
 //! `[jobs]` — the default budgets a run is declared with when the run's
 //! spec and each of its steps declare none.
 //!
-//! The section mirrors the four budget dimensions M1-6 adds (wall-clock,
-//! tokens per endpoint, turns, tool calls); `runner` and `fetch` keys arrive
-//! in later items. The turn ceiling falls back to `[run] max_iterations`,
-//! which this resolution gives its first behavioural reader. The engine never
+//! Every ceiling is opt-in: a ceiling left unset is unlimited at the
+//! contract level, matching the run contract's own wording. The engine never
 //! reads the environment for budgets (plan G3), so no `[jobs]` key has an
 //! environment override.
 
@@ -21,18 +19,41 @@ fn resolve_with_user(toml: &str) -> saya_config::ResolvedConfig {
     .expect("resolution succeeds")
 }
 
-/// Absent from the config, the resolved `[jobs]` defaults carry the
-/// `[run] max_iterations` default as the turn ceiling and leave every other
-/// dimension unlimited — the engine layers more specific budgets over these.
+/// A run with nothing declared has no turn ceiling: `turns` is opt-in like
+/// every other budget dimension, and a ceiling left unset is unlimited at
+/// the contract level. `[jobs] turns` still resolves when declared.
 #[test]
-fn jobs_default_to_the_max_iterations_turn_ceiling_and_nothing_else() {
+fn jobs_turns_unset_means_unlimited() {
+    let resolved =
+        resolve(ResolutionInput::new(ConnectionsFile::default())).expect("resolution succeeds");
+    assert_eq!(
+        resolved.jobs.turns, None,
+        "an undeclared turn ceiling is unlimited, not the max_iterations default"
+    );
+    assert_eq!(
+        resolved.jobs.budgets().turns,
+        None,
+        "the resolved budget carries the unlimited turns through"
+    );
+
+    let declared = resolve_with_user("[jobs]\nturns = 5\n");
+    assert_eq!(declared.jobs.turns, Some(5));
+    assert_eq!(declared.jobs.budgets().turns, Some(5));
+
+    let other_ceiling = resolve_with_user("[run]\nmax_iterations = 30\n");
+    assert_eq!(
+        other_ceiling.jobs.turns, None,
+        "max_iterations no longer becomes a run's turn ceiling"
+    );
+}
+
+/// The other budget dimensions are unchanged: wall-clock, tool calls, and
+/// token ceilings resolve exactly as before.
+#[test]
+fn jobs_other_budget_dimensions_are_unchanged() {
     let resolved =
         resolve(ResolutionInput::new(ConnectionsFile::default())).expect("resolution succeeds");
     let jobs = &resolved.jobs;
-    assert_eq!(
-        jobs.turns, 12,
-        "the [jobs] turn default is the [run] max_iterations default"
-    );
     assert_eq!(
         jobs.wall_clock_seconds, None,
         "no wall-clock ceiling by default"
@@ -43,41 +64,27 @@ fn jobs_default_to_the_max_iterations_turn_ceiling_and_nothing_else() {
         "no token ceilings by default: {:?}",
         jobs.tokens_per_endpoint
     );
-}
 
-/// `[jobs]` resolves every declared key into the effective default budgets.
-#[test]
-fn jobs_resolve_from_the_file() {
-    let resolved = resolve_with_user(
+    let declared = resolve_with_user(
         "[jobs]\nturns = 40\ntool_calls = 25\nwall_clock_seconds = 1800\n\
          [jobs.tokens_per_endpoint]\n\"local-ollama\" = 200_000\n",
     );
-    let jobs = &resolved.jobs;
-    assert_eq!(jobs.turns, 40);
-    assert_eq!(jobs.tool_calls, Some(25));
-    assert_eq!(jobs.wall_clock_seconds, Some(1800));
+    assert_eq!(declared.jobs.turns, Some(40));
+    assert_eq!(declared.jobs.tool_calls, Some(25));
+    assert_eq!(declared.jobs.wall_clock_seconds, Some(1800));
     assert_eq!(
-        jobs.tokens_per_endpoint,
+        declared.jobs.tokens_per_endpoint,
         BTreeMap::from([("local-ollama".into(), 200_000)])
     );
 }
 
-/// `run.max_iterations` is the run-episode default turn ceiling: with no
-/// `[jobs] turns` declared, the resolved jobs turn budget is exactly the
-/// resolved `max_iterations`. This is the knob's first behavioural reader.
+/// A declared `[jobs] turns` resolves verbatim, independent of
+/// `[run] max_iterations`: the per-dimension layering rule every budget
+/// follows.
 #[test]
-fn jobs_turn_ceiling_falls_back_to_run_max_iterations() {
-    let resolved = resolve_with_user("[run]\nmax_iterations = 30\n");
-    assert_eq!(resolved.jobs.turns, 30);
-    assert_eq!(resolved.max_iterations, 30);
-}
-
-/// `[jobs] turns` is more specific than the legacy `[run] max_iterations`, so
-/// it wins when both are declared.
-#[test]
-fn jobs_turn_ceiling_beats_run_max_iterations() {
+fn jobs_turn_ceiling_is_independent_of_run_max_iterations() {
     let resolved = resolve_with_user("[run]\nmax_iterations = 30\n[jobs]\nturns = 7\n");
-    assert_eq!(resolved.jobs.turns, 7);
+    assert_eq!(resolved.jobs.turns, Some(7));
 }
 
 /// Zero is meaningless on every budget default: zero turns or zero tool calls
@@ -133,12 +140,11 @@ fn jobs_zero_token_ceiling_is_rejected() {
     );
 }
 
-/// `run.max_iterations` is now the run-episode default turn ceiling, so the
-/// same below-one discipline applies to it: a dead knob tolerated `0`, but a
-/// reader turns `0` into "pause before the first turn", which is a typo, not
-/// an intent.
+/// `[run] max_iterations` no longer feeds any run behaviour, but the stored
+/// setting stays range-checked: zero would read as a ceiling that pauses
+/// everything, a typo, not an intent.
 #[test]
-fn max_iterations_below_one_is_rejected_once_it_has_a_reader() {
+fn max_iterations_below_one_is_rejected_even_without_a_reader() {
     let error = resolve(
         ResolutionInput::new(ConnectionsFile::default())
             .with_user(ConfigFile::from_toml("[run]\nmax_iterations = 0\n").unwrap()),
@@ -224,7 +230,7 @@ fn resolved_jobs_convert_into_contract_budgets_that_validate() {
         Some(&200_000)
     );
 
-    // With nothing declared, the conversion still carries the turn default.
+    // With nothing declared, the conversion carries no turn ceiling.
     let default_budgets = resolve(ResolutionInput::new(ConnectionsFile::default()))
         .expect("resolution succeeds")
         .jobs
@@ -232,7 +238,7 @@ fn resolved_jobs_convert_into_contract_budgets_that_validate() {
     default_budgets
         .validate()
         .expect("the default jobs satisfy the run contract");
-    assert_eq!(default_budgets.turns, Some(12));
+    assert_eq!(default_budgets.turns, None);
 }
 
 /// `ConfigFile` is `deny_unknown_fields`, so an unknown key inside `[jobs]`
@@ -559,7 +565,7 @@ fn project_layer_jobs_applies_and_is_not_protected() {
             .with_project(ConfigFile::from_toml("[jobs]\nturns = 7\n").unwrap()),
     )
     .expect("resolution succeeds");
-    assert_eq!(resolved.jobs.turns, 7);
+    assert_eq!(resolved.jobs.turns, Some(7));
     assert!(
         resolved.ignored_project_overrides.is_empty(),
         "jobs is not security-critical, so nothing may be reported as ignored: {:?}",
@@ -582,10 +588,11 @@ fn diagnostics_report_jobs_like_their_neighbours() {
     let unset = ConfigFile::from_toml("[run]\nmax_rows = 10\n").unwrap();
     assert_eq!(unset.redacted_diagnostics().jobs_turns, None);
 
-    // Resolved view: the effective values, with the max_iterations fallback.
-    let resolved_set = resolve_with_user("[run]\nmax_iterations = 30\n");
+    // Resolved view: the effective values; an undeclared turn ceiling is
+    // unlimited (`None`), matching every other opt-in budget dimension.
+    let resolved_set = resolve_with_user("[jobs]\nturns = 30\n");
     let shown = resolved_set.redacted_diagnostics();
-    assert_eq!(shown.jobs_turns, 30);
+    assert_eq!(shown.jobs_turns, Some(30));
     assert_eq!(shown.jobs_tool_calls, None);
     assert_eq!(shown.jobs_wall_clock_seconds, None);
     assert!(shown.jobs_tokens_per_endpoint.is_empty());
@@ -594,6 +601,10 @@ fn diagnostics_report_jobs_like_their_neighbours() {
         rendered.contains("\"jobs_turns\":30"),
         "resolved diagnostics must report jobs_turns: {rendered}"
     );
+    let unresolved = resolve(ResolutionInput::new(ConnectionsFile::default()))
+        .expect("resolution succeeds")
+        .redacted_diagnostics();
+    assert_eq!(unresolved.jobs_turns, None);
 
     // A token ceiling is echoed in both views without redaction: endpoint
     // names and token counts are user-declared figures, not secrets.

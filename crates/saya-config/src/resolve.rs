@@ -51,9 +51,10 @@ const MIN_CANDIDATES: usize = 1;
 /// leaves room to opt into a wider search while keeping the worst case bounded.
 const MAX_CANDIDATES: usize = 16;
 
-/// Default `[run] max_iterations`, and through it the default turn ceiling
-/// for a run's episodes: a run with nothing declared stops after twelve
-/// provider turns and salvages the best answer from the work done.
+/// Default `[run] max_iterations`: a stored setting with no behavioural
+/// reader — `[jobs] turns` is opt-in, and unset means unlimited. Kept
+/// parsed and range-checked so existing configs keep resolving; nothing
+/// consumes it.
 const DEFAULT_MAX_ITERATIONS: usize = 12;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,11 +71,10 @@ pub struct ResolvedConfig {
     /// which runs one attempt per candidate and votes on their nominated SQL
     /// (`crates/saya-cli/src/agent/candidates`).
     pub candidates: usize,
-    /// The default budgets a run is declared with: `[jobs]` resolved against
-    /// `[run] max_iterations`, whose turn ceiling falls back to
-    /// `max_iterations` (plan G2 — that knob's first behavioural reader).
-    /// The engine layers RunSpec and step budgets over these per dimension;
-    /// there is deliberately no environment input to any of it (plan G3).
+    /// The default budgets a run is declared with: `[jobs]` resolved per
+    /// dimension — a ceiling left unset is unlimited at the contract level.
+    /// The engine layers RunSpec and step budgets over these; there is
+    /// deliberately no environment input to any of it (plan G3).
     pub jobs: ResolvedJobs,
     /// The `[host_commands]` shaping: user-layer `pass_env` and
     /// the per-call ceiling. The project layer may never state it (typed
@@ -216,7 +216,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     require_candidates(candidates)?;
     let max_iterations = file.run.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
     require_max_iterations(max_iterations)?;
-    let jobs = crate::jobs::resolve(&file.jobs, max_iterations as u64)?;
+    let jobs = crate::jobs::resolve(&file.jobs)?;
     let host_commands = crate::jobs::resolve_host_commands(file.host_commands.clone())?;
     let session_deny = crate::jobs::resolve_session_deny(file.session_commands.clone())?;
     let ai = ResolvedAi {

@@ -223,8 +223,9 @@ pub struct JobsFile {
     /// per-endpoint shape the run contracts carry. Absent or empty: no
     /// endpoint has a token ceiling.
     pub tokens_per_endpoint: Option<BTreeMap<String, u64>>,
-    /// Default turn ceiling for a run's episodes. Absent falls back to
-    /// `[run] max_iterations` — see the resolution.
+    /// Default turn ceiling for a run's episodes. Absent: the run has no
+    /// turn ceiling until the run itself declares one — a ceiling left
+    /// unset is unlimited at the contract level.
     pub turns: Option<u64>,
     /// Default ceiling on total tool calls across a run's episodes. Absent:
     /// no ceiling.

@@ -2,10 +2,11 @@
 //!
 //! The section holds what the run's specification and each step may leave
 //! unset, so the engine can layer RunSpec and step budgets over these
-//! resolved defaults per dimension (`RunSpec > step > [jobs] >
-//! `[run].max_iterations``). There are no environment overrides for `[jobs]`
-//! keys by design: run budgets must be reproducible from the run's
-//! specification and config alone (plan G3).
+//! resolved defaults per dimension. A ceiling left unset is unlimited at the
+//! contract level — the engine enforces what is declared, pausing (never
+//! silently overrunning) when a declared budget trips. There are no
+//! environment overrides for `[jobs]` keys by design: run budgets must be
+//! reproducible from the run's specification and config alone (plan G3).
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -84,8 +85,7 @@ impl Default for ResolvedFetchJobs {
     }
 }
 
-/// Effective run budget defaults, resolved from `[jobs]` (and `[run]
-/// max_iterations` for the turn ceiling) plus safe defaults.
+/// Effective run budget defaults, resolved from `[jobs]` plus safe defaults.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedJobs {
     /// Wall-clock ceiling for a run, in seconds. `None` is the resolved
@@ -96,11 +96,9 @@ pub struct ResolvedJobs {
     /// same shape the run contracts carry. Empty when nothing is declared.
     pub tokens_per_endpoint: BTreeMap<String, u64>,
     /// Turn ceiling for a run's episodes: `[jobs] turns` when declared,
-    /// otherwise `[run] max_iterations` — that knob's first behavioural
-    /// reader, and the only place it is consumed. Always concrete: a run
-    /// with nothing declared is bounded by the `max_iterations` default
-    /// rather than unlimited, which is the point of wiring it (plan G2).
-    pub turns: u64,
+    /// unlimited when unset — a ceiling left unset is unlimited at the
+    /// contract level, matching every other budget dimension.
+    pub turns: Option<u64>,
     /// Ceiling on total tool calls across a run's episodes. `None` by
     /// default, with the same pausing semantics as the wall clock.
     pub tool_calls: Option<u64>,
@@ -230,17 +228,18 @@ impl ResolvedJobs {
         let mut budgets = Budgets::default();
         budgets.wall_clock = self.wall_clock_seconds.map(Duration::from_secs);
         budgets.tokens_per_endpoint = self.tokens_per_endpoint.clone();
-        budgets.turns = Some(self.turns);
+        budgets.turns = self.turns;
         budgets.tool_calls = self.tool_calls;
         budgets
     }
 }
 
-/// Resolves `[jobs]` against the resolved `[run] max_iterations`, which
-/// remains the run-episode default turn ceiling when `[jobs] turns` is
-/// undeclared. Numeric bounds are checked here, at resolve time, with typed
-/// errors — never silently clamped at the point of use.
-pub(crate) fn resolve(file: &JobsFile, max_iterations: u64) -> Result<ResolvedJobs, ConfigError> {
+/// Resolves `[jobs]`: every ceiling is opt-in, and a ceiling left unset is
+/// unlimited at the contract level — the engine layers RunSpec and step
+/// budgets over these resolved defaults per dimension. Numeric bounds are
+/// checked here, at resolve time, with typed errors — never silently
+/// clamped at the point of use.
+pub(crate) fn resolve(file: &JobsFile) -> Result<ResolvedJobs, ConfigError> {
     if let Some(seconds) = file.wall_clock_seconds {
         require_at_least_one("wall_clock_seconds", seconds)?;
     }
@@ -248,8 +247,9 @@ pub(crate) fn resolve(file: &JobsFile, max_iterations: u64) -> Result<ResolvedJo
         Some(map) => resolve_token_map(map)?,
         None => BTreeMap::new(),
     };
-    let turns = file.turns.unwrap_or(max_iterations);
-    require_at_least_one("turns", turns)?;
+    if let Some(turns) = file.turns {
+        require_at_least_one("turns", turns)?;
+    }
     if let Some(tool_calls) = file.tool_calls {
         require_at_least_one("tool_calls", tool_calls)?;
     }
@@ -259,7 +259,7 @@ pub(crate) fn resolve(file: &JobsFile, max_iterations: u64) -> Result<ResolvedJo
     Ok(ResolvedJobs {
         wall_clock_seconds: file.wall_clock_seconds,
         tokens_per_endpoint,
-        turns,
+        turns: file.turns,
         tool_calls: file.tool_calls,
         fetch,
         runner,
@@ -450,10 +450,10 @@ fn is_host_env_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Rejects a `[run] max_iterations` of zero. It is now the run-episode
-/// default turn ceiling, so zero would pause every run before its first
-/// turn — a typo, not an intent. There is no upper bound: the value is the
-/// fallback ceiling, not a cost multiplier.
+/// Rejects a `[run] max_iterations` of zero. The knob no longer feeds any
+/// run behaviour — `[jobs] turns` is opt-in and unset means unlimited — so
+/// this keeps the stored setting honest: zero would read as a ceiling that
+/// pauses everything, a typo, not an intent. There is no upper bound.
 pub(crate) fn require_max_iterations(value: usize) -> Result<(), ConfigError> {
     require_at_least_one("max_iterations", value as u64)
 }

@@ -76,9 +76,9 @@ also drives session-level read-only on connectors that support it. This is
 distinct from a profile's own `SAYA_DB_READ_ONLY`, which sets a file engine's
 (DuckDB/SQLite) access mode.
 
-`max_iterations` (default `12`) is the fallback turn ceiling for a run's
-episodes — the `[jobs]` `turns` key overrides it — and does not bound
-interactive `ask`. A zero is refused as a typo.
+`max_iterations` (default `12`) is a stored setting with no behavioural
+reader: `[jobs] turns` is opt-in, and unset means unlimited. A zero is
+refused as a typo.
 
 The `[jobs]` table sets the default budgets a `saya run` is declared with when
 its specification and each of its steps declare none. Each key is optional and
@@ -95,9 +95,9 @@ wall_clock_seconds = 1800 # run wall-clock ceiling
 "local-ollama" = 200_000  # token ceiling per named endpoint
 ```
 
-`turns` falls back to `[run] max_iterations`. `wall_clock_seconds` and
-`tool_calls` have no default: unset means no ceiling, and the run pauses when
-a declared budget trips rather than overrunning. `tokens_per_endpoint` is
+`turns` has no default: unset means no ceiling, like `wall_clock_seconds`
+and `tool_calls` — a ceiling left unset is unlimited at the contract level,
+and the run pauses when a declared budget trips rather than overrunning. `tokens_per_endpoint` is
 keyed by run-scoped endpoint name (the same shape `[[ai.endpoints]]` uses);
 more than eight keys, or a key outside the name shape, is a rejected config.
 With several ceilings declared, the tightest binds today.

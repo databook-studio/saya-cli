@@ -17,8 +17,8 @@ pub(crate) mod spec;
 pub use budget::{Budgets, MAX_BUDGET_ENDPOINTS};
 pub use event::{PauseReason, RunEvent, RunFailureCode};
 pub use plan::{
-    Deliverable, DeliverableArtifact, MAX_OUTPUT_HINTS, MAX_PLAN_STEPS, MAX_STEP_CREDENTIALS,
-    OutputHint, RunPlan, StepSpec,
+    Deliverable, DeliverableArtifact, MAX_OUTPUT_HINTS, MAX_STEP_CREDENTIALS, OutputHint, RunPlan,
+    StepSpec,
 };
 pub use scope::{
     Capabilities, Destination, EndpointBindings, FetchScope, InterpreterScope,
@@ -48,9 +48,6 @@ pub enum RunContractError {
 
     #[error("plan must contain at least one step")]
     EmptyPlan,
-
-    #[error("plan has too many steps")]
-    TooManySteps,
 
     #[error("step {0} requests a capability outside the approved scopes")]
     CapabilityNotApproved(usize),
