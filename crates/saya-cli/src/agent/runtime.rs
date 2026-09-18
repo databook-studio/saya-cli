@@ -106,10 +106,11 @@ pub(crate) async fn run_prompt_with_inputs(
         .await;
     }
 
-    let system_prompt = super::system_prompt::assemble_system_prompt(
+    let system_prompt = super::system_prompt::assemble_system_prompt_for_mode(
         &registry,
         runtime.resolved.memory.mode,
         super::system_prompt::memory_reachable(state_db.is_some(), allow_query_data),
+        agent_mode,
     );
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let memory = &runtime.resolved.memory;

@@ -567,3 +567,106 @@ fn last_sql_hint_block_is_none_for_empty_sql() {
     assert!(hint.body.contains("most recent SQL you ran was"));
     assert!(!hint.truncated);
 }
+
+// --- mode slice 5: what the model is told under Plan -----------------------
+//
+// Plan is enforced (hidden definitions, engine Deny, derived permits off),
+// advertised (absent from the tool list), reachable (`/mode`), visible
+// (the status segment) and durable — but the model was never told what Plan
+// means, so it could promise edits it cannot make. The fix is one appended
+// paragraph under Plan only. These tests pin: Build byte-identical to before,
+// Plan carrying the paragraph exactly once, and the append being the only
+// difference.
+
+use saya_agent::AgentMode;
+
+/// The Plan paragraph's bytes cannot drift unnoticed: pinned here and in
+/// `assemble_system_prompt_for_mode`.
+#[test]
+fn plan_paragraph_bytes_are_pinned() {
+    assert_eq!(
+        PLAN_SYSTEM_PROMPT,
+        "You are in Plan mode: investigate and answer with a plan. \
+        Write-shaped tools are absent from your tool list and would refuse if called; \
+        do not promise edits as if you had made them — describe the change you would make instead. \
+        Plan composes with the approval policy and never widens it."
+    );
+}
+
+/// Under Build the prompt is byte-identical to `assemble_system_prompt`'s —
+/// which is itself byte-identical to `release/0.4.1`'s (that function is
+/// untouched by this slice; only the mode-aware wrapper is new).
+#[test]
+fn build_prompt_is_byte_identical_to_the_unmoded_prompt() {
+    for (reg, mode, reachable) in [
+        (single_registry("main"), MemoryMode::Off, false),
+        (single_registry("main"), MemoryMode::Assisted, true),
+        (single_registry("main"), MemoryMode::Assisted, false),
+        (multi_registry(), MemoryMode::Off, false),
+        (multi_registry(), MemoryMode::Assisted, true),
+        (multi_registry(), MemoryMode::Off, true),
+    ] {
+        assert_eq!(
+            assemble_system_prompt_for_mode(&reg, mode, reachable, AgentMode::Build),
+            assemble_system_prompt(&reg, mode, reachable),
+            "Build must be byte-identical to the unmoded prompt",
+        );
+    }
+}
+
+/// Under Plan the paragraph appears exactly once, and appending it is the
+/// only difference from Build.
+#[test]
+fn plan_prompt_appends_the_paragraph_exactly_once_and_nothing_else() {
+    for (reg, mode, reachable) in [
+        (single_registry("main"), MemoryMode::Off, false),
+        (single_registry("main"), MemoryMode::Assisted, true),
+        (multi_registry(), MemoryMode::Off, true),
+    ] {
+        let build = assemble_system_prompt_for_mode(&reg, mode, reachable, AgentMode::Build)
+            .expect("a prompt");
+        let plan = assemble_system_prompt_for_mode(&reg, mode, reachable, AgentMode::Plan)
+            .expect("a prompt");
+        assert_eq!(
+            plan.matches(PLAN_SYSTEM_PROMPT).count(),
+            1,
+            "the paragraph must appear exactly once: {plan}"
+        );
+        assert_eq!(
+            plan,
+            format!("{build}\n\n{PLAN_SYSTEM_PROMPT}"),
+            "appending the paragraph must be the only difference",
+        );
+    }
+}
+
+/// The paragraph says what Plan means and how it is enforced, without
+/// overclaiming: it names Plan mode, the absent-then-refusing tools, the
+/// no-promised-edits rule, and the composition with the approval policy —
+/// and it never claims reads are unrestricted.
+#[test]
+fn plan_paragraph_says_the_mechanism_without_overclaiming_reads() {
+    let reg = single_registry("main");
+    let plan = assemble_system_prompt_for_mode(&reg, MemoryMode::Off, false, AgentMode::Plan)
+        .expect("a prompt");
+    assert!(
+        plan.contains("You are in Plan mode: investigate and answer with a plan"),
+        "must say the session is in Plan mode: {plan}"
+    );
+    assert!(
+        plan.contains("absent from your tool list and would refuse if called"),
+        "must state the honest mechanism — absent, and refusing if called: {plan}"
+    );
+    assert!(
+        plan.contains("describe the change you would make instead"),
+        "must tell it to describe the change, not promise made edits: {plan}"
+    );
+    assert!(
+        plan.contains("Plan composes with the approval policy and never widens it"),
+        "must state Plan composes with the policy: {plan}"
+    );
+    assert!(
+        !plan.contains("unrestricted"),
+        "must not claim reads are unrestricted: {plan}"
+    );
+}

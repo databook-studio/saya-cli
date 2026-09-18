@@ -20,6 +20,12 @@
 /// `/connect` and `/include` carry the contrast (one replaces, one adds a
 /// secondary) so a user reading the listing can tell them apart without two more
 /// `/help <name>` round-trips.
+///
+/// The bypass-composition sentence, shared verbatim by the `/mode` help entry
+/// and both `/mode` answers: under `bypass`, Plan still denies writes. One
+/// constant so the surfaces state it in the same words; tests assert each
+/// surface contains it verbatim. Kept beside the command it documents.
+pub(crate) const PLAN_BYPASS_SENTENCE: &str = "Plan still denies writes under `bypass`";
 pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("connect", "Replace the active database profile"),
     ("connections", "List configured database connections"),
@@ -78,6 +84,10 @@ pub(crate) fn description_for(name: &str) -> Option<&'static str> {
         .map(|(_, description)| *description)
 }
 
+/// The bypass-composition sentence shared by the `/mode` help entry and both
+/// `/mode` answers: under `bypass`, Plan still denies writes. One constant so
+/// the surfaces state it in the same words; tests assert each surface contains
+/// it verbatim.
 /// The grouped, described listing printed by `/help` with no argument. Built
 /// from [`LISTING_GROUPS`] (the usage form and group heading) plus the
 /// description text from [`COMMAND_DESCRIPTIONS`], so every line carries a
@@ -214,7 +224,10 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "mode [plan|build] — view or set the agent's task posture. `plan` investigates \
              read-only: write-shaped tools are hidden from the model and refuse before the \
              approval match runs, so Plan still denies writes under `bypass` (bypass \
-             auto-allows reads; Plan refuses writes). Plan is the task posture — what the \
+             auto-allows reads; Plan refuses writes). What Plan guarantees is that a write \
+             attempt fails — hidden definitions, engine denial, derived write permits off; \
+             ending with a plan rather than a half-done edit is what the model is asked to \
+             do, not what Plan guarantees. Plan is the task posture — what the \
              agent may do — while `read-only` is the consent posture — what an approval \
              answers. Example: /mode plan",
         ),
@@ -644,7 +657,10 @@ mod tests {
     /// help. The detailed entry states the composition honestly: under
     /// `bypass`, Plan still denies writes (bypass auto-allows reads, Plan
     /// refuses writes), and Plan is a task posture while `read-only` is a
-    /// consent posture.
+    /// consent posture. The entry says both halves — the enforced half
+    /// (hidden definitions, refusal before the approval match, derived write
+    /// permits off) and the asked-of-the-model half (ending with a plan) —
+    /// and never claims Plan guarantees the model's behaviour.
     #[test]
     fn mode_is_registered_listed_described_and_honest() {
         assert!(
@@ -662,12 +678,20 @@ mod tests {
         );
         let help = command_help("mode").expect("mode has per-command help");
         assert!(
-            help.contains("bypass") && help.contains("Plan still denies writes"),
-            "the /mode help states the bypass composition: {help}"
+            help.contains(PLAN_BYPASS_SENTENCE),
+            "the /mode help states the bypass composition verbatim: {help}"
         );
         assert!(
             help.contains("task posture") && help.contains("consent posture"),
             "the /mode help separates Plan from read-only: {help}"
+        );
+        assert!(
+            help.contains("hidden definitions") && help.contains("ending with a plan"),
+            "the /mode help says both halves — enforced denial and asked-of-the-model plan: {help}"
+        );
+        assert!(
+            !help.contains("guarantees the model"),
+            "the /mode help must never claim Plan guarantees the model's behaviour: {help}"
         );
     }
 }
