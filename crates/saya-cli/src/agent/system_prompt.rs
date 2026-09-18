@@ -3,8 +3,25 @@
 //! turn (never the system prompt, where it would perturb the prefix cache).
 
 use crate::connection::ConnectionRegistry;
-use saya_agent::ContextBlock;
+use saya_agent::{AgentMode, ContextBlock};
 use saya_config::MemoryMode;
+
+/// Plan-mode briefing, appended to the assembled system prompt under Plan
+/// only. It states what Plan means — investigate and answer with a plan —
+/// and the honest mechanism: write-shaped tools are absent from the model's
+/// tool list and would refuse if called. It tells the model not to promise
+/// edits as if made, and to describe the change it would make instead.
+///
+/// The closing sentence is load-bearing: Plan composes with the approval
+/// policy and never widens it, so the paragraph claims nothing about reads
+/// being unrestricted. What the paragraph *asks* of the model (ending with a
+/// plan) is prompt text, not enforcement; what is *enforced* is the hidden
+/// definitions, the engine `Deny` on non-read-shaped effects, and the derived
+/// write permits being off.
+pub(crate) const PLAN_SYSTEM_PROMPT: &str = "You are in Plan mode: investigate and answer with a plan. \
+    Write-shaped tools are absent from your tool list and would refuse if called; \
+    do not promise edits as if you had made them — describe the change you would make instead. \
+    Plan composes with the approval policy and never widens it.";
 
 /// Memory briefing prompt included when assisted memory mode is active.
 pub(crate) const MEMORY_SYSTEM_PROMPT: &str = "\
@@ -160,6 +177,11 @@ pub(crate) fn last_sql_hint_block(sql: &str) -> Option<ContextBlock> {
 /// hint is deliberately absent — it rides the user turn as a context block (see
 /// [`last_sql_hint_block`]) so it never perturbs the system block a provider's
 /// prefix cache is keyed on.
+///
+/// This is the Build prompt: the mode-aware entry point is
+/// [`assemble_system_prompt_for_mode`], which returns this unchanged under
+/// [`AgentMode::Build`] and appends [`PLAN_SYSTEM_PROMPT`] under
+/// [`AgentMode::Plan`] — the append is the only difference.
 pub(crate) fn assemble_system_prompt(
     registry: &ConnectionRegistry,
     memory_mode: MemoryMode,
@@ -194,6 +216,24 @@ pub(crate) fn assemble_system_prompt(
         None
     } else {
         Some(sections.join("\n\n"))
+    }
+}
+
+/// Assembles the system prompt for a turn under an [`AgentMode`]: the Build
+/// prompt from [`assemble_system_prompt`], unchanged, plus — under Plan only —
+/// the [`PLAN_SYSTEM_PROMPT`] paragraph appended as its own section. The
+/// append is the only difference: under Build the result is byte-identical to
+/// [`assemble_system_prompt`].
+pub(crate) fn assemble_system_prompt_for_mode(
+    registry: &ConnectionRegistry,
+    memory_mode: MemoryMode,
+    memory_reachable: bool,
+    agent_mode: AgentMode,
+) -> Option<String> {
+    let prompt = assemble_system_prompt(registry, memory_mode, memory_reachable)?;
+    match agent_mode {
+        AgentMode::Build => Some(prompt),
+        AgentMode::Plan => Some(format!("{prompt}\n\n{PLAN_SYSTEM_PROMPT}")),
     }
 }
 

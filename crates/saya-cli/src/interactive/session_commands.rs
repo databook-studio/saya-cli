@@ -223,11 +223,20 @@ fn approval_name(policy: ApprovalPolicy) -> String {
 
 /// The `/mode` answer: the session's current posture, with what it means.
 /// Set when the command named a mode, reported either way — the `Approvals`
-/// arm's shape, so the two sibling commands read alike.
+/// arm's shape, so the two sibling commands read alike. Both answers carry
+/// the shared bypass-composition sentence (see
+/// [`crate::slash::PLAN_BYPASS_SENTENCE`]) in the same words as the
+/// detailed help entry.
 fn mode_message(mode: &str) -> String {
     match mode {
-        "plan" => "Mode: plan — read-only; write-shaped tools are hidden and refuse".into(),
-        _ => "Mode: build — writes allowed, asks per approval policy".into(),
+        "plan" => format!(
+            "Mode: plan — read-only; write-shaped tools are hidden and refuse. {}",
+            crate::slash::PLAN_BYPASS_SENTENCE
+        ),
+        _ => format!(
+            "Mode: build — writes allowed, asks per approval policy. {}",
+            crate::slash::PLAN_BYPASS_SENTENCE
+        ),
     }
 }
 
@@ -368,9 +377,12 @@ mod tests {
 
     /// `/mode` mirrors `/approvals`: bare reports without changing, a value
     /// switches, and the answer always names the current posture. Switching
-    /// back to build restores the Build surface the status line reads.
+    /// back to build restores the Build surface the status line reads. Both
+    /// answers state the bypass composition verbatim — under `bypass`, Plan
+    /// still denies writes.
     #[test]
     fn mode_reports_switches_and_restores() {
+        use crate::slash::PLAN_BYPASS_SENTENCE;
         use saya_agent::AgentMode;
         let mut state = SessionState::new("test", None, "gpt-4o");
         // Bare reports the default without changing it.
@@ -379,7 +391,9 @@ mod tests {
         };
         assert_eq!(
             report,
-            "Mode: build — writes allowed, asks per approval policy"
+            format!(
+                "Mode: build — writes allowed, asks per approval policy. {PLAN_BYPASS_SENTENCE}"
+            )
         );
         assert_eq!(state.agent_mode, "build");
         // Switching to plan answers plan and sticks.
@@ -390,7 +404,9 @@ mod tests {
         };
         assert_eq!(
             switched,
-            "Mode: plan — read-only; write-shaped tools are hidden and refuse"
+            format!(
+                "Mode: plan — read-only; write-shaped tools are hidden and refuse. {PLAN_BYPASS_SENTENCE}"
+            )
         );
         assert_eq!(state.agent_mode, "plan");
         // Bare now reports plan.
@@ -399,7 +415,9 @@ mod tests {
         };
         assert_eq!(
             again,
-            "Mode: plan — read-only; write-shaped tools are hidden and refuse"
+            format!(
+                "Mode: plan — read-only; write-shaped tools are hidden and refuse. {PLAN_BYPASS_SENTENCE}"
+            )
         );
         // Switching back restores the Build surface.
         state.apply(SlashCommand::Mode(Some(AgentMode::Build)), &[]);
@@ -409,7 +427,36 @@ mod tests {
         };
         assert_eq!(
             back,
-            "Mode: build — writes allowed, asks per approval policy"
+            format!(
+                "Mode: build — writes allowed, asks per approval policy. {PLAN_BYPASS_SENTENCE}"
+            )
+        );
+    }
+
+    /// Both `/mode` answers assert the bypass composition sentence verbatim —
+    /// the shared constant, not a copy that can drift.
+    #[test]
+    fn mode_answers_state_the_bypass_composition_verbatim() {
+        use crate::slash::PLAN_BYPASS_SENTENCE;
+        use saya_agent::AgentMode;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let SessionAction::Message(build) =
+            state.apply(SlashCommand::Mode(Some(AgentMode::Build)), &[])
+        else {
+            panic!("expected SessionAction::Message");
+        };
+        let SessionAction::Message(plan) =
+            state.apply(SlashCommand::Mode(Some(AgentMode::Plan)), &[])
+        else {
+            panic!("expected SessionAction::Message");
+        };
+        assert!(
+            build.contains(PLAN_BYPASS_SENTENCE),
+            "build answer must carry the bypass sentence verbatim: {build}"
+        );
+        assert!(
+            plan.contains(PLAN_BYPASS_SENTENCE),
+            "plan answer must carry the bypass sentence verbatim: {plan}"
         );
     }
 }

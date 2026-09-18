@@ -9,6 +9,9 @@ pub(crate) mod registry;
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // still resolves after the help text moved to `help.rs`.
 pub(crate) use help::help_for;
+// The bypass-composition sentence is shared by the `/mode` help entry and the
+// `/mode` answers, so it is re-exported for the session command layer.
+pub(crate) use help::PLAN_BYPASS_SENTENCE;
 // the one-line description per command is the single source shared by the
 // `/help` listing and the completion popup (`interactive::tui::complete`), so
 // the two surfaces cannot drift. `description_for` is read by the popup in
