@@ -111,6 +111,28 @@ fn cases() -> Vec<(&'static str, ToolEffect, bool)> {
             },
             false,
         ),
+        (
+            "session write shape: session-scoped metadata only, no side effect — \
+             admitted like a read",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::WriteSession,
+            },
+            true,
+        ),
+        (
+            "session write with an external side effect: the local label must \
+             not become a side door",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: true,
+                requires_approval: false,
+                local_state: LocalStateEffect::WriteSession,
+            },
+            false,
+        ),
     ]
 }
 

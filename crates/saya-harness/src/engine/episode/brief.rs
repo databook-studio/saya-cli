@@ -112,6 +112,13 @@ pub(super) fn definitions(
                     || capabilities.interpreter.is_some()
                     || capabilities.fetch.is_some()
             }
+            // A session-metadata tool is always present: a run step's universe
+            // is composed from declared capabilities, and no capability names
+            // the session record — nor could one, since a step that could not
+            // record what it is doing would be absurd. The arm is written out
+            // so the decision stays deliberate instead of falling to the
+            // catch-all by accident.
+            LocalStateEffect::WriteSession => true,
             _ => true,
         })
         .cloned()

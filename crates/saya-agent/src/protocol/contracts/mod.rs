@@ -217,6 +217,8 @@ mod tests {
             (LocalStateEffect::None, "none"),
             (LocalStateEffect::Read, "read"),
             (LocalStateEffect::WriteCandidate, "write_candidate"),
+            (LocalStateEffect::WriteWorkspace, "write_workspace"),
+            (LocalStateEffect::WriteSession, "write_session"),
         ] {
             let text = serde_json::to_string(&variant).expect("serializes");
             assert_eq!(text, format!("\"{expected}\""), "{variant:?}");

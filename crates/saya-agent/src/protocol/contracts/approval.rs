@@ -78,14 +78,20 @@ pub trait ApprovalDecider: Send + Sync {
 }
 
 /// Whether read-only approval may auto-approve a tool with this effect: only
-/// read-shaped tools — no external side effect, no local-state write. Needing
-/// approval is not side-effecting, so the SQL tools (`requires_approval: true,
-/// external_side_effect: false`) stay auto-approved under read-only.
+/// read-shaped tools — no external side effect, no local-state write beyond
+/// session metadata. Session metadata is not the state the read-only posture
+/// protects: a read-only or Plan session that could not record what it is
+/// doing would be absurd, and [`LocalStateEffect::WriteSession`] cannot reach
+/// anything the posture guards — workspace files, the database, contracts, or
+/// the cache. Needing approval is not side-effecting, so the SQL tools
+/// (`requires_approval: true, external_side_effect: false`) stay auto-approved
+/// under read-only. The `external_side_effect` half is unchanged: a
+/// session-writing tool that *also* has an external effect is still refused.
 pub fn read_only_permits(effect: &ToolEffect) -> bool {
     !effect.external_side_effect
         && matches!(
             effect.local_state,
-            LocalStateEffect::None | LocalStateEffect::Read
+            LocalStateEffect::None | LocalStateEffect::Read | LocalStateEffect::WriteSession
         )
 }
 
