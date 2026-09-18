@@ -717,6 +717,7 @@ async fn execute_batch_caps_simultaneous_concurrency() {
         AgentLimits {
             max_turns: Some(4),
             max_tool_calls: Some(64),
+            max_continuations: None,
             permit_candidate_writes: false,
             context_byte_budget: 1024 * 1024,
             permit_workspace_writes: false,
@@ -1320,6 +1321,7 @@ async fn runaway_context_is_trimmed_not_aborted_and_the_bound_still_binds() {
         AgentLimits {
             max_turns: Some(8),
             max_tool_calls: Some(64),
+            max_continuations: None,
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
             permit_workspace_writes: false,
@@ -1435,6 +1437,7 @@ async fn single_oversized_tool_result_does_not_abort_the_run() {
         AgentLimits {
             max_turns: Some(4),
             max_tool_calls: Some(8),
+            max_continuations: None,
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
             permit_workspace_writes: false,

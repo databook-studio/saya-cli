@@ -135,6 +135,7 @@ pub(super) fn limits(request: &EpisodeRequest, spec: &StepSpec) -> AgentLimits {
     AgentLimits {
         max_turns: ceiling(budget.and_then(|budget| budget.turns)),
         max_tool_calls: ceiling(budget.and_then(|budget| budget.tool_calls)),
+        max_continuations: AgentLimits::default().max_continuations,
         permit_candidate_writes: false,
         // The permit means "this step approved some write-shaped scope",
         // not "this step may write the workspace": `LocalStateEffect` has
