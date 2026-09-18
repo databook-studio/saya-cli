@@ -210,4 +210,31 @@ pub enum ToolError {
     /// generic failure.
     #[error("{0}")]
     Fetch(String),
+    /// A `tasks_set` call whose `tasks` argument was not an array, or whose
+    /// array did not deserialize as a task list. Payload-free: the model
+    /// fixes the shape, never reads back what it sent.
+    #[error("invalid tool arguments: tasks must be an array of tasks")]
+    TasksNotArray,
+    /// A `tasks_set` list holding more than the contract's task bound.
+    /// Payload-free — the bound, not the rejected list.
+    #[error("task list refused: task list holds at most 32 items")]
+    TooManyTasks,
+    /// A `tasks_set` list with more than one task in progress.
+    #[error("task list refused: only one task may be in progress")]
+    TooManyInProgress,
+    /// A `tasks_set` task whose title is empty.
+    #[error("task list refused: task title must not be empty")]
+    TaskTitleEmpty,
+    /// A `tasks_set` task whose title exceeds the contract's title bound.
+    #[error("task list refused: task title is too long")]
+    TaskTitleTooLong,
+    /// A `tasks_set` task whose title carries control characters.
+    #[error("task list refused: task title contains control characters")]
+    TaskTitleControl,
+    /// A `tasks_set` task whose note exceeds the contract's note bound.
+    #[error("task list refused: task note is too long")]
+    TaskNoteTooLong,
+    /// A `tasks_set` task whose note carries control characters.
+    #[error("task list refused: task note contains control characters")]
+    TaskNoteControl,
 }

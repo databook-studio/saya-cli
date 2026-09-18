@@ -148,6 +148,18 @@ pub(crate) async fn run_prompt_with_inputs(
     {
         context_blocks.push(hint);
     }
+    // The session task list rides the same lane, last: only when non-empty,
+    // so an empty list costs zero tokens. The block is the live cell's own
+    // rendering (see `session_tasks_render`), quoted as data through the
+    // same untrusted lane — never the system prompt, which stays
+    // byte-identical whether or not a list exists.
+    if let Some(session) = session.as_ref()
+        && let Some(block) = super::super::interactive::session_tasks_render::render_tasks_block(
+            &session.tasks().current(),
+        )
+    {
+        context_blocks.push(block);
+    }
     sink.emit(knowledge_supplied_event(&receipt)).await;
     let receipt = Arc::new(receipt);
     let learning = super::learning::LearningSetup::from(memory.mode);

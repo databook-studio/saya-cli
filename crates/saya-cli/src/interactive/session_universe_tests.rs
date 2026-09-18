@@ -1388,9 +1388,10 @@ fn plan_hides_write_shaped_tools_under_bypass_too() {
 /// definition list is exactly what `release/0.4.1` produces — except
 /// read-only and never no longer advertise `render_chart`: the tool declares
 /// `external_side_effect: true`, so their enforcement denies every call,
-/// and advertisement now agrees. Pinned by name on the plain worktree
-/// composition (no runner composed, so no `run_program`; the unstated host
-/// lane composes, so `run_command` rides).
+/// and advertisement now agrees — plus `tasks_set`, the session-metadata
+/// write every policy but `never` carries. Pinned by name on the plain
+/// worktree composition (no runner composed, so no `run_program`; the
+/// unstated host lane composes, so `run_command` rides).
 #[test]
 fn build_advertisement_is_pinned_for_every_approval_policy() {
     let project = worktree("build-pinned");
@@ -1413,6 +1414,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "join_check",
                 "render_chart",
                 "designate_answer",
+                "tasks_set",
                 "workspace_write",
                 "scratch_sql",
                 "http_fetch",
@@ -1436,6 +1438,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "join_check",
                 "render_chart",
                 "designate_answer",
+                "tasks_set",
                 "workspace_write",
                 "scratch_sql",
                 "http_fetch",
@@ -1458,6 +1461,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "column_health",
                 "join_check",
                 "designate_answer",
+                "tasks_set",
             ],
         ),
         (

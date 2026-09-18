@@ -41,6 +41,10 @@ pub(crate) struct RunTools {
     /// prompt, and bypass at every program-named door. Runs never carry it
     /// (deny is session-shaped); an empty list refuses nothing.
     deny: crate::interactive::session_deny::SessionDeny,
+    /// The session's live task list, present only where a session composed
+    /// it. Its absence refuses `tasks_set` as an unknown tool — a run has
+    /// no session list to write.
+    tasks: Option<crate::interactive::session_tasks::SessionTasks>,
     /// The session journal, when this executor belongs to a session: a deny
     /// firing is journalled there before the refusal is relayed, and a host
     /// call before the child spawns. `None` — test shapes — refuses without
@@ -65,6 +69,7 @@ impl RunTools {
             runner,
             host: None,
             deny: crate::interactive::session_deny::SessionDeny::default(),
+            tasks: None,
             journal: None,
         }
     }
@@ -77,6 +82,17 @@ impl RunTools {
         deny: crate::interactive::session_deny::SessionDeny,
     ) -> Self {
         self.deny = deny;
+        self
+    }
+
+    /// Composes with the session's live task list: `tasks_set` writes
+    /// through it. The session surface is the only caller — runs never get
+    /// the cell, and refuse the name as unknown.
+    pub(crate) fn with_tasks(
+        mut self,
+        tasks: crate::interactive::session_tasks::SessionTasks,
+    ) -> Self {
+        self.tasks = Some(tasks);
         self
     }
 
@@ -171,6 +187,18 @@ impl ToolExecutor for RunTools {
             "run_command" => match &self.host {
                 Some(host) => {
                     host.execute_with_journal(arguments, self.journal.as_deref())
+                        .await
+                }
+                None => Err(ToolError::UnsupportedTool),
+            },
+            // The session task list: whole-list replace against the shared
+            // cell. Absent outside a session — a run has no session list —
+            // where the name refuses as unknown, the hidden-not-advertised
+            // discipline at dispatch.
+            "tasks_set" => match &self.tasks {
+                Some(tasks) => {
+                    crate::interactive::session_tasks::TasksSet::new(tasks.clone())
+                        .execute(name, arguments)
                         .await
                 }
                 None => Err(ToolError::UnsupportedTool),

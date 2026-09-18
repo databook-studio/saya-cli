@@ -32,6 +32,10 @@ impl App {
             .parse()
             .unwrap_or(saya_agent::ApprovalPolicy::Ask);
         session.sync_policy(approval);
+        // The live task list starts the turn seeded from the record — the
+        // headless loop's seam — so the model sees what it last wrote. The
+        // sync-back lands in `drain_stream`, where the turn settles.
+        self.session.seed_tasks(state.task_list.clone());
         self.request.stream = Some(agent::start(agent::StreamRequest {
             runtime: Arc::clone(&self.runtime),
             prompt,
@@ -142,6 +146,7 @@ impl App {
                 StreamMsg::Done(result) => {
                     match result {
                         Ok(output) => {
+                            state.task_list = self.session.tasks().current();
                             state.record_turn(
                                 prompt.clone(),
                                 output.answer.clone(),
