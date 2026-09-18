@@ -72,6 +72,13 @@ pub struct RedactedSession {
     /// behaviour.
     #[serde(default)]
     pub workspace_root: Option<String>,
+    /// The session's task list: conversation metadata tracking what a
+    /// building session is working on, binding no authority. An additive
+    /// `#[serde(default)]` field at `SESSION_VERSION` 2 — the `agent_mode`
+    /// precedent — so a record written before it existed resumes with an
+    /// empty list and no version bump is owed.
+    #[serde(default)]
+    pub task_list: saya_types::SessionTaskList,
     #[serde(default)]
     pub turns: Vec<RedactedTurn>,
     #[serde(default)]
@@ -93,6 +100,7 @@ impl Default for RedactedSession {
             approval_mode: String::new(),
             agent_mode: String::new(),
             workspace_root: None,
+            task_list: saya_types::SessionTaskList::default(),
             turns: Vec::new(),
             profile_names: Vec::new(),
             messages: Vec::new(),

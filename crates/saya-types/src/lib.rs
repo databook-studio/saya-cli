@@ -8,6 +8,7 @@ mod query;
 mod redaction;
 mod run;
 mod schema;
+mod session_tasks;
 
 pub use contract::{
     BindingValidity, CLAIM_PAYLOAD_VERSION, Cardinality, ClaimId, ClaimOrigin, ClaimPayload,
@@ -33,3 +34,7 @@ pub use run::{
     is_refused_runner_program,
 };
 pub use schema::{Column, Database, ForeignKey, Schema, SchemaTree, Table};
+pub use session_tasks::{
+    MAX_SESSION_TASKS, MAX_TASK_NOTE_CHARS, MAX_TASK_TITLE_CHARS, SessionTask, SessionTaskError,
+    SessionTaskList, TaskStatus,
+};

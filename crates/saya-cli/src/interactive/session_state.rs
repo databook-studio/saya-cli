@@ -31,6 +31,13 @@ pub struct SessionState {
     /// workspace existed.
     #[serde(default)]
     pub workspace_root: Option<String>,
+    /// The session's task list: conversation metadata tracking what the
+    /// session is building, binding no authority. Modelled on `agent_mode`:
+    /// an additive `#[serde(default)]` field, so a session file written
+    /// before it existed resumes with an empty list and no `SESSION_VERSION`
+    /// bump is owed.
+    #[serde(default)]
+    pub task_list: saya_types::SessionTaskList,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
     /// Whether the model's chain-of-thought is shown in the transcript. Off by
@@ -86,6 +93,7 @@ impl SessionState {
             approval_mode: "ask".into(),
             agent_mode: default_agent_mode(),
             workspace_root: None,
+            task_list: saya_types::SessionTaskList::default(),
             messages: Vec::new(),
             turns: Vec::new(),
             show_thinking: false,
@@ -166,6 +174,7 @@ impl SessionState {
             approval_mode: self.approval_mode.clone(),
             agent_mode: self.agent_mode.clone(),
             workspace_root: self.workspace_root.clone(),
+            task_list: self.task_list.clone(),
             turns: self.turns.clone(),
             profile_names: self.profile_names(),
             messages: Vec::new(),
@@ -437,19 +446,36 @@ mod tests {
     /// The persisted mode carries the task posture and nothing secret: `plan`
     /// round-trips through `redacted()`, and the serialized form carries the
     /// mode word with no secret-shaped keys beside the ones the redaction
-    /// tests already pin.
+    /// tests already pin. The task list rides the same record: it round-trips
+    /// too, and its titles and notes — plain conversation metadata — add no
+    /// new secret-shaped key.
     #[test]
     fn redacted_carries_the_mode_and_no_secret_shaped_data() {
         use saya_agent::AgentMode;
+        use saya_types::{SessionTask, SessionTaskList, TaskStatus};
         let mut planned = SessionState::new("s-mode", None, "m");
         planned.agent_mode = AgentMode::Plan.as_str().into();
+        planned.task_list = SessionTaskList::new(vec![
+            SessionTask::with_note(
+                "profile the tables",
+                TaskStatus::InProgress,
+                Some("halfway"),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
         let saved = planned.redacted();
         assert_eq!(saved.agent_mode, "plan");
         assert_eq!(saved.approval_mode, "ask");
+        assert_eq!(saved.task_list, planned.task_list);
         let json = serde_json::to_string(&saved).unwrap();
         assert!(
             json.contains(r#""agent_mode":"plan""#),
             "mode missing: {json}"
+        );
+        assert!(
+            json.contains("profile the tables"),
+            "the task list must ride the record: {json}"
         );
         for key in ["password", "api_key", "rows", "reasoning"] {
             assert!(
@@ -460,6 +486,10 @@ mod tests {
 
         let built = SessionState::new("s-build", None, "m");
         assert_eq!(built.redacted().agent_mode, "build");
+        assert!(
+            built.redacted().task_list.is_empty(),
+            "a fresh session persists an empty list"
+        );
     }
 
     /// A session with no tool calls serializes to today's shape: no
