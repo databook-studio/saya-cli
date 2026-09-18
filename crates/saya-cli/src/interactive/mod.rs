@@ -13,6 +13,14 @@ pub(crate) mod session_deny;
 #[cfg(test)]
 mod session_deny_red_tests;
 pub(crate) mod session_host;
+pub(crate) mod session_tasks;
+#[cfg(test)]
+#[path = "session_tasks_plan_tests.rs"]
+mod session_tasks_plan_tests;
+#[cfg(test)]
+#[path = "session_tasks_red_tests.rs"]
+mod session_tasks_red_tests;
+pub(crate) mod session_tasks_render;
 // The session's write-shaped definitions are crate-reachable: the approval
 // tests build the real grantable shapes the frontends are asked about.
 pub(crate) mod session_definitions;

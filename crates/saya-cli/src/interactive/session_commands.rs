@@ -156,6 +156,7 @@ impl SessionState {
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
+                self.task_list = Default::default();
                 self.compaction_summary = None;
                 self.compacted_turns = 0;
                 self.usage = Default::default();

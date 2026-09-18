@@ -439,8 +439,11 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
             }
             // A `/resume` swapped the session: the engine side too, so the
             // app's universe is the resumed session's, not the old one's.
+            // The live list is seeded with the swap, so the next turn sees
+            // what the resumed record carried.
             if state.id != id_before {
                 app.session = session.universe();
+                app.session.seed_tasks(state.task_list.clone());
             }
             queue_session_save(&mut app, store, state);
         }
@@ -469,6 +472,7 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
                         Ok(()) => {
                             *state = loaded;
                             app.session = session.universe();
+                            app.session.seed_tasks(state.task_list.clone());
                             app.reload_at_refs(state);
                             if state.turns.is_empty() {
                                 app.transcript.clear();

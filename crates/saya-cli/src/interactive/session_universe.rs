@@ -72,6 +72,10 @@ pub(crate) struct SessionUniverse {
     /// even when the host lane is off: deny gates the doors every session
     /// already has.
     deny: super::session_deny::SessionDeny,
+    /// The session's live task list: seeded once per session process from
+    /// the record, written by `tasks_set`, rendered into each turn, synced
+    /// back to the record at the turn boundary.
+    tasks: super::session_tasks::SessionTasks,
     /// The turn's primary connection handle. The approval deciders hold a
     /// clone, and each turn binds the registry `prepare_turn` builds into
     /// it, so a grant suggestion names the database the session is actually
@@ -102,6 +106,7 @@ impl SessionUniverse {
             host: None,
             host_ran: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             deny: super::session_deny::SessionDeny::default(),
+            tasks: super::session_tasks::SessionTasks::default(),
             primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
             probe_refused: false,
@@ -256,6 +261,7 @@ impl SessionUniverse {
             host,
             host_ran: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             deny,
+            tasks: super::session_tasks::SessionTasks::default(),
             primary: crate::grant_token::TurnPrimary::default(),
             notice,
             probe_refused,
@@ -352,6 +358,19 @@ impl SessionUniverse {
         self.deny.programs()
     }
 
+    /// The session's live task list — what `tasks_set` writes, what each
+    /// turn renders, what the record sync reads back.
+    pub(crate) fn tasks(&self) -> super::session_tasks::SessionTasks {
+        self.tasks.clone()
+    }
+
+    /// Seeds the live task list from the session record: called once per
+    /// session process, after composition, with what the record carried —
+    /// so a resumed session's list is what the model last wrote.
+    pub(crate) fn seed_tasks(&self, list: saya_types::SessionTaskList) {
+        self.tasks.replace(list);
+    }
+
     /// The shared host-ran flag — the executor's host member sets it after a
     /// host call settles. Cloned into `RunTools` once per executor.
     pub(crate) fn host_ran_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
@@ -396,7 +415,8 @@ impl SessionUniverse {
         });
         let mut tools =
             RunTools::compose(database, self.scratch.clone(), self.fetch.clone(), runner)
-                .with_session_deny(self.deny.clone());
+                .with_session_deny(self.deny.clone())
+                .with_tasks(self.tasks.clone());
         if let Some(journal) = journal {
             tools = tools.with_session_journal(journal);
         }
@@ -416,6 +436,12 @@ impl SessionUniverse {
     /// the piped-REPL demo runs on this); `read-only` and `never` can
     /// neither prompt nor allow. Each write-shaped call is decided through
     /// the approval engine per call.
+    ///
+    /// `tasks_set` is the exception to the write-shaped rule, pushed on the
+    /// path that survives the Plan filter: it declares `WriteSession` with
+    /// no external side effect, so `read_only_permits` admits it — a
+    /// read-only or Plan session that could not record what it is doing
+    /// would be absurd. `never` still hides it, like everything else.
     pub(crate) fn definitions(
         &self,
         agent_mode: AgentMode,
@@ -425,6 +451,9 @@ impl SessionUniverse {
         has_state_store: bool,
         permit_candidate_writes: bool,
     ) -> Vec<ToolDefinition> {
+        // `tasks_set` rides every policy but `never`, under both modes: the
+        // Plan case is the one the tool exists for.
+        let advertises_tasks = !matches!(mode, ApprovalPolicy::Never);
         let advertises = match mode {
             ApprovalPolicy::Ask => can_prompt,
             ApprovalPolicy::Bypass => true,
@@ -445,11 +474,16 @@ impl SessionUniverse {
             false,
             advertises,
         );
+        if advertises_tasks {
+            defs.push(super::session_tasks_render::tasks_set_definition());
+        }
         if !advertises {
             // Read-only and never cannot prompt: everything write-shaped
             // stays hidden, not advertised. Bypass never lands here — its
             // advertised tools are usable, so the advertised-but-unusable
-            // anti-pattern cannot return under it.
+            // anti-pattern cannot return under it. `tasks_set` above is the
+            // one exception: admitted by the approval engine under read-only
+            // and Plan, so advertised there too.
             return defs;
         }
         if self.workspace.is_some() {

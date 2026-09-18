@@ -572,6 +572,11 @@ fn handle_line_verbatim(
             // the current mode (a mid-session `/approval` takes effect next
             // turn, grants carried), so a session grant outlives the turn.
             session.sync_policy(approval);
+            // The live task list starts the turn seeded from the record, so
+            // the model sees what it last wrote; afterwards the cell is
+            // synced back, so `tasks_set` writes persist and ride the next
+            // turn.
+            session.universe().seed_tasks(state.task_list.clone());
             match block_on(super::session_request::run(
                 runtime,
                 line,
@@ -587,6 +592,7 @@ fn handle_line_verbatim(
                 state.agent_mode_parsed(),
             )) {
                 Ok(PromptResult::Completed(output)) => {
+                    state.task_list = session.universe().tasks().current();
                     state.record_turn(
                         line,
                         output.answer.clone(),
@@ -801,6 +807,7 @@ fn handle_line_verbatim(
                 ) {
                     Ok(()) => {
                         *state = loaded;
+                        session.universe().seed_tasks(state.task_list.clone());
                         super::session_emit::emit_action(
                             SessionAction::Message(format!("Resumed session {id}")),
                             format,
