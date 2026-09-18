@@ -44,6 +44,8 @@ pub(crate) fn report(runtime: &RuntimeConfig) -> DoctorReport {
         runtime.resolved.ai.provider,
         runtime.resolved.ai.base_url.as_deref(),
         runtime.resolved.ai.api_key.is_some(),
+        runtime.resolved.ai.max_output_tokens,
+        runtime.resolved.ai.max_output_tokens_is_default,
     ));
     lines.extend(advice_lines(runtime, selected_unresolved));
     DoctorReport {
@@ -246,11 +248,24 @@ fn parse_host_port(url: &str) -> Option<(String, u16)> {
 }
 
 /// What doctor says about the AI side before any network I/O.
-fn provider_lines(provider: AiProvider, base_url: Option<&str>, has_key_ref: bool) -> Vec<String> {
+fn provider_lines(
+    provider: AiProvider,
+    base_url: Option<&str>,
+    has_key_ref: bool,
+    max_output_tokens: u32,
+    max_output_tokens_is_default: bool,
+) -> Vec<String> {
     let mut lines = vec![format!(
         "ai provider: {} model: (from config)",
         provider.as_str()
     )];
+    if max_output_tokens_is_default {
+        lines.push(format!(
+            "ai max_output_tokens: {max_output_tokens} (default 4096 when unset)"
+        ));
+    } else {
+        lines.push(format!("ai max_output_tokens: {max_output_tokens}"));
+    }
     if matches!(
         provider,
         AiProvider::Openai | AiProvider::Anthropic | AiProvider::Gemini
@@ -304,9 +319,9 @@ mod tests {
 
     #[test]
     fn cloud_provider_without_key_reference_warns() {
-        let lines = provider_lines(AiProvider::Anthropic, None, false);
+        let lines = provider_lines(AiProvider::Anthropic, None, false, 4096, true);
         assert!(lines.iter().any(|line| line.contains("unauthenticated")));
-        let lines = provider_lines(AiProvider::Anthropic, None, true);
+        let lines = provider_lines(AiProvider::Anthropic, None, true, 4096, true);
         assert!(!lines.iter().any(|line| line.contains("unauthenticated")));
     }
 
@@ -364,11 +379,95 @@ mod tests {
 
     #[test]
     fn provider_lines_probe_an_ipv6_endpoint_without_an_explicit_port() {
-        let lines = provider_lines(AiProvider::Ollama, Some("http://[::1]"), true);
+        let lines = provider_lines(AiProvider::Ollama, Some("http://[::1]"), true, 4096, true);
         assert!(
             lines.iter().any(|line| line.contains("probe: ::1:80")),
             "doctor should probe the IPv6 endpoint on the http default port: {lines:?}"
         );
+    }
+
+    #[test]
+    fn provider_lines_names_the_stated_output_token_ceiling_without_a_default_note() {
+        let lines = provider_lines(AiProvider::Ollama, None, true, 2048, false);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "ai max_output_tokens: 2048"),
+            "a stated ceiling is reported bare, with no default note: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn provider_lines_notes_the_default_output_token_ceiling_when_unset() {
+        let lines = provider_lines(AiProvider::Ollama, None, true, 4096, true);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "ai max_output_tokens: 4096 (default 4096 when unset)"),
+            "an unset ceiling is reported with the default note: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn the_output_token_ceiling_line_is_informational_only() {
+        for (tokens, from_default) in [(2048, false), (4096, true)] {
+            let lines = provider_lines(AiProvider::Ollama, None, true, tokens, from_default);
+            assert!(
+                !lines.iter().any(|line| line.starts_with('!')),
+                "the ceiling line must never warn: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ceiling_line_never_changes_whether_doctor_can_run() {
+        // `can_run_query` only reads the profile and its secret state; the
+        // ceiling line is informational, so a doctor that can run stays able
+        // to run whatever the ceiling says. Asserted through `report`, the
+        // same decision the exit code reads.
+        for toml in [
+            "[ai]\nmax_output_tokens = 2048\n",
+            "[ai]\nmax_output_tokens = 4096\n",
+            "",
+        ] {
+            let report = test_report(toml);
+            assert!(
+                report.can_run_query,
+                "a resolvable profile must stay runnable (config {toml:?}): {:?}",
+                report.lines
+            );
+            assert!(
+                report
+                    .lines
+                    .iter()
+                    .any(|line| line.contains("max_output_tokens")),
+                "the ceiling line is present in every case: {:?}",
+                report.lines
+            );
+            assert_eq!(report.exit_code(), 0);
+        }
+    }
+
+    fn test_report(ai_toml: &str) -> DoctorReport {
+        use crate::config::runtime::RuntimeConfig;
+        use saya_config::{ConfigFile, ConnectionsFile, ResolutionInput, resolve};
+        let raw = format!(
+            "default_profile = \"analytics\"\n{ai_toml}\n[profiles.analytics]\ntype = \"sqlite\"\npath = \"/tmp/x.sqlite\"\n"
+        );
+        let (config_raw, connections_raw) = raw.split_once("[profiles.").unwrap();
+        let config = ConfigFile::from_toml(config_raw).unwrap();
+        let connections =
+            ConnectionsFile::from_toml(&format!("[profiles.{connections_raw}")).unwrap();
+        let resolved =
+            resolve(ResolutionInput::new(connections.clone()).with_user(config)).unwrap();
+        report(&RuntimeConfig {
+            resolved,
+            connections,
+            config_path: None,
+            connections_path: None,
+            cache_scope: std::path::PathBuf::from("/tmp/saya-doctor-test"),
+            secret_values: Default::default(),
+        })
     }
 }
 
