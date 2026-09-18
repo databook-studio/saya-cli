@@ -145,6 +145,7 @@ pub(crate) fn empty_app() -> App {
             crate::interactive::session_universe::SessionUniverse::empty(),
         ),
         should_quit: false,
+        pending_trust_answer: None,
     }
 }
 

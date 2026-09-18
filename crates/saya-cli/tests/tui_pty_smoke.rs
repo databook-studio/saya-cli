@@ -250,6 +250,13 @@ fn paint_with_config(
     cmd.env("SAYA_CONFIG_HOME", home.join("config-home"));
     cmd.env("SAYA_SESSION_DIR", home.join("sessions"));
     cmd.env("SAYA_STATE_DB", home.join("state.sqlite3"));
+    // The child must launch outside any git worktree: the harness's own cwd
+    // is inside saya's worktree (linked `.git` file), and the child inherits
+    // it — so the trust decision would find a bound root and never open its
+    // modal. A scratch dir under the test's HOME is outside every worktree,
+    // which is exactly the unbound shape the modal covers.
+    cmd.cwd(home.join("launch-dir"));
+    std::fs::create_dir_all(home.join("launch-dir")).expect("scratch launch dir builds");
     // No XDG/APPDATA fallback can reach the real user dir now.
     cmd.env_remove("XDG_CONFIG_HOME");
     cmd.env_remove("XDG_DATA_HOME");
@@ -636,6 +643,10 @@ fn assert_splash_and_status_named(screen: &vt100::Screen, label: &str) {
 
 /// Like [`assert_splash_and_status`] but checks a profile name other than
 /// `demo` — used by rung 3, which points at the docker pagila profile.
+/// Every rung launches outside any worktree, so the startup trust modal is
+/// open on the settled screen: the splash paints first (the positives
+/// below) and the question rides inside the interface (the modal
+/// positive), never as a raw stdin read in front of it.
 fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str) {
     let text = screen_text(screen);
 
@@ -661,6 +672,32 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
         &text,
     );
 
+    // Positive: the startup trust modal is open — the TUI's rendering of
+    // the one trust decision, beside the splash, never before it. The
+    // launch dir is outside every worktree with no `--workspace`, so the
+    // decision fires; the modal carries the shared prompt's body and all
+    // three exits.
+    assert_in(
+        &text,
+        "trust this folder?",
+        &format!("trust modal title missing from {label}"),
+        &text,
+    );
+    assert_in(
+        &text,
+        "Trust this folder as the session",
+        &format!("trust modal body missing from {label}"),
+        &text,
+    );
+    for exit in ["[t]rust once", "[w]orkspace", "[c]ontinue unbound"] {
+        assert_in(
+            &text,
+            exit,
+            &format!("trust modal exit {exit} missing from {label}"),
+            &text,
+        );
+    }
+
     // Negative: none of the fatal-failure strings may appear anywhere on
     // screen. `local state store is unavailable` is the #51 signature; the
     // other two guard against a shell takeover or any other fatal line.
@@ -680,6 +717,17 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
         &text,
         "Error:",
         &format!("fatal Error: line on {label}"),
+        &text,
+    );
+    // Negative: the pre-TUI raw stdin prompt must not pre-empt the
+    // interface. The modal carries the same words, so this pins the
+    // rendering boundary: the question arrives inside the alternate
+    // screen (the title above proves it), never as a bare line on the
+    // plain terminal before the splash paints.
+    assert_not_in(
+        &text,
+        "Trust this folder as the session workspace? [t]rust once",
+        &format!("raw line-prompt bytes leaked onto {label}"),
         &text,
     );
 }

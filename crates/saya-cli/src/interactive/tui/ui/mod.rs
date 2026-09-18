@@ -10,6 +10,7 @@ mod run_panel_view;
 pub(super) mod splash;
 mod status;
 pub(crate) mod theme;
+mod trust_modal;
 
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::transcript::BlockKind;
@@ -24,6 +25,7 @@ use ratatui::{
 };
 use run_panel_view::{draw_run_panel, run_panel_height};
 use status::draw_status;
+use trust_modal::{draw_trust_modal, trust_modal_height};
 
 /// Draws one frame: transcript (fills), the run panel (docked below the
 /// conversation when a run has been started from the session), status bar,
@@ -47,6 +49,14 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
         .as_ref()
         .map(|p| approval_height(p.detail.as_deref(), p.grant.as_deref(), frame.area().width))
         .unwrap_or(0);
+    // The startup trust modal docks above the input like the approval
+    // panels: it opens once after the splash paints, never before it.
+    let trust_h = app
+        .overlays
+        .trust
+        .as_ref()
+        .map(|prompt| trust_modal_height(prompt, frame.area().width))
+        .unwrap_or(0);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -55,6 +65,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
             Constraint::Length(1),               // status bar
             Constraint::Length(approval_h),      // approval panel (0 when none)
             Constraint::Length(plan_approval_h), // plan-approval modal (0 when none)
+            Constraint::Length(trust_h),         // trust modal (0 when none)
             Constraint::Length(input_height),    // input box
         ])
         .split(frame.area());
@@ -90,9 +101,12 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     {
         draw_plan_approval(frame, panel, chunks[4]);
     }
-    draw_input(frame, app, chunks[5]);
+    if let Some(prompt) = &app.overlays.trust {
+        draw_trust_modal(frame, prompt, chunks[5]);
+    }
+    draw_input(frame, app, chunks[6]);
     if let Some(menu) = &app.overlays.menu {
-        draw_menu(frame, menu, chunks[5]);
+        draw_menu(frame, menu, chunks[6]);
     }
     if app.overlays.search.is_some() {
         draw_search(frame, app, frame.area());

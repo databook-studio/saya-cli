@@ -32,6 +32,41 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     };
     let mut state = load_session(&store, &cli, &defaults)?;
     let fresh = !cli.options.continue_session && cli.options.resume.is_none();
+    // The startup trust decision (G3, Decision 2 §1): one decision — prompt
+    // when a fresh session bound no root on a terminal — with two
+    // renderings. The full-screen TUI renders it as a modal inside the
+    // interface after the splash paints (a raw stdin read before it would
+    // pre-empt the alternate screen and leave the terminal broken); the
+    // plain REPL renders it as the line prompt, asked here before the loop.
+    // Terminal-attached TUI sessions defer the question (no stdin read
+    // here); every other terminal session asks it here, on stderr.
+    let terminal_probe = io::stdin().is_terminal();
+    let tui_surface = terminal_probe && cli.options.turn_file.is_none();
+    let trusted_dir: Option<std::path::PathBuf> = if tui_surface {
+        None
+    } else {
+        startup_trust_answer(&cli, fresh, state.workspace_root.as_deref(), terminal_probe)
+    };
+    // A TUI session that still needs the trust answer opens the modal once
+    // the interface paints — the same one decision, rendered inside the
+    // surface instead of in front of it.
+    let tui_trust_pending = tui_surface
+        && super::session_trust::should_prompt(&super::session_trust::TrustPromptContext {
+            is_terminal: true,
+            fresh,
+            has_explicit: cli.options.workspace.is_some(),
+            has_pin: state.workspace_root.is_some(),
+            root_bound: state.workspace_root.is_some()
+                || super::session_workspace::resolve_root(
+                    None,
+                    &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                )
+                .ok()
+                .flatten()
+                .is_some(),
+            turn_file: cli.options.turn_file.is_some(),
+        });
+    let mut trusted_echo: Option<String> = None;
     if fresh {
         state.provider = runtime.resolved.ai.provider.as_str().into();
         state.model = runtime.resolved.ai.model.clone();
@@ -84,18 +119,26 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             return Err(super::session_deny::launch_contradiction(name).into());
         }
     }
-    let mut session = SessionRuntime::acquire(
-        &runtime,
-        cli.options.workspace.as_deref(),
+    let mut session = SessionRuntime::acquire_inner(super::session_runtime::Acquire {
+        runtime: &runtime,
+        explicit: cli.options.workspace.as_deref(),
         fresh,
-        state.workspace_root.as_deref(),
-        &state.id,
-        state
+        pinned_root: state.workspace_root.as_deref(),
+        id: &state.id,
+        mode: state
             .approval_mode
             .parse()
             .unwrap_or(saya_agent::ApprovalPolicy::Ask),
-        &default_session_dir(),
-    )?;
+        sessions_root: &default_session_dir(),
+        trusted: trusted_dir.as_deref(),
+    })?;
+    // The trust answer's echo: the moment of choice carries the tree — the
+    // half of the pair the bypass activation line's lane fact does not
+    // carry. Said once the root actually bound (a `w <dir>` that refused
+    // would have errored above, never echoed).
+    if session.root().is_some() && trusted_dir.is_some() {
+        trusted_echo = session.root().map(super::session_trust::trusted_root_line);
+    }
     // Recompose with the launch statement on a fresh start: `acquire`
     // composed without the launch's deny refusals. The deny list rides the
     // same recomposition — refusal-only, composes nothing — so a deny-only
@@ -105,7 +148,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     if fresh {
         let recomposed = super::session_universe::SessionUniverse::compose_with_launch(
             &runtime,
-            cli.options.workspace.as_deref(),
+            cli.options.workspace.as_deref().or(trusted_dir.as_deref()),
             state.workspace_root.as_deref(),
             true,
             &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
@@ -169,20 +212,37 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     ) {
         session.journal_bypass_activation(saya_store::BypassSource::Launch);
     }
-    let terminal = io::stdin().is_terminal();
+    let terminal = terminal_probe;
+    let trusted_echo_for_tui = trusted_echo.clone();
     if terminal {
         // Interactive terminals get the full-screen TUI. Chart temp files are
         // removed when the session ends, on the clean path and on error alike.
-        let outcome = super::tui::run(
-            &runtime,
-            &store,
-            &state_db,
+        // The startup trust question rides the TUI's modal when it is still
+        // open — asked inside the interface after the splash paints, never
+        // as a raw stdin read in front of it. The modal binds through the
+        // live runtime when answered; the pin and the header facts below
+        // refresh from the rebound session when the TUI returns them.
+        let outcome = super::tui::run(super::tui::TuiSession {
+            runtime: &runtime,
+            store: &store,
+            state_db: &state_db,
             format,
-            &mut state,
-            &mut session,
-        );
+            state: &mut state,
+            session: &mut session,
+            trusted_echo: trusted_echo_for_tui.as_deref(),
+            trust_pending: tui_trust_pending,
+            launch: &launch,
+        });
+        if let Ok(super::tui::TrustOutcome::Answered(dir)) = &outcome {
+            let _ = dir;
+        }
         crate::chart::cleanup_session_charts();
-        let code = outcome?;
+        let code = outcome.map(|outcome| outcome.exit_code())?;
+        if let Some(root) = session.record_root(fresh) {
+            state.workspace_root = Some(root);
+        }
+        state.host_composed = session.universe().host_composed();
+        state.denied_programs = session.universe().deny_programs();
         block_on(store.save(state.redacted()))?;
         return Ok(code);
     }
@@ -213,6 +273,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             format,
             terminal: false,
             session: &mut session,
+            trusted_echo: None,
         };
         let outcome = run_single_turn(turn, &mut ctx);
         crate::chart::cleanup_session_charts();
@@ -231,6 +292,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         format,
         terminal,
         session: &mut session,
+        trusted_echo,
     };
     let outcome = run_plain_loop(&mut ctx);
     crate::chart::cleanup_session_charts();
@@ -250,6 +312,66 @@ pub(crate) fn resume_approval_mode(
         config::runtime::approval_name(options)
     } else {
         Ok(persisted.to_owned())
+    }
+}
+
+/// The startup trust decision (G3): whether this launch asks the trust
+/// prompt, and the answered directory when it does. Fresh sessions only —
+/// a resume re-opens its recorded pin untouched — with no explicit
+/// `--workspace` and no root already bound (an explicit statement or a
+/// worktree top answers the question before it is asked). Terminal only:
+/// piped stdin, `--turn-file`, and `--format json` have nobody to prompt,
+/// so nothing binds there. A refused `w <dir>` is a launch usage error,
+/// never a silent unbound session.
+fn startup_trust_answer(
+    cli: &Cli,
+    fresh: bool,
+    pinned_root: Option<&str>,
+    is_terminal: bool,
+) -> Option<std::path::PathBuf> {
+    if !fresh || cli.options.workspace.is_some() || pinned_root.is_some() {
+        return None;
+    }
+    if cli.options.turn_file.is_some() {
+        return None;
+    }
+    // JSON output owns stdout for machines: the prompt writes to stderr, but
+    // a headless consumer still has nobody to answer — never ask.
+    if !is_terminal {
+        return None;
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    // A worktree top binds without asking: the prompt exists for the unbound
+    // shape only, never as inference with a confirmation step.
+    let already_binds = super::session_workspace::resolve_root(None, &cwd)
+        .ok()
+        .flatten()
+        .is_some();
+    if already_binds {
+        return None;
+    }
+    let ctx = super::session_trust::TrustPromptContext {
+        is_terminal,
+        fresh,
+        has_explicit: false,
+        has_pin: false,
+        root_bound: false,
+        turn_file: false,
+    };
+    if !super::session_trust::should_prompt(&ctx) {
+        return None;
+    }
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+    let mut stderr = io::stderr();
+    let answer = super::session_trust::ask_trust(&mut input, &mut stderr)
+        .unwrap_or(super::session_trust::TrustAnswer::ContinueUnbound);
+    match answer {
+        super::session_trust::TrustAnswer::TrustCwd => {
+            Some(super::session_trust::resolve_trusted_dir(&cwd).unwrap_or(cwd))
+        }
+        super::session_trust::TrustAnswer::Workspace(dir) => Some(dir),
+        super::session_trust::TrustAnswer::ContinueUnbound => None,
     }
 }
 
@@ -295,6 +417,9 @@ struct TurnContext<'a> {
     format: RenderFormat,
     terminal: bool,
     session: &'a mut SessionRuntime,
+    /// The trust answer's echo, said once at startup where the headless loop
+    /// says its other startup facts. `None` on every path that did not trust.
+    trusted_echo: Option<String>,
 }
 
 /// Runs exactly one turn through the session's one per-turn entry
@@ -338,10 +463,24 @@ fn run_plain_loop(ctx: &mut TurnContext) -> Result<(), Box<dyn std::error::Error
     if let Some(notice) = ctx.session.notice() {
         eprintln!("{notice}");
     }
+    if let Some(echo) = ctx.trusted_echo.as_deref() {
+        eprintln!("{echo}");
+    }
     if let Some(line) =
         super::session_activation::line_if_bypass(ctx.state, ctx.runtime, &ctx.session.universe())
     {
         println!("{line}");
+    }
+    // Bypass × unbound × non-terminal: no prompt was possible, so nothing
+    // bound and the lane cannot compose either — bypass runs with the lane
+    // absent, and the notice says so (the fail-closed intersection). Said
+    // as a diagnostic beside the other startup facts: the turn stream owns
+    // stdout, and under `--format json` a bare line would corrupt it.
+    if let Some(note) = super::session_trust::bypass_no_lane_note(
+        super::session_activation::is_bypass_mode(ctx.state),
+        ctx.session.universe().host_composed(),
+    ) {
+        eprintln!("{note}");
     }
     let mut input = String::new();
     loop {
