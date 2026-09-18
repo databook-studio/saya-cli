@@ -43,6 +43,8 @@ impl App {
             last_sql: self.last_query.as_ref().map(|lq| lq.sql.clone()),
             session: Arc::clone(&self.session),
             journal: Some(session.journal()),
+            // The real source arrives with `/mode` in the next slice.
+            agent_mode: saya_agent::AgentMode::Build,
         }));
         self.request.started = Some(std::time::Instant::now());
     }

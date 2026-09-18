@@ -8,7 +8,8 @@ use crate::{
     stream_render::TerminalSink,
 };
 use saya_agent::{
-    AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy,
+    AgentMode, AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage,
+    SessionPolicy,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -40,6 +41,9 @@ pub(crate) async fn run(
     format: RenderFormat,
     state_db: &SqliteStateStore,
     session: Arc<SessionUniverse>,
+    // The agent's task posture, threaded like `approval`: the real source
+    // arrives with `/mode` in the next slice.
+    agent_mode: AgentMode,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
@@ -68,6 +72,7 @@ pub(crate) async fn run(
         Some(decider),
         None,
         Some(session),
+        agent_mode,
     );
     tokio::pin!(work);
     tokio::select! {

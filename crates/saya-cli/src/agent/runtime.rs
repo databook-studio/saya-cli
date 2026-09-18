@@ -10,7 +10,7 @@ use crate::{
     config::runtime::RuntimeConfig, grant_token::TurnPrimary, prompt_approval::TerminalApproval,
 };
 use saya_agent::{
-    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, AgentRequest,
+    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentMode, AgentOutput, AgentRequest,
     ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, LocalStateEffect,
     run_agent_with_sink,
 };
@@ -35,6 +35,10 @@ pub(crate) async fn run_prompt_with_sink(
     // `None` (the one-shot `ask` path) leaves `workspace_read` denying with
     // a typed error and the write-shaped tools hidden.
     session: Option<Arc<SessionUniverse>>,
+    // The agent's task posture, threaded like `approval`: the real source
+    // arrives with `/mode` in the next slice, so every entry point passes
+    // `AgentMode::Build` until then.
+    agent_mode: AgentMode,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let inputs = prepare_turn(runtime, &overrides, can_prompt)
         .await
@@ -52,6 +56,7 @@ pub(crate) async fn run_prompt_with_sink(
         decider,
         last_sql,
         session,
+        agent_mode,
     )
     .await
 }
@@ -74,6 +79,8 @@ pub(crate) async fn run_prompt_with_inputs(
     // `None` (the one-shot `ask` path) leaves `workspace_read` denying with
     // a typed error and the write-shaped tools hidden.
     session: Option<Arc<SessionUniverse>>,
+    // The agent's task posture, threaded like `approval`.
+    agent_mode: AgentMode,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = inputs.ai;
     let provider = inputs.provider;
@@ -193,6 +200,7 @@ pub(crate) async fn run_prompt_with_inputs(
     // error.
     let definitions = match session.as_ref() {
         Some(session) => session.definitions(
+            agent_mode,
             approval,
             can_prompt,
             allow_query_data,

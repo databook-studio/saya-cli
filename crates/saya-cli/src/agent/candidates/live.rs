@@ -6,7 +6,7 @@ use super::super::profile;
 use super::super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
 use super::AttemptRunner;
 use async_trait::async_trait;
-use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
 use saya_store::SqliteStateStore;
 use saya_types::{QueryRequest, QueryResult, SqlDialect};
@@ -94,6 +94,7 @@ pub(crate) struct LiveAttemptRunner<'a> {
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
     session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+    agent_mode: AgentMode,
 }
 
 impl<'a> LiveAttemptRunner<'a> {
@@ -110,6 +111,7 @@ impl<'a> LiveAttemptRunner<'a> {
         decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
         last_sql: Option<String>,
         session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+        agent_mode: AgentMode,
     ) -> Self {
         Self {
             runtime,
@@ -123,6 +125,7 @@ impl<'a> LiveAttemptRunner<'a> {
             decider,
             last_sql,
             session,
+            agent_mode,
         }
     }
 }
@@ -143,6 +146,7 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
             self.decider.clone(),
             self.last_sql.clone(),
             self.session.clone(),
+            self.agent_mode,
         ))
     }
 }

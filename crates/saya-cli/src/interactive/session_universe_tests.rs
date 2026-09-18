@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use saya_agent::{ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken};
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
     ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
@@ -126,9 +126,14 @@ const SESSION_WRITE_TOOLS: [&str; 5] = [
     "run_program",
 ];
 
-fn advertised(universe: &SessionUniverse, mode: ApprovalPolicy, can_prompt: bool) -> Vec<String> {
+fn advertised(
+    universe: &SessionUniverse,
+    agent_mode: AgentMode,
+    mode: ApprovalPolicy,
+    can_prompt: bool,
+) -> Vec<String> {
     universe
-        .definitions(mode, can_prompt, true, false, false)
+        .definitions(agent_mode, mode, can_prompt, true, false, false)
         .into_iter()
         .map(|definition| definition.name)
         .collect()
@@ -159,18 +164,18 @@ fn the_lane_s_advertisement_follows_the_mode_rule() {
         (ApprovalPolicy::Never, true, "never"),
         (ApprovalPolicy::Ask, false, "no prompt surface"),
     ] {
-        let names = advertised(&universe, mode, can_prompt);
+        let names = advertised(&universe, AgentMode::Build, mode, can_prompt);
         assert!(
             !names.contains(&"run_command".to_string()),
             "{label} never sees the tool: {names:?}"
         );
     }
-    let ask_names = advertised(&universe, ApprovalPolicy::Ask, true);
+    let ask_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     assert!(
         ask_names.contains(&"run_command".to_string()),
         "a composed lane advertises under ask with a prompt: {ask_names:?}"
     );
-    let bypass_names = advertised(&universe, ApprovalPolicy::Bypass, false);
+    let bypass_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
     assert!(
         bypass_names.contains(&"run_command".to_string()),
         "a composed lane advertises under bypass: {bypass_names:?}"
@@ -219,7 +224,7 @@ fn a_session_without_path_still_starts() {
     );
     // Everything else works: the session's own surface is intact — SQL,
     // schema reads, workspace file tools, and approvals.
-    let ask_names = advertised(&universe, ApprovalPolicy::Ask, true);
+    let ask_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     for tool in [
         "scratch_sql",
         "http_fetch",
@@ -318,12 +323,12 @@ fn no_root_still_no_lane() {
         unstated.host_composed_for_tests().is_none(),
         "unstated: no lane either"
     );
-    let names = advertised(&universe, ApprovalPolicy::Ask, true);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     assert!(
         !names.contains(&"run_command".to_string()),
         "hidden, not advertised: {names:?}"
     );
-    let bypass_names = advertised(&universe, ApprovalPolicy::Bypass, false);
+    let bypass_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
     assert!(
         !bypass_names.contains(&"run_command".to_string()),
         "hidden under bypass too, not advertised: {bypass_names:?}"
@@ -350,7 +355,7 @@ fn write_shaped_tools_stay_hidden_where_a_prompt_is_impossible() {
         (ApprovalPolicy::Ask, false, "no prompt surface"),
         (ApprovalPolicy::ReadOnly, false, "read-only, no prompt"),
     ] {
-        let names = advertised(&universe, mode, can_prompt);
+        let names = advertised(&universe, AgentMode::Build, mode, can_prompt);
         for tool in SESSION_WRITE_TOOLS {
             assert!(
                 !names.contains(&tool.to_string()),
@@ -376,7 +381,12 @@ fn bypass_advertises_the_write_shaped_tools_without_a_prompt_surface() {
     let state = temp_dir("bypass-advertise-state");
     let universe = compose(&session_runtime(None), &project, &state);
     for can_prompt in [true, false] {
-        let names = advertised(&universe, ApprovalPolicy::Bypass, can_prompt);
+        let names = advertised(
+            &universe,
+            AgentMode::Build,
+            ApprovalPolicy::Bypass,
+            can_prompt,
+        );
         for tool in [
             "workspace_write",
             "scratch_sql",
@@ -389,8 +399,14 @@ fn bypass_advertises_the_write_shaped_tools_without_a_prompt_surface() {
                  (can_prompt={can_prompt}): {names:?}"
             );
         }
-        let definitions =
-            universe.definitions(ApprovalPolicy::Bypass, can_prompt, true, false, false);
+        let definitions = universe.definitions(
+            saya_agent::AgentMode::Build,
+            ApprovalPolicy::Bypass,
+            can_prompt,
+            true,
+            false,
+            false,
+        );
         let write = definitions
             .iter()
             .find(|definition| definition.name == "workspace_write")
@@ -418,7 +434,7 @@ fn outside_a_worktree_the_write_shaped_tools_are_hidden_and_scratch_and_fetch_wo
     let universe =
         SessionUniverse::compose(&session_runtime(None), None, None, true, &plain, &state)
             .expect("composition succeeds without a root");
-    let names = advertised(&universe, ApprovalPolicy::Ask, true);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     assert!(
         !names.contains(&"workspace_write".to_string()),
         "no root, no write tool: {names:?}"
@@ -454,7 +470,7 @@ fn a_worktree_session_advertises_every_write_shaped_tool_ask_gated() {
     let project = worktree("ask-universe");
     let state = temp_dir("ask-universe-state");
     let universe = compose(&session_runtime(None), &project, &state);
-    let names = advertised(&universe, ApprovalPolicy::Ask, true);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     for tool in [
         "workspace_write",
         "scratch_sql",
@@ -466,7 +482,14 @@ fn a_worktree_session_advertises_every_write_shaped_tool_ask_gated() {
             "an ask session advertises {tool}: {names:?}"
         );
     }
-    let definitions = universe.definitions(ApprovalPolicy::Ask, true, true, false, false);
+    let definitions = universe.definitions(
+        saya_agent::AgentMode::Build,
+        ApprovalPolicy::Ask,
+        true,
+        true,
+        false,
+        false,
+    );
     for tool in [
         "workspace_write",
         "scratch_sql",
@@ -696,7 +719,14 @@ async fn a_granted_interpreter_actually_runs_under_ask() {
     );
 
     // The engine half: under ask, the granted token pre-answers the call.
-    let definitions = universe.definitions(ApprovalPolicy::Ask, true, true, false, false);
+    let definitions = universe.definitions(
+        saya_agent::AgentMode::Build,
+        ApprovalPolicy::Ask,
+        true,
+        true,
+        false,
+        false,
+    );
     let run_program = definitions
         .iter()
         .find(|definition| definition.name == "run_program")
@@ -843,7 +873,7 @@ fn bypass_composes_no_runner_where_the_probe_refuses_and_says_so() {
                 universe.notice
             );
             assert!(
-                advertised(&universe, ApprovalPolicy::Bypass, false)
+                advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false)
                     .contains(&"run_program".to_string()),
                 "bypass advertises the proven runner with no prompt surface"
             );
@@ -860,7 +890,7 @@ fn bypass_composes_no_runner_where_the_probe_refuses_and_says_so() {
             assert_eq!(notice, PROBE_REFUSED_NOTICE);
             assert!(universe.probe_refused, "the activation line's fact rides");
             assert!(
-                !advertised(&universe, ApprovalPolicy::Bypass, false)
+                !advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false)
                     .contains(&"run_program".to_string()),
                 "no runner, no run_program advertisement — under bypass like any mode"
             );
@@ -903,7 +933,14 @@ async fn bypass_leaves_the_sql_safety_layer_untouched() {
     // The engine half: under bypass the write-shaped SQL call is *allowed* —
     // the refusal cannot come from approval.
     let sql = universe
-        .definitions(ApprovalPolicy::Bypass, false, true, false, false)
+        .definitions(
+            saya_agent::AgentMode::Build,
+            ApprovalPolicy::Bypass,
+            false,
+            true,
+            false,
+            false,
+        )
         .iter()
         .find(|definition| definition.name == "bounded_sql_query")
         .expect("the read-shaped SQL tools are always advertised")
@@ -1236,12 +1273,12 @@ fn unstated_lane_composes_where_a_root_binds() {
         universe.host_composed_for_tests().is_some(),
         "a bound root composes the lane with no statement"
     );
-    let ask_names = advertised(&universe, ApprovalPolicy::Ask, true);
+    let ask_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     assert!(
         ask_names.contains(&"run_command".to_string()),
         "the unstated lane advertises under ask with a prompt: {ask_names:?}"
     );
-    let bypass_names = advertised(&universe, ApprovalPolicy::Bypass, false);
+    let bypass_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
     assert!(
         bypass_names.contains(&"run_command".to_string()),
         "the unstated lane advertises under bypass: {bypass_names:?}"
@@ -1270,4 +1307,271 @@ fn a_pre_workspace_resume_stays_silent_when_unbound() {
         universe.notice
     );
     let _ = (fs::remove_dir_all(&plain), fs::remove_dir_all(&state));
+}
+
+// ---------------------------------------------------------------------------
+// mode slice 2 — Plan hides the write-shaped tools from the model
+// ---------------------------------------------------------------------------
+
+/// The write-shaped names Plan must never advertise: the session members
+/// plus the host lane. `run_program` joins the asserted absence only where
+/// the runner composes, so the runner-bearing test below names it explicitly
+/// while this shared list names the four the plain composition carries.
+const PLAN_HIDDEN_TOOLS: [&str; 6] = [
+    "workspace_write",
+    "scratch_sql",
+    "http_fetch",
+    "http_download",
+    "run_program",
+    "run_command",
+];
+
+/// Plan advertises exactly the read-only surface: for a fully composed
+/// universe under ask-with-prompt, the Plan definition list equals the list
+/// the same universe produces under read-only in Build. Compared as a set —
+/// Plan is hiding, not denying: the tools are absent from the list, never
+/// offered and refused.
+#[test]
+fn plan_advertises_exactly_the_read_only_surface() {
+    let project = worktree("plan-readonly-surface");
+    let state = temp_dir("plan-readonly-surface-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let plan: std::collections::BTreeSet<String> =
+        advertised(&universe, AgentMode::Plan, ApprovalPolicy::Ask, true)
+            .into_iter()
+            .collect();
+    let read_only: std::collections::BTreeSet<String> =
+        advertised(&universe, AgentMode::Build, ApprovalPolicy::ReadOnly, true)
+            .into_iter()
+            .collect();
+    assert_eq!(
+        plan, read_only,
+        "Plan hides write-shaped tools instead of offering-then-denying them, \
+         so its Ask surface equals the read-only surface: plan={plan:?} read-only={read_only:?}"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// Plan hides under bypass too: bypass-with-Plan advertises no write-shaped
+/// tool — the case a reader will doubt, because Build-with-bypass advertises
+/// them all.
+#[test]
+fn plan_hides_write_shaped_tools_under_bypass_too() {
+    let project = worktree("plan-bypass");
+    let state = temp_dir("plan-bypass-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let names = advertised(&universe, AgentMode::Plan, ApprovalPolicy::Bypass, false);
+    for tool in PLAN_HIDDEN_TOOLS {
+        assert!(
+            !names.contains(&tool.to_string()),
+            "Plan hides {tool} even under bypass (hiding, not denying): {names:?}"
+        );
+    }
+    // The positive control: Build-with-bypass advertises the four the plain
+    // composition carries.
+    let build = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
+    for tool in [
+        "workspace_write",
+        "scratch_sql",
+        "http_fetch",
+        "http_download",
+    ] {
+        assert!(
+            build.contains(&tool.to_string()),
+            "Build-with-bypass still advertises {tool}: {build:?}"
+        );
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// Build is unchanged: for each of the four approval policies the Build
+/// definition list is exactly what `release/0.4.1` produces. Pinned by name
+/// on the plain worktree composition (no runner composed, so no
+/// `run_program`; the unstated host lane composes, so `run_command` rides).
+#[test]
+fn build_advertisement_is_pinned_for_every_approval_policy() {
+    let project = worktree("build-pinned");
+    let state = temp_dir("build-pinned-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    for (mode, can_prompt, names) in [
+        (
+            ApprovalPolicy::Ask,
+            true,
+            vec![
+                "schema_discovery",
+                "workspace_read",
+                "workspace_list",
+                "glob",
+                "grep",
+                "bounded_sql_query",
+                "bounded_sql_query_all",
+                "result_shape",
+                "column_health",
+                "join_check",
+                "render_chart",
+                "designate_answer",
+                "workspace_write",
+                "scratch_sql",
+                "http_fetch",
+                "http_download",
+                "run_command",
+            ],
+        ),
+        (
+            ApprovalPolicy::Bypass,
+            false,
+            vec![
+                "schema_discovery",
+                "workspace_read",
+                "workspace_list",
+                "glob",
+                "grep",
+                "bounded_sql_query",
+                "bounded_sql_query_all",
+                "result_shape",
+                "column_health",
+                "join_check",
+                "render_chart",
+                "designate_answer",
+                "workspace_write",
+                "scratch_sql",
+                "http_fetch",
+                "http_download",
+                "run_command",
+            ],
+        ),
+        (
+            ApprovalPolicy::ReadOnly,
+            true,
+            vec![
+                "schema_discovery",
+                "workspace_read",
+                "workspace_list",
+                "glob",
+                "grep",
+                "bounded_sql_query",
+                "bounded_sql_query_all",
+                "result_shape",
+                "column_health",
+                "join_check",
+                "render_chart",
+                "designate_answer",
+            ],
+        ),
+        (
+            ApprovalPolicy::Never,
+            true,
+            vec![
+                "schema_discovery",
+                "workspace_read",
+                "workspace_list",
+                "glob",
+                "grep",
+                "bounded_sql_query",
+                "bounded_sql_query_all",
+                "result_shape",
+                "column_health",
+                "join_check",
+                "render_chart",
+                "designate_answer",
+            ],
+        ),
+    ] {
+        assert_eq!(
+            advertised(&universe, AgentMode::Build, mode, can_prompt),
+            names
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<String>>(),
+            "Build under {mode:?} is byte-identical to release/0.4.1"
+        );
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The derived permit falls off: a Plan definition list contains no
+/// `WriteWorkspace` definition, so the derivation at `runtime.rs:216-218`
+/// yields `false`. Asserted on the definition list itself — the derivation
+/// is only reachable through the full turn composition, and it reads this
+/// exact property off the list.
+#[test]
+fn plan_definitions_carry_no_workspace_write_permit() {
+    use saya_agent::LocalStateEffect;
+    let project = worktree("plan-permit");
+    let state = temp_dir("plan-permit-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let definitions = universe.definitions(
+        AgentMode::Plan,
+        ApprovalPolicy::Ask,
+        true,
+        true,
+        false,
+        false,
+    );
+    assert!(
+        definitions
+            .iter()
+            .all(|definition| definition.effect.local_state != LocalStateEffect::WriteWorkspace),
+        "no Plan definition writes the workspace, so the runtime derivation reads false: {:?}",
+        definitions
+            .iter()
+            .map(|definition| &definition.name)
+            .collect::<Vec<_>>()
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// Advertisement matches enforcement: for every definition Plan
+/// advertises, `SessionPolicy` under Plan does not deny it. An
+/// advertised-but-always-refused tool is the exact anti-pattern the
+/// hidden-not-advertised rule exists to prevent — this is the anti-drift
+/// test between slice 1 and slice 2.
+///
+/// `render_chart` is the known exception the test reports rather than
+/// hides: it is advertised on the read-only database surface (a pre-existing
+/// read-only advertisement, byte-identical under Build) while Plan
+/// enforcement denies its external side effect. `permit_candidate_writes`
+/// admits nothing write-shaped into the database surface — the flag gates
+/// no tool declared today.
+#[test]
+fn every_plan_advertised_definition_is_not_denied_by_plan_enforcement() {
+    use saya_agent::{ApprovalDecision, SessionPolicy};
+    let project = worktree("plan-anti-drift");
+    let state = temp_dir("plan-anti-drift-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    for policy in [
+        ApprovalPolicy::Ask,
+        ApprovalPolicy::Bypass,
+        ApprovalPolicy::ReadOnly,
+    ] {
+        let definitions = universe.definitions(
+            AgentMode::Plan,
+            policy,
+            policy == ApprovalPolicy::Ask,
+            true,
+            false,
+            false,
+        );
+        let enforcer = SessionPolicy::new(policy).with_agent_mode(AgentMode::Plan);
+        for definition in &definitions {
+            if definition.name == "render_chart" {
+                assert_eq!(
+                    enforcer.resolve(&definition.effect, None),
+                    ApprovalDecision::Deny { reason: None },
+                    "render_chart is the known advertised-but-denied exception: \
+                     advertised on the pre-existing read-only surface, denied by Plan enforcement"
+                );
+                continue;
+            }
+            assert!(
+                !matches!(
+                    enforcer.resolve(&definition.effect, None),
+                    ApprovalDecision::Deny { .. }
+                ),
+                "Plan advertises {} under {policy:?} but enforcement denies it",
+                definition.name
+            );
+        }
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }

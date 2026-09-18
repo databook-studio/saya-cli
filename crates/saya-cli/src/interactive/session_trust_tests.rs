@@ -147,7 +147,14 @@ fn terminal_unbound_prompts_and_trust_binds_cwd() {
         "with the root bound, the lane composes"
     );
     let names: Vec<String> = universe
-        .definitions(ApprovalPolicy::Ask, true, true, false, false)
+        .definitions(
+            saya_agent::AgentMode::Build,
+            ApprovalPolicy::Ask,
+            true,
+            true,
+            false,
+            false,
+        )
         .into_iter()
         .map(|definition| definition.name)
         .collect();
@@ -278,7 +285,14 @@ fn continue_unbound_keeps_today_s_shape() {
     assert!(universe.root().is_none(), "continue binds nothing");
     assert!(!universe.host_composed(), "continue composes no lane");
     let names: Vec<String> = universe
-        .definitions(ApprovalPolicy::Ask, true, true, false, false)
+        .definitions(
+            saya_agent::AgentMode::Build,
+            ApprovalPolicy::Ask,
+            true,
+            true,
+            false,
+            false,
+        )
         .into_iter()
         .map(|definition| definition.name)
         .collect();
@@ -338,7 +352,14 @@ fn bypass_unbound_terminal_prompts_for_the_folder_then_runs_the_lane() {
         .expect("trust binds under bypass exactly as under ask");
     assert!(universe.host_composed(), "the lane composes after trust");
     let names: Vec<String> = universe
-        .definitions(ApprovalPolicy::Bypass, false, true, false, false)
+        .definitions(
+            saya_agent::AgentMode::Build,
+            ApprovalPolicy::Bypass,
+            false,
+            true,
+            false,
+            false,
+        )
         .into_iter()
         .map(|definition| definition.name)
         .collect();
@@ -388,7 +409,14 @@ fn bypass_unbound_headless_composes_no_lane_and_says_so() {
         "no root, no lane — bypass cannot bind silently"
     );
     let names: Vec<String> = universe
-        .definitions(ApprovalPolicy::Bypass, false, true, false, false)
+        .definitions(
+            saya_agent::AgentMode::Build,
+            ApprovalPolicy::Bypass,
+            false,
+            true,
+            false,
+            false,
+        )
         .into_iter()
         .map(|definition| definition.name)
         .collect();

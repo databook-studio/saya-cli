@@ -24,7 +24,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use saya_agent::{ApprovalPolicy, CancellationToken, ToolDefinition, ToolExecutor};
+use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken, ToolDefinition, ToolExecutor};
 use saya_harness::fetch::{
     DownloadBudget, DownloadLimits, FetchLimits, FetchPolicy, FetchTools, ReqwestTransport,
 };
@@ -418,6 +418,7 @@ impl SessionUniverse {
     /// the approval engine per call.
     pub(crate) fn definitions(
         &self,
+        agent_mode: AgentMode,
         mode: ApprovalPolicy,
         can_prompt: bool,
         allow_query_data: bool,
@@ -428,7 +429,7 @@ impl SessionUniverse {
             ApprovalPolicy::Ask => can_prompt,
             ApprovalPolicy::Bypass => true,
             _ => false,
-        };
+        } && agent_mode == AgentMode::Build;
         // The database surface, always with the write permit off — the
         // session's own workspace_write below is the advertised one, and the
         // run-worded definition must not leak into the session's list.
