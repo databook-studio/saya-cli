@@ -432,12 +432,18 @@ impl SessionUniverse {
         } && agent_mode == AgentMode::Build;
         // The database surface, always with the write permit off — the
         // session's own workspace_write below is the advertised one, and the
-        // run-worded definition must not leak into the session's list.
+        // run-worded definition must not leak into the session's list. The
+        // external-effect permit rides the same `advertises` condition as
+        // every other write-shaped member: `render_chart` declares
+        // `external_side_effect: true`, so read-only, never, and plan
+        // enforcement deny every call — it stays hidden there, not
+        // advertised-and-denied.
         let mut defs = DatabaseTools::definitions(
             allow_query_data,
             has_state_store,
             permit_candidate_writes,
             false,
+            advertises,
         );
         if !advertises {
             // Read-only and never cannot prompt: everything write-shaped

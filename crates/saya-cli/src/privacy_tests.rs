@@ -67,6 +67,7 @@ async fn cloud_without_sharing_hides_sql_and_never_sends_rows() {
         false,
         false,
         false,
+        false,
     );
     run_agent(
         &provider,
@@ -111,6 +112,7 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
         false,
         false,
         false,
+        true,
     );
     run_agent(
         &provider,

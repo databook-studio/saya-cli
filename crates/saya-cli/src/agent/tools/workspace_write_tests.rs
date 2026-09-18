@@ -60,7 +60,7 @@ impl Drop for Sandbox {
 /// The real definition, taken from the advertised list: the loop tests must
 /// exercise the gate against the definition the model would actually see.
 fn workspace_write_definition() -> ToolDefinition {
-    DatabaseTools::definitions(false, false, false, true)
+    DatabaseTools::definitions(false, false, false, true, false)
         .into_iter()
         .find(|tool| tool.name == "workspace_write")
         .expect("workspace_write is advertised when workspace writes are permitted")
@@ -526,12 +526,12 @@ async fn workspace_write_rejects_a_non_string_content() {
 /// model can see but never use wastes context and invites retries.
 #[test]
 fn workspace_write_definition_is_hidden_until_writes_are_permitted() {
-    let hidden = DatabaseTools::definitions(false, false, false, false);
+    let hidden = DatabaseTools::definitions(false, false, false, false, false);
     assert!(
         !hidden.iter().any(|tool| tool.name == "workspace_write"),
         "workspace_write must be hidden when writes are not permitted"
     );
-    let shown = DatabaseTools::definitions(false, false, false, true);
+    let shown = DatabaseTools::definitions(false, false, false, true, false);
     assert!(
         shown.iter().any(|tool| tool.name == "workspace_write"),
         "workspace_write must be advertised when writes are permitted"
@@ -543,7 +543,7 @@ fn workspace_write_definition_is_hidden_until_writes_are_permitted() {
 /// both arguments required.
 #[test]
 fn workspace_write_definition_declares_an_honest_effect() {
-    let tools = DatabaseTools::definitions(false, false, false, true);
+    let tools = DatabaseTools::definitions(false, false, false, true, false);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "workspace_write")

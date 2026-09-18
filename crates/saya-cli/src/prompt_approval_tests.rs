@@ -35,7 +35,7 @@ fn workspace_write_tool() -> ToolDefinition {
 }
 
 fn database_tools() -> Vec<ToolDefinition> {
-    DatabaseTools::definitions(true, false, false, false)
+    DatabaseTools::definitions(true, false, false, false, true)
 }
 
 /// A composition that carries the write-shaped family: a bound workspace

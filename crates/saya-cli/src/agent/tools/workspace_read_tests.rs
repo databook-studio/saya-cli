@@ -155,7 +155,7 @@ async fn workspace_read_denies_when_no_workspace_is_attached() {
 /// it, and it declares `LocalStateEffect::Read`.
 #[test]
 fn workspace_read_definition_is_read_shaped_and_always_advertised() {
-    let tools = DatabaseTools::definitions(false, false, false, false);
+    let tools = DatabaseTools::definitions(false, false, false, false, false);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "workspace_read")

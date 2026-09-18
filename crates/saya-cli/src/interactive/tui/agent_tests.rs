@@ -30,7 +30,7 @@ use std::collections::VecDeque;
 use tokio::sync::mpsc::unbounded_channel;
 
 fn read_shaped_tool() -> ToolDefinition {
-    let tools = DatabaseTools::definitions(true, false, false, false);
+    let tools = DatabaseTools::definitions(true, false, false, false, true);
     tools
         .iter()
         .find(|tool| tool.name == "bounded_sql_query")

@@ -1385,9 +1385,12 @@ fn plan_hides_write_shaped_tools_under_bypass_too() {
 }
 
 /// Build is unchanged: for each of the four approval policies the Build
-/// definition list is exactly what `release/0.4.1` produces. Pinned by name
-/// on the plain worktree composition (no runner composed, so no
-/// `run_program`; the unstated host lane composes, so `run_command` rides).
+/// definition list is exactly what `release/0.4.1` produces — except
+/// read-only and never no longer advertise `render_chart`: the tool declares
+/// `external_side_effect: true`, so their enforcement denies every call,
+/// and advertisement now agrees. Pinned by name on the plain worktree
+/// composition (no runner composed, so no `run_program`; the unstated host
+/// lane composes, so `run_command` rides).
 #[test]
 fn build_advertisement_is_pinned_for_every_approval_policy() {
     let project = worktree("build-pinned");
@@ -1454,7 +1457,6 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "result_shape",
                 "column_health",
                 "join_check",
-                "render_chart",
                 "designate_answer",
             ],
         ),
@@ -1472,7 +1474,6 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "result_shape",
                 "column_health",
                 "join_check",
-                "render_chart",
                 "designate_answer",
             ],
         ),
@@ -1483,9 +1484,81 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 .into_iter()
                 .map(str::to_string)
                 .collect::<Vec<String>>(),
-            "Build under {mode:?} is byte-identical to release/0.4.1"
+            "Build under {mode:?} pins the advertised names"
         );
     }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// `render_chart` is advertised exactly where the engine would not deny it:
+/// ask-with-prompt or bypass under Build. For each of the four approval
+/// policies × {Build, Plan}, the advertised set contains the chart iff a
+/// `SessionPolicy` under that posture does not deny its effect. Tool names
+/// are pinned on the chart's presence so a future drift fails loudly.
+#[test]
+fn render_chart_advertisement_agrees_with_enforcement_for_every_policy_and_mode() {
+    use saya_agent::{ApprovalDecision, SessionPolicy, ToolEffect};
+    let project = worktree("chart-advert");
+    let state = temp_dir("chart-advert-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let chart_effect = ToolEffect {
+        database_data: false,
+        external_side_effect: true,
+        requires_approval: true,
+        local_state: saya_agent::LocalStateEffect::None,
+    };
+    for (agent_mode, policy, can_prompt) in [
+        (AgentMode::Build, ApprovalPolicy::Ask, true),
+        (AgentMode::Build, ApprovalPolicy::Ask, false),
+        (AgentMode::Build, ApprovalPolicy::Bypass, false),
+        (AgentMode::Build, ApprovalPolicy::ReadOnly, true),
+        (AgentMode::Build, ApprovalPolicy::Never, true),
+        (AgentMode::Plan, ApprovalPolicy::Ask, true),
+        (AgentMode::Plan, ApprovalPolicy::Bypass, false),
+        (AgentMode::Plan, ApprovalPolicy::ReadOnly, true),
+        (AgentMode::Plan, ApprovalPolicy::Never, true),
+    ] {
+        let definitions = universe.definitions(agent_mode, policy, can_prompt, true, false, false);
+        let advertised_chart = definitions
+            .iter()
+            .any(|definition| definition.name == "render_chart");
+        // Denied means the engine denies — or the decider would with no
+        // prompt to answer: under ask without a prompt surface every
+        // approval-gated tool (`TerminalApproval::approve`'s
+        // `Ask if !can_prompt => false`) is refused, which is exactly why
+        // the write-shaped members hide there too.
+        let denied = matches!(
+            SessionPolicy::new(policy)
+                .with_agent_mode(agent_mode)
+                .resolve(&chart_effect, None),
+            ApprovalDecision::Deny { .. }
+        ) || (policy == ApprovalPolicy::Ask && !can_prompt);
+        assert_eq!(
+            advertised_chart, !denied,
+            "{agent_mode:?} under {policy:?} (can_prompt={can_prompt}): advertised={advertised_chart} but denied={denied}"
+        );
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The normal interactive case does not regress: ask with a prompt surface
+/// under Build still advertises `render_chart` alongside the chart-less SQL
+/// family, in the same position it always held.
+#[test]
+fn ask_with_prompt_under_build_still_advertises_render_chart() {
+    let project = worktree("chart-ask");
+    let state = temp_dir("chart-ask-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
+    let position = names
+        .iter()
+        .position(|name| name == "render_chart")
+        .expect("ask-with-prompt under Build advertises render_chart");
+    assert_eq!(
+        &names[position - 1..position + 2],
+        &["join_check", "render_chart", "designate_answer"],
+        "render_chart keeps its place in the normal interactive tool list: {names:?}"
+    );
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
 
@@ -1525,14 +1598,9 @@ fn plan_definitions_carry_no_workspace_write_permit() {
 /// advertises, `SessionPolicy` under Plan does not deny it. An
 /// advertised-but-always-refused tool is the exact anti-pattern the
 /// hidden-not-advertised rule exists to prevent — this is the anti-drift
-/// test between slice 1 and slice 2.
-///
-/// `render_chart` is the known exception the test reports rather than
-/// hides: it is advertised on the read-only database surface (a pre-existing
-/// read-only advertisement, byte-identical under Build) while Plan
-/// enforcement denies its external side effect. `permit_candidate_writes`
-/// admits nothing write-shaped into the database surface — the flag gates
-/// no tool declared today.
+/// test between slice 1 and slice 2. `permit_candidate_writes` admits
+/// nothing write-shaped into the database surface — the flag gates no tool
+/// declared today.
 #[test]
 fn every_plan_advertised_definition_is_not_denied_by_plan_enforcement() {
     use saya_agent::{ApprovalDecision, SessionPolicy};
@@ -1554,15 +1622,6 @@ fn every_plan_advertised_definition_is_not_denied_by_plan_enforcement() {
         );
         let enforcer = SessionPolicy::new(policy).with_agent_mode(AgentMode::Plan);
         for definition in &definitions {
-            if definition.name == "render_chart" {
-                assert_eq!(
-                    enforcer.resolve(&definition.effect, None),
-                    ApprovalDecision::Deny { reason: None },
-                    "render_chart is the known advertised-but-denied exception: \
-                     advertised on the pre-existing read-only surface, denied by Plan enforcement"
-                );
-                continue;
-            }
             assert!(
                 !matches!(
                     enforcer.resolve(&definition.effect, None),
