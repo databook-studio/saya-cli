@@ -10,14 +10,23 @@ mod tools;
 mod turn_tools;
 
 use crate::{
-    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
-    TokenUsage, ToolDefinition, ToolExecutor,
+    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatMessage,
+    ChatProvider, ProviderError, TokenUsage, ToolDefinition, ToolExecutor,
 };
 
 pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
 pub use tools::{MAX_TOOL_MESSAGE_BYTES, tool_message_cap};
+
+/// Re-instruction pushed as a user-role message after the provider caps a
+/// response mid-answer. The incomplete response is discarded, never replayed:
+/// replaying a half-assembled tool-argument JSON as history would invite the
+/// model to complete a write whose first half it never issued. Committed work
+/// needs no replay — `workspace_edit`'s append variant reports the file's size
+/// and digest in its tool result, and those results are already in the
+/// conversation, so the model resumes from there.
+const CONTINUATION_NOTE: &str = "Your previous response was cut off at the provider's output-token limit. The incomplete part was discarded and is not in the conversation. If you were writing a file, resume it with the append variant of workspace_edit using the size and digest reported in your earlier tool result, do not restart the file. Emit less per response so the next one fits.";
 
 /// Add a turn's optional count into a run total without inventing data.
 ///
@@ -55,6 +64,7 @@ pub async fn run_agent_with_sink(
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
     let mut turn_count = 0;
+    let mut continuation_count = 0;
     // Calls that failed during this run — SQL statements keyed on the
     // statement exactly as submitted, other tools on (tool, arguments) — so a
     // byte-identical re-submission is refused rather than re-executed (loop
@@ -86,7 +96,12 @@ pub async fn run_agent_with_sink(
             .await;
         }
         turn_count += 1;
-        let (assistant, turn_usage, reasoning) = receive::receive(
+        // A truncation is deterministic — re-sending the identical request fails
+        // identically, so `receive` never retries it. Within budget the loop
+        // instead re-instructs: the partial stays discarded, one user-role note
+        // tells the model to resume compactly, and the turn is spent — the
+        // `turn_count += 1` above already ran, so `max_turns` keeps binding.
+        let (assistant, turn_usage, reasoning) = match receive::receive(
             provider,
             &request.model,
             &messages,
@@ -95,7 +110,19 @@ pub async fn run_agent_with_sink(
             &cancellation,
             &mut events,
         )
-        .await?;
+        .await
+        {
+            Err(AgentError::Provider(ProviderError::OutputTruncated { .. }))
+                if limits
+                    .max_continuations
+                    .is_some_and(|max| continuation_count < max) =>
+            {
+                continuation_count += 1;
+                messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
+                continue;
+            }
+            outcome => outcome?,
+        };
         // Providers report cumulative counts per response; sum across turns.
         usage.input_tokens += turn_usage.input_tokens;
         usage.output_tokens += turn_usage.output_tokens;
