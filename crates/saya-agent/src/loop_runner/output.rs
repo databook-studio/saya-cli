@@ -12,6 +12,16 @@ pub struct AgentLimits {
     /// Ceiling on the total number of tool calls across the whole run, or
     /// `None` for no ceiling. Same stopping policy as [`Self::max_turns`].
     pub max_tool_calls: Option<usize>,
+    /// Ceiling on how many times one run may be re-instructed to continue after
+    /// the provider capped a response mid-answer. `None` disables continuation
+    /// entirely (the truncation error surfaces as it does today).
+    ///
+    /// Defaults to `Some(3)` — deliberately not `None`, unlike the other two
+    /// ceilings. The other ceilings are "unbounded until someone asks for a
+    /// bound"; this one is "bounded until someone measures a reason to raise
+    /// it", because each continuation re-sends the trimmed history and cost
+    /// grows roughly quadratically.
+    pub max_continuations: Option<u32>,
     /// Whether the loop may execute tools that declare
     /// [`LocalStateEffect::WriteCandidate`](crate::LocalStateEffect::WriteCandidate).
     /// Defaults to **not permitted**: a tool that can write a candidate claim
@@ -44,6 +54,7 @@ impl Default for AgentLimits {
         Self {
             max_turns: None,
             max_tool_calls: None,
+            max_continuations: Some(DEFAULT_MAX_CONTINUATIONS),
             permit_candidate_writes: false,
             permit_workspace_writes: false,
             permit_external_effects: false,
@@ -56,6 +67,25 @@ impl Default for AgentLimits {
 pub const MAX_TURNS_ENV: &str = "SAYA_AGENT_MAX_TURNS";
 /// Environment variable naming the tool-call ceiling (`SAYA_AGENT_MAX_TOOL_CALLS`).
 pub const MAX_TOOL_CALLS_ENV: &str = "SAYA_AGENT_MAX_TOOL_CALLS";
+/// Environment variable naming the continuation ceiling
+/// (`SAYA_AGENT_MAX_CONTINUATIONS`).
+pub const MAX_CONTINUATIONS_ENV: &str = "SAYA_AGENT_MAX_CONTINUATIONS";
+
+/// Default ceiling on continuations after the provider caps a response
+/// mid-answer. Bounded by default so an operator who never heard of
+/// [`MAX_CONTINUATIONS_ENV`] still gets the bound.
+pub const DEFAULT_MAX_CONTINUATIONS: u32 = 3;
+
+/// The turn, tool-call, and continuation ceilings read from the environment.
+///
+/// Returned by [`budgets_from_env`] so the call site names each ceiling
+/// instead of indexing a bare tuple.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnvBudgets {
+    pub max_turns: Option<usize>,
+    pub max_tool_calls: Option<usize>,
+    pub max_continuations: Option<u32>,
+}
 
 /// The tool name the model calls to designate the SQL that answers the
 /// question. Recognised by the loop at the terminal turn; the SQL text is
@@ -63,22 +93,34 @@ pub const MAX_TOOL_CALLS_ENV: &str = "SAYA_AGENT_MAX_TOOL_CALLS";
 /// executed as a tool.
 pub const DESIGNATE_ANSWER_TOOL: &str = "designate_answer";
 
-/// Reads the turn and tool-call ceilings from the environment through `get`.
+/// Reads the turn, tool-call, and continuation ceilings from the environment
+/// through `get`.
 ///
-/// Each is optional: `None` (unset or unparseable) leaves the loop unbounded
-/// for that ceiling, and a set value imposes no upper limit. `get` is a
-/// callback rather than a direct `std::env::var` so the parsing is testable
-/// without mutating process-global environment; the caller supplies the env
-/// source.
-pub fn budgets_from_env(get: impl Fn(&str) -> Option<String>) -> (Option<usize>, Option<usize>) {
-    (
-        parse_budget(get(MAX_TURNS_ENV)),
-        parse_budget(get(MAX_TOOL_CALLS_ENV)),
-    )
+/// Turns and tool calls are optional: `None` (unset or unparseable) leaves the
+/// loop unbounded for that ceiling, and a set value imposes no upper limit.
+/// Continuations differ: unset or unparseable means the default bound
+/// (`Some(3)`), never unbounded — an operator who never heard of the variable
+/// still gets the bound. `Some(0)` (via `SAYA_AGENT_MAX_CONTINUATIONS=0`)
+/// disables continuation entirely. `get` is a callback rather than a direct
+/// `std::env::var` so the parsing is testable without mutating process-global
+/// environment; the caller supplies the env source.
+pub fn budgets_from_env(get: impl Fn(&str) -> Option<String>) -> EnvBudgets {
+    EnvBudgets {
+        max_turns: parse_budget(get(MAX_TURNS_ENV)),
+        max_tool_calls: parse_budget(get(MAX_TOOL_CALLS_ENV)),
+        max_continuations: parse_continuations(get(MAX_CONTINUATIONS_ENV)),
+    }
 }
 
 fn parse_budget(value: Option<String>) -> Option<usize> {
     value.and_then(|raw| raw.trim().parse().ok())
+}
+
+fn parse_continuations(value: Option<String>) -> Option<u32> {
+    match value {
+        None => Some(DEFAULT_MAX_CONTINUATIONS),
+        Some(raw) => raw.trim().parse().ok().or(Some(DEFAULT_MAX_CONTINUATIONS)),
+    }
 }
 // `events` holds `AgentEvent`, which carries a `serde_json::Value` and is
 // therefore `PartialEq` but not `Eq`.
@@ -323,29 +365,107 @@ mod tests {
     }
 
     #[test]
+    fn default_continuation_ceiling_is_three() {
+        assert_eq!(
+            AgentLimits::default().max_continuations,
+            Some(3),
+            "continuation defaults bounded: an operator who never heard of \
+             the variable still gets the bound"
+        );
+    }
+
+    #[test]
+    fn continuation_budget_unset_means_default_bound() {
+        let budgets = budgets_from_env(|_| None);
+        assert_eq!(budgets.max_continuations, Some(3));
+    }
+
+    #[test]
+    fn continuation_budget_zero_disables_continuation() {
+        let budgets = budgets_from_env(|name| match name {
+            "SAYA_AGENT_MAX_CONTINUATIONS" => Some("0".to_string()),
+            _ => None,
+        });
+        assert_eq!(budgets.max_continuations, Some(0));
+    }
+
+    #[test]
+    fn continuation_budget_positive_value_is_honored() {
+        let budgets = budgets_from_env(|name| match name {
+            "SAYA_AGENT_MAX_CONTINUATIONS" => Some("7".to_string()),
+            _ => None,
+        });
+        assert_eq!(budgets.max_continuations, Some(7));
+    }
+
+    #[test]
+    fn continuation_budget_unparseable_means_default_bound_never_unbounded() {
+        for raw in ["abc", "", "-1"] {
+            let budgets = budgets_from_env(|name| match name {
+                "SAYA_AGENT_MAX_CONTINUATIONS" => Some(raw.to_string()),
+                _ => None,
+            });
+            assert_eq!(
+                budgets.max_continuations,
+                Some(3),
+                "unparseable {raw:?} must fall back to the bound, never unbounded"
+            );
+        }
+    }
+
+    #[test]
+    fn turn_and_tool_call_budgets_stay_unbounded_when_unset_through_new_struct() {
+        let budgets = budgets_from_env(|_| None);
+        assert!(budgets.max_turns.is_none());
+        assert!(budgets.max_tool_calls.is_none());
+    }
+
+    #[test]
+    fn env_budgets_flow_onto_agent_limits_unchanged() {
+        let lookup = |name: &str| match name {
+            "SAYA_AGENT_MAX_TURNS" => Some("11".to_string()),
+            "SAYA_AGENT_MAX_TOOL_CALLS" => Some("13".to_string()),
+            "SAYA_AGENT_MAX_CONTINUATIONS" => Some("5".to_string()),
+            _ => None,
+        };
+        let budgets = budgets_from_env(lookup);
+        // The composition `runtime.rs` performs: the value on `AgentLimits`
+        // is the one `budgets_from_env` produced.
+        let limits = AgentLimits {
+            max_turns: budgets.max_turns,
+            max_tool_calls: budgets.max_tool_calls,
+            max_continuations: budgets.max_continuations,
+            ..AgentLimits::default()
+        };
+        assert_eq!(limits.max_turns, Some(11));
+        assert_eq!(limits.max_tool_calls, Some(13));
+        assert_eq!(limits.max_continuations, Some(5));
+    }
+
+    #[test]
     fn budgets_from_env_sets_each_ceiling_independently_with_no_upper_limit() {
         let lookup = |name: &str| match name {
             "SAYA_AGENT_MAX_TURNS" => Some("1000000".to_string()),
             "SAYA_AGENT_MAX_TOOL_CALLS" => Some("7".to_string()),
             _ => None,
         };
-        let (turns, tool_calls) = budgets_from_env(lookup);
-        assert_eq!(turns, Some(1_000_000));
-        assert_eq!(tool_calls, Some(7));
+        let budgets = budgets_from_env(lookup);
+        assert_eq!(budgets.max_turns, Some(1_000_000));
+        assert_eq!(budgets.max_tool_calls, Some(7));
     }
 
     #[test]
     fn budgets_from_env_is_unbounded_when_unset_or_unparseable() {
-        let (turns, tool_calls) = budgets_from_env(|_| None);
-        assert!(turns.is_none() && tool_calls.is_none());
+        let budgets = budgets_from_env(|_| None);
+        assert!(budgets.max_turns.is_none() && budgets.max_tool_calls.is_none());
         // A set but unparseable value is treated as unset, not as zero: a typo
         // cannot silently collapse the ceiling to the smallest bound.
         let lookup = |name: &str| match name {
             "SAYA_AGENT_MAX_TURNS" => Some("not-a-number".to_string()),
             _ => None,
         };
-        let (turns, _) = budgets_from_env(lookup);
-        assert!(turns.is_none());
+        let budgets = budgets_from_env(lookup);
+        assert!(budgets.max_turns.is_none());
     }
 
     /// An already-sent tool message — a result the model has already seen in an

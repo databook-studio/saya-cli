@@ -182,7 +182,9 @@ pub(crate) async fn run_prompt_with_inputs(
     };
     // Turn and tool-call ceilings come from the environment and are unbounded
     // when unset: SAYA_AGENT_MAX_TURNS / SAYA_AGENT_MAX_TOOL_CALLS, with no
-    // upper limit on a set value.
+    // upper limit on a set value. The continuation ceiling defaults to its
+    // bound when unset (SAYA_AGENT_MAX_CONTINUATIONS), with `0` disabling
+    // continuation.
     let env_budgets = saya_agent::budgets_from_env(|name| std::env::var(name).ok());
     // The turn's universe and its executor ride together: a session dispatches
     // through the shared `RunTools` composite and advertises its write-shaped
@@ -214,8 +216,9 @@ pub(crate) async fn run_prompt_with_inputs(
         .iter()
         .any(|definition| definition.effect.local_state == LocalStateEffect::WriteWorkspace);
     let limits = AgentLimits {
-        max_turns: env_budgets.0,
-        max_tool_calls: env_budgets.1,
+        max_turns: env_budgets.max_turns,
+        max_tool_calls: env_budgets.max_tool_calls,
+        max_continuations: env_budgets.max_continuations,
         permit_candidate_writes: learning.permit_candidate_writes,
         context_byte_budget: runtime.resolved.ai.context_byte_budget,
         permit_workspace_writes,
