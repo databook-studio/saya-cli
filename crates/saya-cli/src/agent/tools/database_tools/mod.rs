@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn render_chart_requires_approval() {
-        let tools = DatabaseTools::definitions(true, false, false, false);
+        let tools = DatabaseTools::definitions(true, false, false, false, true);
         let chart_tool = tools
             .iter()
             .find(|tool| tool.name == "render_chart")

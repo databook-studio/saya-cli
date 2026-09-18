@@ -229,7 +229,7 @@ fn every_suggestible_token_parses_to_the_capability_it_names() {
 /// which block of the builder a definition happens to sit in.
 #[test]
 fn the_sql_family_is_the_definitions_read_sql_shape() {
-    let definitions = DatabaseTools::definitions(true, false, false, false);
+    let definitions = DatabaseTools::definitions(true, false, false, false, true);
     let declared: Vec<&str> = definitions
         .iter()
         .filter(|tool| {
@@ -269,7 +269,7 @@ fn the_sql_family_is_the_definitions_read_sql_shape() {
 /// an ask under the same policy.
 #[test]
 fn one_sql_grant_covers_the_family_on_one_connection_only() {
-    let definitions = DatabaseTools::definitions(true, false, false, false);
+    let definitions = DatabaseTools::definitions(true, false, false, false, true);
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
     policy.grants().grant("sql:analytics");
     for tool in SQL_FAMILY {
@@ -416,8 +416,8 @@ fn a_named_connection_is_judged_by_the_name_shape_rule() {
 /// `sql:analytics` advertises nothing new.
 #[test]
 fn the_privacy_gate_stands_above_the_grants() {
-    let closed = DatabaseTools::definitions(false, false, false, false);
-    let open = DatabaseTools::definitions(true, false, false, false);
+    let closed = DatabaseTools::definitions(false, false, false, false, false);
+    let open = DatabaseTools::definitions(true, false, false, false, true);
     for tool in SQL_FAMILY {
         assert!(
             !closed.iter().any(|definition| definition.name == *tool),

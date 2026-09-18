@@ -19,7 +19,7 @@ use saya_harness::fetch::{DownloadBudget, FetchLimits};
 use std::path::PathBuf;
 
 fn database_tool(name: &str) -> ToolDefinition {
-    DatabaseTools::definitions(true, false, false, false)
+    DatabaseTools::definitions(true, false, false, false, true)
         .into_iter()
         .find(|tool| tool.name == name)
         .unwrap_or_else(|| panic!("{name} is defined"))

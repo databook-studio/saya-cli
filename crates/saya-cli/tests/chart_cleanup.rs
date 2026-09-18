@@ -49,26 +49,47 @@ fn clear_chart_temp_files() {
     }
 }
 
-/// Polls the accumulated stdout for the ndjson line reporting the tool call
-/// completed, which proves the chart file was actually written.
-fn wait_for_tool_denied(
+/// Waits for the run to finish (the `complete` event) and then asserts the
+/// hidden chart call failed validation — never a denial, never a completion:
+/// an unadvertised name is unknown to the loop, so nothing approves it and
+/// nothing executes it.
+fn wait_for_chart_validation_failure(
     buffer: &Arc<Mutex<String>>,
     stderr_text: &Arc<Mutex<String>>,
-    tool: &str,
     timeout: Duration,
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        let seen = buffer.lock().unwrap();
-        if seen.lines().any(|line| {
-            line.contains("\"event\":\"tool_denied\"") && line.contains(&format!("\"{tool}\""))
-        }) {
+        let seen = buffer.lock().unwrap().clone();
+        if seen
+            .lines()
+            .any(|line| line.contains("\"event\":\"complete\""))
+        {
+            drop(seen);
+            let done = buffer.lock().unwrap().clone();
+            assert!(
+                done.lines()
+                    .any(|line| line.contains("\"name\":\"render_chart\"")
+                        && line.contains("failed validation")),
+                "a hidden render_chart must fail validation, never deny or complete; stdout so far:\n{}\nstderr so far:\n{}",
+                done,
+                stderr_text.lock().unwrap()
+            );
+            assert!(
+                !done
+                    .lines()
+                    .any(|line| line.contains("\"event\":\"tool_denied\"")
+                        && line.contains("render_chart")),
+                "a hidden tool is unknown, not denied; stdout so far:\n{}\nstderr so far:\n{}",
+                done,
+                stderr_text.lock().unwrap()
+            );
             return;
         }
         drop(seen);
         assert!(
             Instant::now() < deadline,
-            "{tool} was neither denied nor completed; stdout so far:\n{}\nstderr so far:\n{}",
+            "the run never completed; stdout so far:\n{}\nstderr so far:\n{}",
             buffer.lock().unwrap(),
             stderr_text.lock().unwrap()
         );
@@ -77,11 +98,15 @@ fn wait_for_tool_denied(
 }
 
 #[test]
-fn read_only_denies_render_chart_headlessly_and_nothing_is_written() {
+fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
 
-    // Round 1: one render_chart tool call against the test database.
+    // Round 1: one render_chart tool call against the test database — the
+    // canned hallucination the mock always issues, even when the tool is
+    // hidden. An unadvertised name fails validation before approval or
+    // execution, which is exactly the hidden-not-advertised outcome: no
+    // denial, no file, no browser.
     let render_call = serde_json::json!({
         "choices": [{"delta": {"tool_calls": [
             {"index": 0, "id": "call_chart", "function": {"name": "render_chart",
@@ -219,18 +244,17 @@ fn read_only_denies_render_chart_headlessly_and_nothing_is_written() {
     child.stdin.as_mut().unwrap().flush().unwrap();
 
     // `render_chart` writes a file and opens a browser, so it declares an
-    // external side effect — and read-only approval denies exactly that. This
-    // headless run therefore cannot produce a chart at all, which is the
-    // intended outcome of the M0-1 gate rather than a regression: a
-    // side-effecting tool must not auto-run without a person saying yes.
-    // Cleanup itself is covered directly by the unit tests in
-    // `chart/cleanup.rs`; what this end-to-end run pins is the denial.
-    wait_for_tool_denied(
-        &accumulated,
-        &stderr_accum,
-        "render_chart",
-        Duration::from_secs(30),
-    );
+    // external side effect — and read-only approval denies exactly that, so
+    // the chart stays hidden there, not advertised-and-denied: the request
+    // the mock sends names no advertised tool, so it fails validation before
+    // approval or execution — no denial, no file, no browser. This headless
+    // run therefore cannot produce a chart at all, which is the intended
+    // outcome of the M0-1 gate rather than a regression: a side-effecting
+    // tool must not auto-run without a person saying yes. What this
+    // end-to-end run pins is the validation failure (not a denial) plus no
+    // chart temp file. Cleanup itself is covered directly by the unit tests
+    // in `chart/cleanup.rs`.
+    wait_for_chart_validation_failure(&accumulated, &stderr_accum, Duration::from_secs(30));
     let written = chart_temp_files();
     assert!(
         written.is_empty(),

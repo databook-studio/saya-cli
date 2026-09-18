@@ -212,6 +212,20 @@ pub(crate) async fn run_prompt_with_inputs(
             has_state_store,
             learning.permit_candidate_writes,
             false,
+            // The one-shot `ask` path builds a `TerminalApproval` over this
+            // same mode (below) and keeps `permit_external_effects: false`,
+            // so the loop's misconfiguration guard stays armed — and a
+            // `render_chart` call (`external_side_effect: true`,
+            // `requires_approval: true`, no grant token) goes to the
+            // decider, which resolves it exactly as a session under the same
+            // policy would: per-call ask when prompting is possible. The
+            // chart is advertised exactly there and hidden everywhere else.
+            agent_mode == AgentMode::Build
+                && match approval {
+                    ApprovalPolicy::Ask => can_prompt,
+                    ApprovalPolicy::Bypass => true,
+                    _ => false,
+                },
         ),
     };
     // The fail-closed permits are the definitions' own enforcement, read off

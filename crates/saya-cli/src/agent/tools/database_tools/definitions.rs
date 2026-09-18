@@ -13,12 +13,17 @@ impl DatabaseTools {
     /// sites unchanged. `permit_workspace_writes` gates `workspace_write` the
     /// hidden-not-advertised way: a write tool the model can see but never use
     /// wastes context and invites retries, so it is omitted until the run was
-    /// constructed with workspace writes permitted.
+    /// constructed with workspace writes permitted. `permit_external_effects`
+    /// gates `render_chart` the same way: the chart tool declares
+    /// `external_side_effect: true`, so read-only, never, and plan enforcement
+    /// deny every call to it — advertising it there would hand the model a
+    /// tool and then refuse every call.
     pub(crate) fn definitions(
         allow_query_data: bool,
         has_state_store: bool,
         permit_candidate_writes: bool,
         permit_workspace_writes: bool,
+        permit_external_effects: bool,
     ) -> Vec<ToolDefinition> {
         let connection_prop = serde_json::json!({
             "type": "string",
@@ -448,38 +453,45 @@ impl DatabaseTools {
                 },
                 completion: None,
             });
-            tools.push(ToolDefinition {
-                name: "render_chart".into(),
-                description: "Visualize the results of a SQL query as an interactive chart the user can open \
+            // `render_chart` declares `external_side_effect: true` — it writes
+            // a file and opens the user's browser — so it is pushed only where
+            // the surface can actually allow an external effect. Anywhere
+            // else the enforcement denies every call, so the definition stays
+            // hidden, not advertised-and-denied.
+            if permit_external_effects {
+                tools.push(ToolDefinition {
+                    name: "render_chart".into(),
+                    description: "Visualize the results of a SQL query as an interactive chart the user can open \
                     in their browser. Call this whenever the user asks to chart, plot, graph, or visualize \
                     data. Provide the SQL to run and choose the chart_type that best fits the data: `bar` for \
                     comparing categories, `line` or `area` for trends over an ordered/time axis, `pie` or \
                     `doughnut` for a category's share of a total, `scatter` for the relationship between two \
                     numeric columns. Optionally name the x (label) column, the y (value) column(s), and a \
                     title. The chart is written to a file and opened; only the file path is returned."
-                    .into(),
-                read_only: false,
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "connection": connection_prop.clone(),
-                        "sql": { "type": "string" },
-                        "chart_type": { "type": "string", "enum": ["bar","line","area","pie","doughnut","scatter"] },
-                        "x": { "type": "string" },
-                        "y": { "type": "array", "items": { "type": "string" } },
-                        "title": { "type": "string" }
+                        .into(),
+                    read_only: false,
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "connection": connection_prop.clone(),
+                            "sql": { "type": "string" },
+                            "chart_type": { "type": "string", "enum": ["bar","line","area","pie","doughnut","scatter"] },
+                            "x": { "type": "string" },
+                            "y": { "type": "array", "items": { "type": "string" } },
+                            "title": { "type": "string" }
+                        },
+                        "required": ["sql", "chart_type"],
+                        "additionalProperties": false
+                    }),
+                    effect: ToolEffect {
+                        database_data: false,
+                        external_side_effect: true,
+                        requires_approval: true,
+                        local_state: LocalStateEffect::None,
                     },
-                    "required": ["sql", "chart_type"],
-                    "additionalProperties": false
-                }),
-                effect: ToolEffect {
-                    database_data: false,
-                    external_side_effect: true,
-                    requires_approval: true,
-                    local_state: LocalStateEffect::None,
-                },
-                completion: Some("chart written and opened".into()),
-            });
+                    completion: Some("chart written and opened".into()),
+                });
+            }
             tools.push(ToolDefinition {
                 name: "designate_answer".into(),
                 description: "Designate the SQL query that answers the user's question — the \

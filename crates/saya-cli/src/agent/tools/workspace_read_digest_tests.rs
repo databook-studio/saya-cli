@@ -317,7 +317,7 @@ async fn an_over_bound_read_still_truncates_as_before() {
 /// that `digest` names the state an `expected_digest` precondition states.
 #[test]
 fn the_read_definition_advertises_the_digest() {
-    let tools = DatabaseTools::definitions(false, false, false, false);
+    let tools = DatabaseTools::definitions(false, false, false, false, false);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "workspace_read")

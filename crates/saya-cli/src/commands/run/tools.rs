@@ -85,11 +85,20 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
     steps
         .iter()
         .map(|step| {
+            // A run's approval is its approved scopes, and
+            // `permit_external_effects` is derived from them (fetch or
+            // runner — the same egress union the episode driver derives its
+            // permit from; the interpreter family deliberately carries none
+            // because an interpreter child is wired with an empty
+            // `net_allow`): a step that approved no egress never approved a
+            // chart either, so `render_chart` stays hidden there — the same
+            // advertised-but-always-refused defect the session surface had.
             let mut definitions = DatabaseTools::definitions(
                 allow_query_data,
                 false,
                 false,
                 step.capabilities.workspace_write,
+                step.capabilities.fetch.is_some() || step.capabilities.runner.is_some(),
             );
             let scratch = scratch.filter(|_| step.capabilities.scratch);
             if scratch.is_some() {

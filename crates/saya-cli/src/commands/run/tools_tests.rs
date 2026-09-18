@@ -33,10 +33,27 @@ fn cancellation() -> CancellationToken {
 
 /// The names each step's definitions must carry, in order, for a read-only
 /// run with the privacy gate open: the database and workspace-read set, no
-/// write tool, and no contract tools (a run passes no state store).
-/// `workspace_write` sits between `grep` and the sql tools when approved;
-/// the scope-asking tails append after it.
+/// write tool, no chart (a step that approved no egress approves no chart),
+/// and no contract tools (a run passes no state store). `workspace_write`
+/// sits between `grep` and the sql tools when approved; the scope-asking
+/// tails append after it.
 const OPEN_GATE: &[&str] = &[
+    "schema_discovery",
+    "workspace_read",
+    "workspace_list",
+    "glob",
+    "grep",
+    "bounded_sql_query",
+    "bounded_sql_query_all",
+    "result_shape",
+    "column_health",
+    "join_check",
+    "designate_answer",
+];
+/// The same universe for a step that approved an egress scope (fetch or
+/// runner): `render_chart` sits where it always did, between `join_check`
+/// and `designate_answer`.
+const OPEN_GATE_WITH_CHART: &[&str] = &[
     "schema_discovery",
     "workspace_read",
     "workspace_list",
@@ -261,10 +278,53 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
             "result_shape",
             "column_health",
             "join_check",
-            "render_chart",
             "designate_answer",
         ],
         "the approved write tools must keep their place in the universe"
+    );
+}
+
+/// A run step that approves no egress does not advertise `render_chart` —
+/// the same advertised-but-always-refused defect the session surface had,
+/// on the run surface — while a step that approved fetch or runner does.
+#[test]
+fn a_step_without_egress_hides_render_chart_and_an_egress_step_advertises_it() {
+    use saya_types::{Destination, FetchScope};
+    let database = Arc::new(DatabaseTools::new(None, 100, true));
+    let workspace = workspace("chart-egress");
+    let (_calls, fetch) = run_fetch(b"irrelevant");
+
+    let mut fetch_caps = Capabilities::default();
+    fetch_caps.fetch = Some(
+        FetchScope::new(vec![
+            Destination::new("https", "files.example.org").unwrap(),
+        ])
+        .expect("shaped"),
+    );
+    let built = toolsets(
+        ToolsetInputs {
+            database: &database,
+            scratch: None,
+            fetch: Some(&fetch),
+            runner: None,
+            workspace: &workspace,
+            allow_query_data: true,
+            cancellation: &cancellation(),
+        },
+        &[
+            step("read only", Capabilities::default()),
+            step("pull the corpus", fetch_caps),
+        ],
+    );
+    assert!(
+        !names(&built, 0).contains(&"render_chart".to_string()),
+        "a step that approved no egress must not advertise render_chart: {:?}",
+        names(&built, 0)
+    );
+    assert_eq!(
+        names(&built, 1),
+        [OPEN_GATE_WITH_CHART, FETCH_TAIL].concat(),
+        "the fetch-asking step keeps the chart with its fetch tools"
     );
 }
 
@@ -498,7 +558,7 @@ async fn the_fetch_tools_are_in_the_universe_of_the_steps_that_asked_for_it() {
     // write tool — fetch alone is not the workspace-write scope.
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, FETCH_TAIL].concat(),
+        [OPEN_GATE_WITH_CHART, FETCH_TAIL].concat(),
         "the fetch-asking step's universe must carry both fetch tools"
     );
     assert!(
@@ -562,7 +622,7 @@ async fn a_download_runs_through_the_composite_with_only_the_fetch_scope() {
 
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, FETCH_TAIL].concat(),
+        [OPEN_GATE_WITH_CHART, FETCH_TAIL].concat(),
         "the step's universe must carry both fetch tools and nothing write-shaped besides"
     );
 
@@ -621,7 +681,7 @@ async fn run_program_is_absent_where_no_runner_wiring_exists() {
     );
     assert_eq!(
         names(&built, 0),
-        OPEN_GATE,
+        OPEN_GATE_WITH_CHART,
         "without wiring the runner tool must be absent from the universe"
     );
     let error = built[0]
@@ -713,7 +773,7 @@ async fn the_runner_tool_is_in_the_universe_of_the_steps_that_asked_for_it() {
     // the runner alone is not the workspace-write scope.
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, RUNNER_TAIL].concat(),
+        [OPEN_GATE_WITH_CHART, RUNNER_TAIL].concat(),
         "the runner-asking step's universe must end with run_program"
     );
     assert!(
@@ -765,7 +825,7 @@ async fn a_step_s_narrowed_allowlist_rejects_a_program_it_did_not_ask_for() {
     );
     assert_eq!(
         names(&built, 0),
-        [OPEN_GATE, RUNNER_TAIL].concat(),
+        [OPEN_GATE_WITH_CHART, RUNNER_TAIL].concat(),
         "the step's universe must carry run_program"
     );
     let error = built[0]
@@ -825,6 +885,9 @@ async fn the_interpreter_grant_does_not_leak_into_the_steps_that_did_not_ask_for
 
     // Both steps carry `run_program` — the two families route through one
     // tool, each step's doors narrowed to what that step itself asked for.
+    // Neither step carries `render_chart`: the egress union is fetch and
+    // runner — the interpreter family deliberately carries none (an
+    // interpreter child is wired with an empty `net_allow`).
     assert_eq!(
         names(&built, 0),
         [OPEN_GATE, RUNNER_TAIL].concat(),
@@ -832,7 +895,7 @@ async fn the_interpreter_grant_does_not_leak_into_the_steps_that_did_not_ask_for
     );
     assert_eq!(
         names(&built, 1),
-        [OPEN_GATE, RUNNER_TAIL].concat(),
+        [OPEN_GATE_WITH_CHART, RUNNER_TAIL].concat(),
         "the runner-asking step's universe must carry run_program"
     );
 

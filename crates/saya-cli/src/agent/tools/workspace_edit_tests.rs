@@ -58,7 +58,7 @@ impl Drop for Sandbox {
 /// The real definition, taken from the advertised list: the loop tests must
 /// exercise the gate against the definition the model would actually see.
 fn workspace_edit_definition() -> ToolDefinition {
-    DatabaseTools::definitions(false, false, false, true)
+    DatabaseTools::definitions(false, false, false, true, false)
         .into_iter()
         .find(|tool| tool.name == "workspace_edit")
         .expect("workspace_edit is advertised when workspace writes are permitted")
@@ -457,12 +457,12 @@ async fn an_error_payload_never_carries_file_content() {
 /// model can see but never use wastes context and invites retries.
 #[test]
 fn the_tool_is_hidden_when_writes_are_not_permitted() {
-    let hidden = DatabaseTools::definitions(false, false, false, false);
+    let hidden = DatabaseTools::definitions(false, false, false, false, false);
     assert!(
         !hidden.iter().any(|tool| tool.name == "workspace_edit"),
         "workspace_edit must be hidden when writes are not permitted"
     );
-    let shown = DatabaseTools::definitions(false, false, false, true);
+    let shown = DatabaseTools::definitions(false, false, false, true, false);
     let tool = shown
         .iter()
         .find(|tool| tool.name == "workspace_edit")
