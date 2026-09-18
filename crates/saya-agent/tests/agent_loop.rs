@@ -2760,6 +2760,13 @@ async fn truncation_is_never_retried_and_emits_no_reset() {
     let sink = RecordingSink {
         events: events.clone(),
     };
+    // O1 property 5 is per-turn: `receive` never retries a truncation. The
+    // loop-level continuation budget is disabled here so this test pins the
+    // single-attempt receive behavior, not the continuation policy.
+    let limits = AgentLimits {
+        max_continuations: Some(0),
+        ..AgentLimits::default()
+    };
     let error = run_agent_with_sink(
         &provider,
         &MockTools {
@@ -2767,7 +2774,7 @@ async fn truncation_is_never_retried_and_emits_no_reset() {
         },
         request(),
         definitions(),
-        AgentLimits::default(),
+        limits,
         &AllowReadOnlyApproval,
         &sink,
         CancellationToken::new(),
@@ -2951,6 +2958,366 @@ async fn tool_result_reaching_the_provider_is_redacted() {
         tool_message.content.contains("api_key=[redacted]"),
         "the value must be replaced by the redaction marker, got: {}",
         tool_message.content
+    );
+}
+
+/// A scripted stream provider for the continuation tests. The first turn (or
+/// every turn when `always_truncate`) streams the partial text and then caps
+/// mid-answer with `OutputTruncated`; later turns answer with fixed prose.
+/// Every request is recorded so tests can inspect what the provider saw.
+struct ContinuationScriptProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+    calls: Mutex<usize>,
+    always_truncate: bool,
+    partial_text: String,
+    partial_tool_json: Vec<String>,
+}
+
+#[async_trait]
+impl ChatProvider for ContinuationScriptProvider {
+    fn name(&self) -> &str {
+        "continuation-script"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        let turn = *calls;
+        drop(calls);
+        if !self.always_truncate && turn > 1 {
+            return Ok(Box::pin(futures_util::stream::iter(vec![
+                Ok(ProviderEvent::TextDelta("cooperative answer".into())),
+                Ok(ProviderEvent::Done),
+            ])));
+        }
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            Ok(ProviderEvent::TextDelta(self.partial_text.clone())),
+            Err(saya_agent::ProviderError::output_truncated(
+                self.partial_text.clone(),
+                self.partial_tool_json.clone(),
+            )),
+        ])))
+    }
+}
+
+fn continuation_script(
+    requests: &Arc<Mutex<Vec<ChatRequest>>>,
+    always_truncate: bool,
+    partial_text: &str,
+    partial_tool_json: Vec<String>,
+) -> ContinuationScriptProvider {
+    ContinuationScriptProvider {
+        requests: requests.clone(),
+        calls: Mutex::new(0),
+        always_truncate,
+        partial_text: partial_text.into(),
+        partial_tool_json,
+    }
+}
+
+/// Counts user-role messages in `messages` carrying the continuation note,
+/// keyed on its fixed wording rather than on the private constant.
+fn continuation_notes(messages: &[ChatMessage]) -> usize {
+    messages
+        .iter()
+        .filter(|message| message.role == "user" && message.content.contains("output-token limit"))
+        .count()
+}
+
+/// Recovery: a truncation on turn 1 followed by a cooperative turn completes
+/// the run. The partial is discarded, never replayed: it appears nowhere in
+/// the messages the provider received on turn 2, and exactly one user-role
+/// continuation note does.
+#[tokio::test]
+async fn continuation_recovers_after_truncation_and_discards_the_partial() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(
+        &requests,
+        false,
+        "TRUNCATED-PROSE-SENTINEL-7QZ",
+        vec!["PARTIAL-TOOL-SENTINEL-7QZ".into()],
+    );
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run recovers after one truncation");
+    assert_eq!(output.answer, "cooperative answer");
+    let seen = requests.lock().unwrap().clone();
+    assert_eq!(
+        seen.len(),
+        2,
+        "one truncated turn plus one cooperative turn"
+    );
+    let turn_two = seen[1].messages.clone();
+    for message in &turn_two {
+        assert!(
+            !message.content.contains("TRUNCATED-PROSE-SENTINEL-7QZ"),
+            "the partial text must never be replayed: {}",
+            message.content
+        );
+        assert!(
+            !message.content.contains("PARTIAL-TOOL-SENTINEL-7QZ"),
+            "the partial tool JSON must never be replayed: {}",
+            message.content
+        );
+        let calls = serde_json::to_string(&message.tool_calls).unwrap();
+        assert!(
+            !calls.contains("TRUNCATED-PROSE-SENTINEL-7QZ")
+                && !calls.contains("PARTIAL-TOOL-SENTINEL-7QZ"),
+            "no partial may hide in a replayed tool call: {calls}"
+        );
+    }
+    assert_eq!(
+        continuation_notes(&turn_two),
+        1,
+        "exactly one user-role continuation note on turn 2"
+    );
+}
+
+/// Budget exhausted: with `max_continuations: Some(3)` and a provider that
+/// truncates every turn, exactly 1 + 3 provider calls happen, then the run
+/// returns the original truncation error — same payload, same `Display`.
+#[tokio::test]
+async fn continuation_budget_exhausted_returns_the_original_truncation_error() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(&requests, true, "partial", Vec::new());
+    let limits = AgentLimits {
+        max_continuations: Some(3),
+        ..AgentLimits::default()
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        limits,
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        4,
+        "one initial turn plus three continuations"
+    );
+    let saya_agent::ProviderError::OutputTruncated {
+        partial_text,
+        partial_tool_json,
+    } = saya_agent::ProviderError::output_truncated("partial".into(), Vec::new())
+    else {
+        unreachable!("the constructor builds the compared variant");
+    };
+    assert!(
+        matches!(
+            &error,
+            AgentError::Provider(saya_agent::ProviderError::OutputTruncated { .. })
+        ),
+        "the original truncation error surfaces: {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "provider response truncated: the model hit its output-token limit",
+        "the Display string is unchanged"
+    );
+    let AgentError::Provider(saya_agent::ProviderError::OutputTruncated {
+        partial_text: got_text,
+        partial_tool_json: got_json,
+    }) = error
+    else {
+        unreachable!("matched above");
+    };
+    assert_eq!(got_text, partial_text, "the partial text is byte-identical");
+    assert_eq!(
+        got_json, partial_tool_json,
+        "the partial tool JSON is byte-identical"
+    );
+}
+
+/// Disabled: `Some(0)` and `None` both surface the truncation immediately —
+/// one provider call, no continuation note pushed.
+#[tokio::test]
+async fn continuation_disabled_surfaces_truncation_immediately() {
+    for max_continuations in [Some(0), None] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = continuation_script(&requests, true, "partial", Vec::new());
+        let limits = AgentLimits {
+            max_continuations,
+            ..AgentLimits::default()
+        };
+        let error = run_agent_with_sink(
+            &provider,
+            &MockTools {
+                calls: Arc::new(Mutex::new(Vec::new())),
+            },
+            request(),
+            definitions(),
+            limits,
+            &AllowReadOnlyApproval,
+            &NoopSink,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                AgentError::Provider(saya_agent::ProviderError::OutputTruncated { .. })
+            ),
+            "max_continuations={max_continuations:?}: the error surfaces: {error:?}"
+        );
+        assert_eq!(
+            requests.lock().unwrap().len(),
+            1,
+            "max_continuations={max_continuations:?}: no second call, so no note was pushed"
+        );
+    }
+}
+
+/// A turn whose cap lands mid-tool-argument runs no tool at all: the partial
+/// call never reaches the executor.
+#[tokio::test]
+async fn truncated_tool_call_executes_nothing() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(
+        &requests,
+        false,
+        "half an answer",
+        vec!["{\"sql\": \"SELECT 1".into()],
+    );
+    let tool_calls = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: tool_calls.clone(),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run recovers after the truncated tool call");
+    assert_eq!(output.answer, "cooperative answer");
+    assert!(
+        tool_calls.lock().unwrap().is_empty(),
+        "the half-assembled tool call must never execute"
+    );
+}
+
+/// No `TurnReset` is emitted on any continuation path: a continuation is not
+/// a retry of the same request, so it must not borrow the retry wording.
+#[tokio::test]
+async fn continuation_emits_no_turn_reset() {
+    // The recovery path: one truncation, then a cooperative turn.
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    run_agent_with_sink(
+        &continuation_script(&requests, false, "partial", Vec::new()),
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: events.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run recovers");
+    // The exhausted path: truncations until the continuation budget runs out.
+    let exhausted_requests = Arc::new(Mutex::new(Vec::new()));
+    let exhausted_events = Arc::new(Mutex::new(Vec::new()));
+    run_agent_with_sink(
+        &continuation_script(&exhausted_requests, true, "partial", Vec::new()),
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_continuations: Some(3),
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: exhausted_events.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    for (seen, path) in [
+        (events.lock().unwrap().clone(), "recovery"),
+        (exhausted_events.lock().unwrap().clone(), "exhausted"),
+    ] {
+        assert!(
+            !seen
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnReset)),
+            "{path}: a continuation is not a retry, so no reset may be emitted: {seen:?}"
+        );
+    }
+}
+
+/// The ceilings compose: `max_turns: Some(2)` against a provider that
+/// truncates forever stops at the turn ceiling through the salvage path —
+/// two turns plus the salvage call — not after three continuations.
+#[tokio::test]
+async fn max_turns_ceiling_wins_over_continuations() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(&requests, true, "partial", Vec::new());
+    let limits = AgentLimits {
+        max_turns: Some(2),
+        ..AgentLimits::default()
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        limits,
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the turn ceiling salvages instead of erroring");
+    assert!(
+        output.truncated,
+        "the run stopped at the turn ceiling through salvage"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        3,
+        "two turns plus the salvage call — the tighter ceiling wins"
     );
 }
 
