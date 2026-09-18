@@ -35,7 +35,7 @@ mod sql_task;
 mod stream_events;
 mod table;
 mod terminal;
-mod transcript;
+pub(crate) mod transcript;
 mod trust;
 pub(super) mod types;
 mod ui;
@@ -313,6 +313,12 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
         // has news; the event loop never blocks on the run.
         app.poll_run_panel(state.show_thinking);
 
+        // Poll the /compact worker (non-blocking): apply its result when ready.
+        if app.compact_task.is_some() {
+            super::compact_task::poll(&mut app, state);
+            queue_session_save(&mut app, store, state);
+        }
+
         // Poll the direct-SQL worker (non-blocking): apply its result when ready.
         if let Some((rx, task, _started)) = app.sql_task.as_ref() {
             match rx.try_recv() {
@@ -387,6 +393,9 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
                     app.start_agent(prompt, state, session);
                 }
                 Dispatch::OpenSessionPicker => app.open_session_picker(store),
+                Dispatch::Compact => {
+                    super::compact_task::start(&mut app, state);
+                }
                 Dispatch::SetColumns(arg) => app.set_visible_columns(arg),
                 Dispatch::RunPanel {
                     goal,

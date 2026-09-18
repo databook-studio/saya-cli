@@ -33,6 +33,9 @@ pub(crate) enum Dispatch {
     /// `/columns` — set which columns wide result tables show. Handled by the
     /// caller, which owns the view state on `App`.
     SetColumns(Option<String>),
+    /// `/compact` — shrink working memory through a bounded summariser call.
+    /// Runs on a worker task like a SQL command; the caller owns the handle.
+    Compact,
     /// `/run <goal…>` — a fresh run the run panel drives as a worker task;
     /// the caller owns the panel state and the worker handle.
     RunPanel {
@@ -254,6 +257,9 @@ pub(crate) fn dispatch(
                     BlockKind::System,
                     "Schema view is available in headless mode; TUI rendering is coming next.",
                 ),
+                SessionAction::Compact => {
+                    result = Dispatch::Compact;
+                }
                 SessionAction::Agent(_) | SessionAction::Cancelled => {}
                 SessionAction::NotImplemented(feature) => {
                     transcript.push(BlockKind::System, format!("Not implemented: {feature}"))

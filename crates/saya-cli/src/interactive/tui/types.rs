@@ -185,6 +185,16 @@ pub(crate) struct TrustPrompt {
     pub(crate) error: Option<String>,
 }
 
+/// The outcome of a `/compact` worker task: either the applied message or a
+/// plain failure message (the session is unchanged on every failure path).
+/// Carries the compaction call's usage apart from the answering total, folded
+/// into the learning total exactly like the post-turn extraction call's.
+pub(crate) struct CompactOutcome {
+    pub(crate) message: String,
+    pub(crate) failed: bool,
+    pub(crate) usage: Option<saya_agent::TokenUsage>,
+}
+
 /// A native clipboard helper running in the background alongside an OSC 52 write.
 pub(crate) struct ClipboardCopy {
     pub(crate) native_result: Receiver<bool>,
@@ -248,6 +258,9 @@ pub(crate) struct App {
         super::sql_task::SqlTask,
         std::time::Instant,
     )>,
+    /// In-flight `/compact` running off-thread; polled each loop tick so the
+    /// UI never blocks on the summariser. `None` until `/compact` runs.
+    pub(crate) compact_task: Option<std::sync::mpsc::Receiver<CompactOutcome>>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
     /// Horizontal-scroll / column-selection state for wide result tables.

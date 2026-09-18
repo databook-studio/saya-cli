@@ -40,6 +40,17 @@ pub struct SessionState {
     pub task_list: saya_types::SessionTaskList,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
+    /// The `/compact` summary of the older turns, replayed ahead of the
+    /// verbatim tail. Working memory only (`#[serde(skip)]`, the `usage`
+    /// precedent): the transcript keeps what was said, compaction rewrites
+    /// only what the model replays. `/clear` resets it with the rest of the
+    /// conversation.
+    #[serde(skip)]
+    pub compaction_summary: Option<String>,
+    /// How many oldest turns the summary replaces. `#[serde(skip)]` with the
+    /// summary: a resumed session replays its persisted turns in full.
+    #[serde(skip)]
+    pub compacted_turns: usize,
     /// Whether the model's chain-of-thought is shown in the transcript. Off by
     /// default; toggled by `/thinking` or `--show-thinking`. In-memory only: it
     /// is a display preference, not conversation data. A resumed session
@@ -96,6 +107,8 @@ impl SessionState {
             task_list: saya_types::SessionTaskList::default(),
             messages: Vec::new(),
             turns: Vec::new(),
+            compaction_summary: None,
+            compacted_turns: 0,
             show_thinking: false,
             usage: SessionUsage::default(),
             host_composed: false,
@@ -150,7 +163,8 @@ impl SessionState {
     pub fn provider_history(&self) -> Vec<ChatMessage> {
         let include_sensitive =
             self.provider.eq_ignore_ascii_case("ollama") || self.allow_data_sharing;
-        self.turns
+        let mut history: Vec<ChatMessage> = self
+            .turns
             .iter()
             .filter(|turn| include_sensitive || !turn.database_derived)
             .flat_map(|turn| {
@@ -159,7 +173,24 @@ impl SessionState {
                     ChatMessage::text("assistant", turn.assistant.clone()),
                 ]
             })
-            .collect()
+            .collect();
+        // A `/compact` summary replays ahead of the verbatim tail it
+        // replaced: the count was recorded at compaction time over the same
+        // filtered view only when no turn was filtered out, so a filtered
+        // session replays its kept turns in full rather than a misaligned
+        // prefix. The transcript (`messages`) is untouched throughout.
+        if let Some(summary) = self.compaction_summary.as_deref()
+            && self.compacted_turns > 0
+            && self
+                .turns
+                .iter()
+                .all(|turn| include_sensitive || !turn.database_derived)
+        {
+            let drop = (self.compacted_turns * 2).min(history.len());
+            history.drain(..drop);
+            history.insert(0, ChatMessage::text("user", format!("Earlier conversation summary (compacted from {} turns; the newest turns below are verbatim):\n{summary}", self.compacted_turns)));
+        }
+        history
     }
 
     pub fn redacted(&self) -> RedactedSession {

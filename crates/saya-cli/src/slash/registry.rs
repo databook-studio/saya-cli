@@ -20,6 +20,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "chart",
     "explain",
     "clear",
+    "compact",
     "history",
     "sessions",
     "resume",

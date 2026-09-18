@@ -102,6 +102,7 @@ mod tests {
     fn trust_app() -> App {
         App {
             sql_task: None,
+            compact_task: None,
             input: InputBuffer::new(),
             transcript: Transcript::new(),
             profiles: vec!["analytics".into()],

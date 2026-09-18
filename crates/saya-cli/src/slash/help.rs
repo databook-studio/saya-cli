@@ -46,6 +46,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("chart", "Render the last query as an HTML chart"),
     ("explain", "Explain the given or last SQL statement"),
     ("clear", "Clear current session context"),
+    ("compact", "Summarise older turns to shrink working memory"),
     ("history", "List saved sessions as text"),
     (
         "sessions",
@@ -160,6 +161,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
         "Session",
         &[
             ("clear", "/clear"),
+            ("compact", "/compact"),
             ("history", "/history"),
             ("sessions", "/sessions"),
             ("resume", "/resume <id>"),
@@ -250,6 +252,13 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "columns [name,name,… | all] — choose which columns wide result tables show in the TUI. Names match column headers (case-insensitive); unmatched names are ignored, and a filter that matches nothing falls back to all columns. /columns or /columns all resets. The full table is still copied by Ctrl+Y/Ctrl+B; this only changes what is painted. Example: /columns id, total   or   /columns all",
         ),
         "clear" => Some("clear — clear the conversation and context. Example: /clear"),
+        "compact" => Some(
+            "compact — summarise the older turns into a short summary the model replays ahead of \
+             the newest verbatim turns. Working memory only: the transcript is unchanged \
+             (/export first if you want the full text). Manual only — nothing triggers it \
+             automatically — and a failed compaction leaves the conversation exactly as it was. \
+             Example: /compact",
+        ),
         "history" => Some("history — list saved sessions as text. Example: /history"),
         "sessions" => {
             Some("sessions — browse saved sessions; opens a picker in the TUI. Example: /sessions")
