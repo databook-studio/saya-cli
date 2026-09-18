@@ -238,6 +238,78 @@ fn write_shaped() -> ToolEffect {
     }
 }
 
+fn session_write_shaped() -> ToolEffect {
+    // The session task list's shape: writes session-scoped metadata only, no
+    // external side effect.
+    ToolEffect {
+        database_data: false,
+        external_side_effect: false,
+        requires_approval: false,
+        local_state: LocalStateEffect::WriteSession,
+    }
+}
+
+/// A session-metadata write is read-shaped for approval purposes: read-only
+/// allows it, and Plan allows it under every policy — a read-only or Plan
+/// session that could not record what it is doing would be absurd. `never`
+/// still denies it, and an external side effect beside the session write
+/// still refuses.
+#[test]
+fn session_write_is_allowed_wherever_reads_are() {
+    let read_only = SessionPolicy::new(ApprovalPolicy::ReadOnly);
+    assert_eq!(
+        read_only.resolve(&session_write_shaped(), None),
+        ApprovalDecision::Allow,
+        "read-only allows a session-metadata write"
+    );
+    for policy in [
+        ApprovalPolicy::Ask,
+        ApprovalPolicy::ReadOnly,
+        ApprovalPolicy::Never,
+        ApprovalPolicy::Bypass,
+    ] {
+        let plan = with_mode(policy, AgentMode::Plan).resolve(&session_write_shaped(), None);
+        if policy == ApprovalPolicy::Never {
+            assert_eq!(
+                plan,
+                ApprovalDecision::Deny { reason: None },
+                "never denies everything, session writes included, under {policy:?}"
+            );
+        } else {
+            let build = SessionPolicy::new(policy).resolve(&session_write_shaped(), None);
+            assert_eq!(
+                plan, build,
+                "Plan leaves session writes exactly as {policy:?} resolves them"
+            );
+            assert!(
+                !matches!(plan, ApprovalDecision::Deny { .. }),
+                "Plan allows a session-metadata write under {policy:?}: bypass included"
+            );
+        }
+    }
+    let never = SessionPolicy::new(ApprovalPolicy::Never);
+    assert_eq!(
+        never.resolve(&session_write_shaped(), None),
+        ApprovalDecision::Deny { reason: None },
+        "never is a standing refusal for session writes too"
+    );
+    let side_effecting_session_write = ToolEffect {
+        external_side_effect: true,
+        ..session_write_shaped()
+    };
+    assert_eq!(
+        read_only.resolve(&side_effecting_session_write, None),
+        ApprovalDecision::Deny { reason: None },
+        "a session write with an external side effect is still refused"
+    );
+    assert_eq!(
+        with_mode(ApprovalPolicy::Bypass, AgentMode::Plan)
+            .resolve(&side_effecting_session_write, None),
+        ApprovalDecision::Deny { reason: None },
+        "Plan still refuses a session write carrying an external side effect"
+    );
+}
+
 fn external_effect() -> ToolEffect {
     ToolEffect {
         database_data: false,

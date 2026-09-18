@@ -28,6 +28,11 @@ pub enum LocalStateEffect {
     /// permitted, so a registered write tool cannot write merely by being
     /// registered.
     WriteWorkspace,
+    /// May write session-scoped metadata only — the task list on the session
+    /// record, never workspace files, never the database, never contracts or
+    /// the cache. A tool reaching any of those declares the effect for
+    /// *that*, not this one.
+    WriteSession,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
