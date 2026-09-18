@@ -86,7 +86,7 @@ impl Drop for Sandbox {
 /// The real definition, taken from the advertised list: the loop must run
 /// against the definition the model would actually see.
 fn workspace_edit_definition() -> saya_agent::ToolDefinition {
-    DatabaseTools::definitions(false, false, false, true)
+    DatabaseTools::definitions(false, false, false, true, false)
         .into_iter()
         .find(|tool| tool.name == "workspace_edit")
         .expect("workspace_edit is advertised when workspace writes are permitted")
