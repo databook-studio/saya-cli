@@ -20,7 +20,8 @@ pub(crate) fn emit_action(
         // Doctor is intercepted in the session loop (it needs `runtime`) and
         // never reaches here; the arm keeps the match exhaustive.
         SessionAction::Doctor => {}
-        SessionAction::Agent(_)
+        SessionAction::Compact
+        | SessionAction::Agent(_)
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)
         | SessionAction::Contracts(_)

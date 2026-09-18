@@ -756,6 +756,26 @@ fn handle_line_verbatim(
         block_on(store.save(state.redacted()))?;
         return Ok(false);
     }
+    if let SessionAction::Compact = action {
+        // `/compact` touches working memory, not files or the database, so
+        // it runs outside the approval engine — exactly as today's trimming
+        // does. The summariser runs here (headless owns a `block_on` seam);
+        // any failure leaves the conversation exactly as it was.
+        let outcome = block_on(super::compact_task::run(
+            runtime,
+            state,
+            &session.universe(),
+        ));
+        state.usage.record_learning(outcome.usage);
+        let action = if outcome.failed {
+            SessionAction::Error(outcome.message)
+        } else {
+            SessionAction::Message(outcome.message)
+        };
+        super::session_emit::emit_action(action, format, state, store)?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(false);
+    }
     if let SessionAction::Resume(id) = action {
         let defaults = super::session_resume::SessionDefaults {
             provider: state.provider.clone(),

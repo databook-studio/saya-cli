@@ -122,6 +122,7 @@ pub(crate) fn unused_store() -> SqliteStateStore {
 pub(crate) fn empty_app() -> App {
     App {
         sql_task: None,
+        compact_task: None,
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: vec!["analytics".into(), "billing".into()],

@@ -10,6 +10,10 @@ use saya_agent::ApprovalPolicy;
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionAction {
     Message(String),
+    /// `/compact` — shrink working memory through a bounded summariser call.
+    /// The loops intercept this (it needs the provider runtime); the arm here
+    /// keeps the match exhaustive.
+    Compact,
     Agent(AgentOutput),
     Cancelled,
     NotImplemented(String),
@@ -148,9 +152,12 @@ impl SessionState {
             SlashCommand::Export(path) => SessionAction::Export(path),
             SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Explain(sql) => SessionAction::Explain(sql),
+            SlashCommand::Compact => SessionAction::Compact,
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
+                self.compaction_summary = None;
+                self.compacted_turns = 0;
                 self.usage = Default::default();
                 self.context_warned = false;
                 // The transcript keeps what was said; the model's working

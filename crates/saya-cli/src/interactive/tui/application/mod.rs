@@ -45,6 +45,7 @@ impl App {
             clipboard_copy: None,
             session_save: None,
             sql_task: None,
+            compact_task: None,
             pending_session_save: None,
             last_query: None,
             wide_table: Default::default(),
@@ -68,7 +69,7 @@ impl App {
     /// SQL tasks never makes Esc claim a query was cancelled when it was only
     /// detached. See [`App::detach_sql_task`].
     pub(crate) fn is_busy(&self) -> bool {
-        self.request.stream.is_some() || self.sql_task.is_some()
+        self.request.stream.is_some() || self.sql_task.is_some() || self.compact_task.is_some()
     }
 
     /// Number of visible text rows the input box should show when wrapped to
@@ -152,6 +153,7 @@ pub(crate) mod tests_support {
     pub(crate) fn idle_app() -> App {
         App {
             sql_task: None,
+            compact_task: None,
             input: InputBuffer::new(),
             transcript: Transcript::new(),
             profiles: Vec::new(),

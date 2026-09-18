@@ -2,7 +2,12 @@ pub(crate) mod session_activation;
 // The `/allow` composition refusals: why a scope that parses still gates
 // nothing in this session's composition.
 pub(crate) mod allow_refusal;
+pub(crate) mod compact_task;
 mod session_commands;
+pub(crate) mod session_compact;
+#[cfg(test)]
+#[path = "session_compact_tests.rs"]
+mod session_compact_tests;
 pub(crate) mod session_deny;
 #[cfg(test)]
 mod session_deny_red_tests;
