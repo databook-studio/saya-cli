@@ -253,6 +253,7 @@ fn test_runtime() -> crate::config::runtime::RuntimeConfig {
                 context_window_tokens: None,
                 show_thinking: false,
                 retry_delays_ms: vec![250, 500, 1000],
+                compaction: saya_config::CompactionMode::Auto,
             },
             max_rows: 100,
             read_only: true,
