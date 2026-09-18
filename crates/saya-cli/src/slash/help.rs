@@ -29,6 +29,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("model", "Set or view the AI model"),
     ("privacy", "Enable or disable data sharing privacy"),
     ("approvals", "Set approval policy for tool execution"),
+    ("mode", "Set the agent's task posture: build or plan"),
     ("schema", "Inspect or refresh database schema"),
     ("doctor", "Diagnose config: secrets, provider endpoint"),
     ("usage", "Show session token usage and cache hit rate"),
@@ -129,6 +130,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("model", "/model [name]"),
             ("privacy", "/privacy [on|off]"),
             ("approvals", "/approvals [ask|read-only|never|bypass]"),
+            ("mode", "/mode [plan|build]"),
             ("allow", "/allow <scopes…>"),
             ("grants", "/grants"),
         ],
@@ -207,6 +209,14 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "approvals [ask|read-only|never|bypass] — view or set tool execution approval policy. \
              `bypass` runs every call without asking (a typed, global consent given at the flag or \
              this command); every structural guard still applies. Example: /approvals ask",
+        ),
+        "mode" => Some(
+            "mode [plan|build] — view or set the agent's task posture. `plan` investigates \
+             read-only: write-shaped tools are hidden from the model and refuse before the \
+             approval match runs, so Plan still denies writes under `bypass` (bypass \
+             auto-allows reads; Plan refuses writes). Plan is the task posture — what the \
+             agent may do — while `read-only` is the consent posture — what an approval \
+             answers. Example: /mode plan",
         ),
         "schema" => Some(
             "schema [refresh] — display or refresh database schema context. Example: /schema refresh",
@@ -625,6 +635,39 @@ mod tests {
         assert!(
             listing.contains("/approvals [ask|read-only|never|bypass]"),
             "the /help listing must show the full mode vocabulary: {listing}"
+        );
+    }
+
+    /// `/mode` is wired at every hand-maintained touchpoint the
+    /// cli-application standard names: the registry, the description table
+    /// (the popup's single source), the `/help` listing, and the per-command
+    /// help. The detailed entry states the composition honestly: under
+    /// `bypass`, Plan still denies writes (bypass auto-allows reads, Plan
+    /// refuses writes), and Plan is a task posture while `read-only` is a
+    /// consent posture.
+    #[test]
+    fn mode_is_registered_listed_described_and_honest() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"mode"),
+            "mode is registered"
+        );
+        assert!(
+            description_for("mode").is_some(),
+            "mode has a popup description"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/mode [plan|build]"),
+            "the listing shows the /mode usage: {listing}"
+        );
+        let help = command_help("mode").expect("mode has per-command help");
+        assert!(
+            help.contains("bypass") && help.contains("Plan still denies writes"),
+            "the /mode help states the bypass composition: {help}"
+        );
+        assert!(
+            help.contains("task posture") && help.contains("consent posture"),
+            "the /mode help separates Plan from read-only: {help}"
         );
     }
 }

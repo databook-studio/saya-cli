@@ -137,6 +137,12 @@ impl SessionState {
                 }
                 SessionAction::Message(format!("Approval mode: {}", self.approval_mode))
             }
+            SlashCommand::Mode(value) => {
+                if let Some(value) = value {
+                    self.agent_mode = value.as_str().into();
+                }
+                SessionAction::Message(mode_message(&self.agent_mode))
+            }
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
             SlashCommand::Export(path) => SessionAction::Export(path),
@@ -213,6 +219,16 @@ fn approval_name(policy: ApprovalPolicy) -> String {
         ApprovalPolicy::Bypass => "bypass",
     }
     .into()
+}
+
+/// The `/mode` answer: the session's current posture, with what it means.
+/// Set when the command named a mode, reported either way — the `Approvals`
+/// arm's shape, so the two sibling commands read alike.
+fn mode_message(mode: &str) -> String {
+    match mode {
+        "plan" => "Mode: plan — read-only; write-shaped tools are hidden and refuse".into(),
+        _ => "Mode: build — writes allowed, asks per approval policy".into(),
+    }
 }
 
 fn available_providers() -> &'static [&'static str] {
@@ -348,5 +364,52 @@ mod tests {
         state.apply(SlashCommand::Clear, &[]);
         assert_eq!(state.usage.answering.turns, 0);
         assert_eq!(state.usage.answering.input_tokens, 0);
+    }
+
+    /// `/mode` mirrors `/approvals`: bare reports without changing, a value
+    /// switches, and the answer always names the current posture. Switching
+    /// back to build restores the Build surface the status line reads.
+    #[test]
+    fn mode_reports_switches_and_restores() {
+        use saya_agent::AgentMode;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        // Bare reports the default without changing it.
+        let SessionAction::Message(report) = state.apply(SlashCommand::Mode(None), &[]) else {
+            panic!("expected SessionAction::Message");
+        };
+        assert_eq!(
+            report,
+            "Mode: build — writes allowed, asks per approval policy"
+        );
+        assert_eq!(state.agent_mode, "build");
+        // Switching to plan answers plan and sticks.
+        let SessionAction::Message(switched) =
+            state.apply(SlashCommand::Mode(Some(AgentMode::Plan)), &[])
+        else {
+            panic!("expected SessionAction::Message");
+        };
+        assert_eq!(
+            switched,
+            "Mode: plan — read-only; write-shaped tools are hidden and refuse"
+        );
+        assert_eq!(state.agent_mode, "plan");
+        // Bare now reports plan.
+        let SessionAction::Message(again) = state.apply(SlashCommand::Mode(None), &[]) else {
+            panic!("expected SessionAction::Message");
+        };
+        assert_eq!(
+            again,
+            "Mode: plan — read-only; write-shaped tools are hidden and refuse"
+        );
+        // Switching back restores the Build surface.
+        state.apply(SlashCommand::Mode(Some(AgentMode::Build)), &[]);
+        assert_eq!(state.agent_mode_parsed(), AgentMode::Build);
+        let SessionAction::Message(back) = state.apply(SlashCommand::Mode(None), &[]) else {
+            panic!("expected SessionAction::Message");
+        };
+        assert_eq!(
+            back,
+            "Mode: build — writes allowed, asks per approval policy"
+        );
     }
 }

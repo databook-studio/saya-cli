@@ -412,6 +412,7 @@ mod tests {
             provider: "ollama".into(),
             model: "qwen".into(),
             approval_mode: "read-only".into(),
+            agent_mode: "build".into(),
             workspace_root: None,
             sharing_on: true,
             host_composed: false,

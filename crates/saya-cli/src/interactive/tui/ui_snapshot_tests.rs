@@ -159,7 +159,7 @@ fn empty_app_with_text(text: &str) -> App {
 }
 
 /// A stable status bar: profile `analytics`, `ollama/qwen`, `read-only`
-/// approval, sharing on. The spinner/elapsed fields are not read when the app
+/// approval, `build` mode, sharing on. The spinner/elapsed fields are not read when the app
 /// is idle, so this is the whole status strip.
 pub(crate) fn fixed_status() -> StatusView {
     StatusView {
@@ -168,6 +168,7 @@ pub(crate) fn fixed_status() -> StatusView {
         provider: "ollama".into(),
         model: "qwen".into(),
         approval_mode: "read-only".into(),
+        agent_mode: "build".into(),
         workspace_root: Some("/home/user/proj".into()),
         sharing_on: true,
         host_composed: false,

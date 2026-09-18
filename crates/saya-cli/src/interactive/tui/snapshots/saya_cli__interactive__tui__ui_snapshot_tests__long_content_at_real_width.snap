@@ -1,6 +1,6 @@
 ---
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
-assertion_line: 440
+assertion_line: 443
 expression: buffer
 ---
 "▸ ▸ 2 tool calls · ok — bounded_sql_query select order_id, customer_id, placed_at, fulfilled_at,    "
@@ -29,7 +29,7 @@ expression: buffer
 "                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "
-" [analytics] ollama/qwen approval:read-only ws:/home/user/proj host:off sharing:on  ·  ? for help   "
+" [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:off sharing:on  ·  ? "
 "╭ saya ────────────────────────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                                       │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"

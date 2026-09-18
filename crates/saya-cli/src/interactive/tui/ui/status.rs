@@ -29,8 +29,9 @@ fn approval_colour(mode: &str) -> Color {
 }
 
 /// Builds the coloured status-bar segments (profile, provider/model, approval,
-/// workspace, host, sharing), each on the bar background so they blend into
-/// the strip.
+/// mode, workspace, host, sharing), each on the bar background so they blend
+/// into the strip. The `mode:` segment mirrors the headless header's, so the
+/// two surfaces cannot drift.
 fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     let base = Style::default().bg(bg);
     let approval_color = approval_colour(&view.approval_mode);
@@ -51,6 +52,7 @@ fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
             format!("approval:{} ", view.approval_mode),
             base.fg(approval_color),
         ),
+        Span::styled(format!("mode:{} ", view.agent_mode), base.fg(secondary())),
     ];
     // The workspace segment names the tree the session can touch, so the
     // binding is visible at every moment it matters — including on a resume
@@ -142,6 +144,7 @@ mod tests {
             provider: "ollama".into(),
             model: "m".into(),
             approval_mode: "bypass".into(),
+            agent_mode: "build".into(),
             workspace_root: None,
             sharing_on: false,
             host_composed: false,
@@ -208,6 +211,23 @@ mod tests {
             approval.style.fg,
             Some(danger()),
             "bypass renders in danger red, never a softening colour"
+        );
+    }
+
+    /// The TUI bar carries the `mode:` segment beside `approval:`, with the
+    /// same words the headless header renders — the anti-drift check for the
+    /// posture `/mode` switches.
+    #[test]
+    fn the_status_bar_carries_the_mode_segment() {
+        let spans = status_spans(&bypass_view(), status_bg());
+        let mode = spans
+            .iter()
+            .find(|span| span.content.starts_with("mode:"))
+            .expect("the status bar carries a mode segment");
+        assert_eq!(
+            mode.content.as_ref(),
+            "mode:build ",
+            "the TUI bar says the same words as the headless line"
         );
     }
 }

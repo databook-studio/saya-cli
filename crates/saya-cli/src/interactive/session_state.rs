@@ -14,6 +14,14 @@ pub struct SessionState {
     pub model: String,
     pub allow_data_sharing: bool,
     pub approval_mode: String,
+    /// The session's task posture (`AgentMode::as_str` spelling), beside
+    /// `approval_mode`: `build` does the work, `plan` investigates read-only.
+    /// Carried as the mode's own string so the persisted session file stays
+    /// a plain string like `approval_mode`; parsed at the composition root.
+    /// Defaults to Build; `#[serde(default)]` keeps old session files
+    /// loading (they predate the field and resume as build).
+    #[serde(default = "default_agent_mode")]
+    pub agent_mode: String,
     /// The session's pinned workspace root, canonical (SESSION-WORKSPACE.md):
     /// resolved once at first start — the git worktree top, or an explicit
     /// `--workspace` — persisted here, and re-opened on a resume, never
@@ -68,6 +76,7 @@ impl SessionState {
             model: model.into(),
             allow_data_sharing: false,
             approval_mode: "ask".into(),
+            agent_mode: default_agent_mode(),
             workspace_root: None,
             messages: Vec::new(),
             turns: Vec::new(),
@@ -160,6 +169,22 @@ impl SessionState {
             .chain(self.included_profiles.iter().cloned())
             .collect()
     }
+
+    /// The session's task posture, parsed from the stored spelling. An
+    /// unknown or legacy-absent value falls back to Build — the composition
+    /// root reads this, never the raw string, so a corrupt or pre-`/mode`
+    /// session still turns exactly as before.
+    pub fn agent_mode_parsed(&self) -> saya_agent::AgentMode {
+        self.agent_mode.parse().unwrap_or_default()
+    }
+}
+
+/// The default task posture's own spelling: `AgentMode::Build`, rendered
+/// where the mode is named. The `serde(default)` entry point for
+/// `SessionState::agent_mode`, so session files written before the field
+/// existed resume as build.
+fn default_agent_mode() -> String {
+    saya_agent::AgentMode::Build.as_str().into()
 }
 
 #[cfg(test)]

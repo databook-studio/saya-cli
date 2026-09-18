@@ -212,8 +212,8 @@ pub(crate) struct StreamRequest {
     pub(crate) last_sql: Option<String>,
     pub(crate) session: Arc<SessionUniverse>,
     pub(crate) journal: Option<Arc<saya_store::SessionJournal>>,
-    // The agent's task posture, threaded like `approval`: the real source
-    // arrives with `/mode` in the next slice.
+    // The agent's task posture, threaded like `approval`: the session's
+    // `/mode` state at the composition root.
     pub(crate) agent_mode: AgentMode,
 }
 

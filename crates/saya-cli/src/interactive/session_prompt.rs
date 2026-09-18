@@ -49,8 +49,8 @@ pub(crate) fn status_line(state: &SessionState) -> String {
         host.push_str(&format!(" deny:{}", state.denied_programs.join(",")));
     }
     format!(
-        "[{profile}{included}] {}/{} approval:{} {workspace} {host} {sharing}",
-        state.provider, state.model, state.approval_mode
+        "[{profile}{included}] {}/{} approval:{} mode:{} {workspace} {host} {sharing}",
+        state.provider, state.model, state.approval_mode, state.agent_mode
     )
 }
 
@@ -61,6 +61,9 @@ pub(crate) struct StatusView {
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) approval_mode: String,
+    /// The session's task posture — mirrors `status_line`'s `mode:` segment,
+    /// so the TUI bar and the headless header cannot drift.
+    pub(crate) agent_mode: String,
     /// The pinned workspace root, when one binds — mirrors `status_line`'s
     /// segment; `None` renders the no-root shape.
     pub(crate) workspace_root: Option<String>,
@@ -84,6 +87,7 @@ pub(crate) fn status_segments(state: &SessionState) -> StatusView {
         provider: state.provider.clone(),
         model: state.model.clone(),
         approval_mode: state.approval_mode.clone(),
+        agent_mode: state.agent_mode.clone(),
         workspace_root: state.workspace_root.clone(),
         sharing_on: state.allow_data_sharing,
         host_composed: state.host_composed,
@@ -176,6 +180,41 @@ mod tests {
                 .workspace_root
                 .is_none(),
             "the TUI view mirrors the no-root shape"
+        );
+    }
+
+    /// The header gains a `mode:` segment beside `approval:`: build by
+    /// default, plan after `/mode plan`. The structured `StatusView` the TUI
+    /// reads carries the same word — the line loop and the TUI cannot drift.
+    #[test]
+    fn status_line_and_view_carry_the_mode_segment() {
+        use crate::slash::SlashCommand;
+        let mut state = session_with_sharing(false);
+        let line = status_line(&state);
+        assert!(
+            line.contains("mode:build"),
+            "the default posture reads mode:build: {line}"
+        );
+        assert!(
+            line.contains("approval:"),
+            "the mode segment sits beside approval:: {line}"
+        );
+        assert_eq!(
+            status_segments(&state).agent_mode,
+            "build",
+            "the TUI view mirrors the header"
+        );
+
+        state.apply(SlashCommand::Mode(Some(saya_agent::AgentMode::Plan)), &[]);
+        let planned = status_line(&state);
+        assert!(
+            planned.contains("mode:plan"),
+            "after /mode plan the header reads mode:plan: {planned}"
+        );
+        assert_eq!(
+            status_segments(&state).agent_mode,
+            "plan",
+            "the TUI view follows the switch"
         );
     }
 }

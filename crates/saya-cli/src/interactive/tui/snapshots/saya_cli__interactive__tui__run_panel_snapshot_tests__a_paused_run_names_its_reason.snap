@@ -29,7 +29,7 @@ expression: buffer
 "│                                                                                                  │"
 "│                                                                                                  │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
-" [analytics] ollama/qwen approval:read-only ws:/home/user/proj host:off sharing:on  ·  ? for help   "
+" [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:off sharing:on  ·  ? "
 "╭ saya ────────────────────────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                                       │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"

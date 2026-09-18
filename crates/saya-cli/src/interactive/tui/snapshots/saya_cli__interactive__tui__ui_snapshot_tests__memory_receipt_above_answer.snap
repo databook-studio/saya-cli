@@ -1,6 +1,6 @@
 ---
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
-assertion_line: 305
+assertion_line: 308
 expression: buffer
 ---
 "· memory supplied · 2 claims (1 unconfirmed — review with /queue)               "
@@ -23,7 +23,7 @@ expression: buffer
 "                                                                                "
 "                                                                                "
 "                                                                                "
-" [analytics] ollama/qwen approval:read-only ws:/home/user/proj host:off sharing:"
+" [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:o"
 "╭ saya ────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                   │"
 "╰──────────────────────────────────────────────────────────────────────────────╯"
