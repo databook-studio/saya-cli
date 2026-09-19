@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+mod validation;
+
+pub use validation::{
+    MAX_SCHEMA_BYTES, MAX_SCHEMA_COLUMNS, MAX_SCHEMA_DATABASES, MAX_SCHEMA_NAME_CHARS,
+    MAX_SCHEMA_SCHEMAS, MAX_SCHEMA_TABLES, SchemaValidationError,
+};
+
 /// A complete schema snapshot returned by a connector.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SchemaTree {
@@ -210,5 +217,22 @@ mod tests {
         let json = serde_json::to_string(&fk).unwrap();
         let back: ForeignKey = serde_json::from_str(&json).unwrap();
         assert_eq!(back.referenced_schema.as_deref(), Some("auth"));
+    }
+
+    #[test]
+    fn schema_snapshot_rejects_aggregate_limits_and_long_names() {
+        let mut tree = tree_with("orders");
+        tree.databases[0].schemas[0].tables[0].columns = (0..=MAX_SCHEMA_COLUMNS)
+            .map(|index| Column {
+                name: format!("column_{index}"),
+                data_type: "TEXT".into(),
+                nullable: true,
+            })
+            .collect();
+        assert!(tree.validate().is_err());
+
+        tree.databases[0].schemas[0].tables[0].columns.truncate(1);
+        tree.databases[0].schemas[0].tables[0].name = "x".repeat(MAX_SCHEMA_NAME_CHARS + 1);
+        assert!(tree.validate().is_err());
     }
 }

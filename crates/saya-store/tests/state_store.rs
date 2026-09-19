@@ -1,7 +1,7 @@
 use saya_store::{
     AuditEntry, AuditOperation, AuditStatus, AuditStore, SchemaStore, SqliteStateStore, StoreError,
 };
-use saya_types::{Column, Database, Schema, SchemaTree, Table};
+use saya_types::{Column, Database, MAX_SCHEMA_COLUMNS, Schema, SchemaTree, Table};
 use std::{
     fs,
     path::PathBuf,
@@ -37,6 +37,39 @@ async fn schema_roundtrip_upsert_invalidate_and_versioned_reopen() {
     );
     assert_eq!(store.list_schema_metadata().await.unwrap().len(), 1);
     store.invalidate_schema(PROFILE).await.unwrap();
+    assert!(store.get_schema(PROFILE).await.unwrap().is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn oversized_schema_is_rejected_before_cache_write() {
+    let root = temp_root("schema-limit");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let schema = SchemaTree {
+        databases: vec![Database {
+            name: "main".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![Table {
+                    name: "wide".into(),
+                    columns: (0..=MAX_SCHEMA_COLUMNS)
+                        .map(|index| Column {
+                            name: format!("c{index}"),
+                            data_type: "TEXT".into(),
+                            nullable: true,
+                        })
+                        .collect(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
+                }],
+            }],
+        }],
+    };
+    assert_eq!(
+        store.upsert_schema(PROFILE, &schema).await,
+        Err(StoreError::LimitExceeded)
+    );
     assert!(store.get_schema(PROFILE).await.unwrap().is_none());
     let _ = fs::remove_dir_all(root);
 }

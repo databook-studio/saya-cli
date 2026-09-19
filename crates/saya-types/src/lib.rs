@@ -34,6 +34,10 @@ pub use run::{
     is_refused_runner_program,
 };
 pub use schema::{Column, Database, ForeignKey, Schema, SchemaTree, Table};
+pub use schema::{
+    MAX_SCHEMA_BYTES, MAX_SCHEMA_COLUMNS, MAX_SCHEMA_DATABASES, MAX_SCHEMA_NAME_CHARS,
+    MAX_SCHEMA_SCHEMAS, MAX_SCHEMA_TABLES, SchemaValidationError,
+};
 pub use session_tasks::{
     MAX_SESSION_TASKS, MAX_TASK_NOTE_CHARS, MAX_TASK_TITLE_CHARS, SessionTask, SessionTaskError,
     SessionTaskList, TaskStatus,

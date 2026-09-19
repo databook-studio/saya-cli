@@ -3,14 +3,18 @@ use crate::{
     sqlite_support,
 };
 use async_trait::async_trait;
-use saya_types::SchemaTree;
+use saya_types::{MAX_SCHEMA_BYTES, SchemaTree};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[async_trait]
 impl SchemaStore for SqliteStateStore {
     async fn upsert_schema(&self, profile_id: &str, schema: &SchemaTree) -> Result<(), StoreError> {
         sqlite_support::validate_profile_id(profile_id)?;
+        schema.validate().map_err(|_| StoreError::LimitExceeded)?;
         let json = serde_json::to_string(schema).map_err(|_| StoreError::Unavailable)?;
+        if json.len() > MAX_SCHEMA_BYTES {
+            return Err(StoreError::LimitExceeded);
+        }
         let mut tx = self
             .pool()
             .await?
@@ -32,8 +36,14 @@ impl SchemaStore for SqliteStateStore {
         .await
         .map_err(|_| StoreError::Unavailable)?;
         row.map(|(json, updated_unix_ms, version)| {
+            if json.len() > MAX_SCHEMA_BYTES {
+                return Err(StoreError::LimitExceeded);
+            }
+            let schema: SchemaTree =
+                serde_json::from_str(&json).map_err(|_| StoreError::Unavailable)?;
+            schema.validate().map_err(|_| StoreError::LimitExceeded)?;
             Ok(CachedSchema {
-                schema: serde_json::from_str(&json).map_err(|_| StoreError::Unavailable)?,
+                schema,
                 updated_unix_ms,
                 version: version as u32,
             })

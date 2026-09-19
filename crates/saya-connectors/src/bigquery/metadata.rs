@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use saya_types::{Column, ConnectionError, Database, Schema, SchemaTree, Table};
+use saya_types::{
+    Column, ConnectionError, Database, MAX_SCHEMA_COLUMNS, MAX_SCHEMA_TABLES, Schema, SchemaTree,
+    Table,
+};
 
 use super::BigQueryConnector;
 use super::errors;
@@ -9,7 +12,7 @@ use crate::DatabaseConnector;
 /// Upper bound on the column rows fetched in one pass. A real dataset stays
 /// well under this; the cap fails closed instead of growing without limit.
 const PAGE: usize = 5_000;
-const MAX_COLUMNS: usize = 200_000;
+const MAX_COLUMNS: usize = MAX_SCHEMA_COLUMNS;
 
 /// Discovers one dataset's tables and columns. Both `INFORMATION_SCHEMA.TABLES`
 /// and `INFORMATION_SCHEMA.COLUMNS` are read per dataset: TABLES enumerates
@@ -34,25 +37,59 @@ async fn table_names(
     dataset: &str,
 ) -> Result<Vec<String>, ConnectionError> {
     let (project, dataset) = super::dataset::split(dataset, &connector.project);
-    let sql = format!(
+    let mut names = Vec::new();
+    let mut offset = 0;
+    loop {
+        let sql = table_page_sql(&project, &dataset, offset);
+        let output = connector
+            .execute(saya_types::QueryRequest::new(sql, PAGE))
+            .await
+            .map_err(|_| errors::schema())?;
+        let fetched = output.rows.len();
+        if output.truncated {
+            return Err(ConnectionError::schema_failed(
+                "BigQuery table page was truncated; refusing an incomplete schema",
+            ));
+        }
+        append_table_page(output.rows, &mut names)?;
+        if fetched < PAGE {
+            break;
+        }
+        offset = offset.checked_add(PAGE).ok_or_else(|| {
+            ConnectionError::schema_failed("BigQuery table page offset overflowed")
+        })?;
+    }
+    Ok(names)
+}
+
+fn table_page_sql(project: &str, dataset: &str, offset: usize) -> String {
+    format!(
         "SELECT table_name FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES` \
-         ORDER BY table_name LIMIT {PAGE}",
+         ORDER BY table_name LIMIT {PAGE} OFFSET {offset}"
+    )
+}
+
+fn append_table_page(
+    rows: Vec<serde_json::Value>,
+    names: &mut Vec<String>,
+) -> Result<(), ConnectionError> {
+    if names.len().saturating_add(rows.len()) > MAX_SCHEMA_TABLES {
+        return Err(ConnectionError::schema_failed(
+            "BigQuery dataset has too many tables to enumerate completely; narrow the dataset",
+        ));
+    }
+    names.extend(
+        rows.into_iter()
+            .map(|row| {
+                row.as_array()
+                    .and_then(|cells| cells.first())
+                    .and_then(|cell| cell.as_str())
+                    .map(str::to_owned)
+                    .ok_or_else(errors::schema)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
     );
-    let output = connector
-        .execute(saya_types::QueryRequest::new(sql, PAGE))
-        .await
-        .map_err(|_| errors::schema())?;
-    output
-        .rows
-        .into_iter()
-        .map(|row| {
-            row.as_array()
-                .and_then(|cells| cells.first())
-                .and_then(|cell| cell.as_str())
-                .map(str::to_owned)
-                .ok_or_else(errors::schema)
-        })
-        .collect()
+    Ok(())
 }
 
 async fn columns(
@@ -269,5 +306,20 @@ mod tests {
             project = "my-proj",
         );
         assert!(crate::prepare_bigquery_sql(&tables_sql, 5000).is_ok());
+    }
+
+    #[test]
+    fn table_pages_always_carry_offset_for_complete_enumeration() {
+        let sql = table_page_sql("project", "analytics", PAGE);
+        assert!(sql.contains("LIMIT 5000 OFFSET 5000"));
+    }
+
+    #[test]
+    fn table_page_refuses_when_the_shared_snapshot_bound_is_exceeded() {
+        let rows = (0..=MAX_SCHEMA_TABLES)
+            .map(|index| serde_json::json!([format!("table_{index}")]))
+            .collect();
+        let error = append_table_page(rows, &mut Vec::new()).unwrap_err();
+        assert!(error.to_string().contains("too many tables"));
     }
 }
