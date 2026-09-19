@@ -458,10 +458,8 @@ async fn grep_skips_oversized_and_non_utf8_files_and_counts_the_skips() {
     let sandbox = Sandbox::new("grep-skip");
     let mut oversized = vec![b'a'; WORKSPACE_GREP_MAX_FILE_BYTES as usize];
     oversized.extend_from_slice(b"needle");
-    sandbox
-        .ws
-        .write("big.txt", &oversized)
-        .expect("contained write must succeed");
+    fs::write(sandbox.ws.root().join("big.txt"), &oversized)
+        .expect("oversized fixture must be written directly");
     sandbox
         .ws
         .write("bin.dat", b"\xff\xfe\xfd")
