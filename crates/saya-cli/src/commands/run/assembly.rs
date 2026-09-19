@@ -13,7 +13,7 @@
 //! surface for capabilities; the seeds are the per-call grant words the
 //! scopes' grammar stated.
 
-use crate::agent::runtime::query_data_allowed;
+use crate::agent::runtime::query_data_allowed_for_endpoint;
 use crate::agent::tools::DatabaseTools;
 use crate::agent::{profile, provider};
 use crate::config::runtime::RuntimeConfig;
@@ -150,7 +150,8 @@ pub(super) async fn assemble(
         .map_err(|error| error.to_string())?,
         None => (connection::ConnectionRegistry::new(""), Vec::new()),
     };
-    let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
+    let allow_query_data =
+        query_data_allowed_for_endpoint(ai.provider, ai.base_url.as_deref(), ai.allow_data_sharing);
     let profile_names = registry
         .names()
         .iter()

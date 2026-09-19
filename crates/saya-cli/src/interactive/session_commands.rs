@@ -91,6 +91,10 @@ impl SessionState {
                             "Unsupported provider: {value}. Use ollama, openai, openai_compatible, anthropic, or gemini."
                         ));
                     }
+                    if self.provider != value {
+                        self.provider_endpoint = None;
+                        self.provider_endpoint_bound = true;
+                    }
                     self.provider = value;
                     SessionAction::Message(format!("Provider: {}", self.provider))
                 } else {
@@ -248,6 +252,8 @@ impl SessionState {
             allow_data_sharing: Some(self.allow_data_sharing),
             profile: self.profile.clone(),
             included_profiles: self.included_profiles.clone(),
+            endpoint: self.provider_endpoint.clone(),
+            endpoint_bound: self.provider_endpoint_bound,
         }
     }
 }

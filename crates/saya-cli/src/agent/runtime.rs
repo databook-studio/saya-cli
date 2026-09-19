@@ -3,6 +3,7 @@ use super::knowledge_event::knowledge_supplied_event;
 use super::tools;
 pub(crate) use super::turn_config::{
     AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed,
+    query_data_allowed_for_endpoint,
 };
 use super::turn_inputs::{TurnInputs, prepare_turn};
 use crate::interactive::session_universe::SessionUniverse;
@@ -97,7 +98,8 @@ pub(crate) async fn run_prompt_with_inputs(
     let ai = inputs.ai;
     let provider = inputs.provider;
     let registry = inputs.registry;
-    let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
+    let allow_query_data =
+        query_data_allowed_for_endpoint(ai.provider, ai.base_url.as_deref(), ai.allow_data_sharing);
 
     // The turn's registry is the turn's connection fact: the deciders hold
     // the session universe's primary handle, and this binds the turn's

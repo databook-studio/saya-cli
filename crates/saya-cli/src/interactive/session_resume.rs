@@ -64,6 +64,8 @@ pub(crate) fn state_from_redacted(
     } else {
         value.model
     };
+    state.provider_endpoint = value.provider_endpoint;
+    state.provider_endpoint_bound = value.provider_endpoint_bound;
     state.approval_mode =
         if value.version < saya_store::SESSION_VERSION || value.approval_mode.is_empty() {
             defaults.approval_mode.clone()

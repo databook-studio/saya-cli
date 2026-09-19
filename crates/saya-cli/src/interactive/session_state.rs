@@ -12,6 +12,16 @@ pub struct SessionState {
     pub included_profiles: Vec<String>,
     pub provider: String,
     pub model: String,
+    /// The provider endpoint selected for this session. Persisting it keeps
+    /// resumed sessions under the same privacy classification as the session
+    /// that created their history.
+    #[serde(default)]
+    pub provider_endpoint: Option<String>,
+    /// Distinguishes an explicit endpoint clear from a legacy session with no
+    /// endpoint field, so resume can safely fall back to current config only
+    /// for the latter.
+    #[serde(default)]
+    pub provider_endpoint_bound: bool,
     pub allow_data_sharing: bool,
     pub approval_mode: String,
     /// The session's task posture (`AgentMode::as_str` spelling), beside
@@ -110,6 +120,8 @@ impl SessionState {
             included_profiles: Vec::new(),
             provider: "ollama".into(),
             model: model.into(),
+            provider_endpoint: None,
+            provider_endpoint_bound: false,
             allow_data_sharing: false,
             approval_mode: "ask".into(),
             agent_mode: default_agent_mode(),
@@ -133,6 +145,16 @@ impl SessionState {
             role: role.into(),
             content: content.into(),
         });
+    }
+
+    /// Binds a legacy or fresh session to the current runtime endpoint once.
+    /// A persisted explicit clear is left untouched so switching provider
+    /// cannot silently restore the old endpoint on the next turn.
+    pub(crate) fn bind_runtime_endpoint(&mut self, endpoint: Option<&str>) {
+        if !self.provider_endpoint_bound {
+            self.provider_endpoint = endpoint.map(str::to_owned);
+            self.provider_endpoint_bound = true;
+        }
     }
 
     pub fn record_turn(
@@ -172,8 +194,13 @@ impl SessionState {
     }
 
     pub fn provider_history(&self) -> Vec<ChatMessage> {
-        let include_sensitive =
-            self.provider.eq_ignore_ascii_case("ollama") || self.allow_data_sharing;
+        let provider = saya_config::AiProvider::parse(&self.provider)
+            .unwrap_or(saya_config::AiProvider::Ollama);
+        let include_sensitive = crate::agent::runtime::query_data_allowed_for_endpoint(
+            provider,
+            self.provider_endpoint.as_deref(),
+            self.allow_data_sharing,
+        );
         let mut history: Vec<ChatMessage> = self
             .turns
             .iter()
@@ -212,6 +239,8 @@ impl SessionState {
             included_profiles: self.included_profiles.clone(),
             provider: self.provider.clone(),
             model: self.model.clone(),
+            provider_endpoint: self.provider_endpoint.clone(),
+            provider_endpoint_bound: self.provider_endpoint_bound,
             allow_data_sharing: self.allow_data_sharing,
             approval_mode: self.approval_mode.clone(),
             agent_mode: self.agent_mode.clone(),

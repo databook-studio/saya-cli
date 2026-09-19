@@ -54,6 +54,14 @@ pub struct RedactedSession {
     pub provider: String,
     #[serde(default)]
     pub model: String,
+    /// The provider endpoint selected for the session, when known. Kept as a
+    /// URL string only; no credentials belong in a session record.
+    #[serde(default)]
+    pub provider_endpoint: Option<String>,
+    /// Whether the endpoint field was explicitly bound, including an
+    /// explicit clear after a provider switch.
+    #[serde(default)]
+    pub provider_endpoint_bound: bool,
     #[serde(default)]
     pub allow_data_sharing: bool,
     #[serde(default)]
@@ -96,6 +104,8 @@ impl Default for RedactedSession {
             included_profiles: Vec::new(),
             provider: String::new(),
             model: String::new(),
+            provider_endpoint: None,
+            provider_endpoint_bound: false,
             allow_data_sharing: false,
             approval_mode: String::new(),
             agent_mode: String::new(),
