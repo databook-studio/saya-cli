@@ -54,11 +54,14 @@ pub(crate) async fn show(
     };
     let mut state = ContractSchemaState::Current;
     let mut claims: Vec<ContractClaim> = Vec::with_capacity(kept.len());
+    let mut incomplete = false;
     for item in &kept {
         let validity = item_validity_for(item, schema, freshness);
         state = state.aggregate(validity.into());
         if let Some(carrier) = ContractClaim::from_knowledge_item(item) {
             claims.push(carrier);
+        } else {
+            incomplete = true;
         }
     }
     let conflicts = conflicts_for(&claims);
@@ -78,6 +81,6 @@ pub(crate) async fn show(
         claims,
         conflicts,
         truncated: false,
-        incomplete: false,
+        incomplete,
     }))
 }
