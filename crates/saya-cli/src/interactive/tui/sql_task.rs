@@ -142,15 +142,23 @@ fn complete_chart(
     };
     let path = match path_arg {
         Some(path) => std::path::PathBuf::from(path),
-        None => match crate::chart::create_temp_chart() {
-            Ok(path) => path,
+        None => match crate::chart::reserve_temp_chart() {
+            Ok(mut chart) => {
+                if let Err(msg) = chart.write_html(&html) {
+                    transcript.push(BlockKind::Error, msg);
+                    return;
+                }
+                chart.path().to_path_buf()
+            }
             Err(msg) => {
                 transcript.push(BlockKind::Error, msg);
                 return;
             }
         },
     };
-    if let Err(msg) = crate::chart::write_html(&html, &path) {
+    if path_arg.is_some()
+        && let Err(msg) = crate::chart::write_html(&html, &path)
+    {
         transcript.push(BlockKind::Error, msg);
         return;
     }

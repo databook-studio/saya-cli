@@ -6,11 +6,8 @@
 //! names explicitly (the TUI `/chart <path>` form) are never recorded and are
 //! therefore never deleted.
 
-use std::collections::hash_map::RandomState;
-use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::{fs::OpenOptions, io};
 
 static SESSION_CHART_FILES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
@@ -21,35 +18,6 @@ pub(crate) fn record_temp_chart(path: &Path) {
     if let Ok(mut files) = SESSION_CHART_FILES.lock() {
         files.push(path.to_path_buf());
     }
-}
-
-/// Creates and records an automatic chart file with a fresh, private name.
-///
-/// `create_new` makes the path reservation atomic, so an existing symlink or
-/// file is never followed or replaced. The caller writes the HTML to the
-/// returned path and may rely on session teardown to remove it.
-pub(crate) fn create_temp_chart() -> Result<PathBuf, String> {
-    let temp = std::env::temp_dir();
-    for attempt in 0..16_u64 {
-        let nonce = RandomState::new().hash_one((std::process::id(), attempt));
-        let path = temp.join(format!("saya-chart-{nonce:016x}.html"));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        match options.open(&path) {
-            Ok(_) => {
-                record_temp_chart(&path);
-                return Ok(path);
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("failed to create chart file: {error}")),
-        }
-    }
-    Err("failed to allocate a unique chart file".into())
 }
 
 /// Deletes the given chart files, returning how many were removed. Missing
@@ -74,11 +42,10 @@ pub(crate) fn cleanup_session_charts() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::super::temp_chart::lock_charts_for_test;
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn scratch_dir(label: &str) -> PathBuf {
         let dir =
@@ -90,7 +57,7 @@ mod tests {
 
     #[test]
     fn cleanup_removes_exactly_the_named_paths() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = lock_charts_for_test();
         let dir = scratch_dir("paths");
         let a = dir.join("a.html");
         let b = dir.join("b.html");
@@ -106,7 +73,7 @@ mod tests {
 
     #[test]
     fn session_cleanup_removes_every_recorded_file_and_drains() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = lock_charts_for_test();
         let dir = scratch_dir("session");
         let a = dir.join("a.html");
         let b = dir.join("b.html");
@@ -114,7 +81,11 @@ mod tests {
         std::fs::write(&b, "<html></html>").unwrap();
         record_temp_chart(&a);
         record_temp_chart(&b);
-        assert_eq!(cleanup_session_charts(), 2);
+        let removed = cleanup_session_charts();
+        assert!(
+            removed >= 2,
+            "teardown removes every recorded file (removed {removed})"
+        );
         assert!(!a.exists() && !b.exists());
         // Drained: a second teardown is a no-op.
         assert_eq!(cleanup_session_charts(), 0);
@@ -123,7 +94,7 @@ mod tests {
 
     #[test]
     fn unrecorded_files_are_left_alone() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = lock_charts_for_test();
         let dir = scratch_dir("unrecorded");
         let tracked = dir.join("tracked.html");
         let untracked = dir.join("untracked.html");
@@ -141,9 +112,14 @@ mod tests {
 
     #[test]
     fn automatic_chart_files_are_unique_and_cleanup_does_not_touch_explicit_files() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        let first = create_temp_chart().expect("first automatic chart");
-        let second = create_temp_chart().expect("second automatic chart");
+        use super::super::temp_chart::reserve_temp_chart;
+
+        let _guard = lock_charts_for_test();
+        // Drain charts reserved by other tests so teardown counts below are exact.
+        cleanup_session_charts();
+        let first = reserve_temp_chart().expect("first automatic chart");
+        let second = reserve_temp_chart().expect("second automatic chart");
+        let (first, second) = (first.path().to_path_buf(), second.path().to_path_buf());
         assert_ne!(first, second);
         assert!(
             first
@@ -171,8 +147,39 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn automatic_chart_write_ignores_a_symlink_swapped_in_after_reservation() {
+        use std::os::unix::fs::symlink;
+
+        use super::super::temp_chart::reserve_temp_chart;
+
+        let _guard = lock_charts_for_test();
+        let dir = scratch_dir("reservation-window");
+        let target = dir.join("outside.html");
+        std::fs::write(&target, "sentinel").unwrap();
+
+        // Reserve an automatic chart, then simulate the window: an actor
+        // replaces the reserved path with a symlink to an outside file
+        // before the HTML is written. The write must still land in the
+        // reserved file because the descriptor is held through output.
+        let mut chart = reserve_temp_chart().expect("automatic chart");
+        std::fs::remove_file(chart.path()).unwrap();
+        symlink(&target, chart.path()).unwrap();
+        chart.write_html("chart-body").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "sentinel",
+            "replacing the reserved path between reservation and output must not redirect the write"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn automatic_chart_does_not_follow_the_old_predictable_symlink() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        use super::super::temp_chart::reserve_temp_chart;
+
+        let _guard = lock_charts_for_test();
         use std::os::unix::fs::symlink;
 
         let temp = std::env::temp_dir();
@@ -182,8 +189,8 @@ mod tests {
         std::fs::write(&target, "sentinel").unwrap();
         symlink(&target, &old).unwrap();
 
-        let generated = create_temp_chart().expect("automatic chart");
-        std::fs::write(&generated, "chart").unwrap();
+        let mut generated = reserve_temp_chart().expect("automatic chart");
+        generated.write_html("chart").unwrap();
         cleanup_session_charts();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "sentinel");
         assert!(

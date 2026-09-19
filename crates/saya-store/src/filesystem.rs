@@ -1,4 +1,5 @@
 use crate::redaction::redact;
+use crate::replace::{AtomicReplace, Replacer, publish_staged};
 use crate::{RedactedSession, SessionHistoryPage, SessionHistoryQuery, SessionStore, StoreError};
 use async_trait::async_trait;
 use std::{
@@ -63,11 +64,12 @@ impl FsSessionStore {
         let _ = fs::rename(path, corrupt);
         Ok(None)
     }
-}
 
-#[async_trait]
-impl SessionStore for FsSessionStore {
-    async fn save(&self, mut session: RedactedSession) -> Result<(), StoreError> {
+    async fn save_inner(
+        &self,
+        mut session: RedactedSession,
+        replacer: &dyn Replacer,
+    ) -> Result<(), StoreError> {
         self.ensure_root()?;
         for message in &mut session.messages {
             message.content = redact(&message.content);
@@ -95,12 +97,34 @@ impl SessionStore for FsSessionStore {
             file.sync_all().map_err(io_error)?;
             #[cfg(unix)]
             set_mode(&temp, 0o600)?;
-            replace_file(&temp, &path)
+            // Atomic publish: `publish_staged` (rename on every platform)
+            // either installs the complete new file or leaves the existing
+            // target untouched — it never truncates the target before
+            // failing, unlike the old Windows copy-then-remove.
+            publish(&temp, &path, replacer)
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temp);
         }
         result
+    }
+
+    /// Test-only save through an injected [`Replacer`]: proves a failed
+    /// publish preserves the last good session on any platform.
+    #[cfg(test)]
+    pub(crate) async fn save_with_replacer(
+        &self,
+        session: RedactedSession,
+        replacer: &dyn Replacer,
+    ) -> Result<(), StoreError> {
+        self.save_inner(session, replacer).await
+    }
+}
+
+#[async_trait]
+impl SessionStore for FsSessionStore {
+    async fn save(&self, session: RedactedSession) -> Result<(), StoreError> {
+        self.save_inner(session, &AtomicReplace).await
     }
 
     async fn load(&self, id: &str) -> Result<Option<RedactedSession>, StoreError> {
@@ -131,16 +155,8 @@ impl SessionStore for FsSessionStore {
     }
 }
 
-fn replace_file(temp: &Path, target: &Path) -> Result<(), StoreError> {
-    #[cfg(windows)]
-    {
-        fs::copy(temp, target).map_err(io_error)?;
-        fs::remove_file(temp).map_err(io_error)
-    }
-    #[cfg(not(windows))]
-    {
-        fs::rename(temp, target).map_err(io_error)
-    }
+fn publish(temp: &Path, target: &Path, replacer: &dyn Replacer) -> Result<(), StoreError> {
+    publish_staged(temp, target, replacer)
 }
 
 fn stamp() -> u128 {
