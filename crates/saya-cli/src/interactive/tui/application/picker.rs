@@ -6,7 +6,9 @@ use super::super::transcript::BlockKind;
 use super::super::types::{App, Picker, PickerEntry};
 use crate::interactive::session_state::SessionState;
 use saya_agent::ApprovalChoice;
-use saya_store::{FsSessionStore, SchemaStore, SessionStore};
+use saya_store::{
+    FsSessionStore, MAX_SESSION_HISTORY_PAGE_SIZE, SchemaStore, SessionHistoryQuery, SessionStore,
+};
 
 impl App {
     /// Opens the session picker with the most recent saved sessions, enriched
@@ -41,13 +43,14 @@ impl App {
         let Some(result) = result else { return };
         self.overlays.picker_loading = None;
         match result {
-            Ok(entries) if entries.is_empty() => self
+            Ok((entries, _)) if entries.is_empty() => self
                 .transcript
                 .push(BlockKind::System, "No saved sessions to resume."),
-            Ok(entries) => {
+            Ok((entries, has_more)) => {
                 self.overlays.picker = Some(Picker {
                     entries,
                     selected: 0,
+                    has_more,
                     query: String::new(),
                 });
             }
@@ -56,15 +59,22 @@ impl App {
     }
 }
 
-fn load_picker_entries(store: &FsSessionStore) -> Result<Vec<PickerEntry>, String> {
+fn load_picker_entries(store: &FsSessionStore) -> Result<(Vec<PickerEntry>, bool), String> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let entries = crate::interactive::session_resume::block_on(store.history())
-        .map_err(|error| error.to_string())?
+    let page = crate::interactive::session_resume::block_on(
+        store.history(
+            SessionHistoryQuery::first_page(MAX_SESSION_HISTORY_PAGE_SIZE)
+                .expect("history page bound is valid"),
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    let has_more = page.has_more();
+    let entries = page
+        .entries
         .into_iter()
-        .take(20)
         .map(|entry| {
             let when = relative_time(now_ms.saturating_sub(entry.modified_unix_ms));
             let (profile, model, turns) =
@@ -82,7 +92,7 @@ fn load_picker_entries(store: &FsSessionStore) -> Result<Vec<PickerEntry>, Strin
             }
         })
         .collect::<Vec<_>>();
-    Ok(entries)
+    Ok((entries, has_more))
 }
 
 impl App {

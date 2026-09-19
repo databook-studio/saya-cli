@@ -1,5 +1,5 @@
 use crate::redaction::redact;
-use crate::{RedactedSession, SessionStore, SessionSummary, StoreError};
+use crate::{RedactedSession, SessionHistoryPage, SessionHistoryQuery, SessionStore, StoreError};
 use async_trait::async_trait;
 use std::{
     fs,
@@ -126,8 +126,8 @@ impl SessionStore for FsSessionStore {
         Ok(None)
     }
 
-    async fn history(&self) -> Result<Vec<SessionSummary>, StoreError> {
-        crate::history::list(&self.root)
+    async fn history(&self, query: SessionHistoryQuery) -> Result<SessionHistoryPage, StoreError> {
+        crate::history::list(&self.root, &query)
     }
 }
 

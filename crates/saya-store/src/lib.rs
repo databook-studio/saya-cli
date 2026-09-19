@@ -21,6 +21,9 @@ mod state_contracts;
 pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
 pub use error::StoreError;
 pub use filesystem::{FsSessionStore, MAX_SESSION_BYTES};
+pub use history::{
+    MAX_SESSION_HISTORY_PAGE_SIZE, SessionHistoryCursor, SessionHistoryLimit, SessionHistoryPage,
+};
 pub use knowledge_items::{
     KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
     MAX_KNOWLEDGE_ITEM_BYTES, knowledge_item_id_for,
@@ -173,10 +176,41 @@ pub struct SessionSummary {
     pub modified_unix_ms: u128,
 }
 
+/// A bounded request for one page of saved sessions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionHistoryQuery {
+    limit: SessionHistoryLimit,
+    cursor: Option<SessionHistoryCursor>,
+}
+
+impl SessionHistoryQuery {
+    pub fn first_page(limit: usize) -> Result<Self, StoreError> {
+        Ok(Self {
+            limit: SessionHistoryLimit::try_from(limit)?,
+            cursor: None,
+        })
+    }
+
+    pub fn next_page(&self, page: &SessionHistoryPage) -> Option<Self> {
+        page.next_cursor.clone().map(|cursor| Self {
+            limit: self.limit,
+            cursor: Some(cursor),
+        })
+    }
+
+    pub(crate) fn limit(&self) -> usize {
+        self.limit.get()
+    }
+
+    pub(crate) fn cursor(&self) -> Option<&SessionHistoryCursor> {
+        self.cursor.as_ref()
+    }
+}
+
 #[async_trait]
 pub trait SessionStore: Send + Sync {
     async fn save(&self, session: RedactedSession) -> Result<(), StoreError>;
     async fn load(&self, id: &str) -> Result<Option<RedactedSession>, StoreError>;
     async fn most_recent(&self) -> Result<Option<RedactedSession>, StoreError>;
-    async fn history(&self) -> Result<Vec<SessionSummary>, StoreError>;
+    async fn history(&self, query: SessionHistoryQuery) -> Result<SessionHistoryPage, StoreError>;
 }

@@ -2,7 +2,9 @@ use super::{
     session_commands::SessionAction, session_resume::block_on, session_state::SessionState,
 };
 use crate::render::{RenderFormat, TerminalEvent, render_event};
-use saya_store::{FsSessionStore, SessionStore};
+use saya_store::{
+    FsSessionStore, MAX_SESSION_HISTORY_PAGE_SIZE, SessionHistoryQuery, SessionStore,
+};
 
 pub(crate) fn emit_action(
     action: SessionAction,
@@ -75,15 +77,22 @@ fn history(
     state: &mut SessionState,
     store: &FsSessionStore,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let entries = block_on(store.history())?;
+    let page = block_on(
+        store.history(
+            SessionHistoryQuery::first_page(MAX_SESSION_HISTORY_PAGE_SIZE)
+                .expect("history page bound is valid"),
+        ),
+    )?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_millis())
         .unwrap_or(0);
-    let message = if entries.is_empty() {
+    let message = if page.entries.is_empty() {
         "No saved sessions.".into()
     } else {
-        entries
+        let more = page.next_cursor.is_some();
+        let mut message = page
+            .entries
             .into_iter()
             .map(|entry| {
                 let age = super::tui::replay::relative_time(
@@ -92,7 +101,11 @@ fn history(
                 format!("{}\t{}", entry.id, age)
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        if more {
+            message.push_str("\n(more saved sessions available)");
+        }
+        message
     };
     emit(
         TerminalEvent::Result {

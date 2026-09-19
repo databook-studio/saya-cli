@@ -1,5 +1,7 @@
 use saya_agent::ApprovalPolicy;
-use saya_store::{FsSessionStore, SessionStore};
+use saya_store::{
+    FsSessionStore, MAX_SESSION_HISTORY_PAGE_SIZE, SessionHistoryQuery, SessionStore,
+};
 
 use super::transcript::{BlockKind, Transcript};
 use crate::config::runtime::RuntimeConfig;
@@ -9,16 +11,26 @@ use crate::interactive::session_state::SessionState;
 
 /// Lists saved sessions (shared with the `/history` command).
 pub(super) fn list_sessions(transcript: &mut Transcript, store: &FsSessionStore) {
-    match block_on(store.history()) {
-        Ok(entries) if entries.is_empty() => {
+    match block_on(
+        store.history(
+            SessionHistoryQuery::first_page(MAX_SESSION_HISTORY_PAGE_SIZE)
+                .expect("history page bound is valid"),
+        ),
+    ) {
+        Ok(page) if page.entries.is_empty() => {
             transcript.push(BlockKind::System, "No saved sessions.")
         }
-        Ok(entries) => {
-            let body = entries
+        Ok(page) => {
+            let more = page.next_cursor.is_some();
+            let mut body = page
+                .entries
                 .into_iter()
                 .map(|entry| format!("{}\t{}", entry.id, entry.modified_unix_ms))
                 .collect::<Vec<_>>()
                 .join("\n");
+            if more {
+                body.push_str("\n(more saved sessions available)");
+            }
             transcript.push(BlockKind::System, body);
         }
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),

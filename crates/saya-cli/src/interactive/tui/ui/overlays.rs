@@ -51,6 +51,12 @@ pub(super) fn draw_picker(
         };
         lines.push(Line::from(Span::styled(format!(" {}", entry.label), style)));
     }
+    if picker.has_more {
+        lines.push(Line::from(Span::styled(
+            " more sessions available — refine the filter",
+            Style::default().fg(secondary()),
+        )));
+    }
     let rows = (lines.len() as u16).min(13);
     let height = (rows + 2).min(screen.height);
     let width = screen.width.clamp(40, 90);

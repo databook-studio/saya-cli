@@ -109,6 +109,7 @@ pub(crate) struct PendingApproval {
 pub(crate) struct Picker {
     pub(crate) entries: Vec<PickerEntry>,
     pub(crate) selected: usize,
+    pub(crate) has_more: bool,
     /// Case-insensitive substring filter over id + label.
     pub(crate) query: String,
 }
