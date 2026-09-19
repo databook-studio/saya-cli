@@ -22,6 +22,14 @@ use std::sync::Arc;
 
 use crate::{HarnessError, io_error};
 
+/// Hard ceiling for one workspace byte operation. Public methods still accept
+/// operation-specific bounds, but no caller can widen a read or write past
+/// this process-wide backstop.
+pub const MAX_IO_BYTES: usize = 8 * 1024 * 1024;
+/// Hard ceiling for one directory enumeration. Search callers use smaller
+/// limits; this prevents a direct caller from turning listing into a flood.
+pub const MAX_LIST_ENTRIES: usize = 2_000;
+
 /// A run workspace: the directory the engine created for the run's
 /// artifacts. The root is canonical here — resolved once, never re-inferred —
 /// and on unix pinned by a descriptor opened once, so every later walk
@@ -109,6 +117,13 @@ impl Workspace {
     /// file — hashed in the same open, streamed in chunks — so a truncated
     /// read still names the state an edit precondition can state.
     pub fn read(&self, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
+        if max_bytes > MAX_IO_BYTES as u64 {
+            return Err(HarnessError::BoundsExceeded {
+                path: rel.to_string(),
+                found: max_bytes,
+                max: MAX_IO_BYTES as u64,
+            });
+        }
         #[cfg(unix)]
         return super::anchored::read(self, rel, max_bytes);
 
@@ -169,6 +184,13 @@ impl Workspace {
     /// re-verified afterwards so a post-write swap is reported rather than
     /// pretended away. No execute bits are ever set.
     pub fn write(&self, rel: &str, bytes: &[u8]) -> Result<(), HarnessError> {
+        if bytes.len() > MAX_IO_BYTES {
+            return Err(HarnessError::BoundsExceeded {
+                path: rel.to_string(),
+                found: bytes.len() as u64,
+                max: MAX_IO_BYTES as u64,
+            });
+        }
         #[cfg(unix)]
         return super::anchored::write(self, rel, bytes);
 
@@ -215,6 +237,13 @@ impl Workspace {
     /// Lists a workspace directory, bounded by `max_entries`. The empty
     /// argument names the workspace root itself.
     pub fn list(&self, rel: &str, max_entries: usize) -> Result<Vec<ListEntry>, HarnessError> {
+        if max_entries > MAX_LIST_ENTRIES {
+            return Err(HarnessError::BoundsExceeded {
+                path: rel.to_string(),
+                found: max_entries as u64,
+                max: MAX_LIST_ENTRIES as u64,
+            });
+        }
         #[cfg(unix)]
         return super::anchored::list(self, rel, max_entries);
 
@@ -566,7 +595,11 @@ pub(crate) fn argument_components(rel: &str) -> Result<Vec<String>, HarnessError
     let escaped = || HarnessError::PathOutsideRoot {
         path: rel.to_string(),
     };
-    if rel.is_empty() || rel.as_bytes().contains(&0) || rel.contains('\\') {
+    if rel.is_empty()
+        || rel.len() > MAX_IO_BYTES
+        || rel.as_bytes().contains(&0)
+        || rel.contains('\\')
+    {
         return Err(invalid());
     }
     if rel.starts_with('/') {

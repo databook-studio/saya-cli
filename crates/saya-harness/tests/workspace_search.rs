@@ -7,7 +7,10 @@
 
 use std::{fs, path::PathBuf};
 
-use saya_harness::{HarnessError, workspace::Workspace};
+use saya_harness::{
+    HarnessError,
+    workspace::{MAX_IO_BYTES, MAX_LIST_ENTRIES, Workspace},
+};
 
 /// Keeps a sandbox directory alive for the test and removes it afterwards.
 /// The workspace root sits one level down (`outer/ws`) so outside symlink
@@ -195,6 +198,21 @@ fn grep_skips_oversized_and_non_utf8_files_and_counts_the_skips() {
     assert_eq!(outcome.files_skipped, 2);
     assert_eq!(outcome.matches.len(), 1);
     assert_eq!(outcome.matches[0].path, "small.txt");
+}
+
+#[test]
+fn direct_search_call_cannot_widen_any_bound() {
+    let sandbox = Sandbox::new("search-cap-backstop");
+    assert!(matches!(
+        sandbox.ws.glob("**", MAX_LIST_ENTRIES + 1, 1),
+        Err(HarnessError::BoundsExceeded { .. })
+    ));
+    assert!(matches!(
+        sandbox
+            .ws
+            .grep("needle", false, 1, 1, (MAX_IO_BYTES + 1) as u64, 1),
+        Err(HarnessError::BoundsExceeded { .. })
+    ));
 }
 
 /// One enormous line cannot blow the context: the reported text is capped at

@@ -15,7 +15,7 @@ use saya_types::{Capabilities, QueryResult};
 
 use super::ScratchError;
 use super::open::ScratchDb;
-use super::validate::validate;
+use super::validate::{MAX_SQL_BYTES, validate};
 
 /// The tool's name in the run engine's toolset.
 pub const SCRATCH_SQL_TOOL: &str = "scratch_sql";
@@ -80,7 +80,7 @@ impl ScratchSql {
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "sql": { "type": "string" }
+                    "sql": { "type": "string", "maxLength": MAX_SQL_BYTES }
                 },
                 "required": ["sql"],
                 "additionalProperties": false

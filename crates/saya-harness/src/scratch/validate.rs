@@ -23,6 +23,11 @@ use sqlparser::{
 /// (`truncated: true`) rather than shipped whole.
 pub const SCRATCH_ROW_CAP: usize = 50;
 
+/// Maximum SQL payload parsed by the scratch validator. The tool input is
+/// untrusted; this pre-parse ceiling keeps the parser from being an allocation
+/// bypass for callers that do not use the CLI input reader.
+pub const MAX_SQL_BYTES: usize = 512 * 1024;
+
 /// A statement the validator accepted, ready to execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Validated {
@@ -40,6 +45,8 @@ pub struct Validated {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ScratchRejection {
+    #[error("scratch SQL exceeds the {max}-byte limit (received {bytes} bytes)")]
+    TooLarge { bytes: usize, max: usize },
     #[error("scratch accepts exactly one statement; {count} were given — run them one at a time")]
     MultipleStatements { count: usize },
     #[error("scratch does not parse this as a single DuckDB statement")]
@@ -87,6 +94,12 @@ const FILE_READ_FUNCTIONS: &[&str] = &[
 /// allowlist (the file/configuration/extension family refused by kind), the
 /// file-reader walk, then the single-statement and row-cap discipline.
 pub fn validate(sql: &str) -> Result<Validated, ScratchRejection> {
+    if sql.len() > MAX_SQL_BYTES {
+        return Err(ScratchRejection::TooLarge {
+            bytes: sql.len(),
+            max: MAX_SQL_BYTES,
+        });
+    }
     let mut statements =
         Parser::parse_sql(&DuckDbDialect, sql).map_err(|_| ScratchRejection::Unparsable)?;
     if statements.len() != 1 {

@@ -64,4 +64,5 @@ pub mod search;
 pub mod walk;
 
 pub use contain::{EntryKind, ListEntry, ReadFile, Workspace};
+pub use contain::{MAX_IO_BYTES, MAX_LIST_ENTRIES};
 pub use search::{GlobMatch, GrepMatch, GrepOutcome};

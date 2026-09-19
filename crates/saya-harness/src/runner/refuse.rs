@@ -30,6 +30,62 @@ pub(super) const INTERPRETER_REFUSAL: &str = "shells and interpreters are refuse
      an interpreter can spawn arbitrary children with arbitrary argv and would void the \
      typed-argv contract from inside the allowlist";
 
+/// Maximum number of arguments in one typed runner call.
+pub const MAX_ARG_COUNT: usize = 128;
+/// Maximum size of one argument in bytes.
+pub const MAX_ARG_BYTES: usize = 16 * 1024;
+/// Maximum aggregate size of the argument vector in bytes.
+pub const MAX_ARGV_BYTES: usize = 128 * 1024;
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn argv_count_item_and_total_bounds_refuse_before_spawn() {
+        let allowed = RunnerScope::new(vec!["tool".to_owned()]).unwrap();
+        let too_many = vec![String::new(); MAX_ARG_COUNT + 1];
+        assert!(matches!(
+            validate_call(
+                &allowed,
+                Path::new("/does/not/exist"),
+                Duration::from_secs(5),
+                None,
+                "tool",
+                &too_many,
+            ),
+            Err(RunnerError::ArgsNotTyped { .. })
+        ));
+
+        let too_long = vec!["x".repeat(MAX_ARG_BYTES + 1)];
+        assert!(matches!(
+            validate_call(
+                &allowed,
+                Path::new("/does/not/exist"),
+                Duration::from_secs(5),
+                None,
+                "tool",
+                &too_long,
+            ),
+            Err(RunnerError::ArgsNotTyped { .. })
+        ));
+
+        let item = "x".repeat(MAX_ARG_BYTES);
+        let too_wide = vec![item; MAX_ARGV_BYTES / MAX_ARG_BYTES + 1];
+        assert!(matches!(
+            validate_call(
+                &allowed,
+                Path::new("/does/not/exist"),
+                Duration::from_secs(5),
+                None,
+                "tool",
+                &too_wide,
+            ),
+            Err(RunnerError::ArgsNotTyped { .. })
+        ));
+    }
+}
+
 /// How a validated call is spawned: everything the battery checked,
 /// resolved to the only three things a child may receive.
 #[derive(Debug)]
@@ -49,6 +105,7 @@ pub fn validate_call(
     program: &str,
     argv: &[String],
 ) -> Result<ValidatedCall, RunnerError> {
+    validate_argv(argv)?;
     if !is_bare_name(program) {
         return Err(RunnerError::ProgramRefused {
             program: program.to_owned(),
@@ -149,6 +206,7 @@ pub fn validate_interpreter_call(
     program: &str,
     argv: &[String],
 ) -> Result<ValidatedCall, RunnerError> {
+    validate_argv(argv)?;
     if !is_bare_name(program) {
         return Err(RunnerError::ProgramRefused {
             program: program.to_owned(),
@@ -212,4 +270,30 @@ pub fn validate_interpreter_call(
         argv: argv.to_vec(),
         timeout,
     })
+}
+
+/// Validates the resource shape of typed argv before it is cloned into a
+/// spawn request. Keeping this at the runner seam means direct callers cannot
+/// bypass the CLI adapter's schema limits.
+pub fn validate_argv(argv: &[String]) -> Result<(), RunnerError> {
+    if argv.len() > MAX_ARG_COUNT {
+        return Err(RunnerError::ArgsNotTyped {
+            detail: "too many arguments",
+        });
+    }
+    let mut total = 0usize;
+    for arg in argv {
+        if arg.len() > MAX_ARG_BYTES {
+            return Err(RunnerError::ArgsNotTyped {
+                detail: "an argument exceeds the per-argument byte limit",
+            });
+        }
+        total = total.saturating_add(arg.len());
+        if total > MAX_ARGV_BYTES {
+            return Err(RunnerError::ArgsNotTyped {
+                detail: "arguments exceed the aggregate byte limit",
+            });
+        }
+    }
+    Ok(())
 }

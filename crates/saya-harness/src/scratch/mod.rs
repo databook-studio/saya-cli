@@ -26,7 +26,7 @@ mod validate;
 
 pub use open::{SCRATCH_FILE_NAME, SCRATCH_QUERY_TIMEOUT, ScratchDb};
 pub use tools::{SCRATCH_SQL_TOOL, ScratchSql};
-pub use validate::{SCRATCH_ROW_CAP, ScratchRejection, Validated, validate};
+pub use validate::{MAX_SQL_BYTES, SCRATCH_ROW_CAP, ScratchRejection, Validated, validate};
 
 use std::path::PathBuf;
 

@@ -38,6 +38,7 @@ use saya_agent::{
 use saya_types::{InterpreterScope, RunnerScope, is_refused_runner_program};
 
 use refuse::{INTERPRETER_REFUSAL, validate_call, validate_interpreter_call};
+pub use refuse::{MAX_ARG_BYTES, MAX_ARG_COUNT, MAX_ARGV_BYTES, validate_argv};
 use sandbox::RunnerSpawn;
 
 /// The tool's name in the run engine's toolset.
@@ -216,7 +217,11 @@ impl RunProgram {
                 "type": "object",
                 "properties": {
                     "program": { "type": "string" },
-                    "args": { "type": "array", "items": { "type": "string" } },
+                    "args": {
+                        "type": "array",
+                        "maxItems": MAX_ARG_COUNT,
+                        "items": { "type": "string", "maxLength": MAX_ARG_BYTES }
+                    },
                     "timeout_seconds": { "type": "integer", "minimum": 1 }
                 },
                 "required": ["program"],
@@ -292,14 +297,17 @@ impl RunProgram {
             .ok_or(not_typed("program must be a string"))?;
         let argv: Vec<String> = match object.get("args") {
             None => Vec::new(),
-            Some(serde_json::Value::Array(items)) => items
-                .iter()
-                .map(|item| {
-                    item.as_str()
-                        .map(str::to_owned)
-                        .ok_or_else(|| not_typed("every element of args must be a string"))
-                })
-                .collect::<Result<_, _>>()?,
+            Some(serde_json::Value::Array(items)) => {
+                validate_json_argv(items)?;
+                items
+                    .iter()
+                    .map(|item| {
+                        item.as_str()
+                            .map(str::to_owned)
+                            .ok_or_else(|| not_typed("every element of args must be a string"))
+                    })
+                    .collect::<Result<_, _>>()?
+            }
             Some(_) => return Err(not_typed("args must be an array of strings")),
         };
         let timeout_seconds = match object.get("timeout_seconds") {
@@ -319,6 +327,26 @@ fn not_typed(detail: &'static str) -> RunnerError {
     RunnerError::ArgsNotTyped { detail }
 }
 
+fn validate_json_argv(items: &[serde_json::Value]) -> Result<(), RunnerError> {
+    if items.len() > MAX_ARG_COUNT {
+        return Err(not_typed("too many arguments"));
+    }
+    let mut total = 0usize;
+    for item in items {
+        let value = item
+            .as_str()
+            .ok_or_else(|| not_typed("every element of args must be a string"))?;
+        if value.len() > MAX_ARG_BYTES {
+            return Err(not_typed("an argument exceeds the per-argument byte limit"));
+        }
+        total = total.saturating_add(value.len());
+        if total > MAX_ARGV_BYTES {
+            return Err(not_typed("arguments exceed the aggregate byte limit"));
+        }
+    }
+    Ok(())
+}
+
 fn render_failure() -> String {
     RunnerError::RecordFailed {
         source: io::Error::new(
@@ -327,4 +355,33 @@ fn render_failure() -> String {
         ),
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn json_argv_is_checked_before_string_cloning() {
+        let too_many = vec![serde_json::json!(""); MAX_ARG_COUNT + 1];
+        assert!(matches!(
+            validate_json_argv(&too_many),
+            Err(RunnerError::ArgsNotTyped { .. })
+        ));
+
+        let too_long = vec![serde_json::json!("x".repeat(MAX_ARG_BYTES + 1))];
+        assert!(matches!(
+            validate_json_argv(&too_long),
+            Err(RunnerError::ArgsNotTyped { .. })
+        ));
+
+        let item = "x".repeat(MAX_ARG_BYTES);
+        let too_wide = (0..(MAX_ARGV_BYTES / MAX_ARG_BYTES + 1))
+            .map(|_| serde_json::json!(item.clone()))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            validate_json_argv(&too_wide),
+            Err(RunnerError::ArgsNotTyped { .. })
+        ));
+    }
 }

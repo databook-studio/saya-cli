@@ -21,7 +21,9 @@ use saya_connectors::{
 };
 use saya_harness::{
     run_dir::RunDir,
-    scratch::{SCRATCH_FILE_NAME, ScratchError, ScratchRejection, ScratchSql},
+    scratch::{
+        MAX_SQL_BYTES, SCRATCH_FILE_NAME, ScratchError, ScratchRejection, ScratchSql, validate,
+    },
 };
 use saya_types::{Capabilities, RunId};
 use serde_json::{Value, json};
@@ -84,6 +86,13 @@ fn scratch_approved() -> Capabilities {
     let mut caps = Capabilities::default();
     caps.scratch = true;
     caps
+}
+
+#[test]
+fn sql_over_the_preparse_bound_is_refused_before_sqlparser() {
+    let sql = "x".repeat(MAX_SQL_BYTES + 1);
+    let error = validate(&sql).expect_err("oversized SQL must be refused");
+    assert!(matches!(error, ScratchRejection::TooLarge { .. }));
 }
 
 /// The rows of a [`QueryResult`]-shaped expectation, as a `Vec<Value>` for

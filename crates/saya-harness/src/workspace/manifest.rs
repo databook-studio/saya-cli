@@ -6,7 +6,7 @@ use std::{fs, io::Read, path::Path};
 
 use sha2::{Digest, Sha256};
 
-use crate::workspace::Workspace;
+use crate::workspace::{MAX_IO_BYTES, MAX_LIST_ENTRIES, Workspace};
 use crate::{HarnessError, io_error};
 
 /// One workspace artifact as an episode brief names it.
@@ -27,6 +27,20 @@ pub fn build(
     max_files: usize,
     max_file_bytes: u64,
 ) -> Result<Vec<ManifestEntry>, HarnessError> {
+    if max_files > MAX_LIST_ENTRIES {
+        return Err(HarnessError::BoundsExceeded {
+            path: String::new(),
+            found: max_files as u64,
+            max: MAX_LIST_ENTRIES as u64,
+        });
+    }
+    if max_file_bytes > MAX_IO_BYTES as u64 {
+        return Err(HarnessError::BoundsExceeded {
+            path: String::new(),
+            found: max_file_bytes,
+            max: MAX_IO_BYTES as u64,
+        });
+    }
     let mut state = Walk {
         ws,
         max_files,
@@ -49,6 +63,13 @@ pub fn entry(
     rel: &str,
     max_file_bytes: u64,
 ) -> Result<ManifestEntry, HarnessError> {
+    if max_file_bytes > MAX_IO_BYTES as u64 {
+        return Err(HarnessError::BoundsExceeded {
+            path: rel.to_string(),
+            found: max_file_bytes,
+            max: MAX_IO_BYTES as u64,
+        });
+    }
     let path = ws.target(rel, false)?;
     let pre = fs::symlink_metadata(&path)
         .map_err(|error| io_error("scan workspace file", &path, error))?;

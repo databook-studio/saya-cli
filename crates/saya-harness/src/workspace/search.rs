@@ -11,7 +11,7 @@ use std::str;
 
 use crate::HarnessError;
 
-use super::contain::{EntryKind, Workspace};
+use super::contain::{EntryKind, MAX_IO_BYTES, MAX_LIST_ENTRIES, Workspace};
 use super::pattern::Pattern;
 
 /// One path [`Workspace::glob`] matched, relative to the workspace root.
@@ -55,6 +55,20 @@ impl Workspace {
         max_visited: usize,
         max_matches: usize,
     ) -> Result<Vec<GlobMatch>, HarnessError> {
+        if max_visited > MAX_LIST_ENTRIES {
+            return Err(HarnessError::BoundsExceeded {
+                path: pattern.to_string(),
+                found: max_visited as u64,
+                max: MAX_LIST_ENTRIES as u64,
+            });
+        }
+        if max_matches > MAX_LIST_ENTRIES {
+            return Err(HarnessError::BoundsExceeded {
+                path: pattern.to_string(),
+                found: max_matches as u64,
+                max: MAX_LIST_ENTRIES as u64,
+            });
+        }
         let matcher = Pattern::new(pattern);
         let mut matches = Vec::new();
         self.walk(max_visited, &mut |rel, _kind, _size| {
@@ -93,6 +107,34 @@ impl Workspace {
         max_bytes_per_file: u64,
         max_line_bytes: usize,
     ) -> Result<GrepOutcome, HarnessError> {
+        if max_visited > MAX_LIST_ENTRIES {
+            return Err(HarnessError::BoundsExceeded {
+                path: needle.to_string(),
+                found: max_visited as u64,
+                max: MAX_LIST_ENTRIES as u64,
+            });
+        }
+        if max_matches > MAX_LIST_ENTRIES {
+            return Err(HarnessError::BoundsExceeded {
+                path: needle.to_string(),
+                found: max_matches as u64,
+                max: MAX_LIST_ENTRIES as u64,
+            });
+        }
+        if max_bytes_per_file > MAX_IO_BYTES as u64 {
+            return Err(HarnessError::BoundsExceeded {
+                path: needle.to_string(),
+                found: max_bytes_per_file,
+                max: MAX_IO_BYTES as u64,
+            });
+        }
+        if max_line_bytes > MAX_IO_BYTES {
+            return Err(HarnessError::BoundsExceeded {
+                path: needle.to_string(),
+                found: max_line_bytes as u64,
+                max: MAX_IO_BYTES as u64,
+            });
+        }
         let folded = case_insensitive.then(|| needle.to_lowercase());
         let mut outcome = GrepOutcome::default();
         self.walk(max_visited, &mut |rel, kind, _size| {

@@ -14,7 +14,10 @@ use std::{
 };
 
 use proptest::prelude::*;
-use saya_harness::{HarnessError, workspace::Workspace};
+use saya_harness::{
+    HarnessError,
+    workspace::{MAX_IO_BYTES, MAX_LIST_ENTRIES, Workspace},
+};
 
 const INSIDE: &[u8] = b"inside-sentinel";
 const OUTSIDE: &[u8] = b"outside-sentinel-MUST-NOT-LEAK";
@@ -582,6 +585,30 @@ fn read_caps_are_honoured_with_a_visible_truncation_flag() {
 
     let exact = sandbox.ws.read("huge.txt", 1 << 20).unwrap();
     assert!(!exact.truncated);
+}
+
+#[test]
+fn workspace_io_caps_cannot_be_widened_by_a_direct_caller() {
+    let sandbox = Sandbox::new("io-cap-backstop");
+    sandbox.ws.write("small.txt", b"ok").unwrap();
+
+    let read = sandbox
+        .ws
+        .read("small.txt", (MAX_IO_BYTES + 1) as u64)
+        .expect_err("a caller cannot widen the read cap");
+    assert!(matches!(read, HarnessError::BoundsExceeded { .. }));
+
+    let write = sandbox
+        .ws
+        .write("large.txt", &vec![b'x'; MAX_IO_BYTES + 1])
+        .expect_err("a caller cannot widen the write cap");
+    assert!(matches!(write, HarnessError::BoundsExceeded { .. }));
+
+    let list = sandbox
+        .ws
+        .list("", MAX_LIST_ENTRIES + 1)
+        .expect_err("a caller cannot widen the listing cap");
+    assert!(matches!(list, HarnessError::BoundsExceeded { .. }));
 }
 
 #[test]
