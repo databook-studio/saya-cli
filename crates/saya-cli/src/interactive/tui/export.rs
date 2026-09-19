@@ -1,6 +1,7 @@
 //! Writes a query result to a file as CSV or JSON, chosen by extension.
 
 use saya_types::QueryResult;
+use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::path::Path;
 
 /// Writes `result` to `path`. Format is chosen by extension: `.csv` or `.json`.
@@ -63,7 +64,7 @@ fn export_csv(result: &QueryResult, path: &Path) -> Result<usize, String> {
     let header = result
         .columns
         .iter()
-        .map(|c| escape_csv_field(c))
+        .map(|c| escape_csv_field(&neutralize_formula(c)))
         .collect::<Vec<_>>()
         .join(",");
     let mut lines = vec![header];
@@ -81,17 +82,38 @@ fn export_csv(result: &QueryResult, path: &Path) -> Result<usize, String> {
     Ok(result.rows.len())
 }
 
+struct JsonRow<'a> {
+    columns: &'a [String],
+    cells: &'a [serde_json::Value],
+}
+
+impl Serialize for JsonRow<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut object = serializer.serialize_map(Some(self.columns.len()))?;
+        for (column, cell) in self.columns.iter().zip(self.cells) {
+            object.serialize_entry(column, cell)?;
+        }
+        object.end()
+    }
+}
+
 fn export_json(result: &QueryResult, path: &Path) -> Result<usize, String> {
     let col_count = result.columns.len();
-    let mut objects = Vec::with_capacity(result.rows.len());
-    for row in &result.rows {
-        let cells = normalize_row(row, col_count);
-        let mut map = serde_json::Map::new();
-        for (i, col) in result.columns.iter().enumerate() {
-            map.insert(col.clone(), cells[i].clone());
-        }
-        objects.push(serde_json::Value::Object(map));
-    }
+    let rows = result
+        .rows
+        .iter()
+        .map(|row| normalize_row(row, col_count))
+        .collect::<Vec<_>>();
+    let objects = rows
+        .iter()
+        .map(|cells| JsonRow {
+            columns: &result.columns,
+            cells,
+        })
+        .collect::<Vec<_>>();
     let json_str = serde_json::to_string_pretty(&objects)
         .map_err(|e| format!("failed to serialize JSON: {e}"))?;
     std::fs::write(path, json_str).map_err(|e| format!("failed to write JSON file: {e}"))?;
@@ -142,6 +164,49 @@ mod tests {
         txt_path.push("saya_test_export_unique_123.txt");
         let err = write_result(&result, &txt_path).unwrap_err();
         assert_eq!(err, "unsupported export format; use a .csv or .json path");
+    }
+
+    #[test]
+    fn json_export_preserves_duplicate_column_labels_and_values() {
+        let result = QueryResult {
+            columns: vec!["name".to_string(), "name".to_string()],
+            rows: vec![json!(["first", "second"])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: "SELECT first AS name, second AS name".to_string(),
+        };
+        let path = std::env::temp_dir().join("saya_test_export_duplicate_labels.json");
+
+        write_result(&result, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(serde_json::from_str::<serde_json::Value>(&content).is_ok());
+        assert_eq!(content.matches("\"name\"").count(), 2);
+        assert!(content.contains("\"name\": \"first\""));
+        assert!(content.contains("\"name\": \"second\""));
+    }
+
+    #[test]
+    fn csv_export_neutralizes_and_quotes_formula_shaped_aliases() {
+        let result = QueryResult {
+            columns: vec!["=HYPERLINK(\"http://x\",\"click\")".to_string()],
+            rows: vec![json!(["safe"])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: "SELECT value AS \"=HYPERLINK(\\\"http://x\\\",\\\"click\\\")\""
+                .to_string(),
+        };
+        let path = std::env::temp_dir().join("saya_test_export_formula_alias.csv");
+
+        write_result(&result, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            content.lines().next(),
+            Some("\"'=HYPERLINK(\"\"http://x\"\",\"\"click\"\")\"")
+        );
     }
 }
 
