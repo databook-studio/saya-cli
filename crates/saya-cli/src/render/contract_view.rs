@@ -84,4 +84,6 @@ pub struct ContractQueueItemView {
     pub evidence_count: usize,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub incomplete: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }

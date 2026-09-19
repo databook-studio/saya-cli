@@ -11,7 +11,10 @@ use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::conflict::conflicts_for;
 use crate::contracts::knowledge_validity::item_validity_for;
 use crate::contracts::retrieval::RetrievalPolicy;
-use saya_store::{KnowledgeItem, KnowledgeItemStore, SqliteStateStore};
+use saya_store::{
+    KnowledgeItem, KnowledgeItemStore, KnowledgeItemsQuery, MAX_KNOWLEDGE_PAGE_SIZE,
+    SqliteStateStore,
+};
 use saya_types::{DatabaseObjectRef, KnowledgeState};
 
 /// Assembles one object's contract for display: its non-dismissed items, their
@@ -40,7 +43,11 @@ pub(crate) async fn show(
     policy: RetrievalPolicy,
     now_unix_ms: i64,
 ) -> Result<Option<RetrievedContract>, ContractOpError> {
-    let items = store.knowledge_for_object(object).await?;
+    let query = KnowledgeItemsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE)
+        .map_err(saya_store::KnowledgeStoreError::from)?;
+    let page = store.knowledge_for_object_page(object, query).await?;
+    let repository_truncated = page.has_more();
+    let items = page.entries;
     let kept: Vec<&KnowledgeItem> = items
         .iter()
         .filter(|it| !matches!(it.state, KnowledgeState::Dismissed))
@@ -80,7 +87,7 @@ pub(crate) async fn show(
         schema_state: state,
         claims,
         conflicts,
-        truncated: false,
+        truncated: repository_truncated,
         incomplete,
     }))
 }

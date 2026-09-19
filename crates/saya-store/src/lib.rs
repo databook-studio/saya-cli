@@ -25,8 +25,9 @@ pub use history::{
     MAX_SESSION_HISTORY_PAGE_SIZE, SessionHistoryCursor, SessionHistoryLimit, SessionHistoryPage,
 };
 pub use knowledge_items::{
-    KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
-    MAX_KNOWLEDGE_ITEM_BYTES, MAX_SCHEMA_BINDING_BYTES, knowledge_item_id_for,
+    KnowledgeCursor, KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeItemsQuery,
+    KnowledgeObjectsQuery, KnowledgePage, KnowledgeStoreError, MAX_KNOWLEDGE_ITEM_BYTES,
+    MAX_KNOWLEDGE_PAGE_SIZE, MAX_SCHEMA_BINDING_BYTES, knowledge_item_id_for,
 };
 pub use redaction::redact;
 pub use runs::{

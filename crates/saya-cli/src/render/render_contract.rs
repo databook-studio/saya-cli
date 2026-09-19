@@ -129,7 +129,7 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
     let mut stdout = String::new();
     for item in items {
         stdout.push_str(&format!(
-            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}{incomplete}  (profile: {profile})\n",
+            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}{incomplete}{truncated}  (profile: {profile})\n",
             id = item.claim_id,
             status = item.status,
             kind = item.kind,
@@ -140,6 +140,11 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
             note = schema_state_note(&item.schema_state),
             incomplete = if item.incomplete {
                 "  — incomplete: some stored claims could not be read"
+            } else {
+                ""
+            },
+            truncated = if item.truncated {
+                "  — truncated: more stored claims remain"
             } else {
                 ""
             },
@@ -175,6 +180,11 @@ fn stanza(contract: &ContractView, with_reason: bool) -> String {
     ));
     if contract.incomplete {
         out.push_str("  [incomplete — some stored claims could not be read]\n");
+    }
+    if contract.truncated && !with_reason {
+        // A truncated contract must never read as a complete one, on either
+        // the human list or show surface.
+        out.push_str("  [partial contract — some claims were omitted]\n");
     }
     for claim in &contract.claims {
         out.push_str(&format!(

@@ -140,5 +140,9 @@ pub(crate) struct RecallDiagnostics {
     /// [`Self::excluded_by_schema`]. The P1a recall receipt reads this to make
     /// truncation visible (`dropped_by_bounds`).
     pub excluded_by_count_bounds: usize,
+    /// A bounded repository page had another deterministic page available.
+    /// This is separate from recall's own count bounds: selection could not
+    /// inspect the complete knowledge set.
+    pub repository_truncated: bool,
     pub store_unavailable: bool,
 }

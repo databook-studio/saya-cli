@@ -23,7 +23,10 @@
 use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::knowledge_validity::item_validity_for;
 use crate::contracts::view::ContractSchemaState;
-use saya_store::{KnowledgeItem, KnowledgeItemStore, SqliteStateStore};
+use saya_store::{
+    KnowledgeItem, KnowledgeItemStore, KnowledgeItemsQuery, MAX_KNOWLEDGE_PAGE_SIZE,
+    SqliteStateStore,
+};
 use saya_types::{
     ClaimId, ClaimPayload, ClaimStatus, DatabaseObjectRef, KnowledgeState, ProfileIdentity,
 };
@@ -101,6 +104,8 @@ pub(crate) struct QueuedCandidate {
     /// queue remains usable, but its visible entries must not imply a complete
     /// review set.
     pub incomplete: bool,
+    /// The bounded repository page had more rows after this queue preview.
+    pub truncated: bool,
 }
 
 /// The candidate review queue for `profiles`. `Pending` items only, ordered
@@ -126,8 +131,13 @@ pub(crate) async fn review_queue(
     // carrier does not carry) before projecting to the carrier.
     let mut entries: Vec<(KnowledgeItem, ContractSchemaState)> = Vec::new();
     let mut incomplete = false;
+    let mut truncated = false;
     for profile in profiles {
-        for item in store.knowledge_for_profile(profile).await? {
+        let query = KnowledgeItemsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE)
+            .map_err(saya_store::KnowledgeStoreError::from)?;
+        let page = store.knowledge_for_profile_page(profile, query).await?;
+        truncated |= page.has_more();
+        for item in page.entries {
             if item.state != KnowledgeState::Pending {
                 continue;
             }
@@ -165,6 +175,7 @@ pub(crate) async fn review_queue(
                 // contract_evidence is gone; there is no evidence to count.
                 evidence_count: 0,
                 incomplete,
+                truncated,
             })
         })
         .collect();

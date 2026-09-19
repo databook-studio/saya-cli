@@ -170,5 +170,6 @@ pub(crate) fn queue_item_view(
         schema_state: schema_state_str(candidate.schema_state),
         evidence_count: candidate.evidence_count,
         incomplete: candidate.incomplete,
+        truncated: candidate.truncated,
     }
 }

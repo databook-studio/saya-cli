@@ -149,6 +149,7 @@ pub(crate) async fn recall(store: &SqliteStateStore, request: RecallRequest<'_>)
         attempted: true,
         considered: selection.considered,
         excluded_by_status: selection.excluded_by_status,
+        repository_truncated: selection.repository_truncated,
         ..default_diag()
     };
 
@@ -168,7 +169,15 @@ pub(crate) async fn recall(store: &SqliteStateStore, request: RecallRequest<'_>)
     );
     // One policy, applied here for every recall caller: a contract computed
     // `Stale` is dropped for `ForModel` (and counted), kept for `ForHumanReview`.
-    let contracts = retrieval::apply(assembled, request.policy, &mut diag);
+    let mut contracts = retrieval::apply(assembled, request.policy, &mut diag);
+    if selection.repository_truncated {
+        // A page boundary means the result is a deterministic prefix of the
+        // repository, even when the missing rows did not match this request.
+        // Mark the visible tail so every adapter can say it is incomplete.
+        if let Some(last) = contracts.last_mut() {
+            last.truncated = true;
+        }
+    }
     diag.selected = contracts.len();
     RecallOutcome {
         contracts,

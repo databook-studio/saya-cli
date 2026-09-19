@@ -2,18 +2,19 @@
 //!
 //! This is the home D-1 (typed slots) and D-2 (computed staleness) were given
 //! a table for. Object identity is inlined on the row rather than joined to
-//! `contract_objects`, so "what does SAYA know about this profile" is one
-//! query. Cardinality is enforced at the storage boundary: a partial unique
+//! `contract_objects`, so "what does SAYA know about this profile" needs no
+//! join. Cardinality is enforced at the storage boundary: a partial unique
 //! index refuses two single-valued rows for the same object and slot — a
 //! Rust-side guard alone is a convention, and conventions are what this
 //! subsystem exists to delete.
 //!
-//! Nothing adopts this yet. The existing `contract_*` tables and every current
-//! caller keep working; a later slice switches over.
+//! Recall, review, queue, and learning callers use this repository; the
+//! compatibility `Vec` reads remain for small administrative/test consumers.
 
 mod binding;
 mod error;
 mod keys;
+mod pagination;
 mod reads;
 mod records;
 mod writes;
@@ -21,6 +22,10 @@ mod writes;
 use async_trait::async_trait;
 pub use error::KnowledgeStoreError;
 pub use keys::knowledge_item_id_for;
+pub use pagination::{
+    KnowledgeCursor, KnowledgeItemsQuery, KnowledgeObjectsQuery, KnowledgePage,
+    MAX_KNOWLEDGE_PAGE_SIZE,
+};
 pub use records::{
     KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES, MAX_SCHEMA_BINDING_BYTES,
 };
@@ -29,8 +34,8 @@ use crate::SqliteStateStore;
 use saya_types::{DatabaseObjectRef, KnowledgeState, ProfileIdentity, SchemaFingerprint};
 
 /// The repository over the `knowledge_items` table. Insert/replace enforces
-/// the slot's cardinality and the payload discipline; the two reads are each
-/// one query, scoped absolutely to a profile.
+/// the slot's cardinality and the payload discipline; paged reads are scoped
+/// absolutely to a profile.
 #[async_trait]
 pub trait KnowledgeItemStore: Send + Sync {
     /// Insert a knowledge item, replacing the one row a single-valued slot
@@ -66,21 +71,39 @@ pub trait KnowledgeItemStore: Send + Sync {
     ) -> Result<(), KnowledgeStoreError>;
     /// Delete a knowledge item by its unique ID.
     async fn delete_knowledge_item(&self, id: &str) -> Result<(), KnowledgeStoreError>;
-    /// Every knowledge item for `profile` in one query.
+    /// Every knowledge item for `profile`, collected through bounded pages.
     async fn knowledge_for_profile(
         &self,
         profile: &ProfileIdentity,
     ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError>;
-    /// Every knowledge item for `object` in one query.
+    /// Retrieve one bounded, deterministic page for `profile`.
+    async fn knowledge_for_profile_page(
+        &self,
+        profile: &ProfileIdentity,
+        query: KnowledgeItemsQuery,
+    ) -> Result<KnowledgePage<KnowledgeItem>, KnowledgeStoreError>;
+    /// Every knowledge item for `object`, collected through bounded pages.
     async fn knowledge_for_object(
         &self,
         object: &DatabaseObjectRef,
     ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError>;
+    /// Retrieve one bounded, deterministic page for `object`.
+    async fn knowledge_for_object_page(
+        &self,
+        object: &DatabaseObjectRef,
+        query: KnowledgeItemsQuery,
+    ) -> Result<KnowledgePage<KnowledgeItem>, KnowledgeStoreError>;
     /// All distinct objects that have knowledge items for `profile`.
     async fn objects_for_profile(
         &self,
         profile: &ProfileIdentity,
     ) -> Result<Vec<DatabaseObjectRef>, KnowledgeStoreError>;
+    /// Retrieve one bounded, deterministic page of distinct profile objects.
+    async fn objects_for_profile_page(
+        &self,
+        profile: &ProfileIdentity,
+        query: KnowledgeObjectsQuery,
+    ) -> Result<KnowledgePage<DatabaseObjectRef>, KnowledgeStoreError>;
 }
 
 #[async_trait]
@@ -124,16 +147,37 @@ impl KnowledgeItemStore for SqliteStateStore {
     ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError> {
         reads::read_for_profile(self, profile).await
     }
+    async fn knowledge_for_profile_page(
+        &self,
+        profile: &ProfileIdentity,
+        query: KnowledgeItemsQuery,
+    ) -> Result<KnowledgePage<KnowledgeItem>, KnowledgeStoreError> {
+        reads::read_for_profile_page(self, profile, &query).await
+    }
     async fn knowledge_for_object(
         &self,
         object: &DatabaseObjectRef,
     ) -> Result<Vec<KnowledgeItem>, KnowledgeStoreError> {
         reads::read_for_object(self, object).await
     }
+    async fn knowledge_for_object_page(
+        &self,
+        object: &DatabaseObjectRef,
+        query: KnowledgeItemsQuery,
+    ) -> Result<KnowledgePage<KnowledgeItem>, KnowledgeStoreError> {
+        reads::read_for_object_page(self, object, &query).await
+    }
     async fn objects_for_profile(
         &self,
         profile: &ProfileIdentity,
     ) -> Result<Vec<DatabaseObjectRef>, KnowledgeStoreError> {
         reads::read_objects_for_profile(self, profile).await
+    }
+    async fn objects_for_profile_page(
+        &self,
+        profile: &ProfileIdentity,
+        query: KnowledgeObjectsQuery,
+    ) -> Result<KnowledgePage<DatabaseObjectRef>, KnowledgeStoreError> {
+        reads::read_objects_for_profile_page(self, profile, &query).await
     }
 }

@@ -13,7 +13,9 @@ use crate::contracts::{
     show as show_contract,
 };
 use crate::render::{RenderFormat, TerminalEvent};
-use saya_store::{KnowledgeItemStore, SqliteStateStore};
+use saya_store::{
+    KnowledgeItemStore, KnowledgeObjectsQuery, MAX_KNOWLEDGE_PAGE_SIZE, SqliteStateStore,
+};
 use saya_types::{DatabaseObjectKind, DatabaseObjectRef};
 
 // An unreadable store is not an empty store. `list` exits non-zero so "you have
@@ -39,12 +41,20 @@ pub(super) async fn list(
     // The object list comes from `knowledge_items` (the same table `show`/`queue`
     // read), so a `remember`-written fact is listable the same turn — no split
     // brain with the legacy `contract_objects` table the old `list_objects` read.
-    let explicit_refs: Vec<DatabaseObjectRef> = match store.objects_for_profile(&identity).await {
-        Ok(objects) => objects,
-        Err(_) => {
-            return failure_message(EXIT_CONTRACT_ERROR, STORE_UNAVAILABLE_MSG.into(), format);
-        }
-    };
+    let explicit_refs: Vec<DatabaseObjectRef> =
+        match KnowledgeObjectsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE) {
+            Err(_) => Vec::new(),
+            Ok(query) => match store.objects_for_profile_page(&identity, query).await {
+                Ok(page) => page.entries,
+                Err(_) => {
+                    return failure_message(
+                        EXIT_CONTRACT_ERROR,
+                        STORE_UNAVAILABLE_MSG.into(),
+                        format,
+                    );
+                }
+            },
+        };
     // The cached schema classifies each claim — what `connection schema
     // --refresh` wrote. `Missing` and `Unavailable` stay distinct (not collapsed
     // to an empty tree) so the honest `live_schema_unavailable` is preserved.
