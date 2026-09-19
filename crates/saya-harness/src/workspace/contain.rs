@@ -115,7 +115,9 @@ impl Workspace {
     /// the file that was scanned. At most `max_bytes` are returned, with
     /// `truncated` set when the file holds more; the digest covers the whole
     /// file — hashed in the same open, streamed in chunks — so a truncated
-    /// read still names the state an edit precondition can state.
+    /// read still names the state an edit precondition can state. Files
+    /// larger than the I/O backstop refuse before any byte is hashed; the
+    /// refusal names the scanned size and the bound.
     pub fn read(&self, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
         if max_bytes > MAX_IO_BYTES as u64 {
             return Err(HarnessError::BoundsExceeded {
@@ -144,11 +146,19 @@ impl Workspace {
                     path: rel.to_string(),
                 });
             }
+            if pre.len() > MAX_IO_BYTES as u64 {
+                return Err(HarnessError::BoundsExceeded {
+                    path: rel.to_string(),
+                    found: pre.len(),
+                    max: MAX_IO_BYTES as u64,
+                });
+            }
             let file = self.open_verified(&path, &pre, rel)?;
             let mut bytes = Vec::new();
             let mut hasher = Sha256::new();
             let mut chunk = [0u8; 64 * 1024];
             let mut kept = 0u64;
+            let mut scanned = 0u64;
             loop {
                 use std::io::Read as _;
 
@@ -157,6 +167,14 @@ impl Workspace {
                     .map_err(|error| io_error("read workspace file", &path, error))?;
                 if read == 0 {
                     break;
+                }
+                scanned += read as u64;
+                if scanned > MAX_IO_BYTES as u64 {
+                    return Err(HarnessError::BoundsExceeded {
+                        path: rel.to_string(),
+                        found: scanned,
+                        max: MAX_IO_BYTES as u64,
+                    });
                 }
                 hasher.update(&chunk[..read]);
                 let room = max_bytes.saturating_sub(kept) as usize;

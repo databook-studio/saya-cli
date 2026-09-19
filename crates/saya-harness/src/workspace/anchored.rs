@@ -21,7 +21,11 @@ use crate::{HarnessError, io_error};
 /// file that was scanned. At most `max_bytes` are returned, with `truncated`
 /// set when the file holds more. The digest covers the whole file — hashed
 /// in the same open, streamed in 64 KiB chunks — so a truncated read still
-/// names the state an edit precondition can state.
+/// names the state an edit precondition can state. Files larger than the
+/// process-wide I/O backstop (`MAX_IO_BYTES`, the same ceiling that bounds
+/// writes, patches, and search horizons) refuse before any byte is hashed:
+/// the refusal names the scanned size and the bound, so a very large file
+/// costs a stat, not a full hash.
 pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
     let anchor = ws.anchor(rel, false)?;
     let stat = final_stat(&anchor, "read workspace file", rel)?;
@@ -35,17 +39,33 @@ pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile
             path: rel.to_string(),
         });
     }
+    if stat.len() > super::contain::MAX_IO_BYTES as u64 {
+        return Err(HarnessError::BoundsExceeded {
+            path: rel.to_string(),
+            found: stat.len(),
+            max: super::contain::MAX_IO_BYTES as u64,
+        });
+    }
     let file = anchor.open_verified(stat.identity(), rel)?;
     let mut bytes = Vec::new();
     let mut hasher = Sha256::new();
     let mut chunk = [0u8; 64 * 1024];
     let mut kept = 0u64;
+    let mut scanned = 0u64;
     loop {
         let read = (&file)
             .read(&mut chunk)
             .map_err(|error| io_error("read workspace file", anchor.path(), error))?;
         if read == 0 {
             break;
+        }
+        scanned += read as u64;
+        if scanned > super::contain::MAX_IO_BYTES as u64 {
+            return Err(HarnessError::BoundsExceeded {
+                path: rel.to_string(),
+                found: scanned,
+                max: super::contain::MAX_IO_BYTES as u64,
+            });
         }
         hasher.update(&chunk[..read]);
         let room = max_bytes.saturating_sub(kept) as usize;

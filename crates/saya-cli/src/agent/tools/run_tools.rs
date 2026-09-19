@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use saya_agent::{ToolError, ToolExecutor};
 
 use super::DatabaseTools;
+use super::host_argv::validate_host_json_argv;
 use saya_agent::CancellationToken;
 use saya_harness::fetch::FetchTools;
 use saya_harness::runner::RunProgram;
@@ -153,6 +154,14 @@ impl ToolExecutor for RunTools {
             if let Some(program) = crate::interactive::session_deny::call_program(name, &arguments)
                 && self.deny.contains(&program)
             {
+                // The deny journal line must not materialise unbounded argv
+                // either: validate the raw JSON first, then carry at most the
+                // admitted bound into the owned strings the journal redacts.
+                if name == "run_command"
+                    && let Some(serde_json::Value::Array(items)) = arguments.get("args")
+                {
+                    validate_host_json_argv(items)?;
+                }
                 let argv: Vec<String> = arguments
                     .get("args")
                     .and_then(serde_json::Value::as_array)
@@ -252,14 +261,20 @@ impl HostCommandMember {
             .ok_or(ToolError::UnsupportedProperty)?;
         let argv: Vec<String> = match object.get("args") {
             None => Vec::new(),
-            Some(serde_json::Value::Array(items)) => items
-                .iter()
-                .map(|item| {
-                    item.as_str()
-                        .map(str::to_owned)
-                        .ok_or(ToolError::UnsupportedProperty)
-                })
-                .collect::<Result<_, _>>()?,
+            Some(serde_json::Value::Array(items)) => {
+                // Admission before cloning and before journalling: the bound
+                // runs on the borrowed JSON, so an oversized array refuses
+                // without materialising an owned copy or a journal line.
+                validate_host_json_argv(items)?;
+                items
+                    .iter()
+                    .map(|item| {
+                        item.as_str()
+                            .map(str::to_owned)
+                            .ok_or(ToolError::UnsupportedProperty)
+                    })
+                    .collect::<Result<_, _>>()?
+            }
             Some(_) => return Err(ToolError::UnsupportedProperty),
         };
         let timeout_seconds = match object.get("timeout_seconds") {
