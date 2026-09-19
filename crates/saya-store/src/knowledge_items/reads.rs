@@ -10,7 +10,7 @@ use crate::knowledge_items::KnowledgeStoreError;
 use crate::knowledge_items::pagination::{
     KnowledgeCursor, KnowledgeItemsQuery, KnowledgeObjectsQuery, KnowledgePage,
 };
-use crate::knowledge_items::records::KnowledgeItem;
+use crate::knowledge_items::records::{CleanupState, KnowledgeItem};
 use crate::{SqliteStateStore, StoreError};
 use saya_types::{
     ClaimOrigin, ClaimPayload, DatabaseObjectKind, DatabaseObjectRef, KnowledgeSlot,
@@ -33,12 +33,13 @@ type ItemRow = (
     String,
     String,
     String,
+    String,
     i64,
     i64,
     i64,
 );
 
-const SELECT: &str = "SELECT id, profile_id, catalog, schema, object, object_kind, slot, cardinality, value_json, source, state, schema_binding_json, fingerprint_version, created_unix_ms, updated_unix_ms FROM knowledge_items";
+const SELECT: &str = "SELECT id, profile_id, catalog, schema, object, object_kind, slot, cardinality, value_json, source, state, schema_binding_json, cleanup_state, fingerprint_version, created_unix_ms, updated_unix_ms FROM knowledge_items";
 
 fn decode_item(row: ItemRow) -> Result<KnowledgeItem, KnowledgeStoreError> {
     let (
@@ -54,6 +55,7 @@ fn decode_item(row: ItemRow) -> Result<KnowledgeItem, KnowledgeStoreError> {
         source,
         state,
         schema_binding_json,
+        cleanup_state,
         fingerprint_version,
         created_unix_ms,
         updated_unix_ms,
@@ -69,6 +71,7 @@ fn decode_item(row: ItemRow) -> Result<KnowledgeItem, KnowledgeStoreError> {
         serde_json::from_str::<ClaimPayload>(&value_json).map_err(|_| StoreError::Invalid)?;
     let source = ClaimOrigin::parse(&source).ok_or(StoreError::Invalid)?;
     let state = KnowledgeState::parse(&state).ok_or(StoreError::Invalid)?;
+    let cleanup = CleanupState::parse(&cleanup_state).ok_or(StoreError::Invalid)?;
     Ok(KnowledgeItem {
         id,
         object: object_ref,
@@ -77,6 +80,7 @@ fn decode_item(row: ItemRow) -> Result<KnowledgeItem, KnowledgeStoreError> {
         value,
         source,
         state,
+        cleanup,
         schema_binding_json,
         fingerprint_version: u32::try_from(fingerprint_version).map_err(|_| StoreError::Invalid)?,
         created_unix_ms,

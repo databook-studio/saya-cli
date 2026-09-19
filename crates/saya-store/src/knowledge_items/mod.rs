@@ -27,11 +27,21 @@ pub use pagination::{
     MAX_KNOWLEDGE_PAGE_SIZE,
 };
 pub use records::{
-    KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES, MAX_SCHEMA_BINDING_BYTES,
+    CleanupState, KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES,
+    MAX_SCHEMA_BINDING_BYTES,
 };
 
 use crate::SqliteStateStore;
 use saya_types::{DatabaseObjectRef, KnowledgeState, ProfileIdentity, SchemaFingerprint};
+use sqlx::SqlitePool;
+use std::path::Path;
+
+/// The logical forget commit succeeded; physical byte cleanup may need a retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForgetOutcome {
+    Cleaned,
+    CleanupPending,
+}
 
 /// The repository over the `knowledge_items` table. Insert/replace enforces
 /// the slot's cardinality and the payload discipline; paged reads are scoped
@@ -59,8 +69,10 @@ pub trait KnowledgeItemStore: Send + Sync {
         state: KnowledgeState,
     ) -> Result<(), KnowledgeStoreError>;
     /// Forget an item: erase its value and schema binding and mark it
-    /// `Dismissed`, in one transaction, keeping the row as a tombstone.
-    async fn forget_knowledge_item(&self, id: &str) -> Result<(), KnowledgeStoreError>;
+    /// `Dismissed`, in one transaction, keeping the row as a tombstone. The
+    /// outcome says whether post-commit physical cleanup completed or is
+    /// pending a retry.
+    async fn forget_knowledge_item(&self, id: &str) -> Result<ForgetOutcome, KnowledgeStoreError>;
     /// Revalidate an item, updating its schema binding JSON, fingerprint version,
     /// and transitioning its state to `Active`.
     async fn revalidate_knowledge_item(
@@ -127,7 +139,7 @@ impl KnowledgeItemStore for SqliteStateStore {
     ) -> Result<(), KnowledgeStoreError> {
         writes::update_state(self, id, state).await
     }
-    async fn forget_knowledge_item(&self, id: &str) -> Result<(), KnowledgeStoreError> {
+    async fn forget_knowledge_item(&self, id: &str) -> Result<ForgetOutcome, KnowledgeStoreError> {
         writes::forget_item(self, id).await
     }
     async fn revalidate_knowledge_item(
@@ -180,4 +192,30 @@ impl KnowledgeItemStore for SqliteStateStore {
     ) -> Result<KnowledgePage<DatabaseObjectRef>, KnowledgeStoreError> {
         reads::read_objects_for_profile_page(self, profile, &query).await
     }
+}
+
+/// Best-effort recovery for tombstones whose logical commit preceded a failed
+/// WAL checkpoint. Opening remains available when the filesystem is still
+/// unhealthy; the pending marker makes the next open or explicit retry safe.
+pub(crate) async fn recover_pending_cleanup(pool: &SqlitePool, path: &Path) {
+    let pending: Result<i64, _> =
+        sqlx::query_scalar("SELECT COUNT(*) FROM knowledge_items WHERE cleanup_state='pending'")
+            .fetch_one(pool)
+            .await;
+    if !matches!(pending, Ok(value) if value > 0) {
+        return;
+    }
+    if sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(pool)
+        .await
+        .is_err()
+        || crate::sqlite_support::secure_files(path).is_err()
+    {
+        return;
+    }
+    let _ = sqlx::query(
+        "UPDATE knowledge_items SET cleanup_state='complete' WHERE cleanup_state='pending'",
+    )
+    .execute(pool)
+    .await;
 }

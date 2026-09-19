@@ -18,7 +18,7 @@ use super::op_error::ContractOpError;
 use super::view::ContractClaim;
 
 use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
-use saya_store::{KnowledgeItem, KnowledgeItemStore, SchemaStore, SqliteStateStore};
+use saya_store::{ForgetOutcome, KnowledgeItem, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
     BindingValidity, ClaimId, DatabaseObjectRef, KnowledgeState, SchemaBinding, SchemaFingerprint,
     Table,
@@ -177,9 +177,8 @@ pub(crate) async fn forget(
     store: &SqliteStateStore,
     id: &ClaimId,
     _reason: saya_store::ForgetReason,
-) -> Result<(), ContractOpError> {
-    store.forget_knowledge_item(id.as_str()).await?;
-    Ok(())
+) -> Result<ForgetOutcome, ContractOpError> {
+    Ok(store.forget_knowledge_item(id.as_str()).await?)
 }
 
 /// The schema known for `profile_id` as a three-state [`SchemaAvailability`]:

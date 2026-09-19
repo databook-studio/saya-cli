@@ -29,6 +29,30 @@ pub const MAX_KNOWLEDGE_ITEM_BYTES: usize = 4096;
 /// through the second column.
 pub const MAX_SCHEMA_BINDING_BYTES: usize = 4096;
 
+/// Whether the bytes left by a logical forget have been physically cleaned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupState {
+    Complete,
+    Pending,
+}
+
+impl CleanupState {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Pending => "pending",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "complete" => Some(Self::Complete),
+            "pending" => Some(Self::Pending),
+            _ => None,
+        }
+    }
+}
+
 /// A single current-state knowledge row, as read back from the table. Object
 /// identity is inlined, not joined.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +66,8 @@ pub struct KnowledgeItem {
     pub value: ClaimPayload,
     pub source: ClaimOrigin,
     pub state: KnowledgeState,
+    /// Physical byte cleanup after a logical forget may be retried separately.
+    pub cleanup: CleanupState,
     /// The schema binding the row was written under, serialised as JSON. Opaque
     /// to the store — it is the caller's record of what the object looked like,
     /// stored beside the `fingerprint_version` that says which format it was

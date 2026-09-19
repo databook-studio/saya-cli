@@ -168,10 +168,11 @@ a mode is a preference, sharing is a boundary.
 `saya contracts forget <id>` stops an item influencing anything immediately: it leaves recall,
 listings, and the model's view on the next turn.
 
-Its content is erased. The value and the schema dependency are blanked in the same transaction that
-records the deletion, the freed space is overwritten rather than left in the page, and the
-write-ahead log is folded back so the original text does not survive in a sidecar. A byte scan
-asserts this — an API that returns nothing while the text remains readable on disk is not deletion.
+Its content is logically erased first. The value and the schema dependency are blanked in the same
+transaction that records the deletion. The freed space is then overwritten rather than left in the
+page, and the write-ahead log is folded back so the original text does not survive in a sidecar. If
+that physical cleanup is unavailable after the commit, the command reports `cleanup pending`
+instead of claiming byte erasure; a retry or the next store open recovers it.
 
 **The row itself remains**, carrying no content: its id, its object, its slot, its state and its
 timestamps. That keeps "why did SAYA stop using that?" answerable, and means re-remembering the same

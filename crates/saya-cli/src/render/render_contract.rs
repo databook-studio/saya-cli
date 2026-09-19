@@ -56,6 +56,9 @@ pub(super) fn show(contract: &ContractView) -> Rendered {
 pub(super) fn changed(claim_id: &str, action: &str, status: &str) -> Rendered {
     // The full claim id, never abbreviated: the user pastes it into `contracts forget`.
     let line = match action {
+        "forgotten_cleanup_pending" => {
+            format!("forgotten {claim_id} (cleanup pending — retry to complete)\n")
+        }
         "duplicate" => match status {
             "forgotten" => format!("duplicate of {claim_id} — previously forgotten\n"),
             other => format!("duplicate of {claim_id} — already exists ({other})\n"),

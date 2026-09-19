@@ -20,8 +20,8 @@
 //!    quietly dropped: rejecting it would reject `hunter2` and `SHIPPED` alike.
 
 use saya_store::{
-    KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError, SqliteStateStore, StoreError,
-    state_sidecar_path,
+    CleanupState, ForgetOutcome, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
+    SqliteStateStore, StoreError, state_sidecar_path,
 };
 use saya_types::{
     ClaimOrigin, ClaimPayload, DatabaseObjectKind, DatabaseObjectRef, KnowledgeSlot,
@@ -497,6 +497,77 @@ async fn forget_of_an_unknown_id_is_not_found_not_a_silent_noop() {
         Err(KnowledgeStoreError::Store(StoreError::NotFound)),
         "forgetting a fact that is not there is a typed NotFound, not a silent ok"
     );
+}
+
+/// A committed tombstone must not be reported as an ordinary failure when the
+/// post-commit byte cleanup is unavailable. Retrying the same id completes the
+/// physical cleanup and never attempts to resurrect the logical deletion.
+#[tokio::test]
+async fn forget_reports_pending_cleanup_and_recovers_on_retry() {
+    let root = temp_root("forget-cleanup-retry");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object("orders");
+    store
+        .put_knowledge_item(grain_request(
+            ClaimPayload::table_grain(FORGET_SENTINEL, None).unwrap(),
+            clean_binding(),
+        ))
+        .await
+        .unwrap();
+    let id = store.knowledge_for_object(&obj).await.unwrap()[0]
+        .id
+        .clone();
+
+    store.fail_next_cleanup_for_tests();
+    assert_eq!(
+        store.forget_knowledge_item(&id).await.unwrap(),
+        ForgetOutcome::CleanupPending
+    );
+    let item = store.get_knowledge_item(&id).await.unwrap().unwrap();
+    assert_eq!(item.state, KnowledgeState::Dismissed);
+    assert_eq!(item.cleanup, CleanupState::Pending);
+
+    assert_eq!(
+        store.forget_knowledge_item(&id).await.unwrap(),
+        ForgetOutcome::Cleaned
+    );
+    let item = store.get_knowledge_item(&id).await.unwrap().unwrap();
+    assert_eq!(item.cleanup, CleanupState::Complete);
+    assert!(!window_contains(&db_bytes(&db), FORGET_SENTINEL.as_bytes()));
+    store.close().await;
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn reopening_recovers_pending_cleanup_before_reads() {
+    let root = temp_root("forget-cleanup-reopen");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object("orders");
+    store
+        .put_knowledge_item(grain_request(
+            ClaimPayload::table_grain(FORGET_SENTINEL, None).unwrap(),
+            clean_binding(),
+        ))
+        .await
+        .unwrap();
+    let id = store.knowledge_for_object(&obj).await.unwrap()[0]
+        .id
+        .clone();
+    store.fail_next_cleanup_for_tests();
+    assert_eq!(
+        store.forget_knowledge_item(&id).await.unwrap(),
+        ForgetOutcome::CleanupPending
+    );
+    store.close().await;
+
+    let reopened = SqliteStateStore::new(&db);
+    let item = reopened.get_knowledge_item(&id).await.unwrap().unwrap();
+    assert_eq!(item.cleanup, CleanupState::Complete);
+    assert!(!window_contains(&db_bytes(&db), FORGET_SENTINEL.as_bytes()));
+    reopened.close().await;
+    let _ = fs::remove_dir_all(root);
 }
 
 // ---------------------------------------------------------------------------

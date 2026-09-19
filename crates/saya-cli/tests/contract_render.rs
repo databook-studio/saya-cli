@@ -159,6 +159,19 @@ fn text_contract_changed_forgotten() {
     insta::assert_snapshot!(render_event(&event, RenderFormat::Text).stdout);
 }
 
+#[test]
+fn text_contract_changed_cleanup_pending_is_explicit() {
+    let event = TerminalEvent::ContractChanged {
+        claim_id: "c-1a2b3c4d5e6".into(),
+        action: "forgotten_cleanup_pending".into(),
+        status: "forgotten".into(),
+    };
+    assert_eq!(
+        render_event(&event, RenderFormat::Text).stdout,
+        "forgotten c-1a2b3c4d5e6 (cleanup pending — retry to complete)\n"
+    );
+}
+
 /// A duplicate of an already-forgotten claim must read as "previously forgotten",
 /// not as a fresh success — the user has to know the claim is gone.
 #[test]

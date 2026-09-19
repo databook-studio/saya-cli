@@ -21,6 +21,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step5(&mut connection).await?;
             step6(&mut connection).await?;
             step7(&mut connection).await?;
+            step8(&mut connection).await?;
             true
         }
         1 => {
@@ -30,6 +31,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step5(&mut connection).await?;
             step6(&mut connection).await?;
             step7(&mut connection).await?;
+            step8(&mut connection).await?;
             true
         }
         2 => {
@@ -38,6 +40,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step5(&mut connection).await?;
             step6(&mut connection).await?;
             step7(&mut connection).await?;
+            step8(&mut connection).await?;
             true
         }
         3 => {
@@ -45,24 +48,32 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step5(&mut connection).await?;
             step6(&mut connection).await?;
             step7(&mut connection).await?;
+            step8(&mut connection).await?;
             true
         }
         4 => {
             step5(&mut connection).await?;
             step6(&mut connection).await?;
             step7(&mut connection).await?;
+            step8(&mut connection).await?;
             true
         }
         5 => {
             step6(&mut connection).await?;
             step7(&mut connection).await?;
+            step8(&mut connection).await?;
             true
         }
         6 => {
             step7(&mut connection).await?;
+            step8(&mut connection).await?;
             true
         }
-        7 => false,
+        7 => {
+            step8(&mut connection).await?;
+            true
+        }
+        8 => false,
         _ => {
             sqlx::query("ROLLBACK").execute(&mut *connection).await.ok();
             return Err(StoreError::VersionUnsupported);
@@ -279,6 +290,31 @@ async fn step7(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError
     sqlx::query("CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, status TEXT NOT NULL, failure_code TEXT, cap_workspace_write INTEGER NOT NULL, cap_fetch INTEGER NOT NULL, cap_runner INTEGER NOT NULL, cap_scratch INTEGER NOT NULL, budget_wall_clock_ms INTEGER, budget_tokens_json TEXT, budget_turns INTEGER, budget_tool_calls INTEGER, budget_downloaded_bytes INTEGER, budget_workspace_bytes INTEGER, budget_workspace_files INTEGER, budget_process_count INTEGER, budget_process_time_ms INTEGER, usage_wall_clock_ms INTEGER, usage_tokens_json TEXT, usage_turns INTEGER, usage_tool_calls INTEGER, created_unix_ms INTEGER NOT NULL, updated_unix_ms INTEGER NOT NULL)").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
     sqlx::query("CREATE TABLE IF NOT EXISTS run_steps(run_id TEXT NOT NULL REFERENCES runs(id), step INTEGER NOT NULL, status TEXT NOT NULL, usage_wall_clock_ms INTEGER, usage_tokens_json TEXT, usage_turns INTEGER, usage_tool_calls INTEGER, created_unix_ms INTEGER NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (run_id, step))").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
     sqlx::query("PRAGMA user_version = 7")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}
+
+/// Step 8 records whether a forgotten row's post-commit byte cleanup finished.
+/// The default keeps existing tombstones compatible: their payload was already
+/// checkpointed by the old writer, so they need no recovery pass.
+async fn step8(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    let has_column: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('knowledge_items') WHERE name='cleanup_state'",
+    )
+    .fetch_one(&mut **connection)
+    .await
+    .map_err(|_| StoreError::Unavailable)?;
+    if has_column == 0 {
+        sqlx::query(
+            "ALTER TABLE knowledge_items ADD COLUMN cleanup_state TEXT NOT NULL DEFAULT 'complete'",
+        )
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    }
+    sqlx::query("PRAGMA user_version = 8")
         .execute(&mut **connection)
         .await
         .map_err(|_| StoreError::Unavailable)?;

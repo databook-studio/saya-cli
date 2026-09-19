@@ -3,7 +3,14 @@ use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio::sync::OnceCell;
 
 /// The longest an opener will spend before reporting the store unavailable.
@@ -30,6 +37,7 @@ const OPEN_BUSY_BACKOFF: Duration = Duration::from_millis(250);
 pub struct SqliteStateStore {
     path: Arc<PathBuf>,
     pool: Arc<OnceCell<SqlitePool>>,
+    cleanup_failure: Arc<AtomicBool>,
 }
 
 impl SqliteStateStore {
@@ -37,6 +45,7 @@ impl SqliteStateStore {
         Self {
             path: Arc::new(path.into()),
             pool: Arc::new(OnceCell::new()),
+            cleanup_failure: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -132,6 +141,7 @@ impl SqliteStateStore {
             return Err(StoreError::OpenFailed);
         }
         migration::migrate(&pool).await?;
+        crate::knowledge_items::recover_pending_cleanup(&pool, &self.path).await;
         sqlite_support::secure_files(&self.path)?;
         Ok(pool)
     }
@@ -142,5 +152,15 @@ impl SqliteStateStore {
     }
     pub(crate) fn secure_files(&self) -> Result<(), StoreError> {
         sqlite_support::secure_files(&self.path)
+    }
+
+    /// Inject one post-commit cleanup failure in tests.
+    #[doc(hidden)]
+    pub fn fail_next_cleanup_for_tests(&self) {
+        self.cleanup_failure.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn consume_cleanup_failure_for_tests(&self) -> bool {
+        self.cleanup_failure.swap(false, Ordering::AcqRel)
     }
 }
