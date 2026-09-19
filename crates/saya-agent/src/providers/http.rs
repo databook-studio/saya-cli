@@ -4,16 +4,26 @@ use std::time::Duration;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
+enum AttemptError {
+    Network,
+    Timeout,
+}
+
 pub(super) async fn send_stream(
     mut build: impl FnMut() -> RequestBuilder,
     delays: &[Duration],
     cancellation: &CancellationToken,
     endpoint: &str,
+    establishment_timeout: Duration,
 ) -> Result<Response, ProviderError> {
     for attempt in 0..=delays.len() {
         let response = tokio::select! {
             _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
-            response = build().send() => response,
+            response = tokio::time::timeout(establishment_timeout, build().send()) => match response {
+                Ok(Ok(response)) => Ok(response),
+                Ok(Err(_)) => Err(AttemptError::Network),
+                Err(_) => Err(AttemptError::Timeout),
+            },
         };
         match response {
             Ok(response) if response.status().is_success() => return Ok(response),
@@ -26,11 +36,17 @@ pub(super) async fn send_stream(
             Ok(response) => {
                 return Err(ProviderError::Request(describe(response.status())));
             }
-            Err(_) if attempt < delays.len() => {
+            Err(error) if attempt < delays.len() => {
                 let delay = jitter(delays[attempt]).min(MAX_BACKOFF);
                 wait(delay, cancellation).await?;
+                let _ = error;
             }
-            Err(_) => {
+            Err(error) => {
+                if matches!(error, AttemptError::Timeout) {
+                    return Err(ProviderError::Request(format!(
+                        "provider request timed out while establishing a connection to {endpoint}"
+                    )));
+                }
                 return Err(ProviderError::Request(format!(
                     "could not reach the provider at {endpoint} — check that it is running and the configured base_url is correct"
                 )));
@@ -216,7 +232,14 @@ mod tests {
         let delays = vec![Duration::from_secs(10)];
 
         let start = std::time::Instant::now();
-        let res = send_stream(|| client.get(&url), &delays, &cancellation, &url).await;
+        let res = send_stream(
+            || client.get(&url),
+            &delays,
+            &cancellation,
+            &url,
+            Duration::from_secs(5),
+        )
+        .await;
         let elapsed = start.elapsed();
 
         assert!(res.is_ok());
@@ -224,5 +247,52 @@ mod tests {
         assert!(elapsed < Duration::from_secs(2));
 
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_stream_times_out_while_establishing() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            drop(socket);
+        });
+
+        let client = reqwest::Client::new();
+        let cancellation = CancellationToken::new();
+        let url = format!("http://{addr}");
+        let started = std::time::Instant::now();
+        let error = send_stream(
+            || client.get(&url),
+            &[],
+            &cancellation,
+            &url,
+            Duration::from_millis(20),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("timed out"), "{error:?}");
+        assert!(started.elapsed() < Duration::from_millis(150));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_stream_cancellation_wins_before_establishment() {
+        let client = reqwest::Client::new();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let error = send_stream(
+            || client.get("http://127.0.0.1:1"),
+            &[],
+            &cancellation,
+            "http://127.0.0.1:1",
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error, ProviderError::Cancelled);
     }
 }

@@ -56,6 +56,7 @@ impl ChatProvider for OllamaProvider {
             &self.settings.retry_delays,
             &cancellation,
             &url,
+            self.settings.timeout,
         )
         .await?;
         Ok(ollama_stream::parse(

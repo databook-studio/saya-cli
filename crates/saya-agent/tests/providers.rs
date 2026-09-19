@@ -80,6 +80,17 @@ fn keep_open_server(body: &'static str) -> (String, thread::JoinHandle<()>) {
     (base, handle)
 }
 
+fn silent_server() -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let handle = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        thread::sleep(Duration::from_millis(150));
+        drop(stream);
+    });
+    (base, handle)
+}
+
 fn read_request(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 4096];
@@ -333,6 +344,52 @@ async fn cancellation_and_errors_are_sanitized() {
         Err(ProviderError::Cancelled)
     ));
     handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn every_streaming_provider_applies_the_establishment_deadline() {
+    use saya_agent::AnthropicProvider;
+
+    let (base, handle) = silent_server();
+    let error = OpenAiCompatibleProvider::new(
+        ProviderSettings::new("m", Some(format!("{base}/v1")))
+            .with_retry_delays(Vec::new())
+            .with_timeout(Duration::from_millis(20)),
+        Some("k"),
+    )
+    .unwrap()
+    .complete(request())
+    .await
+    .unwrap_err();
+    handle.join().unwrap();
+    assert!(error.to_string().contains("timed out"), "{error}");
+
+    let (base, handle) = silent_server();
+    let error = AnthropicProvider::new(
+        ProviderSettings::new("m", Some(format!("{base}/v1")))
+            .with_retry_delays(Vec::new())
+            .with_timeout(Duration::from_millis(20)),
+        Some("k"),
+    )
+    .unwrap()
+    .complete(request())
+    .await
+    .unwrap_err();
+    handle.join().unwrap();
+    assert!(error.to_string().contains("timed out"), "{error}");
+
+    let (base, handle) = silent_server();
+    let error = OllamaProvider::new(
+        ProviderSettings::new("m", Some(base))
+            .with_retry_delays(Vec::new())
+            .with_timeout(Duration::from_millis(20)),
+    )
+    .unwrap()
+    .complete(request())
+    .await
+    .unwrap_err();
+    handle.join().unwrap();
+    assert!(error.to_string().contains("timed out"), "{error}");
 }
 
 #[tokio::test]

@@ -19,7 +19,8 @@ pub struct OpenAiCompatibleProvider {
 
 impl OpenAiCompatibleProvider {
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
-        // No client-wide timeout: streams are bounded per chunk gap instead.
+        // Establishment is bounded per request; stream bodies are bounded by
+        // the parser's per-chunk idle timeout instead of a total cap.
         let client = reqwest::Client::builder()
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
@@ -68,6 +69,7 @@ impl ChatProvider for OpenAiCompatibleProvider {
             &self.settings.retry_delays,
             &cancellation,
             &url,
+            self.settings.timeout,
         )
         .await?;
         Ok(openai_stream::parse(

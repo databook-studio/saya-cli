@@ -1,6 +1,10 @@
 use super::{gemini_request, gemini_response, settings::ProviderSettings};
-use crate::{CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError};
+use crate::{
+    CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderEvent,
+    ProviderStream,
+};
 use async_trait::async_trait;
+use futures_util::stream;
 
 /// Gemini API provider implementation.
 pub struct GeminiProvider {
@@ -13,7 +17,6 @@ impl GeminiProvider {
     /// Creates a new `GeminiProvider` with the given settings and optional API key.
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
         let client = reqwest::Client::builder()
-            .timeout(settings.timeout)
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
@@ -31,6 +34,42 @@ impl ChatProvider for GeminiProvider {
     }
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        self.complete_with_cancellation(request, CancellationToken::new())
+            .await
+    }
+
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ProviderStream, ProviderError> {
+        let response = self
+            .complete_with_cancellation(request, cancellation)
+            .await?;
+        let mut events = if response.message.tool_calls.is_empty() {
+            vec![
+                ProviderEvent::TextDelta(response.message.content),
+                ProviderEvent::Done,
+            ]
+        } else {
+            vec![
+                ProviderEvent::ToolCalls(response.message.tool_calls),
+                ProviderEvent::Done,
+            ]
+        };
+        if let Some(usage) = response.usage {
+            events.insert(0, ProviderEvent::Usage(usage));
+        }
+        Ok(Box::pin(stream::iter(events.into_iter().map(Ok))))
+    }
+}
+
+impl GeminiProvider {
+    async fn complete_with_cancellation(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ChatResponse, ProviderError> {
         let model = request.model.clone();
         let body = gemini_request::build_body(
             request,
@@ -44,7 +83,6 @@ impl ChatProvider for GeminiProvider {
             .unwrap_or("https://generativelanguage.googleapis.com/v1beta")
             .trim_end_matches('/');
         let url = format!("{root}/models/{model}:generateContent");
-        let cancellation = CancellationToken::new();
         let client = &self.client;
         let key = self.api_key.as_deref();
 
@@ -60,13 +98,18 @@ impl ChatProvider for GeminiProvider {
             &self.settings.retry_delays,
             &cancellation,
             &url,
+            self.settings.timeout,
         )
         .await?;
 
-        let value: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|_| ProviderError::InvalidResponse)?;
+        let value: serde_json::Value = tokio::select! {
+            _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
+            value = tokio::time::timeout(self.settings.timeout, response.json()) => value
+                .map_err(|_| ProviderError::Request(format!(
+                    "provider request timed out while reading the response from {url}"
+                )))?
+                .map_err(|_| ProviderError::InvalidResponse)?,
+        };
 
         gemini_response::parse(value)
     }
