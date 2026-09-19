@@ -111,8 +111,10 @@ pub(super) fn remembered(
 
 /// The review queue: one line per waiting claim with the fields a reviewer
 /// needs to decide — the full claim id (pasted into `contracts review`), the
-/// status word, kind, value, object, schema state, and evidence count. The
-/// status distinguishes a `candidate` (confirm or reject) from a persisted
+/// status word, kind, value, object, and schema state. The legacy evidence
+/// count is intentionally omitted: the evidence rows it once measured no
+/// longer exist, so rendering zero would imply a measurement we cannot make.
+/// The status distinguishes a `candidate` (confirm or reject) from a persisted
 /// `stale` claim (re-confirm or forget) so a reviewer can tell which decision
 /// is being asked. The claim id is never abbreviated here, unlike the recall
 /// stanza, because the reviewer's next action keys on it.
@@ -127,7 +129,7 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
     let mut stdout = String::new();
     for item in items {
         stdout.push_str(&format!(
-            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}  evidence {count}  (profile: {profile})\n",
+            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}  (profile: {profile})\n",
             id = item.claim_id,
             status = item.status,
             kind = item.kind,
@@ -136,7 +138,6 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
             object = item.object,
             state = item.schema_state,
             note = schema_state_note(&item.schema_state),
-            count = item.evidence_count,
             profile = item.profile,
         ));
     }

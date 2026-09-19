@@ -8,9 +8,9 @@
 //! is one a user cannot work through. The legacy queue sorted by
 //! `evidence_count` from `contract_evidence`; that table is gone by design (a
 //! successful query is not evidence a business definition is true), so the
-//! queue no longer orders by evidence and the carried `evidence_count` is
-//! always zero — kept on the carrier only until the presentation layer (a
-//! later chunk) drops the field from its render DTO.
+//! queue no longer orders by evidence. The carrier still carries the legacy
+//! zero-valued count for wire compatibility, but presentation does not render
+//! it because there are no evidence rows left to measure.
 //!
 //! The queue reads `knowledge_items` via [`KnowledgeItemStore`] — the same
 //! rows the harness-owned learning path writes — so a candidate the model
@@ -42,8 +42,9 @@ pub(crate) const QUEUE_DEFAULT_LIMIT: usize = 50;
 /// The render carrier for one queued item. Carries the fields the
 /// presentation layer's `queue_item_view` reads (`payload`, `id`, `status`,
 /// `object`) projected from the [`KnowledgeItem`] — plus the `schema_state`
-/// and `evidence_count` that ride on [`QueuedCandidate`]. A dedicated carrier
-/// rather than the recall path's `ContractClaim` because the queue view reads
+/// and the legacy `evidence_count` that rides on [`QueuedCandidate`]. A
+/// dedicated carrier rather than the recall path's `ContractClaim` because the
+/// queue view reads
 /// `payload: Option<ClaimPayload>` (a forgotten-tombstone fallback the recall
 /// carrier's non-optional `value` does not model); a dedicated carrier rather
 /// than the legacy `StoredClaim` because reconstructing one would fabricate a
@@ -88,10 +89,9 @@ fn status_for_queue(state: KnowledgeState) -> ClaimStatus {
 }
 
 /// One item waiting for review — a `Pending` candidate. Carries the projected
-/// claim, the per-item schema state (a candidate about a table that has since
-/// changed says so), and the evidence count. The evidence *rows* are gone
-/// (`contract_evidence` is dropped by design), so `evidence_count` is always
-/// zero; it stays on the carrier until the presentation layer drops it.
+/// claim and the per-item schema state (a candidate about a table that has
+/// since changed says so). The legacy evidence count remains zero for the
+/// serialized compatibility shape, but is not a measured queue property.
 #[derive(Debug)]
 pub(crate) struct QueuedCandidate {
     pub claim: QueuedClaim,
