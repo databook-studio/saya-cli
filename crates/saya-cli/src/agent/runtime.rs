@@ -119,11 +119,48 @@ pub(crate) async fn run_prompt_with_inputs(
         .await;
     }
 
+    // Session-stable facts: the turn's connection set plus the session's
+    // bound root, held unchanged across the turns of one session so the
+    // system block keeps one prefix-cache key. The root borrows from the
+    // session universe for exactly this call — the facts render now, and no
+    // reference escapes into the request.
+    let root;
+    let facts = match session.as_ref() {
+        Some(universe) => {
+            root = universe.root().map(std::path::Path::to_path_buf);
+            super::session_facts::SessionFacts {
+                registry: &registry,
+                workspace_root: root.as_deref(),
+            }
+        }
+        None => super::session_facts::SessionFacts {
+            registry: &registry,
+            workspace_root: None,
+        },
+    };
+    // The plain entry point is the same assembly over an empty session
+    // (no workspace root); the mode-aware entry point takes the session
+    // facts. Both stay live: the session-aware prompt is what the turn
+    // sends, and the empty-session prompt is the no-root shape the pins
+    // read. Debug-assert they agree when no root binds — same inputs,
+    // same bytes — so the two shapes cannot drift.
+    let reachable = super::system_prompt::memory_reachable(state_db.is_some(), allow_query_data);
+    let empty_prompt = super::system_prompt::assemble_system_prompt(
+        &registry,
+        runtime.resolved.memory.mode,
+        reachable,
+    );
     let system_prompt = super::system_prompt::assemble_system_prompt_for_mode(
         &registry,
         runtime.resolved.memory.mode,
-        super::system_prompt::memory_reachable(state_db.is_some(), allow_query_data),
+        reachable,
+        &facts,
         agent_mode,
+    );
+    debug_assert!(
+        facts.workspace_root.is_some()
+            || agent_mode != saya_agent::AgentMode::Build
+            || system_prompt == empty_prompt
     );
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let memory = &runtime.resolved.memory;
