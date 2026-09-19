@@ -264,4 +264,34 @@ mod chart_gen_tests {
         assert!(html.contains("\\u003c/script"));
         assert!(html.contains("\\u003c/SCRIPT"));
     }
+
+    #[test]
+    fn script_embedded_config_round_trips_html_sensitive_labels() {
+        let labels = vec![
+            "greater>than & less<than".to_string(),
+            "</script>".to_string(),
+        ];
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "value".to_string()],
+            rows: vec![json!([labels[0], 10]), json!([labels[1], 20])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, value FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["value".to_string()],
+            title: None,
+        };
+
+        let html = render_html(&result, &spec).unwrap();
+        let config_json = html
+            .split_once("<script id=\"saya-chart-config\" type=\"application/json\">")
+            .and_then(|(_, rest)| rest.split_once("</script>"))
+            .map(|(config, _)| config)
+            .expect("chart config script is present");
+        let config: serde_json::Value = serde_json::from_str(config_json).unwrap();
+        assert_eq!(config["data"]["labels"], json!(labels));
+    }
 }

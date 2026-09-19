@@ -21,7 +21,7 @@ fn escape_json_for_script(s: &str) -> String {
     for c in s.chars() {
         match c {
             '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u0026"),
+            '>' => out.push_str("\\u003e"),
             '&' => out.push_str("\\u0026"),
             '\u{2028}' => out.push_str("\\u2028"),
             '\u{2029}' => out.push_str("\\u2029"),
