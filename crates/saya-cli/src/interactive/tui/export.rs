@@ -87,13 +87,44 @@ struct JsonRow<'a> {
     cells: &'a [serde_json::Value],
 }
 
+/// Renames repeated column labels so every key in one row is distinct:
+/// the first `name` stays `name`, the second becomes `name_2`, and so on.
+/// A repeated label must stay addressable after parsing — duplicate object
+/// keys keep only the last value under ordinary JSON parsing, silently
+/// dropping the earlier ones. The suffix starts at 2 and skips names the
+/// query itself used, so an explicit `name_2` column is never shadowed.
+fn disambiguated_columns(columns: &[String]) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    columns
+        .iter()
+        .map(|column| {
+            let next = counts.get(column.as_str()).copied().unwrap_or(0) + 1;
+            counts.insert(column.as_str(), next);
+            let mut candidate;
+            if next == 1 {
+                candidate = column.clone();
+            } else {
+                candidate = format!("{column}_{next}");
+            }
+            while !seen.insert(candidate.clone()) {
+                let bumped = counts.get(column.as_str()).copied().unwrap_or(1) + 1;
+                counts.insert(column.as_str(), bumped);
+                candidate = format!("{column}_{bumped}");
+            }
+            candidate
+        })
+        .collect()
+}
+
 impl Serialize for JsonRow<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut object = serializer.serialize_map(Some(self.columns.len()))?;
-        for (column, cell) in self.columns.iter().zip(self.cells) {
+        let names = disambiguated_columns(self.columns);
+        let mut object = serializer.serialize_map(Some(names.len()))?;
+        for (column, cell) in names.iter().zip(self.cells) {
             object.serialize_entry(column, cell)?;
         }
         object.end()
@@ -167,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn json_export_preserves_duplicate_column_labels_and_values() {
+    fn json_export_keeps_both_values_when_column_labels_repeat() {
         let result = QueryResult {
             columns: vec!["name".to_string(), "name".to_string()],
             rows: vec![json!(["first", "second"])],
@@ -175,16 +206,52 @@ mod tests {
             truncated: false,
             executed_sql: "SELECT first AS name, second AS name".to_string(),
         };
-        let path = std::env::temp_dir().join("saya_test_export_duplicate_labels.json");
+        let path = std::env::temp_dir().join("saya_test_export_duplicate_values.json");
 
         write_result(&result, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
 
-        assert!(serde_json::from_str::<serde_json::Value>(&content).is_ok());
-        assert_eq!(content.matches("\"name\"").count(), 2);
-        assert!(content.contains("\"name\": \"first\""));
-        assert!(content.contains("\"name\": \"second\""));
+        // The failure mode is a parsed document that lost a value while the
+        // raw text looked right: assert through a real parser that both
+        // values survive, addressable under distinct keys.
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let row = &parsed[0];
+        assert_eq!(row["name"], "first", "first value lost: {content}");
+        assert_eq!(
+            row["name_2"], "second",
+            "second value lost or misnamed: {content}"
+        );
+    }
+
+    #[test]
+    fn json_export_never_shadows_a_column_the_query_itself_named() {
+        let result = QueryResult {
+            columns: vec!["name".to_string(), "name_2".to_string(), "name".to_string()],
+            rows: vec![json!(["first", "explicit", "second"])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: "SELECT a, b, c".to_string(),
+        };
+        let path = std::env::temp_dir().join("saya_test_export_duplicate_shadow.json");
+
+        write_result(&result, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let row = &parsed[0];
+        assert_eq!(row["name"], "first", "{content}");
+        assert_eq!(row["name_2"], "explicit", "{content}");
+        assert_eq!(row["name_3"], "second", "{content}");
+    }
+
+    #[test]
+    fn unique_column_labels_are_untouched_by_disambiguation() {
+        assert_eq!(
+            disambiguated_columns(&["id".to_string(), "name".to_string()]),
+            vec!["id".to_string(), "name".to_string()]
+        );
     }
 
     #[test]
