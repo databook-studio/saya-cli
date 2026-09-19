@@ -46,6 +46,7 @@ mod session_grants_tests;
 pub(crate) mod session_prompt;
 mod session_request;
 mod session_resume;
+pub(crate) use session_resume::adopt_picker_resumed;
 mod session_run;
 mod session_runner;
 pub(crate) mod session_runtime;

@@ -470,7 +470,11 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
                             .unwrap_or(saya_agent::ApprovalPolicy::Ask),
                     ) {
                         Ok(()) => {
-                            *state = loaded;
+                            super::adopt_picker_resumed(
+                                state,
+                                loaded,
+                                runtime.resolved.ai.base_url.as_deref(),
+                            );
                             app.session = session.universe();
                             app.session.seed_tasks(state.task_list.clone());
                             app.reload_at_refs(state);
