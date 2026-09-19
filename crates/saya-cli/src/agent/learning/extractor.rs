@@ -11,6 +11,10 @@ use super::extractor_schema::{
 };
 use super::turn_table::{TurnObjectId, TurnObjectTable};
 
+/// Keep provider parse diagnostics structural: the response body may contain
+/// rows, prompts, or credentials, so it must never be copied into an error.
+pub(crate) const MAX_JSON_DIAGNOSTIC_BYTES: usize = 128;
+
 /// Parses a model extraction output string into typed `ExtractedProposal` records.
 #[allow(dead_code)]
 pub fn parse_extraction_response(
@@ -19,7 +23,7 @@ pub fn parse_extraction_response(
 ) -> Result<Vec<ExtractedProposal>, ExtractionError> {
     let unescaped = strip_markdown_fences(raw);
     let parsed: ExtractionResponseJson = serde_json::from_str(unescaped)
-        .map_err(|e| ExtractionError::JsonParse(format!("{e}: {raw}")))?;
+        .map_err(|e| ExtractionError::JsonParse(json_parse_diagnostic(&e)))?;
 
     let mut proposals = Vec::new();
 
@@ -34,6 +38,22 @@ pub fn parse_extraction_response(
     }
 
     Ok(proposals)
+}
+
+fn json_parse_diagnostic(error: &serde_json::Error) -> String {
+    let category = match error.classify() {
+        serde_json::error::Category::Io => "io",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "eof",
+    };
+    let diagnostic = format!(
+        "invalid extraction JSON ({category}) at line {}, column {}",
+        error.line(),
+        error.column()
+    );
+    debug_assert!(diagnostic.len() <= MAX_JSON_DIAGNOSTIC_BYTES);
+    diagnostic
 }
 
 /// Converts a single raw JSON proposal into a validated `ExtractedProposal`,
@@ -283,12 +303,17 @@ mod tests {
     #[test]
     fn test_parse_handles_malformed_json_gracefully() {
         let table = setup_test_table();
-        let bad_json = r#"{"proposals": [ not valid json }"#;
+        let bad_json = r#"{"proposals": ["provider-json-secret-sentinel"}"#;
 
         let res = parse_extraction_response(bad_json, &table);
         assert!(res.is_err());
         match res.unwrap_err() {
-            ExtractionError::JsonParse(_) => (),
+            ExtractionError::JsonParse(diagnostic) => {
+                assert!(diagnostic.contains("line"));
+                assert!(diagnostic.contains("column"));
+                assert!(diagnostic.len() <= MAX_JSON_DIAGNOSTIC_BYTES);
+                assert!(!diagnostic.contains("provider-json-secret-sentinel"));
+            }
             other => panic!("Expected JsonParse error, got {other:?}"),
         }
     }
