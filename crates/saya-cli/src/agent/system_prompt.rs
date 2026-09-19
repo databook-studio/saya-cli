@@ -91,15 +91,18 @@ fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
 }
 
 /// Coaching that applies to every turn regardless of how many databases are
-/// connected: multi-step work is the norm, a failed query must not be repeated,
-/// and a question no connected database can answer must end with a stated reason
-/// rather than an endless loop. With no turn ceiling by default, the model
-/// giving up well is the primary stopping condition.
-const WORKING_GUIDANCE: &str = "Discover the schema before you query it; multi-step work is \
-    expected. Do not repeat a query that already failed — change your approach instead. When the \
-    question cannot be answered from this database, stop and say so, explaining what you tried and \
-    what is missing: a missing table or column, data that is not present, or a question the schema \
-    cannot express. Giving up with a reason is a correct outcome; looping is not.";
+/// connected: multi-step work is the norm, a failed attempt must not be
+/// repeated, and a question nothing in the session can answer must end with a
+/// stated reason rather than an endless loop. With no turn ceiling by default,
+/// the model giving up well is the primary stopping condition. The database
+/// specifics — schema discovery first, missing tables and columns — stay as
+/// the database case of that rule.
+const WORKING_GUIDANCE: &str = "Multi-step work is expected. Do not repeat an attempt that already \
+    failed — change your approach instead. When working with a database, discover the schema before \
+    you query it. When the question cannot be answered from what is available in this session, stop \
+    and say so, explaining what you tried and what is missing: a missing table or column, data that \
+    is not present, or a question the schema cannot express. Giving up with a reason is a correct \
+    outcome; looping is not.";
 
 /// The shape an answer must take. [`WORKING_GUIDANCE`] tells the model how to
 /// proceed; this tells it how to present the result. Each clause fixes a
@@ -112,7 +115,7 @@ const WORKING_GUIDANCE: &str = "Discover the schema before you query it; multi-s
 /// population, a tie broken to fit a limit, and a named period replaced by the
 /// rows that happened to appear. Plain rules, no examples — this text rides on
 /// every request.
-const ANSWER_CONTRACT: &str = "Answer the question exactly as asked:\n\
+const ANSWER_CONTRACT: &str = "Answer the question exactly as asked. These rules govern answers that report query results, and leave other answers untouched:\n\
     - Return only the columns the question asks for; drop intermediate working columns.\n\
     - Do not round unless asked.\n\
     - Write dates as ISO YYYY-MM-DD.\n\
