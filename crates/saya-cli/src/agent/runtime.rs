@@ -1,9 +1,10 @@
 use super::extraction_trace::trace_extraction;
 use super::knowledge_event::knowledge_supplied_event;
 use super::tools;
+#[cfg(test)]
+pub(crate) use super::turn_config::query_data_allowed;
 pub(crate) use super::turn_config::{
-    AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed,
-    query_data_allowed_for_endpoint,
+    AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed_for_endpoint,
 };
 use super::turn_inputs::{TurnInputs, prepare_turn};
 use crate::interactive::session_universe::SessionUniverse;

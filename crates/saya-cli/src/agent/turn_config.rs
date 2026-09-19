@@ -36,6 +36,7 @@ pub(crate) struct PromptOverrides {
 /// Whether result rows may reach the provider when no endpoint URL is known.
 /// This preserves the historical default for Ollama; callers with a resolved
 /// endpoint should use [`query_data_allowed_for_endpoint`].
+#[cfg(test)]
 pub(crate) fn query_data_allowed(provider: AiProvider, allow_data_sharing: bool) -> bool {
     query_data_allowed_for_endpoint(provider, None, allow_data_sharing)
 }
