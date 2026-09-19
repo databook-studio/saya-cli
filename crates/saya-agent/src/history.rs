@@ -1,7 +1,15 @@
 use crate::history_context::render_context;
 use crate::{AgentError, ChatMessage, ContextBlock};
 
-const SYSTEM_PROMPT: &str = "You are SAYA, a database assistant. Use only the supplied read-only tools. Never claim to have written data or used unsupported tools.";
+/// Fixed system prefix: identity and posture, deliberately capability-silent.
+///
+/// The tool list (schemas) and the approval engine decide what is possible
+/// this turn — not prose. Any sentence naming or describing capabilities here
+/// drifts false the moment a tool is added, so this prefix only names SAYA,
+/// defers to the tools actually given, and keeps the honesty rule. Do not add
+/// capability claims back.
+const SYSTEM_PROMPT: &str =
+    "You are SAYA. Act through the tools you were given. Never claim an action you did not take.";
 
 /// Builds the message list for the agent from optional extra system prompt context,
 /// untrusted context blocks, the user prompt, and conversation history.
@@ -244,6 +252,20 @@ mod tests {
         assert_eq!(messages[1].content, "current");
     }
 
+    /// The fixed prefix is capability-silent: it must never name or describe
+    /// what the model can do — the tool list is the authority on what is
+    /// possible this turn, and any prose inventory drifts false the moment a
+    /// tool is added. A failure here reads as the regression it is.
+    #[test]
+    fn system_prompt_prefix_states_no_capabilities() {
+        for word in ["read-only", "database assistant", "write", "file"] {
+            assert!(
+                !SYSTEM_PROMPT.contains(word),
+                "system prefix must stay capability-silent, found: {word}"
+            );
+        }
+    }
+
     #[test]
     fn appends_extra_system_context_when_provided() {
         let extra = "Available database connections:\n- a (postgresql)";
@@ -291,6 +313,12 @@ mod tests {
     /// built without the field.
     #[test]
     fn empty_context_blocks_is_byte_identical_to_today() {
+        // Byte-identity pin: the fixed prefix this test pins (91 bytes).
+        assert_eq!(
+            SYSTEM_PROMPT,
+            "You are SAYA. Act through the tools you were given. Never claim an action you did not take."
+        );
+        assert_eq!(SYSTEM_PROMPT.len(), 91);
         let with_field = build_messages(None, &[], "prompt", &[], BUDGET).unwrap();
         // The pre-2a shape: system + user(prompt), no context machinery.
         let baseline = vec![
