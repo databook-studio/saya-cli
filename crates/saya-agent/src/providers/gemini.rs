@@ -104,11 +104,13 @@ impl GeminiProvider {
 
         let value: serde_json::Value = tokio::select! {
             _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
-            value = tokio::time::timeout(self.settings.timeout, response.json()) => value
+            value = tokio::time::timeout(
+                self.settings.timeout,
+                super::http::read_json(response, crate::MAX_STREAM_BYTES),
+            ) => value
                 .map_err(|_| ProviderError::Request(format!(
                     "provider request timed out while reading the response from {url}"
-                )))?
-                .map_err(|_| ProviderError::InvalidResponse)?,
+                )))??,
         };
 
         gemini_response::parse(value)

@@ -119,7 +119,8 @@ pub(crate) async fn exchange(
     if !response.status().is_success() {
         return Err(());
     }
-    let body: Value = response.json().await.map_err(|_| ())?;
+    let body: Value =
+        crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES).await?;
     let token = body
         .get("access_token")
         .and_then(Value::as_str)

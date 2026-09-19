@@ -104,7 +104,7 @@ async fn checked_json(response: reqwest::Response) -> Result<Value, ()> {
     if !response.status().is_success() || response.status() == StatusCode::NO_CONTENT {
         return Err(());
     }
-    response.json().await.map_err(|_| ())
+    crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES).await
 }
 
 fn validate_url(value: &str) -> Result<(), ConnectionError> {

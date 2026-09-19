@@ -1,8 +1,30 @@
 use crate::{CancellationToken, ProviderError};
+use futures_util::StreamExt;
 use reqwest::{RequestBuilder, Response, StatusCode};
+use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+/// Decode one HTTP JSON body without allowing reqwest to buffer an
+/// unbounded response before the provider applies its stream budget.
+pub(super) async fn read_json<T: DeserializeOwned>(
+    response: Response,
+    max_bytes: usize,
+) -> Result<T, ProviderError> {
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| ProviderError::InvalidResponse)?;
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(ProviderError::Request(
+                "provider response exceeded size limit".into(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| ProviderError::InvalidResponse)
+}
 
 enum AttemptError {
     Network,

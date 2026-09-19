@@ -30,10 +30,14 @@ pub(crate) async fn query(
         .await?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::common::read_text(response, crate::common::MAX_HTTP_ERROR_BYTES)
+            .await
+            .unwrap_or_default();
         return Err(diagnose::query_failure(status, &body));
     }
-    let value: Value = response.json().await.map_err(errors::body)?;
+    let value: Value = crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES)
+        .await
+        .map_err(|_| errors::body_decode())?;
     Ok(parse_result(value, request.max_rows, request.sql))
 }
 
@@ -67,10 +71,14 @@ async fn refuse_if_over_budget(
         .await?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::common::read_text(response, crate::common::MAX_HTTP_ERROR_BYTES)
+            .await
+            .unwrap_or_default();
         return Err(diagnose::query_failure(status, &body));
     }
-    let value: Value = response.json().await.map_err(errors::body)?;
+    let value: Value = crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES)
+        .await
+        .map_err(|_| errors::body_decode())?;
     let estimate = value
         .get("statistics")
         .and_then(|s| s.get("query"))

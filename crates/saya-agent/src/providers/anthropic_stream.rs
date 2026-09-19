@@ -95,6 +95,7 @@ struct State {
     tools: BTreeMap<usize, ToolUseBlock>,
     usage: TokenUsage,
     done: bool,
+    assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
     text: String,
@@ -104,6 +105,18 @@ struct State {
 }
 
 impl State {
+    fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
+        let next = self
+            .assembled_bytes
+            .checked_add(bytes)
+            .ok_or_else(size_error)?;
+        if next > crate::MAX_STREAM_BYTES {
+            return Err(size_error());
+        }
+        self.assembled_bytes = next;
+        Ok(())
+    }
+
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
         if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
             return Err(ProviderError::Request(
@@ -147,6 +160,7 @@ impl State {
                             .as_str()
                             .unwrap_or("")
                             .to_string();
+                        self.reserve(id.len().saturating_add(name.len()))?;
                         self.tools.insert(
                             index,
                             ToolUseBlock {
@@ -164,6 +178,7 @@ impl State {
                             .as_str()
                             .filter(|text| !text.is_empty())
                         {
+                            self.reserve(thinking.len())?;
                             self.pending
                                 .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
                         }
@@ -181,6 +196,7 @@ impl State {
                         let text = json["delta"]["text"]
                             .as_str()
                             .ok_or(ProviderError::InvalidResponse)?;
+                        self.reserve(text.len())?;
                         self.text.push_str(text);
                         self.pending
                             .push_back(ProviderEvent::TextDelta(text.to_string()));
@@ -190,6 +206,7 @@ impl State {
                         let thinking = json["delta"]["thinking"]
                             .as_str()
                             .ok_or(ProviderError::InvalidResponse)?;
+                        self.reserve(thinking.len())?;
                         if !thinking.is_empty() {
                             self.pending
                                 .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
@@ -198,6 +215,7 @@ impl State {
                         let partial = json["delta"]["partial_json"]
                             .as_str()
                             .ok_or(ProviderError::InvalidResponse)?;
+                        self.reserve(partial.len())?;
                         if let Some(block) = self.tools.get_mut(&index) {
                             block.json.push_str(partial);
                         } else {
@@ -266,6 +284,10 @@ impl State {
         }
         Ok(())
     }
+}
+
+fn size_error() -> ProviderError {
+    ProviderError::Request("provider stream exceeded size limit".into())
 }
 
 fn boundary(value: &[u8]) -> Option<(usize, usize)> {

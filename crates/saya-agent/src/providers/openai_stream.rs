@@ -83,11 +83,24 @@ struct State {
     usage: TokenUsage,
     content: bool,
     done: bool,
+    assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
     text: String,
 }
 impl State {
+    fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
+        let next = self
+            .assembled_bytes
+            .checked_add(bytes)
+            .ok_or_else(size_error)?;
+        if next > crate::MAX_STREAM_BYTES {
+            return Err(size_error());
+        }
+        self.assembled_bytes = next;
+        Ok(())
+    }
+
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
         if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
             return Err(ProviderError::Request(
@@ -141,6 +154,7 @@ impl State {
             if let Some(text) = choice.delta.content
                 && !text.is_empty()
             {
+                self.reserve(text.len())?;
                 self.content = true;
                 self.text.push_str(&text);
                 self.pending.push_back(ProviderEvent::TextDelta(text));
@@ -148,6 +162,7 @@ impl State {
             if let Some(reasoning) = choice.delta.reasoning_content
                 && !reasoning.is_empty()
             {
+                self.reserve(reasoning.len())?;
                 self.pending
                     .push_back(ProviderEvent::ReasoningDelta(reasoning));
             }
@@ -158,6 +173,10 @@ impl State {
                     call.function.name.as_deref(),
                     call.function.arguments.as_deref(),
                 )?;
+                if self.assembled_bytes.saturating_add(self.tools.bytes()) > crate::MAX_STREAM_BYTES
+                {
+                    return Err(size_error());
+                }
             }
         }
         if self.done {
@@ -174,6 +193,11 @@ impl State {
         Ok(())
     }
 }
+
+fn size_error() -> ProviderError {
+    ProviderError::Request("provider stream exceeded size limit".into())
+}
+
 fn boundary(value: &[u8]) -> Option<(usize, usize)> {
     value
         .windows(4)

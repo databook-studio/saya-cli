@@ -33,7 +33,9 @@ pub(crate) async fn login(connector: &SnowflakeConnector) -> Result<String, Conn
     if !response.status().is_success() {
         return Err(errors::auth());
     }
-    let value: Value = response.json().await.map_err(|_| errors::auth())?;
+    let value: Value = crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES)
+        .await
+        .map_err(|_| errors::auth())?;
     if value.get("success").and_then(Value::as_bool) == Some(false) {
         return Err(errors::auth());
     }
@@ -80,7 +82,9 @@ pub(crate) async fn execute(
             clear(connector).await;
             continue;
         }
-        let value: Value = response.json().await.map_err(|_| errors::query())?;
+        let value: Value = crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES)
+            .await
+            .map_err(|_| errors::query())?;
         if expired(&value) && attempt == 0 {
             clear(connector).await;
             continue;

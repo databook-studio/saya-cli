@@ -197,6 +197,7 @@ pub trait ChatProvider: Send + Sync {
     async fn collect(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut stream = self.stream(request, CancellationToken::new()).await?;
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
+        let mut assembled_bytes = 0usize;
         // Reasoning is accumulated alongside content: a single string
         // per turn, no ordering relative to text. The bound covers reasoning
         // too — a hostile endpoint streaming unbounded "thinking" must not
@@ -218,23 +219,34 @@ pub trait ChatProvider: Send + Sync {
         while let Some(event) = stream.next().await {
             match event? {
                 ProviderEvent::TextDelta(value) => {
-                    if content.len().saturating_add(value.len()) > MAX_STREAM_BYTES {
+                    if assembled_bytes.saturating_add(value.len()) > MAX_STREAM_BYTES {
                         return Err(ProviderError::Request(
                             "provider stream exceeded size limit".into(),
                         ));
                     }
+                    assembled_bytes += value.len();
                     content.push_str(&value);
                 }
                 ProviderEvent::ReasoningDelta(value) => {
-                    let accumulated = reasoning.get_or_insert_with(String::new);
-                    if accumulated.len().saturating_add(value.len()) > MAX_STREAM_BYTES {
+                    if assembled_bytes.saturating_add(value.len()) > MAX_STREAM_BYTES {
                         return Err(ProviderError::Request(
                             "provider stream exceeded size limit".into(),
                         ));
                     }
+                    assembled_bytes += value.len();
+                    let accumulated = reasoning.get_or_insert_with(String::new);
                     accumulated.push_str(&value);
                 }
-                ProviderEvent::ToolCalls(calls) => tool_calls.extend(calls),
+                ProviderEvent::ToolCalls(calls) => {
+                    let bytes = calls.iter().map(tool_call_bytes).sum::<usize>();
+                    if assembled_bytes.saturating_add(bytes) > MAX_STREAM_BYTES {
+                        return Err(ProviderError::Request(
+                            "provider stream exceeded size limit".into(),
+                        ));
+                    }
+                    assembled_bytes += bytes;
+                    tool_calls.extend(calls);
+                }
                 ProviderEvent::Usage(reported) => usage = Some(reported),
                 ProviderEvent::Done => complete = true,
             }
@@ -253,6 +265,12 @@ pub trait ChatProvider: Send + Sync {
             usage,
         })
     }
+}
+
+fn tool_call_bytes(call: &ToolCall) -> usize {
+    call.id.len()
+        + call.name.len()
+        + serde_json::to_string(&call.arguments).map_or(0, |value| value.len())
 }
 
 #[cfg(test)]

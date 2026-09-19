@@ -36,14 +36,8 @@ pub(crate) fn transport_query(error: Error) -> ConnectionError {
 /// Failure decoding the response body of a query: a timeout is the client
 /// bound, a decode failure is an unreadable result, and anything else is a
 /// generic query failure. No body content reaches the message.
-pub(crate) fn body(error: Error) -> ConnectionError {
-    if error.is_timeout() {
-        ConnectionError::query_failed("ClickHouse query timed out")
-    } else if error.is_decode() {
-        ConnectionError::query_failed("ClickHouse returned an unreadable result")
-    } else {
-        ConnectionError::query_failed("ClickHouse query failed")
-    }
+pub(crate) fn body_decode() -> ConnectionError {
+    ConnectionError::query_failed("ClickHouse returned an unreadable result")
 }
 
 pub(crate) fn connect_status(status: StatusCode) -> ConnectionError {
