@@ -80,6 +80,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         // resume continuity keeps the persisted mode.
         state.approval_mode = resume_approval_mode(&cli.options, &state.approval_mode)?;
     }
+    state.bind_runtime_endpoint(runtime.resolved.ai.base_url.as_deref());
     // Always derived, including on a resumed session: the toggle is a display
     // preference that is never persisted, so a resumed session deserializes it
     // as off and would otherwise ignore both the config setting and the flag.
@@ -863,6 +864,7 @@ fn handle_line_verbatim(
                     Ok(()) => {
                         outcome = TurnOutcome::Completed;
                         *state = loaded;
+                        state.bind_runtime_endpoint(runtime.resolved.ai.base_url.as_deref());
                         session.universe().seed_tasks(state.task_list.clone());
                         super::session_emit::emit_action(
                             SessionAction::Message(format!("Resumed session {id}")),
