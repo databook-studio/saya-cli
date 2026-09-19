@@ -61,3 +61,29 @@ async fn unopenable_path_fails_fast_instead_of_retrying_as_busy() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+/// SQLite's corrupt/not-a-database result is permanent too. It must not spend
+/// the lock retry ceiling before surfacing the typed startup failure.
+#[tokio::test]
+async fn malformed_database_fails_fast_instead_of_retrying_as_busy() {
+    let root = temp_root("malformed");
+    let db = root.join("state.sqlite3");
+    fs::write(&db, b"not a sqlite database").unwrap();
+
+    let started = Instant::now();
+    let open = tokio::time::timeout(Duration::from_secs(2), async {
+        SqliteStateStore::new(&db).get_schema(PROFILE).await
+    })
+    .await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a malformed database retried for {elapsed:?} instead of failing fast"
+    );
+    let error = open
+        .expect("a malformed database must resolve within a second, not time out")
+        .expect_err("a malformed database must fail, not succeed");
+    assert_eq!(error, StoreError::OpenFailed);
+
+    let _ = fs::remove_dir_all(root);
+}

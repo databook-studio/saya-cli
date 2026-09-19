@@ -1,4 +1,4 @@
-use crate::StoreError;
+use crate::{StoreError, sqlite_support};
 use sqlx::{Sqlite, SqlitePool, pool::PoolConnection};
 use std::time::Duration;
 
@@ -290,12 +290,14 @@ async fn retry_statement(
     statement: &str,
 ) -> Result<(), StoreError> {
     for _ in 0..LOCK_RETRIES {
-        if sqlx::query(statement)
-            .execute(&mut **connection)
-            .await
-            .is_ok()
-        {
-            return Ok(());
+        match sqlx::query(statement).execute(&mut **connection).await {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let mapped = sqlite_support::map_open_error(&error);
+                if mapped != StoreError::Unavailable {
+                    return Err(mapped);
+                }
+            }
         }
         tokio::time::sleep(LOCK_RETRY_DELAY).await;
     }

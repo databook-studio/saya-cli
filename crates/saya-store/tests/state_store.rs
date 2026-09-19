@@ -107,8 +107,7 @@ async fn independent_stores_serialize_first_initialization_and_corrupt_files_fai
         .get_schema(PROFILE)
         .await
         .unwrap_err();
-    assert_eq!(error.to_string(), "local state store is unavailable");
-    assert_eq!(format!("{error:?}"), "Unavailable");
+    assert_eq!(error, StoreError::OpenFailed);
     let _ = fs::remove_dir_all(root);
     let _ = fs::remove_dir_all(corrupt_root);
 }
