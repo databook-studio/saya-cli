@@ -25,6 +25,7 @@ pub(crate) fn contract_view(contract: &RetrievedContract, profile_name: &str) ->
         claims: contract.claims.iter().map(claim_view).collect(),
         conflicts: contract.conflicts.iter().map(conflict_view).collect(),
         truncated: contract.truncated,
+        incomplete: contract.incomplete,
     }
 }
 
@@ -168,5 +169,6 @@ pub(crate) fn queue_item_view(
         object: candidate.claim.object.qualified_name(),
         schema_state: schema_state_str(candidate.schema_state),
         evidence_count: candidate.evidence_count,
+        incomplete: candidate.incomplete,
     }
 }

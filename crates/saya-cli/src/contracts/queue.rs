@@ -97,6 +97,10 @@ pub(crate) struct QueuedCandidate {
     pub claim: QueuedClaim,
     pub schema_state: ContractSchemaState,
     pub evidence_count: usize,
+    /// A sibling pending row was malformed and could not be projected. The
+    /// queue remains usable, but its visible entries must not imply a complete
+    /// review set.
+    pub incomplete: bool,
 }
 
 /// The candidate review queue for `profiles`. `Pending` items only, ordered
@@ -121,9 +125,14 @@ pub(crate) async fn review_queue(
     // sort can key on the item's created stamp and slot (fields the render
     // carrier does not carry) before projecting to the carrier.
     let mut entries: Vec<(KnowledgeItem, ContractSchemaState)> = Vec::new();
+    let mut incomplete = false;
     for profile in profiles {
         for item in store.knowledge_for_profile(profile).await? {
             if item.state != KnowledgeState::Pending {
+                continue;
+            }
+            if ClaimId::parse(&item.id).is_err() {
+                incomplete = true;
                 continue;
             }
             let live = live_schema(schemas, item.object.profile());
@@ -155,6 +164,7 @@ pub(crate) async fn review_queue(
                 schema_state,
                 // contract_evidence is gone; there is no evidence to count.
                 evidence_count: 0,
+                incomplete,
             })
         })
         .collect();

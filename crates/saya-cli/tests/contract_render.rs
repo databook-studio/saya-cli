@@ -37,6 +37,7 @@ fn orders_view(schema_state: &str, truncated: bool) -> ContractView {
         ],
         conflicts: Vec::new(),
         truncated,
+        incomplete: false,
     }
 }
 
@@ -100,6 +101,7 @@ fn text_contract_list_with_current_and_stale() {
                 }],
                 conflicts: Vec::new(),
                 truncated: false,
+                incomplete: false,
             },
         ],
     };
@@ -256,6 +258,7 @@ fn contract_view_serialized_keys_exclude_opaque_profile_identity() {
             claim_ids: vec!["c-1".into()],
         }],
         truncated: true,
+        incomplete: false,
     };
     let json = serde_json::to_value(&view).expect("serializable to JSON value");
     let object = json

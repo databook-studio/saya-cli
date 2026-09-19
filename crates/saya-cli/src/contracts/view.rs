@@ -69,6 +69,10 @@ pub(crate) struct RetrievedContract {
     pub claims: Vec<ContractClaim>,
     pub conflicts: Vec<ContractConflict>,
     pub truncated: bool,
+    /// A selected row could not be projected into a render carrier. The
+    /// usable claims remain visible, but callers must not present the object
+    /// as complete.
+    pub incomplete: bool,
 }
 
 /// Validity of a contract's claims against the live schema.

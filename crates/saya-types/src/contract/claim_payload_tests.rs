@@ -686,6 +686,28 @@ fn serde_round_trip() {
 }
 
 #[test]
+fn serde_validates_payloads_but_accepts_blanked_tombstones() {
+    let oversized = serde_json::json!({
+        "kind": "table_description",
+        "text": "x".repeat(crate::MAX_TEXT_CHARS + 1),
+    });
+    assert!(serde_json::from_value::<ClaimPayload>(oversized).is_err());
+
+    let control = serde_json::json!({
+        "kind": "table_alias",
+        "alias": "orders\nsecret",
+    });
+    assert!(serde_json::from_value::<ClaimPayload>(control).is_err());
+
+    let blanked = ClaimPayload::table_alias("orders").unwrap().blanked();
+    let json = serde_json::to_value(&blanked).unwrap();
+    assert_eq!(
+        serde_json::from_value::<ClaimPayload>(json).unwrap(),
+        blanked
+    );
+}
+
+#[test]
 fn blanked_empties_free_text_but_keeps_structural_identity() {
     // The secret-bearing free-text fields are cleared to empty.
     let desc = ClaimPayload::table_description("a customers table").unwrap();

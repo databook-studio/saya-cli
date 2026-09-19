@@ -129,7 +129,7 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
     let mut stdout = String::new();
     for item in items {
         stdout.push_str(&format!(
-            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}  (profile: {profile})\n",
+            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}{incomplete}  (profile: {profile})\n",
             id = item.claim_id,
             status = item.status,
             kind = item.kind,
@@ -138,6 +138,11 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
             object = item.object,
             state = item.schema_state,
             note = schema_state_note(&item.schema_state),
+            incomplete = if item.incomplete {
+                "  — incomplete: some stored claims could not be read"
+            } else {
+                ""
+            },
             profile = item.profile,
         ));
     }
@@ -168,6 +173,9 @@ fn stanza(contract: &ContractView, with_reason: bool) -> String {
         profile = profile_suffix(&contract.profile),
         state_note = schema_state_note(&contract.schema_state),
     ));
+    if contract.incomplete {
+        out.push_str("  [incomplete — some stored claims could not be read]\n");
+    }
     for claim in &contract.claims {
         out.push_str(&format!(
             "  {id}  {kind}  {status}  {origin}  {value}\n",

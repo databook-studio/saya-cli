@@ -23,6 +23,12 @@ use saya_types::{
 /// the same ceiling keeps a runaway payload out of the context block.
 pub const MAX_KNOWLEDGE_ITEM_BYTES: usize = 4096;
 
+/// Bound on the opaque schema binding JSON stored beside each item. It is a
+/// persisted input just like `value_json`, so insert and revalidation share a
+/// ceiling rather than allowing a caller to bypass the knowledge-item bound
+/// through the second column.
+pub const MAX_SCHEMA_BINDING_BYTES: usize = 4096;
+
 /// A single current-state knowledge row, as read back from the table. Object
 /// identity is inlined, not joined.
 #[derive(Debug, Clone, PartialEq, Eq)]

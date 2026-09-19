@@ -59,6 +59,9 @@ pub(super) fn render_body(
             profile = profile_name,
             stale = stale_note(contract.schema_state),
         );
+        if contract.incomplete {
+            let _ = writeln!(out, "  [incomplete — some stored claims could not be read]");
+        }
         // One stanza-level directive per contract, before its claims, so
         // the model reads the authority policy then the facts it governs. The
         // directive is literally an instruction (it does not guarantee the model

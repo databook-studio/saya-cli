@@ -53,6 +53,8 @@ pub struct ContractView {
     pub conflicts: Vec<ContractConflictView>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
 }
 
 /// One claim waiting for review — a `Candidate` or a persisted `Stale` claim —
@@ -80,4 +82,6 @@ pub struct ContractQueueItemView {
     pub object: String,
     pub schema_state: String,
     pub evidence_count: usize,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
 }

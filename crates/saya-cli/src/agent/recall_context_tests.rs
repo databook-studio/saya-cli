@@ -1357,6 +1357,7 @@ async fn conflicting_grains_both_appear_marked_and_kind_named() {
             ],
         }],
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1421,6 +1422,7 @@ async fn conflict_block_instructs_not_to_choose_silently() {
             ],
         }],
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1473,6 +1475,7 @@ async fn no_conflict_renders_no_dispute_artifacts_and_pinned_shape() {
         claims: vec![claim],
         conflicts: Vec::<ContractConflict>::new(),
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1519,6 +1522,7 @@ async fn a_directive_claim_renders_its_reason_under_the_claim_line() {
         }],
         conflicts: Vec::<ContractConflict>::new(),
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1559,6 +1563,7 @@ async fn a_directive_claim_with_no_reason_renders_no_reason_line() {
         }],
         conflicts: Vec::<ContractConflict>::new(),
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1619,6 +1624,7 @@ async fn conflict_does_not_suppress_non_disputed_claims() {
             ],
         }],
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1685,6 +1691,7 @@ async fn conflict_and_candidate_markers_compose_in_one_block() {
             ],
         }],
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1742,6 +1749,7 @@ async fn opaque_identity_appears_nowhere_in_conflict_block() {
             ],
         }],
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -1939,6 +1947,7 @@ async fn disputed_confirmed_claim_does_not_read_as_binding() {
             ],
         }],
         truncated: false,
+        incomplete: false,
     };
     let name_of =
         std::collections::HashMap::from([(identity.as_str().to_string(), "analytics".into())]);
@@ -2358,6 +2367,7 @@ async fn the_byte_bound_measures_the_rendered_block_not_the_payload() {
         claims: vec![claim],
         conflicts: Vec::new(),
         truncated: false,
+        incomplete: false,
     };
     let rendered_stanza = super::render::render_body(std::slice::from_ref(&contract), &name_of);
     let payload_bytes: usize = contract

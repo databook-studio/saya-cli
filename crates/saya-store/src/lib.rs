@@ -26,7 +26,7 @@ pub use history::{
 };
 pub use knowledge_items::{
     KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
-    MAX_KNOWLEDGE_ITEM_BYTES, knowledge_item_id_for,
+    MAX_KNOWLEDGE_ITEM_BYTES, MAX_SCHEMA_BINDING_BYTES, knowledge_item_id_for,
 };
 pub use redaction::redact;
 pub use runs::{

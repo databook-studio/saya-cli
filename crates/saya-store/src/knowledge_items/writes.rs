@@ -15,7 +15,7 @@ use crate::contracts::now;
 use crate::knowledge_items::KnowledgeStoreError;
 use crate::knowledge_items::binding::slot_matches_payload;
 use crate::knowledge_items::keys::{knowledge_item_id, knowledge_item_id_value};
-use crate::knowledge_items::records::MAX_KNOWLEDGE_ITEM_BYTES;
+use crate::knowledge_items::records::{MAX_KNOWLEDGE_ITEM_BYTES, MAX_SCHEMA_BINDING_BYTES};
 use crate::{SqliteStateStore, StoreError, redact};
 use saya_types::{KnowledgeState, MAX_MULTI_SLOT_VALUES, SchemaFingerprint};
 
@@ -43,6 +43,9 @@ pub(crate) async fn insert_or_replace(
     admission::check(&serialized)?;
     if redact(&request.schema_binding_json) != request.schema_binding_json {
         return Err(StoreError::Invalid.into());
+    }
+    if request.schema_binding_json.len() > MAX_SCHEMA_BINDING_BYTES {
+        return Err(StoreError::LimitExceeded.into());
     }
     admission::check(&request.schema_binding_json)?;
 
@@ -154,6 +157,9 @@ pub(crate) async fn revalidate_item(
     fingerprint: SchemaFingerprint,
     schema_binding_json: String,
 ) -> Result<(), KnowledgeStoreError> {
+    if schema_binding_json.len() > MAX_SCHEMA_BINDING_BYTES {
+        return Err(StoreError::LimitExceeded.into());
+    }
     if redact(&schema_binding_json) != schema_binding_json {
         return Err(StoreError::Invalid.into());
     }

@@ -78,5 +78,6 @@ pub(crate) async fn show(
         claims,
         conflicts,
         truncated: false,
+        incomplete: false,
     }))
 }

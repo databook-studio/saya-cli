@@ -21,7 +21,9 @@ mod writes;
 use async_trait::async_trait;
 pub use error::KnowledgeStoreError;
 pub use keys::knowledge_item_id_for;
-pub use records::{KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES};
+pub use records::{
+    KnowledgeItem, KnowledgeItemRequest, MAX_KNOWLEDGE_ITEM_BYTES, MAX_SCHEMA_BINDING_BYTES,
+};
 
 use crate::SqliteStateStore;
 use saya_types::{DatabaseObjectRef, KnowledgeState, ProfileIdentity, SchemaFingerprint};

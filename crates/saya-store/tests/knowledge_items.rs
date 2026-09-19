@@ -1,5 +1,6 @@
 use saya_store::{
-    KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError, SqliteStateStore, StoreError,
+    KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError, MAX_SCHEMA_BINDING_BYTES,
+    SqliteStateStore, StoreError,
 };
 use saya_types::{
     ClaimOrigin, ClaimPayload, ColumnRole, DatabaseObjectKind, DatabaseObjectRef, KnowledgeSlot,
@@ -691,6 +692,47 @@ async fn test_revalidate_knowledge_item_updates_binding_and_activates() {
     assert_eq!(item.state, KnowledgeState::Active);
     assert_eq!(item.fingerprint_version, 5);
     assert_eq!(item.schema_binding_json, new_binding);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn schema_binding_size_is_capped_on_insert_and_revalidate() {
+    let root = temp_root("binding-cap");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&profile('a'), "orders");
+    let oversized = "x".repeat(MAX_SCHEMA_BINDING_BYTES + 1);
+    let mut req = request(
+        &obj,
+        KnowledgeSlot::TableGrain,
+        ClaimPayload::table_grain("grain", None).unwrap(),
+        ClaimOrigin::UserExplicit,
+        KnowledgeState::Pending,
+        1,
+    );
+    req.schema_binding_json = oversized.clone();
+    assert_eq!(
+        store.put_knowledge_item(req).await,
+        Err(KnowledgeStoreError::Store(StoreError::LimitExceeded))
+    );
+    assert!(store.knowledge_for_object(&obj).await.unwrap().is_empty());
+
+    let req = request(
+        &obj,
+        KnowledgeSlot::TableGrain,
+        ClaimPayload::table_grain("grain", None).unwrap(),
+        ClaimOrigin::UserExplicit,
+        KnowledgeState::Pending,
+        1,
+    );
+    store.put_knowledge_item(req.clone()).await.unwrap();
+    let id = store.knowledge_for_object(&obj).await.unwrap().remove(0).id;
+    assert_eq!(
+        store
+            .revalidate_knowledge_item(&id, req.fingerprint, oversized,)
+            .await,
+        Err(KnowledgeStoreError::Store(StoreError::LimitExceeded))
+    );
     let _ = fs::remove_dir_all(root);
 }
 
