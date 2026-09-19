@@ -75,7 +75,7 @@ fn decode_item(row: ItemRow) -> Result<KnowledgeItem, KnowledgeStoreError> {
         source,
         state,
         schema_binding_json,
-        fingerprint_version: fingerprint_version as u32,
+        fingerprint_version: u32::try_from(fingerprint_version).map_err(|_| StoreError::Invalid)?,
         created_unix_ms,
         updated_unix_ms,
     })

@@ -21,8 +21,14 @@ impl AuditStore for SqliteStateStore {
             .begin()
             .await
             .map_err(|_| StoreError::Unavailable)?;
+        let duration_ms = i64::try_from(entry.duration_ms).map_err(|_| StoreError::Invalid)?;
+        let row_count = entry
+            .row_count
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| StoreError::Invalid)?;
         sqlx::query("INSERT INTO audit_log(created_unix_ms, session_id, profile_id, operation, status, duration_ms, row_count, truncated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(now()).bind(entry.session_id).bind(entry.profile_id).bind(entry.operation.as_str()).bind(entry.status.as_str()).bind(entry.duration_ms as i64).bind(entry.row_count.map(|value| value as i64)).bind(entry.truncated.map(i64::from)).execute(&mut *tx).await.map_err(|_| StoreError::Unavailable)?;
+            .bind(now()).bind(entry.session_id).bind(entry.profile_id).bind(entry.operation.as_str()).bind(entry.status.as_str()).bind(duration_ms).bind(row_count).bind(entry.truncated.map(i64::from)).execute(&mut *tx).await.map_err(|_| StoreError::Unavailable)?;
         sqlx::query("DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)").bind(AUDIT_RETENTION).execute(&mut *tx).await.map_err(|_| StoreError::Unavailable)?;
         tx.commit().await.map_err(|_| StoreError::Unavailable)?;
         self.secure_files()
@@ -63,8 +69,11 @@ fn decode(row: AuditRow) -> Result<AuditRecord, StoreError> {
             profile_id,
             operation: AuditOperation::parse(&operation).ok_or(StoreError::Unavailable)?,
             status: AuditStatus::parse(&status).ok_or(StoreError::Unavailable)?,
-            duration_ms: duration_ms as u64,
-            row_count: row_count.map(|value| value as usize),
+            duration_ms: u64::try_from(duration_ms).map_err(|_| StoreError::Invalid)?,
+            row_count: row_count
+                .map(usize::try_from)
+                .transpose()
+                .map_err(|_| StoreError::Invalid)?,
             truncated: truncated.map(|value| value != 0),
             session_id,
         },
@@ -75,4 +84,25 @@ fn now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_millis() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_refuses_negative_or_overwide_numeric_values() {
+        let row = (
+            1,
+            None,
+            "p-test".to_string(),
+            "query".to_string(),
+            "success".to_string(),
+            -1,
+            Some(-1),
+            None,
+        );
+
+        assert_eq!(decode(row), Err(StoreError::Invalid));
+    }
 }
