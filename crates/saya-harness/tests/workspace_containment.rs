@@ -588,6 +588,44 @@ fn read_caps_are_honoured_with_a_visible_truncation_flag() {
 }
 
 #[test]
+fn an_oversized_file_read_refuses_before_hashing_it() {
+    let sandbox = Sandbox::new("read-oversize-refusal");
+    let target = sandbox.root().join("oversize.bin");
+    let oversize = (MAX_IO_BYTES as u64) + 1;
+    let file = fs::File::create(&target).expect("oversize fixture must plant");
+    file.set_len(oversize).expect("sparse fixture must size");
+    drop(file);
+
+    let error = sandbox
+        .ws
+        .read("oversize.bin", 1024)
+        .expect_err("a file past the I/O backstop must refuse before hashing");
+    match error {
+        HarnessError::BoundsExceeded { found, max, .. } => {
+            assert_eq!(found, oversize);
+            assert_eq!(max, MAX_IO_BYTES as u64);
+        }
+        other => panic!("the refusal must be the typed bound: {other:?}"),
+    }
+}
+
+#[test]
+fn a_file_at_the_io_backstop_still_reads_and_hashes_whole() {
+    let sandbox = Sandbox::new("read-at-backstop");
+    use sha2::{Digest, Sha256};
+    let bytes = vec![b'q'; MAX_IO_BYTES];
+    sandbox.ws.write("at-cap.bin", &bytes).unwrap();
+    let read = sandbox.ws.read("at-cap.bin", 1024).unwrap();
+    assert_eq!(read.bytes.len(), 1024);
+    assert!(read.truncated);
+    let mut expected = String::with_capacity(64);
+    for byte in Sha256::digest(&bytes) {
+        expected.push_str(&format!("{byte:02x}"));
+    }
+    assert_eq!(read.digest, expected);
+}
+
+#[test]
 fn workspace_io_caps_cannot_be_widened_by_a_direct_caller() {
     let sandbox = Sandbox::new("io-cap-backstop");
     sandbox.ws.write("small.txt", b"ok").unwrap();

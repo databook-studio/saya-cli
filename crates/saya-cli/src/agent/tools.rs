@@ -6,6 +6,10 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 mod contract_tools;
 mod database_tools;
 mod executor;
+mod host_argv;
+#[cfg(test)]
+#[path = "tools/host_argv_tests.rs"]
+mod host_argv_tests;
 mod run_tools;
 mod sql_format;
 mod tool_calls;
