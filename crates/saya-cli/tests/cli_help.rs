@@ -34,6 +34,27 @@ fn every_subcommand_and_argument_has_help_text() {
     }
 }
 
+#[test]
+fn config_doctor_help_describes_configuration_without_reachability_claims() {
+    let mut cmd = Cli::command();
+    let help = cmd
+        .find_subcommand_mut("config")
+        .expect("`config` subcommand exists")
+        .find_subcommand_mut("doctor")
+        .expect("`config doctor` subcommand exists")
+        .render_help()
+        .to_string();
+
+    assert!(
+        help.contains("configured"),
+        "help must describe configuration: {help}"
+    );
+    assert!(
+        !help.contains("reachable"),
+        "help must not claim provider reachability: {help}"
+    );
+}
+
 /// Depth-first: check `cmd` itself, then every argument it declares, then
 /// recurse into its subcommands. The root is included, so a missing top-level
 /// `about` is caught too.

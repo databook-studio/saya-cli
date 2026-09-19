@@ -1,6 +1,7 @@
 //! `config doctor` — checks what a plain file listing cannot: do secrets
-//! resolve, is the AI endpoint reachable, can profiles connect. Pure helpers
-//! are separated so they are testable without a live environment.
+//! resolve, what AI endpoint is configured, and is the selected profile
+//! configured enough to try. It performs no network checks. Pure helpers are
+//! separated so they are testable without a live environment.
 
 use super::runtime::RuntimeConfig;
 use saya_config::{AiProvider, MapSecretResolver, SecretResolver};
@@ -204,9 +205,8 @@ fn profile_secrets(profile: &DatabaseProfile) -> Vec<&saya_types::SecretRef> {
     }
 }
 
-/// Host/port the AI provider would actually be contacted on, so doctor can
-/// probe it. `None` means there is nothing meaningful to probe (a gateway
-/// with no default address).
+/// Host/port the AI provider is configured to contact. `None` means there is
+/// no meaningful endpoint to report (a gateway with no default address).
 fn provider_endpoint(provider: AiProvider, base_url: Option<&str>) -> Option<(String, u16)> {
     const DEFAULTS: [(AiProvider, &str, u16); 4] = [
         (AiProvider::Ollama, "localhost", 11_434),
@@ -226,14 +226,14 @@ fn provider_endpoint(provider: AiProvider, base_url: Option<&str>) -> Option<(St
 /// Host/port the AI provider would be contacted on, parsed from `base_url`
 /// with `url::Url`. Returns `None` when there is no usable endpoint: a string
 /// without a scheme is not an endpoint, a `mailto:`-style URL carries no host,
-/// and an empty authority has no host to probe. The port defaults from the
+/// and an empty authority has no host to report. The port defaults from the
 /// scheme (`https` => 443, `http` => 80); schemes with no known default are not
-/// probed. IPv6 hosts are returned without their brackets, matching the display
-/// shape of the `probe:` line.
+/// reported. IPv6 hosts are returned without their brackets, matching the
+/// display shape of the configured-endpoint line.
 fn parse_host_port(url: &str) -> Option<(String, u16)> {
     // `Url::parse` is lenient about an empty authority: for a special scheme it
     // folds a leading path segment into the host ("http:///path" => host
-    // "path"), which would have doctor probe a string that is not a host. A URL
+    // "path"), which would have doctor treat a string that is not a host as one. A URL
     // whose authority is empty is therefore rejected from the raw input before
     // parsing, so `Url::parse` is only reached when there is a host to extract.
     let scheme_end = url.find("://")?;
@@ -280,8 +280,8 @@ fn provider_lines(
         ));
     }
     match provider_endpoint(provider, base_url) {
-        Some((host, port)) => lines.push(format!("probe: {host}:{port}")),
-        None => lines.push("probe: no endpoint to check".to_string()),
+        Some((host, port)) => lines.push(format!("configured endpoint: {host}:{port}")),
+        None => lines.push("configured endpoint: none".to_string()),
     }
     lines
 }
@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_probed_when_base_url_is_absent() {
+    fn defaults_are_reported_when_base_url_is_absent() {
         assert_eq!(
             provider_endpoint(AiProvider::Ollama, None),
             Some(("localhost".into(), 11_434))
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn parse_host_port_strips_userinfo_before_host_and_port() {
-        // The authority after the last `@` is what is probed; a password or
+        // The authority after the last `@` is what is reported; a password or
         // username never reaches the host/port split.
         assert_eq!(
             parse_host_port("https://user:pass@host:5432"),
@@ -372,7 +372,7 @@ mod tests {
             parse_host_port("http://[::1]:5432"),
             Some(("::1".into(), 5432))
         );
-        // No port: the scheme's default port is used so the host is still probed.
+        // No port: the scheme's default port is used so the host is still reported.
         assert_eq!(
             parse_host_port("https://[2001:db8::1]"),
             Some(("2001:db8::1".into(), 443))
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn parse_host_port_rejects_strings_without_a_scheme() {
         // A bare hostname or host:port is not an endpoint; callers rely on None
-        // here so doctor reports "no endpoint to check" instead of probing one.
+        // here so doctor reports that no endpoint is configured.
         assert_eq!(parse_host_port("api.openai.com"), None);
         assert_eq!(parse_host_port("localhost:11434"), None);
         assert_eq!(parse_host_port("not a url"), None);
@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_lines_probe_an_ipv6_endpoint_without_an_explicit_port() {
+    fn provider_lines_report_an_ipv6_endpoint_without_an_explicit_port() {
         let lines = provider_lines(
             AiProvider::Ollama,
             Some("http://[::1]"),
@@ -405,9 +405,27 @@ mod tests {
             saya_config::CompactionMode::Auto,
         );
         assert!(
-            lines.iter().any(|line| line.contains("probe: ::1:80")),
-            "doctor should probe the IPv6 endpoint on the http default port: {lines:?}"
+            lines
+                .iter()
+                .any(|line| line.contains("configured endpoint: ::1:80")),
+            "doctor should report the IPv6 endpoint on the http default port: {lines:?}"
         );
+    }
+
+    #[test]
+    fn closed_loopback_endpoint_is_reported_without_claiming_reachability() {
+        let lines = provider_lines(
+            AiProvider::Ollama,
+            Some("http://127.0.0.1:1"),
+            true,
+            4096,
+            true,
+            saya_config::CompactionMode::Auto,
+        );
+        let report = lines.join("\n");
+        assert!(report.contains("configured endpoint: 127.0.0.1:1"));
+        assert!(!report.contains("probe"));
+        assert!(!report.contains("reachable"));
     }
 
     #[test]

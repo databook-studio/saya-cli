@@ -265,8 +265,9 @@ pub enum ConfigCommand {
         #[arg(long)]
         project: bool,
     },
-    /// Diagnose configuration: secrets resolve? provider reachable? Exits
-    /// non-zero (3) when the setup cannot run a query, so a script can tell.
+    /// Diagnose configuration: secrets resolve? what provider endpoint is
+    /// configured? Exits non-zero (3) when the setup cannot run a query, so a
+    /// script can tell.
     Doctor,
     /// Print the effective (redacted) configuration as JSON.
     Show,
