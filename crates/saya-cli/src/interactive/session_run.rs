@@ -1,10 +1,11 @@
 //! The `/run` child: one nested `saya run` invocation, streamed unmangled.
 //!
 //! The session's `/run <tail…>` starts a headless run by spawning the real
-//! `saya run` command as a child process and handing it the raw tail
-//! verbatim. The child's own CLI parser stays the authority on `--allow`,
-//! `--budget`, and the `resume`/`show`/`log`/`list` subcommands — the slash
-//! adapter parses nothing twice, so the two surfaces cannot drift.
+//! `saya run` command as a child process and handing it the slash tail after
+//! its small no-shell argv tokenizer. The child's own CLI parser stays the
+//! authority on `--allow`, `--budget`, and the `resume`/`show`/`log`/`list`
+//! subcommands — the slash adapter parses no command grammar twice, so the two
+//! surfaces cannot drift.
 //!
 //! **The dual-tag hazard, and what this module does about it.** A nested
 //! `saya` emits its own event stream — `TerminalEvent` lines tagged
@@ -78,7 +79,10 @@ pub(crate) fn spawn_run_child(
         .arg("--format")
         .arg(format_flag(format))
         .arg("run")
-        .args(child_argv(tail));
+        .args(
+            child_argv(tail)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?,
+        );
     if !seed_forwarded.is_empty() {
         command.arg("--allow").args(seed_forwarded);
     }
@@ -112,22 +116,74 @@ pub(crate) fn spawn_run_child(
     command.status().map(|_| ())
 }
 
-/// Shapes the child's `run` argument vector from the raw slash tail:
-/// a subcommand tail passes through verbatim (the child's parser reads its
-/// id), and a goal tail rejoins its leading words into the single positional
-/// the CLI declares — a goal is one string, then the flags verbatim.
-fn child_argv(tail: &str) -> Vec<String> {
-    let tokens = tail.split_whitespace().collect::<Vec<_>>();
-    if matches!(tokens.first(), Some(first) if SUBCOMMAND_WORDS.contains(first)) {
-        return tokens.into_iter().map(str::to_string).collect();
+/// Shapes the child's `run` argument vector from the slash tail:
+/// a subcommand tail passes through as tokenized argv (the child's parser reads
+/// its id), and a goal tail rejoins its leading words into the single
+/// positional the CLI declares — a goal is one string, then the flags.
+fn child_argv(tail: &str) -> Result<Vec<String>, String> {
+    let tokens = tokenize_tail(tail)?;
+    if matches!(tokens.first(), Some(first) if SUBCOMMAND_WORDS.contains(&first.as_str())) {
+        return Ok(tokens);
     }
     let boundary = tokens
         .iter()
         .position(|token| token.starts_with("--"))
         .unwrap_or(tokens.len());
     let mut argv = vec![tokens[..boundary].join(" ")];
-    argv.extend(tokens[boundary..].iter().map(|token| token.to_string()));
-    argv
+    argv.extend(tokens[boundary..].iter().cloned());
+    Ok(argv)
+}
+
+/// Splits a slash tail into argv words without invoking a shell. Quotes group
+/// whitespace and backslashes escape the next character; both are removed.
+/// Shell expansion and metacharacter handling do not exist here.
+fn tokenize_tail(tail: &str) -> Result<Vec<String>, String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut started = false;
+
+    for character in tail.chars() {
+        if escaped {
+            token.push(character);
+            escaped = false;
+            started = true;
+            continue;
+        }
+        match quote {
+            Some(delimiter) if character == delimiter => quote = None,
+            Some(_) => token.push(character),
+            None if character == '\\' => {
+                escaped = true;
+                started = true;
+            }
+            None if matches!(character, '\'' | '"') => {
+                quote = Some(character);
+                started = true;
+            }
+            None if character.is_whitespace() => {
+                if started {
+                    tokens.push(std::mem::take(&mut token));
+                    started = false;
+                }
+            }
+            None => {
+                token.push(character);
+                started = true;
+            }
+        }
+    }
+    if escaped {
+        return Err("unmatched escape in /run tail".to_string());
+    }
+    if quote.is_some() {
+        return Err("unmatched quote in /run tail".to_string());
+    }
+    if started {
+        tokens.push(token);
+    }
+    Ok(tokens)
 }
 
 /// The approval mode forwarded to a nested `saya run` child: the session's
@@ -175,7 +231,7 @@ pub(crate) enum RunTail {
 pub(crate) fn parse_run_tail(tail: &str) -> Result<RunTail, String> {
     let mut argv = vec!["saya".to_string(), "--non-interactive".to_string()];
     argv.push("run".to_string());
-    argv.extend(child_argv(tail));
+    argv.extend(child_argv(tail)?);
     match crate::cli::Cli::try_parse_from(argv) {
         Ok(cli) => match cli.command {
             Some(crate::cli::Command::Run {
@@ -208,25 +264,64 @@ mod tests {
     #[test]
     fn a_goal_tail_becomes_one_positional_then_flags() {
         assert_eq!(
-            child_argv("survey the data --allow workspace-write"),
+            child_argv("survey the data --allow workspace-write").unwrap(),
             ["survey the data", "--allow", "workspace-write"]
         );
-        assert_eq!(child_argv("one goal"), ["one goal"]);
+        assert_eq!(child_argv("one goal").unwrap(), ["one goal"]);
         // No goal words at all: an empty positional, which the child's own
         // parser refuses — the adapter does not pre-validate what the child
         // rejects.
         assert_eq!(
-            child_argv("--allow workspace-write"),
+            child_argv("--allow workspace-write").unwrap(),
             ["", "--allow", "workspace-write"]
         );
+    }
+
+    #[test]
+    fn quoted_and_escaped_tail_words_become_literal_argv() {
+        assert_eq!(
+            child_argv(r#""survey the data" --allow workspace-write"#).unwrap(),
+            ["survey the data", "--allow", "workspace-write"]
+        );
+        assert_eq!(
+            child_argv(r#"survey\ the\ data --allow workspace-write"#).unwrap(),
+            ["survey the data", "--allow", "workspace-write"]
+        );
+        assert_eq!(
+            child_argv(r#"echo '$(touch pwned)' --allow 'runner:echo'"#).unwrap(),
+            ["echo $(touch pwned)", "--allow", "runner:echo"]
+        );
+        match parse_run_tail(r#""survey the data" --allow workspace-write"#) {
+            Ok(RunTail::Start { goal, allow, .. }) => {
+                assert_eq!(goal.as_deref(), Some("survey the data"));
+                assert_eq!(allow, ["workspace-write"]);
+            }
+            other => panic!("quoted tail parses to Start, got {other:?}"),
+        }
+        let tail = match crate::slash::parse_slash_command(
+            r#"/run "survey the data" --allow workspace-write"#,
+        )
+        .unwrap()
+        {
+            Some(crate::slash::SlashCommand::Run(tail)) => tail,
+            other => panic!("quoted slash line parses to Run, got {other:?}"),
+        };
+        assert!(matches!(parse_run_tail(&tail), Ok(RunTail::Start { .. })));
+    }
+
+    #[test]
+    fn unmatched_quotes_and_escapes_are_rejected_before_clap() {
+        assert!(child_argv(r#""unfinished goal"#).is_err());
+        assert!(child_argv("unfinished\\").is_err());
+        assert!(parse_run_tail(r#""unfinished goal"#).is_err());
     }
 
     /// A subcommand tail passes through verbatim, word by word, so
     /// `/run resume <id>` and `/run list` reach the child exactly as typed.
     #[test]
     fn subcommand_tails_pass_through_verbatim() {
-        assert_eq!(child_argv("resume r-1"), ["resume", "r-1"]);
-        assert_eq!(child_argv("list"), ["list"]);
+        assert_eq!(child_argv("resume r-1").unwrap(), ["resume", "r-1"]);
+        assert_eq!(child_argv("list").unwrap(), ["list"]);
     }
 
     /// The panel path parses the tail through the same grammar the child
