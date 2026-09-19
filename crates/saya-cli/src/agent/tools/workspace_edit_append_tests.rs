@@ -441,7 +441,12 @@ async fn append_to_an_unreadable_file_refuses_and_preserves_bytes() {
 #[tokio::test]
 async fn append_rejects_mixed_and_mistyped_arguments() {
     let sandbox = Sandbox::new("append-mixed");
+    sandbox
+        .ws
+        .write("notes.md", b"unchanged")
+        .expect("seed write must succeed");
     let tools = sandbox.tools();
+    let before = fs::read(sandbox.ws_root().join("notes.md")).expect("seed file must exist");
     let error = tools
         .execute(
             "workspace_edit",
@@ -480,4 +485,9 @@ async fn append_rejects_mixed_and_mistyped_arguments() {
         .await
         .expect_err("a non-string chunk must be rejected at validation");
     assert_eq!(error, saya_agent::ToolError::ChunkNotString);
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("notes.md")).expect("file must survive"),
+        before,
+        "missing and mixed variants are rejected before mutation"
+    );
 }

@@ -478,9 +478,20 @@ fn the_tool_is_hidden_when_writes_are_not_permitted() {
         "the scope approval and the permit are the gate; no per-call prompt (D7)"
     );
     assert_eq!(tool.effect.local_state, LocalStateEffect::WriteWorkspace);
-    assert_eq!(
-        tool.parameters["required"],
-        serde_json::json!(["path", "old_text", "new_text"])
+    assert_eq!(tool.parameters["required"], serde_json::json!(["path"]));
+    let variants = tool.parameters["oneOf"]
+        .as_array()
+        .expect("workspace_edit schema must expose its variants with oneOf");
+    assert_eq!(variants.len(), 2);
+    assert!(
+        variants
+            .iter()
+            .any(|variant| { variant["required"] == serde_json::json!(["old_text", "new_text"]) })
+    );
+    assert!(
+        variants
+            .iter()
+            .any(|variant| { variant["required"] == serde_json::json!(["offset", "chunk"]) })
     );
     assert_eq!(tool.completion.as_deref(), Some("workspace file edited"));
 }

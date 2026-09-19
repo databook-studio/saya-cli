@@ -1,6 +1,7 @@
 use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect, ToolError};
 
 use super::DatabaseTools;
+use super::workspace_edit::parse_arguments as parse_workspace_edit_arguments;
 
 impl DatabaseTools {
     /// Returns available database tool definitions. Contract read tools are
@@ -261,7 +262,11 @@ impl DatabaseTools {
                             "description": "Optional. The file's sha256 hex digest the anchor was measured against; a mismatch refuses with no write."
                         }
                     },
-                    "required": ["path", "old_text", "new_text"],
+                    "required": ["path"],
+                    "oneOf": [
+                        { "required": ["old_text", "new_text"] },
+                        { "required": ["offset", "chunk"] }
+                    ],
                     "additionalProperties": false
                 }),
                 effect: ToolEffect {
@@ -538,23 +543,15 @@ pub(super) fn validate_arguments(
     arguments: &serde_json::Value,
 ) -> Result<(), ToolError> {
     let object = arguments.as_object().ok_or(ToolError::ArgumentsNotObject)?;
+    if name == "workspace_edit" {
+        parse_workspace_edit_arguments(arguments).map(|_| ())?;
+        return Ok(());
+    }
     let (allowed, requires_sql) = match name {
         "schema_discovery" => (&["connection"][..], false),
         "workspace_read" => (&["path"][..], false),
         "workspace_list" => (&["path"][..], false),
         "workspace_write" => (&["path", "content"][..], false),
-        "workspace_edit" => (
-            &[
-                "path",
-                "old_text",
-                "new_text",
-                "offset",
-                "chunk",
-                "expected_size",
-                "expected_digest",
-            ][..],
-            false,
-        ),
         "glob" => (&["pattern"][..], false),
         "grep" => (&["pattern", "case_insensitive"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
@@ -583,67 +580,6 @@ pub(super) fn validate_arguments(
     }
     if name == "workspace_read" && !object.get("path").is_some_and(serde_json::Value::is_string) {
         return Err(ToolError::PathNotString);
-    }
-    // The `workspace_edit` arguments are a tagged union of two variants:
-    // `replace` (`old_text`+`new_text`) and `append` (`offset`+`chunk`).
-    // Required strings name their own error, and the optional `expected_*`
-    // precondition names its own when present-but-malformed — so the model
-    // can fix the right argument. The structural rule is enforced here, not
-    // only in the body: mixing the two halves, or half of one, is a typed
-    // validation error, never a guess about which variant was meant. No
-    // read-side digest, no D15 edit: this slice adds the `append` variant to
-    // the existing `replace` shape.
-    if name == "workspace_edit" {
-        if !object.get("path").is_some_and(serde_json::Value::is_string) {
-            return Err(ToolError::PathNotString);
-        }
-        let has_old = object.contains_key("old_text");
-        let has_new = object.contains_key("new_text");
-        let has_offset = object.contains_key("offset");
-        let has_chunk = object.contains_key("chunk");
-        if has_offset || has_chunk {
-            // Append: both halves, neither replace half.
-            if !object
-                .get("offset")
-                .is_some_and(|value| !value.is_null() && value.as_u64().is_some())
-            {
-                return Err(ToolError::OffsetNotUint);
-            }
-            if !object
-                .get("chunk")
-                .is_some_and(serde_json::Value::is_string)
-            {
-                return Err(ToolError::ChunkNotString);
-            }
-            if has_old || has_new {
-                return Err(ToolError::UnsupportedProperty);
-            }
-        } else {
-            if !object
-                .get("old_text")
-                .is_some_and(serde_json::Value::is_string)
-            {
-                return Err(ToolError::OldTextNotString);
-            }
-            if !object
-                .get("new_text")
-                .is_some_and(serde_json::Value::is_string)
-            {
-                return Err(ToolError::NewTextNotString);
-            }
-        }
-        if object
-            .get("expected_size")
-            .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
-        {
-            return Err(ToolError::ExpectedSizeNotUint);
-        }
-        if object
-            .get("expected_digest")
-            .is_some_and(|value| !value.is_null() && !value.is_string())
-        {
-            return Err(ToolError::ExpectedDigestNotString);
-        }
     }
     // Both `workspace_write` arguments are required strings; each names its
     // own typed error so the model can fix the right one.

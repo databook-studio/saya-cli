@@ -52,6 +52,104 @@ pub(crate) const WORKSPACE_EDIT_MAX_BYTES: usize = WORKSPACE_WRITE_MAX_BYTES;
 pub(crate) const WORKSPACE_EDIT_MAX_FILE_BYTES: u64 =
     saya_harness::workspace::patch::PATCH_MAX_FILE_BYTES;
 
+pub(super) enum WorkspaceEditRequest {
+    Replace {
+        path: String,
+        old_text: String,
+        new_text: String,
+        expected_size: Option<u64>,
+        expected_digest: Option<String>,
+    },
+    Append {
+        path: String,
+        offset: u64,
+        chunk: String,
+        expected_size: Option<u64>,
+        expected_digest: Option<String>,
+    },
+}
+
+/// Parses the two disjoint edit variants once for both schema validation and
+/// execution. Keeping the shape check beside the executor prevents a caller
+/// from selecting a variant by accident when fields are missing or mixed.
+pub(super) fn parse_arguments(
+    arguments: &serde_json::Value,
+) -> Result<WorkspaceEditRequest, ToolError> {
+    let object = arguments.as_object().ok_or(ToolError::ArgumentsNotObject)?;
+    const ALLOWED: &[&str] = &[
+        "path",
+        "old_text",
+        "new_text",
+        "offset",
+        "chunk",
+        "expected_size",
+        "expected_digest",
+    ];
+    if object.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err(ToolError::UnsupportedProperty);
+    }
+    let path = object
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ToolError::PathNotString)?
+        .to_owned();
+    let expected_size = match object.get("expected_size") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(value.as_u64().ok_or(ToolError::ExpectedSizeNotUint)?),
+    };
+    let expected_digest = match object.get("expected_digest") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .ok_or(ToolError::ExpectedDigestNotString)?
+                .to_owned(),
+        ),
+    };
+    let has_old = object.contains_key("old_text");
+    let has_new = object.contains_key("new_text");
+    let has_offset = object.contains_key("offset");
+    let has_chunk = object.contains_key("chunk");
+    if has_offset || has_chunk {
+        let offset = object
+            .get("offset")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(ToolError::OffsetNotUint)?;
+        let chunk = object
+            .get("chunk")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(ToolError::ChunkNotString)?
+            .to_owned();
+        if has_old || has_new {
+            return Err(ToolError::UnsupportedProperty);
+        }
+        return Ok(WorkspaceEditRequest::Append {
+            path,
+            offset,
+            chunk,
+            expected_size,
+            expected_digest,
+        });
+    }
+    let old_text = object
+        .get("old_text")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ToolError::OldTextNotString)?
+        .to_owned();
+    let new_text = object
+        .get("new_text")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ToolError::NewTextNotString)?
+        .to_owned();
+    Ok(WorkspaceEditRequest::Replace {
+        path,
+        old_text,
+        new_text,
+        expected_size,
+        expected_digest,
+    })
+}
+
 impl DatabaseTools {
     /// Replaces the single occurrence of `old_text` in the contained file
     /// `path` with `new_text`, atomically: zero or multiple matches refuse
@@ -75,15 +173,28 @@ impl DatabaseTools {
         &self,
         arguments: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
-        let rel = arguments
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .ok_or(ToolError::PathNotString)?;
-        let is_append = arguments.get("offset").is_some() || arguments.get("chunk").is_some();
-        if is_append {
-            return self.workspace_append(rel, arguments).await;
+        match parse_arguments(arguments)? {
+            WorkspaceEditRequest::Replace {
+                path,
+                old_text,
+                new_text,
+                expected_size,
+                expected_digest,
+            } => {
+                self.workspace_replace(&path, &old_text, &new_text, expected_size, expected_digest)
+                    .await
+            }
+            WorkspaceEditRequest::Append {
+                path,
+                offset,
+                chunk,
+                expected_size,
+                expected_digest,
+            } => {
+                self.workspace_append(&path, offset, &chunk, expected_size, expected_digest)
+                    .await
+            }
         }
-        self.workspace_replace(rel, arguments).await
     }
 
     /// The `replace` half of [`DatabaseTools::workspace_edit`]: resolve
@@ -92,29 +203,11 @@ impl DatabaseTools {
     async fn workspace_replace(
         &self,
         rel: &str,
-        arguments: &serde_json::Value,
+        old_text: &str,
+        new_text: &str,
+        expected_size: Option<u64>,
+        expected_digest: Option<String>,
     ) -> Result<serde_json::Value, ToolError> {
-        let old_text = arguments
-            .get("old_text")
-            .and_then(serde_json::Value::as_str)
-            .ok_or(ToolError::OldTextNotString)?;
-        let new_text = arguments
-            .get("new_text")
-            .and_then(serde_json::Value::as_str)
-            .ok_or(ToolError::NewTextNotString)?;
-        let expected_size = match arguments.get("expected_size") {
-            None | Some(serde_json::Value::Null) => None,
-            Some(value) => Some(value.as_u64().ok_or(ToolError::ExpectedSizeNotUint)?),
-        };
-        let expected_digest = match arguments.get("expected_digest") {
-            None | Some(serde_json::Value::Null) => None,
-            Some(value) => Some(
-                value
-                    .as_str()
-                    .ok_or(ToolError::ExpectedDigestNotString)?
-                    .to_owned(),
-            ),
-        };
         if old_text.is_empty() {
             return Err(ToolError::WorkspaceEditEmptyAnchor {
                 path: rel.to_string(),
@@ -225,25 +318,11 @@ impl DatabaseTools {
     async fn workspace_append(
         &self,
         rel: &str,
-        arguments: &serde_json::Value,
+        offset: u64,
+        chunk: &str,
+        _expected_size: Option<u64>,
+        expected_digest: Option<String>,
     ) -> Result<serde_json::Value, ToolError> {
-        let offset = arguments
-            .get("offset")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or(ToolError::OffsetNotUint)?;
-        let chunk = arguments
-            .get("chunk")
-            .and_then(serde_json::Value::as_str)
-            .ok_or(ToolError::ChunkNotString)?;
-        let expected_digest = match arguments.get("expected_digest") {
-            None | Some(serde_json::Value::Null) => None,
-            Some(value) => Some(
-                value
-                    .as_str()
-                    .ok_or(ToolError::ExpectedDigestNotString)?
-                    .to_owned(),
-            ),
-        };
         if chunk.len() > WORKSPACE_EDIT_MAX_BYTES {
             return Err(ToolError::WorkspaceEditTooLarge {
                 path: rel.to_string(),
