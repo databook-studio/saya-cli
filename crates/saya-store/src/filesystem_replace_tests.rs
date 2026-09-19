@@ -118,3 +118,25 @@ fn oversized_save_rejects_before_touching_the_last_good_record() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// Serialization refuses at the ceiling instead of after a full
+/// materialization: a value whose pretty JSON exceeds the bound errors out
+/// of the bounded writer, with the retained prefix capped at the bound.
+#[test]
+fn oversized_serialization_fails_fast_inside_the_bound() {
+    use crate::bounded::BoundedWriter;
+    let oversized = session_with_content("s", &"x".repeat(MAX_SESSION_BYTES + 1));
+    let mut capped = BoundedWriter::new(Vec::new(), MAX_SESSION_BYTES);
+    let result = serde_json::to_writer_pretty(&mut capped, &oversized);
+    let error = result.expect_err("an oversized session must refuse mid-stream");
+    assert_eq!(
+        error.io_error_kind(),
+        Some(std::io::ErrorKind::QuotaExceeded),
+        "the refusal is the writer's bound, not a serialization failure"
+    );
+    assert!(
+        capped.peak() <= MAX_SESSION_BYTES,
+        "peak retained bytes stay within the bound: {}",
+        capped.peak()
+    );
+}
