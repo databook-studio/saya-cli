@@ -305,6 +305,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         };
 
         let provider = StaticExtractionProvider {
@@ -349,6 +350,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         };
 
         let json_payload = format!(
@@ -418,6 +420,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         };
 
         let json_payload = format!(
@@ -484,6 +487,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         };
 
         let provider = ErrorProvider;
@@ -532,6 +536,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         };
 
         let provider = RecordingProvider {
@@ -603,6 +608,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         };
 
         let provider = UsageExtractionProvider {
@@ -650,6 +656,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         };
 
         let provider = UsageExtractionProvider {

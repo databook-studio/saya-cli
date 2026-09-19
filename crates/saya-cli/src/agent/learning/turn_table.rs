@@ -116,6 +116,18 @@ impl TurnObjectTable {
         })
     }
 
+    /// Drops the last column from the last object, then removes empty objects.
+    /// The turn record uses this as its deterministic lowest-priority eviction.
+    #[allow(dead_code)]
+    pub fn drop_last_detail(&mut self) -> bool {
+        if let Some(entry) = self.entries.last_mut()
+            && entry.columns.pop().is_some()
+        {
+            return true;
+        }
+        self.entries.pop().is_some()
+    }
+
     /// Registers an object. If already present, merges new columns.
     /// If absent and within capacity, assigns the next `TurnObjectId`.
     #[allow(dead_code)]

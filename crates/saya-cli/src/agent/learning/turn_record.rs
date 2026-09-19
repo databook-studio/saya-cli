@@ -72,6 +72,9 @@ pub struct TurnRecord {
     pub user_corrections: Vec<String>,
     pub override_findings: Vec<OverrideFindingDto>,
     pub supplied_claims: Vec<SuppliedContractDto>,
+    /// Number of evidence items omitted to keep the serialized record bounded.
+    #[serde(default)]
+    pub omitted: usize,
 }
 
 impl TurnRecord {
@@ -97,6 +100,7 @@ impl TurnRecord {
 
         let primary_profile = registry.primary_name();
         let mut object_table = TurnObjectTable::new();
+        let mut omitted = usize::from(observations.truncated);
 
         for obs in &observations.observations {
             // The observation records the identity; the table needs the name the
@@ -110,7 +114,12 @@ impl TurnRecord {
                 .unwrap_or(primary_profile);
             for obj_parts in &obs.objects {
                 let qualified = obj_parts.join(".");
-                object_table.register(prof, &qualified, &obs.columns);
+                if object_table
+                    .register(prof, &qualified, &obs.columns)
+                    .is_none()
+                {
+                    omitted += 1;
+                }
             }
         }
 
@@ -129,15 +138,70 @@ impl TurnRecord {
 
         let user_corrections = extract_user_corrections(&bounded_prompt);
 
-        Self {
+        let mut record = Self {
             prompt: bounded_prompt,
             assistant_answer: bounded_answer,
             object_table,
             user_corrections,
             override_findings: overrides.to_vec(),
             supplied_claims: supplied_dtos,
+            omitted,
+        };
+        record.enforce_budget();
+        record
+    }
+
+    /// Keeps the complete extraction record under one serialized byte budget.
+    /// Evidence vectors are evicted from least to most useful in a stable order;
+    /// every eviction is counted so the extractor can report that its evidence
+    /// was incomplete instead of presenting a partial record as complete.
+    fn enforce_budget(&mut self) {
+        while serialized_size(self) > MAX_TURN_RECORD_BYTES {
+            let dropped = if let Some(contract) = self.supplied_claims.last_mut() {
+                if contract.claims.pop().is_some() {
+                    true
+                } else {
+                    self.supplied_claims.pop().is_some()
+                }
+            } else if self.override_findings.pop().is_some() {
+                true
+            } else if self.user_corrections.pop().is_some() {
+                true
+            } else {
+                self.object_table.drop_last_detail()
+            };
+
+            if dropped {
+                self.omitted += 1;
+                continue;
+            }
+
+            // Prompt and answer are already individually bounded, but a record
+            // with unusually large structural evidence can leave little room for
+            // them. Shrink the answer first, then the prompt, at UTF-8 boundaries.
+            if !self.assistant_answer.is_empty() {
+                let next = self.assistant_answer.len().saturating_sub(1024);
+                self.assistant_answer = truncate_utf8(&self.assistant_answer, next);
+                self.omitted += 1;
+            } else if !self.prompt.is_empty() {
+                let next = self.prompt.len().saturating_sub(1024);
+                self.prompt = truncate_utf8(&self.prompt, next);
+                self.omitted += 1;
+            } else {
+                break;
+            }
         }
     }
+
+    /// Number of record components not retained under the byte budget.
+    #[allow(dead_code)]
+    pub fn omitted(&self) -> usize {
+        self.omitted
+    }
+}
+
+fn serialized_size(record: &TurnRecord) -> usize {
+    serde_json::to_vec(record).map_or(usize::MAX, |bytes| bytes.len())
 }
 
 /// Truncates a string to at most `max_bytes` at a valid UTF-8 character boundary.
@@ -175,6 +239,7 @@ fn extract_user_corrections(prompt: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::tools::{ObservationOutcome, ToolObservation};
     use saya_types::ClaimId;
 
     #[test]
@@ -219,5 +284,45 @@ mod tests {
         assert_eq!(dto.claims.len(), 1);
         assert_eq!(dto.claims[0].claim_id, "c-1");
         assert_eq!(dto.claims[0].value, "created_at");
+    }
+
+    #[test]
+    fn assembled_record_stays_within_serialized_budget_and_reports_omissions() {
+        let obs = DrainedObservations {
+            observations: (0..32)
+                .map(|i| ToolObservation {
+                    tool: format!("tool-{i}"),
+                    outcome: ObservationOutcome::Succeeded,
+                    profile: None,
+                    objects: vec![vec![format!("catalog.public.{}", "orders".repeat(500))]],
+                    columns: (0..32)
+                        .map(|n| format!("column_{}", "x".repeat(200 + n)))
+                        .collect(),
+                    row_count: None,
+                    truncated: None,
+                    references_partial: false,
+                })
+                .collect(),
+            truncated: true,
+        };
+        let record = TurnRecord::assemble(
+            &"prompt ".repeat(2_000),
+            &"answer ".repeat(2_000),
+            &ConnectionRegistry::new("primary"),
+            &obs,
+            None,
+            &[],
+        );
+
+        let bytes = serde_json::to_vec(&record).expect("turn records are JSON serializable");
+        assert!(
+            bytes.len() <= MAX_TURN_RECORD_BYTES,
+            "{} > cap",
+            bytes.len()
+        );
+        assert!(
+            record.omitted() > 0,
+            "the dropped evidence must be reported"
+        );
     }
 }
