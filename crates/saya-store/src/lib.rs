@@ -20,7 +20,7 @@ mod state_contracts;
 
 pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
 pub use error::StoreError;
-pub use filesystem::FsSessionStore;
+pub use filesystem::{FsSessionStore, MAX_SESSION_BYTES};
 pub use knowledge_items::{
     KnowledgeItem, KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError,
     MAX_KNOWLEDGE_ITEM_BYTES, knowledge_item_id_for,
@@ -30,7 +30,9 @@ pub use runs::{
     NewRun, RunBudgets, RunCapabilityFlags, RunRecord, RunStatus, RunStepRecord, RunStepStatus,
     RunStore, RunSummary, RunUsage,
 };
-pub use session_journal::{BypassSource, GrantSource, JournalEvent, SessionJournal};
+pub use session_journal::{
+    BypassSource, GrantSource, JournalEvent, MAX_JOURNAL_BYTES, SessionJournal,
+};
 pub use sqlite::{OPEN_BUSY_CEILING, SqliteStateStore};
 pub use sqlite_support::state_sidecar_path;
 pub use state_contracts::{

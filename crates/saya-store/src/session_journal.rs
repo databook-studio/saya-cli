@@ -7,13 +7,17 @@ use crate::StoreError;
 use crate::redaction::redact;
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 /// The journal file's name inside a session state directory. Reserved since
 /// U1 (`session_paths.rs` in `saya-cli`); written from U7 on.
 pub const JOURNAL_FILE: &str = "journal.ndjson";
+
+/// Maximum journal bytes retained per session. Appends fail before action when
+/// this ceiling would be crossed; an oversized existing journal fails closed.
+pub const MAX_JOURNAL_BYTES: usize = 1 << 20;
 
 /// Why a token was granted — the `source` field of a `session-granted` line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -194,7 +198,23 @@ impl SessionJournal {
             }),
         }
         .map_err(|_| StoreError::Invalid)?;
+        let append_bytes = line.len().saturating_add(1);
+        let existing_bytes = match fs::metadata(&self.path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(_) => return Err(StoreError::Unavailable),
+        };
+        if append_bytes > MAX_JOURNAL_BYTES
+            || existing_bytes > (MAX_JOURNAL_BYTES - append_bytes) as u64
+        {
+            return Err(StoreError::LimitExceeded);
+        }
         let mut file = open_append(&self.path)?;
+        if file.metadata().map_err(|_| StoreError::Unavailable)?.len()
+            > (MAX_JOURNAL_BYTES - append_bytes) as u64
+        {
+            return Err(StoreError::LimitExceeded);
+        }
         file.write_all(line.as_bytes())
             .and_then(|()| file.write_all(b"\n"))
             .map_err(|error| io_error(&self.path, error))?;
@@ -208,10 +228,9 @@ impl SessionJournal {
     /// complete event and is ignored on read; a complete line that fails to
     /// parse is corruption and fails closed.
     pub fn read(&self) -> Result<Vec<JournalEvent>, StoreError> {
-        let raw = match fs::read_to_string(&self.path) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(io_error(&self.path, error)),
+        let raw = match bounded_read(&self.path)? {
+            Some(bytes) => String::from_utf8(bytes).map_err(|_| StoreError::Invalid)?,
+            None => return Ok(Vec::new()),
         };
         parse_lines(&raw)
     }
@@ -265,6 +284,12 @@ struct CommandLine<'a> {
 /// write cannot concatenate onto it. A whole-line journal is untouched, and
 /// an absent journal creates nothing.
 fn truncate_torn_tail(path: &Path) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() > MAX_JOURNAL_BYTES as u64 {
+        return;
+    }
     let Ok(raw) = fs::read_to_string(path) else {
         return;
     };
@@ -276,6 +301,22 @@ fn truncate_torn_tail(path: &Path) {
         let _ = file.write_all(&raw.as_bytes()[..keep]);
         let _ = file.sync_all();
     }
+}
+
+fn bounded_read(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
+    let file = match fs::File::open(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_error(path, error)),
+    };
+    let mut bytes = Vec::new();
+    file.take(MAX_JOURNAL_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| io_error(path, error))?;
+    if bytes.len() > MAX_JOURNAL_BYTES {
+        return Err(StoreError::LimitExceeded);
+    }
+    Ok(Some(bytes))
 }
 
 /// Parses every newline-terminated line. A torn final line — no newline —
