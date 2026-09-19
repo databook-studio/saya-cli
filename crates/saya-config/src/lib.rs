@@ -18,7 +18,7 @@ mod values;
 
 pub use context_window::context_window_tokens;
 pub use diagnostics::{EndpointDiagnostics, RedactedDiagnostics, ResolvedDiagnostics};
-pub use endpoints::{ORCHESTRATOR_ROLE, ResolvedEndpoint};
+pub use endpoints::{MAX_ENDPOINT_STRING_CHARS, ORCHESTRATOR_ROLE, ResolvedEndpoint};
 pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
 pub use input::{CliOverrides, ResolutionInput};

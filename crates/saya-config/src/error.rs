@@ -60,6 +60,16 @@ pub enum ConfigError {
         min: usize,
         max: usize,
     },
+    /// An endpoint's model or base URL is too long to carry safely through
+    /// provider construction and diagnostics. The source field is carried so
+    /// an inherited `[ai]` value is distinguished from an endpoint override.
+    #[error("setting {field} for endpoint {endpoint:?} has {value} characters; the limit is {max}")]
+    EndpointStringTooLong {
+        field: &'static str,
+        endpoint: String,
+        value: usize,
+        max: usize,
+    },
     /// A map-valued setting carries a key that cannot name the thing it
     /// keys — a `[jobs] tokens_per_endpoint` endpoint name that is empty,
     /// carries whitespace or control characters, or exceeds the name bound.

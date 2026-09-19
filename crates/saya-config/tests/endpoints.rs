@@ -6,7 +6,10 @@
 //! to the plain `[ai]` block when nothing is declared with that name, so an
 //! existing config keeps working untouched.
 
-use saya_config::{AiProvider, ConfigError, ConfigFile, ConnectionsFile, ResolutionInput, resolve};
+use saya_config::{
+    AiProvider, ConfigError, ConfigFile, ConnectionsFile, MAX_ENDPOINT_STRING_CHARS,
+    ResolutionInput, resolve,
+};
 
 fn resolve_with_user(toml: &str) -> Result<saya_config::ResolvedConfig, ConfigError> {
     resolve(
@@ -184,4 +187,102 @@ fn endpoint_diagnostics_never_carry_a_secret_value() {
         views[1].contains("\"orchestrator\""),
         "the resolved mirror carries the orchestrator fallback"
     );
+}
+
+#[test]
+fn endpoint_model_is_bounded_at_resolution() {
+    let model = "m".repeat(MAX_ENDPOINT_STRING_CHARS + 1);
+    let error = resolve_with_user(&format!(
+        "[[ai.endpoints]]\nname = 'planner'\nmodel = '{model}'\n"
+    ))
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ConfigError::EndpointStringTooLong {
+            field: "ai.endpoints.model",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn endpoint_base_url_is_bounded_at_resolution() {
+    let base_url = format!("https://{}", "a".repeat(MAX_ENDPOINT_STRING_CHARS));
+    let error = resolve_with_user(&format!(
+        "[[ai.endpoints]]\nname = 'planner'\nbase_url = '{base_url}'\n"
+    ))
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ConfigError::EndpointStringTooLong {
+            field: "ai.endpoints.base_url",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn endpoint_secret_reference_is_bounded_at_resolution() {
+    let env = "E".repeat(MAX_ENDPOINT_STRING_CHARS + 1);
+    let error = resolve_with_user(&format!(
+        "[[ai.endpoints]]\nname = 'planner'\napi_key = {{ env = '{env}' }}\n"
+    ))
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ConfigError::EndpointStringTooLong {
+            field: "ai.endpoints.api_key",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn inherited_endpoint_secret_reference_is_bounded_at_resolution() {
+    let env = "E".repeat(MAX_ENDPOINT_STRING_CHARS + 1);
+    let error = resolve_with_user(&format!(
+        "[ai]\napi_key = {{ env = '{env}' }}\n[[ai.endpoints]]\nname = 'planner'\n"
+    ))
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ConfigError::EndpointStringTooLong {
+            field: "ai.api_key",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn inherited_endpoint_strings_are_bounded_without_losing_inheritance() {
+    let model = "m".repeat(MAX_ENDPOINT_STRING_CHARS + 1);
+    let error = resolve_with_user(&format!(
+        "[ai]\nmodel = '{model}'\n[[ai.endpoints]]\nname = 'planner'\n"
+    ))
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ConfigError::EndpointStringTooLong {
+            field: "ai.model",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn inherited_endpoint_diagnostics_remain_redacted() {
+    let user = ConfigFile::from_toml(
+        "[ai]\nmodel = 'gateway-model'\nbase_url = 'https://user:pass@gateway.test/v1?token=secret'\n\
+         api_key = { env = 'SAYA_KEY' }\n[[ai.endpoints]]\nname = 'planner'\n",
+    )
+    .unwrap();
+    let resolved =
+        resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(user)).unwrap();
+    let planner = &resolved.redacted_diagnostics().endpoints["planner"];
+    assert_eq!(planner.model.as_deref(), Some("gateway-model"));
+    assert_eq!(
+        planner.base_url.as_deref(),
+        Some("https://gateway.test/v1?[redacted]")
+    );
+    assert_eq!(planner.api_key_reference.as_deref(), Some("env:SAYA_KEY"));
 }

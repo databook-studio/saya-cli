@@ -135,7 +135,11 @@ fn inline_secret_hint(raw: &str) -> Option<String> {
 #[serde(deny_unknown_fields)]
 pub struct AiFile {
     pub provider: Option<AiProvider>,
+    /// Provider model name. Endpoint resolution bounds this value, including
+    /// when an endpoint inherits it from `[ai]`.
     pub model: Option<String>,
+    /// Provider base URL. Endpoint resolution bounds this value, including
+    /// when an endpoint inherits it from `[ai]`.
     pub base_url: Option<String>,
     pub allow_data_sharing: Option<bool>,
     pub api_key: Option<SecretRef>,
@@ -191,7 +195,9 @@ pub struct EndpointFile {
     /// validated at resolution against `saya_types::is_name_shaped`.
     pub name: String,
     pub provider: Option<AiProvider>,
+    /// Provider model override; bounded at endpoint resolution.
     pub model: Option<String>,
+    /// Provider base URL override; bounded at endpoint resolution.
     pub base_url: Option<String>,
     /// A reference (`{ env = ... }`), never an inline value — `SecretRef` is
     /// an untagged enum, so an inline string fails to parse with the

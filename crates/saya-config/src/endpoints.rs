@@ -23,6 +23,12 @@ use crate::{
 /// `[ai]` itself — the fallback that keeps an existing config unchanged.
 pub const ORCHESTRATOR_ROLE: &str = "orchestrator";
 
+/// Maximum size of a provider model name or endpoint URL carried through
+/// resolution. Both values are copied into provider settings and diagnostics,
+/// so accepting arbitrary config-sized strings would make those paths
+/// unbounded.
+pub const MAX_ENDPOINT_STRING_CHARS: usize = 2_048;
+
 /// A resolved endpoint: everything a provider connection needs, with the
 /// defaults and inheritance already applied. `api_key` stays a *reference* —
 /// values are resolved only at request time, never into this map.
@@ -46,6 +52,13 @@ pub(crate) fn resolve_endpoints(
             max: MAX_ENDPOINT_BINDINGS,
         });
     }
+    require_endpoint_string("ai.model", ORCHESTRATOR_ROLE, &ai.model)?;
+    if let Some(base_url) = ai.base_url.as_deref() {
+        require_endpoint_string("ai.base_url", ORCHESTRATOR_ROLE, base_url)?;
+    }
+    if let Some(api_key) = ai.api_key.as_ref() {
+        require_secret_reference("ai.api_key", ORCHESTRATOR_ROLE, api_key)?;
+    }
     let mut map = BTreeMap::new();
     for endpoint in &file.endpoints {
         if !is_name_shaped(&endpoint.name) {
@@ -53,6 +66,15 @@ pub(crate) fn resolve_endpoints(
                 field: "ai.endpoints",
                 key: endpoint.name.clone(),
             });
+        }
+        if let Some(model) = endpoint.model.as_deref() {
+            require_endpoint_string("ai.endpoints.model", &endpoint.name, model)?;
+        }
+        if let Some(base_url) = endpoint.base_url.as_deref() {
+            require_endpoint_string("ai.endpoints.base_url", &endpoint.name, base_url)?;
+        }
+        if let Some(api_key) = endpoint.api_key.as_ref() {
+            require_secret_reference("ai.endpoints.api_key", &endpoint.name, api_key)?;
         }
         let resolved = ResolvedEndpoint {
             name: endpoint.name.clone(),
@@ -74,6 +96,37 @@ pub(crate) fn resolve_endpoints(
             api_key: ai.api_key.clone(),
         });
     Ok(map)
+}
+
+fn require_secret_reference(
+    field: &'static str,
+    endpoint: &str,
+    reference: &SecretRef,
+) -> Result<(), ConfigError> {
+    let value = match reference {
+        SecretRef::Env { env } => env,
+        SecretRef::File { file } => file,
+        SecretRef::Keyring { keyring } => keyring,
+    };
+    require_endpoint_string(field, endpoint, value)
+}
+
+fn require_endpoint_string(
+    field: &'static str,
+    endpoint: &str,
+    value: &str,
+) -> Result<(), ConfigError> {
+    let length = value.chars().count();
+    if length <= MAX_ENDPOINT_STRING_CHARS {
+        Ok(())
+    } else {
+        Err(ConfigError::EndpointStringTooLong {
+            field,
+            endpoint: endpoint.to_owned(),
+            value: length,
+            max: MAX_ENDPOINT_STRING_CHARS,
+        })
+    }
 }
 
 /// Rejects a single configuration layer that declares two endpoints with the
