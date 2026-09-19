@@ -163,9 +163,9 @@ impl TurnRecord {
                 } else {
                     self.supplied_claims.pop().is_some()
                 }
-            } else if self.override_findings.pop().is_some() {
-                true
-            } else if self.user_corrections.pop().is_some() {
+            } else if self.override_findings.pop().is_some()
+                || self.user_corrections.pop().is_some()
+            {
                 true
             } else {
                 self.object_table.drop_last_detail()

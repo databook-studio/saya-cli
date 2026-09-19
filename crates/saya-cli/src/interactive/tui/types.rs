@@ -121,6 +121,8 @@ pub(crate) struct PickerEntry {
     pub(crate) label: String,
 }
 
+type PickerLoad = Result<(Vec<PickerEntry>, bool), String>;
+
 /// State tied to an active agent request.
 #[derive(Default)]
 pub(crate) struct RequestState {
@@ -158,7 +160,7 @@ pub(crate) enum SearchKind {
 #[derive(Default)]
 pub(crate) struct OverlayState {
     pub(crate) menu: Option<Menu>,
-    pub(crate) picker_loading: Option<Receiver<Result<(Vec<PickerEntry>, bool), String>>>,
+    pub(crate) picker_loading: Option<Receiver<PickerLoad>>,
     pub(crate) picker: Option<Picker>,
     pub(crate) pending_resume: Option<String>,
     pub(crate) show_help: bool,
