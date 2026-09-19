@@ -381,10 +381,27 @@ fn startup_trust_answer(
 /// `\r\n` (the file's own line ending) is stripped, since the per-turn entry
 /// below treats a trailing newline as the end of input, not content.
 fn read_turn_file(path: &std::path::Path) -> Result<String, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("cannot read --turn-file {}: {error}", path.display()))?;
-    let mut text = String::from_utf8(bytes)
-        .map_err(|error| format!("--turn-file {} is not valid UTF-8: {error}", path.display()))?;
+    let mut text = crate::commands::query_input::read_file_bounded(
+        path,
+        crate::commands::query_input::FILE_BYTE_LIMIT,
+    )
+    .map_err(|error| match error {
+        crate::commands::query_input::InputReadError::OverLimit { limit } => {
+            format!("--turn-file exceeds the {limit}-byte limit; use a smaller turn")
+        }
+        crate::commands::query_input::InputReadError::Io(error) => {
+            format!("cannot read --turn-file {}: {error}", path.display())
+        }
+        crate::commands::query_input::InputReadError::Utf8(error) => {
+            format!("--turn-file {} is not valid UTF-8: {error}", path.display())
+        }
+        crate::commands::query_input::InputReadError::Idle => {
+            format!(
+                "cannot read --turn-file {}: input went idle",
+                path.display()
+            )
+        }
+    })?;
     if text.ends_with("\r\n") {
         text.truncate(text.len() - 2);
     } else if text.ends_with('\n') {
@@ -896,4 +913,29 @@ fn handle_line_verbatim(
     }
     block_on(store.save(state.redacted()))?;
     Ok(false)
+}
+
+#[cfg(test)]
+mod turn_file_tests {
+    use super::*;
+
+    #[test]
+    fn oversized_turn_file_is_refused_without_echoing_contents() {
+        let path = std::env::temp_dir().join(format!(
+            "saya-turn-file-over-limit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sentinel = "turn-file-secret-sentinel";
+        let mut bytes = vec![b'x'; crate::commands::query_input::FILE_BYTE_LIMIT + 1];
+        bytes[..sentinel.len()].copy_from_slice(sentinel.as_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let error = read_turn_file(&path).expect_err("oversized turn files must be refused");
+        assert!(error.contains(&crate::commands::query_input::FILE_BYTE_LIMIT.to_string()));
+        assert!(!error.contains(sentinel));
+        let _ = std::fs::remove_file(path);
+    }
 }

@@ -5,7 +5,7 @@ mod connection_schema_cache;
 mod contracts;
 mod output;
 mod query;
-mod query_input;
+pub(crate) mod query_input;
 pub(crate) mod run;
 mod state;
 

@@ -13,6 +13,10 @@ use std::{
 /// small enough to fail fast when someone pipes a misdirected large file or a
 /// whole dump. Exceeding it is an error naming the limit, never a truncation.
 pub(super) const STDIN_BYTE_LIMIT: usize = 512 * 1024;
+/// File-backed prompts and SQL use the same ceiling as piped input. Keeping
+/// the bound here means `--file` cannot turn the otherwise bounded input path
+/// into an unbounded allocation.
+pub(crate) const FILE_BYTE_LIMIT: usize = STDIN_BYTE_LIMIT;
 
 /// How long the stdin read may sit silent before we give up. The scripting path
 /// (`echo x | saya ask`) delivers bytes in milliseconds; an idle pipe (CI,
@@ -36,28 +40,35 @@ fn read_bounded_progress<R: Read>(
     reader: &mut R,
     limit: usize,
     mut on_progress: impl FnMut(),
-) -> Result<String, StdinReadError> {
+) -> Result<String, InputReadError> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut buf = [0u8; 8192];
     loop {
-        let n = reader.read(&mut buf).map_err(StdinReadError::Io)?;
+        let n = reader.read(&mut buf).map_err(InputReadError::Io)?;
         if n == 0 {
             break;
         }
         bytes.extend_from_slice(&buf[..n]);
         if bytes.len() > limit {
-            return Err(StdinReadError::OverLimit { limit });
+            return Err(InputReadError::OverLimit { limit });
         }
         on_progress();
     }
-    String::from_utf8(bytes).map_err(StdinReadError::Utf8)
+    String::from_utf8(bytes).map_err(InputReadError::Utf8)
 }
 
 /// Bounded read with no liveness callback — the shape tests use directly to
 /// exercise the bound on a `Cursor` without threading.
-#[cfg(test)]
-fn read_bounded<R: Read>(reader: &mut R, limit: usize) -> Result<String, StdinReadError> {
+fn read_bounded<R: Read>(reader: &mut R, limit: usize) -> Result<String, InputReadError> {
     read_bounded_progress(reader, limit, || {})
+}
+
+pub(crate) fn read_file_bounded(
+    path: &std::path::Path,
+    limit: usize,
+) -> Result<String, InputReadError> {
+    let mut file = fs::File::open(path).map_err(InputReadError::Io)?;
+    read_bounded(&mut file, limit)
 }
 
 /// Read stdin on a worker thread, giving up if it stays silent past `idle`. A
@@ -68,10 +79,10 @@ fn read_stdin_bounded_with_deadline<R: Read + Send + 'static>(
     reader: R,
     limit: usize,
     idle: Duration,
-) -> Result<String, StdinReadError> {
+) -> Result<String, InputReadError> {
     enum Signal {
         Progress,
-        Done(Result<String, StdinReadError>),
+        Done(Result<String, InputReadError>),
     }
     let (tx, rx) = mpsc::channel::<Signal>();
     thread::spawn(move || {
@@ -89,9 +100,9 @@ fn read_stdin_bounded_with_deadline<R: Read + Send + 'static>(
         match rx.recv_timeout(idle) {
             Ok(Signal::Progress) => continue,
             Ok(Signal::Done(result)) => return result,
-            Err(mpsc::RecvTimeoutError::Timeout) => return Err(StdinReadError::Idle),
+            Err(mpsc::RecvTimeoutError::Timeout) => return Err(InputReadError::Idle),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(StdinReadError::Io(std::io::Error::other(
+                return Err(InputReadError::Io(std::io::Error::other(
                     "stdin reader failed",
                 )));
             }
@@ -103,19 +114,19 @@ fn read_stdin_bounded_with_deadline<R: Read + Send + 'static>(
 /// the user is told the size refused; `Idle` says stdin was silent so the
 /// caller learns the read did not hang — it gave up.
 #[derive(Debug)]
-enum StdinReadError {
+pub(crate) enum InputReadError {
     OverLimit { limit: usize },
     Idle,
     Io(std::io::Error),
     Utf8(std::string::FromUtf8Error),
 }
 
-impl std::fmt::Display for StdinReadError {
+impl std::fmt::Display for InputReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OverLimit { limit } => write!(
                 f,
-                "stdin input exceeds the {limit}-byte limit; use --file for larger input"
+                "input exceeds the {limit}-byte limit; use a smaller input"
             ),
             Self::Idle => write!(
                 f,
@@ -128,7 +139,7 @@ impl std::fmt::Display for StdinReadError {
     }
 }
 
-impl std::error::Error for StdinReadError {}
+impl std::error::Error for InputReadError {}
 
 pub(super) fn input(
     value: Option<String>,
@@ -136,7 +147,7 @@ pub(super) fn input(
 ) -> Result<String, Box<dyn std::error::Error>> {
     match (value, file) {
         (Some(value), None) => Ok(value),
-        (None, Some(path)) => Ok(fs::read_to_string(path)?),
+        (None, Some(path)) => Ok(read_file_bounded(&path, FILE_BYTE_LIMIT)?),
         (Some(_), Some(_)) => Err("provide a prompt or --file, not both".into()),
         // Piped input (`pbpaste | saya ask`, `echo sql | saya query`) is the
         // scripting path: slurp stdin instead of demanding an argument. The read
@@ -184,7 +195,7 @@ mod tests {
         let mut reader = Cursor::new(over);
         let err = read_bounded(&mut reader, STDIN_BYTE_LIMIT)
             .expect_err("one byte over the limit must be refused");
-        let StdinReadError::OverLimit { limit } = &err else {
+        let InputReadError::OverLimit { limit } = &err else {
             panic!("expected OverLimit, got {err:?}");
         };
         assert_eq!(*limit, STDIN_BYTE_LIMIT);
@@ -232,8 +243,29 @@ mod tests {
         let mut reader = Cursor::new(vec![0xff, 0xfe, 0xfd]);
         assert!(matches!(
             read_bounded(&mut reader, STDIN_BYTE_LIMIT),
-            Err(StdinReadError::Utf8(_))
+            Err(InputReadError::Utf8(_))
         ));
+    }
+
+    #[test]
+    fn file_input_is_bounded_without_echoing_file_contents() {
+        let path = std::env::temp_dir().join(format!(
+            "saya-qin-over-limit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sentinel = "file-input-secret-sentinel";
+        let mut bytes = vec![b'x'; FILE_BYTE_LIMIT + 1];
+        bytes[..sentinel.len()].copy_from_slice(sentinel.as_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let error = input(None, Some(path.clone())).expect_err("oversized file must be refused");
+        let rendered = error.to_string();
+        assert!(rendered.contains(&FILE_BYTE_LIMIT.to_string()));
+        assert!(!rendered.contains(sentinel));
+        let _ = std::fs::remove_file(path);
     }
 
     // The idle-stdin guard. A reader that never produces a byte
@@ -253,7 +285,7 @@ mod tests {
             read_stdin_bounded_with_deadline(Silent, STDIN_BYTE_LIMIT, Duration::from_millis(80));
         let elapsed = started.elapsed();
         assert!(
-            matches!(result, Err(StdinReadError::Idle)),
+            matches!(result, Err(InputReadError::Idle)),
             "expected Idle, got {result:?}"
         );
         // It gave up promptly — well under the production 10s, and not instant
@@ -294,7 +326,7 @@ mod tests {
         let over = Cursor::new(vec![b'x'; STDIN_BYTE_LIMIT + 5]);
         let err = read_stdin_bounded_with_deadline(over, STDIN_BYTE_LIMIT, Duration::from_secs(5))
             .expect_err("over-limit must be refused");
-        assert!(matches!(err, StdinReadError::OverLimit { .. }));
+        assert!(matches!(err, InputReadError::OverLimit { .. }));
         let rendered = err.to_string();
         assert!(
             rendered.contains(&STDIN_BYTE_LIMIT.to_string()),
