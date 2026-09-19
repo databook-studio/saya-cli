@@ -369,12 +369,11 @@ mod tests {
         );
     }
 
-    /// A turn that ran SQL persists the statement (in `arguments`) and the
-    /// value-free result shape (row count + column names). This is the core of
-    /// "let a session reproduce its own run": tomorrow a user can answer "what
-    /// did it actually do?" from the session file alone.
+    /// A turn may carry arguments and a result shape while the session is
+    /// live, but neither is persisted. Session files retain only the minimal
+    /// tool name/status audit metadata.
     #[test]
-    fn a_session_that_ran_sql_stores_the_statement_and_shape() {
+    fn a_session_that_ran_sql_does_not_persist_arguments_or_shape() {
         let mut session = SessionState::new("s1", None, "m");
         session.record_turn(
             "count customers",
@@ -395,26 +394,14 @@ mod tests {
         let tool = &saved.turns[0].tools[0];
         assert_eq!(tool.name, "bounded_sql_query");
         assert_eq!(tool.status, "completed");
-        assert!(
-            tool.arguments.contains("SELECT customer, age FROM users"),
-            "the statement must be persisted: {}",
-            tool.arguments
-        );
-        let shape = tool
-            .result_shape
-            .as_ref()
-            .expect("the result shape is persisted");
-        assert_eq!(shape.row_count, 1);
-        assert_eq!(shape.columns, vec!["customer", "age"]);
+        let json = serde_json::to_string(&saved).expect("serializes");
+        assert!(!json.contains("SELECT customer, age FROM users"));
+        assert!(!json.contains("result_shape"));
     }
 
     /// A cell value present in a live query result never reaches the session
-    /// file. The persisted record carries the statement and the value-free
-    /// shape (row count + column names) only; `rows` is never stored. The
-    /// agent's `result_shape_of` test pins that the shape excludes cells; this
-    /// test pins the session-file half: write a session whose tool record
-    /// mirrors that shape and assert the cell is absent and no `rows` key
-    /// appears.
+    /// file. Tool arguments and result shapes are live-only, so neither the
+    /// cell nor its surrounding query metadata is serialized.
     #[test]
     fn a_result_cell_value_never_reaches_the_session_file() {
         use saya_store::{FsSessionStore, SessionStore};
@@ -465,21 +452,14 @@ mod tests {
             "a `rows` key appeared in a tool record: {file}"
         );
         // Round-trip through the store and confirm the persisted record keeps
-        // the statement and the value-free shape, independent of pretty-print
-        // spacing.
+        // only the minimal tool audit fields.
         let loaded = runtime
             .block_on(store.load("cell-test"))
             .unwrap()
             .expect("the session file loads");
         let tool = &loaded.turns[0].tools[0];
-        assert!(
-            tool.arguments.contains("SELECT customer FROM users"),
-            "the statement must be persisted: {}",
-            tool.arguments
-        );
-        let shape = tool.result_shape.as_ref().expect("the shape is persisted");
-        assert_eq!(shape.row_count, 1);
-        assert_eq!(shape.columns, vec!["customer"]);
+        assert!(tool.arguments.is_empty());
+        assert!(tool.result_shape.is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 

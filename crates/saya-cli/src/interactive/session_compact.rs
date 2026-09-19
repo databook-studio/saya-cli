@@ -8,8 +8,8 @@
 //! Pinning: the summary must preserve every pinned token drawn from the
 //! summarised region's assistant texts. Pinned tokens are the
 //! continuation-critical file anchors (`size:` / `digest:` lines and the
-//! `path:` that names which file they anchor) plus the SQL statements the
-//! session ran (the tool-call `arguments`, the only place statements live).
+//! `path:` that names which file they anchor) plus SQL statements present in
+//! the live conversation text.
 //! A summary that drops any of them is rejected and the session is unchanged —
 //! a rewrite on a hope is worse than no rewrite.
 
@@ -157,9 +157,9 @@ pub(crate) fn failure_message(reason: &str) -> String {
 ///   reported. A summary that drops them silently breaks recovery.
 /// - `path:` lines: a size/digest anchors one file; without the path the
 ///   anchor names no file and the model cannot resume the right one.
-/// - SQL statements: the tool-call `arguments` are the only record of what
-///   ran. Provider history carries no tool result bytes, so a verbatim tail
-///   alone cannot preserve them for older turns — the summary must.
+/// - SQL statements in the conversation text: provider history carries no
+///   tool result bytes, so a verbatim tail alone cannot preserve them for
+///   older turns — the summary must.
 ///
 /// What is NOT pinned, and why:
 /// - The system prompt is never compacted: it is assembled fresh per turn in
@@ -168,9 +168,9 @@ pub(crate) fn failure_message(reason: &str) -> String {
 /// - The current user turn is never compacted: it is not in the session yet
 ///   when `/compact` runs — the summarised region holds only past turns, and
 ///   the prompt rides the next turn beside the summary.
-/// - Row values are never pinned: they never reach the session at all
-///   (`record_turn` persists statements and value-free shapes only), so
-///   there is nothing to preserve.
+/// - Tool arguments and row values are never pinned: arguments are live-only
+///   metadata and row values never reach the session at all, so there is
+///   nothing to preserve.
 pub(crate) fn pinned_tokens(summarise: &[ChatMessage]) -> Vec<String> {
     let mut pinned = Vec::new();
     for message in summarise {

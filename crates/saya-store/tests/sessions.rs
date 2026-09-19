@@ -63,6 +63,46 @@ fn filesystem_store_round_trips_redacted_sessions_and_recovers_corruption() {
 }
 
 #[test]
+fn filesystem_store_drops_tool_payload_metadata() {
+    let root = temp_root("tool-metadata");
+    let store = FsSessionStore::new(&root);
+    block_on(store.save(RedactedSession {
+        id: "minimal".into(),
+        profile_names: vec![],
+        messages: vec![],
+        turns: vec![RedactedTurn {
+            user: "q".into(),
+            assistant: "a".into(),
+            database_derived: true,
+            tools: vec![RedactedToolMetadata {
+                name: "bounded_sql_query".into(),
+                status: "completed".into(),
+                arguments: r#"{"sql":"SELECT secret FROM users"}"#.into(),
+                result_shape: Some(saya_store::RedactedToolResultShape {
+                    row_count: 1,
+                    columns: vec!["secret".into()],
+                }),
+            }],
+        }],
+        ..Default::default()
+    }))
+    .unwrap();
+
+    let saved = std::fs::read_to_string(root.join("minimal.json")).unwrap();
+    assert!(saved.contains("bounded_sql_query"));
+    assert!(saved.contains("completed"));
+    assert!(!saved.contains("SELECT secret FROM users"));
+    assert!(!saved.contains("result_shape"));
+    assert!(!saved.contains("secret"));
+
+    let loaded = block_on(store.load("minimal")).unwrap().unwrap();
+    let tool = &loaded.turns[0].tools[0];
+    assert!(tool.arguments.is_empty());
+    assert!(tool.result_shape.is_none());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn most_recent_ignores_corrupt_sessions_and_rejects_path_traversal() {
     let root = temp_root("recent");
     let store = FsSessionStore::new(&root);

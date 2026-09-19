@@ -138,26 +138,23 @@ pub struct RedactedTurn {
 pub struct RedactedToolMetadata {
     pub name: String,
     pub status: String,
-    /// The tool-call arguments serialized to JSON exactly as the model sent
-    /// them — for a SQL tool, `{"sql": "...", ...}`, so the statement the agent
-    /// ran is persisted here. The SQL text is already user-visible in the
-    /// transcript and on the `--format ndjson` event stream, so persisting it
-    /// discloses nothing new; [`FsSessionStore::save`] redacts
-    /// credential-shaped substrings in it the same way it redacts a user turn.
-    /// Result rows are never stored — only [`Self::result_shape`].
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// Tool-call arguments are retained only while the live session needs
+    /// them (for replay and compaction). They are intentionally absent from
+    /// the persisted session format: arguments can contain SQL, paths, and
+    /// other user data beyond the minimal name/status audit metadata.
+    #[serde(skip)]
     pub arguments: String,
-    /// The value-free shape of a query result: row count and column names.
-    /// `None` for a tool that produced no row-shaped result (a denied call, a
-    /// non-query tool, or a failed query). Carries no cell values.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The value-free result shape is likewise live-session metadata only.
+    /// Persisting it is unnecessary for resuming provider history and would
+    /// retain database schema details in a session record.
+    #[serde(skip)]
     pub result_shape: Option<RedactedToolResultShape>,
 }
 
-/// The value-free shape of a query result persisted per tool call: the row
-/// count and the column names. Built by the agent's `result_shape_of` from a
-/// result's `row_count` and `columns` keys alone — `rows` is never read — so a
-/// planted cell value cannot reach a session file.
+/// The value-free shape of a query result kept for the live replay surface.
+/// It is not part of the persisted session format. Built by the agent's
+/// `result_shape_of` from a result's `row_count` and `columns` keys alone —
+/// `rows` is never read — so a planted cell value cannot reach session state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct RedactedToolResultShape {
     pub row_count: u64,

@@ -24,10 +24,9 @@ pub(crate) fn history_blocks(state: &SessionState) -> Vec<(BlockKind, String)> {
                 BlockKind::Tool,
                 format!("{glyph} {} ({})", tool.name, tool.status),
             ));
-            // Show what the call ran: the statement (or arguments) and the
-            // value-free result shape. A resumed session can now answer "what
-            // did it actually do?" without the live event stream. Cell values
-            // are never on the persisted record, so they cannot appear here.
+            // Live sessions may show the statement and value-free result
+            // shape alongside the call. Those details are intentionally not
+            // persisted, so a resumed session only replays name and status.
             if let Some(line) = statement_line(&tool.arguments) {
                 blocks.push((BlockKind::Tool, line));
             }
@@ -51,7 +50,7 @@ pub(crate) fn history_blocks(state: &SessionState) -> Vec<(BlockKind, String)> {
     blocks
 }
 
-/// Renders the persisted tool-call arguments as a single display line: the SQL
+/// Renders live-session tool-call arguments as a single display line: the SQL
 /// statement when the arguments carry one (a SQL tool), otherwise the raw
 /// arguments. `None` when the arguments are empty (a tool with no recorded
 /// request, e.g. an older session file).
@@ -70,7 +69,7 @@ fn statement_line(arguments: &str) -> Option<String> {
     Some(format!("  {}", sql.unwrap_or_else(|| arguments.to_owned())))
 }
 
-/// Renders the value-free result shape as a single display line: `→ N rows:
+/// Renders a live-session value-free result shape as a single display line: `→ N rows:
 /// col1, col2`. `None` when no shape was recorded (a non-query tool, a denied
 /// call, or an older session file).
 fn shape_line(shape: Option<&saya_store::RedactedToolResultShape>) -> Option<String> {
