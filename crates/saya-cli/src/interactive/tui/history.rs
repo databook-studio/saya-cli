@@ -1,5 +1,9 @@
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+
+const MAX_ENTRY_BYTES: usize = 64 * 1024;
+const MAX_TOTAL_BYTES: usize = 1024 * 1024;
+const MAX_ENTRIES: usize = 1000;
 
 /// Persistent, de-duplicated input history with Up/Down navigation.
 #[allow(dead_code)]
@@ -9,6 +13,7 @@ pub(crate) struct History {
     path: PathBuf,
     limit: usize,
     disabled: bool,
+    omitted: usize,
 }
 
 fn is_disabled_env() -> bool {
@@ -36,30 +41,7 @@ impl History {
     pub(crate) fn load() -> Self {
         let path = crate::interactive::session_paths::default_history_file();
         let disabled = is_disabled_env();
-        let entries = if disabled {
-            Vec::new()
-        } else {
-            std::fs::read_to_string(&path)
-                .map(|c| {
-                    let mut l: Vec<_> = c
-                        .lines()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if l.len() > 1000 {
-                        l.drain(..l.len() - 1000);
-                    }
-                    l
-                })
-                .unwrap_or_default()
-        };
-        Self {
-            entries,
-            cursor: None,
-            path,
-            limit: 1000,
-            disabled,
-        }
+        Self::from_path(path, disabled)
     }
 
     pub(crate) fn with_path(path: PathBuf) -> Self {
@@ -67,8 +49,9 @@ impl History {
             entries: Vec::new(),
             cursor: None,
             path,
-            limit: 1000,
+            limit: MAX_ENTRIES,
             disabled: false,
+            omitted: 0,
         }
     }
 
@@ -78,25 +61,42 @@ impl History {
             entries: Vec::new(),
             cursor: None,
             path,
-            limit: 1000,
+            limit: MAX_ENTRIES,
             disabled: true,
+            omitted: 0,
         }
     }
 
-    pub(crate) fn push(&mut self, line: &str) {
+    /// Number of entries omitted by the safety bounds since this history was loaded.
+    pub(crate) fn omitted_count(&self) -> usize {
+        self.omitted
+    }
+
+    pub(crate) fn push(&mut self, line: &str) -> bool {
         if self.disabled {
-            return;
+            return false;
         }
         let trimmed = line.trim();
         if trimmed.is_empty() || self.entries.last().map(String::as_str) == Some(trimmed) {
-            return;
+            return false;
+        }
+        if trimmed.len() > MAX_ENTRY_BYTES {
+            self.omitted += 1;
+            return false;
         }
         self.cursor = None;
         self.entries.push(trimmed.to_string());
         if self.entries.len() > self.limit {
-            self.entries.drain(..self.entries.len() - self.limit);
+            let removed = self.entries.len() - self.limit;
+            self.entries.drain(..removed);
+            self.omitted += removed;
+        }
+        while total_bytes(&self.entries) > MAX_TOTAL_BYTES {
+            self.entries.remove(0);
+            self.omitted += 1;
         }
         self.save();
+        true
     }
 
     pub(crate) fn previous(&mut self) -> Option<&str> {
@@ -139,12 +139,21 @@ impl History {
             .and_then(|s| s.to_str())
             .unwrap_or("history");
         let tmp = self.path.with_file_name(format!("{name}.{pid}.tmp"));
-        let content = self
-            .entries
-            .iter()
-            .map(|e| saya_store::redact(e))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut lines = Vec::new();
+        let mut content_bytes = 0;
+        for entry in self.entries.iter().rev() {
+            let redacted = saya_store::redact(entry);
+            let separator = usize::from(!lines.is_empty());
+            if redacted.len() > MAX_ENTRY_BYTES
+                || content_bytes + separator + redacted.len() > MAX_TOTAL_BYTES
+            {
+                continue;
+            }
+            content_bytes += separator + redacted.len();
+            lines.push(redacted);
+        }
+        lines.reverse();
+        let content = lines.join("\n");
 
         let write_tmp = || -> std::io::Result<()> {
             #[cfg(unix)]
@@ -168,6 +177,82 @@ impl History {
             let _ = std::fs::remove_file(&tmp);
         }
     }
+}
+
+impl History {
+    fn from_path(path: PathBuf, disabled: bool) -> Self {
+        let (entries, omitted) = if disabled {
+            (Vec::new(), 0)
+        } else {
+            load_entries(&path)
+        };
+        Self {
+            entries,
+            cursor: None,
+            path,
+            limit: MAX_ENTRIES,
+            disabled,
+            omitted,
+        }
+    }
+}
+
+fn total_bytes(entries: &[String]) -> usize {
+    entries.iter().map(String::len).sum::<usize>() + entries.len().saturating_sub(1)
+}
+
+fn load_entries(path: &std::path::Path) -> (Vec<String>, usize) {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return (Vec::new(), 0);
+    };
+    let Ok(length) = file.metadata().map(|meta| meta.len()) else {
+        return (Vec::new(), 0);
+    };
+    let start = length.saturating_sub(MAX_TOTAL_BYTES as u64);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return (Vec::new(), 0);
+    }
+    let mut bytes = Vec::new();
+    if file
+        .take(MAX_TOTAL_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return (Vec::new(), 0);
+    }
+
+    let truncated_prefix = start > 0;
+    let mut lines = bytes.rsplit(|byte| *byte == b'\n').collect::<Vec<_>>();
+    if truncated_prefix {
+        // The first chunk may begin halfway through an old line. Never turn
+        // that fragment into a recalled command.
+        lines.pop();
+    }
+    let mut omitted = usize::from(truncated_prefix);
+    let mut newest = Vec::new();
+    for line in lines {
+        let Ok(line) = std::str::from_utf8(line) else {
+            omitted += 1;
+            continue;
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.len() > MAX_ENTRY_BYTES {
+            omitted += 1;
+            continue;
+        }
+        if newest.len() >= MAX_ENTRIES
+            || total_bytes(&newest) + line.len() + usize::from(!newest.is_empty()) > MAX_TOTAL_BYTES
+        {
+            omitted += 1;
+            break;
+        }
+        newest.push(line.to_string());
+    }
+    newest.reverse();
+    (newest, omitted)
 }
 
 #[cfg(test)]
@@ -257,6 +342,54 @@ mod tests {
         assert_eq!(c.lines().collect::<Vec<_>>(), exp);
         let _ = std::fs::remove_file(p);
     }
+
+    #[test]
+    fn oversized_entry_is_omitted_and_reported() {
+        let p = tmp_path("entry_bound");
+        let mut h = History::with_path(p.clone());
+        assert!(!h.push(&"x".repeat(MAX_ENTRY_BYTES + 1)));
+        assert_eq!(h.omitted_count(), 1);
+        assert!(h.previous().is_none());
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn total_bound_keeps_the_newest_entries() {
+        let p = tmp_path("total_bound");
+        let mut h = History::with_path(p.clone());
+        let entry = "x".repeat(MAX_ENTRY_BYTES - 16);
+        for index in 0..20 {
+            h.push(&format!("{index:02}-{entry}"));
+        }
+
+        assert!(h.omitted_count() >= 1);
+        assert!(h.entries.len() < 20);
+        assert!(h.entries.last().is_some_and(|line| line.starts_with("19-")));
+        assert!(h.previous().is_some_and(|line| line.starts_with("19-")));
+        assert!(h.previous().is_some_and(|line| line.starts_with("18-")));
+        assert!(std::fs::metadata(&p).unwrap().len() as usize <= MAX_TOTAL_BYTES);
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn load_skips_oversized_and_partial_utf8_entries_but_keeps_newest() {
+        let p = tmp_path("load_bound");
+        let contents = format!(
+            "{}\nold 🦀\nnew 🦀",
+            "x".repeat(MAX_TOTAL_BYTES + MAX_ENTRY_BYTES)
+        );
+        std::fs::write(&p, contents).unwrap();
+
+        let h = History::from_path(p.clone(), false);
+        assert!(h.omitted_count() >= 1);
+        assert_eq!(h.entries, ["old 🦀", "new 🦀"]);
+        assert!(
+            h.entries
+                .iter()
+                .all(|entry| std::str::from_utf8(entry.as_bytes()).is_ok())
+        );
+        let _ = std::fs::remove_file(p);
+    }
 }
 
 #[cfg(test)]
@@ -275,8 +408,9 @@ mod search_tests {
             ],
             cursor: None,
             path: std::path::PathBuf::new(),
-            limit: 1000,
+            limit: MAX_ENTRIES,
             disabled: true,
+            omitted: 0,
         }
     }
 
