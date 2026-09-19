@@ -37,6 +37,9 @@ pub(crate) mod session_paths;
 // `/allow` and `/grants`: the session grant store's one behaviour, shared
 // by the headless loop and the TUI dispatch — and the journal-warning
 // wording every journaling site renders.
+#[cfg(test)]
+#[path = "session_approval_surface_tests.rs"]
+mod session_approval_surface_tests;
 pub(crate) mod session_grants;
 #[cfg(test)]
 mod session_grants_tests;

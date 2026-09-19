@@ -217,6 +217,23 @@ pub(crate) struct StreamRequest {
     pub(crate) agent_mode: AgentMode,
 }
 
+/// What the TUI states about itself at the turn boundary, as the
+/// (`can_prompt`, `can_obtain_approval`) pair the turn runners consume.
+///
+/// `can_prompt` means "this surface may read stdin": always false here —
+/// the TUI must never read stdin under the alternate screen. There is a
+/// second, explicitly named capability, `can_obtain_approval`: "this surface
+/// can obtain a per-call approval at all" — always true here, through the
+/// modal. The two flags must never be merged back into one: one boolean
+/// meaning two things is what hid every write-shaped tool from the TUI
+/// under `ask`. [`SessionUniverse::definitions`] consumes the approval
+/// flag, never the stdin flag; the stdin fallback inside
+/// `TerminalApproval::approve` consumes the stdin flag, never the approval
+/// one.
+pub(crate) fn approval_capabilities() -> (bool, bool) {
+    (false, true)
+}
+
 /// Spawns the agent on a background thread and returns the live stream handle.
 pub(crate) fn start(request: StreamRequest) -> Stream {
     let StreamRequest {
@@ -267,7 +284,8 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
             runtime.as_ref(),
             &prompt_worker,
             approval,
-            false, // never prompt on stdin: the TUI collects approvals via a modal
+            approval_capabilities().0, // never read stdin: the modal collects approvals
+            approval_capabilities().1, // the modal is the approval surface
             overrides,
             history,
             &sink,

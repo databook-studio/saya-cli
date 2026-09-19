@@ -35,7 +35,16 @@ pub(crate) async fn run(
     // The session's journal: a `[s]` answer's new grant is journalled there
     // before the call it allowed runs.
     journal: Option<Arc<saya_store::SessionJournal>>,
+    // Whether this surface may read stdin. Feeds the connector's secret
+    // prompt and the decider's stdin fallback — never the advertisement
+    // gate. The headless line loop passes its live-terminal fact; the TUI
+    // never reaches this path (it runs through `tui::agent::start`).
     can_prompt: bool,
+    // Whether this surface can obtain a per-call approval at all. Feeds the
+    // advertisement gate (`SessionUniverse::definitions`), never the stdin
+    // fallback. The headless line loop passes its live-terminal fact — the
+    // same value as `can_prompt` there.
+    can_obtain_approval: bool,
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     format: RenderFormat,
@@ -64,6 +73,7 @@ pub(crate) async fn run(
         prompt,
         approval,
         can_prompt,
+        can_obtain_approval,
         overrides,
         history,
         &sink,

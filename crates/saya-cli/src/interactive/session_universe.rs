@@ -431,11 +431,20 @@ impl SessionUniverse {
 
     /// The turn's definitions: the database tools' own surface plus this
     /// session's write-shaped members — advertised exactly where the mode's
-    /// consent shape makes them usable: `ask` needs a prompt surface to
+    /// consent shape makes them usable: `ask` needs an approval surface to
     /// answer its asks; `bypass` **is** the consent (no ask, no surface —
     /// the piped-REPL demo runs on this); `read-only` and `never` can
-    /// neither prompt nor allow. Each write-shaped call is decided through
-    /// the approval engine per call.
+    /// neither obtain an approval nor allow. Each write-shaped call is
+    /// decided through the approval engine per call.
+    ///
+    /// `can_obtain_approval` means "this surface can obtain a per-call
+    /// approval at all" — the line REPL's live-terminal fact, the TUI's
+    /// modal (always true). It is deliberately NOT `can_prompt` ("this
+    /// surface may read stdin"): the TUI must never read stdin under the
+    /// alternate screen, yet obtains every approval through its modal. One
+    /// flag meaning two things is what hid every write-shaped tool from the
+    /// TUI under `ask`; keep them split. The stdin fallback inside
+    /// `TerminalApproval::approve` reads `can_prompt` — this gate never does.
     ///
     /// `tasks_set` is the exception to the write-shaped rule, pushed on the
     /// path that survives the Plan filter: it declares `WriteSession` with
@@ -446,7 +455,7 @@ impl SessionUniverse {
         &self,
         agent_mode: AgentMode,
         mode: ApprovalPolicy,
-        can_prompt: bool,
+        can_obtain_approval: bool,
         allow_query_data: bool,
         has_state_store: bool,
         permit_candidate_writes: bool,
@@ -455,7 +464,7 @@ impl SessionUniverse {
         // Plan case is the one the tool exists for.
         let advertises_tasks = !matches!(mode, ApprovalPolicy::Never);
         let advertises = match mode {
-            ApprovalPolicy::Ask => can_prompt,
+            ApprovalPolicy::Ask => can_obtain_approval,
             ApprovalPolicy::Bypass => true,
             _ => false,
         } && agent_mode == AgentMode::Build;

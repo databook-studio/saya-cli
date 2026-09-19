@@ -7,7 +7,7 @@
 //! streaming arrives in a later milestone. Non-TTY input uses a headless
 //! executor, not this module. Rendering lives in `ui`.
 
-mod agent;
+pub(crate) mod agent;
 mod application;
 mod atref;
 mod clipboard;
