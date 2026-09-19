@@ -4,14 +4,16 @@ mod cleanup;
 mod kind;
 mod render;
 mod spec;
+mod temp_chart;
 
 #[cfg(test)]
 use saya_types::QueryResult;
 
-pub(crate) use cleanup::{cleanup_session_charts, create_temp_chart};
+pub(crate) use cleanup::cleanup_session_charts;
 pub(crate) use kind::{ChartKind, ChartSpec};
 pub(crate) use render::render_html;
 pub(crate) use spec::suggest_spec;
+pub(crate) use temp_chart::reserve_temp_chart;
 
 pub(super) fn is_numeric_column(rows: &[Vec<serde_json::Value>], col_idx: usize) -> bool {
     let mut non_null_count = 0;

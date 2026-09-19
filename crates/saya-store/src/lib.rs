@@ -11,6 +11,7 @@ mod history;
 mod knowledge_items;
 mod migration;
 mod redaction;
+mod replace;
 mod runs;
 mod schema_store;
 mod session_journal;

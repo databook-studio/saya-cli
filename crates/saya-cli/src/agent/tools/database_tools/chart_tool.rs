@@ -46,8 +46,9 @@ impl DatabaseTools {
         }
 
         let html = crate::chart::render_html(&result, &spec).map_err(ToolError::Chart)?;
-        let path = crate::chart::create_temp_chart().map_err(ToolError::Chart)?;
-        crate::chart::write_html(&html, &path).map_err(ToolError::Chart)?;
+        let mut chart = crate::chart::reserve_temp_chart().map_err(ToolError::Chart)?;
+        chart.write_html(&html).map_err(ToolError::Chart)?;
+        let path = chart.path().to_path_buf();
         let _ = crate::chart::open_file(&path);
         Ok(serde_json::json!({
             "path": path.display().to_string(),
