@@ -235,6 +235,29 @@ mod chart_gen_tests {
     }
 
     #[test]
+    fn chart_html_redacts_secret_shaped_dataset_labels() {
+        let secret_alias = "api_key=sk-live-ALIAS-SENTINEL";
+        let result = QueryResult {
+            columns: vec!["label".to_string(), secret_alias.to_string()],
+            rows: vec![json!(["safe", 10])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: "SELECT label, value AS \"api_key=sk-live-ALIAS-SENTINEL\" FROM t"
+                .to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec![secret_alias.to_string()],
+            title: None,
+        };
+
+        let html = render_html(&result, &spec).unwrap();
+        assert!(html.contains("api_key=[redacted]"));
+        assert!(!html.contains(secret_alias));
+    }
+
+    #[test]
     fn test_render_html_script_injection_prevention() {
         let result = QueryResult {
             columns: vec!["label".to_string(), "val".to_string()],

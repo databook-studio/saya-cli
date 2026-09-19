@@ -96,7 +96,7 @@ pub(crate) fn render_html(result: &QueryResult, spec: &ChartSpec) -> Result<Stri
                         }
                     }
                     serde_json::json!({
-                        "label": y_name,
+                        "label": redact(y_name),
                         "data": points,
                         "backgroundColor": PALETTE[i % PALETTE.len()]
                     })
@@ -150,7 +150,7 @@ pub(crate) fn render_html(result: &QueryResult, spec: &ChartSpec) -> Result<Stri
                         .collect();
                     let color = PALETTE[i % PALETTE.len()];
                     let mut ds = serde_json::json!({
-                        "label": y_name,
+                        "label": redact(y_name),
                         "data": data,
                         "backgroundColor": color,
                         "borderColor": color,
