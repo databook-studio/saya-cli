@@ -448,24 +448,11 @@ fn run_single_turn(
     turn: String,
     ctx: &mut TurnContext,
 ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
-    // The one per-turn entry decides the outcome: `/exit` asks to leave
-    // (exit 0), an errored turn — the stream it emitted names it — is exit
-    // 5, and anything that left a mark ran to completion (exit 0). The
-    // piped loop swallows these into the loop; the single-turn path maps
-    // them to the process exit code instead. Both marks matter: an agent
-    // turn records `turns`, while a slash turn records only `messages` —
-    // the error test's unknown slash records neither, which is how the
-    // outcome tells the two apart without re-parsing the turn.
-    let before_turns = ctx.state.turns.len();
-    let before_messages = ctx.state.messages.len();
-    let should_exit = handle_line_verbatim(&turn, ctx)?;
-    if should_exit {
-        return Ok(TurnOutcome::Exit);
-    }
-    if ctx.state.turns.len() > before_turns || ctx.state.messages.len() > before_messages {
-        return Ok(TurnOutcome::Completed);
-    }
-    Ok(TurnOutcome::Errored)
+    // The per-turn entry reports its outcome directly. Do not infer success
+    // from a change in persisted vector lengths: valid commands such as
+    // `/schema` can complete without appending a session message, while an
+    // error can leave unrelated state untouched.
+    handle_line_verbatim(&turn, ctx)
 }
 
 /// Reads lines from stdin without the rich editor, printing the status header
@@ -527,7 +514,10 @@ fn run_plain_loop(ctx: &mut TurnContext) -> Result<(), Box<dyn std::error::Error
 fn handle_line(line: &str, ctx: &mut TurnContext) -> Result<bool, Box<dyn std::error::Error>> {
     // Piped stdin reads line by line: trim the line ending here, keep the
     // blank-line skip in the shared entry below so both paths share it.
-    handle_line_verbatim(line.trim_end(), ctx)
+    Ok(matches!(
+        handle_line_verbatim(line.trim_end(), ctx)?,
+        TurnOutcome::Exit
+    ))
 }
 
 /// The one per-turn entry every headless path shares: the piped loop
@@ -538,7 +528,7 @@ fn handle_line(line: &str, ctx: &mut TurnContext) -> Result<bool, Box<dyn std::e
 fn handle_line_verbatim(
     line: &str,
     ctx: &mut TurnContext,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     let state = &mut *ctx.state;
     let runtime = ctx.runtime;
     let store = ctx.store;
@@ -547,7 +537,9 @@ fn handle_line_verbatim(
     let terminal = ctx.terminal;
     let session = &mut *ctx.session;
     if line.trim().is_empty() {
-        return Ok(false);
+        // Piped input treats blank lines as no-ops. `read_turn_file` rejects
+        // an all-blank file before this entry is reached.
+        return Ok(TurnOutcome::Completed);
     }
     // A malformed or unknown slash command must not tear down the whole session:
     // surface the parse error (which may carry a "did you mean" hint) and keep looping.
@@ -561,7 +553,7 @@ fn handle_line_verbatim(
                 store,
             )?;
             block_on(store.save(state.redacted()))?;
-            return Ok(false);
+            return Ok(TurnOutcome::Errored);
         }
     };
     // A mode change through `/approvals` carries the activation line with it:
@@ -641,10 +633,10 @@ fn handle_line_verbatim(
         }
     };
     if matches!(action, SessionAction::Exit) {
-        return Ok(true);
+        return Ok(TurnOutcome::Exit);
     }
     if let SessionAction::Schema(refresh) = action {
-        block_on(super::session_schema::run(
+        let completed = block_on(super::session_schema::run(
             runtime,
             state.profile.as_deref(),
             refresh,
@@ -653,7 +645,11 @@ fn handle_line_verbatim(
             state_db,
         ))?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(if completed {
+            TurnOutcome::Completed
+        } else {
+            TurnOutcome::Errored
+        });
     }
     if let SessionAction::Doctor = action {
         // Same report the TUI's /doctor shows; runtime lives here.
@@ -664,7 +660,7 @@ fn handle_line_verbatim(
             store,
         )?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Sql(sql) = action {
         block_on(super::session_sql::run(
@@ -675,17 +671,21 @@ fn handle_line_verbatim(
             format,
         ))?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Contracts(command) = action {
         // The slash adapter hands the translated `ContractsCommand` to the same
         // `run_contracts` dispatcher the headless `saya contracts` path uses; the
         // captured output goes to the terminal through the shared `emit` seam.
-        block_on(crate::commands::run_contracts(
+        let code = block_on(crate::commands::run_contracts(
             command, runtime, format, state_db,
         ))?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(if code == 0 {
+            TurnOutcome::Completed
+        } else {
+            TurnOutcome::Errored
+        });
     }
     if let SessionAction::Runs(run_id) = action {
         // `/runs [id]` reaches the same `reads.rs` path the headless
@@ -699,11 +699,15 @@ fn handle_line_verbatim(
             .approval_mode
             .parse()
             .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
-        block_on(crate::commands::run_management(
+        let code = block_on(crate::commands::run_management(
             command, runtime, format, approval, state_db,
         ))?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(if code == 0 {
+            TurnOutcome::Completed
+        } else {
+            TurnOutcome::Errored
+        });
     }
     if let SessionAction::RunCancel(run_id) = action {
         // `/run cancel <id>` is the same engine path `saya run cancel` uses —
@@ -712,7 +716,7 @@ fn handle_line_verbatim(
             .approval_mode
             .parse()
             .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
-        block_on(crate::commands::run_management(
+        let code = block_on(crate::commands::run_management(
             crate::cli::RunCommand::Cancel { run_id },
             runtime,
             format,
@@ -720,7 +724,11 @@ fn handle_line_verbatim(
             state_db,
         ))?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(if code == 0 {
+            TurnOutcome::Completed
+        } else {
+            TurnOutcome::Errored
+        });
     }
     if let SessionAction::Allow(tokens) = action {
         // `/allow <scopes…>` seeds the session's one grant store through the
@@ -731,18 +739,33 @@ fn handle_line_verbatim(
         // and says so. Each newly seeded token is journalled once by the
         // shared behaviour; a failed journal write changes no grant and is
         // said in the message.
-        let action = match super::session_grants::allow(
+        let outcome = match super::session_grants::allow(
             &tokens,
             &session.universe().approval_facts(runtime),
             session.policy().grants(),
             &session.journal(),
         ) {
-            Ok(message) => SessionAction::Message(message),
-            Err(error) => SessionAction::Error(error),
+            Ok(message) => {
+                super::session_emit::emit_action(
+                    SessionAction::Message(message),
+                    format,
+                    state,
+                    store,
+                )?;
+                TurnOutcome::Completed
+            }
+            Err(error) => {
+                super::session_emit::emit_action(
+                    SessionAction::Error(error),
+                    format,
+                    state,
+                    store,
+                )?;
+                TurnOutcome::Errored
+            }
         };
-        super::session_emit::emit_action(action, format, state, store)?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(outcome);
     }
     if let SessionAction::Grants = action {
         // `/grants` lists the store verbatim: the words are the record, and
@@ -758,7 +781,7 @@ fn handle_line_verbatim(
             store,
         )?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Run(tail) = action {
         // `/run --seed-grants <tail…>` seeds the child's `--allow` from this
@@ -786,7 +809,7 @@ fn handle_line_verbatim(
         };
         super::session_run::spawn_run_child(runtime, format, state, &seed.forwarded, tail)?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Compact = action {
         // `/compact` touches working memory, not files or the database, so
@@ -799,14 +822,19 @@ fn handle_line_verbatim(
             &session.universe(),
         ));
         state.usage.record_learning(outcome.usage);
-        let action = if outcome.failed {
+        let failed = outcome.failed;
+        let action = if failed {
             SessionAction::Error(outcome.message)
         } else {
             SessionAction::Message(outcome.message)
         };
         super::session_emit::emit_action(action, format, state, store)?;
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(if failed {
+            TurnOutcome::Errored
+        } else {
+            TurnOutcome::Completed
+        });
     }
     if let SessionAction::Resume(id) = action {
         let defaults = super::session_resume::SessionDefaults {
@@ -815,6 +843,7 @@ fn handle_line_verbatim(
             allow_data_sharing: state.allow_data_sharing,
             approval_mode: state.approval_mode.clone(),
         };
+        let mut outcome = TurnOutcome::Errored;
         match super::session_resume::resume_session(store, &id, &defaults) {
             Ok(Some(loaded)) => {
                 // The resumed session's own state must ride the swap: the new
@@ -832,6 +861,7 @@ fn handle_line_verbatim(
                         .unwrap_or(saya_agent::ApprovalPolicy::Ask),
                 ) {
                     Ok(()) => {
+                        outcome = TurnOutcome::Completed;
                         *state = loaded;
                         session.universe().seed_tasks(state.task_list.clone());
                         super::session_emit::emit_action(
@@ -887,8 +917,9 @@ fn handle_line_verbatim(
             )?,
         }
         block_on(store.save(state.redacted()))?;
-        return Ok(false);
+        return Ok(outcome);
     }
+    let outcome = action_outcome(&action);
     super::session_emit::emit_action(action, format, state, store)?;
     if approvals_set {
         if let Some(line) =
@@ -912,7 +943,20 @@ fn handle_line_verbatim(
         }
     }
     block_on(store.save(state.redacted()))?;
-    Ok(false)
+    Ok(outcome)
+}
+
+fn action_outcome(action: &SessionAction) -> TurnOutcome {
+    match action {
+        SessionAction::Exit => TurnOutcome::Exit,
+        SessionAction::Error(_)
+        | SessionAction::Cancelled
+        | SessionAction::NotImplemented(_)
+        | SessionAction::Export(_)
+        | SessionAction::Chart(_)
+        | SessionAction::Explain(_) => TurnOutcome::Errored,
+        _ => TurnOutcome::Completed,
+    }
 }
 
 #[cfg(test)]

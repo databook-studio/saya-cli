@@ -246,6 +246,41 @@ fn a_completed_turn_exits_zero() {
     let _ = std::fs::remove_dir_all(&env.root);
 }
 
+/// A successful slash command may have no session-message side effect. Its
+/// turn result must still be completed: exit status is the command outcome,
+/// not an inference from `messages.len()` or `turns.len()`.
+#[test]
+fn a_successful_schema_turn_without_session_state_changes_exits_zero() {
+    let env = test_root("schema-success");
+    let (address, _bodies) = mock("unused");
+    let path = env.root.join("instruction.md");
+    std::fs::write(&path, "/schema\n").unwrap();
+
+    let mut args = base_args(&env);
+    args.push("--turn-file".into());
+    args.push(path.to_str().unwrap().into());
+    let output = saya(
+        &env,
+        &address,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+    .output()
+    .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a successful schema command completes the turn; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("\"event\":\"schema\""),
+        "schema output should be rendered: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&env.root);
+}
+
 /// An errored turn exits non-zero and the stream names the error: an
 /// unknown slash command surfaces `TerminalEvent::Error` (stderr in every
 /// format) carrying the command's name, so a harness can tell "the turn
