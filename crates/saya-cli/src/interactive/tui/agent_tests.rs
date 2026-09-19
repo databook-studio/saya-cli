@@ -773,6 +773,44 @@ async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
     let _ = (tool, arguments);
 }
 
+/// The stdin gate the split must never move: `TerminalApproval` with
+/// `can_prompt = false` denies an ungranted ask without reading stdin — the
+/// same answer as before, on the same flag. The TUI's modal path answers
+/// `true` for the approval-surface flag, which this decider never reads.
+/// Pinned here because widening the gate to the approval flag would let a
+/// headless surface read stdin it must not touch.
+#[tokio::test]
+async fn the_stdin_gate_still_denies_without_reading_stdin() {
+    let tool = side_effecting_tool();
+    let arguments = serde_json::json!({});
+    // `can_prompt = false` is the TUI's stdin answer too: deny, and deny
+    // without touching stdin (this test would block on a read if it did).
+    let no_stdin = TerminalApproval::new(
+        ApprovalPolicy::Ask,
+        false,
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+    );
+    assert!(
+        !no_stdin.approve(&tool, &arguments).await,
+        "an ungranted ask with no stdin surface denies"
+    );
+    // The mode denials never reach the gate: `never` and `read-only` deny
+    // before any surface question arises.
+    for mode in [ApprovalPolicy::Never, ApprovalPolicy::ReadOnly] {
+        let decider = TerminalApproval::new(
+            mode,
+            false,
+            TurnPrimary::default(),
+            ApprovalFacts::default(),
+        );
+        assert!(
+            !decider.approve(&tool, &arguments).await,
+            "{mode:?} denies regardless of the stdin surface"
+        );
+    }
+}
+
 /// The session journal's `prompt` properties, driven through the one ask
 /// surface a test can drive (the TUI's channel; the terminal decider shares
 /// the operation, `record_prompt_answer`):

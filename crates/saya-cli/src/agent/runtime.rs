@@ -18,12 +18,23 @@ use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
 /// Production entry point: builds provider + registry from config and executes the turn.
+///
+/// `can_prompt` means "this surface may read stdin" — it feeds the
+/// connector's secret prompt, the turn's fallback [`TerminalApproval`], and
+/// nothing else. `can_obtain_approval` means "this surface can obtain a
+/// per-call approval at all" — it feeds the advertisement gate
+/// ([`SessionUniverse::definitions`] for sessions, the one-shot branch
+/// below for `ask`), never the stdin fallback. The line REPL passes its
+/// live-terminal fact for both; the TUI passes `false` for the first and
+/// `true` for the second (its modal); the one-shot `ask` path passes the
+/// same value for both (unchanged behaviour). Keep them split.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_prompt_with_sink(
     runtime: &RuntimeConfig,
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    can_obtain_approval: bool,
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
@@ -48,6 +59,7 @@ pub(crate) async fn run_prompt_with_sink(
         prompt,
         approval,
         can_prompt,
+        can_obtain_approval,
         history,
         sink,
         cancellation,
@@ -68,6 +80,7 @@ pub(crate) async fn run_prompt_with_inputs(
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    can_obtain_approval: bool,
     history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
@@ -207,14 +220,14 @@ pub(crate) async fn run_prompt_with_inputs(
     let env_budgets = saya_agent::budgets_from_env(|name| std::env::var(name).ok());
     // The turn's universe and its executor ride together: a session dispatches
     // through the shared `RunTools` composite and advertises its write-shaped
-    // members only where a prompt is possible; the one-shot `ask` path keeps
-    // the database surface alone, where `workspace_read` denies with a typed
-    // error.
+    // members only where an approval surface exists to answer the asks; the
+    // one-shot `ask` path keeps the database surface alone, where
+    // `workspace_read` denies with a typed error.
     let definitions = match session.as_ref() {
         Some(session) => session.definitions(
             agent_mode,
             approval,
-            can_prompt,
+            can_obtain_approval,
             allow_query_data,
             has_state_store,
             learning.permit_candidate_writes,
@@ -230,11 +243,12 @@ pub(crate) async fn run_prompt_with_inputs(
             // `render_chart` call (`external_side_effect: true`,
             // `requires_approval: true`, no grant token) goes to the
             // decider, which resolves it exactly as a session under the same
-            // policy would: per-call ask when prompting is possible. The
-            // chart is advertised exactly there and hidden everywhere else.
+            // policy would: per-call ask when an approval surface exists.
+            // The chart is advertised exactly there and hidden everywhere
+            // else.
             agent_mode == AgentMode::Build
                 && match approval {
-                    ApprovalPolicy::Ask => can_prompt,
+                    ApprovalPolicy::Ask => can_obtain_approval,
                     ApprovalPolicy::Bypass => true,
                     _ => false,
                 },

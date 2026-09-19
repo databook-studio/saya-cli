@@ -13,11 +13,11 @@ use crate::interactive::session_tasks_render::{
 /// definitions, on the path that survives the Plan filter.
 #[test]
 fn the_universe_advertises_tasks_set_including_under_plan() {
-    let observed = |agent_mode: AgentMode, mode: ApprovalPolicy, can_prompt: bool| {
+    let observed = |agent_mode: AgentMode, mode: ApprovalPolicy, can_obtain_approval: bool| {
         let plain = std::env::temp_dir().join(format!(
             "saya-tasks-ads-{}-{}",
             std::process::id(),
-            match (agent_mode, mode, can_prompt) {
+            match (agent_mode, mode, can_obtain_approval) {
                 (AgentMode::Build, ApprovalPolicy::Ask, true) => "build-ask",
                 (AgentMode::Build, ApprovalPolicy::Bypass, _) => "build-bypass",
                 (AgentMode::Plan, _, _) => "plan",
@@ -27,7 +27,7 @@ fn the_universe_advertises_tasks_set_including_under_plan() {
         let state = std::env::temp_dir().join(format!(
             "saya-tasks-ads-state-{}-{}",
             std::process::id(),
-            match (agent_mode, mode, can_prompt) {
+            match (agent_mode, mode, can_obtain_approval) {
                 (AgentMode::Build, ApprovalPolicy::Ask, true) => "build-ask",
                 (AgentMode::Build, ApprovalPolicy::Bypass, _) => "build-bypass",
                 (AgentMode::Plan, _, _) => "plan",
@@ -54,7 +54,7 @@ fn the_universe_advertises_tasks_set_including_under_plan() {
             )
             .expect("composition succeeds");
         let names: Vec<String> = universe
-            .definitions(agent_mode, mode, can_prompt, true, false, false)
+            .definitions(agent_mode, mode, can_obtain_approval, true, false, false)
             .into_iter()
             .map(|definition| definition.name)
             .collect();
@@ -62,7 +62,7 @@ fn the_universe_advertises_tasks_set_including_under_plan() {
         let _ = std::fs::remove_dir_all(&state);
         names
     };
-    for (agent_mode, mode, can_prompt, label) in [
+    for (agent_mode, mode, can_obtain_approval, label) in [
         (AgentMode::Build, ApprovalPolicy::Ask, true, "ask+prompt"),
         (AgentMode::Build, ApprovalPolicy::Bypass, false, "bypass"),
         (
@@ -85,7 +85,7 @@ fn the_universe_advertises_tasks_set_including_under_plan() {
         ),
     ] {
         assert!(
-            observed(agent_mode, mode, can_prompt).contains(&"tasks_set".to_string()),
+            observed(agent_mode, mode, can_obtain_approval).contains(&"tasks_set".to_string()),
             "tasks_set must be advertised under {label}"
         );
     }

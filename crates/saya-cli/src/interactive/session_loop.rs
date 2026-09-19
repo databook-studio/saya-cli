@@ -577,12 +577,17 @@ fn handle_line_verbatim(
             // synced back, so `tasks_set` writes persist and ride the next
             // turn.
             session.universe().seed_tasks(state.task_list.clone());
+            // The line REPL states the live terminal fact for both
+            // capabilities: stdin readability and approval obtainability are
+            // the same fact here — no modal, no alternate screen. The TUI
+            // states them separately (`tui::agent::approval_capabilities`).
             match block_on(super::session_request::run(
                 runtime,
                 line,
                 approval,
                 session.policy(),
                 Some(session.journal()),
+                terminal,
                 terminal,
                 state.prompt_overrides(),
                 history,

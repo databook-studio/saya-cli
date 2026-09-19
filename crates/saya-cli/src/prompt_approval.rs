@@ -8,6 +8,13 @@ use std::sync::Arc;
 
 pub(crate) struct TerminalApproval {
     policy: SessionPolicy,
+    /// Whether this surface may read stdin. This gates the stdin fallback
+    /// below — and ONLY that. The TUI answers false (it must never read
+    /// stdin under the alternate screen) while still obtaining approvals
+    /// through its modal; the advertisement gate
+    /// ([`SessionUniverse::definitions`]) reads the separate
+    /// `can_obtain_approval` flag, never this one. Merging the two is what
+    /// hid every write-shaped tool from the TUI under `ask`.
     can_prompt: bool,
     /// The turn's primary connection, bound by the turn that owns this
     /// decider; the SQL family's suggestion names it when the call names

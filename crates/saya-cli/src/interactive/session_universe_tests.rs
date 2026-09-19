@@ -131,10 +131,10 @@ fn advertised(
     universe: &SessionUniverse,
     agent_mode: AgentMode,
     mode: ApprovalPolicy,
-    can_prompt: bool,
+    can_obtain_approval: bool,
 ) -> Vec<String> {
     universe
-        .definitions(agent_mode, mode, can_prompt, true, false, false)
+        .definitions(agent_mode, mode, can_obtain_approval, true, false, false)
         .into_iter()
         .map(|definition| definition.name)
         .collect()
@@ -160,12 +160,12 @@ fn the_lane_s_advertisement_follows_the_mode_rule() {
         Some(&launch),
     )
     .expect("composition succeeds on a plain worktree");
-    for (mode, can_prompt, label) in [
+    for (mode, can_obtain_approval, label) in [
         (ApprovalPolicy::ReadOnly, true, "read-only"),
         (ApprovalPolicy::Never, true, "never"),
         (ApprovalPolicy::Ask, false, "no prompt surface"),
     ] {
-        let names = advertised(&universe, AgentMode::Build, mode, can_prompt);
+        let names = advertised(&universe, AgentMode::Build, mode, can_obtain_approval);
         assert!(
             !names.contains(&"run_command".to_string()),
             "{label} never sees the tool: {names:?}"
@@ -341,22 +341,31 @@ fn no_root_still_no_lane() {
 // red test 2 — a read-only session sees none of the write-shaped tools
 // ---------------------------------------------------------------------------
 
-/// Under `read-only` and under `never` — and under `ask` where nothing can
-/// prompt — none of the write-shaped tools are advertised: the
-/// advertised-but-unusable anti-pattern (a definition the engine always
+/// Under `read-only` and under `never` — and under `ask` where no approval
+/// surface exists at all — none of the write-shaped tools are advertised:
+/// the advertised-but-unusable anti-pattern (a definition the engine always
 /// denies) must not return. Everything read-shaped stays.
+///
+/// The flag is the approval-surface flag, not the stdin flag: a surface
+/// that can obtain approvals (the line REPL, the TUI's modal) advertises
+/// under `ask`; a surface that can obtain none still hides. `read-only`
+/// and `never` hide on every surface, approval surface or not.
 #[test]
 fn write_shaped_tools_stay_hidden_where_a_prompt_is_impossible() {
     let project = worktree("readonly");
     let state = temp_dir("readonly-state");
     let universe = compose(&session_runtime(None), &project, &state);
-    for (mode, can_prompt, label) in [
+    for (mode, can_obtain_approval, label) in [
         (ApprovalPolicy::ReadOnly, true, "read-only"),
         (ApprovalPolicy::Never, true, "never"),
-        (ApprovalPolicy::Ask, false, "no prompt surface"),
-        (ApprovalPolicy::ReadOnly, false, "read-only, no prompt"),
+        (ApprovalPolicy::Ask, false, "no approval surface"),
+        (
+            ApprovalPolicy::ReadOnly,
+            false,
+            "read-only, no approval surface",
+        ),
     ] {
-        let names = advertised(&universe, AgentMode::Build, mode, can_prompt);
+        let names = advertised(&universe, AgentMode::Build, mode, can_obtain_approval);
         for tool in SESSION_WRITE_TOOLS {
             assert!(
                 !names.contains(&tool.to_string()),
@@ -381,12 +390,12 @@ fn bypass_advertises_the_write_shaped_tools_without_a_prompt_surface() {
     let project = worktree("bypass-advertise");
     let state = temp_dir("bypass-advertise-state");
     let universe = compose(&session_runtime(None), &project, &state);
-    for can_prompt in [true, false] {
+    for can_obtain_approval in [true, false] {
         let names = advertised(
             &universe,
             AgentMode::Build,
             ApprovalPolicy::Bypass,
-            can_prompt,
+            can_obtain_approval,
         );
         for tool in [
             "workspace_write",
@@ -397,13 +406,13 @@ fn bypass_advertises_the_write_shaped_tools_without_a_prompt_surface() {
             assert!(
                 names.contains(&tool.to_string()),
                 "bypass advertises {tool} whether or not a prompt surface exists \
-                 (can_prompt={can_prompt}): {names:?}"
+                 (can_obtain_approval={can_obtain_approval}): {names:?}"
             );
         }
         let definitions = universe.definitions(
             saya_agent::AgentMode::Build,
             ApprovalPolicy::Bypass,
-            can_prompt,
+            can_obtain_approval,
             true,
             false,
             false,
@@ -1393,12 +1402,35 @@ fn plan_hides_write_shaped_tools_under_bypass_too() {
 /// write every policy but `never` carries. Pinned by name on the plain
 /// worktree composition (no runner composed, so no `run_program`; the
 /// unstated host lane composes, so `run_command` rides).
+///
+/// The flag is the approval-surface flag: `ask` with an approval surface
+/// advertises the write-shaped set; `bypass` needs no surface; `read-only`
+/// and `never` hide whatever the surface. The `(Ask, false)` row — a
+/// surface that can obtain no approval — keeps the anti-pattern pinned.
 #[test]
 fn build_advertisement_is_pinned_for_every_approval_policy() {
     let project = worktree("build-pinned");
     let state = temp_dir("build-pinned-state");
     let universe = compose(&session_runtime(None), &project, &state);
-    for (mode, can_prompt, names) in [
+    for (mode, can_obtain_approval, names) in [
+        (
+            ApprovalPolicy::Ask,
+            false,
+            vec![
+                "schema_discovery",
+                "workspace_read",
+                "workspace_list",
+                "glob",
+                "grep",
+                "bounded_sql_query",
+                "bounded_sql_query_all",
+                "result_shape",
+                "column_health",
+                "join_check",
+                "designate_answer",
+                "tasks_set",
+            ],
+        ),
         (
             ApprovalPolicy::Ask,
             true,
@@ -1484,7 +1516,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
         ),
     ] {
         assert_eq!(
-            advertised(&universe, AgentMode::Build, mode, can_prompt),
+            advertised(&universe, AgentMode::Build, mode, can_obtain_approval),
             names
                 .into_iter()
                 .map(str::to_string)
@@ -1512,7 +1544,7 @@ fn render_chart_advertisement_agrees_with_enforcement_for_every_policy_and_mode(
         requires_approval: true,
         local_state: saya_agent::LocalStateEffect::None,
     };
-    for (agent_mode, policy, can_prompt) in [
+    for (agent_mode, policy, can_obtain_approval) in [
         (AgentMode::Build, ApprovalPolicy::Ask, true),
         (AgentMode::Build, ApprovalPolicy::Ask, false),
         (AgentMode::Build, ApprovalPolicy::Bypass, false),
@@ -1523,24 +1555,26 @@ fn render_chart_advertisement_agrees_with_enforcement_for_every_policy_and_mode(
         (AgentMode::Plan, ApprovalPolicy::ReadOnly, true),
         (AgentMode::Plan, ApprovalPolicy::Never, true),
     ] {
-        let definitions = universe.definitions(agent_mode, policy, can_prompt, true, false, false);
+        let definitions =
+            universe.definitions(agent_mode, policy, can_obtain_approval, true, false, false);
         let advertised_chart = definitions
             .iter()
             .any(|definition| definition.name == "render_chart");
         // Denied means the engine denies — or the decider would with no
-        // prompt to answer: under ask without a prompt surface every
-        // approval-gated tool (`TerminalApproval::approve`'s
-        // `Ask if !can_prompt => false`) is refused, which is exactly why
-        // the write-shaped members hide there too.
+        // approval surface to answer: under ask without one every
+        // approval-gated tool (the stdin fallback's `Ask if !can_prompt
+        // => false` is the same shape: an unanswerable ask denies) is
+        // refused, which is exactly why the write-shaped members hide
+        // there too.
         let denied = matches!(
             SessionPolicy::new(policy)
                 .with_agent_mode(agent_mode)
                 .resolve(&chart_effect, None),
             ApprovalDecision::Deny { .. }
-        ) || (policy == ApprovalPolicy::Ask && !can_prompt);
+        ) || (policy == ApprovalPolicy::Ask && !can_obtain_approval);
         assert_eq!(
             advertised_chart, !denied,
-            "{agent_mode:?} under {policy:?} (can_prompt={can_prompt}): advertised={advertised_chart} but denied={denied}"
+            "{agent_mode:?} under {policy:?} (can_obtain_approval={can_obtain_approval}): advertised={advertised_chart} but denied={denied}"
         );
     }
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));

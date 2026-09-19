@@ -32,10 +32,15 @@ pub(super) async fn ask(
     }
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
+    // The one-shot `ask` path composes no session universe at all — writes
+    // stay hidden, reads deny — so both capabilities ride the same
+    // live-terminal fact: stdin readability and approval obtainability are
+    // the same fact here. Unchanged behaviour.
     let work = crate::agent::candidates::run_with_candidates(
         runtime,
         &prompt,
         approval,
+        can_prompt,
         can_prompt,
         PromptOverrides {
             included_profiles,
