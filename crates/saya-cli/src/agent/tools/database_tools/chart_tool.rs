@@ -46,20 +46,8 @@ impl DatabaseTools {
         }
 
         let html = crate::chart::render_html(&result, &spec).map_err(ToolError::Chart)?;
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!("saya-chart-{unique}.html"));
+        let path = crate::chart::create_temp_chart().map_err(ToolError::Chart)?;
         crate::chart::write_html(&html, &path).map_err(ToolError::Chart)?;
-        // The path is session-scoped from here: the session teardown removes
-        // every chart file the tool wrote (DESIGN §6.6).
-        crate::chart::record_temp_chart(&path);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
         let _ = crate::chart::open_file(&path);
         Ok(serde_json::json!({
             "path": path.display().to_string(),

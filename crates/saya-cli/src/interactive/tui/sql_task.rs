@@ -140,9 +140,16 @@ fn complete_chart(
             return;
         }
     };
-    let path = path_arg
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("saya-chart.html"));
+    let path = match path_arg {
+        Some(path) => std::path::PathBuf::from(path),
+        None => match crate::chart::create_temp_chart() {
+            Ok(path) => path,
+            Err(msg) => {
+                transcript.push(BlockKind::Error, msg);
+                return;
+            }
+        },
+    };
     if let Err(msg) = crate::chart::write_html(&html, &path) {
         transcript.push(BlockKind::Error, msg);
         return;

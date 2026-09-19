@@ -8,7 +8,7 @@ mod spec;
 #[cfg(test)]
 use saya_types::QueryResult;
 
-pub(crate) use cleanup::{cleanup_session_charts, record_temp_chart};
+pub(crate) use cleanup::{cleanup_session_charts, create_temp_chart};
 pub(crate) use kind::{ChartKind, ChartSpec};
 pub(crate) use render::render_html;
 pub(crate) use spec::suggest_spec;
