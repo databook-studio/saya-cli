@@ -7,6 +7,7 @@ use super::{
 };
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
+    render::TerminalEvent,
     slash::{SlashCommand, parse_slash_command},
 };
 use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
@@ -469,7 +470,10 @@ fn run_plain_loop(ctx: &mut TurnContext) -> Result<(), Box<dyn std::error::Error
     if let Some(line) =
         super::session_activation::line_if_bypass(ctx.state, ctx.runtime, &ctx.session.universe())
     {
-        println!("{line}");
+        let rendered =
+            crate::render_event(&TerminalEvent::Diagnostic { message: line }, ctx.format);
+        print!("{}", rendered.stdout);
+        eprint!("{}", rendered.stderr);
     }
     // Bypass × unbound × non-terminal: no prompt was possible, so nothing
     // bound and the lane cannot compose either — bypass runs with the lane
