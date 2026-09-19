@@ -12,9 +12,9 @@ Rust 1.88.0 exactly and runs `cargo check --workspace --locked`. This catches
 dependency or source MSRV drift without duplicating the stable test matrix.
 
 The workspace pins `duckdb` and its bundled `libduckdb-sys` implementation to
-`1.10504.0`. This release vendors fmt without the obsolete MSVC
+`1.10505.0`. This release vendors fmt without the obsolete MSVC
 `stdext::checked_array_iterator` branch. Its published
-[`libduckdb-sys` build script](https://docs.rs/crate/libduckdb-sys/1.10504.0/source/build_bundled_cc.rs)
+[`libduckdb-sys` build script](https://docs.rs/crate/libduckdb-sys/1.10505.0/source/build_bundled_cc.rs)
 enables `/EHsc` behind an MSVC target gate, so CI does not override dependency
 C++ flags.
 
