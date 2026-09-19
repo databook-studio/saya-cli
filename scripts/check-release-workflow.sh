@@ -84,13 +84,20 @@ clippy = File.read(File.join(root_dir, "clippy.toml"))
 raise "Clippy MSRV is not Rust 1.88" unless clippy.match?(/^msrv = "1\.88"$/)
 member_block = workspace[/members\s*=\s*\[(.*?)\]/m, 1] or raise "workspace members missing"
 members = member_block.scan(/"([^"]+)"/).flatten
-raise "expected six workspace members" unless members.length == 6
+raise "expected seven workspace members" unless members.length == 7
 manifests = members.map { |member| File.join(root_dir, member, "Cargo.toml") }
 raise "workspace member manifest missing" unless manifests.all? { |path| File.file?(path) }
+package_names = manifests.map { |path| File.read(path)[/^\[package\]\n(.*?)(?=^\[|\z)/m, 1][/^name = "([^"]+)"$/, 1] }
+raise "workspace package names do not match members" unless package_names.sort == %w[saya-agent saya-cli saya-config saya-connectors saya-harness saya-store saya-types]
+release_version = package_names.zip(manifests).map { |_name, path| File.read(path)[/^\[package\]\n(.*?)(?=^\[|\z)/m, 1][/^version = "([^"]+)"$/, 1] }.compact.uniq
+raise "workspace release versions are inconsistent" unless release_version.length == 1
 manifests.each do |path|
   member_package = File.read(path)[/^\[package\]\n(.*?)(?=^\[|\z)/m, 1]
   raise "#{path} does not inherit the workspace MSRV" unless member_package&.match?(/^rust-version\.workspace = true$/)
 end
+publish_script = File.read(File.join(root_dir, "scripts", "publish-crates.sh"))
+publish_order = publish_script[/^CRATES=\((.*?)\)$/, 1]&.split
+raise "publish order does not cover every workspace crate" unless publish_order == %w[saya-types saya-config saya-store saya-agent saya-connectors saya-harness saya-cli]
 msrv = workflow.dig("jobs", "msrv") or raise "MSRV job missing"
 raise "MSRV job is not Ubuntu" unless msrv["runs-on"] == "ubuntu-latest"
 raise "MSRV build is not serialized" unless msrv.dig("env", "CARGO_BUILD_JOBS") == "1"
@@ -265,4 +272,105 @@ Dir.mktmpdir("tap-check-fixtures") do |dir|
   raise "warn-only matching tap must not warn" unless status.success? && !(out + err).include?("::warning")
 end
 puts "tap check contract and verify-tap wiring valid"
+RUBY
+
+ruby -rfileutils -rjson -ropen3 -rtmpdir - "$ROOT_DIR" <<'RUBY'
+root_dir = ARGV.fetch(0)
+publish_script = File.join(root_dir, "scripts", "publish-crates.sh")
+raise "scripts/publish-crates.sh missing" unless File.file?(publish_script)
+
+crates = %w[saya-types saya-config saya-store saya-agent saya-connectors saya-harness saya-cli]
+dependencies = {
+  "saya-types" => [],
+  "saya-config" => ["saya-types"],
+  "saya-store" => ["saya-types"],
+  "saya-agent" => ["saya-types"],
+  "saya-connectors" => ["saya-config", "saya-types"],
+  "saya-harness" => ["saya-agent", "saya-store", "saya-types", "saya-connectors"],
+  "saya-cli" => ["saya-agent", "saya-config", "saya-connectors", "saya-harness", "saya-store", "saya-types"],
+}
+
+metadata = lambda do |versions, members = crates|
+  packages = members.map do |name|
+    id = "path+file:///fixture/#{name}##{versions.fetch(name)}"
+    {
+      "name" => name,
+      "version" => versions.fetch(name),
+      "id" => id,
+      "dependencies" => dependencies.fetch(name, []).map do |dependency|
+        { "name" => dependency, "req" => "^#{versions.fetch(dependency)}", "path" => "/fixture/#{dependency}" }
+      end,
+    }
+  end
+  { "workspace_members" => packages.map { |package| package.fetch("id") }, "packages" => packages }
+end
+
+run_fixture = lambda do |payload|
+  Dir.mktmpdir("publish-check") do |dir|
+    scripts_dir = File.join(dir, "scripts")
+    bin_dir = File.join(dir, "bin")
+    FileUtils.mkdir_p(scripts_dir)
+    FileUtils.mkdir_p(bin_dir)
+    FileUtils.cp(publish_script, File.join(scripts_dir, "publish-crates.sh"))
+    metadata_path = File.join(dir, "metadata.json")
+    cargo_log = File.join(dir, "cargo.log")
+    curl_log = File.join(dir, "curl.log")
+    File.write(metadata_path, JSON.generate(payload))
+    File.write(File.join(bin_dir, "cargo"), <<~'SH')
+      #!/usr/bin/env bash
+      set -euo pipefail
+      if [[ "${1:-}" == "metadata" ]]; then
+        cat "$SAYA_METADATA_FILE"
+      elif [[ "${1:-}" == "publish" ]]; then
+        printf 'stub cargo %s\n' "$*"
+        printf '%s\n' "$*" >> "$SAYA_CARGO_LOG"
+      else
+        echo "unexpected cargo invocation: $*" >&2
+        exit 1
+      fi
+    SH
+    File.write(File.join(bin_dir, "curl"), <<~'SH')
+      #!/usr/bin/env bash
+      set -euo pipefail
+      printf 'stub curl %s\n' "$*" >&2
+      printf '%s\n' "$*" >> "$SAYA_CURL_LOG"
+      printf '404'
+    SH
+    FileUtils.chmod(0o755, [File.join(bin_dir, "cargo"), File.join(bin_dir, "curl")])
+    Open3.capture3(
+      {
+        "PATH" => "#{bin_dir}:#{ENV.fetch('PATH')}",
+        "SAYA_METADATA_FILE" => metadata_path,
+        "SAYA_CARGO_LOG" => cargo_log,
+        "SAYA_CURL_LOG" => curl_log,
+        "DRY_RUN" => "1",
+      },
+      "bash", File.join(scripts_dir, "publish-crates.sh")
+    ).tap { |result| result << cargo_log << curl_log }
+  end
+end
+
+versions = crates.to_h { |name| [name, "0.4.1"] }
+output, error, status, cargo_log, curl_log = run_fixture.call(metadata.call(versions))
+raise "valid publish fixture should pass: #{output}\n#{error}" unless status.success?
+published = output.lines.grep(/^stub cargo publish /).map { |line| line.split.fetch(4) }
+raise "publish order omitted saya-harness before saya-cli: #{published.inspect}" unless published == crates
+raise "valid publish fixture should query each crate exactly once" unless error.lines.count { |line| line.start_with?("stub curl ") } == crates.length
+
+versions["saya-harness"] = "0.4.0"
+output, error, status, cargo_log, curl_log = run_fixture.call(metadata.call(versions))
+raise "mismatched workspace versions should fail" if status.success?
+raise "version mismatch should be reported" unless (output + error).include?("saya-harness") && (output + error).include?("0.4.0")
+raise "version mismatch reached publish" if output.include?("stub cargo publish")
+raise "version mismatch reached registry" if error.include?("stub curl")
+
+extra = crates + ["saya-plugin"]
+versions["saya-plugin"] = "0.4.1"
+output, error, status, cargo_log, curl_log = run_fixture.call(metadata.call(versions, extra))
+raise "an added workspace package should fail" if status.success?
+raise "added package should be reported" unless (output + error).include?("saya-plugin")
+raise "added package reached publish" if output.include?("stub cargo publish")
+raise "added package reached registry" if error.include?("stub curl")
+
+puts "publish preflight and dependency order contract valid"
 RUBY
