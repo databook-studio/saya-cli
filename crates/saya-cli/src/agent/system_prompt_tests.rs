@@ -1,8 +1,11 @@
+use super::super::session_facts::{SESSION_FACTS_HEADING, SessionFacts, session_facts_text};
+use super::super::turn_context::LAST_SQL_BLOCK_LABEL;
 use super::*;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{build_messages, turn_bytes};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
+use std::path::PathBuf;
 
 struct DummyConnector {
     dialect: SqlDialect,
@@ -84,7 +87,9 @@ fn memory_section_appears_under_assisted_and_absent_under_off() {
 #[test]
 fn assemble_system_prompt_single_connection_off() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Off, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None))
+            .expect("a prompt");
     // With one connection and memory off there is no context and no briefing —
     // but the model is still shown a catalog/schema/table tree by schema
     // discovery, so it still has to be told what SQL will accept.
@@ -95,7 +100,9 @@ fn assemble_system_prompt_single_connection_off() {
 #[test]
 fn assemble_system_prompt_single_connection_assisted() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(prompt.starts_with(MEMORY_SYSTEM_PROMPT));
     // A single PostgreSQL connection: the memory briefing, then its naming rule.
     assert!(prompt.contains("catalog.schema.object"));
@@ -107,7 +114,9 @@ fn assemble_system_prompt_single_connection_assisted() {
 #[test]
 fn assemble_system_prompt_with_last_sql_and_memory_off() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Off, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(!prompt.contains("durable knowledge"));
     assert!(
         !prompt.contains("most recent SQL you ran was"),
@@ -120,7 +129,9 @@ fn assemble_system_prompt_with_last_sql_and_memory_off() {
 #[test]
 fn assemble_system_prompt_with_last_sql_and_assisted() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(prompt.contains(MEMORY_SYSTEM_PROMPT));
     assert!(
         !prompt.contains("most recent SQL you ran was"),
@@ -133,7 +144,9 @@ fn assemble_system_prompt_with_last_sql_and_assisted() {
 #[test]
 fn assemble_system_prompt_multi_connection_assisted_and_sql() {
     let reg = multi_registry();
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None))
+            .expect("a prompt");
 
     // Contains all three sections in expected order.
     let conn_idx = prompt.find("Available database connections").unwrap();
@@ -161,7 +174,8 @@ fn assemble_system_prompt_multi_connection_assisted_and_sql() {
 #[test]
 fn assemble_system_prompt_stays_within_budget() {
     let reg = multi_registry();
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true);
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None));
     assert!(prompt.is_some());
     let system_text = prompt.unwrap();
 
@@ -181,7 +195,9 @@ fn assemble_system_prompt_stays_within_budget() {
 #[test]
 fn memory_section_is_absent_when_memory_is_configured_on_but_unreachable() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, false).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, false, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(
         !prompt.contains("durable knowledge"),
         "memory is unreachable, so the briefing must not claim otherwise: {prompt}"
@@ -216,10 +232,12 @@ fn registry_with(dialect: SqlDialect) -> ConnectionRegistry {
 /// a wasted round trip on nearly every question before it corrects itself.
 #[test]
 fn the_naming_rule_matches_what_the_engine_accepts() {
-    let sqlite = assemble_system_prompt(
-        &registry_with(SqlDialect::Sqlite),
+    let sqlite_reg = registry_with(SqlDialect::Sqlite);
+    let sqlite = assemble_system_prompt_with_session(
+        &sqlite_reg,
         MemoryMode::Assisted,
         true,
+        &facts(&sqlite_reg, &None),
     )
     .expect("a prompt");
     assert!(
@@ -227,10 +245,12 @@ fn the_naming_rule_matches_what_the_engine_accepts() {
         "SQLite cannot parse a three-part name, so the prompt must not ask for one: {sqlite}"
     );
 
-    let postgres = assemble_system_prompt(
-        &registry_with(SqlDialect::Postgres),
+    let postgres_reg = registry_with(SqlDialect::Postgres);
+    let postgres = assemble_system_prompt_with_session(
+        &postgres_reg,
         MemoryMode::Assisted,
         true,
+        &facts(&postgres_reg, &None),
     )
     .expect("a prompt");
     assert!(
@@ -251,8 +271,13 @@ fn every_engine_is_still_told_to_qualify_names() {
         SqlDialect::DuckDb,
         SqlDialect::Snowflake,
     ] {
-        let prompt = assemble_system_prompt(&registry_with(dialect), MemoryMode::Assisted, true)
-            .expect("a prompt");
+        let prompt = assemble_system_prompt_with_session(
+            &registry_with(dialect),
+            MemoryMode::Assisted,
+            true,
+            &facts(&registry_with(dialect), &None),
+        )
+        .expect("a prompt");
         assert!(
             prompt.contains(dialect.qualified_name_form()),
             "{} must be told its own name form: {prompt}",
@@ -266,8 +291,13 @@ fn every_engine_is_still_told_to_qualify_names() {
 /// off, so the rule that keeps SQL valid has to be present either way.
 #[test]
 fn the_naming_rule_is_present_with_memory_off() {
-    let prompt = assemble_system_prompt(&registry_with(SqlDialect::Sqlite), MemoryMode::Off, false)
-        .expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &registry_with(SqlDialect::Sqlite),
+        MemoryMode::Off,
+        false,
+        &facts(&registry_with(SqlDialect::Sqlite), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains(SqlDialect::Sqlite.qualified_name_form()),
         "the SQL naming rule must survive memory being off: {prompt}"
@@ -285,9 +315,13 @@ fn the_naming_rule_is_present_with_memory_off() {
 /// reason when the question cannot be answered from what the session offers.
 #[test]
 fn single_connection_prompt_names_engine_and_guides_giving_up() {
-    let prompt =
-        assemble_system_prompt(&registry_with(SqlDialect::Postgres), MemoryMode::Off, false)
-            .expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &registry_with(SqlDialect::Postgres),
+        MemoryMode::Off,
+        false,
+        &facts(&registry_with(SqlDialect::Postgres), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("postgresql"),
         "the engine must be named for a single connection: {prompt}"
@@ -315,8 +349,13 @@ fn single_connection_prompt_names_engine_and_guides_giving_up() {
 /// answer, so the coaching must be present there too.
 #[test]
 fn multi_connection_prompt_also_guides_giving_up() {
-    let prompt =
-        assemble_system_prompt(&multi_registry(), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &multi_registry(),
+        MemoryMode::Off,
+        false,
+        &facts(&multi_registry(), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("Giving up with a reason"),
         "multi-connection prompt must also coach giving up: {prompt}"
@@ -329,8 +368,13 @@ fn multi_connection_prompt_also_guides_giving_up() {
 /// unconditionally alongside [`WORKING_GUIDANCE`].
 #[test]
 fn assembled_prompt_contains_the_answer_contract() {
-    let prompt =
-        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains(ANSWER_CONTRACT),
         "the answer contract must be part of every prompt: {prompt}"
@@ -352,7 +396,9 @@ fn answer_contract_present_regardless_of_connections_and_memory() {
         (multi_registry(), MemoryMode::Off, true),
     ];
     for (reg, mode, reachable) in cases {
-        let prompt = assemble_system_prompt(&reg, mode, reachable).expect("a prompt for this case");
+        let prompt =
+            assemble_system_prompt_with_session(&reg, mode, reachable, &facts(&reg, &None))
+                .expect("a prompt for this case");
         assert!(
             prompt.contains(ANSWER_CONTRACT),
             "answer contract missing for memory {}, reachable {reachable}: {prompt}",
@@ -375,8 +421,13 @@ const ANSWER_CONTRACT_MAX_BYTES: usize = 1200;
 /// assembled prompt is what the model actually reads.
 #[test]
 fn answer_contract_directs_completing_a_computation_not_returning_its_operands() {
-    let prompt =
-        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("a ratio, a percentage, or a difference"),
         "the directive must name the class of computations it covers: {prompt}"
@@ -400,8 +451,13 @@ fn answer_contract_directs_completing_a_computation_not_returning_its_operands()
 /// are the agent stopping short of the value asked for.
 #[test]
 fn answer_contract_directs_a_superlative_to_name_one_row() {
-    let prompt =
-        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("\"the fastest\", \"the highest\", \"the top one\""),
         "the directive must carry the examples the earlier contract was measured on: {prompt}"
@@ -444,12 +500,14 @@ fn answer_contract_section_stays_under_documented_ceiling() {
 
 /// The assembled system prompt must not contain the previous turn's SQL, for
 /// any input — the hint now lives on the user turn, so the system block is the
-/// same whether or not a query just ran. `assemble_system_prompt` takes no SQL,
+/// same whether or not a query just ran. The session-aware assembly takes no SQL,
 /// so the hint prose can never reach it; this locks that property.
 #[test]
 fn system_prompt_does_not_contain_the_previous_sql() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Off, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(
         !prompt.contains("most recent SQL you ran was"),
         "the SQL hint prose must not appear in the system prompt: {prompt}"
@@ -470,7 +528,8 @@ fn system_prompt_does_not_contain_the_previous_sql() {
 #[test]
 fn system_message_is_byte_identical_across_turns_differing_only_in_last_sql() {
     let reg = single_registry("main");
-    let system_prompt = assemble_system_prompt(&reg, MemoryMode::Off, true);
+    let system_prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None));
     let question = "refine the last query";
     // Turn A: no previous SQL. Turn B: a previous SQL hint on the user turn.
     let blocks_a: Vec<saya_agent::ContextBlock> = Vec::new();
@@ -506,8 +565,13 @@ fn system_message_is_byte_identical_across_turns_differing_only_in_last_sql() {
 /// declares.
 #[test]
 fn dialect_statement_names_the_connected_engine() {
-    let prompt = assemble_system_prompt(&registry_with(SqlDialect::Sqlite), MemoryMode::Off, false)
-        .expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &registry_with(SqlDialect::Sqlite),
+        MemoryMode::Off,
+        false,
+        &facts(&registry_with(SqlDialect::Sqlite), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("The SQL dialect is sqlite's, whatever the DDL says"),
         "the dialect statement must name the connected engine: {prompt}"
@@ -525,7 +589,8 @@ fn dialect_statement_names_the_connected_engine() {
 #[test]
 fn last_sql_hint_reaches_user_turn_not_system_message() {
     let reg = single_registry("main");
-    let system_prompt = assemble_system_prompt(&reg, MemoryMode::Off, true);
+    let system_prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None));
     let hint = last_sql_hint_block("SELECT 1 FROM tbl").expect("a hint block");
     let messages = build_messages(
         system_prompt.as_deref(),
@@ -593,9 +658,9 @@ fn plan_paragraph_bytes_are_pinned() {
     );
 }
 
-/// Under Build the prompt is byte-identical to `assemble_system_prompt`'s —
-/// which is itself byte-identical to `release/0.4.1`'s (that function is
-/// untouched by this slice; only the mode-aware wrapper is new).
+/// Under Build the mode-aware prompt is byte-identical to the unmoded
+/// session-aware prompt for the same session inputs — the append-only Plan
+/// difference, asserted directly on the session-aware entry points.
 #[test]
 fn build_prompt_is_byte_identical_to_the_unmoded_prompt() {
     for (reg, mode, reachable) in [
@@ -607,8 +672,14 @@ fn build_prompt_is_byte_identical_to_the_unmoded_prompt() {
         (multi_registry(), MemoryMode::Off, true),
     ] {
         assert_eq!(
-            assemble_system_prompt_for_mode(&reg, mode, reachable, AgentMode::Build),
-            assemble_system_prompt(&reg, mode, reachable),
+            assemble_system_prompt_for_mode(
+                &reg,
+                mode,
+                reachable,
+                &facts(&reg, &None),
+                AgentMode::Build
+            ),
+            assemble_system_prompt_with_session(&reg, mode, reachable, &facts(&reg, &None)),
             "Build must be byte-identical to the unmoded prompt",
         );
     }
@@ -623,10 +694,22 @@ fn plan_prompt_appends_the_paragraph_exactly_once_and_nothing_else() {
         (single_registry("main"), MemoryMode::Assisted, true),
         (multi_registry(), MemoryMode::Off, true),
     ] {
-        let build = assemble_system_prompt_for_mode(&reg, mode, reachable, AgentMode::Build)
-            .expect("a prompt");
-        let plan = assemble_system_prompt_for_mode(&reg, mode, reachable, AgentMode::Plan)
-            .expect("a prompt");
+        let build = assemble_system_prompt_for_mode(
+            &reg,
+            mode,
+            reachable,
+            &facts(&reg, &None),
+            AgentMode::Build,
+        )
+        .expect("a prompt");
+        let plan = assemble_system_prompt_for_mode(
+            &reg,
+            mode,
+            reachable,
+            &facts(&reg, &None),
+            AgentMode::Plan,
+        )
+        .expect("a prompt");
         assert_eq!(
             plan.matches(PLAN_SYSTEM_PROMPT).count(),
             1,
@@ -694,8 +777,13 @@ fn answer_contract_scopes_itself_to_query_results() {
 /// stopping rule covers whatever the session is actually working with.
 #[test]
 fn working_guidance_does_not_scope_answers_to_the_database() {
-    let prompt =
-        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
     assert!(
         !prompt.contains("from this database"),
         "the stopping rule must cover the whole session, not just a database: {prompt}"
@@ -706,8 +794,13 @@ fn working_guidance_does_not_scope_answers_to_the_database() {
 /// the database case — in the assembled prompt of a database session.
 #[test]
 fn database_session_prompt_keeps_schema_discovery_advice() {
-    let prompt =
-        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("discover the schema before you query it"),
         "a database session must keep the schema-discovery advice: {prompt}"
@@ -725,8 +818,14 @@ fn database_session_prompt_keeps_schema_discovery_advice() {
 #[test]
 fn plan_paragraph_says_the_mechanism_without_overclaiming_reads() {
     let reg = single_registry("main");
-    let plan = assemble_system_prompt_for_mode(&reg, MemoryMode::Off, false, AgentMode::Plan)
-        .expect("a prompt");
+    let plan = assemble_system_prompt_for_mode(
+        &reg,
+        MemoryMode::Off,
+        false,
+        &facts(&reg, &None),
+        AgentMode::Plan,
+    )
+    .expect("a prompt");
     assert!(
         plan.contains("You are in Plan mode: investigate and answer with a plan"),
         "must say the session is in Plan mode: {plan}"
@@ -746,5 +845,143 @@ fn plan_paragraph_says_the_mechanism_without_overclaiming_reads() {
     assert!(
         !plan.contains("unrestricted"),
         "must not claim reads are unrestricted: {plan}"
+    );
+}
+
+/// Slice 3 — session facts: what the session is, not what it may do.
+///
+/// The system prompt must orient the model — which connections are in scope,
+/// whether a workspace root is bound — without restating the tool list. The
+/// facts are session-stable inputs (the connection set, the bound root), so
+/// the section keeps one prefix-cache key across turns. Approval mode is out:
+/// it can change mid-session via `/approvals`, which would churn the key.
+fn facts<'a>(reg: &'a ConnectionRegistry, root: &'a Option<PathBuf>) -> SessionFacts<'a> {
+    SessionFacts {
+        registry: reg,
+        workspace_root: root.as_deref(),
+    }
+}
+
+/// A database-only session names its connection and says no workspace is
+/// bound — the model must not assume files it cannot see.
+#[test]
+fn database_only_session_names_connections_and_no_workspace() {
+    let reg = single_registry("main");
+    let text = session_facts_text(&facts(&reg, &None)).expect("a database session has facts");
+    assert!(
+        text.contains("main"),
+        "the facts must name the connection in scope: {text}"
+    );
+    assert!(
+        text.contains("No workspace is bound"),
+        "the facts must say no workspace is bound: {text}"
+    );
+}
+
+/// A workspace-only session names the root and does not claim a database.
+#[test]
+fn workspace_only_session_names_root_and_claims_no_database() {
+    let empty = ConnectionRegistry::new("main");
+    let root = Some(PathBuf::from("/repo"));
+    let text = session_facts_text(&facts(&empty, &root)).expect("a workspace session has facts");
+    assert!(
+        text.contains("/repo"),
+        "the facts must name the bound root: {text}"
+    );
+    assert!(
+        text.contains("No database is connected"),
+        "the facts must not imply a database is in scope: {text}"
+    );
+}
+
+/// Both bound: both are named.
+#[test]
+fn session_with_both_names_both() {
+    let reg = multi_registry();
+    let root = Some(PathBuf::from("/repo"));
+    let text = session_facts_text(&facts(&reg, &root)).expect("a session with both has facts");
+    assert!(text.contains("db1"), "both connections named: {text}");
+    assert!(text.contains("db2"), "both connections named: {text}");
+    assert!(text.contains("/repo"), "the root named: {text}");
+}
+
+/// Neither bound: no facts section at all — no empty heading. The legacy
+/// no-root entry point is the caller here, so `assemble_system_prompt` keeps
+/// a direct production-shaped caller alongside the session-aware paths.
+#[test]
+fn session_with_neither_produces_no_facts_section() {
+    let empty = ConnectionRegistry::new("main");
+    assert!(session_facts_text(&facts(&empty, &None)).is_none());
+    let prompt = assemble_system_prompt(&empty, MemoryMode::Off, false);
+    assert!(
+        !prompt
+            .as_deref()
+            .unwrap_or("")
+            .contains(SESSION_FACTS_HEADING),
+        "no empty facts heading may appear: {prompt:?}"
+    );
+}
+
+/// Byte-stability: the cache property, asserted directly.
+#[test]
+fn session_facts_are_byte_stable_for_the_same_session_inputs() {
+    let reg = multi_registry();
+    let root = Some(PathBuf::from("/repo"));
+    let first =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, false, &facts(&reg, &root));
+    let second =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, false, &facts(&reg, &root));
+    assert_eq!(
+        first, second,
+        "same session inputs must produce byte-identical prompts"
+    );
+}
+
+/// The facts section states facts about the session, never a tool
+/// inventory: the tool schemas are the authority on what is possible. (The
+/// adjacent multi-connection paragraph names query tools as its navigation
+/// instruction; that prose predates this section and is not the facts.)
+#[test]
+fn session_facts_name_no_tool() {
+    for tool in [
+        "workspace_write",
+        "workspace_edit",
+        "workspace_read",
+        "run_command",
+        "run_program",
+        "schema_discovery",
+    ] {
+        let single = single_registry("main");
+        let multi = multi_registry();
+        let empty = ConnectionRegistry::new("main");
+        let root = Some(PathBuf::from("/repo"));
+        for (reg, root) in [(&single, &None), (&multi, &root), (&empty, &root)] {
+            let text = session_facts_text(&facts(reg, root)).expect("session facts");
+            assert!(
+                !text.contains(tool),
+                "the facts section must not name the {tool} tool: {text}"
+            );
+        }
+    }
+}
+
+/// The session-aware prompt carries the facts. The workspace-less default
+/// entry point keeps its prior bytes only insofar as it passes an empty
+/// session; a single connection still yields a facts line naming the
+/// connection and saying no workspace is bound.
+#[test]
+fn session_aware_prompt_adds_facts() {
+    let reg = single_registry("main");
+    let root = Some(PathBuf::from("/repo"));
+    let with_session =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, false, &facts(&reg, &root))
+            .expect("a prompt");
+    assert!(
+        with_session.contains(SESSION_FACTS_HEADING),
+        "the session-aware prompt carries the facts: {with_session}"
+    );
+    assert!(
+        with_session.contains("main") && with_session.contains("/repo"),
+        "the facts name the connection and the root: {with_session}"
     );
 }

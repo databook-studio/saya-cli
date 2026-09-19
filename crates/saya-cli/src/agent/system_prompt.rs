@@ -2,8 +2,9 @@
 //! model on its context and memory, and carry the last-SQL hint on the user
 //! turn (never the system prompt, where it would perturb the prefix cache).
 
+use super::session_facts::{SessionFacts, session_facts_text};
 use crate::connection::ConnectionRegistry;
-use saya_agent::{AgentMode, ContextBlock};
+use saya_agent::AgentMode;
 use saya_config::MemoryMode;
 
 /// Plan-mode briefing, appended to the assembled system prompt under Plan
@@ -127,68 +128,59 @@ const ANSWER_CONTRACT: &str = "Answer the question exactly as asked. These rules
     - Keep every row tied at a cut-off; never drop a tie to fit a limit.\n\
     - When a period is named, enumerate that whole period, not only the rows that happen to appear in the data.";
 
-/// Whether this turn can honour what the memory section promises.
-///
-/// The section tells the model that confirmed facts are already in context and
-/// that two named tools are available. Both are only true when the state store
-/// opened *and* the privacy gate is open — with either shut, recall never ran
-/// and the contract tools are not advertised. Briefing the model anyway would
-/// have it look for supplied facts that are not there and call tools it does
-/// not have, which is a worse failure than saying nothing.
-pub(crate) fn memory_reachable(has_state_store: bool, allow_query_data: bool) -> bool {
-    has_state_store && allow_query_data
-}
-
-/// Hint prose for adapting the most recent executed SQL query. Carried on the
-/// user turn as a [`ContextBlock`] body (see [`last_sql_hint_block`]) — never in
-/// the system prompt, where it would change on every follow-up that ran SQL and
-/// forfeit the provider's prefix cache.
-fn last_sql_hint(sql: &str) -> String {
-    format!(
-        "For context, the most recent SQL you ran was:\n{sql}\n\nIf the user's request \
-         refines, filters, sorts, or drills into that previous result, adapt this query \
-         instead of rediscovering the schema from scratch."
-    )
-}
-
-/// Label for the last-SQL hint context block, which rides the user turn beside
-/// the recall context block.
-pub(crate) const LAST_SQL_BLOCK_LABEL: &str = "last-sql";
-
-/// Builds the user-turn context block carrying the most recent SQL, so the
-/// model can adapt it without the hint polluting the session-stable system
-/// prompt. Returns `None` for empty/whitespace SQL. The body is untrusted data
-/// rendered into the user turn by `saya_agent::build_messages` (quoted,
-/// labelled, escaped) — never the system message.
-pub(crate) fn last_sql_hint_block(sql: &str) -> Option<ContextBlock> {
-    if sql.trim().is_empty() {
-        return None;
-    }
-    Some(ContextBlock {
-        label: LAST_SQL_BLOCK_LABEL.to_string(),
-        body: last_sql_hint(sql),
-        truncated: false,
-    })
-}
+pub(crate) use super::turn_context::{last_sql_hint_block, memory_reachable};
 
 /// Assembles the system prompt for a turn from connection registry context,
-/// the memory briefing (if assisted and reachable), working guidance, the answer
-/// contract, and the engine naming/dialect section.
+/// the memory briefing (if assisted and reachable), the session facts (what
+/// the session is — connections in scope, bound workspace root — never what
+/// the model may do), working guidance, the answer contract, and the engine
+/// naming/dialect section.
 ///
-/// This is **session-stable**: the same connections, memory mode, and reachability
-/// produce a byte-identical system prompt across turns. The per-turn last-SQL
-/// hint is deliberately absent — it rides the user turn as a context block (see
-/// [`last_sql_hint_block`]) so it never perturbs the system block a provider's
-/// prefix cache is keyed on.
+/// This entry point passes an empty session (no workspace root): it keeps
+/// the pre-session-facts bytes for callers without a root. The session-aware
+/// variant is [`assemble_system_prompt_with_session`]; production threads the
+/// session's bound root through it.
+///
+/// Both are **session-stable**: the same connections, memory mode,
+/// reachability, and session facts produce a byte-identical system prompt
+/// across turns. The per-turn last-SQL hint is deliberately absent — it rides
+/// the user turn as a context block (see [`last_sql_hint_block`]) so it never
+/// perturbs the system block a provider's prefix cache is keyed on.
+/// Mid-session connection or root changes recompute the block once and pay
+/// one cache miss; per-turn volatile content must never enter here.
 ///
 /// This is the Build prompt: the mode-aware entry point is
 /// [`assemble_system_prompt_for_mode`], which returns this unchanged under
 /// [`AgentMode::Build`] and appends [`PLAN_SYSTEM_PROMPT`] under
 /// [`AgentMode::Plan`] — the append is the only difference.
+///
+/// Three-argument entry point: an empty session (no workspace root) passed
+/// into [`assemble_system_prompt_with_session`]. Production always threads
+/// the session's bound root through the session-aware entry points; this
+/// stays as the documented no-root shape. Called by the empty-session
+/// session-facts test, so the no-root shape keeps a direct caller.
 pub(crate) fn assemble_system_prompt(
     registry: &ConnectionRegistry,
     memory_mode: MemoryMode,
     memory_reachable: bool,
+) -> Option<String> {
+    let empty = SessionFacts {
+        registry,
+        workspace_root: None,
+    };
+    assemble_system_prompt_with_session(registry, memory_mode, memory_reachable, &empty)
+}
+
+/// Session-aware variant of [`assemble_system_prompt`]: the same sections
+/// plus the session-facts section (connections in scope, bound workspace
+/// root) rendered from `session`. The caller holds `session` stable across
+/// the turns of one session — same inputs, byte-identical bytes — so the
+/// system block keeps one prefix-cache key.
+pub(crate) fn assemble_system_prompt_with_session(
+    registry: &ConnectionRegistry,
+    memory_mode: MemoryMode,
+    memory_reachable: bool,
+    session: &SessionFacts<'_>,
 ) -> Option<String> {
     let base = registry.describe_context();
     let memory = if memory_reachable {
@@ -203,6 +195,9 @@ pub(crate) fn assemble_system_prompt(
     }
     if let Some(m) = memory {
         sections.push(m.to_string());
+    }
+    if let Some(f) = session_facts_text(session) {
+        sections.push(f);
     }
     sections.push(WORKING_GUIDANCE.to_string());
     sections.push(ANSWER_CONTRACT.to_string());
@@ -226,14 +221,18 @@ pub(crate) fn assemble_system_prompt(
 /// prompt from [`assemble_system_prompt`], unchanged, plus — under Plan only —
 /// the [`PLAN_SYSTEM_PROMPT`] paragraph appended as its own section. The
 /// append is the only difference: under Build the result is byte-identical to
-/// [`assemble_system_prompt`].
+/// [`assemble_system_prompt`]. Mode-aware entry point over
+/// [`assemble_system_prompt`]: the Plan-pinned tests read the real assembly
+/// through it.
 pub(crate) fn assemble_system_prompt_for_mode(
     registry: &ConnectionRegistry,
     memory_mode: MemoryMode,
     memory_reachable: bool,
+    session: &SessionFacts<'_>,
     agent_mode: AgentMode,
 ) -> Option<String> {
-    let prompt = assemble_system_prompt(registry, memory_mode, memory_reachable)?;
+    let prompt =
+        assemble_system_prompt_with_session(registry, memory_mode, memory_reachable, session)?;
     match agent_mode {
         AgentMode::Build => Some(prompt),
         AgentMode::Plan => Some(format!("{prompt}\n\n{PLAN_SYSTEM_PROMPT}")),
