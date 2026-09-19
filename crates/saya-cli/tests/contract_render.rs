@@ -2,8 +2,8 @@
 //! the structural guarantee that no opaque profile identity can leak.
 
 use saya_cli::{
-    ContractClaimView, ContractConflictView, ContractView, RenderFormat, TerminalEvent,
-    render_event,
+    ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView, RenderFormat,
+    TerminalEvent, render_event,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -192,6 +192,55 @@ fn text_contract_changed_duplicate_of_confirmed() {
         status: "confirmed".into(),
     };
     insta::assert_snapshot!(render_event(&event, RenderFormat::Text).stdout);
+}
+
+/// A051: the legacy evidence count is a deliberate wire-compatibility field,
+/// not a measurement. The human queue line must never render it (a `0` would
+/// imply a count of evidence rows that no longer exist), while the JSON shape
+/// keeps `evidence_count: 0` for existing consumers.
+#[test]
+fn text_queue_omits_the_retired_evidence_count_while_json_keeps_the_legacy_field() {
+    let item = ContractQueueItemView {
+        profile: "warehouse".into(),
+        claim_id: "ki-0123456789abcdef".into(),
+        status: "candidate".into(),
+        kind: "table_alias".into(),
+        value: "customers".into(),
+        column: None,
+        object: "analytics.public.orders".into(),
+        schema_state: "current".into(),
+        evidence_count: 0,
+        incomplete: false,
+        truncated: false,
+    };
+    let event = TerminalEvent::ContractQueue {
+        items: vec![item.clone()],
+    };
+    let stdout = render_event(&event, RenderFormat::Text).stdout;
+    assert!(
+        stdout.contains("ki-0123456789abcdef"),
+        "the queue line names the claim: {stdout}"
+    );
+    assert!(
+        !stdout.to_lowercase().contains("evidence"),
+        "human queue output must omit the retired count: {stdout}"
+    );
+
+    let rendered = render_event(&event, RenderFormat::Json);
+    let value: Value =
+        serde_json::from_str(rendered.stdout.trim_end_matches('\n')).expect("json line is JSON");
+    assert_eq!(value["event"], "contract_queue");
+    let items = value["items"]
+        .as_array()
+        .expect("queue event carries items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0]["evidence_count"], 0,
+        "JSON keeps the documented legacy compatibility field: {items:?}"
+    );
+    let back: ContractQueueItemView =
+        serde_json::from_value(items[0].clone()).expect("queue item deserializes");
+    assert_eq!(back, item);
 }
 
 #[test]
