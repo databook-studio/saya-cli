@@ -138,7 +138,7 @@ fn assemble_system_prompt_multi_connection_assisted_and_sql() {
     // Contains all three sections in expected order.
     let conn_idx = prompt.find("Available database connections").unwrap();
     let mem_idx = prompt.find("SAYA maintains durable knowledge").unwrap();
-    let guidance_idx = prompt.find("Discover the schema").unwrap();
+    let guidance_idx = prompt.find("Multi-step work is expected").unwrap();
 
     assert!(conn_idx < mem_idx);
     assert!(mem_idx < guidance_idx);
@@ -281,8 +281,8 @@ fn the_naming_rule_is_present_with_memory_off() {
 /// A single connection is never named by `describe_context` (it stays silent
 /// for one connection), so the prompt itself must name the engine — the model
 /// is otherwise never told it is writing SQLite. The prompt must also coach
-/// multi-step work, refusing to repeat a failed query, and giving up with a
-/// reason when the question cannot be answered from this database.
+/// multi-step work, refusing to repeat a failed attempt, and giving up with a
+/// reason when the question cannot be answered from what the session offers.
 #[test]
 fn single_connection_prompt_names_engine_and_guides_giving_up() {
     let prompt =
@@ -293,12 +293,12 @@ fn single_connection_prompt_names_engine_and_guides_giving_up() {
         "the engine must be named for a single connection: {prompt}"
     );
     assert!(
-        prompt.contains("multi-step"),
+        prompt.contains("Multi-step work is expected"),
         "the prompt must say multi-step work is expected: {prompt}"
     );
     assert!(
-        prompt.contains("Do not repeat a query that already failed"),
-        "the prompt must tell the model not to repeat a failed query: {prompt}"
+        prompt.contains("Do not repeat an attempt that already failed"),
+        "the prompt must tell the model not to repeat a failed attempt: {prompt}"
     );
     assert!(
         prompt.contains("Giving up with a reason"),
@@ -638,6 +638,84 @@ fn plan_prompt_appends_the_paragraph_exactly_once_and_nothing_else() {
             "appending the paragraph must be the only difference",
         );
     }
+}
+
+/// Pin: every `ANSWER_CONTRACT` bullet is byte-identical to `release/0.4.1`.
+/// Each clause fixes a measured class of benchmark failure; rewording risks
+/// regressions for zero truth gain, so a future tidy-up must trip here first.
+/// Only the header and the query-results scoping line may differ.
+#[test]
+fn answer_contract_bullets_are_byte_identical_to_release_0_4_1() {
+    let bullets = [
+        "- Return only the columns the question asks for; drop intermediate working columns.",
+        "- Do not round unless asked.",
+        "- Write dates as ISO YYYY-MM-DD.",
+        "- If the question asks for a ratio, a percentage, or a difference, compute that value and answer with it — returning the operands alone stops one step short.",
+        "- A superlative — \"the fastest\", \"the highest\", \"the top one\", \"the fewest\" — asks which one: answer with that row and the value that makes it so, not the ranking it came from. Every row tied with it is part of the answer.",
+        "- Answer every quantity the question names; if it asks for two things, answer both.",
+        "- Read measure words literally: \"volume\" is units, \"revenue\" is money.",
+        "- A qualifier on a metric is not a qualifier on the population — filter the metric, not the rows.",
+        "- Keep every row tied at a cut-off; never drop a tie to fit a limit.",
+        "- When a period is named, enumerate that whole period, not only the rows that happen to appear in the data.",
+    ];
+    for bullet in bullets {
+        assert!(
+            ANSWER_CONTRACT.contains(bullet),
+            "contract bullet changed or missing: {bullet}\n{ANSWER_CONTRACT}"
+        );
+    }
+    assert_eq!(
+        ANSWER_CONTRACT
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count(),
+        10,
+        "no bullet may be added or removed without tripping this pin: {ANSWER_CONTRACT}"
+    );
+}
+
+/// The column-selection rules are nonsense for a turn whose answer is "I wrote
+/// the file". The contract carries one scoping line limiting it to answers
+/// that report query results; every other answer is untouched.
+#[test]
+fn answer_contract_scopes_itself_to_query_results() {
+    assert!(
+        ANSWER_CONTRACT.contains("govern answers that report query results"),
+        "the contract must scope itself to query-result answers: {ANSWER_CONTRACT}"
+    );
+    assert!(
+        ANSWER_CONTRACT.contains("leave other answers untouched"),
+        "the contract must leave non-query answers alone: {ANSWER_CONTRACT}"
+    );
+}
+
+/// A workspace-only session has no database, so the assembled prompt must not
+/// assert "from this database" as the only place an answer can come from. The
+/// stopping rule covers whatever the session is actually working with.
+#[test]
+fn working_guidance_does_not_scope_answers_to_the_database() {
+    let prompt =
+        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    assert!(
+        !prompt.contains("from this database"),
+        "the stopping rule must cover the whole session, not just a database: {prompt}"
+    );
+}
+
+/// The schema-discovery advice is genuinely database counsel and stays — as
+/// the database case — in the assembled prompt of a database session.
+#[test]
+fn database_session_prompt_keeps_schema_discovery_advice() {
+    let prompt =
+        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    assert!(
+        prompt.contains("discover the schema before you query it"),
+        "a database session must keep the schema-discovery advice: {prompt}"
+    );
+    assert!(
+        prompt.contains("a missing table or column"),
+        "a database session must keep the missing-table specifics: {prompt}"
+    );
 }
 
 /// The paragraph says what Plan means and how it is enforced, without
