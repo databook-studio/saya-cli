@@ -40,7 +40,7 @@ async fn table_names(
     let mut names = Vec::new();
     let mut offset = 0;
     loop {
-        let sql = table_page_sql(&project, &dataset, offset);
+        let sql = table_page_sql(project, dataset, offset);
         let output = connector
             .execute(saya_types::QueryRequest::new(sql, PAGE))
             .await
