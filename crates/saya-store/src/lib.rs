@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 mod audit_store;
+mod bounded;
 mod contracts;
 mod error;
 mod filesystem;

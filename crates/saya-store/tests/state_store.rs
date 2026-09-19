@@ -2,6 +2,7 @@ use saya_store::{
     AuditEntry, AuditOperation, AuditStatus, AuditStore, SchemaStore, SqliteStateStore, StoreError,
 };
 use saya_types::{Column, Database, MAX_SCHEMA_COLUMNS, Schema, SchemaTree, Table};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::{
     fs,
     path::PathBuf,
@@ -71,6 +72,91 @@ async fn oversized_schema_is_rejected_before_cache_write() {
         Err(StoreError::LimitExceeded)
     );
     assert!(store.get_schema(PROFILE).await.unwrap().is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A tree that passes structural validation but serializes past the byte
+/// cap must still refuse — and cache nothing. Unlike the count-overflow
+/// tree above, this one reaches the serialization seam, so it pins the
+/// bounded-serializer contract rather than the validator.
+#[tokio::test]
+async fn oversized_but_valid_schema_tree_is_refused_before_caching() {
+    use saya_types::MAX_SCHEMA_BYTES;
+    let root = temp_root("schema-bytes");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let wide_name = "n".repeat(200);
+    let wide_type = "t".repeat(200);
+    let schema = SchemaTree {
+        databases: vec![Database {
+            name: "main".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![Table {
+                    name: "wide".into(),
+                    columns: (0..60_000)
+                        .map(|index| Column {
+                            name: format!("{wide_name}{index:05}"),
+                            data_type: wide_type.clone(),
+                            nullable: true,
+                        })
+                        .collect(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
+                }],
+            }],
+        }],
+    };
+    schema
+        .validate()
+        .expect("the tree must pass structural validation");
+    let rendered = serde_json::to_string(&schema).expect("the tree must render");
+    assert!(
+        rendered.len() > MAX_SCHEMA_BYTES,
+        "the fixture must exceed the byte cap: {}",
+        rendered.len()
+    );
+    assert_eq!(
+        store.upsert_schema(PROFILE, &schema).await,
+        Err(StoreError::LimitExceeded)
+    );
+    assert!(store.get_schema(PROFILE).await.unwrap().is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A stored row that is already oversized — planted past every write seam
+/// by raw SQL — must refuse on read without materializing the whole value.
+#[tokio::test]
+async fn oversized_stored_schema_row_is_refused_on_read() {
+    use saya_types::MAX_SCHEMA_BYTES;
+    let root = temp_root("schema-row");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    store
+        .upsert_schema(PROFILE, &schema("events"))
+        .await
+        .unwrap();
+    let oversized = "x".repeat(MAX_SCHEMA_BYTES + 1);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::query("UPDATE schema_cache SET schema_json=? WHERE profile_id=?")
+        .bind(&oversized)
+        .bind(PROFILE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    assert_eq!(
+        store.get_schema(PROFILE).await,
+        Err(StoreError::LimitExceeded)
+    );
     let _ = fs::remove_dir_all(root);
 }
 

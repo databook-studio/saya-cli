@@ -79,10 +79,19 @@ impl FsSessionStore {
             turn.assistant = redact(&turn.assistant);
         }
         let path = self.path(&session.id)?;
-        let data = serde_json::to_vec_pretty(&session).map_err(|_| StoreError::unavailable())?;
-        if data.len() > MAX_SESSION_BYTES {
-            return Err(StoreError::LimitExceeded);
+        // Bounded serialization: the pretty JSON streams into a writer that
+        // refuses at the ceiling, so an oversized session fails mid-stream —
+        // never after a full `Vec` materialization — and the publish below
+        // (and the old record) is never reached.
+        let mut capped = crate::bounded::BoundedWriter::new(Vec::new(), MAX_SESSION_BYTES);
+        match serde_json::to_writer_pretty(&mut capped, &session) {
+            Ok(()) => {}
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::QuotaExceeded) => {
+                return Err(StoreError::LimitExceeded);
+            }
+            Err(_) => return Err(StoreError::unavailable()),
         }
+        let data = capped.into_inner();
         let temp = temporary_path(&path);
         let result = (|| {
             let mut options = OpenOptions::new();
