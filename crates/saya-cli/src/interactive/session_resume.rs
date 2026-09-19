@@ -124,6 +124,19 @@ pub(crate) fn resume_session(
     Ok(block_on(store.load(id))?.map(|value| state_from_redacted(value, defaults)))
 }
 
+/// Adopts a loaded session on the TUI picker resume path and binds the live
+/// runtime endpoint. A legacy record carries no endpoint and is unbound, so
+/// it inherits the current runtime's classification; a record with an
+/// explicitly bound endpoint (including a clear) is left untouched.
+pub(crate) fn adopt_picker_resumed(
+    state: &mut SessionState,
+    loaded: SessionState,
+    endpoint: Option<&str>,
+) {
+    *state = loaded;
+    state.bind_runtime_endpoint(endpoint);
+}
+
 fn legacy_turns(messages: &[SessionLine]) -> Vec<saya_store::RedactedTurn> {
     let safe = messages
         .iter()
