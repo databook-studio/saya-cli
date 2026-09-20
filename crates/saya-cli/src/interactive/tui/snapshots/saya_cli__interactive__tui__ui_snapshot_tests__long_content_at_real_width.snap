@@ -1,8 +1,8 @@
 ---
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
-assertion_line: 443
 expression: buffer
 ---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on                             "
 "▸ ▸ 2 tool calls · ok — bounded_sql_query select order_id, customer_id, placed_at, fulfilled_at,    "
 "▸ shipped_at, total_amount, tax_amount, discount_amount, currency, status, region, country, city,   "
 "▸ postal_code, carrier, tracking_number from catalog.public.orders where placed_at >= '2024-01-01'  "
@@ -20,7 +20,6 @@ expression: buffer
 "·     ki-lon…  table_description  Free-text notes captured by support agents during customer        "
 "· interactions including follow-up reminders, escalation flags, and the internal handling summary   "
 "· used by the tier-two team when triaging escalations, plus the resolved-action log  confirmed      "
-"                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "
