@@ -2,6 +2,7 @@
 //! Kept separate from the event loop so styling can evolve on its own.
 
 mod input_box;
+mod labels;
 mod markdown;
 mod overlays;
 mod panels;
