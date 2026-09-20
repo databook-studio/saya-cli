@@ -3,6 +3,8 @@
 
 mod context_line;
 use context_line::draw_context_line;
+mod approval;
+mod empty_state;
 mod input_box;
 mod markdown;
 mod overlays;
@@ -17,9 +19,11 @@ mod trust_modal;
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
+use approval::{approval_height, draw_approval};
+use empty_state::draw_empty_state;
 use input_box::draw_input;
 use overlays::{draw_help, draw_menu, draw_picker, draw_search};
-use panels::{approval_height, draw_approval, draw_empty_state, draw_transcript};
+use panels::draw_transcript;
 use plan_approval_view::{draw_plan_approval, plan_approval_height};
 use ratatui::{
     Frame,
