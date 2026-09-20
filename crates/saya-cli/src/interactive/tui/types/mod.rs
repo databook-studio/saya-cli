@@ -15,5 +15,5 @@ pub(crate) use tasks::{ClipboardCopy, CompactOutcome, LastQuery, SessionSave, Wi
 pub(crate) use usage::SessionUsage;
 
 #[cfg(test)]
-#[path = "usage_tests.rs"]
-mod usage_tests;
+#[path = "../types_tests.rs"]
+mod types_tests;
