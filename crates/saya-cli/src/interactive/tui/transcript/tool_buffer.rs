@@ -53,10 +53,18 @@ impl Transcript {
     /// the tail. Returns false when no request is open — a stray completion
     /// the caller renders directly, outside any group.
     pub(crate) fn buffer_tool_completion(&mut self, name: &str, summary: &str) -> bool {
+        // Oldest open call of this name, not newest. The loop emits every
+        // `ToolRequested` of a parallel batch first, then every
+        // `ToolCompleted`, both in `assistant.tool_calls` order
+        // (`turn_tools.rs`), so completions arrive in request order and must
+        // pair FIFO. Matching newest-first swapped the summaries of two
+        // same-name parallel calls, and the flushed group then showed one
+        // call's arguments beside another call's result. Pairing is by name
+        // only — there is no call id on the events — so FIFO is the strongest
+        // correct rule available here.
         let Some(pending) = self
             .pending_tools
             .iter_mut()
-            .rev()
             .find(|call| call.open && call.name == name)
         else {
             return false;
@@ -234,3 +242,7 @@ impl Transcript {
         self.invalidate_cache();
     }
 }
+
+#[cfg(test)]
+#[path = "tool_buffer_tests.rs"]
+mod parallel_pairing_tests;
