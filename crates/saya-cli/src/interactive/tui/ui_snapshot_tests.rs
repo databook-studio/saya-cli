@@ -911,6 +911,41 @@ fn a_folded_chapter_paints_its_request_as_one_row() {
     insta::assert_snapshot!(folded);
 }
 
+// --- Fieldnotes phase 3, packet 3: automatic fold at the live edge. ---------
+//
+// When the user sends a new request, the chapter that just finished folds
+// itself before the new `User` block lands. Pin the observable screen: the
+// finished chapter's answer leaves the buffer while its verbatim request line
+// stays, without blessing a new snapshot (the fold path is already snapshotted
+// above; this asserts the submit-time trigger paints the same screen).
+#[test]
+fn sending_a_new_request_folds_the_finished_chapter_on_screen() {
+    use super::application::tests_support::idle_app;
+    use super::transcript::BlockKind;
+    let mut app = idle_app();
+    app.input.set_text("count the red orders");
+    app.submit();
+    app.pending = None;
+    app.transcript
+        .push(BlockKind::Assistant, "the red orders total 42");
+    app.input.set_text("and the blue ones");
+    app.submit();
+    app.pending = None;
+    assert!(
+        app.transcript.is_folded(1),
+        "the finished chapter folds when the next request starts"
+    );
+    let screen = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        screen.contains("count the red orders"),
+        "the folded screen keeps the verbatim request:\n{screen}"
+    );
+    assert!(
+        !screen.contains("the red orders total 42"),
+        "the hidden answer leaves the screen:\n{screen}"
+    );
+}
+
 // --- Fieldnotes phase 2, packet 2C: the composer says what Send will do. ----
 //
 // The composer placeholder only paints while the input is empty; the moment
