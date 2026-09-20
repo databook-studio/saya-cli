@@ -46,8 +46,14 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "Show the session's task list, or clear it with /tasks clear",
     ),
     ("sql", "Run a raw SQL query against the active profile"),
-    ("export", "Export the last query result as CSV or JSON"),
-    ("chart", "Render the last query as an HTML chart"),
+    (
+        "export",
+        "Re-run the last query and export the fresh result as CSV or JSON",
+    ),
+    (
+        "chart",
+        "Re-run the last query and render the fresh result as an HTML chart",
+    ),
     ("explain", "Explain the given or last SQL statement"),
     ("clear", "Clear current session context"),
     ("compact", "Summarise older turns to shrink working memory"),
@@ -245,16 +251,16 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "sql <query> — execute a raw SQL query directly. Example: /sql SELECT * FROM users LIMIT 10;",
         ),
         "export" => Some(
-            "export <path> — write the last query's rows to a .csv or .json file. Example: /export results.csv",
+            "export <path> — re-run the last query and write the fresh result's rows to a .csv or .json file. The file reflects that fresh read, not the displayed table (/columns, scroll, and folds do not apply). Example: /export results.csv",
         ),
         "chart" => Some(
-            "chart [type] [path] — render the last query as an interactive HTML chart and open it. type: bar|line|area|pie|doughnut|scatter (default auto)",
+            "chart [type] [path] — re-run the last query and render the fresh result as an interactive HTML chart, then open it. The chart reflects that fresh read, not the displayed table. type: bar|line|area|pie|doughnut|scatter (default auto)",
         ),
         "explain" => Some(
             "explain [sql] — show the query plan (EXPLAIN) for the given SQL, or the last query if omitted",
         ),
         "columns" => Some(
-            "columns [name,name,… | all] — choose which columns wide result tables show in the TUI. Names match column headers (case-insensitive); unmatched names are ignored, and a filter that matches nothing falls back to all columns. /columns or /columns all resets. The full table is still copied by Ctrl+Y/Ctrl+B; this only changes what is painted. Example: /columns id, total   or   /columns all",
+            "columns [name,name,… | all] — choose which columns wide result tables show in the TUI. Names match column headers (case-insensitive); unmatched names are ignored, and a filter that matches nothing falls back to all columns. /columns or /columns all resets. The full table is still copied by Ctrl+B; this only changes what is painted. Example: /columns id, total   or   /columns all",
         ),
         "clear" => Some("clear — clear the conversation and context. Example: /clear"),
         "compact" => Some(
@@ -489,6 +495,8 @@ mod tests {
     /// `/columns` is a slash command, so it needs a `/help` entry, a listing
     /// line, and a description shared with the popup — and the help must say
     /// that copy still yields the full table (the view filter is paint-only).
+    /// The path that does is Ctrl+B (`copy_transcript` keeps the full
+    /// untruncated table text); Ctrl+Y copies the last assistant block only.
     #[test]
     fn columns_has_help_listing_and_copy_guarantee() {
         assert!(
@@ -506,13 +514,98 @@ mod tests {
             "/columns help names what it selects: {help}"
         );
         assert!(
-            help.contains("Ctrl+Y"),
+            help.contains("Ctrl+B"),
             "/columns help must say copy still yields the full table: {help}"
         );
         assert!(
             description_for("columns").is_some(),
             "columns has a popup description"
         );
+    }
+
+    // --- Fieldnotes phase 6, packet 3: output actions name their scope. -------
+    //
+    // Red tests first: the `/columns` long help claims Ctrl+Y copies the full
+    // table (it copies the last assistant block only), and the `/export` and
+    // `/chart` helps never say the query is run again from a fresh read.
+
+    /// The `/columns` filter is paint-only, and the help must not credit
+    /// Ctrl+Y with copying tables: `copy_last_answer` finds only
+    /// `BlockKind::Assistant` (`application/input_actions/clipboard.rs`).
+    #[test]
+    fn the_columns_help_does_not_claim_ctrl_y_copies_tables() {
+        let help = command_help("columns").expect("columns has help");
+        assert!(
+            !help.contains("Ctrl+Y/Ctrl+B"),
+            "must not claim both copy keys yield the full table: {help}"
+        );
+        assert!(
+            !help.contains("copied by Ctrl+Y"),
+            "must not claim Ctrl+Y copies the table: {help}"
+        );
+    }
+
+    /// Removing the false Ctrl+Y half must not drop the true Ctrl+B half:
+    /// `copy_transcript` keeps the full untruncated table text outside the
+    /// visible window (`ui_snapshot_tables.rs`), so the help still names it.
+    #[test]
+    fn the_columns_help_still_names_the_path_that_does() {
+        let help = command_help("columns").expect("columns has help");
+        assert!(
+            help.contains("Ctrl+B"),
+            "must still tell the user Ctrl+B copies the full table: {help}"
+        );
+    }
+
+    /// `/export` dispatches a fresh `SqlTask` from `lq.sql` (`dispatch/query.rs`),
+    /// so the help must say the query is run again and the file reflects that
+    /// fresh read, not the displayed table.
+    #[test]
+    fn export_help_says_the_query_is_run_again() {
+        let help = command_help("export").expect("export has help");
+        let lower = help.to_lowercase();
+        assert!(
+            lower.contains("run") && (lower.contains("again") || lower.contains("re-run")),
+            "/export help must say the query is run again: {help}"
+        );
+        assert!(
+            lower.contains("fresh"),
+            "/export help must say the output reflects a fresh read, not the displayed table: {help}"
+        );
+    }
+
+    /// `/chart` dispatches the same fresh `SqlTask` shape as `/export`, so its
+    /// help carries the same re-run statement.
+    #[test]
+    fn chart_help_says_the_query_is_run_again() {
+        let help = command_help("chart").expect("chart has help");
+        let lower = help.to_lowercase();
+        assert!(
+            lower.contains("run") && (lower.contains("again") || lower.contains("re-run")),
+            "/chart help must say the query is run again: {help}"
+        );
+        assert!(
+            lower.contains("fresh"),
+            "/chart help must say the output reflects a fresh read, not the displayed table: {help}"
+        );
+    }
+
+    /// No output help may predict a row count: the count is not known before
+    /// the re-run, so a "will copy/export N rows" string would be invented.
+    #[test]
+    fn no_output_help_promises_a_row_count() {
+        for name in ["columns", "export", "chart"] {
+            let help = command_help(name).expect("output command has help");
+            let lower = help.to_lowercase();
+            assert!(
+                !lower.contains("will copy") && !lower.contains("will export"),
+                "/{name} help must not promise a pre-action row count: {help}"
+            );
+            assert!(
+                !lower.contains("n rows"),
+                "/{name} help must not predict an N-rows count: {help}"
+            );
+        }
     }
 
     /// the listing groups commands under short headings, so 28 described
