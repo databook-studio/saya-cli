@@ -1,10 +1,10 @@
 ---
 source: crates/saya-cli/src/approval_facts_tests.rs
-assertion_line: 147
 expression: prompt
 ---
 workspace_write — writes into this session's workspace
   path: notes/summary.md
   bytes: 11 · per-write bound: 65536 bytes (over the bound the call refuses whole)
   containment: absolute paths, `..` escapes, and symlinks are refused · the write is atomic — an existing file is replaced whole, never partially
+  [s] covers every workspace write for this session — not this path alone
 [a] allow once   [s] allow workspace-write for this session   [d] deny

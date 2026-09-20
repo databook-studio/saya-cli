@@ -62,6 +62,7 @@ pub(super) fn facts(
     arguments: &Value,
     facts: &ApprovalFacts,
     session_line: Option<String>,
+    grant: Option<&str>,
 ) -> Option<String> {
     let host = facts.host.as_ref()?;
     let program = arguments.get("program").and_then(Value::as_str)?;
@@ -113,6 +114,11 @@ pub(super) fn facts(
     }
     if let Some(session_line) = session_line {
         lines.push(session_line);
+    }
+    // The scope sentence renders only when a session grant is actually on
+    // offer — last, closest to the `[s]` answer it describes.
+    if let Some(scope) = super::scope::scope_sentence("run_command", grant) {
+        lines.push(scope);
     }
     let header = lines.remove(0);
     Some(body(header, lines))

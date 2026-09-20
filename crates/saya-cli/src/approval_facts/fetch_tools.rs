@@ -16,7 +16,7 @@ pub(super) fn facts(
 ) -> Option<String> {
     let (header, mut lines) = match name {
         "http_fetch" => fetch_lines(arguments, grant, facts.fetch.as_ref())?,
-        _ => download_lines(arguments, facts.fetch.as_ref())?,
+        _ => download_lines(arguments, grant, facts.fetch.as_ref())?,
     };
     if let Some(session_line) = session_line {
         lines.push(session_line);
@@ -26,7 +26,8 @@ pub(super) fn facts(
 
 /// `http_fetch`'s fact lines: the URL, the destination token a grant would
 /// record, and the composed policy's structural refusals and bounds. Without
-/// a composed member only the call's own lines render.
+/// a composed member only the call's own lines render. The scope sentence
+/// renders only when a session grant is actually on offer.
 fn fetch_lines(
     arguments: &Value,
     grant: Option<&str>,
@@ -56,12 +57,20 @@ fn fetch_lines(
             fetch.fetch_body_bytes, fetch.fetch_seconds, fetch.fetch_redirects,
         ));
     }
+    if let Some(scope) = super::scope::scope_sentence("http_fetch", grant) {
+        lines.push(scope);
+    }
     Some(("http_fetch — external fetch".to_string(), lines))
 }
 
 /// `http_download`'s fact lines: the URL, the target path, and the
-/// *remaining* download budget.
-fn download_lines(arguments: &Value, fetch: Option<&FetchFacts>) -> Option<(String, Vec<String>)> {
+/// *remaining* download budget. The scope sentence renders only when a
+/// session grant is actually on offer.
+fn download_lines(
+    arguments: &Value,
+    grant: Option<&str>,
+    fetch: Option<&FetchFacts>,
+) -> Option<(String, Vec<String>)> {
     let url = arguments.get("url").and_then(Value::as_str)?;
     let destination = arguments.get("destination").and_then(Value::as_str)?;
     let mut lines = vec![
@@ -77,6 +86,9 @@ fn download_lines(arguments: &Value, fetch: Option<&FetchFacts>) -> Option<(Stri
             wallet.limit().saturating_sub(wallet.consumed()),
             wallet.limit(),
         ));
+    }
+    if let Some(scope) = super::scope::scope_sentence("http_download", grant) {
+        lines.push(scope);
     }
     Some((
         "http_download — downloads into this session's workspace".to_string(),

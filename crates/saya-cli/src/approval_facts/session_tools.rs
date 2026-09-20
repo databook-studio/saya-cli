@@ -12,6 +12,7 @@ pub(super) fn workspace_write_facts(
     arguments: &Value,
     facts: &ApprovalFacts,
     session_line: Option<String>,
+    grant: Option<&str>,
 ) -> Option<String> {
     let path = arguments.get("path").and_then(Value::as_str)?;
     let mut lines = vec![format!(
@@ -35,6 +36,11 @@ pub(super) fn workspace_write_facts(
     }
     if let Some(session_line) = session_line {
         lines.push(session_line);
+    }
+    // The scope sentence renders only when a session grant is actually on
+    // offer — last, closest to the `[s]` answer it describes.
+    if let Some(scope) = super::scope::scope_sentence("workspace_write", grant) {
+        lines.push(scope);
     }
     Some(body(
         "workspace_write — writes into this session's workspace".to_string(),

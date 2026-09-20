@@ -15,6 +15,7 @@
 mod fetch_tools;
 mod run_command;
 mod run_program;
+mod scope;
 mod session_line;
 mod session_tools;
 mod sql_family;
@@ -168,9 +169,11 @@ pub(crate) fn call_facts(
         | "column_health"
         | "join_check" => sql_family::sql_facts(name, arguments, facts, primary, session_line),
         "render_chart" => sql_family::chart_facts(arguments, primary),
-        "run_program" => run_program::facts(arguments, facts, session_line),
-        "run_command" => run_command::facts(arguments, facts, session_line),
-        "workspace_write" => session_tools::workspace_write_facts(arguments, facts, session_line),
+        "run_program" => run_program::facts(arguments, facts, session_line, grant),
+        "run_command" => run_command::facts(arguments, facts, session_line, grant),
+        "workspace_write" => {
+            session_tools::workspace_write_facts(arguments, facts, session_line, grant)
+        }
         "scratch_sql" => session_tools::scratch_facts(arguments, facts, session_line),
         "http_fetch" | "http_download" => {
             fetch_tools::facts(name, arguments, grant, facts, session_line)
