@@ -1005,3 +1005,49 @@ fn approval_modal_renders_the_shared_fact_body() {
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
     insta::assert_snapshot!(buffer);
 }
+
+/// The phase gate: nothing essential relies on hue alone.
+///
+/// This asserts it directly rather than by toggling the palette. `render_buffer`
+/// returns the `TestBackend` symbol view, which has already discarded every
+/// `Style` — so if each kind is identifiable in *this* string, colour cannot be
+/// carrying the distinction. Rendering twice with colour on and off and
+/// comparing these buffers would instead compare two values that never held
+/// colour in the first place: equal by construction, and green whatever the
+/// renderer did.
+///
+/// `Error`, `System` and `Thinking` are identified by a glyph rather than a
+/// word. That is the deliberate interim state — their label words are undecided
+/// and belong to later phases — not an oversight for this test to paper over.
+#[test]
+fn every_block_kind_is_distinguishable_without_colour() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    for (kind, text) in [
+        (BlockKind::User, "the user request"),
+        (BlockKind::Assistant, "the assistant answer"),
+        (BlockKind::Tool, "the tool trail"),
+        (BlockKind::Table, "the result grid"),
+        (BlockKind::Error, "the failure"),
+        (BlockKind::System, "the receipt"),
+        (BlockKind::Thinking, "the reasoning"),
+    ] {
+        app.transcript.push(kind, text);
+    }
+    let buffer = render_buffer(&app, &fixed_status(), 100, 40);
+
+    for (marker, what) in [
+        ("YOU", "a user turn"),
+        ("SAYA", "an assistant turn"),
+        ("ACTIVITY", "the tool trail"),
+        ("RESULT", "a result"),
+        ("\u{2717} the failure", "a failure"),
+        ("\u{b7} the receipt", "system content"),
+        ("\u{2248} the reasoning", "reasoning"),
+    ] {
+        assert!(
+            buffer.contains(marker),
+            "{what} must be identifiable from symbols alone, found no {marker:?}:\n{buffer}"
+        );
+    }
+}
