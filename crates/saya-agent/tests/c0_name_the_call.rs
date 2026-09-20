@@ -308,10 +308,12 @@ async fn a_failed_call_is_still_classified_as_failed() {
 
 /// Property 4 (completion half): a failure line carries no success verb.
 /// A failed call must not reuse the success completion text at all — no
-/// "written", no "ran", no "listed" — for either covered tool.
+/// "written", no "ran", no "listed" — for either covered tool. The bounded,
+/// redacted error reason (Phase 7 packet 2) may follow the key fact after
+/// " — ", but the success text itself never appears.
 #[tokio::test]
 async fn a_failure_line_carries_no_success_verb() {
-    for (tool, arguments, success_text, expected) in [
+    for (tool, arguments, success_text, expected_prefix) in [
         (
             workspace_write_tool(),
             serde_json::json!({"path": "notes.md", "content": "hi"}),
@@ -327,8 +329,8 @@ async fn a_failure_line_carries_no_success_verb() {
     ] {
         let events = run_one(tool.clone(), arguments, &FailExecutor).await;
         let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-        assert_eq!(
-            summary, expected,
+        assert!(
+            summary.starts_with(expected_prefix),
             "{} failure summary must name the call without the success text: got \"{summary}\"",
             tool.name
         );
@@ -366,9 +368,9 @@ async fn an_uncovered_tool_keeps_todays_text_byte_exact() {
     );
     let events = run_one(uncovered_tool(), serde_json::json!({}), &FailExecutor).await;
     let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-    assert_eq!(
-        summary, "failed to complete: workspace directory listed",
-        "an uncovered tool must keep today's failure text byte-exact: got \"{summary}\""
+    assert!(
+        summary.starts_with("failed to complete: workspace directory listed"),
+        "an uncovered tool must keep today's failure text as the prefix: got \"{summary}\""
     );
 }
 
