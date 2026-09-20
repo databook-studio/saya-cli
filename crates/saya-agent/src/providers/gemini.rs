@@ -16,7 +16,14 @@ pub struct GeminiProvider {
 impl GeminiProvider {
     /// Creates a new `GeminiProvider` with the given settings and optional API key.
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
+        // Redirects are refused outright: `base_url` is user-configurable, so
+        // a misconfigured or hostile endpoint could answer 307 and have the
+        // default policy replay the POST to another host — prompt plus
+        // database-derived context in the body, and the `x-goog-api-key`
+        // header untouched by reqwest's cross-host strip (which removes only
+        // `Authorization` and cookie headers).
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {

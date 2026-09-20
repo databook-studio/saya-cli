@@ -21,7 +21,13 @@ impl OpenAiCompatibleProvider {
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
         // Establishment is bounded per request; stream bodies are bounded by
         // the parser's per-chunk idle timeout instead of a total cap.
+        // Redirects are refused outright: `base_url` is user-configurable, so
+        // a misconfigured or hostile endpoint could answer 307 and have the
+        // default policy replay the POST — prompt plus database-derived
+        // context — to another host. (`Authorization` would be stripped on
+        // the cross-host hop; the prompt body would not.)
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
