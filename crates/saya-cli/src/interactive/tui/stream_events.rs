@@ -335,7 +335,11 @@ mod tests {
             "a group is there to expand"
         );
         let wrapped = transcript.wrapped(200);
-        let shown: Vec<&str> = wrapped.iter().map(|(_, s)| s.as_str()).collect();
+        let shown: Vec<&str> = wrapped
+            .iter()
+            .filter(|row| !row.is_label)
+            .map(|row| row.text.as_str())
+            .collect();
         assert_eq!(
             shown,
             vec![
@@ -350,7 +354,11 @@ mod tests {
 
         assert!(transcript.toggle_latest_group(), "toggling again collapses");
         let wrapped = transcript.wrapped(200);
-        let shown: Vec<&str> = wrapped.iter().map(|(_, s)| s.as_str()).collect();
+        let shown: Vec<&str> = wrapped
+            .iter()
+            .filter(|row| !row.is_label)
+            .map(|row| row.text.as_str())
+            .collect();
         assert_eq!(
             shown,
             vec!["▸ 2 tool calls · ok — workspace_write notes.md, other.md"],
@@ -373,12 +381,14 @@ mod tests {
         let first: Vec<String> = transcript
             .wrapped(200)
             .iter()
-            .map(|(_, s)| s.clone())
+            .filter(|row| !row.is_label)
+            .map(|row| row.text.clone())
             .collect();
         let second: Vec<String> = transcript
             .wrapped(200)
             .iter()
-            .map(|(_, s)| s.clone())
+            .filter(|row| !row.is_label)
+            .map(|row| row.text.clone())
             .collect();
         assert_eq!(first, second, "re-render must not reset expansion");
         assert!(first[0].starts_with('▾'), "still expanded: {first:?}");
@@ -386,7 +396,11 @@ mod tests {
         // A newly streamed event lands after the group without resetting it.
         apply_event(&mut transcript, AgentEvent::assistant_text("done"), false);
         let wrapped = transcript.wrapped(200);
-        let shown: Vec<&str> = wrapped.iter().map(|(_, s)| s.as_str()).collect();
+        let shown: Vec<&str> = wrapped
+            .iter()
+            .filter(|row| !row.is_label)
+            .map(|row| row.text.as_str())
+            .collect();
         assert!(shown[0].starts_with('▾'), "expansion survives: {shown:?}");
         assert_eq!(
             shown.last(),

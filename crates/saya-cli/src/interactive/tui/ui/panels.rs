@@ -32,7 +32,17 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // ``` fence state persists across the consecutive lines of one assistant
     // block; any other role ends it.
     let mut fence = false;
-    for (kind, text) in app.transcript.wide_view(width, height, &app.wide_table) {
+    // Packet 2B-2: label rows live in the metrics (`lines()`) but are not
+    // painted yet (2B-3 does the painting). The tail view still windows over
+    // all rows — label rows consume window slots — so the painted frame is
+    // the tail of the measured content with label rows elided, and the
+    // scrollbar/viewport clamp stay derived from the measured total.
+    for row in app.transcript.wide_view(width, height, &app.wide_table) {
+        if row.is_label {
+            continue;
+        }
+        let kind = row.kind;
+        let text = row.text;
         if text.is_empty() {
             lines.push(Line::from(""));
             continue;

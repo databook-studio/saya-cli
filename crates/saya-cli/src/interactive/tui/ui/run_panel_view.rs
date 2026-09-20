@@ -107,7 +107,14 @@ pub(super) fn draw_run_panel(
     lines.push(Line::from(""));
     lines.push(status_line(panel, phase));
     let episode_rows = inner.height.saturating_sub(lines.len() as u16).max(1) as usize;
-    for (kind, text) in panel.episode.view(inner_width, episode_rows) {
+    // Same contract as `draw_transcript`: the tail view windows over all rows
+    // (label rows consume slots) and label rows elide at paint time.
+    for row in panel.episode.view(inner_width, episode_rows) {
+        if row.is_label {
+            continue;
+        }
+        let kind = row.kind;
+        let text = row.text;
         if text.is_empty() {
             lines.push(Line::from(""));
             continue;
