@@ -78,20 +78,30 @@ fn a_result_names_the_query_that_produced_it() {
 
 #[test]
 fn a_result_keeps_its_connection_after_the_active_one_changes() {
+    // Drives the real paint path rather than reading `block.text`, so this
+    // also fails if a later change ever renders the *current* profile —
+    // which would relabel yesterday's numbers with today's database name.
+    use super::ui_snapshot_tests::{empty_app, fixed_status, render_buffer};
+
     let task = sql_task_with_connection(Some("sales-demo"), "select region from orders");
     let block = completed_table(&task, query_result("select region from orders", 3, false));
-    drop(task);
-    // `state.profile` moves on; the block text was frozen at completion.
-    let _new_active = Some("billing".to_string());
+
+    let mut app = empty_app();
+    app.transcript
+        .push(super::transcript::BlockKind::User, "/sql select region");
+    app.transcript.push(block.kind, block.text.clone());
+
+    let mut moved_on = fixed_status();
+    moved_on.profile = "billing".to_string();
+    let painted = render_buffer(&app, &moved_on, 100, 30);
+
     assert!(
-        block.text.contains("sales-demo"),
-        "historical result keeps its original connection: {:?}",
-        block.text
+        painted.contains("from sales-demo"),
+        "the scope line names the connection the query ran on:\n{painted}"
     );
     assert!(
-        !block.text.contains("billing"),
-        "a later connection must not relabel it: {:?}",
-        block.text
+        !painted.contains("from billing"),
+        "moving to another connection must not relabel it:\n{painted}"
     );
 }
 
