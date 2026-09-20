@@ -120,8 +120,12 @@ pub(super) fn draw_run_panel(
             lines.push(Line::from(""));
             continue;
         }
+        // Same interim rule as the transcript: a kind with no label word
+        // keeps the glyph that distinguished it without colour. The episode
+        // must read the same way the conversation does.
+        let prefix = super::panels::unlabelled_glyph(row.kind).unwrap_or("  ");
         lines.push(Line::from(Span::styled(
-            format!("  {}", row.text),
+            format!("{prefix}{}", row.text),
             kind_style(row.kind),
         )));
     }

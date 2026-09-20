@@ -18,6 +18,29 @@ use ratatui::{
 /// Spinner frames shown while an agent request is streaming.
 pub(super) const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// The glyph for a kind that has no label word, or `None` when the kind is
+/// introduced by a label row instead.
+///
+/// This is the interim half of the visual grammar. `YOU`/`SAYA`/`ACTIVITY`/
+/// `RESULT` are stated in words; `Error`, `System` and `Thinking` have no
+/// agreed word yet, so they keep the glyph that distinguished them before —
+/// two columns wide, exactly like the body indent, so nothing shifts.
+///
+/// The gate for this phase is that nothing essential relies on hue alone. A
+/// failure whose only difference from prose is a red foreground fails it,
+/// which is why these glyphs may not be removed until the phase that names
+/// them (failure headline: Phase 7; System content: undecided) lands.
+pub(super) fn unlabelled_glyph(kind: BlockKind) -> Option<&'static str> {
+    match kind {
+        BlockKind::Error => Some("\u{2717} "),
+        BlockKind::System => Some("\u{b7} "),
+        BlockKind::Thinking => Some("\u{2248} "),
+        // These are introduced by a label row; a glyph as well would be
+        // saying the same thing twice.
+        BlockKind::User | BlockKind::Assistant | BlockKind::Tool | BlockKind::Table => None,
+    }
+}
+
 /// Renders the visible, soft-wrapped transcript lines — a label word at the
 /// left margin introducing each turn, body rows indented beneath it — with
 /// per-kind styling, plus a scrollbar when the content overflows.
@@ -58,8 +81,17 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
             continue;
         }
         fence = false;
+        // A kind with no label keeps its glyph in the indent. `Error`,
+        // `System` and `Thinking` have no label word yet (`rows::label`
+        // returns `None`), and the glyph was their only distinction that
+        // survives without colour. Dropping it would leave a failure
+        // reading as ordinary prose and fold a memory receipt into the
+        // answer above it — so it stays until a label replaces it, which
+        // is the plan's rule: do not hide information until its
+        // replacement is visible.
+        let prefix = unlabelled_glyph(kind).unwrap_or("  ");
         lines.push(Line::from(Span::styled(
-            format!("  {text}"),
+            format!("{prefix}{text}"),
             kind_style(kind),
         )));
     }

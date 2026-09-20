@@ -822,18 +822,41 @@ fn a_failure_is_not_distinguished_by_colour_alone() {
     let mut app = empty_app();
     app.transcript.push(BlockKind::User, "hi");
     app.transcript.push(BlockKind::Error, "boom");
+    // `render_buffer` strips colour, so anything this sees is hue-independent
+    // by construction. The phase gate is that nothing essential relies on hue
+    // alone; a failure that paints as plain indented prose would fail it.
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
     assert!(
-        buffer.lines().any(|line| line.contains("  boom")),
-        "the error body paints indented, with no glyph rail:\n{buffer}"
-    );
-    assert!(
-        !buffer.contains("✗ "),
-        "no error glyph paints anymore:\n{buffer}"
+        buffer.contains("✗ boom"),
+        "a failure keeps a mark that survives with colour stripped:\n{buffer}"
     );
     assert!(
         !buffer.contains("ERROR"),
-        "no ERROR label is invented by this packet:\n{buffer}"
+        "and no ERROR label is invented to provide it — the failure headline \
+         is Phase 7's work:\n{buffer}"
+    );
+}
+
+/// `System` content sits between turns. Without a mark of its own it is
+/// indented exactly like assistant prose and reads as part of the answer
+/// above it, which misattributes it — the opposite of the phase's
+/// who-said-what goal.
+#[test]
+fn system_content_is_not_absorbed_into_the_answer_above_it() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    app.transcript
+        .push(BlockKind::Assistant, "here is the answer");
+    app.transcript
+        .push(BlockKind::System, "memory supplied · 1 claim");
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        buffer.contains("  here is the answer"),
+        "the answer body indents under SAYA:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("· memory supplied"),
+        "the receipt keeps a mark distinguishing it from that answer:\n{buffer}"
     );
 }
 
