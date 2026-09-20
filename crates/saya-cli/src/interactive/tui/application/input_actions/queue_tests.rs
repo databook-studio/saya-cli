@@ -146,19 +146,3 @@ fn replacing_a_queued_prompt_shows_the_new_text() {
         "the latest notice no longer shows the replaced text"
     );
 }
-
-/// Ctrl+G returns before the shared disarm, so it must disarm itself. Without
-/// this, arming Ctrl+C then dropping a queue leaves the app one keystroke
-/// from exiting with no second warning.
-#[test]
-fn dropping_the_queue_disarms_the_exit_prompt() {
-    let mut app = idle_app();
-    app.pending = Some("queued question".into());
-    app.ctrl_c_armed = false;
-    app.drop_queued_prompt();
-    assert!(
-        !app.ctrl_c_armed,
-        "a queue drop leaves no armed exit behind"
-    );
-    assert!(app.pending.is_none(), "and the queue is cleared");
-}

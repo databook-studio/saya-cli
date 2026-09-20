@@ -16,3 +16,7 @@ mod tests;
 #[cfg(test)]
 #[path = "queue_tests.rs"]
 mod queue_tests;
+
+#[cfg(test)]
+#[path = "revise_tests.rs"]
+mod revise_tests;

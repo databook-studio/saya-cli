@@ -50,20 +50,27 @@ impl App {
             // request finishes. One slot — resubmitting replaces it. The
             // notice quotes the prompt (truncated) so the queue is visible;
             // it stays a `System` block — a `User` block would open a chapter
-            // and read as the active task.
+            // and read as the active task. When the stop was already asked
+            // (the stream token is cancelled but the worker has not settled),
+            // the notice says the run waits for the stop confirmation.
             let replaced = self.pending.is_some();
             let preview = Self::queued_preview(&line);
+            let stop_pending = self
+                .request
+                .stream
+                .as_ref()
+                .is_some_and(|stream| stream.cancel.is_cancelled());
             self.pending = Some(line);
-            self.transcript.push(
-                BlockKind::System,
-                if replaced {
-                    format!(
-                        "Queued (replaced the earlier queued prompt) — runs after the current request:\n  {preview}"
-                    )
-                } else {
-                    format!("Queued — runs when the current request finishes:\n  {preview}")
-                },
-            );
+            let tail = if stop_pending {
+                format!("Queued — runs once the stop is confirmed:\n  {preview}")
+            } else if replaced {
+                format!(
+                    "Queued (replaced the earlier queued prompt) — runs after the current request:\n  {preview}"
+                )
+            } else {
+                format!("Queued — runs when the current request finishes:\n  {preview}")
+            };
+            self.transcript.push(BlockKind::System, tail);
             self.transcript.scroll_to_bottom();
             return;
         }

@@ -88,6 +88,36 @@ fn stopping_never_claims_work_was_undone() {
     }
 }
 
+/// Phase 5 packet 4: the held revision is still in `pending` after the
+/// worker's stop confirmation lands — the loop's drain releases it next,
+/// and the confirmation itself stays a `System` "Stopped." line.
+/// RED: pins the settle-then-drain order on the seam this packet owns.
+#[test]
+fn the_revision_runs_once_the_stop_is_confirmed() {
+    let (mut app, mut state) = app_with_model("gpt-4o");
+    app.pending = Some("the revised question".into());
+    app.request.stream = Some(cancelled_stream_with(vec![StreamMsg::Done(Err(
+        "request cancelled".into(),
+    ))]));
+    assert!(app.drain_stream(&mut state), "the turn finished");
+    assert!(
+        app.transcript
+            .blocks()
+            .iter()
+            .any(|block| block.text.contains("Stopped.")),
+        "the stop confirmation still lands as Stopped."
+    );
+    assert_eq!(
+        app.pending.as_deref(),
+        Some("the revised question"),
+        "settle confirms the stop; the held revision waits for the drain"
+    );
+    assert!(
+        app.request.stream.is_none(),
+        "the stream cleared, so the next tick can release the revision"
+    );
+}
+
 /// The dangerous case the `&&` exists for: the user presses Esc, and while
 /// the stop is in flight the connection genuinely drops. Guarding on the
 /// fired token alone would swallow that failure into a reassuring
