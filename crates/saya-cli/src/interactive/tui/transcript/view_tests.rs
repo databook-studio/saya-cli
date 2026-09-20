@@ -130,16 +130,16 @@ mod tests {
 
         let mut tc = Transcript::new();
         tc.push(BlockKind::User, "hello world");
-        let (l1, l2) = (tc.lines_for_tests(10), tc.lines_for_tests(10));
+        let (l1, l2) = (tc.lines(10), tc.lines(10));
         assert!(Rc::ptr_eq(&l1, &l2) && tc.wrapped(10).len() == 3);
 
         tc.push(BlockKind::Assistant, "hi");
-        let (l3, l4) = (tc.lines_for_tests(10), tc.lines_for_tests(20));
+        let (l3, l4) = (tc.lines(10), tc.lines(20));
         assert!(!Rc::ptr_eq(&l2, &l3) && !Rc::ptr_eq(&l3, &l4));
         tc.append_delta(BlockKind::Assistant, " there");
-        assert!(!Rc::ptr_eq(&l4, &tc.lines_for_tests(20)));
+        assert!(!Rc::ptr_eq(&l4, &tc.lines(20)));
         tc.clear();
-        assert!(tc.lines_for_tests(20).is_empty());
+        assert!(tc.lines(20).is_empty());
 
         let mut tb = Transcript::new();
         (0..MAX_BLOCKS + 100).for_each(|i| tb.push(BlockKind::User, format!("msg {i}")));

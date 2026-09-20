@@ -4,7 +4,7 @@ use super::rows::{Row, WrappedLines, wrap_word_aware};
 use super::{BlockKind, Transcript};
 
 impl Transcript {
-    fn lines(&self, width: usize) -> Rc<WrappedLines> {
+    pub(super) fn lines(&self, width: usize) -> Rc<WrappedLines> {
         let eff = width.max(1);
         if let Some((_, lines)) = self.cache.borrow().as_ref().filter(|(w, _)| *w == eff) {
             return Rc::clone(lines);
@@ -204,10 +204,6 @@ impl Transcript {
         }
         let start = rem - self.scroll_up.min(rem);
         out[start..start + height].to_vec()
-    }
-
-    pub(super) fn lines_for_tests(&self, width: usize) -> Rc<WrappedLines> {
-        self.lines(width)
     }
 }
 

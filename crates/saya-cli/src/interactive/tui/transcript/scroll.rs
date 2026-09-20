@@ -40,7 +40,7 @@ impl Transcript {
             return false;
         }
         let needle = needle.to_lowercase();
-        let lines = self.lines_for_tests(width);
+        let lines = self.lines(width);
         let current_top = total
             .saturating_sub(height)
             .saturating_sub(self.scroll_up.min(total.saturating_sub(height)));
@@ -67,7 +67,7 @@ impl Transcript {
             return 0;
         }
         let needle = needle.to_lowercase();
-        self.lines_for_tests(width)
+        self.lines(width)
             .iter()
             .filter(|row| !row.is_label && row.text.to_lowercase().contains(&needle))
             .count()
