@@ -4,7 +4,6 @@
 mod context_line;
 use context_line::draw_context_line;
 mod input_box;
-mod labels;
 mod markdown;
 mod overlays;
 mod panels;

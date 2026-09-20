@@ -1,11 +1,13 @@
+use rows::{Row, WrappedLines, wrap_word_aware};
 use std::{cell::RefCell, rc::Rc};
 
 use saya_agent::ToolEffect;
 
+pub(crate) mod rows;
+
 const MAX_BLOCKS: usize = 5000;
 const MAX_TOTAL_TEXT_BYTES: usize = 4 << 20;
 
-type WrappedLines = Vec<(BlockKind, String)>;
 type WrapCache = RefCell<Option<(usize, Rc<WrappedLines>)>>;
 
 #[allow(dead_code)]
@@ -407,29 +409,54 @@ impl Transcript {
         }
         let mut lines = Vec::new();
         for block in &self.blocks {
+            if block.text.is_empty()
+                && block
+                    .group
+                    .as_ref()
+                    .filter(|group| group.expanded)
+                    .is_none()
+            {
+                // Spacers (`push_spacer`'s `(System, "")`) stay visible but
+                // bare: one empty body row, no label row — a label above every
+                // blank line would be noise, and empty rows paint blank.
+                lines.push(Row::body(block.kind, String::new()));
+                continue;
+            }
+            // One label row per non-empty block, ahead of its body rows — so
+            // every scroll/find metric derived from `lines()` counts the row
+            // that paints, keeping "one entry per painted row" true.
+            let mut labelled_yet = false;
+            let mut emit_body = |raw: &str, lines: &mut WrappedLines| {
+                if raw.is_empty() {
+                    // Blank lines inside a block stay bare.
+                    lines.push(Row::body(block.kind, String::new()));
+                    return;
+                }
+                if !labelled_yet {
+                    labelled_yet = true;
+                    if let Some(label) = Row::label(block.kind) {
+                        lines.push(label);
+                    }
+                }
+                if block.kind == BlockKind::Table {
+                    // A table row is one line of box drawing; word-wrapping it
+                    // destroys the grid, so each line is kept whole and the
+                    // view clips it horizontally instead.
+                    lines.push(Row::body(block.kind, raw.to_string()));
+                } else {
+                    wrap_word_aware(raw, eff, block.kind, lines);
+                }
+            };
             if let Some(group) = block.group.as_ref().filter(|group| group.expanded) {
                 for raw in std::iter::once(group.open_header.as_str())
                     .chain(group.detail.iter().map(String::as_str))
                 {
-                    if raw.is_empty() {
-                        lines.push((block.kind, String::new()));
-                    } else {
-                        wrap_word_aware(raw, eff, block.kind, &mut lines);
-                    }
+                    emit_body(raw, &mut lines);
                 }
                 continue;
             }
             for raw in block.text.split('\n') {
-                if raw.is_empty() {
-                    lines.push((block.kind, String::new()));
-                } else if block.kind == BlockKind::Table {
-                    // A table row is one line of box drawing; word-wrapping it
-                    // destroys the grid, so each line is kept whole and the
-                    // view clips it horizontally instead.
-                    lines.push((block.kind, raw.to_string()));
-                } else {
-                    wrap_word_aware(raw, eff, block.kind, &mut lines);
-                }
+                emit_body(raw, &mut lines);
             }
         }
         let rc = Rc::new(lines);
@@ -438,7 +465,14 @@ impl Transcript {
     }
 
     pub(crate) fn wrapped(&self, width: usize) -> WrappedLines {
-        (*self.lines(width)).clone()
+        self.lines(width)
+            .iter()
+            .map(|row| Row {
+                kind: row.kind,
+                text: row.text.clone(),
+                is_label: row.is_label,
+            })
+            .collect()
     }
 
     pub(crate) fn total_lines(&self, width: usize) -> usize {
@@ -449,13 +483,24 @@ impl Transcript {
         if height == 0 {
             return Vec::new();
         }
-        let lines = self.lines(width);
-        let rem = lines.len().saturating_sub(height);
+        // Every row `lines()` produces is a row that paints — label rows
+        // included — so the tail view windows over all rows and
+        // `total_lines` equals the painted row count again.
+        let painted: WrappedLines = self
+            .lines(width)
+            .iter()
+            .map(|row| Row {
+                kind: row.kind,
+                text: row.text.clone(),
+                is_label: row.is_label,
+            })
+            .collect();
+        let rem = painted.len().saturating_sub(height);
         if rem == 0 {
-            return (*lines).clone();
+            return painted;
         }
         let start = rem - self.scroll_up.min(rem);
-        lines[start..start + height].to_vec()
+        painted[start..start + height].to_vec()
     }
 
     /// Like [`view`], but table blocks are painted through the wide-table
@@ -471,29 +516,65 @@ impl Transcript {
         wv: &super::types::WideTableView,
     ) -> WrappedLines {
         let src = self.lines(width);
-        let mut out: WrappedLines = Vec::with_capacity(src.len());
+        let mut full: WrappedLines = Vec::with_capacity(src.len());
         let mut i = 0;
         while i < src.len() {
-            if src[i].0 == BlockKind::Table {
+            if src[i].kind == BlockKind::Table && !src[i].is_label {
                 // A table block's lines are contiguous; collect the run, then
                 // split it into individual tables (each starts with ┌) so two
-                // adjacent results are clipped independently.
+                // adjacent results are clipped independently. The label row
+                // opens the run and passes through untouched.
                 let run_start = i;
-                while i < src.len() && src[i].0 == BlockKind::Table {
+                while i < src.len() && src[i].kind == BlockKind::Table {
                     i += 1;
                 }
                 let run = src[run_start..i]
                     .iter()
-                    .map(|(_, t)| t.clone())
+                    .map(|row| row.text.clone())
                     .collect::<Vec<_>>();
-                for line in super::table::clip_table_block(&run, wv, width) {
-                    out.push((BlockKind::Table, line));
+                // A run of exactly one line is the lone label row (a
+                // non-empty table block is label + grid lines): it passes
+                // through untouched, never through the grid clipper.
+                if run.len() == 1 && src[run_start].is_label {
+                    full.push(Row {
+                        kind: BlockKind::Table,
+                        text: run[0].clone(),
+                        is_label: true,
+                    });
+                    continue;
+                }
+                // The run opens with the label row, ahead of the grid lines
+                // the clipper expects — clip the grid, keep the label
+                // verbatim, and the line count is unchanged.
+                let (label, grid) = match src[run_start].is_label {
+                    true => (Some(&src[run_start]), &run[1..]),
+                    false => (None, &run[..]),
+                };
+                let clipped = super::table::clip_table_block(grid, wv, width);
+                debug_assert_eq!(clipped.len(), grid.len());
+                if let Some(label) = label {
+                    full.push(Row {
+                        kind: BlockKind::Table,
+                        text: label.text.clone(),
+                        is_label: true,
+                    });
+                }
+                for line in clipped {
+                    full.push(Row::body(BlockKind::Table, line));
                 }
             } else {
-                out.push(src[i].clone());
+                full.push(Row {
+                    kind: src[i].kind,
+                    text: src[i].text.clone(),
+                    is_label: src[i].is_label,
+                });
                 i += 1;
             }
         }
+        // Every row `lines()` produces is a row that paints — label rows
+        // included — so the tail view windows over the full rows and
+        // `total_lines` equals the painted row count again.
+        let out: WrappedLines = full;
         if height == 0 {
             return Vec::new();
         }
@@ -558,6 +639,78 @@ impl Transcript {
 }
 
 #[cfg(test)]
+mod label_row_red_tests {
+    // RED: these tests name the `Row` API (`row.text`, `row.is_label`) that
+    // does not exist yet — `WrappedLines` is still `Vec<(BlockKind, String)>`,
+    // so this module fails to compile until `rows.rs` lands.
+    use super::*;
+
+    fn texts(rows: &WrappedLines) -> Vec<&str> {
+        rows.iter().map(|row| row.text.as_str()).collect()
+    }
+
+    #[test]
+    fn every_non_empty_block_gains_exactly_one_label_row() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::User, "hello");
+        t.push(BlockKind::Assistant, "hi");
+        let rows = t.wrapped(80);
+        assert_eq!(rows.len(), 4, "two bodies plus two labels: {rows:?}");
+        assert!(rows[0].is_label && rows[0].text == "YOU");
+        assert!(!rows[1].is_label && rows[1].text == "hello");
+        assert!(rows[2].is_label && rows[2].text == "SAYA");
+        assert!(!rows[3].is_label && rows[3].text == "hi");
+    }
+
+    #[test]
+    fn an_empty_block_gains_no_label_row() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::System, "");
+        let rows = t.wrapped(80);
+        assert_eq!(rows.len(), 1, "a spacer keeps its bare empty row");
+        assert!(
+            rows.iter().all(|row| !row.is_label),
+            "but gains no label row: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn find_never_lands_on_a_label_row() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::User, "nothing to match here");
+        assert_eq!(
+            t.count_matches("saya", 80),
+            0,
+            "the only 'saya' is the SAYA label row"
+        );
+    }
+
+    #[test]
+    fn consecutive_same_kind_blocks_each_get_their_own_label() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::User, "first");
+        t.push(BlockKind::User, "second");
+        let rows = t.wrapped(80);
+        let labels: Vec<&str> = rows
+            .iter()
+            .filter(|row| row.is_label)
+            .map(|row| row.text.as_str())
+            .collect();
+        assert_eq!(labels, vec!["YOU", "YOU"]);
+    }
+
+    #[test]
+    fn total_lines_still_equals_the_rows_produced() {
+        let mut t = Transcript::new();
+        t.push(BlockKind::User, "hello");
+        t.push(BlockKind::Assistant, "hi");
+        let rows = t.wrapped(80);
+        assert_eq!(t.total_lines(80), texts(&rows).len());
+        assert_eq!(t.total_lines(80), 4);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -578,29 +731,29 @@ mod tests {
 
         let mut t2 = Transcript::new();
         t2.push(BlockKind::System, "1234567890abcdefghij");
-        let s: String = t2.wrapped(10).iter().map(|(_, s)| s.as_str()).collect();
+        let s: String = t2.wrapped(10).iter().map(|row| row.text.as_str()).collect();
         assert_eq!(s, "1234567890abcdefghij");
 
         let (mut t3, mut t4) = (Transcript::new(), Transcript::new());
         t3.push(BlockKind::Error, "a\n\nb\n");
         t4.push(BlockKind::Tool, "日日日日日");
-        assert!(t3.wrapped(10).len() == 4 && t4.wrapped(2).len() == 3);
+        assert!(t3.wrapped(10).len() == 4 && t4.wrapped(2).len() == 4);
 
         t.clear();
         t.push(BlockKind::User, "l1\nl2\nl3\nl4\nl5");
-        let texts = |v: WrappedLines| v.into_iter().map(|(_, s)| s).collect::<Vec<_>>();
+        let texts = |v: WrappedLines| v.into_iter().map(|row| row.text).collect::<Vec<_>>();
         assert_eq!(texts(t.view(10, 3)), ["l3", "l4", "l5"]);
         t.scroll_up(1, 10, 3);
         assert_eq!(texts(t.view(10, 3)), ["l2", "l3", "l4"]);
         t.scroll_up(100, 10, 3);
-        assert_eq!(texts(t.view(10, 3)), ["l1", "l2", "l3"]);
+        assert_eq!(texts(t.view(10, 3)), ["YOU", "l1", "l2"]);
         t.scroll_down(1);
-        assert_eq!(t.view(10, 3)[0].1, "l2");
+        assert_eq!(t.view(10, 3)[0].text, "l1");
         t.scroll_down(10);
-        assert_eq!(t.view(10, 3)[0].1, "l3");
+        assert_eq!(t.view(10, 3)[0].text, "l3");
         t.scroll_up(2, 10, 3);
         t.scroll_to_bottom();
-        assert_eq!(t.view(10, 3)[0].1, "l3");
+        assert_eq!(t.view(10, 3)[0].text, "l3");
 
         let (mut empty, mut t_edge) = (Transcript::new(), Transcript::new());
         empty.scroll_up(5, 10, 5);
@@ -614,7 +767,7 @@ mod tests {
         let mut tc = Transcript::new();
         tc.push(BlockKind::User, "hello world");
         let (l1, l2) = (tc.lines(10), tc.lines(10));
-        assert!(Rc::ptr_eq(&l1, &l2) && tc.wrapped(10).len() == 2);
+        assert!(Rc::ptr_eq(&l1, &l2) && tc.wrapped(10).len() == 3);
 
         tc.push(BlockKind::Assistant, "hi");
         let (l3, l4) = (tc.lines(10), tc.lines(20));
@@ -637,7 +790,7 @@ mod tests {
         tb2.push(BlockKind::Assistant, huge.clone());
         assert_eq!(tb2.blocks().len(), 1);
         assert_eq!(tb2.blocks()[0].text, huge);
-        assert_eq!(tb2.view(10, 1)[0].0, BlockKind::Assistant);
+        assert_eq!(tb2.view(10, 1)[0].kind, BlockKind::Assistant);
     }
 
     #[test]
@@ -673,7 +826,7 @@ mod tests {
             t.total_lines(80),
             "wrapped length must match total_lines length"
         );
-        assert_eq!(wrapped.len(), MAX_BLOCKS);
+        assert_eq!(wrapped.len(), MAX_BLOCKS * 2);
     }
 
     #[test]
@@ -709,65 +862,6 @@ mod tests {
     }
 }
 
-/// Wraps one logical line to `width` chars, preferring the last space inside
-/// the window so words are not split mid-word; over-long single tokens still
-/// split (they have nowhere else to go).
-fn wrap_word_aware(raw: &str, width: usize, kind: BlockKind, out: &mut Vec<(BlockKind, String)>) {
-    let chars: Vec<char> = raw.chars().collect();
-    let mut start = 0;
-    while start < chars.len() {
-        let remaining = chars.len() - start;
-        if remaining <= width {
-            out.push((kind, chars[start..].iter().collect()));
-            break;
-        }
-        let window = &chars[start..start + width];
-        // Last space in the window (never at position 0, or we would loop).
-        let space = window
-            .iter()
-            .rposition(|c: &char| c.is_whitespace())
-            .filter(|&index| index > 0);
-        let (emit_end, next_start) = match space {
-            // Break on the space: it ends this line (trimmed) and is skipped.
-            Some(index) => (index, index + 1),
-            None => (width, width),
-        };
-        out.push((kind, window[..emit_end].iter().collect::<String>()));
-        start += next_start;
-    }
-}
-
-#[cfg(test)]
-mod wrap_tests {
-    use super::*;
-
-    fn wrapped_lines(input: &str, width: usize) -> Vec<String> {
-        let mut out = Vec::new();
-        wrap_word_aware(input, width, BlockKind::System, &mut out);
-        out.into_iter().map(|(_, text)| text).collect()
-    }
-
-    #[test]
-    fn wraps_on_word_boundaries_when_possible() {
-        assert_eq!(
-            wrapped_lines("alpha beta gamma", 8),
-            vec!["alpha", "beta", "gamma"]
-        );
-    }
-
-    #[test]
-    fn splits_unbreakable_tokens_but_keeps_the_rest_whole() {
-        let lines = wrapped_lines("abcdefghij klmno", 6);
-        assert_eq!(lines, vec!["abcdef", "ghij", "klmno"]);
-    }
-
-    #[test]
-    fn short_lines_pass_through_and_leading_space_never_loops() {
-        assert_eq!(wrapped_lines("short", 80), vec!["short"]);
-        assert_eq!(wrapped_lines("aaaaaaa bbb", 4), vec!["aaaa", "aaa", "bbb"]);
-    }
-}
-
 impl Transcript {
     /// Jumps the viewport to the next line at/after the current top that
     /// contains `needle` (case-insensitive). Returns true when a match was
@@ -786,7 +880,10 @@ impl Transcript {
         // Walk downward from just above the current top; wrap once.
         for offset in 0..total {
             let idx = (current_top + offset) % total;
-            if lines[idx].1.to_lowercase().contains(&needle) {
+            if lines[idx].is_label {
+                continue;
+            }
+            if lines[idx].text.to_lowercase().contains(&needle) {
                 let max_scroll = total.saturating_sub(height);
                 self.scroll_up = (total - 1 - idx).min(max_scroll);
                 return true;
@@ -805,7 +902,7 @@ impl Transcript {
         let needle = needle.to_lowercase();
         self.lines(width)
             .iter()
-            .filter(|(_, text)| text.to_lowercase().contains(&needle))
+            .filter(|row| !row.is_label && row.text.to_lowercase().contains(&needle))
             .count()
     }
 }

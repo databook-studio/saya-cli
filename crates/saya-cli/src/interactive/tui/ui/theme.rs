@@ -201,18 +201,11 @@ pub(super) fn kind_style(kind: BlockKind) -> Style {
     }
 }
 
-/// Returns the rail color style for a given transcript block kind.
-pub(super) fn rail_style(kind: BlockKind) -> Style {
-    match kind {
-        BlockKind::User => Style::default()
-            .fg(user_color())
-            .add_modifier(Modifier::BOLD),
-        BlockKind::Assistant => Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-        BlockKind::Tool | BlockKind::System => Style::default().fg(secondary()),
-        BlockKind::Table => Style::default().fg(secondary()),
-        BlockKind::Error => Style::default().fg(danger()).add_modifier(Modifier::BOLD),
-        BlockKind::Thinking => Style::default().fg(secondary()),
-    }
+/// The label-row style: plain, uncoloured, unmodified uppercase words.
+/// Labels are the only thing marking a turn now, so they must read without
+/// colour — and every other row keeps its `kind_style`, untouched.
+pub(super) fn label_style() -> Style {
+    Style::default()
 }
 
 /// Centers a `width`×`height` rect within `screen`.

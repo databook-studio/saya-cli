@@ -137,7 +137,7 @@ impl App {
         let start = after.map(|idx| (idx + 1) % total).unwrap_or(current_top);
         let idx = (0..total)
             .map(|offset| (start + offset) % total)
-            .find(|&i| lines[i].1.to_lowercase().contains(&needle))?;
+            .find(|&i| !lines[i].is_label && lines[i].text.to_lowercase().contains(&needle))?;
         if after.is_none() {
             // First search: `jump_to_match` scans from the same current top and
             // pins the match, so delegate the placement to it.

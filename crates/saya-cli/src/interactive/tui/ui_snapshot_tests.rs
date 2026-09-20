@@ -742,6 +742,145 @@ fn input_empty_buffer_cursor_at_origin() {
     assert_eq!(y, 22, "empty buffer: cursor at inner top row");
 }
 
+// --- Fieldnotes phase 2, packet 2B-3: label rows paint. --------------------
+//
+// RED packet: label rows exist in `lines()` (measured) but `view()` /
+// `wide_view()` elide them before the window slice and the painters skip
+// them, so measured height exceeds painted height. These tests fail until
+// the elision is removed and the label word paints on its own row.
+
+/// A long user request wrapping to several rows shows `YOU` exactly once:
+/// the label introduces the turn, the body rows carry no label.
+#[test]
+fn continuation_lines_carry_no_label() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    app.transcript.push(
+        BlockKind::User,
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu",
+    );
+    // Narrow enough that the body wraps to several rows.
+    let buffer = render_buffer(&app, &fixed_status(), 40, 24);
+    let you_rows = buffer
+        .lines()
+        .filter(|line| line.trim_start_matches(['"', ' ']).starts_with("YOU"))
+        .count();
+    assert_eq!(
+        you_rows, 1,
+        "the user turn introduces exactly one YOU label row:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("❯ "),
+        "no glyph rail paints anymore:\n{buffer}"
+    );
+}
+
+/// The run-panel episode introduces its turn with the same word the
+/// transcript uses: the shared `transcript::rows::label` map, one source.
+#[test]
+fn episode_first_line_carries_the_shared_label() {
+    use super::run_panel::RunPanel;
+    use super::run_worker::RunWorker;
+    use super::stream_events::apply_event;
+    use super::transcript::BlockKind;
+    use saya_agent::AgentEvent;
+
+    let expected = super::transcript::rows::label(BlockKind::Assistant);
+    let mut app = empty_app();
+    app.transcript.push(BlockKind::User, "count the orders");
+    let (tx, rx) = super::run_panel::test_channels();
+    let mut panel = RunPanel::new(
+        RunWorker {
+            rx,
+            cancel: saya_agent::CancellationToken::new(),
+        },
+        "r-label".into(),
+        "survey".into(),
+    );
+    let _ = tx;
+    apply_event(
+        &mut panel.episode,
+        AgentEvent::assistant_text("Step one profiled the tables."),
+        false,
+    );
+    app.run_panel = Some(panel);
+    let buffer = render_buffer(&app, &fixed_status(), 100, 30);
+    let word = expected.expect("user turns have a label");
+    assert!(
+        buffer.contains(word),
+        "the episode paints the shared label {word:?}:\n{buffer}"
+    );
+}
+
+/// An error row carries no introducing label (no `ERROR` label exists —
+/// inventing one belongs to a later phase), so without colour it paints
+/// exactly like ordinary prose: indented, no glyph. This pins the known
+/// gap: stripped of style, a failure is text-identical to a plain body row.
+#[test]
+fn a_failure_is_not_distinguished_by_colour_alone() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    app.transcript.push(BlockKind::User, "hi");
+    app.transcript.push(BlockKind::Error, "boom");
+    // `render_buffer` strips colour, so anything this sees is hue-independent
+    // by construction. The phase gate is that nothing essential relies on hue
+    // alone; a failure that paints as plain indented prose would fail it.
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        buffer.contains("✗ boom"),
+        "a failure keeps a mark that survives with colour stripped:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("ERROR"),
+        "and no ERROR label is invented to provide it — the failure headline \
+         is Phase 7's work:\n{buffer}"
+    );
+}
+
+/// `System` content sits between turns. Without a mark of its own it is
+/// indented exactly like assistant prose and reads as part of the answer
+/// above it, which misattributes it — the opposite of the phase's
+/// who-said-what goal.
+#[test]
+fn system_content_is_not_absorbed_into_the_answer_above_it() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    app.transcript
+        .push(BlockKind::Assistant, "here is the answer");
+    app.transcript
+        .push(BlockKind::System, "memory supplied · 1 claim");
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        buffer.contains("  here is the answer"),
+        "the answer body indents under SAYA:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("· memory supplied"),
+        "the receipt keeps a mark distinguishing it from that answer:\n{buffer}"
+    );
+}
+
+/// `total_lines(w)` equals the row count `wide_view` returns for a tall
+/// enough window: measured height is painted height again.
+#[test]
+fn measured_height_equals_painted_height() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    app.transcript.push(BlockKind::User, "hello");
+    app.transcript
+        .push(BlockKind::Assistant, "hi there, here is the answer");
+    let width = 80;
+    let total = app.transcript.total_lines(width);
+    let painted = app
+        .transcript
+        .wide_view(width, total, &app.wide_table)
+        .len();
+    assert_eq!(
+        total, painted,
+        "measured height ({total}) must equal painted height ({painted})"
+    );
+}
+
 // --- The tool-approval modal renders the shared fact body. -------------------
 
 /// The approval modal renders the per-call fact body verbatim — the same
