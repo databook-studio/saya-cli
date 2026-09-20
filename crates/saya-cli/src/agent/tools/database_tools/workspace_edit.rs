@@ -314,13 +314,16 @@ impl DatabaseTools {
     /// range at EOF with `offset` as the positional precondition, committed
     /// through the same [`Workspace::patch_range`] the replace half uses.
     /// Offset 0 on an absent path creates the file; any mismatch refuses,
-    /// writes nothing, and reports the current size and digest.
+    /// writes nothing, and reports the current size and digest. A supplied
+    /// `expected_size` is a second precondition checked like the replace
+    /// half's: a file that moved under the model refuses before the offset
+    /// check, so a stated guard never silently passes.
     async fn workspace_append(
         &self,
         rel: &str,
         offset: u64,
         chunk: &str,
-        _expected_size: Option<u64>,
+        expected_size: Option<u64>,
         expected_digest: Option<String>,
     ) -> Result<serde_json::Value, ToolError> {
         if chunk.len() > WORKSPACE_EDIT_MAX_BYTES {
@@ -336,7 +339,20 @@ impl DatabaseTools {
         let target_size = match workspace_probe(workspace, rel)? {
             None => {
                 // Absent path: only offset 0 creates. Anything else is a
-                // mismatch against the (empty, absent) current state.
+                // mismatch against the (empty, absent) current state. A
+                // supplied `expected_size` guards the same way: anything but
+                // the absent size 0 means the file moved under the model.
+                if let Some(want) = expected_size
+                    && want != 0
+                {
+                    return Err(ToolError::WorkspaceEditMoved {
+                        path: rel.to_string(),
+                        expected_size: Some(want),
+                        current_size: 0,
+                        expected_digest: expected_digest.clone(),
+                        current_digest: hex_digest(&[]),
+                    });
+                }
                 if offset != 0 {
                     return Err(ToolError::WorkspaceAppendOffset {
                         path: rel.to_string(),
@@ -377,12 +393,23 @@ impl DatabaseTools {
         }
         let size = file.size;
         let digest = hex_digest(&file.bytes);
+        if let Some(want) = expected_size
+            && want != size
+        {
+            return Err(ToolError::WorkspaceEditMoved {
+                path: rel.to_string(),
+                expected_size: Some(want),
+                current_size: size,
+                expected_digest: expected_digest.clone(),
+                current_digest: digest,
+            });
+        }
         if let Some(want) = expected_digest.as_deref()
             && want != digest
         {
             return Err(ToolError::WorkspaceEditMoved {
                 path: rel.to_string(),
-                expected_size: None,
+                expected_size,
                 current_size: size,
                 expected_digest,
                 current_digest: digest,
