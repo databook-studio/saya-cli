@@ -88,12 +88,14 @@ struct JsonRow<'a> {
 }
 
 /// Renames repeated column labels so every key in one row is distinct:
-/// the first `name` stays `name`, the second becomes `name_2`, and so on.
-/// A repeated label must stay addressable after parsing — duplicate object
-/// keys keep only the last value under ordinary JSON parsing, silently
-/// dropping the earlier ones. The suffix starts at 2 and skips names the
-/// query itself used, so an explicit `name_2` column is never shadowed.
+/// the first `name` stays `name`; later repeats take `name_2`, `name_3`,
+/// and so on. A repeated label must stay addressable after parsing —
+/// duplicate object keys keep only the last value under ordinary JSON
+/// parsing, silently dropping the earlier ones. All original labels are
+/// reserved up front, so a generated suffix skips every name the query
+/// itself used and an explicit `name_2` column is never shadowed.
 fn disambiguated_columns(columns: &[String]) -> Vec<String> {
+    let reserved: std::collections::HashSet<&str> = columns.iter().map(String::as_str).collect();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     columns
@@ -107,11 +109,14 @@ fn disambiguated_columns(columns: &[String]) -> Vec<String> {
             } else {
                 candidate = format!("{column}_{next}");
             }
-            while !seen.insert(candidate.clone()) {
+            while seen.contains(&candidate)
+                || (candidate != *column && reserved.contains(candidate.as_str()))
+            {
                 let bumped = counts.get(column.as_str()).copied().unwrap_or(1) + 1;
                 counts.insert(column.as_str(), bumped);
                 candidate = format!("{column}_{bumped}");
             }
+            seen.insert(candidate.clone());
             candidate
         })
         .collect()
@@ -244,6 +249,31 @@ mod tests {
         assert_eq!(row["name"], "first", "{content}");
         assert_eq!(row["name_2"], "explicit", "{content}");
         assert_eq!(row["name_3"], "second", "{content}");
+    }
+
+    #[test]
+    fn json_export_keeps_the_explicit_label_when_duplicates_come_first() {
+        // Q3: the reverse order of the shadowing test above. The explicit
+        // `name_2` the query itself named must stay addressable with its own
+        // value; the duplicate `name` takes the free suffix instead.
+        let result = QueryResult {
+            columns: vec!["name".to_string(), "name".to_string(), "name_2".to_string()],
+            rows: vec![json!(["first", "second", "explicit"])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: "SELECT a, b, c".to_string(),
+        };
+        let path = std::env::temp_dir().join("saya_test_export_duplicate_leading.json");
+
+        write_result(&result, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let row = &parsed[0];
+        assert_eq!(row["name"], "first", "{content}");
+        assert_eq!(row["name_3"], "second", "{content}");
+        assert_eq!(row["name_2"], "explicit", "{content}");
     }
 
     #[test]
