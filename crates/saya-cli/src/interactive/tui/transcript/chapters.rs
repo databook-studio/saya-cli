@@ -11,11 +11,11 @@
 //! integer every read site can compare and group by without unwrapping,
 //! sorting before all real chapters.
 //!
-//! [`Block`]: super::Block
+//! [`Block`]: super::blocks::Block
 //! [`BlockKind::User`]: super::BlockKind::User
 
 use super::rows::{Row, WrappedLines, label, wrap_word_aware};
-use super::{Block, BlockKind};
+use super::{BlockKind, blocks::Block};
 
 /// Chapter of blocks pushed before any request: no `User` block yet, so no
 /// chapter has begun. Plain `0` (not `Option`) so read sites compare and
