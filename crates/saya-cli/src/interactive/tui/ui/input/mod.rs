@@ -22,7 +22,7 @@ const SEND_HINT: &str = " Enter sends ";
 /// Hint for a multiline draft: Enter sends every line, Alt+Enter adds one.
 const SEND_ALL_HINT: &str = " Enter sends all lines · Alt+Enter new line ";
 
-pub(super) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
+pub(in crate::interactive::tui) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // The hint rides the bottom border (a `Block` title), so the box keeps
     // the `input_rows + 2` height `ui::draw` budgets: no content row grows.
     let send_hint = if app.input.text().contains('\n') {

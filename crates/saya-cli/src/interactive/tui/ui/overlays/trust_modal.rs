@@ -5,7 +5,7 @@
 //! verbatim; only the key handling differs (modal keys here, line reads
 //! there), so the two surfaces cannot drift.
 
-use super::theme::{foreground, secondary, warning};
+use super::super::theme::{foreground, secondary, warning};
 use crate::interactive::session_trust::TRUST_PROMPT;
 use crate::interactive::tui::types::TrustPrompt;
 use ratatui::{
@@ -19,7 +19,7 @@ use ratatui::{
 /// How tall the trust modal may grow: the wrapped prompt body plus the
 /// answers, draft-error, and draft rows, bounded so a narrow terminal
 /// wraps instead of pushing the input off screen.
-pub(super) fn trust_modal_height(prompt: &TrustPrompt, width: u16) -> u16 {
+pub(in crate::interactive::tui) fn trust_modal_height(prompt: &TrustPrompt, width: u16) -> u16 {
     let inner = width.saturating_sub(2).max(1) as usize;
     let wrapped: usize = TRUST_PROMPT
         .lines()
@@ -42,7 +42,11 @@ fn draft_rows(draft: Option<&str>, inner: usize) -> u16 {
 
 /// Draws the trust modal: the shared prompt body, the modal's answers
 /// line, and the `w <dir>` draft being typed with its inline refusal.
-pub(super) fn draw_trust_modal(frame: &mut Frame<'_>, prompt: &TrustPrompt, area: Rect) {
+pub(in crate::interactive::tui) fn draw_trust_modal(
+    frame: &mut Frame<'_>,
+    prompt: &TrustPrompt,
+    area: Rect,
+) {
     let mut lines = Vec::new();
     for line in TRUST_PROMPT.lines() {
         lines.push(Line::from(Span::styled(

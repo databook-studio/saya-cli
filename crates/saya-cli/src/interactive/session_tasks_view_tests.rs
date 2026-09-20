@@ -269,7 +269,7 @@ fn the_line_loop_status_and_the_view_agree() {
 fn the_tui_bar_carries_the_same_tasks_words() {
     use crate::interactive::session_prompt::status_segments;
     use crate::interactive::session_state::SessionState;
-    use crate::interactive::tui::ui::status::status_words_for_test;
+    use crate::interactive::tui::ui::chrome::status::status_words_for_test;
 
     let mut state = SessionState::new("s1", Some(String::from("analytics")), "m");
     state.task_list = SessionTaskList::new(vec![

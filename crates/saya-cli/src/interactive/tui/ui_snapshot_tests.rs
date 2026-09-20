@@ -454,7 +454,7 @@ fn long_content_at_real_width() {
 /// carries no root (so the workspace paragraph paints too).
 #[test]
 fn splash_names_unbound_beside_no_database() {
-    use crate::interactive::tui::ui::splash::{NO_DATABASE_HEADLINE, NO_WORKSPACE_LINES};
+    use crate::interactive::tui::ui::surface::{NO_DATABASE_HEADLINE, NO_WORKSPACE_LINES};
     // `empty_app` carries demo profiles, so clear them: the no-database
     // guidance paints only with no profiles configured.
     let mut app = empty_app();
@@ -483,7 +483,7 @@ fn splash_names_unbound_beside_no_database() {
 /// byte-identical to before this slice.
 #[test]
 fn splash_stays_silent_when_a_workspace_is_bound() {
-    use crate::interactive::tui::ui::splash::NO_WORKSPACE_LINES;
+    use crate::interactive::tui::ui::surface::NO_WORKSPACE_LINES;
     // `fixed_status` is the bound case (it carries a root); keep the demo
     // profiles too, so both paragraphs are in their silent shape.
     let app = empty_app();
@@ -1200,8 +1200,8 @@ fn a_long_detail_never_pushes_the_cancel_hint_off_the_bar() {
     // action sheds the row's overflow down to the frame width, so the tail
     // spans still follow the action in the same `Line` — nothing is dropped
     // to make room. Assert through the budget seam, not the clipped pixels.
-    let tail_width = super::ui::status::tail_width_for_test(&fixed_status());
-    let full_row = super::ui::status::total_row_width_for_test(
+    let tail_width = super::ui::chrome::action_line::tail_width_for_test(&fixed_status());
+    let full_row = super::ui::chrome::action_line::total_row_width_for_test(
         app.request.activity.as_deref(),
         app.transcript
             .newest_open_tool()

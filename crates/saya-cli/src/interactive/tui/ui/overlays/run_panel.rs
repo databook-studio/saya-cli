@@ -8,8 +8,8 @@
 //! the conversation's blocks do — the shared label word and kind style from
 //! the same theme — but from the panel's own transcript, never the session's.
 
-use super::panels::SPINNER;
-use super::theme::{accent, danger, kind_style, label_style, secondary, success, warning};
+use super::super::surface::SPINNER;
+use super::super::theme::{accent, danger, kind_style, label_style, secondary, success, warning};
 use crate::interactive::tui::run_panel::{RunPanel, RunStep, RunStepStatus};
 use crate::interactive::tui::transcript::rows;
 use ratatui::{
@@ -27,7 +27,7 @@ const EPISODE_ROWS: usize = 5;
 /// The panel's height: one row per plan step (or one while the plan is being
 /// proposed), the status line, the episode tail, and the border — clamped so
 /// the conversation above keeps at least half the screen.
-pub(super) fn run_panel_height(panel: &RunPanel, height: u16) -> u16 {
+pub(in crate::interactive::tui) fn run_panel_height(panel: &RunPanel, height: u16) -> u16 {
     let rows = panel.steps.len().max(1) as u16 + 1 + EPISODE_ROWS as u16 + 2;
     rows.clamp(8, (height / 2).max(8))
 }
@@ -60,7 +60,7 @@ fn step_line(index: usize, step: &RunStep) -> Line<'static> {
 
 /// Draws the run panel into its docked area: step list, live status, and the
 /// episode's transcript tail.
-pub(super) fn draw_run_panel(
+pub(in crate::interactive::tui) fn draw_run_panel(
     frame: &mut Frame<'_>,
     app: &crate::interactive::tui::types::App,
     area: Rect,
@@ -123,7 +123,7 @@ pub(super) fn draw_run_panel(
         // Same interim rule as the transcript: a kind with no label word
         // keeps the glyph that distinguished it without colour. The episode
         // must read the same way the conversation does.
-        let prefix = super::panels::unlabelled_glyph(row.kind).unwrap_or("  ");
+        let prefix = super::super::surface::unlabelled_glyph(row.kind).unwrap_or("  ");
         lines.push(Line::from(Span::styled(
             format!("{prefix}{}", row.text),
             kind_style(row.kind),

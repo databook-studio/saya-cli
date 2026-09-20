@@ -1,37 +1,28 @@
 //! Rendering for the TUI: transcript, status bar, input box, and overlays.
 //! Kept separate from the event loop so styling can evolve on its own.
 
-mod context_line;
-use context_line::draw_context_line;
-mod approval;
-mod empty_state;
-mod input_box;
-mod markdown;
-mod overlays;
-mod panels;
-mod plan_approval_view;
-mod run_panel_view;
-pub(super) mod splash;
-pub(crate) mod status;
+pub(crate) mod chrome;
+pub(super) mod input;
+pub(super) mod overlays;
+pub(crate) mod surface;
 pub(crate) mod theme;
-mod trust_modal;
 
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
-use approval::{approval_height, draw_approval};
-use empty_state::draw_empty_state;
-use input_box::draw_input;
-use overlays::{draw_help, draw_menu, draw_picker, draw_search};
-use panels::draw_transcript;
-use plan_approval_view::{draw_plan_approval, plan_approval_height};
+use chrome::draw_context_line;
+use chrome::draw_status;
+use input::draw_input;
+use overlays::{
+    approval_height, draw_approval, draw_help, draw_menu, draw_picker, draw_plan_approval,
+    draw_run_panel, draw_search, draw_trust_modal, plan_approval_height, run_panel_height,
+    trust_modal_height,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
 };
-use run_panel_view::{draw_run_panel, run_panel_height};
-use status::draw_status;
-use trust_modal::{draw_trust_modal, trust_modal_height};
+use surface::{draw_empty_state, draw_transcript};
 
 /// Draws one frame: transcript (fills), the run panel (docked below the
 /// conversation when a run has been started from the session), status bar,

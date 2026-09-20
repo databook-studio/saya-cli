@@ -1,6 +1,6 @@
 //! Lightweight markdown styling for assistant transcript lines.
 
-use super::theme::{accent, code_color, foreground, secondary};
+use super::super::theme::{accent, code_color, foreground, secondary};
 use ratatui::{
     style::{Modifier, Style},
     text::Span,
@@ -13,7 +13,10 @@ fn base_style() -> Style {
 
 /// Styles one assistant line, tracking ``` fence state across consecutive
 /// lines of the block (`fence` is owned by the caller's render loop).
-pub(super) fn markdown_spans_fenced(line: &str, fence: &mut bool) -> Vec<Span<'static>> {
+pub(in crate::interactive::tui) fn markdown_spans_fenced(
+    line: &str,
+    fence: &mut bool,
+) -> Vec<Span<'static>> {
     let base = base_style();
     let trimmed = line.trim_start();
 

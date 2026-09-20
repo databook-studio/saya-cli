@@ -1,9 +1,9 @@
 //! The splash / empty state shown before the first conversation turn.
 
+use super::super::theme::{accent, secondary, warning};
 use super::splash::{
     NO_DATABASE_FOOTER, NO_DATABASE_HEADLINE, NO_DATABASE_STEPS, NO_WORKSPACE_LINES, splash_art,
 };
-use super::theme::{accent, secondary, warning};
 use crate::interactive::tui::types::App;
 use ratatui::{
     Frame,
@@ -18,7 +18,7 @@ use ratatui::{
 /// `workspace_bound` decides the workspace paragraph: `None` (no root
 /// bound) draws the unbound line beside — never instead of — the
 /// no-database guidance, so the two orthogonal absences both read.
-pub(super) fn draw_empty_state(
+pub(in crate::interactive::tui) fn draw_empty_state(
     frame: &mut Frame<'_>,
     app: &App,
     area: Rect,

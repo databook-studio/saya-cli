@@ -3,7 +3,7 @@
 //! the same body the terminal driver prints for `saya run` — so the modal
 //! shapes nothing of its own.
 
-use super::theme::{accent, warning};
+use super::super::theme::{accent, warning};
 use crate::interactive::tui::run_panel::RunPanel;
 use ratatui::{
     Frame,
@@ -16,7 +16,7 @@ use ratatui::{
 /// The modal's height — the tool-approval panel's arithmetic: the wrapped
 /// view text plus the prompt rows, bounded so a long plan cannot push the
 /// input off screen.
-pub(super) fn plan_approval_height(view_text: &str, width: u16) -> u16 {
+pub(in crate::interactive::tui) fn plan_approval_height(view_text: &str, width: u16) -> u16 {
     let inner = width.saturating_sub(2).max(1) as usize;
     let wrapped: usize = view_text
         .lines()
@@ -28,7 +28,11 @@ pub(super) fn plan_approval_height(view_text: &str, width: u16) -> u16 {
 /// Draws the plan-approval modal: the same view text the terminal driver
 /// prints for `saya run`, answered here with y/n — an explicit yes and
 /// nothing else, exactly the tool-approval modal's rule.
-pub(super) fn draw_plan_approval(frame: &mut Frame<'_>, panel: &RunPanel, area: Rect) {
+pub(in crate::interactive::tui) fn draw_plan_approval(
+    frame: &mut Frame<'_>,
+    panel: &RunPanel,
+    area: Rect,
+) {
     let Some(request) = panel.plan_approval.as_ref() else {
         return;
     };
