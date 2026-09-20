@@ -165,6 +165,11 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         && app.is_busy()
         && app.pending.is_some()
     {
+        // Disarm like any other key: this arm returns before the shared
+        // disarm below, and leaving the "press again to exit" state standing
+        // across a queue drop means a later single Ctrl+C exits with no
+        // second warning.
+        app.ctrl_c_armed = false;
         app.drop_queued_prompt();
         return;
     }
