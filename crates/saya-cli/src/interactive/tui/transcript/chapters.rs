@@ -238,3 +238,7 @@ impl super::Transcript {
 #[cfg(test)]
 #[path = "chapters_tests.rs"]
 mod chapter_tests;
+
+#[cfg(test)]
+#[path = "autofold_tests.rs"]
+mod autofold_tests;
