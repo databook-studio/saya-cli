@@ -93,6 +93,7 @@ pub(super) fn draw_help(frame: &mut Frame<'_>, screen: Rect) {
         "Ctrl+,/.     scroll a wide result table ←/→  ·  Ctrl+P  pin first col",
         "Ctrl+A/E     start/end of line  ·  Ctrl+W/U  delete word/line",
         "Ctrl+C       cancel request / clear · twice to exit",
+        "Ctrl+G       drop the queued prompt (while a request runs)",
         "Esc          cancel a running request",
         "Ctrl+O       selection mode (drag-select + copy)",
         "Ctrl+Y       copy last answer  ·  Ctrl+B  copy transcript",

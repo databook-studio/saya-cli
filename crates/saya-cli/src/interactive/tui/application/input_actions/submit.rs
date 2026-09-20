@@ -2,6 +2,31 @@ use super::super::super::transcript::BlockKind;
 use super::super::super::types::App;
 
 impl App {
+    /// One-line preview of a queued prompt for the queue notice. Newlines
+    /// collapse to spaces so the notice stays one visual line; long prompts
+    /// truncate with an ellipsis. `pending` keeps the full text — the
+    /// preview never changes what runs.
+    fn queued_preview(line: &str) -> String {
+        const PREVIEW_CHARS: usize = 120;
+        let flat: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if flat.chars().count() <= PREVIEW_CHARS {
+            return flat;
+        }
+        let kept: String = flat.chars().take(PREVIEW_CHARS).collect();
+        format!("{kept}…")
+    }
+
+    /// Drops the queued prompt without submitting anything. The active
+    /// request is untouched, the earlier transcript stands, and the input
+    /// draft survives. No-op when nothing is queued.
+    pub(crate) fn drop_queued_prompt(&mut self) {
+        if self.pending.take().is_some() {
+            self.transcript
+                .push(BlockKind::System, "Dropped the queued prompt.");
+            self.transcript.scroll_to_bottom();
+        }
+    }
+
     /// Pushes a blank separator line, unless the transcript is empty or already ends in one.
     fn push_spacer(&mut self) {
         match self.transcript.blocks().last() {
@@ -22,15 +47,21 @@ impl App {
         self.history.push(&line);
         if self.is_busy() {
             // Queue instead of dropping: the prompt runs when the current
-            // request finishes. One slot — resubmitting replaces it.
+            // request finishes. One slot — resubmitting replaces it. The
+            // notice quotes the prompt (truncated) so the queue is visible;
+            // it stays a `System` block — a `User` block would open a chapter
+            // and read as the active task.
             let replaced = self.pending.is_some();
+            let preview = Self::queued_preview(&line);
             self.pending = Some(line);
             self.transcript.push(
                 BlockKind::System,
                 if replaced {
-                    "Queued (replaced the earlier queued prompt) — runs after the current request."
+                    format!(
+                        "Queued (replaced the earlier queued prompt) — runs after the current request:\n  {preview}"
+                    )
                 } else {
-                    "Queued — runs as soon as the current request finishes."
+                    format!("Queued — runs when the current request finishes:\n  {preview}")
                 },
             );
             self.transcript.scroll_to_bottom();
