@@ -76,7 +76,7 @@ pub(super) fn draw_picker(
 /// Draws the keybinding help overlay.
 pub(super) fn draw_help(frame: &mut Frame<'_>, screen: Rect) {
     let lines = [
-        "Enter        submit  ·  Alt+Enter  newline  ·  Enter on empty line expands/collapses latest tool group",
+        "Enter        submit  ·  Alt+Enter  newline  ·  Enter on empty line expands/collapses latest tool group or chapter",
         "/            command popup  ·  @  table references",
         "Tab / Enter  accept popup suggestion  ·  Esc  dismiss",
         "↑ / ↓        history (input)  ·  overlay navigation",

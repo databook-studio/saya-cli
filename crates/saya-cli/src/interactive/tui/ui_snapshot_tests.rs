@@ -881,6 +881,36 @@ fn measured_height_equals_painted_height() {
     );
 }
 
+/// Phase 3 packet 2: a folded finished chapter paints as one body row
+/// carrying the verbatim request — never a summary — and unfolding restores
+/// the painted rows.
+#[test]
+fn a_folded_chapter_paints_its_request_as_one_row() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    app.transcript.push(BlockKind::User, "count the red orders");
+    app.transcript
+        .push(BlockKind::Assistant, "the red orders total 42");
+    app.transcript.push(BlockKind::User, "and the blue ones");
+    let unfolded_rows = app.transcript.total_lines(78);
+    assert!(app.transcript.toggle_chapter(1));
+    let folded_rows = app.transcript.total_lines(78);
+    assert!(
+        folded_rows < unfolded_rows,
+        "folding removes painted rows ({unfolded_rows} -> {folded_rows})"
+    );
+    let folded = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        folded.contains("count the red orders"),
+        "the folded screen keeps the verbatim request:\n{folded}"
+    );
+    assert!(
+        !folded.contains("the red orders total 42"),
+        "the hidden answer leaves the screen:\n{folded}"
+    );
+    insta::assert_snapshot!(folded);
+}
+
 // --- Fieldnotes phase 2, packet 2C: the composer says what Send will do. ----
 //
 // The composer placeholder only paints while the input is empty; the moment

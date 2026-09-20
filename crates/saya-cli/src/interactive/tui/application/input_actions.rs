@@ -174,6 +174,13 @@ impl App {
         self.transcript.toggle_latest_group()
     }
 
+    /// Toggles the newest foldable chapter (see
+    /// [`Transcript::toggle_latest_chapter`]). Enter on an empty line falls
+    /// through to this only when no tool group toggled.
+    pub(crate) fn toggle_latest_chapter(&mut self) -> bool {
+        self.transcript.toggle_latest_chapter()
+    }
+
     /// Pushes a blank separator line, unless the transcript is empty or already ends in one.
     fn push_spacer(&mut self) {
         match self.transcript.blocks().last() {
@@ -249,6 +256,26 @@ mod tests {
         assert!(
             !copied.contains("the secret chain-of-thought about row values"),
             "thinking must not reach the clipboard: {copied}"
+        );
+    }
+
+    #[test]
+    fn folding_does_not_change_what_copy_yields() {
+        let mut app = idle_app();
+        app.transcript.push(BlockKind::User, "count the red orders");
+        app.transcript
+            .push(BlockKind::Assistant, "the red orders total 42");
+        app.transcript.push(BlockKind::User, "and the blue ones");
+        app.copy_transcript();
+        let plain = app.pending_clipboard.take().expect("transcript was queued");
+
+        app.transcript.toggle_chapter(1);
+        app.copy_transcript();
+        let folded = app.pending_clipboard.expect("folded transcript was queued");
+        assert_eq!(plain, folded, "a fold is a view, not a redaction");
+        assert!(
+            folded.contains("the red orders total 42"),
+            "hidden rows still copy: {folded}"
         );
     }
 

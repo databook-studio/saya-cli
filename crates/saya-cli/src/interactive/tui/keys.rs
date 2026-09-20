@@ -240,6 +240,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         // submits. Ctrl+E (move-to-end) is untouched: this arm only fires
         // without Ctrl.
         KeyCode::Enter if app.input.is_empty() && app.toggle_tool_group() => return,
+        KeyCode::Enter if app.input.is_empty() && app.toggle_latest_chapter() => return,
         KeyCode::Enter => return app.submit(),
         KeyCode::Backspace => app.input.backspace(),
         KeyCode::Delete => app.input.delete(),
@@ -356,6 +357,83 @@ mod approval_modal_tests {
             approval_choice(KeyCode::Enter, Some("workspace-write")),
             None,
             "Enter is still never an approval"
+        );
+    }
+
+    /// Enter on an empty line toggles the latest foldable chapter (or the
+    /// tool group first), and it must never answer a modal while doing so.
+    #[test]
+    fn enter_still_never_approves_while_a_chapter_is_foldable() {
+        use crate::interactive::tui::application::tests_support::idle_app;
+        use crate::interactive::tui::transcript::BlockKind;
+
+        assert_eq!(
+            approval_choice(KeyCode::Enter, Some("workspace-write")),
+            None,
+            "Enter never answers, so it can keep toggling chapters"
+        );
+        let mut app = idle_app();
+        app.transcript.push(BlockKind::User, "count the red orders");
+        app.transcript
+            .push(BlockKind::Assistant, "the red orders total 42");
+        app.transcript.push(BlockKind::User, "and the blue ones");
+        let unfolded: Vec<String> = app
+            .transcript
+            .wrapped(80)
+            .iter()
+            .map(|row| row.text.clone())
+            .collect();
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(
+            app.transcript.is_folded(1),
+            "Enter on an empty line folds the finished chapter"
+        );
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        let reopened: Vec<String> = app
+            .transcript
+            .wrapped(80)
+            .iter()
+            .map(|row| row.text.clone())
+            .collect();
+        assert_eq!(unfolded, reopened, "the same keystroke reopens it");
+    }
+
+    /// Enter prefers the tool group: with both a collapsed group and a
+    /// foldable chapter, the group toggles and the chapter stays open.
+    #[test]
+    fn enter_toggles_the_tool_group_before_any_chapter() {
+        use crate::interactive::tui::application::tests_support::idle_app;
+        use crate::interactive::tui::transcript::BlockKind;
+
+        let mut app = idle_app();
+        app.transcript.push(BlockKind::User, "count the red orders");
+        app.transcript.buffer_tool_request(
+            "bounded_sql_query".into(),
+            serde_json::json!({"sql": "SELECT 1"}),
+            None,
+        );
+        assert!(
+            app.transcript
+                .buffer_tool_completion("bounded_sql_query", "finished call one")
+        );
+        app.transcript.buffer_tool_request(
+            "bounded_sql_query".into(),
+            serde_json::json!({"sql": "SELECT 2"}),
+            None,
+        );
+        assert!(
+            app.transcript
+                .buffer_tool_completion("bounded_sql_query", "finished call two")
+        );
+        app.transcript.flush_tool_buffer(
+            |name, _| vec![format!("→ {name}")],
+            |name, summary| format!("✓ {name}: {summary}"),
+        );
+        app.transcript.push(BlockKind::User, "and the blue ones");
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(
+            !app.transcript.is_folded(1),
+            "the tool group wins; the chapter stays open"
         );
     }
 }
