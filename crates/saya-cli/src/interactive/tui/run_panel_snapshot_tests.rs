@@ -22,65 +22,14 @@ use std::time::Duration;
 
 use saya_agent::AgentEvent;
 
-use super::run_panel::{RunPanel, RunStep, RunStepStatus};
-use super::run_worker::RunWorker;
-use super::stream_events::apply_event;
-use super::transcript::BlockKind;
-use super::types::App;
-use super::ui_snapshot_tests::{empty_app, fixed_status, render_buffer};
+use super::run_panel::{RunStep, RunStepStatus};
+use super::ui_snapshot_tests::{fixed_status, render_buffer};
 
-/// An app with a small session conversation and the panel in the given
-/// state. The conversation above and the panel below are what the snapshot
-/// shows, so the separation is in the same frame.
-fn app_with_panel(panel: RunPanel) -> App {
-    let mut app = empty_app();
-    app.transcript.push(BlockKind::User, "count the orders");
-    app.transcript.push(
-        BlockKind::Assistant,
-        "The orders table holds 128 rows in catalog.public.orders.",
-    );
-    app.run_panel = Some(panel);
-    app
-}
+#[cfg(test)]
+#[path = "run_panel_snapshot_support.rs"]
+mod support;
 
-/// A panel with the given steps and lifecycle line — the fields the four
-/// screens differ on. The worker handle is real while the run is in flight
-/// (a channel nobody sends to), so the panel reads as active.
-fn panel(
-    run_id: &str,
-    goal: &str,
-    active: bool,
-    status: &str,
-    status_is_error: bool,
-    steps: Vec<RunStep>,
-) -> RunPanel {
-    let (tx, rx) = super::run_panel::test_channels();
-    let mut p = RunPanel::new(
-        RunWorker {
-            rx,
-            cancel: saya_agent::CancellationToken::new(),
-        },
-        run_id.into(),
-        goal.into(),
-    );
-    if !active {
-        // The drive ended: the worker is released, the record stays.
-        p.worker = None;
-        let _ = tx;
-    }
-    p.steps = steps;
-    p.status = status.into();
-    p.status_is_error = status_is_error;
-    p.terminated = !active;
-    p
-}
-
-/// Seeds the episode's own transcript through the seam the events arrive on.
-fn episode(panel: &mut RunPanel, events: Vec<AgentEvent>) {
-    for event in events {
-        apply_event(&mut panel.episode, event, false);
-    }
-}
+use support::{app_with_panel, episode, panel};
 
 /// Screen 1 — a running run: step 1 done in 12s, step 2 in flight at 3s,
 /// step 3 pending, the lifecycle line on the shared shaper's wording, and
