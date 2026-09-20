@@ -7,10 +7,15 @@ use super::BlockKind;
 /// Maps a [`BlockKind`] to its headline label, if it has one.
 ///
 /// `Error`, `System`, and `Thinking` deliberately have no label; `None` is
-/// the honest answer for all three, not a placeholder. This duplicates
-/// `ui::labels::label` (which that packet's paint step consumes) so the data
-/// layer stays paint-free: `transcript` must not depend on `ui`.
-fn label(kind: BlockKind) -> Option<&'static str> {
+/// the honest answer for all three, not a placeholder.
+///
+/// This is the **single** source of the map. It lives here, in the data
+/// layer, because `lines()` emits the label rows and `transcript` must not
+/// depend on `ui`; the paint step imports it in the other direction, which
+/// is the way the dependency already runs (`ui` reads `BlockKind` from
+/// here). An earlier packet put a second copy in `ui/labels.rs`; that file
+/// is gone, because two maps drift.
+pub(crate) fn label(kind: BlockKind) -> Option<&'static str> {
     match kind {
         BlockKind::User => Some("YOU"),
         BlockKind::Assistant => Some("SAYA"),
@@ -113,5 +118,50 @@ mod wrap_tests {
     fn short_lines_pass_through_and_leading_space_never_loops() {
         assert_eq!(wrapped_lines("short", 80), vec!["short"]);
         assert_eq!(wrapped_lines("aaaaaaa bbb", 4), vec!["aaaa", "aaa", "bbb"]);
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn assistant_maps_to_saya_while_your_choice_maps_to_nothing() {
+        assert_eq!(label(BlockKind::Assistant), Some("SAYA"));
+        for kind in [
+            BlockKind::User,
+            BlockKind::Assistant,
+            BlockKind::Tool,
+            BlockKind::Table,
+            BlockKind::Error,
+            BlockKind::System,
+            BlockKind::Thinking,
+        ] {
+            let text = label(kind).unwrap_or("");
+            assert_ne!(text, "YOUR CHOICE", "{kind:?} must not map to YOUR CHOICE");
+            assert_ne!(text, "PARTIAL", "{kind:?} must not map to PARTIAL");
+            assert_ne!(text, "WORKING", "{kind:?} must not map to WORKING");
+        }
+    }
+
+    #[test]
+    fn every_kind_is_mapped_explicitly() {
+        assert_eq!(label(BlockKind::User), Some("YOU"));
+        assert_eq!(label(BlockKind::Assistant), Some("SAYA"));
+        assert_eq!(label(BlockKind::Tool), Some("ACTIVITY"));
+        assert_eq!(label(BlockKind::Table), Some("RESULT"));
+        assert_eq!(label(BlockKind::Error), None);
+        assert_eq!(label(BlockKind::System), None);
+        assert_eq!(label(BlockKind::Thinking), None);
+    }
+
+    #[test]
+    fn a_finished_tool_call_is_not_labelled_as_running_work() {
+        // Tool blocks include completed calls, and the design states that
+        // "Working becomes Complete only when the stated work is actually
+        // complete" — labelling a finished call WORKING would break that
+        // rule, so the trail of operations reads ACTIVITY instead.
+        assert_eq!(label(BlockKind::Tool), Some("ACTIVITY"));
+        assert_ne!(label(BlockKind::Tool), Some("WORKING"));
     }
 }
