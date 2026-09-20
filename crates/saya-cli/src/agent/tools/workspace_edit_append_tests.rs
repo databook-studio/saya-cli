@@ -91,6 +91,41 @@ async fn an_offset_mismatch_writes_nothing_and_reports_the_size() {
     );
 }
 
+/// Q1: a matching offset with a contradictory `expected_size` refuses and
+/// writes nothing. The schema promises the size guard, so the append arm
+/// must honour it like the replace arm does — not silently ignore it.
+#[tokio::test]
+async fn an_expected_size_mismatch_refuses_an_append_without_writing() {
+    let sandbox = Sandbox::new("expected-size");
+    sandbox
+        .ws
+        .write("log.txt", b"chunk-one;")
+        .expect("seed write must succeed");
+    let before = fs::read(sandbox.ws_root().join("log.txt")).expect("seed file must exist");
+    let tools = sandbox.tools();
+    let error = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "log.txt",
+                "offset": 10,
+                "chunk": "chunk-two;",
+                "expected_size": 3,
+            }),
+        )
+        .await
+        .expect_err("a contradictory expected_size must refuse, not append");
+    let saya_agent::ToolError::WorkspaceEditMoved { current_size, .. } = error else {
+        panic!("a contradictory expected_size must refuse with the moved error, got: {error}");
+    };
+    assert_eq!(current_size, 10);
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("log.txt")).expect("file must survive"),
+        before,
+        "a refused append leaves the file byte-identical"
+    );
+}
+
 /// Several chunks reassemble byte-exact: the same content written in one go
 /// and written chunk by chunk (each at the size the previous chunk left)
 /// land identical, and each result carries `{ path, size, digest }` for the
