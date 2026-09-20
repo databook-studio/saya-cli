@@ -1,5 +1,9 @@
+pub(crate) mod rows;
+pub(crate) mod scroll;
+
 use std::rc::Rc;
 
+use super::chapters;
 use super::rows::{Row, WrappedLines, wrap_word_aware};
 use super::{BlockKind, Transcript};
 
@@ -20,10 +24,10 @@ impl Transcript {
             if i < skip_until {
                 continue;
             }
-            if let Some((start, end)) = super::chapters::chapter_range(&self.blocks, block.chapter)
+            if let Some((start, end)) = chapters::chapter_range(&self.blocks, block.chapter)
                 && start == i
                 && self.is_folded(block.chapter)
-                && let Some(row) = super::chapters::folded_row(&self.blocks, block.chapter, eff)
+                && let Some(row) = chapters::folded_row(&self.blocks, block.chapter, eff)
             {
                 lines.push(row);
                 skip_until = end;

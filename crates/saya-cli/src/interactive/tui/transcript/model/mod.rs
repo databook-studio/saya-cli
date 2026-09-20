@@ -1,3 +1,9 @@
+pub(crate) mod push;
+pub(crate) mod tool_buffer;
+
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use super::Transcript;
 use super::chapters;
 
 #[allow(dead_code)]

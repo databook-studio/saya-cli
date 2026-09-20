@@ -1,7 +1,7 @@
 use saya_agent::ToolEffect;
 
-use super::blocks::{Block, PendingToolCall};
-use super::{BlockKind, Transcript};
+use super::super::{Transcript, chapters};
+use super::{Block, BlockKind, PendingToolCall};
 
 impl Transcript {
     /// A run folds only when it is a multi-call all-ok group: two or more
@@ -26,7 +26,7 @@ impl Transcript {
         arguments: serde_json::Value,
         effect: Option<ToolEffect>,
     ) {
-        let chapter = super::chapters::chapter_for(&self.blocks, BlockKind::Tool);
+        let chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
         let before = self.blocks.len();
         for line in Self::live_request_lines(&name, &arguments) {
             self.blocks.push(Block {
@@ -69,7 +69,7 @@ impl Transcript {
         else {
             return false;
         };
-        let chapter = super::chapters::chapter_for(&self.blocks, BlockKind::Tool);
+        let chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
         let before = self.blocks.len();
         self.blocks.push(Block {
             kind: BlockKind::Tool,
@@ -221,14 +221,14 @@ impl Transcript {
                     .collect();
                 let open_header = format!("▾{}", shaped[0].trim_start_matches('▸'));
                 let mut folded = Block::tool_group(shaped[0].clone(), detail, open_header);
-                folded.chapter = super::chapters::chapter_for(&self.blocks, BlockKind::Tool);
+                folded.chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
                 self.blocks.push(folded);
                 continue;
             }
             // Unreachable today: `is_collapsible_run` gates on exactly the
             // shape above, so every group here folds. The arm stays so a
             // future grouper change lands verbatim instead of vanishing.
-            let chapter = super::chapters::chapter_for(&self.blocks, BlockKind::Tool);
+            let chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
             for line in shaped {
                 self.blocks.push(Block {
                     kind: BlockKind::Tool,

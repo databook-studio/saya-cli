@@ -1,14 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-pub(crate) mod blocks;
 pub(crate) mod chapters;
-pub(crate) mod push;
-pub(crate) mod rows;
-pub(crate) mod scroll;
-pub(crate) mod tool_buffer;
+pub(crate) mod model;
 pub(crate) mod view;
 
-pub(crate) use blocks::BlockKind;
+pub(crate) use model::{Block, BlockKind};
+pub(crate) use view::rows;
 
 pub(super) const MAX_BLOCKS: usize = 5000;
 pub(super) const MAX_TOTAL_TEXT_BYTES: usize = 4 << 20;
@@ -18,7 +15,7 @@ pub(super) type WrapCache = RefCell<Option<(usize, Rc<rows::WrappedLines>)>>;
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 pub(crate) struct Transcript {
-    pub(super) blocks: Vec<blocks::Block>,
+    pub(super) blocks: Vec<Block>,
     pub(super) scroll_up: usize,
     pub(super) cache: WrapCache,
     /// Folded finished chapters: pure view state, like `Block.group` — never
@@ -31,7 +28,7 @@ pub(crate) struct Transcript {
     /// `None`'s and in-flight requests (`Some` with no completion yet) ride
     /// here only — never on a rendered block — so an interrupted stream
     /// leaves no half group behind.
-    pub(super) pending_tools: Vec<blocks::PendingToolCall>,
+    pub(super) pending_tools: Vec<model::PendingToolCall>,
 }
 
 #[allow(dead_code)]

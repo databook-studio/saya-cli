@@ -1,13 +1,13 @@
-use super::blocks::Block;
-use super::{BlockKind, Transcript};
+use super::super::{MAX_BLOCKS, MAX_TOTAL_TEXT_BYTES, Transcript, chapters};
+use super::{Block, BlockKind};
 
 #[allow(dead_code)]
 impl Transcript {
     pub(super) fn enforce_bounds(&mut self) {
         let mut bytes: usize = self.blocks.iter().map(|b| b.text.len()).sum();
         let mut drop = 0;
-        while self.blocks.len().saturating_sub(drop) > super::MAX_BLOCKS
-            || (bytes > super::MAX_TOTAL_TEXT_BYTES && drop < self.blocks.len())
+        while self.blocks.len().saturating_sub(drop) > MAX_BLOCKS
+            || (bytes > MAX_TOTAL_TEXT_BYTES && drop < self.blocks.len())
         {
             bytes = bytes.saturating_sub(self.blocks[drop].text.len());
             drop += 1;
@@ -18,7 +18,7 @@ impl Transcript {
     }
 
     pub(crate) fn push(&mut self, kind: BlockKind, text: impl Into<String>) {
-        let chapter = super::chapters::chapter_for(&self.blocks, kind);
+        let chapter = chapters::chapter_for(&self.blocks, kind);
         let text = text.into();
         self.blocks.push(Block {
             kind,
