@@ -137,11 +137,13 @@ pub(super) fn completion_summaries(
 /// Only the model-supplied arguments and the tool's own typed result feed
 /// the key fact — never stdout/stderr or file content — so the detail rides
 /// the same redaction the rest of the output does: there is no tool output
-/// in the line to redact. A failure carries no reason beyond the key fact:
+/// in the line to redact. A success carries no reason beyond the key fact:
 /// the `Err` path reaches `completion_summaries` with `result: None`, so no
 /// exit code is reachable there (a non-zero exit is an `Ok` outcome, not a
-/// failure), and the `ToolError` itself is not threaded into the summary —
-/// a bare `failed <key fact>` is the honest form. Uncovered tools fall
+/// failure), and the `ToolError` text itself is appended to the generic
+/// failure summary separately in [`execute`] (bounded, redacted) rather than
+/// threaded through these summaries — a bare `failed <key fact>` is the
+/// honest form here. Uncovered tools fall
 /// back to today's text untouched; a covered tool missing its key still
 /// must not reuse the success text, so it reads `failed <name>`.
 fn completion_detail(
@@ -224,10 +226,13 @@ pub(super) async fn execute(
             (value, completed)
         }
         // The reason reaches the model so it can adjust (e.g. a
-        // safety-layer rejection naming what is not allowed).
+        // safety-layer rejection naming what is not allowed); the bounded,
+        // redacted form reaches the human summary so a refusal reads
+        // differently from a runtime failure.
         Err(error) => {
             let (_, failed) = completion_summaries(definition, name, &arguments, None);
-            (serde_json::json!({"error": error.to_string()}), failed)
+            let summary = failure_summary_with_reason(&failed, &error.to_string());
+            (serde_json::json!({"error": error.to_string()}), summary)
         }
     }
 }
@@ -269,6 +274,48 @@ pub(super) async fn execute_batch(
 /// inside the pool — matching the pool default keeps the cap meaningful without
 /// over-subscribing the database.
 const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
+
+/// Cap on the failure reason carried into the human-facing summary, in
+/// characters. Long enough to name a safety rejection (the canonical refusal
+/// is well under half this) and short enough that one failure cannot flood
+/// the transcript or a persisted session. The bound is the summary only —
+/// the model's JSON still carries the full error.
+const MAX_FAILURE_REASON_CHARS: usize = 200;
+
+/// Appends a failure reason to the generic failure summary so a safety-layer
+/// refusal reads differently from a runtime failure. The reason is the
+/// untrusted error text, so it is redacted (secret-shaped material must not
+/// reach `TerminalEvent` payloads, per `security.md`), single-lined, and
+/// bounded at [`MAX_FAILURE_REASON_CHARS`] with the existing `…` marker.
+/// Keeps the "failed" substring the status derivation and failure memory key
+/// on, and offers no override — the line explains what was refused, never
+/// how to force it.
+fn failure_summary_with_reason(failed: &str, error: &str) -> String {
+    let reason = bound_failure_reason(&redact(error));
+    if reason.is_empty() {
+        return failed.to_owned();
+    }
+    format!("{failed} — {reason}")
+}
+
+/// Single-lines `reason` and cuts it to [`MAX_FAILURE_REASON_CHARS`]
+/// characters, marking the cut with `…`. Operates on characters (not bytes)
+/// so the slice never splits a multi-byte sequence, and on an already
+/// redacted string — redaction runs first so secret-shaped material cannot
+/// hide inside the truncated tail.
+fn bound_failure_reason(reason: &str) -> String {
+    let single_line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    let single_line = single_line.trim();
+    if single_line.is_empty() {
+        return String::new();
+    }
+    let bounded: String = single_line.chars().take(MAX_FAILURE_REASON_CHARS).collect();
+    if bounded.len() < single_line.len() {
+        format!("{bounded}…")
+    } else {
+        bounded
+    }
+}
 
 /// Builds the `tool`-role message for a result, truncating it to fit the
 /// conversation byte budget when a single result would otherwise exceed it,
