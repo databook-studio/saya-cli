@@ -1,7 +1,7 @@
 //! Transcript rendering: label rows, role marks, and the scrollbar.
 
+use super::super::theme::{accent, kind_style, label_style};
 use super::markdown::markdown_spans_fenced;
-use super::theme::{accent, kind_style, label_style};
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
 use ratatui::{
@@ -13,7 +13,8 @@ use ratatui::{
 };
 
 /// Spinner frames shown while an agent request is streaming.
-pub(super) const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub(in crate::interactive::tui) const SPINNER: [&str; 10] =
+    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// The glyph for a kind that has no label word, or `None` when the kind is
 /// introduced by a label row instead.
@@ -27,7 +28,7 @@ pub(super) const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴"
 /// failure whose only difference from prose is a red foreground fails it,
 /// which is why these glyphs may not be removed until the phase that names
 /// them (failure headline: Phase 7; System content: undecided) lands.
-pub(super) fn unlabelled_glyph(kind: BlockKind) -> Option<&'static str> {
+pub(in crate::interactive::tui) fn unlabelled_glyph(kind: BlockKind) -> Option<&'static str> {
     match kind {
         BlockKind::Error => Some("\u{2717} "),
         BlockKind::System => Some("\u{b7} "),
@@ -48,7 +49,7 @@ pub(super) const DRAFT_LABEL: &str = "SAYA (draft)";
 /// Renders the visible, soft-wrapped transcript lines — a label word at the
 /// left margin introducing each turn, body rows indented beneath it — with
 /// per-kind styling, plus a scrollbar when the content overflows.
-pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
+pub(in crate::interactive::tui) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // Reserve two columns on the left for the role rail; wrap text to the rest.
     let text_width = area.width.saturating_sub(2);
     // Store the WRAP width (not the pane width) so key-driven scrolling clamps consistently.

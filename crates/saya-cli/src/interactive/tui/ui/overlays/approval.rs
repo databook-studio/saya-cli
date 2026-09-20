@@ -1,6 +1,6 @@
 //! The docked approval panel: what will run, and the answers that decide it.
 
-use super::theme::accent;
+use super::super::theme::accent;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -15,7 +15,11 @@ use ratatui::{
 /// (`approval_facts`) run longer than the old SQL-only detail, so the cap
 /// follows them: an interpreter `run_program` prompt carries the no-euphemism
 /// warning, and clipping a containment fact is worse than a taller panel.
-pub(super) fn approval_height(detail: Option<&str>, grant: Option<&str>, width: u16) -> u16 {
+pub(in crate::interactive::tui) fn approval_height(
+    detail: Option<&str>,
+    grant: Option<&str>,
+    width: u16,
+) -> u16 {
     let inner = width.saturating_sub(2).max(1) as usize;
     let answers_rows = crate::grant_token::session_answers_line(grant)
         .chars()
@@ -41,7 +45,7 @@ pub(super) fn approval_height(detail: Option<&str>, grant: Option<&str>, width: 
 /// state different facts for the same call; the answers line is the shared
 /// three-answer text — with the offered token when one exists, two answers
 /// and the reason when not.
-pub(super) fn draw_approval(
+pub(in crate::interactive::tui) fn draw_approval(
     frame: &mut Frame<'_>,
     tool: &str,
     detail: Option<&str>,
@@ -75,11 +79,11 @@ pub(super) fn draw_approval(
     let block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(super::theme::warning()))
+        .border_style(Style::default().fg(super::super::theme::warning()))
         .title(Span::styled(
             " approval required ",
             Style::default()
-                .fg(super::theme::warning())
+                .fg(super::super::theme::warning())
                 .add_modifier(Modifier::BOLD),
         ));
 
