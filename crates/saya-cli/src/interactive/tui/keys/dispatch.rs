@@ -154,6 +154,25 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     let ctrl = mods.contains(KeyModifiers::CONTROL);
     let alt = mods.contains(KeyModifiers::ALT);
     let word = ctrl || alt;
+    // Ctrl+G drops the queued prompt while a request is running. The chord
+    // is free: not an approval answer (the modal returns before this point),
+    // ordered after every Esc arm (Esc's SQL → stream → run-panel order is
+    // untouched), not Ctrl+C (whose arm/disarm curve is unchanged), and not
+    // a terminal-reserved chord. Gated on a held prompt, so without a queue
+    // it falls through to normal input — nothing to drop, nothing said.
+    if let KeyCode::Char('g') = code
+        && ctrl
+        && app.is_busy()
+        && app.pending.is_some()
+    {
+        // Disarm like any other key: this arm returns before the shared
+        // disarm below, and leaving the "press again to exit" state standing
+        // across a queue drop means a later single Ctrl+C exits with no
+        // second warning.
+        app.ctrl_c_armed = false;
+        app.drop_queued_prompt();
+        return;
+    }
     // Any key other than a bare Ctrl+C disarms the "press again to exit" state.
     let was_armed = app.ctrl_c_armed;
     app.ctrl_c_armed = false;

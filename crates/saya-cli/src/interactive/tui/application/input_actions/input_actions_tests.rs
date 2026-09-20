@@ -116,3 +116,11 @@ fn selection_mode_stays_quiet_about_thinking_when_none_is_shown() {
         notice.text
     );
 }
+
+// --- Fieldnotes phase 5, packet 2: the queue is visible and droppable. ------
+//
+// `submit()` while busy holds the prompt in `App.pending` with only a generic
+// "Queued …" notice, so the user can never read back what is held. The queue
+// notice must quote the prompt (truncated), stay a `System` block (a `User`
+// block would read as the active task), and the queue must be droppable via
+// Ctrl+G (`handle_key`) without touching the active request or the draft.
