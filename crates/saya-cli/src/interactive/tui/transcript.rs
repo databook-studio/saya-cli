@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use saya_agent::ToolEffect;
 
+pub(crate) mod chapters;
 pub(crate) mod rows;
 
 const MAX_BLOCKS: usize = 5000;
@@ -34,6 +35,8 @@ pub(crate) enum BlockKind {
 pub(crate) struct Block {
     pub(crate) kind: BlockKind,
     pub(crate) text: String,
+    /// Request chapter: 0 before any `User` block, +1 per `User` block.
+    pub(crate) chapter: u32,
     /// A collapsed tool group renders as one header block; its per-call lines
     /// live here and render only while expanded. `None` on every other block.
     /// Pure view state on the block — never persisted, never replayed — so a
@@ -59,6 +62,7 @@ impl Block {
         Self {
             kind: BlockKind::Tool,
             text: summary,
+            chapter: chapters::PRE_CHAPTER,
             group: Some(ToolGroupView {
                 expanded: false,
                 detail,
@@ -126,10 +130,12 @@ impl Transcript {
     }
 
     pub(crate) fn push(&mut self, kind: BlockKind, text: impl Into<String>) {
+        let chapter = chapters::chapter_for(&self.blocks, kind);
         let text = text.into();
         self.blocks.push(Block {
             kind,
             text,
+            chapter,
             group: None,
         });
         self.enforce_bounds();
@@ -201,11 +207,13 @@ impl Transcript {
         arguments: serde_json::Value,
         effect: Option<ToolEffect>,
     ) {
+        let chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
         let before = self.blocks.len();
         for line in Self::live_request_lines(&name, &arguments) {
             self.blocks.push(Block {
                 kind: BlockKind::Tool,
                 text: line,
+                chapter,
                 group: None,
             });
         }
@@ -234,10 +242,12 @@ impl Transcript {
         else {
             return false;
         };
+        let chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
         let before = self.blocks.len();
         self.blocks.push(Block {
             kind: BlockKind::Tool,
             text: format!("✓ {name}: {summary}"),
+            chapter,
             group: None,
         });
         pending.live_blocks += self.blocks.len().saturating_sub(before);
@@ -383,17 +393,20 @@ impl Transcript {
                     })
                     .collect();
                 let open_header = format!("▾{}", shaped[0].trim_start_matches('▸'));
-                self.blocks
-                    .push(Block::tool_group(shaped[0].clone(), detail, open_header));
+                let mut folded = Block::tool_group(shaped[0].clone(), detail, open_header);
+                folded.chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
+                self.blocks.push(folded);
                 continue;
             }
             // Unreachable today: `is_collapsible_run` gates on exactly the
             // shape above, so every group here folds. The arm stays so a
             // future grouper change lands verbatim instead of vanishing.
+            let chapter = chapters::chapter_for(&self.blocks, BlockKind::Tool);
             for line in shaped {
                 self.blocks.push(Block {
                     kind: BlockKind::Tool,
                     text: line,
+                    chapter,
                     group: None,
                 });
             }
