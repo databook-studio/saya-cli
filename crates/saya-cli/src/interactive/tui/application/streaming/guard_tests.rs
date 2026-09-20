@@ -6,12 +6,12 @@ use super::*;
 /// An `App` plus a session whose model is `model`. The runtime's declared
 /// window is `None`, so the footer's window lookup must fall through to the
 /// built-in table (which knows only its own models).
-fn app_with_model(model: &str) -> (App, SessionState) {
+pub(super) fn app_with_model(model: &str) -> (App, SessionState) {
     (idle_app(), SessionState::new("s1", None, model))
 }
 
 /// A stream that carries exactly `messages`, as the agent thread would.
-fn stream_with(messages: Vec<StreamMsg>) -> Stream {
+pub(super) fn stream_with(messages: Vec<StreamMsg>) -> Stream {
     let (tx, rx) = unbounded_channel();
     for message in messages {
         let _ = tx.send(message);
@@ -26,7 +26,7 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
 /// A stream that carries exactly `messages` on a token the user already
 /// cancelled with Esc, as the agent thread's channel looks when the worker
 /// confirms the stop.
-fn cancelled_stream_with(messages: Vec<StreamMsg>) -> Stream {
+pub(super) fn cancelled_stream_with(messages: Vec<StreamMsg>) -> Stream {
     let (tx, rx) = unbounded_channel();
     for message in messages {
         let _ = tx.send(message);
@@ -179,115 +179,5 @@ fn the_footer_block_is_a_system_block() {
         last.kind,
         BlockKind::System,
         "the footer must remain a System block"
-    );
-}
-
-/// Phase 5 packet 1: the worker's stop confirmation reads as a stop, not a
-/// failure — "Stopped." with kept work — and is not an error block.
-#[test]
-fn the_worker_confirmation_says_stopped() {
-    let (mut app, mut state) = app_with_model("gpt-4o");
-    app.request.stream = Some(cancelled_stream_with(vec![StreamMsg::Done(Err(
-        "request cancelled".into(),
-    ))]));
-    assert!(app.drain_stream(&mut state), "the turn finished");
-    let last = app
-        .transcript
-        .blocks()
-        .last()
-        .expect("the confirmation was pushed");
-    assert!(
-        last.text.contains("Stopped."),
-        "the worker confirmation must say Stopped.: {}",
-        last.text
-    );
-}
-
-/// Phase 5 packet 1: a user stop is not rendered as an error — the
-/// confirmation is a System block, without the failure mark.
-#[test]
-fn a_user_stop_is_not_rendered_as_an_error() {
-    let (mut app, mut state) = app_with_model("gpt-4o");
-    app.request.stream = Some(cancelled_stream_with(vec![StreamMsg::Done(Err(
-        "request cancelled".into(),
-    ))]));
-    assert!(app.drain_stream(&mut state), "the turn finished");
-    assert!(
-        !app.transcript
-            .blocks()
-            .iter()
-            .any(|block| block.kind == BlockKind::Error),
-        "a user stop must not push an error block"
-    );
-}
-
-/// Phase 5 packet 1: a genuine failure is still an error — the fix must not
-/// swallow real failures into the stop wording.
-#[test]
-fn a_genuine_failure_is_still_an_error() {
-    let (mut app, mut state) = app_with_model("gpt-4o");
-    app.request.stream = Some(stream_with(vec![StreamMsg::Done(Err(
-        "connection refused".into(),
-    ))]));
-    assert!(app.drain_stream(&mut state), "the turn finished");
-    let last = app
-        .transcript
-        .blocks()
-        .last()
-        .expect("the failure was pushed");
-    assert_eq!(
-        last.kind,
-        BlockKind::Error,
-        "a genuine failure must stay an error block"
-    );
-}
-
-/// Phase 5 packet 1: stopping never claims work was undone — no rollback
-/// language on either the request or the confirmation.
-#[test]
-fn stopping_never_claims_work_was_undone() {
-    let (mut app, mut state) = app_with_model("gpt-4o");
-    app.request.stream = Some(cancelled_stream_with(vec![StreamMsg::Done(Err(
-        "request cancelled".into(),
-    ))]));
-    assert!(app.drain_stream(&mut state), "the turn finished");
-    for block in app.transcript.blocks() {
-        let lower = block.text.to_lowercase();
-        for word in ["undone", "reverted", "rolled back"] {
-            assert!(
-                !lower.contains(word),
-                "stop wording must never imply rollback ({word}): {}",
-                block.text
-            );
-        }
-    }
-}
-
-/// The dangerous case the `&&` exists for: the user presses Esc, and while
-/// the stop is in flight the connection genuinely drops. Guarding on the
-/// fired token alone would swallow that failure into a reassuring
-/// "Stopped. Completed work is kept." — telling the user their work ended the
-/// way they asked when in fact it broke.
-#[test]
-fn a_failure_arriving_after_esc_is_still_an_error() {
-    let (mut app, mut state) = app_with_model("gpt-4o");
-    let stream = stream_with(vec![StreamMsg::Done(Err("connection refused".into()))]);
-    stream.cancel.cancel();
-    app.request.stream = Some(stream);
-    assert!(app.drain_stream(&mut state), "the turn finished");
-    let last = app
-        .transcript
-        .blocks()
-        .last()
-        .expect("the failure was pushed");
-    assert_eq!(
-        last.kind,
-        BlockKind::Error,
-        "a real failure during a stop is still a failure, not a clean stop"
-    );
-    assert!(
-        last.text.contains("connection refused"),
-        "and it still names what went wrong: {}",
-        last.text
     );
 }

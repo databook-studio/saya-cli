@@ -5,6 +5,7 @@
 //! `drain`. Sibling test files exercise the drain seam.
 
 mod drain;
+mod settle;
 mod start;
 
 // Re-exported so the `#[path]` sibling test modules (which resolve `super::`
@@ -38,12 +39,16 @@ mod footer_tests;
 #[cfg(test)]
 #[path = "guard_tests.rs"]
 mod guard_tests;
+
 #[cfg(test)]
 #[path = "numerator_tests.rs"]
 mod numerator_tests;
 #[cfg(test)]
 #[path = "reset_tests.rs"]
 mod reset_tests;
+#[cfg(test)]
+#[path = "stop_tests.rs"]
+mod stop_tests;
 #[cfg(test)]
 #[path = "warn_absence_tests.rs"]
 mod warn_absence_tests;
