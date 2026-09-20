@@ -41,6 +41,13 @@ pub(super) fn unlabelled_glyph(kind: BlockKind) -> Option<&'static str> {
     }
 }
 
+/// The draft wording for a streaming answer's label row: `SAYA (draft)` — a
+/// plain word, never a spinner or animation. It says what the block is (the
+/// answer, still arriving) without claiming progress, a percentage, or a
+/// motive; it vanishes on `Done` because it is read from `request.stream` at
+/// paint time, and it never touches `block.text` so copy is unaffected.
+pub(super) const DRAFT_LABEL: &str = "SAYA (draft)";
+
 /// Renders the visible, soft-wrapped transcript lines — a label word at the
 /// left margin introducing each turn, body rows indented beneath it — with
 /// per-kind styling, plus a scrollbar when the content overflows.
@@ -60,9 +67,26 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // the left margin, a body row paints indented by 2 spaces, and an empty
     // row stays blank. The 2-space indent keeps the 2-column rail reserve,
     // so the wrap width and the scroll clamp are unchanged.
-    for row in app.transcript.wide_view(width, height, &app.wide_table) {
+    for (i, row) in app
+        .transcript
+        .wide_view(width, height, &app.wide_table)
+        .into_iter()
+        .enumerate()
+    {
         if row.is_label {
-            lines.push(Line::from(Span::styled(row.text, label_style())));
+            // An assistant label in the live chapter while the request still
+            // streams is a draft: read at paint time from the live state, so
+            // `Done` clears it with no extra plumbing and `block.text` —
+            // what copy sees — is untouched.
+            let draft = row.kind == BlockKind::Assistant
+                && app.request.stream.is_some()
+                && is_live_assistant_label(&app.transcript, row.text.as_str(), i, width);
+            let text = if draft {
+                DRAFT_LABEL
+            } else {
+                row.text.as_str()
+            };
+            lines.push(Line::from(Span::styled(text.to_string(), label_style())));
             continue;
         }
         let kind = row.kind;
@@ -109,6 +133,51 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
             &mut state,
         );
     }
+}
+
+/// Whether the label row painted at `painted_idx` is the live chapter's
+/// assistant label — the only one that may read as a draft. The painted rows
+/// carry no chapter, so count back from the window: the live chapter opens at
+/// the last `YOU` row across the whole transcript, and only an assistant
+/// label after it is the live answer. Earlier chapters — resumed or folded —
+/// keep exactly today's `SAYA`.
+fn is_live_assistant_label(
+    transcript: &crate::interactive::tui::transcript::Transcript,
+    text: &str,
+    painted_idx: usize,
+    width: usize,
+) -> bool {
+    use crate::interactive::tui::transcript::rows::label;
+    if text != label(BlockKind::Assistant).unwrap_or("SAYA") {
+        return false;
+    }
+    live_assistant_idx(transcript, width).is_some_and(|live| {
+        let (_, first_visible) = transcript.scroll_metrics(width, usize::MAX);
+        live == first_visible.saturating_add(painted_idx)
+    })
+}
+
+/// The full-transcript index of the live chapter's assistant label, if the
+/// live chapter has one on screen: the last assistant label after the last
+/// user label. `None` with no user turn yet (welcome text, resumed prose) or
+/// when the live chapter has streamed no answer text so far.
+fn live_assistant_idx(
+    transcript: &crate::interactive::tui::transcript::Transcript,
+    width: usize,
+) -> Option<usize> {
+    use crate::interactive::tui::transcript::BlockKind;
+    let full = transcript.wrapped(width);
+    let open = full
+        .iter()
+        .rposition(|r| r.is_label && r.kind == BlockKind::User)?;
+    full.iter()
+        .rposition(|r| r.is_label && r.kind == BlockKind::Assistant)
+        .filter(|&idx| {
+            open < idx
+                && !full[idx + 1..]
+                    .iter()
+                    .any(|r| r.is_label && r.kind == BlockKind::User)
+        })
 }
 
 /// Draws a centered splash/empty state shown before the first conversation turn.

@@ -205,6 +205,27 @@ impl Transcript {
         let start = rem - self.scroll_up.min(rem);
         out[start..start + height].to_vec()
     }
+
+    /// The newest open pending tool call's facts for the status bar: the one
+    /// place "what is running" is already recorded, so the bar reads it here
+    /// instead of keeping a second copy beside `RequestState::activity`.
+    /// `None` when nothing is open — the bar falls back to the bare tool
+    /// name, and the transcript buffer itself is untouched.
+    pub(crate) fn newest_open_tool(&self) -> Option<(&str, &serde_json::Value)> {
+        self.pending_tools
+            .iter()
+            .rev()
+            .find(|call| call.open)
+            .map(|call| (call.name.as_str(), &call.arguments))
+    }
+
+    /// Debug seam: how many tool calls are still open. The status-bar test
+    /// asserts through this that the fixture really holds an open call, so a
+    /// green assertion cannot hide an empty buffer.
+    #[cfg(test)]
+    pub(crate) fn open_tool_count(&self) -> usize {
+        self.pending_tools.iter().filter(|call| call.open).count()
+    }
 }
 
 #[cfg(test)]

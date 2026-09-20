@@ -115,6 +115,17 @@ fn request_lines(name: &str, arguments: &serde_json::Value) -> Vec<String> {
     ]
 }
 
+/// The shared `tool_call_detail` fact, reachable from the status bar: the
+/// bar reads the same words the transcript lines render, so the two cannot
+/// drift. A seam rather than a direct call because `agent::tools` is private
+/// to the crate root and invisible from `tui::ui`.
+pub(crate) fn tool_call_detail_for_test(
+    name: &str,
+    arguments: &serde_json::Value,
+) -> Option<String> {
+    crate::agent::tools::tool_call_detail(name, arguments)
+}
+
 fn apply_boundary_event(transcript: &mut Transcript, event: AgentEvent, show_thinking: bool) {
     match event {
         AgentEvent::AssistantText { text } => {
