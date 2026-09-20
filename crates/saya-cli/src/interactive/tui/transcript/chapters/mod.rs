@@ -11,11 +11,11 @@
 //! integer every read site can compare and group by without unwrapping,
 //! sorting before all real chapters.
 //!
-//! [`Block`]: super::blocks::Block
+//! [`Block`]: super::Block
 //! [`BlockKind::User`]: super::BlockKind::User
 
-use super::rows::{Row, WrappedLines, label, wrap_word_aware};
-use super::{BlockKind, blocks::Block};
+use super::view::rows::{Row, WrappedLines, label, wrap_word_aware};
+use super::{Block, BlockKind, Transcript};
 
 /// Chapter of blocks pushed before any request: no `User` block yet, so no
 /// chapter has begun. Plain `0` (not `Option`) so read sites compare and
@@ -169,7 +169,7 @@ fn request_line(text: &str) -> String {
 /// The set holds folded finished chapters; `clear()` empties it with the
 /// blocks, and a chapter whose opener evicted can never render folded
 /// (`folded_row` re-checks `foldable`), so stale ids unfold themselves.
-impl super::Transcript {
+impl Transcript {
     /// Whether `chapter` currently renders as one folded row.
     pub(crate) fn is_folded(&self, chapter: u32) -> bool {
         self.folded.contains(&chapter)

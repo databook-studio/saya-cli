@@ -2,7 +2,7 @@
 //! metric derives from. A label row (`YOU`, `SAYA`, …) opens a block; body
 //! rows carry the wrapped content.
 
-use super::BlockKind;
+use super::super::BlockKind;
 
 /// Maps a [`BlockKind`] to its headline label, if it has one.
 ///
