@@ -1,5 +1,5 @@
 ---
-source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
+source: crates/saya-cli/src/interactive/tui/ui_snapshot_output_scope.rs
 expression: buffer
 ---
 "saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
