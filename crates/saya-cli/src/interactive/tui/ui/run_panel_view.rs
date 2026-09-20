@@ -5,13 +5,13 @@
 //! Every status word is the shared shaper's output (`run_event_text`), so the
 //! panel, the headless wire, and `saya run log` cannot drift; this module
 //! only lays lines out. The episode's transcript lines render the same way
-//! the conversation's blocks do — kind glyph and kind style from the same
-//! theme — but from the panel's own transcript, never the session's.
+//! the conversation's blocks do — the shared label word and kind style from
+//! the same theme — but from the panel's own transcript, never the session's.
 
 use super::panels::SPINNER;
-use super::theme::{accent, danger, kind_style, rail_style, secondary, success, warning};
+use super::theme::{accent, danger, kind_style, label_style, secondary, success, warning};
 use crate::interactive::tui::run_panel::{RunPanel, RunStep, RunStepStatus};
-use crate::interactive::tui::transcript::BlockKind;
+use crate::interactive::tui::transcript::rows;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -107,22 +107,23 @@ pub(super) fn draw_run_panel(
     lines.push(Line::from(""));
     lines.push(status_line(panel, phase));
     let episode_rows = inner.height.saturating_sub(lines.len() as u16).max(1) as usize;
-    // Same contract as `draw_transcript`: the tail view windows over all rows
-    // (label rows consume slots) and label rows elide at paint time.
+    // Same contract as `draw_transcript`: every row paints — a label row
+    // paints the shared word at the left margin, a body row paints indented
+    // by 2 spaces, and an empty row stays blank.
     for row in panel.episode.view(inner_width, episode_rows) {
         if row.is_label {
+            debug_assert_eq!(Some(row.text.as_str()), rows::label(row.kind));
+            lines.push(Line::from(Span::styled(row.text, label_style())));
             continue;
         }
-        let kind = row.kind;
-        let text = row.text;
-        if text.is_empty() {
+        if row.text.is_empty() {
             lines.push(Line::from(""));
             continue;
         }
-        lines.push(Line::from(vec![
-            Span::styled(glyph(kind), rail_style(kind)),
-            Span::styled(text, kind_style(kind)),
-        ]));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", row.text),
+            kind_style(row.kind),
+        )));
     }
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
@@ -184,18 +185,5 @@ fn style_of(panel: &RunPanel) -> Style {
         Style::default().fg(success())
     } else {
         Style::default().fg(accent())
-    }
-}
-
-/// The episode block's rail glyph — the same glyphs the conversation's
-/// transcript renders, so an episode reads like any other stream.
-fn glyph(kind: BlockKind) -> &'static str {
-    match kind {
-        BlockKind::User => "❯ ",
-        BlockKind::Assistant => "◆ ",
-        BlockKind::Tool | BlockKind::Table => "▸ ",
-        BlockKind::Error => "✗ ",
-        BlockKind::System => "· ",
-        BlockKind::Thinking => "≈ ",
     }
 }

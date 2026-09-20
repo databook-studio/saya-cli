@@ -4,7 +4,7 @@ use super::markdown::markdown_spans_fenced;
 use super::splash::{
     NO_DATABASE_FOOTER, NO_DATABASE_HEADLINE, NO_DATABASE_STEPS, NO_WORKSPACE_LINES, splash_art,
 };
-use super::theme::{accent, kind_style, rail_style, secondary, warning};
+use super::theme::{accent, kind_style, label_style, secondary, warning};
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
 use ratatui::{
@@ -18,8 +18,9 @@ use ratatui::{
 /// Spinner frames shown while an agent request is streaming.
 pub(super) const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Renders the visible, soft-wrapped transcript lines with a left role rail
-/// and per-kind styling, plus a scrollbar when the content overflows.
+/// Renders the visible, soft-wrapped transcript lines — a label word at the
+/// left margin introducing each turn, body rows indented beneath it — with
+/// per-kind styling, plus a scrollbar when the content overflows.
 pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // Reserve two columns on the left for the role rail; wrap text to the rest.
     let text_width = area.width.saturating_sub(2);
@@ -32,13 +33,13 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // ``` fence state persists across the consecutive lines of one assistant
     // block; any other role ends it.
     let mut fence = false;
-    // Packet 2B-2: label rows live in the metrics (`lines()`) but are not
-    // painted yet (2B-3 does the painting). The tail view still windows over
-    // all rows — label rows consume window slots — so the painted frame is
-    // the tail of the measured content with label rows elided, and the
-    // scrollbar/viewport clamp stay derived from the measured total.
+    // Every row `wide_view` returns paints: a label row paints its word at
+    // the left margin, a body row paints indented by 2 spaces, and an empty
+    // row stays blank. The 2-space indent keeps the 2-column rail reserve,
+    // so the wrap width and the scroll clamp are unchanged.
     for row in app.transcript.wide_view(width, height, &app.wide_table) {
         if row.is_label {
+            lines.push(Line::from(Span::styled(row.text, label_style())));
             continue;
         }
         let kind = row.kind;
@@ -47,25 +48,20 @@ pub(super) fn draw_transcript(frame: &mut Frame<'_>, app: &App, area: Rect) {
             lines.push(Line::from(""));
             continue;
         }
-        // Shape differs per role so state survives without colour.
-        let glyph = match kind {
-            BlockKind::User => "❯ ",
-            BlockKind::Assistant => "◆ ",
-            BlockKind::Tool => "▸ ",
-            BlockKind::Table => "▸ ",
-            BlockKind::Error => "✗ ",
-            BlockKind::System => "· ",
-            BlockKind::Thinking => "≈ ",
-        };
-        let rail = Span::styled(glyph, rail_style(kind));
-        let mut spans = vec![rail];
         if kind == BlockKind::Assistant {
+            // The body indents beneath its label; markdown still keys off
+            // the text (headings, bullets, fences) and the indent paints as
+            // a plain prefix ahead of the shaped spans.
+            let mut spans = vec![Span::raw("  ")];
             spans.extend(markdown_spans_fenced(&text, &mut fence));
-        } else {
-            fence = false;
-            spans.push(Span::styled(text, kind_style(kind)));
+            lines.push(Line::from(spans));
+            continue;
         }
-        lines.push(Line::from(spans));
+        fence = false;
+        lines.push(Line::from(Span::styled(
+            format!("  {text}"),
+            kind_style(kind),
+        )));
     }
     frame.render_widget(Paragraph::new(Text::from(lines)), area);
 

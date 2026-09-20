@@ -418,15 +418,13 @@ impl Transcript {
             {
                 // Spacers (`push_spacer`'s `(System, "")`) stay visible but
                 // bare: one empty body row, no label row — a label above every
-                // blank line would be noise, and `draw_transcript` skips the
-                // rail for empty text already.
+                // blank line would be noise, and empty rows paint blank.
                 lines.push(Row::body(block.kind, String::new()));
                 continue;
             }
             // One label row per non-empty block, ahead of its body rows — so
             // every scroll/find metric derived from `lines()` counts the row
-            // `draw_transcript` now skips, keeping "one entry per painted row"
-            // true while rendering stays byte-identical.
+            // that paints, keeping "one entry per painted row" true.
             let mut labelled_yet = false;
             let mut emit_body = |raw: &str, lines: &mut WrappedLines| {
                 if raw.is_empty() {
@@ -485,13 +483,12 @@ impl Transcript {
         if height == 0 {
             return Vec::new();
         }
-        // Same contract as `wide_view`: the tail view windows over the
-        // painted rows only (label rows elided), so the painted frame is
-        // byte-identical while `total_lines` still counts every row.
+        // Every row `lines()` produces is a row that paints — label rows
+        // included — so the tail view windows over all rows and
+        // `total_lines` equals the painted row count again.
         let painted: WrappedLines = self
             .lines(width)
             .iter()
-            .filter(|row| !row.is_label)
             .map(|row| Row {
                 kind: row.kind,
                 text: row.text.clone(),
@@ -535,15 +532,35 @@ impl Transcript {
                     .iter()
                     .map(|row| row.text.clone())
                     .collect::<Vec<_>>();
-                for (idx, line) in super::table::clip_table_block(&run, wv, width)
-                    .into_iter()
-                    .enumerate()
-                {
+                // A run of exactly one line is the lone label row (a
+                // non-empty table block is label + grid lines): it passes
+                // through untouched, never through the grid clipper.
+                if run.len() == 1 && src[run_start].is_label {
                     full.push(Row {
                         kind: BlockKind::Table,
-                        text: line,
-                        is_label: src[run_start + idx].is_label,
+                        text: run[0].clone(),
+                        is_label: true,
                     });
+                    continue;
+                }
+                // The run opens with the label row, ahead of the grid lines
+                // the clipper expects — clip the grid, keep the label
+                // verbatim, and the line count is unchanged.
+                let (label, grid) = match src[run_start].is_label {
+                    true => (Some(&src[run_start]), &run[1..]),
+                    false => (None, &run[..]),
+                };
+                let clipped = super::table::clip_table_block(grid, wv, width);
+                debug_assert_eq!(clipped.len(), grid.len());
+                if let Some(label) = label {
+                    full.push(Row {
+                        kind: BlockKind::Table,
+                        text: label.text.clone(),
+                        is_label: true,
+                    });
+                }
+                for line in clipped {
+                    full.push(Row::body(BlockKind::Table, line));
                 }
             } else {
                 full.push(Row {
@@ -554,11 +571,10 @@ impl Transcript {
                 i += 1;
             }
         }
-        // Packet 2B-2: label rows live in the scroll/find metrics but are not
-        // painted yet (2B-3 does the painting). The tail view windows over the
-        // painted rows only, so the painted frame is byte-identical to before
-        // this packet while the measured total still counts every row.
-        let out: WrappedLines = full.into_iter().filter(|row| !row.is_label).collect();
+        // Every row `lines()` produces is a row that paints — label rows
+        // included — so the tail view windows over the full rows and
+        // `total_lines` equals the painted row count again.
+        let out: WrappedLines = full;
         if height == 0 {
             return Vec::new();
         }
@@ -730,7 +746,7 @@ mod tests {
         t.scroll_up(1, 10, 3);
         assert_eq!(texts(t.view(10, 3)), ["l2", "l3", "l4"]);
         t.scroll_up(100, 10, 3);
-        assert_eq!(texts(t.view(10, 3)), ["l1", "l2", "l3"]);
+        assert_eq!(texts(t.view(10, 3)), ["YOU", "l1", "l2"]);
         t.scroll_down(1);
         assert_eq!(t.view(10, 3)[0].text, "l1");
         t.scroll_down(10);
