@@ -216,6 +216,17 @@ impl App {
             return;
         }
         self.push_spacer();
+        // Auto-fold the chapter that just finished, before the new `User`
+        // block opens the next one — the only automatic fold in the app
+        // (never on a timer, scroll, completion, or resume). Guarded: only
+        // while following the tail, never with a pending approval (an
+        // unresolved decision whose context folding could hide), and only the
+        // previous chapter via insert-only semantics (a chapter the user
+        // reopened stays open). The busy path above returns early, so a queued
+        // prompt — no new chapter — folds nothing.
+        if self.request.pending_approval.is_none() {
+            self.transcript.auto_fold_finished_chapter();
+        }
         self.transcript.push(BlockKind::User, line.clone());
         self.transcript.scroll_to_bottom();
         self.pending = Some(line);

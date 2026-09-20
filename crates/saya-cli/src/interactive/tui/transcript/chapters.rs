@@ -198,8 +198,47 @@ impl super::Transcript {
         let next = latest_foldable(&self.blocks);
         next.is_some_and(|chapter| self.toggle_chapter(chapter))
     }
+
+    /// Folds the chapter that just finished at the live edge, for a new
+    /// request starting. Inserts only — never toggles, never unfolds — so a
+    /// chapter the user deliberately reopened stays open. Guards: fold only
+    /// while following the tail (no text-selection state exists, so scrolled
+    /// away is the honest proxy for "reading something that folding would
+    /// hide"), and only over a real chapter with its request intact — never
+    /// `PRE_CHAPTER`, never an already-folded chapter.
+    ///
+    /// A material caveat is NOT guarded: no block, field, or type marks a
+    /// caveat anywhere, and no heuristic sniffs text for warning words — a
+    /// guard that claimed to cover caveats would be a lie. Only the live-edge
+    /// caller (`App::submit`, idle path) may call this: folding on a timer,
+    /// on scroll, on completion, or on session resume is out.
+    pub(crate) fn auto_fold_finished_chapter(&mut self) -> bool {
+        if !self.is_following_tail() {
+            return false;
+        }
+        // Fold the chapter the new request finishes — the live chapter now,
+        // the previous one once the `User` block lands. `foldable` answers
+        // over the pre-push numbering, so check the request survives here and
+        // insert this same id after `push`: an already-folded chapter is left
+        // alone (insert-only, never toggle), and a chapter the user reopened
+        // stays open.
+        let chapter = current_chapter(&self.blocks);
+        if chapter == PRE_CHAPTER
+            || self.is_folded(chapter)
+            || chapter_request(&self.blocks, chapter).is_none()
+        {
+            return false;
+        }
+        self.folded.insert(chapter);
+        self.invalidate_cache();
+        true
+    }
 }
 
 #[cfg(test)]
 #[path = "chapters_tests.rs"]
 mod chapter_tests;
+
+#[cfg(test)]
+#[path = "autofold_tests.rs"]
+mod autofold_tests;
