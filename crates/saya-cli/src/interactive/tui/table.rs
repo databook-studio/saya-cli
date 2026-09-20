@@ -1,6 +1,9 @@
 mod box_render;
 mod markdown;
 mod query;
+pub(crate) mod scope;
+#[cfg(test)]
+mod scope_unit_tests;
 mod shared;
 #[cfg(test)]
 mod tests;
@@ -10,6 +13,7 @@ use saya_types::QueryResult;
 
 pub(crate) use markdown::format_markdown_tables;
 pub(crate) use query::format_table;
+pub(crate) use scope::with_scope_line;
 pub(crate) use wide::{clip_table_block, column_names};
 
 /// One shared row-count footer: `{n} row(s)`, with ` (truncated)` when the
