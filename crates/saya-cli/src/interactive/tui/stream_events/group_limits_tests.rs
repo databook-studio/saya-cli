@@ -39,8 +39,9 @@ fn two_write_calls() -> Vec<AgentEvent> {
 }
 
 /// C3 property 5: a group with a failure is not collapsible into a count —
-/// the failure's full pair renders as it does today: today's `→` / `✓`
-/// lines, never the piped text's `Using tool:` rendering.
+/// the failure's full pair renders with the shared mark (`✗` for the
+/// failed call, `✓` for the success), never the piped text's `Using tool:`
+/// rendering.
 #[test]
 fn group_with_a_failure_renders_the_full_pair() {
     let events = vec![
@@ -92,9 +93,9 @@ fn group_with_a_failure_renders_the_full_pair() {
             "→ workspace_write: notes.md",
             "✓ workspace_write: notes.md written",
             "→ run_command: pytest",
-            "✓ run_command: failed pytest",
+            "✗ run_command: failed pytest",
         ],
-        "the failure's full pair renders as today, successes uncollapsed"
+        "the failure's full pair renders with ✗ on the failed call, successes uncollapsed"
     );
     assert!(
         transcript.blocks().iter().all(|b| !b.is_collapsible()),

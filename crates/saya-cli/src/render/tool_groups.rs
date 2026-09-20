@@ -33,6 +33,20 @@ pub(crate) fn is_failure_summary(summary: &str) -> bool {
     summary.contains("failed")
 }
 
+/// The live per-call completion line both TUI render sites mirror onto the
+/// tail: `✓` for a completion that succeeded, `✗` for one that failed.
+/// Keys on [`is_failure_summary`], never a second definition, so the live
+/// tail and the flushed group detail cannot drift — and so a future change
+/// to the failure predicate moves both marks together.
+pub(crate) fn live_completion_line(name: &str, summary: &str) -> String {
+    let mark = if is_failure_summary(summary) {
+        "✗"
+    } else {
+        "✓"
+    };
+    format!("{mark} {name}: {summary}")
+}
+
 /// A nonzero host exit as reported on the piped surface: an `Ok` outcome
 /// whose completion summary reads `<program> exited <nonzero>` — no
 /// "failed" substring, so `is_failure_summary` (and `tool_metadata.status`,

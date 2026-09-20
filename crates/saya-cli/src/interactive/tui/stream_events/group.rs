@@ -22,7 +22,8 @@ pub(crate) fn is_group_member(event: &AgentEvent) -> bool {
 /// `TurnReset` discards the buffer: it retries the turn, never completes a run.
 ///
 /// Returns a stray completion that arrived with no open request: it renders as
-/// today's `✓` line and stays out of the buffer, so it can never join a group.
+/// the shared completion line (`✓` for success, `✗` for failure) and stays
+/// out of the buffer, so it can never join a group.
 pub(crate) fn buffer_tool_event(
     transcript: &mut Transcript,
     event: AgentEvent,
@@ -41,8 +42,11 @@ pub(crate) fn buffer_tool_event(
                 None
             } else {
                 // Stray completion: no open request to pair it with. Render
-                // today's line and keep it out of the group.
-                transcript.push(BlockKind::Tool, format!("✓ {name}: {summary}"));
+                // the shared line and keep it out of the group.
+                transcript.push(
+                    BlockKind::Tool,
+                    crate::render::tool_groups::live_completion_line(&name, &summary),
+                );
                 None
             }
         }
@@ -54,9 +58,10 @@ pub(crate) fn buffer_tool_event(
 /// for a multi-call group, today's verbatim lines for a single call or a
 /// group with a failure.
 pub(crate) fn flush_tool_buffer(transcript: &mut Transcript) {
-    transcript.flush_tool_buffer(request_lines, |name, summary| {
-        format!("✓ {name}: {summary}")
-    });
+    transcript.flush_tool_buffer(
+        request_lines,
+        crate::render::tool_groups::live_completion_line,
+    );
 }
 
 /// Today's verbatim request rendering, one block per line: the SQL block or
@@ -120,7 +125,10 @@ pub(crate) fn apply_tool_edge(transcript: &mut Transcript, event: AgentEvent) ->
             true
         }
         AgentEvent::ToolCompleted { name, summary } => {
-            transcript.push(BlockKind::Tool, format!("✓ {name}: {summary}"));
+            transcript.push(
+                BlockKind::Tool,
+                crate::render::tool_groups::live_completion_line(&name, &summary),
+            );
             true
         }
         AgentEvent::ToolDenied { name, reason } => {

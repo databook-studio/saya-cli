@@ -7,15 +7,14 @@ impl Transcript {
     /// A run folds only when it is a multi-call all-ok group: two or more
     /// completed calls, every summary success-shaped. A single call renders as
     /// today; a group with a failure keeps the failure's full pair live. The
-    /// failure half mirrors the grouper's contract directly instead of
-    /// calling into it: the transcript owns no `AgentEvent`s, only names and
-    /// summaries, so it re-checks the displayed summary text. The day the
-    /// contract changes, both must move together.
+    /// failure half uses the grouper's own predicate on the displayed summary
+    /// text (the transcript owns no `AgentEvent`s): the day the contract
+    /// changes, both must move together.
     fn folds_run(completed: &[(String, serde_json::Value, Option<ToolEffect>, String)]) -> bool {
         completed.len() >= 2
             && completed
                 .iter()
-                .all(|(_, _, _, summary)| !summary.contains("failed"))
+                .all(|(_, _, _, summary)| !crate::render::tool_groups::is_failure_summary(summary))
     }
 
     /// Buffers a tool request: mirrors today's per-call line onto the tail so
@@ -49,8 +48,9 @@ impl Transcript {
         self.invalidate_cache();
     }
 
-    /// Pairs a completion with its open request: mirrors today's `✓` line onto
-    /// the tail. Returns false when no request is open — a stray completion
+    /// Pairs a completion with its open request: mirrors the shared
+    /// completion line onto the tail (`✓` for success, `✗` for failure).
+    /// Returns false when no request is open — a stray completion
     /// the caller renders directly, outside any group.
     pub(crate) fn buffer_tool_completion(&mut self, name: &str, summary: &str) -> bool {
         // Oldest open call of this name, not newest. The loop emits every
@@ -73,7 +73,7 @@ impl Transcript {
         let before = self.blocks.len();
         self.blocks.push(Block {
             kind: BlockKind::Tool,
-            text: format!("✓ {name}: {summary}"),
+            text: crate::render::tool_groups::live_completion_line(name, summary),
             chapter,
             group: None,
         });
