@@ -83,6 +83,9 @@ pub(crate) struct Transcript {
     blocks: Vec<Block>,
     scroll_up: usize,
     cache: WrapCache,
+    /// Folded finished chapters: pure view state, like `Block.group` — never
+    /// persisted, never replayed, emptied by `clear()` with the blocks.
+    folded: std::collections::BTreeSet<u32>,
     /// Tool events buffered behind the shared grouper: the open run of
     /// `ToolRequested`/`ToolCompleted` pairs not yet closed by a boundary
     /// event. While the run is open its per-call lines also render live on
@@ -191,6 +194,7 @@ impl Transcript {
 
     pub(crate) fn clear(&mut self) {
         self.blocks.clear();
+        self.folded.clear();
         self.scroll_up = 0;
         self.invalidate_cache();
     }
@@ -421,7 +425,25 @@ impl Transcript {
             return Rc::clone(lines);
         }
         let mut lines = Vec::new();
-        for block in &self.blocks {
+        let mut skip_until = 0;
+        for (i, block) in self.blocks.iter().enumerate() {
+            // A folded chapter paints one summary row for its whole range:
+            // the opener's block emits it, every later block skips. The row
+            // re-checks `foldable` (so an evicted opener or a chapter that
+            // became live again unfolds itself) and counts as one row, like
+            // a collapsed tool group.
+            if i < skip_until {
+                continue;
+            }
+            if let Some((start, end)) = chapters::chapter_range(&self.blocks, block.chapter)
+                && start == i
+                && self.is_folded(block.chapter)
+                && let Some(row) = chapters::folded_row(&self.blocks, block.chapter, eff)
+            {
+                lines.push(row);
+                skip_until = end;
+                continue;
+            }
             if block.text.is_empty()
                 && block
                     .group

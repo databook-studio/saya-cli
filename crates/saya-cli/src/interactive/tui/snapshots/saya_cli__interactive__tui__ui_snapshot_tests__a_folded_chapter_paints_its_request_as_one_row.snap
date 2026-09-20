@@ -1,0 +1,28 @@
+---
+source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
+expression: folded
+---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
+"  YOU  count the red orders ▸ 3 lines                                           "
+"YOU                                                                             "
+"  and the blue ones                                                             "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+" [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:o"
+"╭ saya ────────────────────────────────────────────────────────────────────────╮"
+"│Ask about your data, or type / for commands                                   │"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"
