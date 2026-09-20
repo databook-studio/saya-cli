@@ -1,6 +1,8 @@
 //! Rendering for the TUI: transcript, status bar, input box, and overlays.
 //! Kept separate from the event loop so styling can evolve on its own.
 
+mod context_line;
+use context_line::draw_context_line;
 mod input_box;
 mod markdown;
 mod overlays;
@@ -60,6 +62,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(1),               // context line (row 0)
             Constraint::Min(1),                  // transcript
             Constraint::Length(run_panel_h),     // run panel (0 when none)
             Constraint::Length(1),               // status bar
@@ -70,43 +73,44 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
         ])
         .split(frame.area());
 
+    draw_context_line(frame, status, chunks[0]);
     let has_turns = app
         .transcript
         .blocks()
         .iter()
         .any(|b| matches!(b.kind, BlockKind::User | BlockKind::Assistant));
     if has_turns {
-        draw_transcript(frame, app, chunks[0]);
+        draw_transcript(frame, app, chunks[1]);
     } else {
         // The empty state names the unbound workspace when the status bar's
         // view carries no root: `None` renders the no-root shape beside the
         // no-database guidance, never instead of it.
-        draw_empty_state(frame, app, chunks[0], Some(status.workspace_root.is_some()));
+        draw_empty_state(frame, app, chunks[1], Some(status.workspace_root.is_some()));
     }
     if run_panel_h > 0 {
-        draw_run_panel(frame, app, chunks[1]);
+        draw_run_panel(frame, app, chunks[2]);
     }
-    draw_status(frame, app, status, chunks[2]);
+    draw_status(frame, app, status, chunks[3]);
     if let Some(pending) = &app.request.pending_approval {
         draw_approval(
             frame,
             &pending.tool,
             pending.detail.as_deref(),
             pending.grant.as_deref(),
-            chunks[3],
+            chunks[4],
         );
     }
     if let Some(panel) = &app.run_panel
         && panel.plan_approval.is_some()
     {
-        draw_plan_approval(frame, panel, chunks[4]);
+        draw_plan_approval(frame, panel, chunks[5]);
     }
     if let Some(prompt) = &app.overlays.trust {
-        draw_trust_modal(frame, prompt, chunks[5]);
+        draw_trust_modal(frame, prompt, chunks[6]);
     }
-    draw_input(frame, app, chunks[6]);
+    draw_input(frame, app, chunks[7]);
     if let Some(menu) = &app.overlays.menu {
-        draw_menu(frame, menu, chunks[6]);
+        draw_menu(frame, menu, chunks[7]);
     }
     if app.overlays.search.is_some() {
         draw_search(frame, app, frame.area());

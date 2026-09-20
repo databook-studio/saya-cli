@@ -1,11 +1,10 @@
 ---
 source: crates/saya-cli/src/interactive/tui/run_panel_snapshot_tests.rs
-assertion_line: 174
 expression: buffer
 ---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on                             "
 "❯ count the orders                                                                                  "
 "◆ The orders table holds 128 rows in catalog.public.orders.                                         "
-"                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "

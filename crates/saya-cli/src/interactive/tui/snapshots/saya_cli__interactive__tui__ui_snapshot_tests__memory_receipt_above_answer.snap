@@ -1,8 +1,8 @@
 ---
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
-assertion_line: 308
 expression: buffer
 ---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
 "· memory supplied · 2 claims (1 unconfirmed — review with /queue)               "
 "·   catalog.public.orders  [current]  (profile: analytics)                      "
 "·     ki-abc…  table_alias  orders  confirmed                                   "
@@ -10,7 +10,6 @@ expression: buffer
 "· (unconfirmed)                                                                 "
 "                                                                                "
 "◆ The orders table uses created_at as its time column.                          "
-"                                                                                "
 "                                                                                "
 "                                                                                "
 "                                                                                "
