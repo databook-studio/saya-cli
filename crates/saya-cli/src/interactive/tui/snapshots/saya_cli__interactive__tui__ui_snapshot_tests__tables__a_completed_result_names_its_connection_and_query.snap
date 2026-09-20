@@ -1,0 +1,28 @@
+---
+source: crates/saya-cli/src/interactive/tui/ui_snapshot_tables.rs
+expression: buffer
+---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
+"YOU                                                                             "
+"  /sql SELECT * FROM orders                                                     "
+"RESULT                                                                          "
+"  ┌────┬───────┬───────────┬────────┬─────────┬──────┬────────┬─────────┤       "
+"  │ id │ name  │ status    │ region │ country │ city │ postal │ carrier │       "
+"  ├────┼───────┼───────────┼────────┼─────────┼──────┼────────┼─────────┼       "
+"  │  1 │ alice │ fulfilled │ north  │ CA      │ SF   │ 94105  │ UPS     │       "
+"  └────┴───────┴───────────┴────────┴─────────┴──────┴────────┴─────────┤       "
+"  1 row(s)                                                                      "
+"  from analytics · SELECT * FROM orders                                         "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+" [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:o"
+"╭ saya ────────────────────────────────────────────────────────────────────────╮"
+"│Ask about your data, or type / for commands                                   │"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

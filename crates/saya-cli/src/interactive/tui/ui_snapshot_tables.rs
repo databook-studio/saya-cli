@@ -91,6 +91,40 @@ fn copy_last_answer_does_not_grab_a_table_block() {
     assert_eq!(copied, "the answer is here");
 }
 
+/// A completed direct-SQL result carries its dispatch-time scope: the
+/// `Followup::Sql` connection frozen at dispatch plus the executed SQL,
+/// painted beneath the row-count footer on the composed screen.
+#[test]
+fn a_completed_result_names_its_connection_and_query() {
+    use super::super::sql_task::{Followup, SqlTask, complete};
+    use super::claims::wide_table_result;
+
+    let mut app = empty_app();
+    app.transcript
+        .push(BlockKind::User, "/sql SELECT * FROM orders");
+    let task = SqlTask {
+        profile: Some("analytics".into()),
+        sql: "SELECT * FROM orders".into(),
+        followup: Followup::Sql {
+            connection: Some("analytics".into()),
+        },
+    };
+    complete(
+        &task,
+        crate::render::TerminalEvent::QueryResult {
+            result: wide_table_result(),
+        },
+        &mut app.transcript,
+        &mut app.last_query,
+    );
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        buffer.contains("from analytics"),
+        "the composed screen names the captured connection:\n{buffer}"
+    );
+    insta::assert_snapshot!(buffer);
+}
+
 // --- Screen 3: long content at a real width (wrap + truncation). -------------
 
 /// A wide SQL block (a `WHERE` clause wider than the text area) and a long

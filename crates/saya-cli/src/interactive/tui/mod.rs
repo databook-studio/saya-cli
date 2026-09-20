@@ -31,6 +31,8 @@ mod run_panel_snapshot_tests;
 #[cfg(test)]
 mod run_panel_tests;
 mod run_worker;
+#[cfg(test)]
+mod scope_tests;
 pub(crate) mod session;
 mod session_save;
 mod sql_task;
