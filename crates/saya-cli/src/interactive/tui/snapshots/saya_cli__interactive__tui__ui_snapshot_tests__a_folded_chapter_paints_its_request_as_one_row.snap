@@ -3,7 +3,7 @@ source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
 expression: folded
 ---
 "saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
-"  count the red orders ▸ 3 lines                                                "
+"  YOU  count the red orders ▸ 3 lines                                           "
 "YOU                                                                             "
 "  and the blue ones                                                             "
 "                                                                                "

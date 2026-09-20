@@ -14,7 +14,7 @@
 //! [`Block`]: super::Block
 //! [`BlockKind::User`]: super::BlockKind::User
 
-use super::rows::{Row, WrappedLines, wrap_word_aware};
+use super::rows::{Row, WrappedLines, label, wrap_word_aware};
 use super::{Block, BlockKind};
 
 /// Chapter of blocks pushed before any request: no `User` block yet, so no
@@ -123,7 +123,15 @@ pub(crate) fn folded_row(blocks: &[Block], chapter: u32, width: usize) -> Option
         .map(|b| unfolded_row_count(b, eff))
         .sum();
     let marker = format!(" ▸ {} lines", shown.saturating_sub(1).max(1));
-    let room = eff.saturating_sub(marker.chars().count());
+    // The folded row still says whose turn it is. Without the role word it is
+    // a user request painted exactly like body prose, so after the preceding
+    // chapter it reads as that chapter's continuation — the misattribution
+    // Phase 2 fixed for `System` content. The word rides in the text rather
+    // than making this a label row, because find skips label rows and a
+    // folded request must stay findable.
+    let lead = label(BlockKind::User).unwrap_or("YOU");
+    let prefix = format!("{lead}  ");
+    let room = eff.saturating_sub(marker.chars().count() + prefix.chars().count());
     let mut text: String = request
         .chars()
         .take(room.saturating_sub(1).max(1))
@@ -132,7 +140,7 @@ pub(crate) fn folded_row(blocks: &[Block], chapter: u32, width: usize) -> Option
         text.push('…');
     }
     text.push_str(&marker);
-    Some(Row::body(BlockKind::User, text))
+    Some(Row::body(BlockKind::User, format!("{prefix}{text}")))
 }
 
 /// A block's body rows for one raw line: blank stays bare, tables stay one
