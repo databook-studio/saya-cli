@@ -5,6 +5,14 @@ use super::shared::clean_cell;
 /// (the same style as query results), leaving all other lines untouched. A table is only
 /// recognised when a header row `| a | b |` is immediately followed by a separator row whose
 /// cells are all dashes/colons (e.g. `|---|:--:|`) - so stray `|` in prose is never mangled.
+///
+/// Each rewritten table gains the shared row-count footer (`N row(s)`), naming
+/// the displayed rows so an assistant-pasted table never reads as complete-by-
+/// silence. A table the model itself marks as a capped prefix (a trailing
+/// `<!-- truncated -->` line, the contract the agent tools document for capped
+/// row samples) carries the shared ` (truncated)` marker instead; the marker
+/// line is consumed, never painted. Anything else — including a bare
+/// `<!-- truncated -->` with no table above it — passes through untouched.
 #[allow(dead_code)]
 pub(crate) fn format_markdown_tables(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
@@ -59,6 +67,10 @@ pub(crate) fn format_markdown_tables(text: &str) -> String {
 
                     let box_lines = render_box(&header, &data_rows, &numeric);
                     output.extend(box_lines);
+                    // A trailing marker line is the model's own "capped" flag;
+                    // consume it so it never paints as stray prose.
+                    let capped = consume_truncated_marker(&lines, &mut i);
+                    output.push(super::row_count_footer(data_rows.len(), capped));
                     continue;
                 }
                 _ => {}
@@ -111,4 +123,20 @@ fn is_separator_cell(cell: &str) -> bool {
         s = &s[..s.len() - 1];
     }
     !s.is_empty() && s.chars().all(|c| c == '-')
+}
+
+/// Consumes a trailing `<!-- truncated -->` marker line after a table (plus
+/// one optional blank line before it) and reports whether one was present.
+/// The marker is the model's own "capped prefix" flag; anything else —
+/// including prose that merely mentions truncation — is left alone.
+fn consume_truncated_marker(lines: &[&str], i: &mut usize) -> bool {
+    let mut j = *i;
+    if j < lines.len() && lines[j].trim().is_empty() {
+        j += 1;
+    }
+    if j < lines.len() && lines[j].trim() == "<!-- truncated -->" {
+        *i = j + 1;
+        return true;
+    }
+    false
 }

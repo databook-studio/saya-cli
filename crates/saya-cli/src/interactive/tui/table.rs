@@ -12,6 +12,17 @@ pub(crate) use markdown::format_markdown_tables;
 pub(crate) use query::format_table;
 pub(crate) use wide::{clip_table_block, column_names};
 
+/// One shared row-count footer: `{n} row(s)`, with ` (truncated)` when the
+/// rows shown are a capped prefix. Matches `query.rs`'s wording exactly —
+/// a floor, never a total — so every surface reuses one form.
+pub(crate) fn row_count_footer(row_count: usize, truncated: bool) -> String {
+    if truncated {
+        format!("{row_count} row(s) (truncated)")
+    } else {
+        format!("{row_count} row(s)")
+    }
+}
+
 /// Renders an EXPLAIN result as readable plan text WITHOUT the box-table's 40-char
 /// column cap. A single-column plan (PostgreSQL/DuckDB, one plan line per row) prints
 /// one line per row; a multi-column plan (MySQL) prints `column: value` lines per row,
@@ -22,7 +33,7 @@ pub(crate) fn format_plan(result: &QueryResult) -> String {
     }
 
     let col_count = result.columns.len();
-    if col_count <= 1 {
+    let body = if col_count <= 1 {
         let fetch_count = col_count.max(1);
         result
             .rows
@@ -52,6 +63,11 @@ pub(crate) fn format_plan(result: &QueryResult) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n\n")
+    };
+    if result.truncated {
+        format!("{body}\n{}", row_count_footer(result.rows.len(), true))
+    } else {
+        body
     }
 }
 

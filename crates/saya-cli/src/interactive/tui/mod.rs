@@ -38,6 +38,8 @@ mod stream_events;
 mod table;
 mod terminal;
 pub(crate) mod transcript;
+#[cfg(test)]
+mod truncation_tests;
 mod trust;
 pub(super) mod types;
 pub(crate) mod ui;

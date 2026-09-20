@@ -163,6 +163,9 @@ fn complete_chart(
         return;
     }
     let mut note = format!("Chart written to {}", path.display());
+    if result.truncated {
+        note.push_str(" (result was truncated)");
+    }
     match crate::chart::open_file(&path) {
         Ok(()) => note.push_str(" (opening in your browser)"),
         Err(e) => note.push_str(&format!(" — open it manually ({e})")),
