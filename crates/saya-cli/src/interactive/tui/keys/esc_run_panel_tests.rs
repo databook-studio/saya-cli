@@ -43,6 +43,35 @@ fn esc_closes_a_finished_panel() {
     assert!(app.run_panel.is_none(), "the finished panel closes");
 }
 
+/// Phase 5 packet 1: Esc while an agent stream runs asks for a stop — the
+/// transcript says "Stop requested" and must not claim the worker already
+/// confirmed ("Stopped.").
+#[test]
+fn esc_says_stop_requested_not_stopped() {
+    let (mut app, _cancel) = app_with_panel(false);
+    let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    app.request.stream = Some(crate::interactive::tui::agent::Stream {
+        rx,
+        cancel: CancellationToken::new(),
+        prompt: "a prompt".into(),
+    });
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    let texts: Vec<&str> = app
+        .transcript
+        .blocks()
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect();
+    assert!(
+        texts.iter().any(|text| text.contains("Stop requested")),
+        "Esc must say the stop was requested: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|text| text.contains("Stopped.")),
+        "requesting a stop must not claim the worker confirmed: {texts:?}"
+    );
+}
+
 /// An agent stream in the conversation cancels first: with both a stream
 /// and a finished panel on screen, Esc stops the stream and the panel
 /// stays. A run and an agent stream are separate workers, and Esc never
@@ -75,5 +104,8 @@ fn esc_cancels_the_agent_stream_before_touching_the_panel() {
         .blocks()
         .last()
         .expect("the stream cancel posts");
-    assert_eq!(last.text, "Cancelling…");
+    assert_eq!(
+        last.text,
+        "Stop requested — waiting for the worker to confirm."
+    );
 }

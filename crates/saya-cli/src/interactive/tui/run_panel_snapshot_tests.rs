@@ -199,3 +199,41 @@ fn a_failed_run_says_what_failed() {
     let buffer = render_buffer(&app, &fixed_status(), 100, 30);
     insta::assert_snapshot!(buffer);
 }
+
+/// Phase 5 packet 1: a stopped run says "Run stopped." — never the engine's
+/// "run cancelled" line — and reads as ended, not failed.
+#[test]
+fn a_stopped_run_says_run_stopped_not_run_cancelled() {
+    let mut p = panel(
+        "r-snap-stop",
+        "survey the data",
+        true,
+        "",
+        false,
+        Vec::new(),
+    );
+    p.cancelling = true;
+    let cancelling = render_buffer(&app_with_panel(p), &fixed_status(), 100, 30);
+    assert!(
+        cancelling.contains("Stop requested"),
+        "the local ack must say Stop requested:\n{cancelling}"
+    );
+    let mut stopped = panel(
+        "r-snap-stop",
+        "survey the data",
+        false,
+        "Run stopped.",
+        false,
+        Vec::new(),
+    );
+    stopped.cancelling = false;
+    let buffer = render_buffer(&app_with_panel(stopped), &fixed_status(), 100, 30);
+    assert!(
+        buffer.contains("Run stopped."),
+        "the confirmation must say Run stopped.:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("run cancelled"),
+        "the shared shaper's line must not reach the screen:\n{buffer}"
+    );
+}
