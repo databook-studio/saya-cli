@@ -262,3 +262,32 @@ fn stopping_never_claims_work_was_undone() {
         }
     }
 }
+
+/// The dangerous case the `&&` exists for: the user presses Esc, and while
+/// the stop is in flight the connection genuinely drops. Guarding on the
+/// fired token alone would swallow that failure into a reassuring
+/// "Stopped. Completed work is kept." — telling the user their work ended the
+/// way they asked when in fact it broke.
+#[test]
+fn a_failure_arriving_after_esc_is_still_an_error() {
+    let (mut app, mut state) = app_with_model("gpt-4o");
+    let stream = stream_with(vec![StreamMsg::Done(Err("connection refused".into()))]);
+    stream.cancel.cancel();
+    app.request.stream = Some(stream);
+    assert!(app.drain_stream(&mut state), "the turn finished");
+    let last = app
+        .transcript
+        .blocks()
+        .last()
+        .expect("the failure was pushed");
+    assert_eq!(
+        last.kind,
+        BlockKind::Error,
+        "a real failure during a stop is still a failure, not a clean stop"
+    );
+    assert!(
+        last.text.contains("connection refused"),
+        "and it still names what went wrong: {}",
+        last.text
+    );
+}
