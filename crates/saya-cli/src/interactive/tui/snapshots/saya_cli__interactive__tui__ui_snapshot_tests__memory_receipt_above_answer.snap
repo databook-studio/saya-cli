@@ -25,4 +25,4 @@ expression: buffer
 " [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:o"
 "╭ saya ────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                   │"
-"╰──────────────────────────────────────────────────────────────────────────────╯"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

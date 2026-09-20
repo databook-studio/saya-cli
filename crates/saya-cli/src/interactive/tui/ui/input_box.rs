@@ -17,7 +17,19 @@ use ratatui::{
 /// **without** `.wrap()`, so the pre-split visual lines are authoritative and
 /// the cursor — mapped from the same split — can never disagree with what is
 /// on screen.
+/// Hint naming what Enter does with a single-line draft.
+const SEND_HINT: &str = " Enter sends ";
+/// Hint for a multiline draft: Enter sends every line, Alt+Enter adds one.
+const SEND_ALL_HINT: &str = " Enter sends all lines · Alt+Enter new line ";
+
 pub(super) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    // The hint rides the bottom border (a `Block` title), so the box keeps
+    // the `input_rows + 2` height `ui::draw` budgets: no content row grows.
+    let send_hint = if app.input.text().contains('\n') {
+        SEND_ALL_HINT
+    } else {
+        SEND_HINT
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -25,7 +37,11 @@ pub(super) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .title(Span::styled(
             " saya ",
             Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-        ));
+        ))
+        .title_bottom(Line::from(Span::styled(
+            send_hint,
+            Style::default().fg(secondary()),
+        )));
     let inner = block.inner(area);
     // Empty input: show a dim placeholder and park the cursor at the start.
     if app.input.is_empty() {
