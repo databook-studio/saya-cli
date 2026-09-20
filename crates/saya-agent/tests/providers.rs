@@ -142,6 +142,77 @@ fn openai(base: String) -> OpenAiCompatibleProvider {
     .unwrap()
 }
 
+/// Cross-host 307 capture rig shared by the three remote-provider redirect
+/// tests. The origin answers 307 to `target_url`; the target records every
+/// request that reaches it and answers `terminal` (a per-provider
+/// terminal payload) so a following client terminates instead of erroring.
+struct RedirectCapture {
+    origin_base: String,
+    reached: Arc<Mutex<Vec<String>>>,
+    origin_handle: thread::JoinHandle<()>,
+    target_handle: thread::JoinHandle<()>,
+}
+
+fn redirect_capture(target_url: &str, terminal: &'static str) -> RedirectCapture {
+    // Target host: captures any request that reaches it, then answers the
+    // provider's terminal record.
+    let target = TcpListener::bind("127.0.0.1:0").unwrap();
+    target.set_nonblocking(true).unwrap();
+    let target_base = format!("http://{}", target.local_addr().unwrap());
+    let redirect_to = format!("{target_base}{target_url}");
+    let reached = Arc::new(Mutex::new(Vec::new()));
+    let reached_copy = reached.clone();
+    let target_handle = thread::spawn(move || {
+        // Nonblocking accept with a bounded deadline: when the client
+        // refuses the redirect (the secure behaviour) nothing ever
+        // connects, and the capture must end rather than hang the suite.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            match target.accept() {
+                Ok((mut stream, _)) => {
+                    target.set_nonblocking(false).ok();
+                    reached_copy.lock().unwrap().push(read_request(&mut stream));
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{terminal}",
+                        terminal.len()
+                    )
+                    .unwrap();
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(_) => return,
+            }
+        }
+    });
+    // Origin host: answers 307 to the target's URL.
+    let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin_base = format!("http://{}", origin.local_addr().unwrap());
+    let origin_handle = thread::spawn(move || {
+        let (mut stream, _) = origin.accept().unwrap();
+        let _ = read_request(&mut stream);
+        let head = format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: {redirect_to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(head.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    });
+    RedirectCapture {
+        origin_base,
+        reached,
+        origin_handle,
+        target_handle,
+    }
+}
+
+fn await_capture(capture: RedirectCapture) -> (String, Arc<Mutex<Vec<String>>>) {
+    capture.origin_handle.join().unwrap();
+    capture.target_handle.join().unwrap();
+    (capture.origin_base, capture.reached)
+}
+
 #[tokio::test]
 async fn openai_sse_handles_fragmented_text_and_done() {
     let (base, requests, handle) = server(vec![Reply {
@@ -999,5 +1070,129 @@ async fn ollama_does_not_replay_the_post_to_a_cross_host_redirect() {
     assert_eq!(
         hits, 0,
         "a cross-host 307 must not replay the Ollama POST to the redirect target"
+    );
+}
+
+/// Probe establishing what reqwest's default redirect handling does with the
+/// headers and body these providers send: `Authorization` (OpenAI's
+/// `bearer_auth`) is stripped on a cross-host hop, but the bespoke key
+/// headers (`x-api-key`, `x-goog-api-key`) are replayed untouched — and a
+/// 307 replays the POST body carrying the prompt. Read against reqwest
+/// 0.12's `redirect::remove_sensitive_headers`, which removes exactly
+/// `authorization`, `cookie`, `cookie2`, `proxy-authorization`, and
+/// `www-authenticate`.
+#[tokio::test]
+async fn default_client_replays_body_and_bespoke_key_headers_but_strips_authorization() {
+    let capture = redirect_capture(
+        "/v1/chat/completions",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+    );
+    let client = reqwest::Client::builder().build().unwrap();
+    let url = format!("{}/v1/chat/completions", capture.origin_base);
+    let _ = client
+        .post(&url)
+        .header("authorization", "Bearer secret-sentinel")
+        .header("x-api-key", "secret-sentinel")
+        .header("x-goog-api-key", "secret-sentinel")
+        .body("{\"messages\":[{\"content\":\"database-derived context\"}]}")
+        .send()
+        .await;
+    let (_, reached) = await_capture(capture);
+    let hits = reached.lock().unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "the default client must follow the 307 for this probe to say anything"
+    );
+    let replayed = &hits[0];
+    assert!(
+        replayed.contains("database-derived context"),
+        "a 307 replays the POST body to the redirect target: {replayed}"
+    );
+    assert!(
+        !replayed.to_ascii_lowercase().contains("authorization:"),
+        "Authorization is stripped on a cross-host hop: {replayed}"
+    );
+    assert!(
+        replayed.contains("x-api-key: secret-sentinel"),
+        "the bespoke x-api-key header travels to the redirect target: {replayed}"
+    );
+    assert!(
+        replayed.contains("x-goog-api-key: secret-sentinel"),
+        "the bespoke x-goog-api-key header travels to the redirect target: {replayed}"
+    );
+}
+
+/// A cross-host 307 must not replay the OpenAI POST to the redirect target:
+/// the body carries the prompt (including database-derived context), and the
+/// `Authorization: Bearer` key rides the default policy's replayed request
+/// only until reqwest strips it — so the prompt disclosure is the finding
+/// this test pins, with the key spared by the strip rather than by policy.
+#[tokio::test]
+async fn openai_does_not_replay_the_post_to_a_cross_host_redirect() {
+    let capture = redirect_capture(
+        "/v1/chat/completions",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+    );
+    let provider = openai(capture.origin_base.clone());
+    let _ = provider.complete(request()).await;
+    let (_, reached) = await_capture(capture);
+    let hits = reached.lock().unwrap().len();
+    assert_eq!(
+        hits, 0,
+        "a cross-host 307 must not replay the OpenAI POST to the redirect target"
+    );
+}
+
+/// A cross-host 307 must not replay the Anthropic POST to the redirect
+/// target: reqwest's cross-host strip removes `Authorization` but not the
+/// bespoke `x-api-key` header, so both the prompt body and the API key would
+/// reach the redirect target under the default policy.
+#[tokio::test]
+async fn anthropic_does_not_replay_the_post_to_a_cross_host_redirect() {
+    use saya_agent::AnthropicProvider;
+    let capture = redirect_capture(
+        "/messages",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    );
+    let provider = AnthropicProvider::new(
+        ProviderSettings::new("test-model", Some(capture.origin_base.clone()))
+            .with_retry_delays(vec![Duration::ZERO]),
+        Some("secret-sentinel"),
+    )
+    .unwrap();
+    let _ = provider.complete(request()).await;
+    let (_, reached) = await_capture(capture);
+    let hits = reached.lock().unwrap().len();
+    assert_eq!(
+        hits, 0,
+        "a cross-host 307 must not replay the Anthropic POST (prompt body and x-api-key) to the redirect target"
+    );
+}
+
+/// A cross-host 307 must not replay the Gemini POST to the redirect target:
+/// reqwest's cross-host strip removes `Authorization` but not the bespoke
+/// `x-goog-api-key` header, so both the prompt body and the API key would
+/// reach the redirect target under the default policy.
+#[tokio::test]
+async fn gemini_does_not_replay_the_post_to_a_cross_host_redirect() {
+    use saya_agent::GeminiProvider;
+    let capture = redirect_capture(
+        "/v1beta/models/test-model:generateContent",
+        r#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#,
+    );
+    let origin_base = capture.origin_base.clone();
+    let provider = GeminiProvider::new(
+        ProviderSettings::new("test-model", Some(format!("{origin_base}/v1beta")))
+            .with_retry_delays(vec![Duration::ZERO]),
+        Some("secret-sentinel"),
+    )
+    .unwrap();
+    let _ = provider.complete(request()).await;
+    let (_, reached) = await_capture(capture);
+    let hits = reached.lock().unwrap().len();
+    assert_eq!(
+        hits, 0,
+        "a cross-host 307 must not replay the Gemini POST (prompt body and x-goog-api-key) to the redirect target"
     );
 }
