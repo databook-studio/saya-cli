@@ -65,6 +65,9 @@ mod group_limits_tests;
 #[path = "group_live_tests.rs"]
 mod group_live_tests;
 #[cfg(test)]
+#[path = "group_mark_tests.rs"]
+mod group_mark_tests;
+#[cfg(test)]
 #[path = "knowledge_override_tests.rs"]
 mod knowledge_override_tests;
 #[cfg(test)]
