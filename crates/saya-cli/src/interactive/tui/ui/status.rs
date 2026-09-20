@@ -151,9 +151,7 @@ fn action_text(
     // "what is running" is already recorded — newest open call of this name.
     let detail = running.as_ref().and_then(|(name, arguments)| {
         (name == &tool)
-            .then(|| {
-                crate::interactive::tui::stream_events::tool_call_detail_for_test(name, arguments)
-            })
+            .then(|| crate::interactive::tui::stream_events::tool_call_detail(name, arguments))
             .flatten()
     });
     let Some(detail) = detail else { return bare };

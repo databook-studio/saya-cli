@@ -115,14 +115,12 @@ fn request_lines(name: &str, arguments: &serde_json::Value) -> Vec<String> {
     ]
 }
 
-/// The shared `tool_call_detail` fact, reachable from the status bar: the
-/// bar reads the same words the transcript lines render, so the two cannot
-/// drift. A seam rather than a direct call because `agent::tools` is private
-/// to the crate root and invisible from `tui::ui`.
-pub(crate) fn tool_call_detail_for_test(
-    name: &str,
-    arguments: &serde_json::Value,
-) -> Option<String> {
+/// The shared `tool_call_detail` fact, re-exported for the status bar: the
+/// bar names the running tool's target with the same words the transcript
+/// lines render, so the two cannot drift. A re-export rather than a direct
+/// call because `agent::tools` is private to the crate root and invisible
+/// from `tui::ui`. Production code calls this — it is not a test seam.
+pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Option<String> {
     crate::agent::tools::tool_call_detail(name, arguments)
 }
 

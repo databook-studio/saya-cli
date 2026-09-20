@@ -1141,7 +1141,7 @@ fn the_action_line_names_the_tool_and_its_target() {
         "the fixture must hold one open call or the bar cannot name its target"
     );
     assert_eq!(
-        crate::interactive::tui::stream_events::tool_call_detail_for_test(
+        crate::interactive::tui::stream_events::tool_call_detail(
             "bounded_sql_query",
             &serde_json::json!({"sql": "select region, count(*) from orders"}),
         )
