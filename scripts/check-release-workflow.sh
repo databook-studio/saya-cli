@@ -24,7 +24,7 @@ raise "release test debug info is enabled" unless resource_env["CARGO_PROFILE_TE
 raise "top-level write permission" unless workflow.dig("permissions", "contents") == "read"
 raise "publish write permission missing" unless jobs.dig("publish", "permissions", "contents") == "write"
 raise "publish gate missing" unless jobs["publish"]["if"].include?("inputs.publish == true")
-raise "publish dependencies missing" unless jobs["publish"]["needs"].sort == %w[build checksums]
+raise "publish dependencies missing" unless jobs["publish"]["needs"].sort == %w[build checksums guard-tag]
 matrix = jobs.dig("build", "strategy", "matrix", "include")
 arm64 = matrix.find { |entry| entry["platform"] == "linux-arm64" }
 raise "linux-arm64 matrix entry missing" if arm64.nil?
@@ -159,7 +159,7 @@ raise "the tap token value must be passed exactly once (to the bump job)" unless
 raise "verify-tap must observe only whether the token is configured" unless tap_text.include?("secrets.HOMEBREW_TAP_TOKEN != ''")
 bump = jobs["bump-homebrew"] or raise "bump-homebrew job missing"
 raise "bump-homebrew gate changed" unless bump["if"].to_s.include?("refs/tags/v")
-raise "bump-homebrew no longer bumps after publish" unless bump["needs"] == %w[publish]
+raise "bump-homebrew no longer bumps after publish" unless bump["needs"].sort == %w[guard-tag publish]
 raise "bump-homebrew invocation changed" unless bump["steps"].map { |s| s["run"] }.compact.join.include?('bash scripts/update-homebrew-formula.sh "${GITHUB_REF_NAME#v}"')
 
 script = File.join(root_dir, "scripts", "check-homebrew-tap.sh")
@@ -271,7 +271,44 @@ Dir.mktmpdir("tap-check-fixtures") do |dir|
   out, err, status = run_check.call("0.4.0", "SAYA_TAP_FORMULA_FILE" => fixture_path, "TAP_CHECK_WARN_ONLY" => "1")
   raise "warn-only matching tap must not warn" unless status.success? && !(out + err).include?("::warning")
 end
-puts "tap check contract and verify-tap wiring valid"
+  # A033 guard: tag/manifest equality must refuse before side effects.
+  guard = jobs["guard-tag"] or raise "guard-tag job missing"
+  raise "guard-tag must not be conditional on its own dispatch input" if guard.key?("if")
+  guard_text = File.read(workflow_path)[/^  guard-tag:.*?(?=^  \S)/m] or raise "guard-tag job text missing"
+  raise "guard-tag must run the tag/manifest check" unless guard_text.include?("bash scripts/check-tag-manifest.sh")
+  raise "guard-tag must pass the tag version" unless guard_text.include?('"${GITHUB_REF_NAME#v}"')
+  raise "guard-tag failure message must name both values" unless guard_text.include?("pushed tag") && guard_text.include?("manifest")
+  %w[publish publish-crates bump-homebrew].each do |side_effect|
+    needs = Array(jobs.dig(side_effect, "needs"))
+    raise "#{side_effect} can run without guard-tag" unless needs.include?("guard-tag")
+  end
+
+  script = File.join(root_dir, "scripts", "check-tag-manifest.sh")
+  raise "scripts/check-tag-manifest.sh missing" unless File.file?(script)
+
+  Dir.mktmpdir("tag-guard-fixtures") do |dir|
+    run_check = lambda do |tag, manifest|
+      Open3.capture3("bash", script, tag, manifest)
+    end
+
+    # Matching tag/manifest: pass, naming the agreed version.
+    out, _err, status = run_check.call("0.4.1", "0.4.1")
+    raise "matching tag/manifest should pass" unless status.success? && out.include?("0.4.1")
+
+    # A dispatch validation build carries no tag: it must keep working.
+    out, _err, status = run_check.call("", "0.4.1")
+    raise "empty tag should pass as a validation build" unless status.success?
+
+    # The defect: pushed tag v0.4.2 with manifest 0.4.1 must fail, naming both.
+    out, err, status = run_check.call("0.4.2", "0.4.1")
+    raise "mismatched tag/manifest should exit 1" unless status.exitstatus == 1
+    raise "mismatch message must name the tag and the manifest" unless err.include?("0.4.2") && err.include?("0.4.1")
+
+    # Usage errors are could-not-run (2), distinct from a mismatch (1).
+    _out, err, status = Open3.capture3("bash", script)
+    raise "missing arguments should exit 2" unless status.exitstatus == 2 && err.include?("usage:")
+  end
+  puts "tap check contract and verify-tap wiring valid"
 RUBY
 
 ruby -rfileutils -rjson -ropen3 -rtmpdir - "$ROOT_DIR" <<'RUBY'

@@ -167,10 +167,31 @@ jobs:
           path: artifacts/SHA256SUMS
           if-no-files-found: error
 
+  guard-tag:
+    name: Guard tag/manifest agreement
+    # Runs on every trigger — including workflow_dispatch validation builds —
+    # so a side-effecting job can never skip it. On a validation build there
+    # is no tag, and the check passes unchanged. On a tag push the pushed tag
+    # must equal the manifest version, naming both on refusal, before any
+    # release, crates.io publish, or Homebrew tap write can run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Refuse a pushed tag that disagrees with the manifest
+        shell: bash
+        run: |
+          MANIFEST=$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' crates/saya-cli/Cargo.toml | head -n 1)
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            bash scripts/check-tag-manifest.sh "${GITHUB_REF_NAME#v}" "$MANIFEST"
+          else
+            bash scripts/check-tag-manifest.sh "" "$MANIFEST"
+          fi
+          # The failure message names both values: the pushed tag and the manifest.
+
   publish:
     name: Publish verified release
     if: ${{ inputs.publish == true || startsWith(github.ref, 'refs/tags/v') }}
-    needs: [build, checksums]
+    needs: [build, checksums, guard-tag]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -199,7 +220,7 @@ jobs:
     # CARGO_REGISTRY_TOKEN secret is not configured, so it never blocks a
     # release before the maintainer opts in.
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    needs: [build, checksums]
+    needs: [build, checksums, guard-tag]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -215,7 +236,7 @@ jobs:
     # The script regenerates the tap formula from the published checksums and
     # no-ops if HOMEBREW_TAP_TOKEN is unset, so it never blocks a release.
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    needs: [publish]
+    needs: [publish, guard-tag]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
