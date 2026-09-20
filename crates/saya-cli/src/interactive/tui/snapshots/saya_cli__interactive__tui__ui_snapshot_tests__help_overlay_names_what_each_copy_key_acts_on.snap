@@ -1,0 +1,28 @@
+---
+source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
+expression: buffer
+---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
+"                                                                                "
+"                                     ▄     ▄                                    "
+"    ╭ keybindings — any key to close ──────────────────────────────────────╮    "
+"    │Enter        submit  ·  Alt+Enter  newline  ·  Enter on empty line exp│    "
+"    │/            command popup  ·  @  table references                    │    "
+"    │Tab / Enter  accept popup suggestion  ·  Esc  dismiss                 │    "
+"    │↑ / ↓        history (input)  ·  overlay navigation                   │    "
+"    │Ctrl+R       search input history  ·  Ctrl+F  find in transcript      │    "
+"    │PageUp/Dn    scroll transcript                                        │    "
+"    │Ctrl+,/.     scroll a wide result table ←/→  ·  Ctrl+P  pin first col │    "
+"    │Ctrl+A/E     start/end of line  ·  Ctrl+W/U  delete word/line         │    "
+"    │Ctrl+C       cancel request / clear · twice to exit                   │    "
+"    │Ctrl+G       drop the queued prompt (while a request runs)            │    "
+"    │Esc          cancel a running request                                 │    "
+"    │Ctrl+O       selection mode (drag-select + copy)                      │    "
+"    │Ctrl+Y       copy last answer (last assistant block, not a table)     │    "
+"    │Ctrl+B       copy transcript (full, minus reasoning)                  │    "
+"    │? or F1      toggle this help                                         │    "
+"    ╰──────────────────────────────────────────────────────────────────────╯    "
+" [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:o"
+"╭ saya ────────────────────────────────────────────────────────────────────────╮"
+"│Ask about your data, or type / for commands                                   │"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

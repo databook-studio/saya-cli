@@ -96,7 +96,8 @@ pub(super) fn draw_help(frame: &mut Frame<'_>, screen: Rect) {
         "Ctrl+G       drop the queued prompt (while a request runs)",
         "Esc          cancel a running request",
         "Ctrl+O       selection mode (drag-select + copy)",
-        "Ctrl+Y       copy last answer  ·  Ctrl+B  copy transcript",
+        "Ctrl+Y       copy last answer (last assistant block, not a table)",
+        "Ctrl+B       copy transcript (full, minus reasoning)",
         "? or F1      toggle this help",
     ];
     let width = screen.width.clamp(40, 72);
