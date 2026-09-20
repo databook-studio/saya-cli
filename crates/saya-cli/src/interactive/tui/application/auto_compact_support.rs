@@ -1,6 +1,6 @@
 use super::super::super::super::agent::{Stream, StreamMsg};
+use super::super::super::super::types::App;
 use super::super::super::tests_support::idle_app;
-use super::super::super::*;
 use crate::interactive::session_state::SessionState;
 use saya_agent::{AgentEvent, AgentOutput, CancellationToken, TokenUsage, UsageCall};
 use tokio::sync::mpsc::unbounded_channel;
