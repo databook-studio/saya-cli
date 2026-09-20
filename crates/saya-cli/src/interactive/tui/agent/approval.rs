@@ -1,57 +1,24 @@
-//! Runs an agent prompt on a background thread and streams its events back to
-//! the UI over a channel, so the event loop stays responsive (spinner + cancel)
-//! while the model works.
+//! The turn's approval decider: the modal over a channel.
 
-use crate::agent::runtime::{PromptOverrides, run_prompt_with_sink};
+use super::messages::StreamMsg;
+use crate::agent::runtime::PromptOverrides;
 use crate::approval_facts::ApprovalFacts;
 use crate::config::runtime::RuntimeConfig;
 use crate::grant_token::{TurnPrimary, grant_token};
 use crate::interactive::session_universe::SessionUniverse;
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentMode, AgentOutput, ApprovalChoice, ApprovalDecider,
-    ApprovalDecision, ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy,
-    ToolDefinition,
+    AgentEvent, AgentEventSink, AgentMode, ApprovalChoice, ApprovalDecider, ApprovalDecision,
+    ApprovalPolicy, ChatMessage, SessionPolicy, ToolDefinition,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
-/// A message from the agent thread to the UI.
-pub(crate) enum StreamMsg {
-    Event(AgentEvent),
-    /// The agent is asking the user to approve a tool; the UI replies via
-    /// `respond` with the user's [`ApprovalChoice`]. `detail` is the shared
-    /// fact body the terminal prompt renders too (`approval_facts::call_facts`),
-    /// so both surfaces state the same facts; `grant` is the grammar
-    /// token a session grant for this call would record — the modal offers
-    /// its third answer only when it is `Some`.
-    ApprovalRequest {
-        tool: String,
-        /// The per-call fact body (e.g. the SQL, the bounds, the session's
-        /// grant history) shown so the user sees what they approve.
-        detail: Option<String>,
-        grant: Option<String>,
-        respond: oneshot::Sender<ApprovalChoice>,
-    },
-    /// A system fact the decider must say into the transcript — today, that
-    /// the session journal could not record a grant the user just made. The
-    /// consent stands; the line is missing, and silence would hide it.
-    Notice(String),
-    Done(Result<AgentOutput, String>),
-}
-
-/// A running agent request the UI drains each tick.
-pub(crate) struct Stream {
-    pub(crate) rx: UnboundedReceiver<StreamMsg>,
-    pub(crate) cancel: CancellationToken,
-    pub(crate) prompt: String,
-}
-
 /// Sink that forwards every agent event to the UI channel.
-struct ChannelSink {
-    tx: UnboundedSender<StreamMsg>,
+pub(crate) struct ChannelSink {
+    pub(crate) tx: UnboundedSender<StreamMsg>,
 }
 
 #[async_trait]
@@ -233,75 +200,3 @@ pub(crate) struct StreamRequest {
 pub(crate) fn approval_capabilities() -> (bool, bool) {
     (false, true)
 }
-
-/// Spawns the agent on a background thread and returns the live stream handle.
-pub(crate) fn start(request: StreamRequest) -> Stream {
-    let StreamRequest {
-        runtime,
-        prompt,
-        approval,
-        policy,
-        overrides,
-        history,
-        state_db,
-        last_sql,
-        session,
-        journal,
-        agent_mode,
-    } = request;
-    let (tx, rx) = unbounded_channel();
-    let cancel = CancellationToken::new();
-    let cancel_worker = cancel.clone();
-    let prompt_worker = prompt.clone();
-    // The turn's primary handle rides the session's universe: the decider
-    // holds a clone, and the turn binds the registry's primary into it.
-    let primary = session.primary.clone();
-    // The prompt facts come from the members this session actually composed,
-    // read off the universe and the resolved config — the modal states only
-    // these.
-    let facts = session.approval_facts(&runtime);
-
-    std::thread::spawn(move || {
-        let sink = ChannelSink { tx: tx.clone() };
-        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::new(
-            tx.clone(),
-            policy,
-            primary,
-            facts,
-            journal,
-        ));
-        let runtime_handle = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(handle) => handle,
-            Err(error) => {
-                let _ = tx.send(StreamMsg::Done(Err(error.to_string())));
-                return;
-            }
-        };
-        let result = runtime_handle.block_on(run_prompt_with_sink(
-            runtime.as_ref(),
-            &prompt_worker,
-            approval,
-            approval_capabilities().0, // never read stdin: the modal collects approvals
-            approval_capabilities().1, // the modal is the approval surface
-            overrides,
-            history,
-            &sink,
-            cancel_worker,
-            Some(state_db),
-            Some(decider),
-            last_sql,
-            Some(session),
-            agent_mode,
-        ));
-        let _ = tx.send(StreamMsg::Done(result.map_err(|error| error.to_string())));
-    });
-
-    Stream { rx, cancel, prompt }
-}
-
-#[cfg(test)]
-#[path = "agent_tests.rs"]
-mod tests;
