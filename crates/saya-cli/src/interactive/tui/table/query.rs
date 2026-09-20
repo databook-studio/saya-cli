@@ -9,10 +9,12 @@ use saya_types::QueryResult;
 pub(crate) fn format_table(result: &QueryResult) -> String {
     let num_cols = result.columns.len();
     let row_count = result.rows.len();
-    let trunc_suffix = if result.truncated { " (truncated)" } else { "" };
 
     if num_cols == 0 {
-        return format!("(no columns) — {row_count} row(s){trunc_suffix}");
+        return format!(
+            "(no columns) — {}",
+            super::row_count_footer(row_count, result.truncated)
+        );
     }
 
     let numeric: Vec<bool> = (0..num_cols)
@@ -52,6 +54,6 @@ pub(crate) fn format_table(result: &QueryResult) -> String {
         .collect();
 
     let mut lines = render_box(&result.columns, &rows, &numeric);
-    lines.push(format!("{row_count} row(s){trunc_suffix}"));
+    lines.push(super::row_count_footer(row_count, result.truncated));
     lines.join("\n")
 }
