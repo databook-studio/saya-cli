@@ -37,19 +37,22 @@ impl SchemaStore for SqliteStateStore {
     }
     async fn get_schema(&self, profile_id: &str) -> Result<Option<CachedSchema>, StoreError> {
         sqlite_support::validate_profile_id(profile_id)?;
-        // Bounded row fetch: the length gate runs inside SQLite and the
-        // capped `substr` keeps at most one byte past the ceiling on the
-        // wire, so an oversized stored row refuses without materializing
-        // its whole `String` — never fetch-then-measure.
-        let row = sqlx::query_as::<_, (i64, Option<String>)>(
-            "SELECT length(schema_json), CASE WHEN length(schema_json) <= ? THEN schema_json END FROM schema_cache WHERE profile_id=?",
+        // Bounded single-row fetch: the byte gate runs inside SQLite and the
+        // guarded column comes back NULL for an oversized row, so it refuses
+        // without materializing the whole `String` — never fetch-then-measure.
+        // `length()` on TEXT counts characters; the bound is bytes, so the gate
+        // measures `CAST(.. AS BLOB)`. Bytes and freshness metadata come from
+        // the same statement, so no concurrent upsert or delete can pair one
+        // version's bytes with another's timestamp between two reads.
+        let row = sqlx::query_as::<_, (i64, Option<String>, i64, i64)>(
+            "SELECT length(CAST(schema_json AS BLOB)), CASE WHEN length(CAST(schema_json AS BLOB)) <= ? THEN schema_json END, updated_unix_ms, version FROM schema_cache WHERE profile_id=?",
         )
         .bind(i64::try_from(MAX_SCHEMA_BYTES).map_err(|_| StoreError::Unavailable)?)
         .bind(profile_id)
         .fetch_optional(self.pool().await?)
         .await
         .map_err(|_| StoreError::Unavailable)?;
-        let Some((len, capped)) = row else {
+        let Some((len, capped, updated_unix_ms, version)) = row else {
             return Ok(None);
         };
         if len > i64::try_from(MAX_SCHEMA_BYTES).map_err(|_| StoreError::Unavailable)? {
@@ -58,14 +61,6 @@ impl SchemaStore for SqliteStateStore {
         let Some(json) = capped else {
             return Err(StoreError::Unavailable);
         };
-        let meta = sqlx::query_as::<_, (i64, i64)>(
-            "SELECT updated_unix_ms, version FROM schema_cache WHERE profile_id=?",
-        )
-        .bind(profile_id)
-        .fetch_one(self.pool().await?)
-        .await
-        .map_err(|_| StoreError::Unavailable)?;
-        let (updated_unix_ms, version) = meta;
         let schema: SchemaTree =
             serde_json::from_str(&json).map_err(|_| StoreError::Unavailable)?;
         schema.validate().map_err(|_| StoreError::LimitExceeded)?;
