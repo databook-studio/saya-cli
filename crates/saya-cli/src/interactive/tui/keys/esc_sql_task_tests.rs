@@ -28,6 +28,29 @@ fn esc_detaches_a_running_sql_command() {
     );
 }
 
+/// Phase 5 packet 1: the SQL path is unchanged — detaching says the query
+/// may still be running, never that it was cancelled or stopped.
+#[test]
+fn a_detached_sql_query_still_says_it_may_still_be_running() {
+    let mut app = idle_app_with_sql_task();
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    let last = app
+        .transcript
+        .blocks()
+        .last()
+        .expect("detach posts a message");
+    assert!(
+        last.text.contains("may still be running"),
+        "the SQL wording is unchanged: {}",
+        last.text
+    );
+    assert!(
+        !last.text.contains("Stopped."),
+        "the SQL path must not claim a stop: {}",
+        last.text
+    );
+}
+
 #[test]
 fn esc_does_not_detach_when_no_task_is_running() {
     let mut app = idle_app_with_sql_task();

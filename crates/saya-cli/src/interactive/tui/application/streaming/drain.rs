@@ -101,6 +101,15 @@ impl App {
                     });
                 }
                 StreamMsg::Done(result) => {
+                    // Whether the user asked this stream to stop: Esc fires the
+                    // token before the worker's settle arrives. Read before
+                    // the match borrows `result`, while the stream exists;
+                    // the finish block clears it after the batch.
+                    let stop_confirmed = self
+                        .request
+                        .stream
+                        .as_ref()
+                        .is_some_and(|stream| stream.cancel.is_cancelled());
                     // Whether this run continued after the provider capped a
                     // response mid-answer: the loop re-instructs, the partial
                     // stays discarded, and the resume anchors live in earlier
@@ -210,7 +219,20 @@ impl App {
                             // here — the answering total is unchanged.
                             state.usage.record_learning(output.learning_usage);
                         }
-                        Err(error) => self.transcript.push(BlockKind::Error, error),
+                        Err(error) => {
+                            // The stop's confirmation, not a failure: the
+                            // token says this app asked, the worker's settle
+                            // text says the worker confirmed — kept work
+                            // stays kept — so it renders as a System block.
+                            // Both must agree: a genuine failure arriving
+                            // with the token fired keeps its error block.
+                            if stop_confirmed && error == "request cancelled" {
+                                self.transcript
+                                    .push(BlockKind::System, "Stopped. Completed work is kept.");
+                            } else {
+                                self.transcript.push(BlockKind::Error, error);
+                            }
+                        }
                     }
                     finished = true;
                 }

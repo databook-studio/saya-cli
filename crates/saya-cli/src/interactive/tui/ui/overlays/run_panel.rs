@@ -69,8 +69,15 @@ pub(in crate::interactive::tui) fn draw_run_panel(
         return;
     };
     let inner_width = area.width.saturating_sub(2).max(1) as usize;
+    // The panel's own stop lifecycle, worded apart from the engine's journal
+    // line: a local request reads as asked, the journal's `Cancelled` event
+    // as confirmed. The shared shaper stays the journal's wording — this
+    // mapping is presentation-only, in the one module that lays the panel
+    // out — so the wire, `saya run log`, and the durable record never move.
     let phase = if panel.cancelling {
-        "cancelling…".to_string()
+        "Stop requested".to_string()
+    } else if panel.status == "run cancelled" {
+        "Run stopped.".to_string()
     } else if panel.status.is_empty() && !panel.terminated {
         "starting…".to_string()
     } else {

@@ -122,13 +122,16 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         return;
     }
     // Esc cancels an in-flight agent request. An agent stream owns a real
-    // cancellation token, so Esc stops it cleanly.
+    // cancellation token, so Esc stops it cleanly. The transcript says only
+    // that the stop was requested — the worker's own `Done` confirms it.
     if code == KeyCode::Esc && app.request.stream.is_some() {
         if let Some(stream) = &app.request.stream {
             stream.cancel.cancel();
         }
-        app.transcript
-            .push(super::super::transcript::BlockKind::System, "Cancelling…");
+        app.transcript.push(
+            super::super::transcript::BlockKind::System,
+            "Stop requested — waiting for the worker to confirm.",
+        );
         return;
     }
     // Esc cancels the panel's in-flight run — the token cancels and the
@@ -166,8 +169,10 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 if let Some(stream) = &app.request.stream {
                     stream.cancel.cancel();
                 }
-                app.transcript
-                    .push(super::super::transcript::BlockKind::System, "Cancelling…");
+                app.transcript.push(
+                    super::super::transcript::BlockKind::System,
+                    "Stop requested — waiting for the worker to confirm.",
+                );
             } else if !app.input.is_empty() {
                 app.input.clear();
                 app.overlays.menu = None;
