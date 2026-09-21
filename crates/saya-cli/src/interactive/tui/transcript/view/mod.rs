@@ -167,3 +167,7 @@ impl Transcript {
 #[cfg(test)]
 #[path = "view_tests.rs"]
 mod view_tests;
+
+#[cfg(test)]
+#[path = "render_scale_tests.rs"]
+mod render_scale_tests;

@@ -3,7 +3,7 @@
 
 use super::super::chapters;
 use super::super::rows::{Row, WrappedLines, wrap_word_aware};
-use super::super::{BlockKind, Transcript};
+use super::super::{Block, BlockKind, Transcript};
 
 impl Transcript {
     /// The rendered rows plus the row index each block's output begins at, in
@@ -27,15 +27,29 @@ impl Transcript {
             // re-checks `foldable` (so an evicted opener or a chapter that
             // became live again unfolds itself) and counts as one row, like
             // a collapsed tool group.
-            if let Some((start, end)) = chapters::chapter_range(&self.blocks, block.chapter)
-                && start == i
-                && self.is_folded(block.chapter)
-                && let Some(row) = chapters::folded_row(&self.blocks, block.chapter, eff)
+            //
+            // `is_folded` gates the whole branch: an unfolded block pays no
+            // range discovery at all. Chapters are contiguous and only
+            // advance, so a folded run starts exactly where the previous
+            // block carries a different chapter — no search — and ends at
+            // the first differing chapter after it: one scan over the run,
+            // once per folded chapter, never per visited block (audit F08:
+            // the old branch scanned the slice twice per visited block
+            // before even asking whether it was folded).
+            if self.is_folded(block.chapter)
+                && (i == 0 || {
+                    #[cfg(test)]
+                    range_probe::note();
+                    self.blocks[i - 1].chapter != block.chapter
+                })
             {
-                fold_start = lines.len();
-                lines.push(row);
-                skip_until = end;
-                continue;
+                let end = chapter_run_end(&self.blocks, i);
+                if let Some(row) = chapters::folded_row(&self.blocks, block.chapter, i, end, eff) {
+                    fold_start = lines.len();
+                    lines.push(row);
+                    skip_until = end;
+                    continue;
+                }
             }
             if block.text.is_empty()
                 && block
@@ -88,5 +102,46 @@ impl Transcript {
             }
         }
         (lines, starts)
+    }
+}
+
+/// One past the run of blocks carrying `blocks[start].chapter`: chapters are
+/// contiguous and only advance (see [`chapters::chapter_range`]), so the run
+/// ends at the first differing chapter — a forward scan over the run alone,
+/// paid once per folded run instead of per visited block. `pub(super)` so
+/// the scale tests can price the one-pass discovery against the old
+/// whole-slice scans.
+pub(super) fn chapter_run_end(blocks: &[Block], start: usize) -> usize {
+    blocks[start + 1..]
+        .iter()
+        .position(|b| {
+            #[cfg(test)]
+            range_probe::note();
+            b.chapter != blocks[start].chapter
+        })
+        .map_or(blocks.len(), |rel| start + 1 + rel)
+}
+
+/// Benchmark seam for the scale tests: counts the block-chapter comparisons
+/// range discovery performs while rendering. `cfg(test)` only — the notes
+/// compile out of production builds entirely.
+#[cfg(test)]
+pub(crate) mod range_probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static COMPARISONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn note() {
+        COMPARISONS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn reset() {
+        COMPARISONS.with(|count| count.set(0));
+    }
+
+    pub(crate) fn take() -> usize {
+        COMPARISONS.with(|count| count.replace(0))
     }
 }

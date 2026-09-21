@@ -37,7 +37,6 @@ pub(crate) fn chapter_for(blocks: &[Block], kind: BlockKind) -> u32 {
 
 /// The newest chapter with a surviving block: the last block's chapter, or
 /// `PRE_CHAPTER` when the transcript is empty.
-#[allow(dead_code)]
 pub(crate) fn current_chapter(blocks: &[Block]) -> u32 {
     blocks.last().map(|b| b.chapter).unwrap_or(PRE_CHAPTER)
 }
@@ -106,22 +105,28 @@ pub(crate) fn unfolded_row_count(block: &Block, width: usize) -> usize {
 }
 
 /// One folded row: the verbatim request plus a `▸` marker naming the hidden
-/// rows. Never a summary or title — the request's own words, truncated with
-/// an ellipsis when too long for `width` (chars, like the wrap width).
-/// `None` unless the chapter may fold, so every render site honors the
-/// rule: a chapter whose opener evicted after folding unfolds itself, and a
-/// finished chapter that becomes live again can never paint folded.
-pub(crate) fn folded_row(blocks: &[Block], chapter: u32, width: usize) -> Option<Row> {
-    if !foldable(blocks, chapter) {
+/// rows — the request's own words, truncated with an ellipsis when too long
+/// for `width`. `start..end` is the chapter's range from the caller's one
+/// sweep; this rescans nothing. `None` unless the chapter may fold — an
+/// opener evicted after folding unfolds itself; a chapter become live
+/// again can never paint folded.
+pub(crate) fn folded_row(
+    blocks: &[Block],
+    chapter: u32,
+    start: usize,
+    end: usize,
+    width: usize,
+) -> Option<Row> {
+    if chapter == PRE_CHAPTER || chapter == current_chapter(blocks) {
         return None;
     }
-    let request = chapter_request(blocks, chapter)?;
-    let (start, end) = chapter_range(blocks, chapter)?;
+    // The opener is the chapter's first surviving `User` block, inside its
+    // run by contiguity.
+    let run = &blocks[start..end];
+    let opener = run.iter().find(|b| b.kind == BlockKind::User)?;
+    let request = request_line(&opener.text);
     let eff = width.max(1);
-    let shown: usize = blocks[start..end]
-        .iter()
-        .map(|b| unfolded_row_count(b, eff))
-        .sum();
+    let shown: usize = run.iter().map(|b| unfolded_row_count(b, eff)).sum();
     let marker = format!(" ▸ {} lines", shown.saturating_sub(1).max(1));
     // The folded row still says whose turn it is. Without the role word it is
     // a user request painted exactly like body prose, so after the preceding
@@ -132,10 +137,8 @@ pub(crate) fn folded_row(blocks: &[Block], chapter: u32, width: usize) -> Option
     let lead = label(BlockKind::User).unwrap_or("YOU");
     let prefix = format!("{lead}  ");
     let room = eff.saturating_sub(marker.chars().count() + prefix.chars().count());
-    let mut text: String = request
-        .chars()
-        .take(room.saturating_sub(1).max(1))
-        .collect();
+    let fit = room.saturating_sub(1).max(1);
+    let mut text: String = request.chars().take(fit).collect();
     if request.chars().count() > text.chars().count() {
         text.push('…');
     }
