@@ -2,6 +2,9 @@
 //! metric derives from. A label row (`YOU`, `SAYA`, …) opens a block; body
 //! rows carry the wrapped content.
 
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
 use super::super::BlockKind;
 
 /// Maps a [`BlockKind`] to its headline label, if it has one.
@@ -59,33 +62,54 @@ impl Row {
 /// The flattened transcript: one entry per painted row, label rows included.
 pub(crate) type WrappedLines = Vec<Row>;
 
-/// Wraps one logical line to `width` chars, preferring the last space inside
-/// the window so words are not split mid-word; over-long single tokens still
-/// split (they have nowhere else to go).
+/// Wraps one logical line to `width` display cells, preferring the last
+/// whitespace inside the cell window so words are not split mid-word;
+/// over-long single tokens still split (they have nowhere else to go).
+///
+/// The budget is measured in terminal cells (`unicode_width`), not scalar
+/// values: `日` is one `char` but two cells, a combining mark is several
+/// `char`s but no cell. Breaks land on grapheme boundaries
+/// (`unicode_segmentation`), so a base never loses its accent and a ZWJ
+/// emoji sequence is never cut in half. A single grapheme wider than the
+/// whole budget is emitted alone and the loop advances — every iteration
+/// consumes at least one grapheme, so wide and zero-width content cannot
+/// spin. Control characters (`width() == None`) cost one cell, keeping the
+/// pure-ASCII break points identical to the scalar-count loop this replaces.
 pub(crate) fn wrap_word_aware(raw: &str, width: usize, kind: BlockKind, out: &mut WrappedLines) {
-    let chars: Vec<char> = raw.chars().collect();
+    let width = width.max(1);
+    let graphemes: Vec<&str> = raw.graphemes(true).collect();
+    let widths: Vec<usize> = graphemes.iter().map(|grapheme| grapheme.width()).collect();
     let mut start = 0;
-    while start < chars.len() {
-        let remaining = chars.len() - start;
-        if remaining <= width {
-            out.push(Row::body(kind, chars[start..].iter().collect()));
+    while start < graphemes.len() {
+        let mut end = start;
+        let mut used = 0;
+        while end < graphemes.len() && used + widths[end] <= width {
+            used += widths[end];
+            end += 1;
+        }
+        if end == graphemes.len() {
+            out.push(Row::body(kind, graphemes[start..].concat()));
             break;
         }
-        let window = &chars[start..start + width];
-        // Last space in the window (never at position 0, or we would loop).
-        let space = window
-            .iter()
-            .rposition(|c: &char| c.is_whitespace())
-            .filter(|&index| index > 0);
-        let (emit_end, next_start) = match space {
-            // Break on the space: it ends this line (trimmed) and is skipped.
-            Some(index) => (index, index + 1),
-            None => (width, width),
+        let (emit_end, next_start) = if end > start {
+            // Last whitespace grapheme in the cell window (never the first,
+            // or we would loop).
+            let space = graphemes[start..end]
+                .iter()
+                .rposition(|grapheme| grapheme.chars().all(char::is_whitespace))
+                .filter(|&index| index > 0);
+            match space {
+                // Break on the whitespace: it ends this line (trimmed) and
+                // is skipped.
+                Some(index) => (index, index + 1),
+                None => (end - start, end - start),
+            }
+        } else {
+            // One grapheme wider than the whole budget: emit it alone and
+            // advance, or the loop would spin forever.
+            (1, 1)
         };
-        out.push(Row::body(
-            kind,
-            window[..emit_end].iter().collect::<String>(),
-        ));
+        out.push(Row::body(kind, graphemes[start..start + emit_end].concat()));
         start += next_start;
     }
 }
