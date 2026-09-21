@@ -78,7 +78,7 @@ pub(in crate::interactive::tui) fn draw_transcript(frame: &mut Frame<'_>, app: &
             // what copy sees — is untouched.
             let draft = row.kind == BlockKind::Assistant
                 && app.request.stream.is_some()
-                && is_live_assistant_label(&app.transcript, row.text.as_str(), i, width);
+                && is_live_assistant_label(&app.transcript, row.text.as_str(), i, width, height);
             let text = if draft {
                 DRAFT_LABEL
             } else {
@@ -139,18 +139,25 @@ pub(in crate::interactive::tui) fn draw_transcript(frame: &mut Frame<'_>, app: &
 /// the last `YOU` row across the whole transcript, and only an assistant
 /// label after it is the live answer. Earlier chapters — resumed or folded —
 /// keep exactly today's `SAYA`.
+///
+/// `height` is the real viewport height, the same one `wide_view` windowed
+/// with: `first_visible` is then the absolute index of the painted window's
+/// first row, so `first_visible + painted_idx` is the painted row's absolute
+/// index and the comparison stays between comparable things even when the
+/// transcript overflows the pane.
 fn is_live_assistant_label(
     transcript: &crate::interactive::tui::transcript::Transcript,
     text: &str,
     painted_idx: usize,
     width: usize,
+    height: usize,
 ) -> bool {
     use crate::interactive::tui::transcript::rows::label;
     if text != label(BlockKind::Assistant).unwrap_or("SAYA") {
         return false;
     }
     live_assistant_idx(transcript, width).is_some_and(|live| {
-        let (_, first_visible) = transcript.scroll_metrics(width, usize::MAX);
+        let (_, first_visible) = transcript.scroll_metrics(width, height);
         live == first_visible.saturating_add(painted_idx)
     })
 }
