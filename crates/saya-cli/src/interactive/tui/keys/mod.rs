@@ -8,7 +8,9 @@ pub(crate) use dispatch::handle_key;
 // Test-only bare-key shims so the `*_tests` siblings (moved byte-identical
 // via `#[path]`) keep resolving their `use super::*` names: the production
 // helpers take the held modifiers, and `NONE` is exactly the bare press
-// those tests pin.
+// those tests pin. They cannot express a held modifier by design — a
+// modifier test belongs in `approval_modifier_tests.rs`, which calls
+// `handle_key` with real key events.
 #[cfg(test)]
 pub(crate) fn approval_answer(code: KeyCode) -> Option<bool> {
     approvals::approval_answer(code, KeyModifiers::NONE)
