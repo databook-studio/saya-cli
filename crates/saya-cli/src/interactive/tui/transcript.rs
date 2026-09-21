@@ -17,6 +17,11 @@ pub(super) type WrapCache = RefCell<Option<(usize, Rc<rows::WrappedLines>)>>;
 pub(crate) struct Transcript {
     pub(super) blocks: Vec<Block>,
     pub(super) scroll_up: usize,
+    /// Rows appended below a scrolled-up reader since they last returned to the
+    /// tail: pure view state, like `scroll_up` and `Block.group` — raised by
+    /// the append path, cleared by `scroll_to_bottom`, never persisted, never
+    /// replayed, and never read by anything that builds the model's context.
+    pub(super) unseen_rows: usize,
     pub(super) cache: WrapCache,
     /// Folded finished chapters: pure view state, like `Block.group` — never
     /// persisted, never replayed, emptied by `clear()` with the blocks.

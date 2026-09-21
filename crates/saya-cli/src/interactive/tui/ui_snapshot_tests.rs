@@ -213,6 +213,39 @@ fn approval_modal_renders_the_shared_fact_body() {
     insta::assert_snapshot!(buffer);
 }
 
+// --- Fieldnotes phase 8, packet 2: new activity below the fold. -------------
+
+/// A scrolled-up reader with rows below the fold sees the quiet count and the
+/// key back in the status bar, while the transcript window stays put. This is
+/// the whole packet on the real paint path: an invitation, never a jump.
+#[test]
+fn new_activity_below_the_fold_shows_the_count_and_the_key_back() {
+    use super::transcript::BlockKind;
+    let mut app = empty_app();
+    for i in 0..12 {
+        app.transcript
+            .push(BlockKind::Assistant, format!("line {i}"));
+    }
+    app.transcript.scroll_up(3, 78, 8);
+    let _ = app.transcript.view(78, 8);
+    app.transcript
+        .push(BlockKind::Assistant, "a late answer lands");
+    assert!(
+        app.unseen_new_rows() > 0,
+        "precondition: the row landed below the fold"
+    );
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        buffer.contains("new line"),
+        "the bar names the arrival:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("Shift+End"),
+        "the bar names the key back:\n{buffer}"
+    );
+    insta::assert_snapshot!(buffer);
+}
+
 // --- Fieldnotes phase 6, packet 3: output actions name their scope. ---------
 //
 // `copy_behaviour_is_unchanged` proves the packet changed words only: Ctrl+Y
