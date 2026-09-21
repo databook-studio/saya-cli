@@ -1,5 +1,5 @@
 use super::super::types::{App, SearchKind};
-use super::approvals::{approval_answer, approval_choice};
+use super::approvals::{ApprovalKey, approval_answer, approval_key};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 /// Applies one key press to the application state.
@@ -63,16 +63,15 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         return;
     }
-    // A tool-approval modal captures input until answered. The modal's
-    // offered token decides whether `s` is an answer at all.
-    if app.request.pending_approval.is_some() {
-        let grant = app
-            .request
-            .pending_approval
-            .as_ref()
-            .and_then(|pending| pending.grant.clone());
-        if let Some(choice) = approval_choice(code, mods, grant.as_deref()) {
-            app.answer_approval(choice);
+    // A tool-approval modal captures input until answered. One decision
+    // function sorts scroll from answer: the keys that reach the withheld
+    // facts can never be the keys that answer, and the modal's offered
+    // token decides whether `s` is an answer at all.
+    if let Some(pending) = app.request.pending_approval.as_ref() {
+        match approval_key(code, mods, pending.grant.as_deref()) {
+            ApprovalKey::Answer(choice) => app.answer_approval(choice),
+            ApprovalKey::Scroll(delta) => app.scroll_approval(delta),
+            ApprovalKey::Ignore => {}
         }
         return;
     }

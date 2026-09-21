@@ -207,6 +207,7 @@ fn approval_modal_renders_the_shared_fact_body() {
         tool: tool.name.clone(),
         detail,
         grant,
+        scroll: 0,
         respond,
     });
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);

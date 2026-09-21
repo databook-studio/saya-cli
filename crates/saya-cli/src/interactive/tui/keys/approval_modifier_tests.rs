@@ -17,6 +17,7 @@ fn pending_approval(grant: Option<&str>) -> (App, tokio::sync::oneshot::Receiver
         tool: "workspace_write".into(),
         detail: Some("write a file".into()),
         grant: grant.map(str::to_owned),
+        scroll: 0,
         respond,
     });
     (app, answer)

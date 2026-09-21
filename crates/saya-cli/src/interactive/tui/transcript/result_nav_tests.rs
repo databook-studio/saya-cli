@@ -147,6 +147,7 @@ fn the_step_key_does_not_disturb_an_approval() {
         tool: "bounded_sql_query".into(),
         detail: Some("SELECT 1".into()),
         grant: None,
+        scroll: 0,
         respond,
     });
     handle_key(&mut app, KeyCode::Up, KeyModifiers::ALT);

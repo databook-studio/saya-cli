@@ -1,5 +1,48 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use saya_agent::ApprovalChoice;
+
+/// How far one page key scrolls the withheld fact body, in wrapped rows.
+/// The panel's live geometry clamps the offset at paint time, so a page
+/// larger than the visible window lands at the end, never past it.
+pub(crate) const APPROVAL_PAGE_ROWS: isize = 10;
+
+/// What one key press means to a pending tool-approval modal. One key is
+/// exactly one of these: a scroll key is never an answer, so the keys that
+/// reach the withheld facts can never be the keys that consent.
+pub(crate) enum ApprovalKey {
+    /// The press answers the modal with this choice.
+    Answer(ApprovalChoice),
+    /// The press scrolls the fact body by this many wrapped rows (negative
+    /// scrolls up). The modal itself never sees an answer.
+    Scroll(isize),
+    /// The press is nothing to the modal.
+    Ignore,
+}
+
+/// Decides what a key press means to the tool-approval modal: an answer, a
+/// scroll of the fact body, or nothing. Scroll keys (`Up`, `Down`, `PageUp`,
+/// `PageDown`) are bare navigation keys today; they are matched before the
+/// answer keys and can never fall through into one. A held Ctrl/Alt/Super is
+/// neither an answer nor a scroll (slice A's contract, extended): the modal
+/// can appear mid-typing, and an editing chord must not consent or drag the
+/// facts. Shift is not held in this sense — `Y`/`N` are the answers their
+/// bare forms are, and Shift+arrow scrolls like its bare form.
+pub(crate) fn approval_key(code: KeyCode, mods: KeyModifiers, grant: Option<&str>) -> ApprovalKey {
+    if modifier_held(mods) {
+        return ApprovalKey::Ignore;
+    }
+    match code {
+        KeyCode::Up => ApprovalKey::Scroll(-1),
+        KeyCode::Down => ApprovalKey::Scroll(1),
+        KeyCode::PageUp => ApprovalKey::Scroll(-APPROVAL_PAGE_ROWS),
+        KeyCode::PageDown => ApprovalKey::Scroll(APPROVAL_PAGE_ROWS),
+        _ => match approval_choice(code, mods, grant) {
+            Some(choice) => ApprovalKey::Answer(choice),
+            None => ApprovalKey::Ignore,
+        },
+    }
+}
+
 /// A held Ctrl, Alt or Super makes the press an editing or global chord,
 /// never an answer: the modal can appear mid-typing, and start-of-line
 /// Ctrl+A or EOF Ctrl+D must never read as consent or denial. Shift stays

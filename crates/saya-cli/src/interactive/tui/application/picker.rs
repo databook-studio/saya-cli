@@ -172,6 +172,17 @@ impl App {
         }
     }
 
+    /// Scrolls the pending approval's fact body by `delta` wrapped rows
+    /// (negative scrolls up). The offset floors at the top here; the paint
+    /// clamps the bottom against the live panel geometry, so no delta can
+    /// scroll the facts out of reach. The offset dies with the approval —
+    /// a fresh one starts at the top.
+    pub(crate) fn scroll_approval(&mut self, delta: isize) {
+        if let Some(pending) = &mut self.request.pending_approval {
+            pending.scroll = pending.scroll.saturating_add_signed(delta);
+        }
+    }
+
     /// Reloads `@`-reference names from the cached schema of the active and
     /// included profiles (best-effort; empty when nothing is cached).
     pub(crate) fn reload_at_refs(&mut self, state: &SessionState) {

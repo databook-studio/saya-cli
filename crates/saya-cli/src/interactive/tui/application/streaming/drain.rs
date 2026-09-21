@@ -96,6 +96,9 @@ impl App {
                         tool,
                         detail,
                         grant,
+                        // Every fresh approval opens at the top of its fact
+                        // body: the offset is per-pending-approval state.
+                        scroll: 0,
                         respond,
                     });
                 }

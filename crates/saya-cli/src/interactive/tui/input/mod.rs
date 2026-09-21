@@ -9,7 +9,7 @@ pub(crate) struct InputBuffer {
 mod cursor;
 mod edit;
 mod view;
-mod wrap;
+pub(crate) mod wrap;
 
 #[cfg(test)]
 mod input_tests;

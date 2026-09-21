@@ -15,6 +15,12 @@ pub(crate) struct PendingApproval {
     /// The grammar token a session grant for this call would record; the
     /// modal offers its `[s]` answer only when this is `Some`.
     pub(crate) grant: Option<String>,
+    /// How many wrapped body rows the panel has scrolled into the fact
+    /// text. Per-pending-approval state that dies with it — a fresh
+    /// approval starts at the top. Floored at the top as it scrolls and
+    /// clamped against the live panel geometry at paint time, so no delta
+    /// can scroll the facts out of reach or leave the panel blank.
+    pub(crate) scroll: usize,
     pub(crate) respond: oneshot::Sender<ApprovalChoice>,
 }
 
