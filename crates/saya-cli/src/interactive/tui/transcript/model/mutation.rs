@@ -132,6 +132,10 @@ impl Transcript {
                 if evicted {
                     self.invalidate_cache();
                 }
+                // Not just the assertion's input: this re-wrap repopulates the
+                // cache the measure above invalidated, which is the warm-cache
+                // behaviour the boundary has always left behind. It runs in
+                // release too — do not fold it into the `debug_assert!`.
                 let after = self.lines(width).len();
                 debug_assert!(after <= mid, "bounds enforcement only removes rows");
                 self.freeze_scrolled_view(before, mid);
