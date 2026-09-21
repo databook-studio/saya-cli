@@ -16,6 +16,7 @@
 
 use super::view::rows::{Row, WrappedLines, label, wrap_word_aware};
 use super::{Block, BlockKind, Transcript};
+use crate::interactive::tui::wrap::{cell_width, truncate_cells};
 
 /// Chapter of blocks pushed before any request: no `User` block yet, so no
 /// chapter has begun. Plain `0` (not `Option`) so read sites compare and
@@ -136,14 +137,13 @@ pub(crate) fn folded_row(
     // folded request must stay findable.
     let lead = label(BlockKind::User).unwrap_or("YOU");
     let prefix = format!("{lead}  ");
-    let room = eff.saturating_sub(marker.chars().count() + prefix.chars().count());
+    let room = eff.saturating_sub(cell_width(&marker) + cell_width(&prefix));
     let fit = room.saturating_sub(1).max(1);
-    let mut text: String = request.chars().take(fit).collect();
-    if request.chars().count() > text.chars().count() {
+    let mut text = truncate_cells(&request, fit);
+    if cell_width(&request) > fit {
         text.push('…');
     }
-    text.push_str(&marker);
-    Some(Row::body(BlockKind::User, format!("{prefix}{text}")))
+    Some(Row::body(BlockKind::User, prefix + &text + &marker))
 }
 
 /// A block's body rows for one raw line: blank stays bare, tables stay one
@@ -245,3 +245,6 @@ mod chapter_tests;
 #[cfg(test)]
 #[path = "autofold_tests.rs"]
 mod autofold_tests;
+#[cfg(test)]
+#[path = "fold_cell_tests.rs"]
+mod fold_cell_tests;

@@ -5,6 +5,7 @@
 //! neither side dangles.
 
 use crate::interactive::tui::types::App;
+use crate::interactive::tui::wrap::{cell_width, truncate_cells};
 
 /// The bar's cancel hint, kept verbatim in one place: the busy row reserves
 /// exactly this before anything else is sized, so no other span can push it
@@ -14,10 +15,10 @@ pub(super) const CANCEL_HINT: &str = "  (Esc to cancel) ";
 /// The busy row's separator between the action phrase and the status detail.
 pub(super) const SEPARATOR: &str = "· ";
 
-/// The fewest detail chars worth showing before the ellipsis. Below this the
+/// The fewest detail cells worth showing before the ellipsis. Below this the
 /// truncated target is noise, so the line falls back to the bare
 /// `running {tool}` — the honest degradation, never a pushed-off bar.
-const MIN_DETAIL_CHARS: usize = 8;
+const MIN_DETAIL_CELLS: usize = 8;
 
 /// The bare action phrase: `running {tool}` while a tool runs, `thinking`
 /// before any does. One builder for the phrase and its width
@@ -32,7 +33,7 @@ fn bare_text(activity: Option<&str>) -> String {
 /// The bare phrase's width — the floor the busy row plans against: what the
 /// row paints when the detail is absent or the room cannot afford one.
 pub(super) fn bare_action_width(activity: Option<&str>) -> usize {
-    bare_text(activity).chars().count()
+    cell_width(&bare_text(activity))
 }
 
 /// The busy row's width plan: how the frame's columns are handed out,
@@ -65,7 +66,7 @@ pub(super) struct BusyRowPlan {
     /// Whether the new-activity notice paints this frame. When it does, it
     /// still leads the row.
     pub lead_painted: bool,
-    /// Char budget for the whole `running … ` phrase.
+    /// Cell budget for the whole `running … ` phrase.
     pub action_room: usize,
     /// How many leading status-detail segments may paint; the rest shed.
     pub status_segments: usize,
@@ -84,8 +85,7 @@ pub(super) fn busy_row_plan(
     full_action_width: usize,
     bare_action_width: usize,
 ) -> BusyRowPlan {
-    let chrome =
-        spinner_width + elapsed_width + SEPARATOR.chars().count() + CANCEL_HINT.chars().count();
+    let chrome = spinner_width + elapsed_width + cell_width(SEPARATOR) + cell_width(CANCEL_HINT);
     let base = frame_width.saturating_sub(chrome);
     // Everything fits: paint all of it, notice included.
     if lead_width + full_action_width + segment_widths.iter().sum::<usize>() <= base {
@@ -129,7 +129,7 @@ pub(super) fn busy_row_plan(
 /// The busy line's action words: `thinking` while no tool runs, otherwise
 /// `running {tool}` plus the call's target through the shared detail seam —
 /// the path for a write, the program for a command, the SQL for a query.
-/// Names the action and its target, never a motive. `room` is the char
+/// Names the action and its target, never a motive. `room` is the cell
 /// budget for the whole `running … ` phrase: the caller passes what the
 /// plan affords beside the painted tail, and only the detail truncates —
 /// the tool name, the elapsed time, and the cancel hint never move.
@@ -152,17 +152,18 @@ pub(super) fn action_text(
     let Some(detail) = detail else { return bare };
     let detail = one_line(&detail);
     let full = format!("running {tool}: {detail} ");
-    if full.chars().count() <= room.max(bare.chars().count()) {
+    if cell_width(&full) <= room.max(cell_width(&bare)) {
         return full;
     }
     let head = format!("running {tool}: ");
     // Below this the truncated target is noise: fall back to the bare tool
-    // name rather than show a sliver.
-    let budget = room.saturating_sub(head.chars().count() + 2);
-    if budget < MIN_DETAIL_CHARS {
+    // name rather than show a sliver. The `… ` tail is two cells the budget
+    // must leave room for.
+    let budget = room.saturating_sub(cell_width(&head) + 2);
+    if budget < MIN_DETAIL_CELLS {
         return bare;
     }
-    format!("{head}{}… ", head_chars(&detail, budget))
+    format!("{head}{}… ", truncate_cells(&detail, budget))
 }
 
 /// The newest open pending call's name and arguments: the one place "what is
@@ -178,9 +179,4 @@ pub(super) fn running_call(app: &App) -> Option<(String, serde_json::Value)> {
 /// line even if a future detail is not.
 fn one_line(detail: &str) -> String {
     detail.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// The first `budget` chars — char-boundary safe, never splitting mid-grapheme.
-fn head_chars(detail: &str, budget: usize) -> String {
-    detail.chars().take(budget).collect()
 }

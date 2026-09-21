@@ -7,6 +7,7 @@ use super::action_line::{
 };
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::types::App;
+use crate::interactive::tui::wrap::cell_width;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -162,8 +163,8 @@ pub(in crate::interactive::tui) fn draw_status(
         let segments = status_spans(status, bg);
         let widths: Vec<usize> = segments.iter().map(|span| span.width()).collect();
         let unseen_width = unseen.as_ref().map(|span| span.width()).unwrap_or(0);
-        let elapsed_width = format!("{elapsed}s ").chars().count();
-        let frame_width = format!(" {frame_char} ").chars().count();
+        let elapsed_width = cell_width(&format!("{elapsed}s "));
+        let frame_width = cell_width(&format!(" {frame_char} "));
         let full_action = action_text(
             app.request.activity.as_deref(),
             running_call(app),
@@ -175,7 +176,7 @@ pub(in crate::interactive::tui) fn draw_status(
             frame_width,
             elapsed_width,
             &widths,
-            full_action.chars().count(),
+            cell_width(&full_action),
             bare_action_width(app.request.activity.as_deref()),
         );
         let doing = action_text(
@@ -234,6 +235,9 @@ pub(in crate::interactive::tui) fn draw_status(
 #[cfg(test)]
 #[path = "status_cancel_tests.rs"]
 mod cancel_tests;
+#[cfg(test)]
+#[path = "status_cell_tests.rs"]
+mod status_cell_tests;
 #[cfg(test)]
 #[path = "status_tests.rs"]
 mod tests;
