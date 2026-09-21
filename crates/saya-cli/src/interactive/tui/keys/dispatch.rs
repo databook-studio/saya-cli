@@ -71,7 +71,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             .pending_approval
             .as_ref()
             .and_then(|pending| pending.grant.clone());
-        if let Some(choice) = approval_choice(code, grant.as_deref()) {
+        if let Some(choice) = approval_choice(code, mods, grant.as_deref()) {
             app.answer_approval(choice);
         }
         return;
@@ -83,7 +83,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         .as_ref()
         .is_some_and(|panel| panel.plan_approval.is_some())
     {
-        if let Some(allow) = approval_answer(code) {
+        if let Some(allow) = approval_answer(code, mods) {
             app.answer_plan_approval(allow);
         }
         return;
