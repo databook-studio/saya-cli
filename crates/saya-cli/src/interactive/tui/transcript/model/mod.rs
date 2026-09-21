@@ -1,5 +1,7 @@
+pub(crate) mod mutation;
 pub(crate) mod push;
 pub(crate) mod tool_buffer;
+pub(crate) mod tool_lines;
 
 #[cfg(test)]
 #[allow(unused_imports)]
