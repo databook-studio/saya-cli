@@ -34,6 +34,10 @@ pub(crate) struct Transcript {
     /// here only — never on a rendered block — so an interrupted stream
     /// leaves no half group behind.
     pub(super) pending_tools: Vec<model::PendingToolCall>,
+    /// Where the provider attempt in flight began, taken on every
+    /// `TurnStarted`. `TurnReset` rolls back to exactly this and no further.
+    /// Pure lifecycle state: never persisted, never replayed.
+    pub(super) attempt: Option<model::attempt::AttemptMark>,
 }
 
 #[allow(dead_code)]

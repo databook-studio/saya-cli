@@ -222,6 +222,12 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // no spinner to label. Dropped rather than rendered — not forgotten,
         // which is what the catch-all would make of it.
         AgentEvent::KnowledgeLearningStarted => return None,
+        // A provider attempt began. The TUI records a rollback watermark here;
+        // a pipe has nothing to roll back and nothing to say. Explicitly None
+        // rather than left to the catch-all, which would print `unrecognized
+        // agent event` at the user — the regression the note above says has
+        // already shipped three times for contentless variants.
+        AgentEvent::TurnStarted => return None,
         // The model's chain-of-thought. This is the one case where rendering to
         // nothing is a *scope* decision rather than a *nature-of-the-event*
         // decision: reasoning is content (it mirrors `AssistantText`), so by its
