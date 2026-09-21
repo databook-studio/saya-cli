@@ -22,18 +22,22 @@ impl Transcript {
     /// rows slide the window down by the growth while `scroll_up > 0`.
     /// Bumping `scroll_up` by the growth keeps the top anchor on the same
     /// row. At the tail (`scroll_up == 0`) nothing moves — the new rows
-    /// surface as today. `before`/`after` are painted lengths at the cached
-    /// width; the append (`push`/`append_delta` mutate blocks), never a
-    /// later width-driven re-wrap, sits between the two measures. The length
-    /// is measured around the *whole* mutation (append plus `enforce_bounds`),
+    /// surface as today — and nothing is counted: rows already on screen are
+    /// not "new". `before`/`after` are painted lengths at the cached width;
+    /// the append (`push`/`append_delta` mutate blocks), never a later
+    /// width-driven re-wrap, sits between the two measures. The length is
+    /// measured around the *whole* mutation (append plus `enforce_bounds`),
     /// so top-dropped rows shrink `after` and shrink the bump with it — and
     /// `view()`'s `scroll_up.min(rem)` clamp absorbs any overshoot instead of
-    /// running past the start.
+    /// running past the start. The same growth is the unseen-row count the
+    /// "new lines below" indicator reads; this is its one raise site.
     fn freeze_scrolled_view(&mut self, before: usize, after: usize) {
         if self.scroll_up == 0 {
             return;
         }
-        self.scroll_up = self.scroll_up.saturating_add(after.saturating_sub(before));
+        let growth = after.saturating_sub(before);
+        self.scroll_up = self.scroll_up.saturating_add(growth);
+        self.unseen_rows = self.unseen_rows.saturating_add(growth);
     }
 
     /// Painted-length baseline for [`freeze_scrolled_view`]: the cached
@@ -124,6 +128,7 @@ impl Transcript {
         self.blocks.clear();
         self.folded.clear();
         self.scroll_up = 0;
+        self.unseen_rows = 0;
         self.invalidate_cache();
     }
 
@@ -132,6 +137,9 @@ impl Transcript {
     }
 }
 
+#[cfg(test)]
+#[path = "new_activity_tests.rs"]
+mod new_activity_tests;
 #[cfg(test)]
 #[path = "push_tests.rs"]
 mod push_tests;

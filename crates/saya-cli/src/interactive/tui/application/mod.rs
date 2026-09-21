@@ -1,6 +1,7 @@
 //! Application state transitions: input, menus, streaming, and clipboard.
 
 mod input_actions;
+mod new_activity;
 mod picker;
 mod run_panel;
 mod search;

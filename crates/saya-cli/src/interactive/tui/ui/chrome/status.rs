@@ -117,6 +117,21 @@ pub(super) fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
     spans
 }
 
+/// The quiet "new activity" affordance: how many rows landed below a
+/// scrolled-up reader, with the key that returns. `None` at the tail, where
+/// the count is zero by construction — the bar stays exactly as it was while
+/// following, and a scrolled reader never has their viewport taken.
+fn unseen_span(count: usize, bg: Color) -> Option<Span<'static>> {
+    if count == 0 {
+        return None;
+    }
+    let noun = if count == 1 { "line" } else { "lines" };
+    Some(Span::styled(
+        format!("{count} new {noun} below · Shift+End to catch up "),
+        Style::default().bg(bg).fg(accent()),
+    ))
+}
+
 /// Renders the status bar as a filled accent-tinted strip, with a spinner and
 /// hint while an agent request is streaming.
 pub(in crate::interactive::tui) fn draw_status(
@@ -129,6 +144,7 @@ pub(in crate::interactive::tui) fn draw_status(
         .bg(super::super::theme::status_bg())
         .fg(secondary());
     let bg = super::super::theme::status_bg();
+    let unseen = unseen_span(app.unseen_new_rows(), bg);
     let line = if app.is_busy() {
         let frame_char = SPINNER[app.spinner % SPINNER.len()];
         let elapsed = app
@@ -145,10 +161,14 @@ pub(in crate::interactive::tui) fn draw_status(
         // fits beside the painted tail; the tail spans paint after the
         // action in the same `Line`, so the cancel hint survives a 900-char
         // detail at 100 columns by construction, and the test asserts it.
-        let tail = status_spans(status, bg);
-        let tail_width = tail.iter().map(|span| span.width()).sum::<usize>()
+        let unseen_width = unseen.as_ref().map(|span| span.width()).unwrap_or(0);
+        let tail_width = status_spans(status, bg)
+            .iter()
+            .map(|span| span.width())
+            .sum::<usize>()
             + Span::styled(CANCEL_HINT, bar).width()
-            + Span::styled("· ", bar).width();
+            + Span::styled("· ", bar).width()
+            + unseen_width;
         let elapsed_width = format!("{elapsed}s ").chars().count();
         let frame_width = format!(" {frame_char} ").chars().count();
         let full_action = action_text(
@@ -168,24 +188,33 @@ pub(in crate::interactive::tui) fn draw_status(
             .saturating_sub(overflow)
             .max(MIN_ACTION_ROOM.min(full_action.chars().count()));
         let doing = action_text(app.request.activity.as_deref(), running_call(app), room);
-        let mut spans = vec![
-            Span::styled(
-                format!(" {frame_char} {doing}{elapsed}s "),
-                Style::default().bg(bg).fg(accent()),
-            ),
-            Span::styled("· ", bar),
-        ];
-        spans.extend(tail);
+        // The new-activity count leads the bar: the status tail already
+        // overflows a narrow frame, so a trailing segment would be clipped
+        // exactly when it matters. It is an invitation, never a jump.
+        let mut spans = Vec::new();
+        if let Some(span) = unseen {
+            spans.push(span);
+        }
+        spans.push(Span::styled(
+            format!(" {frame_char} {doing}{elapsed}s "),
+            Style::default().bg(bg).fg(accent()),
+        ));
+        spans.push(Span::styled("· ", bar));
+        spans.extend(status_spans(status, bg));
         spans.push(Span::styled(CANCEL_HINT, bar));
         Line::from(spans)
     } else if app.overlays.selection_mode {
-        let mut spans = vec![Span::styled(
+        let mut spans = Vec::new();
+        if let Some(span) = unseen {
+            spans.push(span);
+        }
+        spans.push(Span::styled(
             " SELECT ",
             Style::default()
                 .bg(accent())
                 .fg(on_accent())
                 .add_modifier(Modifier::BOLD),
-        )];
+        ));
         spans.extend(status_spans(status, bg));
         spans.push(Span::styled(
             "  ·  drag to copy  ·  Ctrl+O to resume scrolling ",
@@ -193,7 +222,11 @@ pub(in crate::interactive::tui) fn draw_status(
         ));
         Line::from(spans)
     } else {
-        let mut spans = status_spans(status, bg);
+        let mut spans = Vec::new();
+        if let Some(span) = unseen {
+            spans.push(span);
+        }
+        spans.extend(status_spans(status, bg));
         spans.push(Span::styled("  ·  ? for help ", bar));
         Line::from(spans)
     };

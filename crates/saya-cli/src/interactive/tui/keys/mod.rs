@@ -24,3 +24,6 @@ mod esc_run_panel_tests;
 #[cfg(test)]
 #[path = "esc_sql_task_tests.rs"]
 mod esc_sql_task_tests;
+#[cfg(test)]
+#[path = "new_activity_tests.rs"]
+mod new_activity_tests;

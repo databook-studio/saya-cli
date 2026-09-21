@@ -9,14 +9,32 @@ impl Transcript {
 
     pub(crate) fn scroll_down(&mut self, n: usize) {
         self.scroll_up = self.scroll_up.saturating_sub(n);
+        // Reaching the tail by hand means the rows below are now visible:
+        // a stale count would be a lie.
+        if self.scroll_up == 0 {
+            self.unseen_rows = 0;
+        }
     }
 
     pub(crate) fn scroll_to_bottom(&mut self) {
         self.scroll_up = 0;
+        self.unseen_rows = 0;
     }
 
     pub(crate) fn is_following_tail(&self) -> bool {
         self.scroll_up == 0
+    }
+
+    /// Rows that landed below a scrolled-up reader since they last returned to
+    /// the tail. Zero while following the tail by construction — the append
+    /// hook does not count there — so the value is never a claim about rows
+    /// already on screen.
+    pub(crate) fn unseen_new_rows(&self) -> usize {
+        if self.is_following_tail() {
+            0
+        } else {
+            self.unseen_rows
+        }
     }
 
     pub(crate) fn scroll_metrics(&self, width: usize, height: usize) -> (usize, usize) {
@@ -53,6 +71,9 @@ impl Transcript {
             if lines[idx].text.to_lowercase().contains(&needle) {
                 let max_scroll = total.saturating_sub(height);
                 self.scroll_up = (total - 1 - idx).min(max_scroll);
+                if self.scroll_up == 0 {
+                    self.unseen_rows = 0;
+                }
                 return true;
             }
         }
