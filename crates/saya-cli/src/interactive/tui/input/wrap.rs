@@ -11,10 +11,12 @@
 //!
 //! **Known limitation — display width.** Wrapping is by *char count*, not
 //! terminal cell width (a CJK character counts as 1 here but occupies 2
-//! cells). This matches the transcript pane's `wrap_word_aware` convention so
-//! the codebase is coherent; a long CJK line can overflow the visible box and
-//! the cursor drifts right of its true cell. Display-width-aware wrapping is
-//! the follow-up.
+//! cells). It no longer matches the transcript pane: `wrap_word_aware` went
+//! cell-aware (the shared `tui::wrap` helper it and the approval panel both
+//! use). The char model stays here because the cursor mapping in
+//! [`super::cursor`] depends on these exact breaks; a long CJK line can
+//! overflow the visible box and the cursor drifts right of its true cell.
+//! Display-width-aware wrapping is the follow-up.
 
 /// Greedy word wrap of one logical line into visual lines of at most `width`
 /// chars. Fits as many words per line as `width` allows; the whitespace that
