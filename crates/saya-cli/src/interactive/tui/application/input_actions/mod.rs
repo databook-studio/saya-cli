@@ -14,6 +14,10 @@ pub(crate) use crate::interactive::tui::transcript::BlockKind;
 mod tests;
 
 #[cfg(test)]
+#[path = "draft_stash_tests.rs"]
+mod draft_stash_tests;
+
+#[cfg(test)]
 #[path = "queue_tests.rs"]
 mod queue_tests;
 
