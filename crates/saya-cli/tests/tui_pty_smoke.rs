@@ -650,17 +650,24 @@ fn assert_splash_and_status_named(screen: &vt100::Screen, label: &str) {
 fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str) {
     let text = screen_text(screen);
 
-    // Positive: the splash the REPL paints on startup must be present.
+    // Positive: the first screen the REPL paints must be present — asserted on
+    // what survives a squeeze, not on the branding.
+    //
+    // This used to pin `◆ saya` and the tagline. Those are decoration, and the
+    // empty state now drops decoration before guidance when height is short
+    // (Phase 9 packet 2): here the startup trust modal takes most of the pane,
+    // so the branding is correctly shed while the keyboard hint and the
+    // concept line stay. Pinning the branding pinned the old, wrong priority.
     assert_in(
         &text,
-        "◆ saya",
-        &format!("splash marker (◆ saya) missing from {label}"),
+        "/ commands",
+        &format!("keyboard hint missing from {label} — it must outlive decoration"),
         &text,
     );
     assert_in(
         &text,
-        "Ask your databases in plain language.",
-        &format!("splash tagline missing from {label}"),
+        "Each request becomes a chapter",
+        &format!("first-screen concept line missing from {label}"),
         &text,
     );
 
