@@ -71,3 +71,7 @@ impl Transcript {
         toggled
     }
 }
+
+#[cfg(test)]
+#[path = "transcript/result_nav_tests.rs"]
+mod result_nav_tests;
