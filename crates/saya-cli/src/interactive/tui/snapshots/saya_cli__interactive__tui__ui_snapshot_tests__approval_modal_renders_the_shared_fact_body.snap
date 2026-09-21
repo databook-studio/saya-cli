@@ -3,8 +3,8 @@ source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
 expression: buffer
 ---
 "saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
-"                                     ◆ saya                                     "
-"                      Ask your databases in plain language.                     "
+"                                                                                "
+"               / commands     @ tables     ? help     Ctrl+C quit               "
 "                                                                                "
 " [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:o"
 "╭ approval required ───────────────────────────────────────────────────────────╮"
