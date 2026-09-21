@@ -49,5 +49,6 @@ pub(crate) mod ui;
 mod ui_snapshot_tests;
 mod usage_footer;
 mod usage_totals;
+pub(crate) mod wrap;
 
 pub(crate) use session::{TrustOutcome, TuiSession, run};
