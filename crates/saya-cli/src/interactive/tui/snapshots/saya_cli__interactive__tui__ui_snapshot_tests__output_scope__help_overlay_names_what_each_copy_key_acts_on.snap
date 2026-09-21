@@ -3,7 +3,7 @@ source: crates/saya-cli/src/interactive/tui/ui_snapshot_output_scope.rs
 expression: buffer
 ---
 "saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
-"                                                                                "
+"                                     ▄     ▄                                    "
 "    ╭ keybindings — any key to close ──────────────────────────────────────╮    "
 "    │Enter        submit  ·  Alt+Enter  newline  ·  Enter on empty line exp│    "
 "    │/            command popup  ·  @  table references                    │    "

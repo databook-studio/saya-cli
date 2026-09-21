@@ -1,0 +1,28 @@
+---
+source: crates/saya-cli/src/interactive/tui/ui/surface/empty_state_tests.rs
+expression: buffer
+---
+"saya · Database read-only · No workspace bound · Data sharing on                "
+"                                                                                "
+"                         No database is configured yet.                         "
+"          Run `saya config init` — it prints where it wrote the files.          "
+"          Add your database there, then `saya connection test <name>`.          "
+"                           Restart saya to pick it up.                          "
+"                                                                                "
+"              `saya config doctor` explains anything still missing.             "
+"                                                                                "
+"               No workspace is bound: file tools are unavailable;               "
+"            launch inside a git worktree or pass `--workspace <dir>`.           "
+"                                                                                "
+"         Each request becomes a chapter — activity, answer, and results.        "
+"                                                                                "
+"                                   try asking                                   "
+"                            which tables track billing?                         "
+"                            top 5 customers by revenue                          "
+"                 compare row counts across the connected databases              "
+"                                                                                "
+"               / commands     @ tables     ? help     Ctrl+C quit               "
+" [analytics] ollama/qwen approval:read-only mode:build ws:unbound host:off shari"
+"╭ saya ────────────────────────────────────────────────────────────────────────╮"
+"│Ask about your data, or type / for commands                                   │"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"
