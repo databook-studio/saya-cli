@@ -53,6 +53,9 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_t
 }
 
 #[cfg(test)]
+#[path = "answer_chapter_tests.rs"]
+mod answer_chapter_tests;
+#[cfg(test)]
 #[path = "answer_tests.rs"]
 mod answer_tests;
 #[cfg(test)]

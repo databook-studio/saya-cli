@@ -10,7 +10,8 @@ use super::super::table;
 /// from any tool/SQL lines above) on the first chunk. A retry notice left
 /// by `reset_answer` must not capture the re-stream: the emptied assistant
 /// block sits *behind* the notice, so the answer resumes into it (found by
-/// kind, not by the tail) instead of appending to the notice.
+/// kind within the chapter in flight, not by the tail) instead of appending
+/// to the notice.
 /// `append_delta` would extend the trailing System notice; the separator
 /// arm below only opens a spacer when the tail is neither the notice nor
 /// an assistant block.
@@ -19,6 +20,7 @@ pub(crate) fn push_assistant_text(transcript: &mut Transcript, text: &str) {
         .blocks()
         .last()
         .is_some_and(|b| b.kind == BlockKind::System && b.text == RETRY_NOTICE)
+        && live_answer_index(transcript).is_some()
     {
         transcript.reformat_last(BlockKind::Assistant, |current| format!("{current}{text}"));
         return;
@@ -47,32 +49,50 @@ pub(crate) fn push_assistant_text(transcript: &mut Transcript, text: &str) {
 /// adapter at runtime and fails on any drift.
 pub(crate) const RETRY_NOTICE: &str = "provider stream interrupted — retrying";
 
+/// The index of the live assistant answer in the chapter in flight, if any:
+/// the last `Assistant` block carrying the tail block's chapter. The reverse
+/// scan is bounded to that chapter — the same identity `current_chapter`
+/// derives (`transcript/chapters/mod.rs`) — so a completed answer from an
+/// earlier chapter is never reachable from here: losing delivered evidence
+/// is worse than any duplicate, and a stream that died before answering has
+/// nothing of its own to find. Chapters are contiguous and only advance, so
+/// the first kind-match scanning backward is the chapter's own answer.
+fn live_answer_index(transcript: &Transcript) -> Option<usize> {
+    let blocks = transcript.blocks();
+    let chapter = blocks.last()?.chapter;
+    blocks
+        .iter()
+        .rposition(|block| block.kind == BlockKind::Assistant && block.chapter == chapter)
+}
+
 /// The provider stream failed mid-answer and the loop is retrying the
 /// turn. The text streamed so far is discarded: the live assistant block
 /// is cleared, and a `System` notice is pushed after it. The ordering is
 /// the whole trick: clearing first means the notice (a System block, not
 /// Assistant) is never itself cleared by this or a later reset, and the
 /// re-streamed answer resumes into the emptied assistant block *behind*
-/// the notice (by kind in `push_assistant_text`), so it neither appends
-/// to the notice nor opens a second assistant block. A reset with nothing
-/// streamed says nothing: there is no discarded attempt to announce, and
-/// the next answer still opens its own block.
+/// the notice (by kind within the chapter in `push_assistant_text`), so it
+/// neither appends to the notice nor opens a second assistant block. A
+/// reset with nothing streamed says nothing: there is no discarded attempt
+/// to announce, and the next answer still opens its own block.
 pub(crate) fn reset_answer(transcript: &mut Transcript) {
-    // The discarded attempt is whatever assistant text is live: either the
-    // trailing assistant block (mid-answer) or the resumed answer behind a
-    // trailing notice (a second retry landing after the re-stream began).
-    let discarded = transcript
-        .blocks()
-        .iter()
-        .rev()
-        .find(|block| block.kind == BlockKind::Assistant)
-        .map(|block| !block.text.is_empty())
-        .unwrap_or(false);
+    // The discarded attempt is the live answer of the chapter in flight:
+    // either the trailing assistant block (mid-answer) or the resumed answer
+    // behind a trailing notice (a second retry landing after the re-stream
+    // began). No answer in this chapter — the stream died before it wrote
+    // anything — means nothing to discard and nothing to clear: the search
+    // must not walk past the chapter boundary to find something to erase.
+    let Some(index) = live_answer_index(transcript) else {
+        return;
+    };
+    let discarded = !transcript.blocks()[index].text.is_empty();
     // Clear the live answer wherever it sits — trailing, or behind a
     // trailing notice — so the next delta resumes it instead of appending
     // to the partial. `reset_delta` only clears the trailing block, so a
     // notice-trailing retry needs `reformat_last` to reach behind it; the
-    // notice itself (System, never Assistant) is untouched either way.
+    // notice itself (System, never Assistant) is untouched either way. The
+    // index above guarantees the kind-match `reformat_last` finds is this
+    // chapter's own answer.
     if transcript
         .blocks()
         .last()
