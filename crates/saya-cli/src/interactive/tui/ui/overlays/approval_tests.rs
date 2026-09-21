@@ -25,6 +25,7 @@ fn approval_app(detail: Option<String>, grant: Option<&str>) -> App {
         tool: "http_fetch".into(),
         detail,
         grant: grant.map(str::to_string),
+        scroll: 0,
         respond,
     });
     app

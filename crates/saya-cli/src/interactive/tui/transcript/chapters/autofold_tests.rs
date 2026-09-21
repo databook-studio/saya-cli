@@ -72,6 +72,7 @@ fn nothing_folds_while_an_approval_is_pending() {
         tool: "bounded_sql_query".into(),
         detail: None,
         grant: None,
+        scroll: 0,
         respond,
     });
     submit_text(&mut app, "and the blue ones");

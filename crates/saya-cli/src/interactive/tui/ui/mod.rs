@@ -92,6 +92,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
             &pending.tool,
             pending.detail.as_deref(),
             pending.grant.as_deref(),
+            pending.scroll,
             chunks[4],
         );
     }

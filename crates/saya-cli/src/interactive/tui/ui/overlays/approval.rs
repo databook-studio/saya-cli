@@ -1,6 +1,7 @@
 //! The docked approval panel: what will run, and the answers that decide it.
 
 use super::super::theme::{accent, secondary, warning};
+use crate::interactive::tui::input::wrap::wrap_line;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -56,6 +57,18 @@ fn detail_lines(body: &str) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// How many rows the body really wraps into at `inner` columns — the same
+/// word-aware arithmetic the input box counts with. The panel decides fit
+/// and the scroll end-stop with this, not [`wrapped_rows`]: the char
+/// arithmetic above undercounts a prose line that ratatui's paragraph wraps
+/// into several rows, leaving such a body clipped and unlabelled, or
+/// stranding its final rows below the end-stop — E1's defect from the other
+/// side. The paint is ratatui's own wrap; this counter is the codebase's
+/// canonical model of it.
+fn body_row_count(body: &str, inner: usize) -> usize {
+    body.lines().map(|line| wrap_line(line, inner).len()).sum()
+}
+
 /// The shared answers line, bold — the same wording the terminal prompt appends.
 fn answers_row(answers: &str) -> Line<'static> {
     Line::from(Span::styled(
@@ -94,15 +107,19 @@ fn paint(frame: &mut Frame<'_>, lines: Vec<Line<'static>>, block: Block<'static>
 ///
 /// The answers' rows are reserved out of the panel height. When the wrapped
 /// body fits under that reservation, the panel paints exactly as it always
-/// did; when it does not, the detail clips at the reservation — the last
-/// visible detail row names how much was withheld — and the answers still
-/// paint immediately after it. No scrolling: reaching the withheld rows is
-/// a separate slice.
+/// did; when it does not, the detail clips at the reservation, the last
+/// visible detail row names how much was withheld, and the answers still
+/// paint immediately after it. `scroll` then moves a verbatim window of the
+/// wrapped facts through the detail region — clamped here against the live
+/// geometry, so it cannot run past either end, and left alone entirely when
+/// the body fits — while the answers row stays pinned: the offset moves the
+/// detail region only.
 pub(in crate::interactive::tui) fn draw_approval(
     frame: &mut Frame<'_>,
     tool: &str,
     detail: Option<&str>,
     grant: Option<&str>,
+    scroll: usize,
     area: Rect,
 ) {
     let answers = crate::grant_token::session_answers_line(grant);
@@ -123,7 +140,7 @@ pub(in crate::interactive::tui) fn draw_approval(
 
     let inner_w = area.width.saturating_sub(2).max(1) as usize;
     let answers_rows = wrapped_rows(&answers, inner_w).max(1);
-    let detail_rows = wrapped_rows(body, inner_w);
+    let detail_rows = body_row_count(body, inner_w);
     let inner_h = area.height.saturating_sub(2) as usize;
     // The reservation: the blank separator plus the answers' wrapped rows.
     let budget = inner_h.saturating_sub(answers_rows + 1);
@@ -138,21 +155,33 @@ pub(in crate::interactive::tui) fn draw_approval(
     }
 
     // Overflow: the detail clips at the answers' reservation and the cut is
-    // labelled. The body text goes to the paragraph whole, so what shows is
-    // a verbatim prefix of the facts; the region edge does the clipping.
+    // labelled. The body text goes to the paragraph whole; the clamped
+    // scroll offset moves a verbatim window of the wrapped facts through
+    // the region, and the region edge does the clipping.
     let block = approval_block();
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let budget = budget.min(inner.height as usize) as u16;
+    let visible = budget as usize;
+    // The offset cannot run past either end: at the maximum the final fact
+    // rows fill the region and nothing is withheld; a body that fits never
+    // reaches this branch, so it cannot scroll at all. The end-stop counts
+    // the rows the body really wraps into (see `body_row_count`).
+    let max_offset = detail_rows.saturating_sub(visible);
+    let offset = scroll.min(max_offset) as u16;
 
     frame.render_widget(
-        Paragraph::new(Text::from(detail_lines(body))).wrap(Wrap { trim: false }),
+        Paragraph::new(Text::from(detail_lines(body)))
+            .wrap(Wrap { trim: false })
+            .scroll((offset, 0)),
         Rect::new(inner.x, inner.y, inner.width, budget),
     );
 
-    // The last visible detail row says material was withheld.
-    if budget >= 1 {
-        let withheld = detail_rows.saturating_sub(budget as usize - 1) as u16;
+    // The last visible detail row names the withheld material — until the
+    // scroll reaches the end, where the final facts fill the region and
+    // the marker is gone.
+    let withheld = detail_rows.saturating_sub(offset as usize + visible.saturating_sub(1));
+    if budget >= 1 && usize::from(offset) < max_offset {
         let marker = Rect::new(inner.x, inner.y + budget - 1, inner.width, 1);
         frame.render_widget(Clear, marker);
         frame.render_widget(
@@ -178,6 +207,9 @@ pub(in crate::interactive::tui) fn draw_approval(
     );
 }
 
+#[cfg(test)]
+#[path = "approval_scroll_tests.rs"]
+mod scroll_tests;
 #[cfg(test)]
 #[path = "approval_tests.rs"]
 mod tests;

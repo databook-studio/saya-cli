@@ -46,6 +46,7 @@ fn the_return_key_does_not_disturb_an_approval() {
         tool: "bounded_sql_query".into(),
         detail: Some("SELECT 1".into()),
         grant: None,
+        scroll: 0,
         respond,
     });
     let before = app.unseen_new_rows();
