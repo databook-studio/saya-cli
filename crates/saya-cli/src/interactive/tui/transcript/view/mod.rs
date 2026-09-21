@@ -167,3 +167,7 @@ impl Transcript {
 #[cfg(test)]
 #[path = "view_tests.rs"]
 mod view_tests;
+
+#[cfg(test)]
+#[path = "rows_unicode_tests.rs"]
+mod rows_unicode_tests;

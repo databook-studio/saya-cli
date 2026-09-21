@@ -101,7 +101,9 @@ mod tests {
         let (mut t3, mut t4) = (Transcript::new(), Transcript::new());
         t3.push(BlockKind::Error, "a\n\nb\n");
         t4.push(BlockKind::Tool, "日日日日日");
-        assert!(t3.wrapped(10).len() == 4 && t4.wrapped(2).len() == 4);
+        // `日` paints two terminal cells, so a 2-cell budget fits one glyph
+        // per row: five body rows under the ACTIVITY label.
+        assert!(t3.wrapped(10).len() == 4 && t4.wrapped(2).len() == 6);
 
         t.clear();
         t.push(BlockKind::User, "l1\nl2\nl3\nl4\nl5");
