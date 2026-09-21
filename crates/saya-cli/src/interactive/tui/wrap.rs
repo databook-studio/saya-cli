@@ -4,7 +4,10 @@
 //! [`wrap_cells`], and the approval panel measures **and** paints its fact
 //! body with the same rows — so what a panel counts is what it draws, and a
 //! wide body can never be counted short of its paint (re-audit R01: three
-//! wrappers is how that defect happened).
+//! wrappers is how that defect happened). The budgets that truncate instead
+//! of wrap — the busy bar's action and its detail head, the folded chapter
+//! summary — cut through [`truncate_cells`] and measure through
+//! [`cell_width`], so no site rediscovers the units.
 //!
 //! The budget is measured in terminal cells (`unicode_width`), not scalar
 //! values: `日` is one `char` but two cells, a combining mark is several
@@ -65,4 +68,34 @@ pub(crate) fn wrap_cells(raw: &str, width: usize) -> Vec<String> {
         rows.push(String::new());
     }
     rows
+}
+
+/// A string's cost in terminal cells — the unit every column budget in the
+/// TUI is counted in. A `char` is not a cell (`日` is one char, two cells; a
+/// combining mark is two chars, no cell), so a site that compares against a
+/// `width` measures with this and never with `chars().count()`.
+pub(crate) fn cell_width(text: &str) -> usize {
+    text.width()
+}
+
+/// Cuts `raw` to at most `width` display cells, on a grapheme boundary — the
+/// single-line companion to [`wrap_cells`] for the budgets that truncate
+/// rather than wrap. The cut stops before the grapheme that would exceed the
+/// budget, so a base never loses its combining mark, a ZWJ sequence is never
+/// split, and the result never overruns; a lone grapheme wider than the
+/// whole budget yields an empty cut rather than an exception to that, and
+/// the loop advances without spinning. An ellipsis the caller appends is the
+/// caller's one cell to reserve out of `width`.
+pub(crate) fn truncate_cells(raw: &str, width: usize) -> String {
+    let mut cut = String::new();
+    let mut used = 0;
+    for grapheme in raw.graphemes(true) {
+        let cells = grapheme.width();
+        if used + cells > width {
+            break;
+        }
+        used += cells;
+        cut.push_str(grapheme);
+    }
+    cut
 }
