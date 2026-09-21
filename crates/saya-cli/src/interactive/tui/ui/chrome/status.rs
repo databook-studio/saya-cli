@@ -3,7 +3,7 @@
 use super::super::surface::SPINNER;
 use super::super::theme::{accent, danger, on_accent, secondary, success, warning};
 use super::action_line::{
-    CANCEL_HINT, MIN_ACTION_ROOM, action_text, running_call, total_row_width,
+    CANCEL_HINT, SEPARATOR, action_text, bare_action_width, busy_row_plan, running_call,
 };
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::types::App;
@@ -152,23 +152,16 @@ pub(in crate::interactive::tui) fn draw_status(
             .started
             .map(|start| start.elapsed().as_secs())
             .unwrap_or(0);
-        // The bar is wider than the frame, so the room cannot come from the
-        // window width minus today's tail: both already overflow the frame,
-        // and subtracting them erases the target even on an idle-width bar.
-        // The action sheds the row's overflow down to the frame width — but
-        // never below the pinned floor (`MIN_ACTION_ROOM`), which keeps the
-        // suite's target whole. A longer detail truncates to exactly what
-        // fits beside the painted tail; the tail spans paint after the
-        // action in the same `Line`, so the cancel hint survives a 900-char
-        // detail at 100 columns by construction, and the test asserts it.
+        // The stop affordance is reserved first: the cancel hint and the
+        // fixed chrome it rides with come off the frame width before
+        // anything elastic is sized, and what is left is spent down the
+        // shedding hierarchy — the routine status detail sheds, then the
+        // action detail truncates, and the notice yields last — so the hint
+        // is never what the row drops (audit F06: it painted last and paid
+        // for every other span's overflow).
+        let segments = status_spans(status, bg);
+        let widths: Vec<usize> = segments.iter().map(|span| span.width()).collect();
         let unseen_width = unseen.as_ref().map(|span| span.width()).unwrap_or(0);
-        let tail_width = status_spans(status, bg)
-            .iter()
-            .map(|span| span.width())
-            .sum::<usize>()
-            + Span::styled(CANCEL_HINT, bar).width()
-            + Span::styled("· ", bar).width()
-            + unseen_width;
         let elapsed_width = format!("{elapsed}s ").chars().count();
         let frame_width = format!(" {frame_char} ").chars().count();
         let full_action = action_text(
@@ -176,31 +169,36 @@ pub(in crate::interactive::tui) fn draw_status(
             running_call(app),
             usize::MAX,
         );
-        let full_row = total_row_width(frame_width, &full_action, elapsed_width, tail_width);
-        // Shed the whole row overflow from the action: the tail is fixed and
-        // the frame is the only width that matters. The floor keeps the
-        // pinned target whole on an idle-width bar; a longer detail is what
-        // pays for the overflow.
-        let overflow = full_row.saturating_sub(area.width as usize);
-        let room = full_action
-            .chars()
-            .count()
-            .saturating_sub(overflow)
-            .max(MIN_ACTION_ROOM.min(full_action.chars().count()));
-        let doing = action_text(app.request.activity.as_deref(), running_call(app), room);
-        // The new-activity count leads the bar: the status tail already
-        // overflows a narrow frame, so a trailing segment would be clipped
-        // exactly when it matters. It is an invitation, never a jump.
+        let plan = busy_row_plan(
+            area.width as usize,
+            unseen_width,
+            frame_width,
+            elapsed_width,
+            &widths,
+            full_action.chars().count(),
+            bare_action_width(app.request.activity.as_deref()),
+        );
+        let doing = action_text(
+            app.request.activity.as_deref(),
+            running_call(app),
+            plan.action_room,
+        );
+        // The new-activity count leads the bar: it is an invitation, never a
+        // jump, and the plan sheds it only when the bare action cannot fit
+        // beside it. It is painted before the tail, so it is never clipped
+        // by what follows.
         let mut spans = Vec::new();
-        if let Some(span) = unseen {
+        if plan.lead_painted
+            && let Some(span) = unseen
+        {
             spans.push(span);
         }
         spans.push(Span::styled(
             format!(" {frame_char} {doing}{elapsed}s "),
             Style::default().bg(bg).fg(accent()),
         ));
-        spans.push(Span::styled("· ", bar));
-        spans.extend(status_spans(status, bg));
+        spans.push(Span::styled(SEPARATOR, bar));
+        spans.extend(segments.into_iter().take(plan.status_segments));
         spans.push(Span::styled(CANCEL_HINT, bar));
         Line::from(spans)
     } else if app.overlays.selection_mode {
@@ -233,6 +231,9 @@ pub(in crate::interactive::tui) fn draw_status(
     frame.render_widget(Paragraph::new(line).style(bar), area);
 }
 
+#[cfg(test)]
+#[path = "status_cancel_tests.rs"]
+mod cancel_tests;
 #[cfg(test)]
 #[path = "status_tests.rs"]
 mod tests;
