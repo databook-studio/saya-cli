@@ -5,6 +5,10 @@ use super::{History, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, total_bytes};
 #[allow(dead_code)]
 impl History {
     pub(crate) fn push(&mut self, line: &str) -> bool {
+        // A submit ends navigation and consumes the draft stash, whatever the
+        // entry fate: even a de-duplicated or disabled push must not leave a
+        // stash a later Down could resurrect over the freshly cleared line.
+        self.stash = None;
         if self.disabled {
             return false;
         }
@@ -55,5 +59,31 @@ impl History {
 
     pub(crate) fn reset(&mut self) {
         self.cursor = None;
+        // Any edit or cursor move ends navigation: the draft on the line is
+        // new, so the stash it was parked from must not come back on a
+        // later Down.
+        self.stash = None;
+    }
+
+    /// True while Up/Down navigation is active: a recalled entry sits on the
+    /// input line and `previous`/`next` step from the cursor. False while the
+    /// user is typing, or after navigation ended by stepping past an edge.
+    pub(crate) fn navigating(&self) -> bool {
+        self.cursor.is_some()
+    }
+
+    /// Stashes the in-progress draft when navigation begins (the first Up
+    /// from an unset cursor). Readline-style: the line the user was typing
+    /// survives the walk through history and comes back when Down steps past
+    /// the newest entry. View state only — never persisted, never recorded.
+    pub(crate) fn stash_draft(&mut self, draft: &str) {
+        self.stash = Some(draft.to_string());
+    }
+
+    /// Consumes the stashed draft, if any. Taken (not peeked) when Down
+    /// restores the live edge, so the stash cannot resurrect after an edit
+    /// or a submit has already ended navigation.
+    pub(crate) fn take_stash(&mut self) -> Option<String> {
+        self.stash.take()
     }
 }

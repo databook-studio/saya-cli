@@ -3,20 +3,33 @@ use super::super::super::complete;
 use super::super::super::types::{App, Menu};
 
 impl App {
-    /// Recalls the previous history entry into the input (Up).
+    /// Recalls the previous history entry into the input (Up). Recall only
+    /// fills the draft — it never submits. The first Up from a fresh line
+    /// (unset history cursor) stashes the in-progress draft, readline-style,
+    /// so stepping back down past the newest entry can restore it.
     pub(crate) fn history_prev(&mut self) {
+        let entering = !self.history.navigating();
         if let Some(entry) = self.history.previous() {
             let entry = entry.to_string();
+            if entering {
+                self.history.stash_draft(self.input.text());
+            }
             self.input.set_text(entry);
             self.refresh_menu();
         }
     }
 
-    /// Recalls the next history entry, or restores an empty line (Down).
+    /// Recalls the next history entry (Down). Stepping back past the newest
+    /// entry restores the stashed draft; with no history position at all,
+    /// Down leaves the draft alone — it never wipes what the user typed.
     pub(crate) fn history_next(&mut self) {
         match self.history.next() {
             Some(entry) => self.input.set_text(entry.to_string()),
-            None => self.input.clear(),
+            None => {
+                if let Some(draft) = self.history.take_stash() {
+                    self.input.set_text(draft);
+                }
+            }
         }
         self.refresh_menu();
     }
