@@ -31,15 +31,29 @@ mod viewport_freeze_tests {
 
     #[test]
     fn following_the_tail_still_shows_new_lines() {
+        // Deliberately far more content than the window: with only a few rows
+        // the `scroll_up.min(rem)` clamp keeps the newest line visible even if
+        // the tail were wrongly compensated, so a small fixture cannot tell a
+        // working tail from a frozen one.
         let mut t = Transcript::new();
-        t.push(BlockKind::User, "alpha");
-        t.push(BlockKind::Assistant, "gamma");
+        for i in 0..40 {
+            t.push(BlockKind::Assistant, format!("line {i}"));
+        }
         assert!(t.is_following_tail());
+        // Warm the wrap cache: `scrolled_baseline` reads it, so without a
+        // prior view there is no baseline and the compensation path is never
+        // entered — the test would pass whatever the guard did.
+        let _ = view_texts(&t, 80, 4);
         t.push(BlockKind::Assistant, "brand new");
         let shown = view_texts(&t, 80, 4);
         assert!(
             shown.iter().any(|line| line == "brand new"),
             "the live tail must still show new lines: {shown:?}"
+        );
+        // And the tail anchor itself must not have drifted off zero.
+        assert!(
+            t.is_following_tail(),
+            "compensating at the tail would leave scroll_up non-zero"
         );
     }
 
