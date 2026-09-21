@@ -79,6 +79,7 @@ impl History {
         Self {
             entries,
             cursor: None,
+            stash: None,
             path,
             limit: MAX_ENTRIES,
             disabled,

@@ -11,6 +11,7 @@ fn history() -> History {
             "select count(*) from events".to_string(),
         ],
         cursor: None,
+        stash: None,
         path: std::path::PathBuf::new(),
         limit: MAX_ENTRIES,
         disabled: true,
