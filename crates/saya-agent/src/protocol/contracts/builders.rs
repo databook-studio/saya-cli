@@ -31,6 +31,14 @@ impl AgentEvent {
         Self::TurnReset
     }
 
+    /// Builds the per-attempt [`AgentEvent::TurnStarted`] signal. The caller
+    /// is `stream_attempt`, at the top of every attempt — the first and each
+    /// retry — so a sink's rollback watermark always marks the attempt now in
+    /// flight.
+    pub fn turn_started() -> Self {
+        Self::TurnStarted
+    }
+
     /// Builds the per-call request event. `effect` is the tool's **declared
     /// effect**, carried so a renderer can derive its label from the
     /// declaration the loop gates on; `None` only when no declaration exists

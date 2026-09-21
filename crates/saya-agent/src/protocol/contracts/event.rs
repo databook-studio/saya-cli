@@ -45,6 +45,22 @@ pub enum AgentEvent {
     /// is discarded, and the retried stream re-emits the full answer as fresh
     /// deltas. Carries nothing — the replacement arrives as new deltas.
     TurnReset,
+    /// A provider receive is about to begin — emitted once before a turn's
+    /// first attempt and once before each retried attempt. Carries nothing.
+    ///
+    /// This is the boundary [`AgentEvent::TurnReset`] rolls back to. Without
+    /// it a sink cannot tell where "this turn" began: after a
+    /// [`AgentEvent::ToolCompleted`], the next [`AgentEvent::AssistantText`]
+    /// may be the same receive continuing or a new one, and nothing else in
+    /// the stream distinguishes them. A sink that tried to infer the boundary
+    /// from presentation — the TUI used its request chapter — rolls back an
+    /// earlier step's delivered preamble and completed tool results
+    /// (re-audit R02).
+    ///
+    /// A sink that replays or accumulates should record a rollback watermark
+    /// here. A sink with nothing to roll back may ignore it; it carries no
+    /// content and means nothing to a pipe.
+    TurnStarted,
     /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
     /// surfaced so the user can see exactly what will run before approving it.
     /// `effect` carries the tool's **declared effect** (`ToolEffect`) so a

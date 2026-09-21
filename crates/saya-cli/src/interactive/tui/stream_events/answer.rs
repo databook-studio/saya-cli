@@ -60,9 +60,18 @@ pub(crate) const RETRY_NOTICE: &str = "provider stream interrupted — retrying"
 fn live_answer_index(transcript: &Transcript) -> Option<usize> {
     let blocks = transcript.blocks();
     let chapter = blocks.last()?.chapter;
-    blocks
+    let index = blocks
         .iter()
-        .rposition(|block| block.kind == BlockKind::Assistant && block.chapter == chapter)
+        .rposition(|block| block.kind == BlockKind::Assistant && block.chapter == chapter)?;
+    // Chapter is not attempt. When an attempt boundary is known, an answer
+    // block that predates it belongs to an earlier step of this request and
+    // is not the live answer to resume into — appending the retried text to
+    // it overwrites delivered evidence (re-audit R02). Without a mark the
+    // chapter bound stands, which is slice B's behaviour.
+    match transcript.attempt_start() {
+        Some(start) if index < start => None,
+        _ => Some(index),
+    }
 }
 
 /// The provider stream failed mid-answer and the loop is retrying the

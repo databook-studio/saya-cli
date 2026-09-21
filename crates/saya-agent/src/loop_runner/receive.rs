@@ -112,6 +112,12 @@ async fn stream_attempt(
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
 ) -> Result<(ChatMessage, TokenUsage, Option<String>), AttemptError> {
+    // The attempt boundary, emitted before anything can be produced: a sink
+    // that rolls back on `TurnReset` needs to know where this attempt began,
+    // and nothing later in the stream marks it. Emitted on every attempt,
+    // first and retried alike, so the watermark always names the attempt in
+    // flight.
+    emit(events, sink, AgentEvent::turn_started()).await;
     // A failure while establishing the stream is `Fatal`: the HTTP layer
     // already retried establishment, and a refused request (bad key, bad
     // model) would fail identically on every retry.

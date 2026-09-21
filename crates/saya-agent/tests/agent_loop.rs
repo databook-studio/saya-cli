@@ -2506,10 +2506,29 @@ async fn dropped_stream_retries_the_turn_and_the_sink_saw_reset_then_full_text()
     // The sink saw reset-then-full text: the partial attempt's deltas came
     // before the reset, the full retry after it — never concatenated.
     let seen = events.lock().unwrap().clone();
+    // Every attempt announces itself, the first and the retried one alike.
+    // A sink rolls back to this boundary, so a missing one would leave the
+    // TUI reaching for the request chapter instead and erasing an earlier
+    // step's delivered evidence (re-audit R02).
+    assert_eq!(
+        seen.iter()
+            .filter(|event| matches!(event, AgentEvent::TurnStarted))
+            .count(),
+        2,
+        "one TurnStarted before the first attempt and one before the retry:\n{seen:#?}"
+    );
+    assert!(
+        matches!(seen.first(), Some(AgentEvent::TurnStarted)),
+        "the attempt boundary precedes anything the attempt can produce"
+    );
     let split = seen
         .iter()
         .position(|event| matches!(event, AgentEvent::TurnReset))
         .expect("the sink saw a TurnReset before the retry");
+    assert!(
+        matches!(seen.get(split + 1), Some(AgentEvent::TurnStarted)),
+        "the retried attempt announces its own boundary right after the reset"
+    );
     let partial: String = seen[..split]
         .iter()
         .filter_map(|event| match event {
