@@ -237,6 +237,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         // Shift+End returns to the live edge; bare End stays input end-of-line.
         KeyCode::End if mods.contains(KeyModifiers::SHIFT) => return app.return_to_live_edge(),
         KeyCode::End => app.input.move_end(),
+        KeyCode::Up | KeyCode::Down if alt => return app.step_result(code == KeyCode::Down),
         KeyCode::Up => return app.history_prev(),
         KeyCode::Down => return app.history_next(),
         KeyCode::PageUp => return app.scroll_pages(true),
