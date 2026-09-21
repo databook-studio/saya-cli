@@ -125,42 +125,19 @@ fn a_long_detail_never_pushes_the_cancel_hint_off_the_bar() {
         None,
     );
     let buffer = render_buffer(&app, &fixed_status(), 100, 10);
-    // The bar renders wider than the frame — today's tail alone overflows
-    // it — so the clipped pixels cannot carry the assertion: the renderer
-    // clips the `Line` at the frame edge and the hint paints past it. What
-    // the phase requires is the truncation the renderer budgets from: the
-    // action sheds the row's overflow down to the frame width, so the tail
-    // spans still follow the action in the same `Line` — nothing is dropped
-    // to make room. Assert through the budget seam, not the clipped pixels.
-    let tail_width = super::super::ui::chrome::action_line::tail_width_for_test(&fixed_status());
-    let full_row = super::super::ui::chrome::action_line::total_row_width_for_test(
-        app.request.activity.as_deref(),
-        app.transcript
-            .newest_open_tool()
-            .map(|(name, arguments)| (name.to_string(), arguments.clone())),
-        0,
-        &fixed_status(),
-    );
+    // Assert the painted frame, not the budget the renderer worked from.
+    // This test previously computed a row width through a test-only seam,
+    // discarded it, and checked only that *something* was truncated — so it
+    // passed against a bar with no cancel hint on it at all, which is the
+    // bar that shipped (audit F06). The hint is now reserved before the
+    // elastic spans are sized, so it is in the buffer and can be asserted
+    // there.
     assert!(
-        full_row > 100,
-        "precondition: the untruncated row overflows the 100-column frame"
+        buffer.contains("Esc to cancel"),
+        "a long detail must not push the cancel affordance off the bar:\n{buffer}"
     );
-    let _ = tail_width;
     assert!(
         buffer.contains("…"),
         "the over-long detail truncates with an ellipsis rather than overflowing:\n{buffer}"
-    );
-    let bar_row = buffer
-        .lines()
-        .find(|line| line.contains("running bounded_sql_query"))
-        .expect("the busy bar renders");
-    let action_end = bar_row.find("0s ·").expect("elapsed time renders");
-    let head = bar_row
-        .find("running bounded_sql_query")
-        .expect("action renders");
-    let detail_chars = bar_row[head..action_end].chars().count();
-    assert!(
-        detail_chars < 100,
-        "the action phrase before the elapsed time must be shorter than the frame, so the tail follows it in the same line:\n{buffer}"
     );
 }

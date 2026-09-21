@@ -4,15 +4,8 @@
 //! (`CANCEL_HINT`, the separator, the busy-row plan): they move together so
 //! neither side dangles.
 
-#[cfg(test)]
-use super::super::theme::{secondary, status_bg};
-#[cfg(test)]
-use super::status::status_spans;
-#[cfg(test)]
-use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::types::App;
-#[cfg(test)]
-use ratatui::{style::Style, text::Span};
+
 /// The bar's cancel hint, kept verbatim in one place: the busy row reserves
 /// exactly this before anything else is sized, so no other span can push it
 /// off the bar.
@@ -190,35 +183,4 @@ fn one_line(detail: &str) -> String {
 /// The first `budget` chars — char-boundary safe, never splitting mid-grapheme.
 fn head_chars(detail: &str, budget: usize) -> String {
     detail.chars().take(budget).collect()
-}
-
-/// Test seams for the truncation budget: the bar's own row width and tail
-/// width, so the suite asserts the budget the renderer draws from — not the
-/// frame-clipped pixels, which today's over-wide tail already overflows.
-#[cfg(test)]
-pub(crate) fn tail_width_for_test(status: &StatusView) -> usize {
-    let bar = Style::default().bg(status_bg()).fg(secondary());
-    let bg = status_bg();
-    status_spans(status, bg)
-        .iter()
-        .map(|span| span.width())
-        .sum::<usize>()
-        + Span::styled(CANCEL_HINT, bar).width()
-        + Span::styled(SEPARATOR, bar).width()
-}
-
-/// Test seams for the truncation budget: the bar's own row width and tail
-/// width, so the suite asserts the budget the renderer draws from — not the
-/// frame-clipped pixels, which today's over-wide tail already overflows.
-#[cfg(test)]
-pub(crate) fn total_row_width_for_test(
-    activity: Option<&str>,
-    running: Option<(String, serde_json::Value)>,
-    elapsed: u64,
-    status: &StatusView,
-) -> usize {
-    let tail = tail_width_for_test(status);
-    let elapsed_width = format!("{elapsed}s ").chars().count();
-    let frame_width = 3;
-    frame_width + action_text(activity, running, usize::MAX).chars().count() + elapsed_width + tail
 }
