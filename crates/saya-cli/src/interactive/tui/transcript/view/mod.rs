@@ -171,3 +171,7 @@ mod view_tests;
 #[cfg(test)]
 #[path = "render_scale_tests.rs"]
 mod render_scale_tests;
+
+#[cfg(test)]
+#[path = "rows_unicode_tests.rs"]
+mod rows_unicode_tests;
