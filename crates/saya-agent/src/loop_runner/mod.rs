@@ -74,6 +74,7 @@ pub async fn run_agent_with_sink(
     // The last statement that completed successfully, so a run that exhausts its
     // budget without nominating can still surface its best available answer.
     let mut last_successful_sql: Option<String> = None;
+    let mut designation = designation::State::new(limits.context_byte_budget);
     loop {
         check_cancelled(&cancellation)?;
         if let Some(max_turns) = limits.max_turns
@@ -91,7 +92,7 @@ pub async fn run_agent_with_sink(
                 &mut usage,
                 used_bounded_sql_query,
                 tool_metadata,
-                last_successful_sql,
+                designation.sql.clone().or(last_successful_sql),
             )
             .await;
         }
@@ -120,6 +121,15 @@ pub async fn run_agent_with_sink(
                 continuation_count += 1;
                 messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
                 continue;
+            }
+            Err(error) if designation.recovering() => {
+                return designation::failed_follow_up(
+                    &designation,
+                    error,
+                    (&mut events, sink),
+                    (usage, used_bounded_sql_query, tool_metadata),
+                )
+                .await;
             }
             outcome => outcome?,
         };
@@ -151,30 +161,19 @@ pub async fn run_agent_with_sink(
             emit(&mut events, sink, AgentEvent::reasoning_text(text)).await;
         }
         messages.push(assistant.clone());
-        // The model designates the SQL that answers the question by calling
-        // `designate_answer` in its terminal turn, alongside the prose answer.
-        // That ends the run: the prose is the answer, the SQL is carried on
-        // the output and an event, and no tool is executed. Optional — a turn
-        // without the call falls through to the normal terminal below.
-        if let Some(sql) = designation::designation_from(&assistant) {
-            emit(
-                &mut events,
-                sink,
-                AgentEvent::answer_designated(sql.clone()),
-            )
-            .await;
-            check_cancelled(&cancellation)?;
-            emit(&mut events, sink, AgentEvent::Complete).await;
-            return Ok(AgentOutput {
-                answer: assistant.content,
-                events,
-                used_bounded_sql_query,
-                tool_metadata,
-                usage,
-                learning_usage: None,
-                truncated: false,
-                answer_sql: Some(sql),
-            });
+        // Designation arm: see `designation` for the bounded prose recovery.
+        match designation::handle(
+            &mut designation,
+            &assistant,
+            (&mut events, sink, &cancellation),
+            &mut messages,
+            (usage, used_bounded_sql_query, &mut tool_metadata),
+        )
+        .await?
+        {
+            designation::Outcome::Done(output) => return Ok(*output),
+            designation::Outcome::Recovering => continue,
+            designation::Outcome::NotDesignated => {}
         }
         if assistant.tool_calls.is_empty() {
             check_cancelled(&cancellation)?;
@@ -187,7 +186,7 @@ pub async fn run_agent_with_sink(
                 usage,
                 learning_usage: None,
                 truncated: false,
-                answer_sql: None,
+                answer_sql: designation.sql.clone(),
             });
         }
         // The tool-call ceiling is a whole-run total checked once per turn,
@@ -209,7 +208,7 @@ pub async fn run_agent_with_sink(
                 &mut usage,
                 used_bounded_sql_query,
                 tool_metadata,
-                last_successful_sql,
+                designation.sql.clone().or(last_successful_sql),
             )
             .await;
         }
