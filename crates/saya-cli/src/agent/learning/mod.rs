@@ -16,6 +16,7 @@
 //!   nothing (§2). `Assisted` attaches an observation log and permits candidate
 //!   writes via `contract_propose`.
 
+pub(crate) mod extraction_stream;
 pub(crate) mod extractor;
 pub(crate) mod extractor_prompt;
 pub(crate) mod extractor_schema;

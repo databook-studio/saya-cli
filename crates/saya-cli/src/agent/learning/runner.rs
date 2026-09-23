@@ -6,6 +6,7 @@ use saya_agent::{
 use saya_store::KnowledgeItemStore;
 use std::fmt;
 
+use super::extraction_stream::{ExtractionStreamError, collect_extraction};
 use super::{
     ExtractionError, IngestionError, TurnRecord, build_extraction_prompt,
     filter_anti_self_reinforcement, ingest_proposals, parse_extraction_response, resolve_proposals,
@@ -116,13 +117,21 @@ pub(crate) async fn run_extraction(
     let request = request
         .with_response_format(ResponseFormat::JsonObject)
         .with_reasoning_effort(ReasoningEffort::Minimal);
-    let response = match provider.complete(request).await {
-        Ok(response) => response,
-        Err(error) => return ExtractionOutcome::failed(error.into(), None),
+    // The reply is collected from the stream, not `complete`: a reply whose
+    // first visible character is not JSON (a model ignoring JSON mode) stops
+    // the provider at its first visible token instead of writing prose until
+    // the output ceiling truncates it and the turn's timeout burns.
+    let reply = match collect_extraction(provider, request).await {
+        Ok(reply) => reply,
+        Err(ExtractionStreamError::NotJson { usage }) => {
+            return ExtractionOutcome::failed(ExtractionError::NotJson.into(), usage);
+        }
+        Err(ExtractionStreamError::Provider(error)) => {
+            return ExtractionOutcome::failed(error.into(), None);
+        }
     };
-    let usage = response.usage;
-    let extracted = match parse_extraction_response(&response.message.content, &record.object_table)
-    {
+    let usage = reply.usage;
+    let extracted = match parse_extraction_response(&reply.content, &record.object_table) {
         Ok(extracted) => extracted,
         Err(error) => return ExtractionOutcome::failed(error.into(), usage),
     };
