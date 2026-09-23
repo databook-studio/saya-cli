@@ -24,9 +24,10 @@ const SALVAGE_INSTRUCTION: &str = "You have no further tool calls available. Usi
 /// prose, so the answer is empty. Cancellation is not a salvage failure to
 /// work around and still propagates.
 ///
-/// When the model never designated an answer (it hit the budget first), the
-/// output's `answer_sql` is the last statement that completed successfully —
-/// the best available answer from work already done — or `None` when nothing
+/// When the model designated an answer before the ceiling hit, the output's
+/// `answer_sql` is that designation — the query it committed to as the answer.
+/// Otherwise it is the last statement that completed successfully — the best
+/// available answer from work already done — or `None` when nothing
 /// succeeded. A failed statement is never nominated.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn salvage(
@@ -41,7 +42,9 @@ pub(super) async fn salvage(
     usage: &mut TokenUsage,
     used_bounded_sql_query: bool,
     tool_metadata: Vec<crate::ToolMetadata>,
-    best_successful_sql: Option<String>,
+    // The SQL to carry on the output: the run's designation when the model
+    // made one, else the last statement that completed successfully.
+    designated_or_best_sql: Option<String>,
 ) -> Result<AgentOutput, AgentError> {
     for call in pending {
         let (message, _) = tools::tool_message(
@@ -75,7 +78,7 @@ pub(super) async fn salvage(
                 usage: *usage,
                 learning_usage: None,
                 truncated: true,
-                answer_sql: best_successful_sql,
+                answer_sql: designated_or_best_sql,
             });
         }
         Err(error) => return Err(error),
@@ -106,6 +109,6 @@ pub(super) async fn salvage(
         usage: *usage,
         learning_usage: None,
         truncated: true,
-        answer_sql: best_successful_sql,
+        answer_sql: designated_or_best_sql,
     })
 }
