@@ -167,10 +167,14 @@ pub(in crate::interactive::tui) fn status_bg() -> Color {
 pub(in crate::interactive::tui) fn code_color() -> Color {
     pick(Color::Rgb(127, 181, 214), Color::Rgb(46, 109, 158))
 }
-/// Primary foreground for body text on the terminal's default ground: the
-/// terminal's light on a dark theme, a near-black on a light theme.
+/// Primary foreground for body text on the terminal's default ground. The
+/// dark entry is the terminal's own text colour (`Reset`), never a fixed
+/// white: a wrong dark/light guess can then never paint the answer
+/// invisible on a light terminal. The light entry keeps its near-black,
+/// which is deliberately painted (the light palette is only ever chosen
+/// when the terminal is known to be light).
 pub(in crate::interactive::tui) fn foreground() -> Color {
-    pick(Color::White, Color::Rgb(40, 38, 42))
+    pick(Color::Reset, Color::Rgb(40, 38, 42))
 }
 /// Text colour that reads against the accent when the accent is the background
 /// (selection badges, highlighted rows): black on the light iris, white on the
