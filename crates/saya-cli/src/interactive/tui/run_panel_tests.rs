@@ -110,10 +110,11 @@ fn a_run_driven_from_the_tui_renders_its_steps_and_updates_as_they_complete() {
 #[test]
 fn the_event_loop_is_not_blocked_while_a_run_executes() {
     let (mut app, tx, _cancel) = panel_app("r-panel-resp", "long job");
+    let (release, wait) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         tx.send(RunMsg::Event(RunEvent::StepStarted { step: 0 }))
             .unwrap();
-        std::thread::sleep(Duration::from_millis(250));
+        wait.recv().unwrap();
         tx.send(RunMsg::Done(RunOutcome {
             code: 0,
             message: String::new(),
@@ -145,14 +146,27 @@ fn the_event_loop_is_not_blocked_while_a_run_executes() {
     // The run is still in flight — nothing blocked, nothing finished yet.
     assert!(app.run_panel.as_ref().unwrap().is_active());
 
-    // Give the worker time to finish, then one more prompt drain applies it.
-    std::thread::sleep(Duration::from_millis(250));
+    // Keep the worker deliberately in flight while ticking the panel, then
+    // release it and keep checking prompt polls until its end arrives. This
+    // tests responsiveness without depending on scheduler timing.
     let t1 = Instant::now();
     app.poll_run_panel(false);
     assert!(
         t1.elapsed() < Duration::from_millis(100),
-        "draining the end must be as prompt as draining progress"
+        "draining while the worker is in flight must stay prompt"
     );
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.run_panel.as_ref().unwrap().is_active() {
+        let t0 = Instant::now();
+        app.poll_run_panel(false);
+        assert!(
+            t0.elapsed() < Duration::from_millis(100),
+            "draining the end must be as prompt as draining progress"
+        );
+        assert!(Instant::now() < deadline, "the worker's end never landed");
+        std::thread::yield_now();
+    }
     assert!(
         !app.run_panel.as_ref().unwrap().is_active(),
         "the run's end was applied by a non-blocking poll"
