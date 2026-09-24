@@ -103,6 +103,7 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
             let scratch = scratch.filter(|_| step.capabilities.scratch);
             if scratch.is_some() {
                 definitions.push(ScratchSql::definition());
+                definitions.push(ScratchSql::import_definition());
             }
             // The step's fetch member: its own policy built from the
             // destinations *this step* declared — never the run's union —

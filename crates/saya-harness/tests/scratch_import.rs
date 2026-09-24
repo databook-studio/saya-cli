@@ -88,11 +88,18 @@ fn header_names_are_sanitised_deterministically() {
     assert_eq!(
         sanitize_headers(&[
             "first name".into(),
+            "FIRST NAME".into(),
             "first name".into(),
             "".into(),
             "1bad".into()
         ]),
-        vec!["first_name", "first_name_2", "column_3", "_1bad"]
+        vec![
+            "first_name",
+            "FIRST_NAME_2",
+            "first_name_3",
+            "column_4",
+            "_1bad"
+        ]
     );
 }
 
@@ -103,6 +110,29 @@ fn ragged_rows_name_the_line() {
 }
 
 #[tokio::test]
+async fn ragged_import_names_the_physical_record_line() {
+    let root = std::env::temp_dir().join(format!("saya-ragged-import-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("ragged.csv"), b"a,b\n\"one\ntwo\",ok\nonly\n").unwrap();
+    let tool = ScratchSql::open(&root)
+        .unwrap()
+        .with_workspace(Arc::new(Workspace::open(&root).unwrap()));
+    let error = tool
+        .execute(
+            "scratch_import",
+            json!({"path":"ragged.csv","table":"target"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("row 4"),
+        "error names first ragged record's physical line: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced() {
     let root = std::env::temp_dir().join(format!("saya-import-policy-{}", std::process::id()));
     let outside = root.with_extension("outside.csv");
@@ -110,6 +140,22 @@ async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced()
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("ok.csv"), b"name\nnew\n").unwrap();
     std::fs::write(root.join("bad.csv"), b"name\n\xff\n").unwrap();
+    std::fs::write(
+        root.join("field.csv"),
+        format!("name\n{}\n", "x".repeat(64 * 1024 + 1)),
+    )
+    .unwrap();
+    let wide = format!(
+        "{}\n{}\n",
+        (0..513)
+            .map(|i| format!("c{i}"))
+            .collect::<Vec<_>>()
+            .join(","),
+        (0..513).map(|_| "x").collect::<Vec<_>>().join(",")
+    );
+    std::fs::write(root.join("wide.csv"), wide).unwrap();
+    let huge = std::fs::File::create(root.join("huge.csv")).unwrap();
+    huge.set_len((32 * 1024 * 1024 + 1) as u64).unwrap();
     std::fs::write(&outside, b"name\noutside\n").unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, root.join("link.csv")).unwrap();
@@ -128,6 +174,19 @@ async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced()
     )
     .await
     .unwrap();
+    assert!(
+        tool.execute(
+            "scratch_import",
+            json!({"path":"huge.csv","table":"target","if_exists":"replace"})
+        )
+        .await
+        .is_err()
+    );
+    let unchanged = tool
+        .execute("scratch_sql", json!({"sql":"SELECT name FROM target"}))
+        .await
+        .unwrap();
+    assert_eq!(unchanged["rows"], json!([["old"]]));
     tool.execute(
         "scratch_sql",
         json!({"sql":"INSERT INTO target VALUES ('old')"}),
@@ -153,6 +212,25 @@ async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced()
         .await
         .is_err()
     );
+    for path in ["wide.csv", "field.csv"] {
+        assert!(
+            tool.execute(
+                "scratch_import",
+                json!({"path":path,"table":"target","if_exists":"replace"})
+            )
+            .await
+            .is_err()
+        );
+        let unchanged = tool
+            .execute("scratch_sql", json!({"sql":"SELECT name FROM target"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged["rows"],
+            json!([["old"]]),
+            "{path} must preserve target"
+        );
+    }
     assert!(
         tool.execute("scratch_import", json!({"path":"ok.csv","table":"target"}))
             .await

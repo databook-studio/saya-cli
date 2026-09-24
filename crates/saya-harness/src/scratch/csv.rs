@@ -154,7 +154,8 @@ pub fn sanitize_headers(headers: &[String]) -> Vec<String> {
         .enumerate()
         .map(|(index, header)| {
             let base = sanitise(header, index + 1);
-            let count = seen.entry(base.clone()).or_insert(0);
+            let key = base.to_ascii_lowercase();
+            let count = seen.entry(key).or_insert(0);
             loop {
                 *count += 1;
                 let candidate = if *count == 1 {
@@ -162,7 +163,7 @@ pub fn sanitize_headers(headers: &[String]) -> Vec<String> {
                 } else {
                     format!("{base}_{count}")
                 };
-                if used.insert(candidate.clone()) {
+                if used.insert(candidate.to_ascii_lowercase()) {
                     return candidate;
                 }
             }
