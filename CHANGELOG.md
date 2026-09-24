@@ -169,6 +169,11 @@ behavioural reader.
 
 ### Fixed
 
+**Session history orders close saves correctly.** Listing and pagination now
+compare full filesystem modification timestamps, while the displayed time
+retains millisecond precision. Sessions saved within the same millisecond no
+longer reverse order because their IDs differ.
+
 **Launch `--allow` seeded only `command:` tokens — every other scope was a
 silent no-op.** `session_loop.rs` fed the shared grammar-then-composition
 gate (`seed_launch_allow`, the same one `/allow` uses) a pre-filtered copy
