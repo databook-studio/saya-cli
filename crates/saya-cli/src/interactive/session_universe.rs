@@ -25,6 +25,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken, ToolDefinition, ToolExecutor};
+
+use crate::agent::learning::LearningBreaker;
 use saya_harness::fetch::{
     DownloadBudget, DownloadLimits, FetchLimits, FetchPolicy, FetchTools, ReqwestTransport,
 };
@@ -82,6 +84,10 @@ pub(crate) struct SessionUniverse {
     /// connected to — and a mid-session `/connect` rebinds it for the next
     /// turn, never stale.
     pub(crate) primary: crate::grant_token::TurnPrimary,
+    /// The session's post-turn extraction circuit breaker: two consecutive
+    /// misses disable learning for the rest of the session. Not persisted —
+    /// a new or resumed session always starts enabled.
+    learning_breaker: LearningBreaker,
     /// A startup fact the user must see: a pinned root that no longer
     /// exists, or a sandbox probe that did not prove this host. Reported,
     /// never silent.
@@ -110,6 +116,7 @@ impl SessionUniverse {
             primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
             probe_refused: false,
+            learning_breaker: LearningBreaker::new(),
         }
     }
 
@@ -265,6 +272,7 @@ impl SessionUniverse {
             primary: crate::grant_token::TurnPrimary::default(),
             notice,
             probe_refused,
+            learning_breaker: LearningBreaker::new(),
         })
     }
 
@@ -299,6 +307,14 @@ impl SessionUniverse {
     /// and the session record's fact.
     pub(crate) fn root(&self) -> Option<&Path> {
         self.workspace.as_ref().map(|bound| bound.root.as_path())
+    }
+
+    /// This session's post-turn extraction circuit breaker — the runtime
+    /// consults it before every turn's extraction attempt and records this
+    /// turn's outcome against it. Not persisted: a resumed session gets a
+    /// fresh one, composed enabled.
+    pub(crate) fn learning_breaker(&self) -> &LearningBreaker {
+        &self.learning_breaker
     }
 
     /// The approval prompts' facts, read off this universe's composed

@@ -146,6 +146,21 @@ pub enum AgentEvent {
     KnowledgeLearningSkipped {
         reason: LearningSkipReason,
     },
+    /// Post-turn extraction's per-session circuit breaker tripped: two
+    /// consecutive misses (a reply cut off at the output limit, or the
+    /// transport stalling or timing out) with no success or non-miss failure
+    /// between them. Emitted once, in the turn whose miss tripped it,
+    /// immediately after that turn's own
+    /// [`AgentEvent::KnowledgeLearningSkipped`] — never again this session.
+    /// From the next turn on the runtime makes **no** extraction request at
+    /// all: no [`AgentEvent::KnowledgeLearningStarted`], no provider call.
+    /// Recall and `/remember` are unaffected; only post-turn extraction
+    /// stops. `misses` is always 2 (the trip threshold); `model` is the
+    /// extraction model the misses were against.
+    KnowledgeLearningDisabled {
+        model: String,
+        misses: u32,
+    },
     Complete,
     /// The token counts one provider call reported — one event per call that
     /// reported any, named by `call` (every answering round is its own event;
@@ -187,3 +202,7 @@ pub enum AgentEvent {
         probe_broke_tie: bool,
     },
 }
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

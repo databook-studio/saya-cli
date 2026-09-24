@@ -24,6 +24,7 @@ pub(crate) fn apply_boundary_event(
         AgentEvent::KnowledgeSupplied { .. }
         | AgentEvent::KnowledgeOverridden { .. }
         | AgentEvent::KnowledgeLearningSkipped { .. }
+        | AgentEvent::KnowledgeLearningDisabled { .. }
         | AgentEvent::KnowledgeProposed { .. } => {
             let _ = apply_knowledge_event(transcript, event);
         }

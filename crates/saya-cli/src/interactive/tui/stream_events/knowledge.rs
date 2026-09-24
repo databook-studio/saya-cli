@@ -55,6 +55,18 @@ pub(crate) fn push_learning_skipped(
     }
 }
 
+// The extraction circuit breaker tripped this turn (owner decision 3).
+// Trails the answer, immediately after the turn's own
+// `push_learning_skipped` block, so the two read together. Shares the
+// shaper with the headless path; the line is never empty for a known
+// model/miss pair, so the block always pushes.
+pub(crate) fn push_learning_disabled(transcript: &mut Transcript, model: &str, misses: u32) {
+    let text = crate::render::learning_disabled_text(model, misses);
+    if !text.is_empty() {
+        transcript.push(BlockKind::System, text.trim_end_matches('\n'));
+    }
+}
+
 // One fact learned this turn. Trails the answer — the runtime emits it
 // after the loop — so it lands below the assistant text, where "and I
 // kept this" belongs. Shares the shaper with the headless path; an
@@ -77,6 +89,7 @@ pub(crate) fn is_knowledge_event(event: &AgentEvent) -> bool {
         AgentEvent::KnowledgeSupplied { .. }
             | AgentEvent::KnowledgeOverridden { .. }
             | AgentEvent::KnowledgeLearningSkipped { .. }
+            | AgentEvent::KnowledgeLearningDisabled { .. }
             | AgentEvent::KnowledgeProposed { .. }
     )
 }
@@ -98,6 +111,10 @@ pub(crate) fn apply_knowledge_event(transcript: &mut Transcript, event: AgentEve
         }
         AgentEvent::KnowledgeLearningSkipped { reason } => {
             push_learning_skipped(transcript, reason);
+            true
+        }
+        AgentEvent::KnowledgeLearningDisabled { model, misses } => {
+            push_learning_disabled(transcript, &model, misses);
             true
         }
         AgentEvent::KnowledgeProposed { claim } => {

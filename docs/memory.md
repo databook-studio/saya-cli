@@ -128,13 +128,22 @@ initial state.
 A proposal duplicating something already supplied that turn is dropped. Otherwise a fact could
 strengthen itself simply by being recalled.
 
-Extraction is best-effort and isolated: if it fails, times out, or returns nothing usable, your query
-and your answer are unaffected.
+Extraction is best-effort and isolated: if it fails or returns nothing usable, your query and your
+answer are unaffected. There is no wall-clock ceiling on the extraction call itself — a slow model is
+simply awaited — so it is bounded only by your AI provider's own connection and streaming limits.
 
-It is not silent about it, though. A turn whose extraction failed or timed out prints
-`memory not recorded · …` beneath the answer, so a fact you stated and expected to stick is never
-quietly dropped. A turn the gate declined — most ordinary turns, where there was nothing durable to
-learn — says nothing, because a line on every turn would train you to ignore the line that matters.
+It is not silent about it, though. A turn whose extraction failed prints `memory not recorded · …`
+beneath the answer, so a fact you stated and expected to stick is never quietly dropped. A turn the
+gate declined — most ordinary turns, where there was nothing durable to learn — says nothing, because
+a line on every turn would train you to ignore the line that matters.
+
+If a reply comes back cut off at your provider's output limit, or the connection stalls or times out,
+that counts as a miss. Two misses in a row — with no success or other kind of failure between them —
+disable learning for the rest of the session: SAYA tells you once ("learning disabled for this
+session — extraction with `<model>` was cut off or stalled `<n>` times in a row. Recall still works;
+`/remember` still stores a rule.") and makes no further extraction requests until you start a new
+session. Recall and `/remember` keep working regardless — only the automatic post-turn extraction
+stops.
 
 If you want to see the boundary itself, `--verbose` (or `SAYA_EXTRACTION_TRACE=1`) reports the gate
 decision, how many objects the turn involved, the outcome, and how many facts were recorded. It is

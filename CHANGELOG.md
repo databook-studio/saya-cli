@@ -7,6 +7,21 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+**Post-turn extraction disables itself after two consecutive misses.** A
+session's extraction is a **miss** when the reply is cut off at the
+output-token limit or the transport stalls or times out; every other
+outcome — success, a parse failure, a non-JSON reply, an HTTP error, an
+ingest failure — resets the count. On the second consecutive miss, learning
+is disabled for the rest of the session: from the next turn on no
+extraction request is made at all, and the turn whose miss tripped it says
+so once (`AgentEvent::KnowledgeLearningDisabled`, rendered on every surface
+— text, TUI, ndjson): "memory: learning disabled for this session —
+extraction with `<model>` was cut off or stalled `<misses>` times in a row.
+Recall still works; `/remember` still stores a rule." The breaker lives in
+the session, not persisted — a new or resumed session always starts
+enabled; the one-shot `saya ask` path and each candidate attempt get a
+fresh breaker per call, which can never trip within one turn.
+
 **Headless runs on the same approval engine (U4).** The run's per-call
 decider is the same `SessionPolicy` a session consults, frozen: seeded from
 the run's `--allow` tokens, unable to prompt, unable to accumulate. An
@@ -250,6 +265,18 @@ boundary, and a failed salvage call discarded the work it was salvaging.
 
 ### Changed
 
+- **Post-turn extraction has no wall-clock ceiling.** The 25-second
+  `EXTRACTION_TIMEOUT` that wrapped the post-turn structured-extraction call
+  is gone — a deliberate departure from AGENTS.md's "bound untrusted work —
+  time" rule for this one path. A slow model may now take as long as it
+  needs; the call is bounded only by the provider transport's own limits
+  (the per-attempt connect timeout, the per-chunk stream idle timeout, the
+  output-token ceiling, bounded retries). In its place, a per-session
+  circuit breaker trips after two consecutive misses (see "Post-turn
+  extraction disables itself after two consecutive misses" above).
+  `LearningSkipReason::TimedOut` stays in the serialized contract (a
+  resumed session's history may still carry it) but the runtime no longer
+  produces it.
 - **The agent finishes the computation a question asks for.** Characterising all
   867 failures of a 1,534-question benchmark run found two classes where the
   agent had the right pieces and stopped short: it handed back the operands of

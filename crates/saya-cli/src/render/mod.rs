@@ -29,6 +29,9 @@ pub(crate) use render_memory::knowledge_overridden_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeSupplied`] in
 /// `apply_event` and shares this shaper so the wording lives in one place.
 pub(crate) use render_memory::knowledge_supplied_text;
+/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningDisabled`]
+/// in `apply_event` and shares this shaper so the wording lives in one place.
+pub(crate) use render_memory::learning_disabled_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningSkipped`]
 /// in `apply_event` and shares this shaper so the wording lives in one place
 /// (packet-54).
@@ -115,6 +118,14 @@ pub enum TerminalEvent {
     /// derive.
     KnowledgeLearningSkipped {
         reason: LearningSkipReason,
+    },
+    /// The extraction circuit breaker tripped this turn — no more extraction
+    /// requests this session (`AgentEvent::KnowledgeLearningDisabled`).
+    /// Trails the answer, after `KnowledgeLearningSkipped`. Text is shaped
+    /// in [`render_memory`]; JSON/NDJSON fall out of the serde derive.
+    KnowledgeLearningDisabled {
+        model: String,
+        misses: u32,
     },
     Complete,
     /// The provider stream failed mid-answer and the turn is being retried
@@ -305,6 +316,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::KnowledgeLearningSkipped { reason } => Rendered {
             stdout: render_memory::learning_skipped_text(*reason),
+            stderr: String::new(),
+        },
+        TerminalEvent::KnowledgeLearningDisabled { model, misses } => Rendered {
+            stdout: render_memory::learning_disabled_text(model, *misses),
             stderr: String::new(),
         },
         TerminalEvent::Complete => Rendered {
