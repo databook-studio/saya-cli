@@ -14,58 +14,37 @@
 //! claims a bound the code does not apply — H0's module header is the
 //! register this module matches.
 
-/// What the launch stated about the lane: the `--allow` seeds, the `--deny`
-/// refusals, and the user-layer config — read together, once, at
-/// composition. Nothing here decides whether the lane composes: a bound
-/// root does.
+/// What the launch stated about the lane: the `--deny` refusals and the
+/// user-layer config — read together, once, at composition. Nothing here
+/// decides whether the lane composes: a bound root does. The `--allow`
+/// seeds are not carried here: every seed — `command:` included — rides
+/// `cli.options.allow` straight into `session_grants::seed_launch_allow`,
+/// the one grammar-then-composition gate `/allow` uses (a prior relay
+/// carried a `command:`-only copy here and fed only that filtered list to
+/// the shared gate, so every other scope type never reached it).
 pub(crate) struct HostLaunch {
-    seeds: Vec<String>,
     deny: Vec<String>,
     config: saya_config::ResolvedHostCommands,
 }
 
 impl HostLaunch {
-    /// Reads the launch statement: the session's `--allow` seeds and
-    /// `--deny` refusals, and the resolved user-layer `[host_commands]`.
+    /// Reads the launch statement: the session's `--deny` refusals and the
+    /// resolved user-layer `[host_commands]`.
     pub(crate) fn from_options(
         options: &crate::cli::GlobalOptions,
         runtime: &RuntimeConfig,
     ) -> Self {
         Self {
-            seeds: options.allow.clone(),
             deny: options.deny.clone(),
             config: runtime.resolved.host_commands.clone(),
         }
     }
 
-    /// The `command:` seeds the launch stated, verbatim and in order.
-    pub(crate) fn command_seeds(&self) -> Vec<String> {
-        self.seeds
-            .iter()
-            .filter(|seed| seed.starts_with("command:"))
-            .cloned()
-            .collect()
-    }
-
-    /// The bare program names the launch's `runner:` seeds stated, in
-    /// stated order: what the composition checks against the composed
-    /// runner's door to decide whether a launch-time runner-gap notice is
-    /// due — a grant this session's runner cannot honour is otherwise a
-    /// silent no-op, said nowhere.
-    pub(crate) fn runner_seed_programs(&self) -> Vec<String> {
-        self.seeds
-            .iter()
-            .filter_map(|seed| seed.strip_prefix("runner:"))
-            .map(str::to_owned)
-            .collect()
-    }
-
-    /// A launch with no statement: no seeds, no refusals, over the
-    /// runtime's own resolved `[host_commands]` shaping. The lane still
-    /// composes wherever a root binds — unstated is not off.
+    /// A launch with no statement: no refusals, over the runtime's own
+    /// resolved `[host_commands]` shaping. The lane still composes wherever
+    /// a root binds — unstated is not off.
     pub(crate) fn unstated(runtime: &RuntimeConfig) -> Self {
         Self {
-            seeds: Vec::new(),
             deny: Vec::new(),
             config: runtime.resolved.host_commands.clone(),
         }
@@ -77,21 +56,6 @@ impl HostLaunch {
     pub(crate) fn for_tests_stated(runtime: &RuntimeConfig) -> Self {
         Self::from_options(
             &crate::cli::GlobalOptions {
-                allow: Vec::new(),
-                deny: Vec::new(),
-                ..Default::default()
-            },
-            runtime,
-        )
-    }
-
-    /// The test seam: a launch stating the given `--allow` seeds verbatim,
-    /// over the runtime's own resolved `[host_commands]`.
-    #[cfg(test)]
-    pub(crate) fn for_tests_seeded(seeds: Vec<String>, runtime: &RuntimeConfig) -> Self {
-        Self::from_options(
-            &crate::cli::GlobalOptions {
-                allow: seeds,
                 deny: Vec::new(),
                 ..Default::default()
             },
@@ -104,7 +68,6 @@ impl HostLaunch {
     #[cfg(test)]
     pub(crate) fn from_deny_for_tests(deny: Vec<String>) -> Self {
         Self {
-            seeds: Vec::new(),
             deny,
             config: saya_config::ResolvedHostCommands::default(),
         }
@@ -113,27 +76,6 @@ impl HostLaunch {
     /// The launch's `--deny` refusals, verbatim and in order.
     pub(crate) fn deny_list(&self) -> Vec<String> {
         self.deny.clone()
-    }
-
-    /// Seeds the launch's `command:` tokens into the provided grant store:
-    /// the grammar stays the authority (each token parses on the session
-    /// surface). The session loop seeds through
-    /// `session_grants::seed_launch_allow` instead (which journals); this
-    /// stays as the launch helper's unit — exercised by the host tests
-    /// below.
-    pub(crate) fn seed_grants(
-        &self,
-        grants: &saya_agent::SessionGrants,
-    ) -> Result<Vec<String>, String> {
-        let seeds = self.command_seeds();
-        for seed in &seeds {
-            crate::commands::run::scopes::parse(
-                std::slice::from_ref(seed),
-                crate::commands::run::scopes::Surface::Session,
-            )?;
-            grants.grant(seed);
-        }
-        Ok(seeds)
     }
 }
 

@@ -97,13 +97,14 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // the process; the lock releases when it drops.
     //
     // The host lane composes here, once per session: the launch statement
-    // (the `--allow command:<x>` seeds — which seed the grant, never imply
-    // composition — the `--deny` refusals, the user-layer config) is read,
-    // the universe composes with it, and the seeds land in the grant store
-    // before anything runs. A seed the composition cannot carry is a launch
-    // usage error — never a silently dropped token. A resumed session
-    // restarts unstated: grants die with the process, and the launch
-    // statement belonged to the previous process.
+    // (the `--allow` seeds of every shape — `command:<x>` included, which
+    // seed the grant, never imply composition — the `--deny` refusals, the
+    // user-layer config) is read, the universe composes with it, and the
+    // seeds land in the grant store below, before anything runs. A seed
+    // the composition cannot carry is a launch usage error — never a
+    // silently dropped token. A resumed session restarts unstated: grants
+    // die with the process, and the launch statement belonged to the
+    // previous process.
     let launch = super::session_host::HostLaunch::from_options(&cli.options, &runtime);
     // The launch contradiction: `--allow command:x` together with `--deny
     // x` grants what it refuses — an exit-2 usage error, before anything
@@ -174,14 +175,17 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         }
     }
     if fresh && !cli.options.allow.is_empty() {
-        // The launch helper seeds the store through the same grammar; the
-        // shared behaviour below journals each token. A seed the composition
-        // cannot carry is a launch usage error — never silently dropped.
-        let launch_seeded = launch
-            .seed_grants(session.policy().grants())
-            .map_err(|error| format!("invalid --allow seed: {error}"))?;
+        // Every stated `--allow` token — `command:` included — goes through
+        // the one grammar-then-composition gate `/allow` uses
+        // (`seed_launch_allow`): the grammar is the only authority a token
+        // parses under, and a token this session's composition cannot
+        // carry is a launch usage error with its own reason, never
+        // silently dropped. `cli.options.allow` rides here unfiltered — a
+        // prior relay fed this call only the pre-filtered `command:`
+        // subset (`HostLaunch::seed_grants`, now removed), so every other
+        // scope type never reached either check and seeded nothing.
         let seeded = super::session_grants::seed_launch_allow(
-            &launch_seeded,
+            &cli.options.allow,
             &session.universe().approval_facts(&runtime),
             session.policy().grants(),
         )

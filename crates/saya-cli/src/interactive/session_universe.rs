@@ -228,24 +228,6 @@ impl SessionUniverse {
             probe_refused = composition.probe_notice.is_some();
             runner_composed = composition.runner;
         }
-        // A launch's `runner:<program>` seed with nothing that can honour
-        // it is otherwise a silent no-op: the grant still lands in the
-        // store (seeding is unchanged), but with no composed runner — or a
-        // composed one whose door does not carry the program — no
-        // `run_program` call can ever consult it, and nothing said so
-        // before this. Read here, off the launch statement's raw seeds,
-        // before the seed itself lands: the seed carries no message of its
-        // own, so the fact must ride this same notice seam.
-        let runner_grant_notice = launch.and_then(|launch| {
-            launch.runner_seed_programs().iter().find_map(|program| {
-                super::session_runner::runner_grant_notice(
-                    program,
-                    runner_composed
-                        .as_ref()
-                        .map(|runner| runner.scope.programs.as_slice()),
-                )
-            })
-        });
         // The host lane, once per session: wherever a workspace root binds
         // — no root, no lane, structural, because the child's cwd is pinned
         // to the root. The child's PATH is the parent's own. With no root
@@ -267,19 +249,21 @@ impl SessionUniverse {
             None => (session_host::compose_host(lane, None, String::new())?, None),
         };
         // The startup notice names the exceptional shapes: a vanished pin,
-        // a refused probe, a missing PATH on a root-bound session, a
-        // launch-seeded runner grant this session cannot honour. The
+        // a refused probe, a missing PATH on a root-bound session. The
         // composed lane is not exceptional — the lane composes wherever a
         // root binds, and the status header's `host:` segment
         // (`host:unsandboxed` / `host:off`) already carries the fact — so
         // it rides no notice. The per-call ask under `ask`, and the bypass
         // activation line's lane fact under `bypass`, carry the consent
         // surfaces; there is nothing left for a "stated" frame to say, so
-        // `launch_notice` (which named it) deleted with the flag.
+        // `launch_notice` (which named it) deleted with the flag. A
+        // launch-seeded `runner:<program>` grant the composition cannot
+        // honour no longer reaches here either: it is now a launch usage
+        // error, refused before the seed lands (`seed_launch_allow`'s own
+        // composition gate) — the same reason `/allow` gives mid-session.
         let notice = notice
             .or(no_path_notice)
-            .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()))
-            .or(runner_grant_notice);
+            .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()));
         Ok(Self {
             workspace,
             scratch: Some(Arc::new(scratch)),

@@ -7,18 +7,12 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
-**A `runner:<program>` grant with no runner to use it says so.** Seeding
+**A `runner:<program>` grant with no runner to use it now says so.** Seeding
 `runner:<program>` — at launch with `--allow`, or mid-session with
 `/allow` — when this session composed no runner, or a composed runner's
-`[jobs.runner] allow` does not carry the program, now states the gap: "no
-runner is configured ([jobs.runner] program_dir and allow in config), so
-run_program is unavailable this session" (or "`<program>` is not in
-[jobs.runner] allow"), plus the fallback — host commands still run, they
-just ask for approval. The launch-time notice rides the session's existing
-startup-notice seam, so the TUI and the line REPL both show it once; the
-grant itself is unchanged (it still lands in the store). The `/allow`
-refusal for the same gap (U8 — a grant the composition cannot honour still
-seeds nothing) now names the same fallback.
+`[jobs.runner] allow` does not carry the program, is a usage error (U8: a
+grant the composition cannot honour seeds nothing) naming the gap and the
+fallback: host commands still run, they just ask for approval.
 
 **Post-turn extraction disables itself after two consecutive misses.** A
 session's extraction is a **miss** when the reply is cut off at the
@@ -165,6 +159,18 @@ declares default run budgets, and `[run] max_iterations` finally has a
 behavioural reader.
 
 ### Fixed
+
+**Launch `--allow` seeded only `command:` tokens — every other scope was a
+silent no-op.** `session_loop.rs` fed the shared grammar-then-composition
+gate (`seed_launch_allow`, the same one `/allow` uses) a pre-filtered copy
+of the launch's `--allow` tokens holding only `command:` seeds; a token of
+any other shape (`workspace-write`, `scratch`, `fetch:…`, `sql:…`,
+`runner:…`, `interpreter:…`) never reached either check, so it neither
+seeded nor refused — it just vanished, with the session starting normally
+as if nothing had been stated. Every launch seed now goes through the one
+gate `/allow` uses: honoured when the composition carries it, a launch
+usage error with its own reason when it does not (the same reason `/allow`
+gives), never silently dropped.
 
 **A grant offer named a capability the composition could not carry (U8).**
 The `[s]` answer offered `interpreter:<program>` for any interpreter-shaped
