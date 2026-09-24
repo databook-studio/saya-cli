@@ -29,18 +29,24 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
         trust_pending,
         launch,
     } = args;
-    let mut guard = TerminalGuard::new()?;
     let choice = runtime.resolved.output_color;
     use std::io::IsTerminal as _;
-    ui::theme::set_color_enabled(ui::theme::decide_public(
-        choice,
-        std::io::stdout().is_terminal(),
-        std::env::var_os("NO_COLOR").is_some(),
-    ));
-    ui::theme::set_theme(ui::theme::resolve_theme(
+    let is_terminal = std::io::stdout().is_terminal();
+    let color_enabled =
+        ui::theme::decide_public(choice, is_terminal, std::env::var_os("NO_COLOR").is_some());
+    ui::theme::set_color_enabled(color_enabled);
+    // Resolved before `TerminalGuard::new()` enables raw mode and the
+    // alternate screen: `Auto` may query the terminal over OSC 11, and that
+    // reply must land before anything reads stdin as key input, not race
+    // the event loop that starts once the guard and app exist.
+    ui::theme::set_theme(ui::theme::resolve_startup_theme(
         runtime.resolved.ui_theme,
+        color_enabled,
+        is_terminal,
+        ui::theme::probe_terminal_theme,
         std::env::var("COLORFGBG").ok().as_deref(),
     ));
+    let mut guard = TerminalGuard::new()?;
     let mut app = build_app(
         runtime,
         state_db,
