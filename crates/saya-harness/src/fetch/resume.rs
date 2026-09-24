@@ -7,7 +7,7 @@
 //! and truncates the unaccounted tail. Nothing here writes until the body
 //! actually streams; a mismatch leaves the evidence in place.
 
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
 use sha2::{Digest, Sha256};
 
@@ -151,13 +151,18 @@ pub(super) fn reopen(
     destination: &str,
     meta: &PartialMeta,
 ) -> Result<(PathBuf, std::fs::File), DownloadError> {
-    let (path, file) = workspace
+    let (path, mut file) = workspace
         .open_download_part(&part_rel(destination), false)
         .map_err(DownloadError::from)?;
     file.set_len(meta.len)
         .map_err(|error| DownloadError::ResumeMismatch {
             path: destination.to_owned(),
             detail: format!("truncating the partial's tail failed: {error}"),
+        })?;
+    file.seek(SeekFrom::End(0))
+        .map_err(|error| DownloadError::ResumeMismatch {
+            path: destination.to_owned(),
+            detail: format!("seeking to the partial's end failed: {error}"),
         })?;
     Ok((path, file))
 }

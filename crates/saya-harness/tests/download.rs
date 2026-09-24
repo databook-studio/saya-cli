@@ -455,6 +455,57 @@ fn sidecar_json(root: &std::path::Path) -> serde_json::Value {
     serde_json::from_slice(&bytes).expect("the sidecar parses")
 }
 
+/// Windows preserves destination creation metadata across `rename` in some
+/// filesystems. A resumed download therefore exercises the handle identity
+/// checks for an overwritten final file, an appended part, and promotion.
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_resume_overwrites_and_promotes_with_stable_file_identity() {
+    let content: Vec<u8> = (0..40u8).collect();
+    let (root, workspace) = workspace("windows-identity");
+    std::fs::create_dir_all(root.join("downloads")).unwrap();
+    std::fs::write(root.join(DEST), b"old destination").unwrap();
+    let site = LocalSite::spawn(vec![(
+        "/doc",
+        Route {
+            abort_after: Some(16),
+            ..route(&content, 8)
+        },
+    )])
+    .await;
+    let net = transport(&site);
+
+    http_download(
+        &policy(),
+        &net,
+        &workspace,
+        DEST,
+        &url("/doc"),
+        DownloadLimits::default(),
+        &DownloadBudget::default(),
+    )
+    .await
+    .expect_err("the first download leaves a part to resume");
+    assert_eq!(std::fs::read(root.join(PART)).unwrap(), content[..16]);
+
+    site.routes.lock().expect("routes poisoned")[0]
+        .1
+        .abort_after = None;
+    http_download(
+        &policy(),
+        &net,
+        &workspace,
+        DEST,
+        &url("/doc"),
+        DownloadLimits::default(),
+        &DownloadBudget::default(),
+    )
+    .await
+    .expect("resume appends and promotes over the old destination");
+
+    assert_eq!(std::fs::read(root.join(DEST)).unwrap(), content);
+}
+
 // --- test 1: the budget trip pauses fail-safe, the partial is resumable -----
 
 /// The run's download budget trips before the byte that would overrun it is
