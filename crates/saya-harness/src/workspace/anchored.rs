@@ -22,11 +22,16 @@ use crate::{HarnessError, io_error};
 /// set when the file holds more. The digest covers the whole file — hashed
 /// in the same open, streamed in 64 KiB chunks — so a truncated read still
 /// names the state an edit precondition can state. Files larger than the
-/// process-wide I/O backstop (`MAX_IO_BYTES`, the same ceiling that bounds
-/// writes, patches, and search horizons) refuse before any byte is hashed:
-/// the refusal names the scanned size and the bound, so a very large file
-/// costs a stat, not a full hash.
-pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
+/// operation's file ceiling refuse before any byte is hashed: the refusal
+/// names the scanned size and the bound, so a very large file costs a stat,
+/// not a full hash. Ordinary reads retain the 8 MiB backstop; scratch CSV
+/// import calls this same contained open with its separate 32 MiB ceiling.
+pub(crate) fn read(
+    ws: &Workspace,
+    rel: &str,
+    max_bytes: u64,
+    file_limit: u64,
+) -> Result<ReadFile, HarnessError> {
     let anchor = ws.anchor(rel, false)?;
     let stat = final_stat(&anchor, "read workspace file", rel)?;
     if stat.is_symlink() {
@@ -39,11 +44,11 @@ pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile
             path: rel.to_string(),
         });
     }
-    if stat.len() > super::contain::MAX_IO_BYTES as u64 {
+    if stat.len() > file_limit {
         return Err(HarnessError::BoundsExceeded {
             path: rel.to_string(),
             found: stat.len(),
-            max: super::contain::MAX_IO_BYTES as u64,
+            max: file_limit,
         });
     }
     let file = anchor.open_verified(stat.identity(), rel)?;
@@ -60,11 +65,11 @@ pub(crate) fn read(ws: &Workspace, rel: &str, max_bytes: u64) -> Result<ReadFile
             break;
         }
         scanned += read as u64;
-        if scanned > super::contain::MAX_IO_BYTES as u64 {
+        if scanned > file_limit {
             return Err(HarnessError::BoundsExceeded {
                 path: rel.to_string(),
                 found: scanned,
-                max: super::contain::MAX_IO_BYTES as u64,
+                max: file_limit,
             });
         }
         hasher.update(&chunk[..read]);
