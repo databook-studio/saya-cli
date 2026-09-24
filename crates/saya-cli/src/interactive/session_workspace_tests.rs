@@ -104,7 +104,7 @@ fn a_state_root_inside_the_workspace_refuses_the_binding() {
             "the refusal must name the workspace root: {error}"
         );
         assert!(
-            error.contains(state_root.display().to_string().as_str()),
+            error.contains(state_canonical.display().to_string().as_str()),
             "the refusal must name the state root: {error}"
         );
     }

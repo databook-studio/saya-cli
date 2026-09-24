@@ -1776,7 +1776,7 @@ async fn session_turn_system_prompt_names_connection_and_workspace_root() {
         "the facts name the connection in scope: {system}"
     );
     assert!(
-        system.contains(&project.display().to_string()),
+        system.contains(&project.canonicalize().unwrap().display().to_string()),
         "the facts name the session's bound root: {system}"
     );
     let _ = fs::remove_dir_all(&project);

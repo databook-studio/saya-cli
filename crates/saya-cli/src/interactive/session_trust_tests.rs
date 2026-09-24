@@ -143,10 +143,17 @@ fn terminal_unbound_prompts_and_trust_binds_cwd() {
         std::fs::canonicalize(&cwd).unwrap().as_path(),
         "trust binds exactly the launch cwd"
     );
-    assert!(
-        universe.host_composed(),
-        "with the root bound, the lane composes"
-    );
+    if cfg!(windows) {
+        assert!(
+            !universe.host_composed(),
+            "Windows binds the trusted root while keeping its unavailable host lane off"
+        );
+    } else {
+        assert!(
+            universe.host_composed(),
+            "with the root bound, the lane composes"
+        );
+    }
     let names: Vec<String> = universe
         .definitions(
             saya_agent::AgentMode::Build,
@@ -351,7 +358,14 @@ fn bypass_unbound_terminal_prompts_for_the_folder_then_runs_the_lane() {
     let state = temp_dir("bypass-trust-state");
     let universe = SessionUniverse::compose(&runtime, Some(&cwd), None, true, &cwd, &state)
         .expect("trust binds under bypass exactly as under ask");
-    assert!(universe.host_composed(), "the lane composes after trust");
+    if cfg!(windows) {
+        assert!(
+            !universe.host_composed(),
+            "Windows trusts the folder without composing an unsupported host lane"
+        );
+    } else {
+        assert!(universe.host_composed(), "the lane composes after trust");
+    }
     let names: Vec<String> = universe
         .definitions(
             saya_agent::AgentMode::Build,
@@ -364,10 +378,17 @@ fn bypass_unbound_terminal_prompts_for_the_folder_then_runs_the_lane() {
         .into_iter()
         .map(|definition| definition.name)
         .collect();
-    assert!(
-        names.contains(&"run_command".to_string()),
-        "after trust, the lane runs unasked under bypass: {names:?}"
-    );
+    if cfg!(windows) {
+        assert!(
+            !names.contains(&"run_command".to_string()),
+            "bypass does not advertise Windows' unavailable host lane: {names:?}"
+        );
+    } else {
+        assert!(
+            names.contains(&"run_command".to_string()),
+            "after trust, the lane runs unasked under bypass: {names:?}"
+        );
+    }
     // The activation line names both exposures.
     let line = crate::interactive::session_activation::bypass_line(
         &[],
@@ -375,10 +396,17 @@ fn bypass_unbound_terminal_prompts_for_the_folder_then_runs_the_lane() {
         universe.host_composed(),
         &[],
     );
-    assert!(
-        line.contains(crate::interactive::session_activation::HOST_LANE_FACT),
-        "the activation line names the unsandboxed exposure: {line}"
-    );
+    if cfg!(windows) {
+        assert!(
+            !line.contains(crate::interactive::session_activation::HOST_LANE_FACT),
+            "an inactive Windows lane contributes no unsandboxed exposure: {line}"
+        );
+    } else {
+        assert!(
+            line.contains(crate::interactive::session_activation::HOST_LANE_FACT),
+            "the activation line names the unsandboxed exposure: {line}"
+        );
+    }
     let trusted = trusted_root_line(universe.root().expect("trust binds"));
     assert!(
         trusted.contains(&cwd.canonicalize().unwrap().display().to_string()),

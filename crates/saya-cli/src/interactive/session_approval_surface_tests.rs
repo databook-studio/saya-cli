@@ -116,6 +116,20 @@ const WRITE_SHAPED: [&str; 6] = [
     "run_command",
 ];
 
+fn assert_host_tool_for_platform(names: &BTreeSet<String>) {
+    if cfg!(windows) {
+        assert!(
+            !names.contains("run_command"),
+            "Windows keeps the unavailable host lane out of the surface: {names:?}"
+        );
+    } else {
+        assert!(
+            names.contains("run_command"),
+            "a composed Unix host lane advertises run_command: {names:?}"
+        );
+    }
+}
+
 fn advertised_set(
     universe: &SessionUniverse,
     agent_mode: AgentMode,
@@ -163,12 +177,16 @@ fn tui_shaped_session_under_ask_advertises_the_write_shaped_tools() {
         ApprovalPolicy::Ask,
         tui_can_obtain_approval,
     );
-    for tool in WRITE_SHAPED {
+    for tool in WRITE_SHAPED
+        .into_iter()
+        .filter(|tool| *tool != "run_command")
+    {
         assert!(
             names.contains(tool),
             "a TUI-shaped ask session advertises {tool}: {names:?}"
         );
     }
+    assert_host_tool_for_platform(&names);
     // Advertised is not allowed: the definition still declares its approval
     // shape honestly, and the engine — untouched by this slice — decides
     // every call, which the modal answers per call.
@@ -263,13 +281,17 @@ fn bypass_advertises_the_full_write_shaped_set_on_both_surfaces() {
             ApprovalPolicy::Bypass,
             can_obtain_approval,
         );
-        for tool in WRITE_SHAPED {
+        for tool in WRITE_SHAPED
+            .into_iter()
+            .filter(|tool| *tool != "run_command")
+        {
             assert!(
                 names.contains(tool),
                 "bypass advertises {tool} with or without an approval surface \
                  (can_obtain_approval={can_obtain_approval}): {names:?}"
             );
         }
+        assert_host_tool_for_platform(&names);
     }
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }

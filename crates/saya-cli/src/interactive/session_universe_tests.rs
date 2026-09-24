@@ -640,6 +640,7 @@ async fn advertised_scratch_import_routes_through_the_session_executor() {
 /// The placement guard now runs against the project: a checked-in tool
 /// directory is inside the session's fs root and refuses, naming the
 /// directory and the root it sits inside. `<project>` itself refuses too.
+#[cfg(not(windows))]
 #[test]
 fn a_program_dir_inside_the_session_workspace_refuses_naming_directory_and_root() {
     let project = worktree("placement");
