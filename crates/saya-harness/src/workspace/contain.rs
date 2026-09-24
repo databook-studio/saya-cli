@@ -22,10 +22,12 @@ use std::sync::Arc;
 
 use crate::{HarnessError, io_error};
 
-/// Hard ceiling for one workspace byte operation. Public methods still accept
-/// operation-specific bounds, but no caller can widen a read or write past
-/// this process-wide backstop.
+/// Hard ceiling for ordinary workspace byte operations. Public methods still
+/// accept operation-specific bounds; scratch CSV import has its own read-only
+/// ceiling below, while ordinary reads and all writes stay at this one.
 pub const MAX_IO_BYTES: usize = 8 * 1024 * 1024;
+/// The separate ceiling for a single CSV import into the scratch database.
+pub const MAX_SCRATCH_IMPORT_BYTES: usize = 32 * 1024 * 1024;
 /// Hard ceiling for one directory enumeration. Search callers use smaller
 /// limits; this prevents a direct caller from turning listing into a flood.
 pub const MAX_LIST_ENTRIES: usize = 2_000;
@@ -119,15 +121,34 @@ impl Workspace {
     /// larger than the I/O backstop refuse before any byte is hashed; the
     /// refusal names the scanned size and the bound.
     pub fn read(&self, rel: &str, max_bytes: u64) -> Result<ReadFile, HarnessError> {
-        if max_bytes > MAX_IO_BYTES as u64 {
+        self.read_with_limit(rel, max_bytes, MAX_IO_BYTES as u64)
+    }
+
+    /// Reads one complete file for scratch CSV import through the same
+    /// contained open as `read`, with only this operation's 32 MiB ceiling.
+    pub fn read_for_scratch_import(&self, rel: &str) -> Result<ReadFile, HarnessError> {
+        self.read_with_limit(
+            rel,
+            MAX_SCRATCH_IMPORT_BYTES as u64,
+            MAX_SCRATCH_IMPORT_BYTES as u64,
+        )
+    }
+
+    fn read_with_limit(
+        &self,
+        rel: &str,
+        max_bytes: u64,
+        file_limit: u64,
+    ) -> Result<ReadFile, HarnessError> {
+        if max_bytes > file_limit {
             return Err(HarnessError::BoundsExceeded {
                 path: rel.to_string(),
                 found: max_bytes,
-                max: MAX_IO_BYTES as u64,
+                max: file_limit,
             });
         }
         #[cfg(unix)]
-        return super::anchored::read(self, rel, max_bytes);
+        return super::anchored::read(self, rel, max_bytes, file_limit);
 
         #[cfg(not(unix))]
         {
@@ -146,11 +167,11 @@ impl Workspace {
                     path: rel.to_string(),
                 });
             }
-            if pre.len() > MAX_IO_BYTES as u64 {
+            if pre.len() > file_limit {
                 return Err(HarnessError::BoundsExceeded {
                     path: rel.to_string(),
                     found: pre.len(),
-                    max: MAX_IO_BYTES as u64,
+                    max: file_limit,
                 });
             }
             let file = self.open_verified(&path, &pre, rel)?;
@@ -169,11 +190,11 @@ impl Workspace {
                     break;
                 }
                 scanned += read as u64;
-                if scanned > MAX_IO_BYTES as u64 {
+                if scanned > file_limit {
                     return Err(HarnessError::BoundsExceeded {
                         path: rel.to_string(),
                         found: scanned,
-                        max: MAX_IO_BYTES as u64,
+                        max: file_limit,
                     });
                 }
                 hasher.update(&chunk[..read]);
