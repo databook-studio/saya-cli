@@ -18,12 +18,18 @@
 //! (timeout, interrupt, budgets), [`tools`] (the `scratch_sql` tool and its
 //! admission).
 
+mod csv;
 mod decode;
 mod execute;
+mod import;
 mod open;
 mod tools;
 mod validate;
 
+pub use csv::{
+    CsvError, MAX_CSV_COLUMNS, MAX_CSV_FIELD_BYTES, MAX_CSV_ROWS, parse_csv, sanitize_headers,
+};
+pub use import::{ImportError, ImportResult, MAX_IMPORT_FILE_BYTES};
 pub use open::{SCRATCH_FILE_NAME, SCRATCH_QUERY_TIMEOUT, ScratchDb};
 pub use tools::{SCRATCH_SQL_TOOL, ScratchSql};
 pub use validate::{MAX_SQL_BYTES, SCRATCH_ROW_CAP, ScratchRejection, Validated, validate};
@@ -65,4 +71,8 @@ pub enum ScratchError {
     /// allow-listed DuckDB message classes — never a staged value.
     #[error("scratch statement failed: {message}")]
     Execution { message: String },
+
+    /// The contained CSV import refused its input or could not complete.
+    #[error("scratch import refused: {0}")]
+    Import(#[from] ImportError),
 }

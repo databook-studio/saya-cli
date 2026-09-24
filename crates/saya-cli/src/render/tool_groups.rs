@@ -198,6 +198,7 @@ fn key_label(name: &str, arguments: &serde_json::Value) -> Option<String> {
             .and_then(serde_json::Value::as_str)
             .map(|sql| sql.chars().take(24).collect::<String>())
             .filter(|sql| !sql.is_empty()),
+        "scratch_import" => string_argument(arguments, "path"),
         _ => None,
     }
 }

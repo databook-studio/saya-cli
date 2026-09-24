@@ -85,6 +85,19 @@ pub(crate) fn scratch_sql() -> ToolDefinition {
     }
 }
 
+/// `scratch_import`, the one contained workspace-to-scratch CSV route.
+pub(crate) fn scratch_import() -> ToolDefinition {
+    let mut definition = saya_harness::scratch::ScratchSql::import_definition();
+    definition.description = "Load one CSV file from this session's bound workspace into one \
+        scratch table. The path is relative to the workspace root; absolute paths, `..` \
+        escapes, symlinks, non-regular files, and files over 32 MiB are refused. Every column \
+        is VARCHAR. The import is bounded and replaces a table only after it succeeds; scratch \
+        keeps external access off, so read_csv remains refused."
+        .into();
+    definition.effect = write_shape(false);
+    definition
+}
+
 /// `http_fetch`: any HTTPS host outside the refused ranges, consented per
 /// call — the structural gates stay absolute, the destination list is
 /// replaced by the ask.

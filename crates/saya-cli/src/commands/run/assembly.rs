@@ -169,21 +169,22 @@ pub(super) async fn assemble(
             None,
             None,
         )
-        .with_workspace(Some(workspace)),
+        .with_workspace(Some(Arc::clone(&workspace))),
     );
     // Shared per run, admitted before anything runs (fail closed at start,
     // never mid-flight): one scratch database when the run approved
     // `scratch`, its per-statement timeout the run's resolved query
     // timeout. The per-step toolsets put it behind the composites of the
     // steps that asked for it; a step that did not ask never sees it.
-    let scratch =
-        ScratchSql::admit(run_root, scopes)
-            .map_err(|error| format!("scratch database could not be opened: {error}"))?
-            .map(|scratch| {
-                Arc::new(scratch.with_query_timeout(Duration::from_secs(
-                    runtime.resolved.query_timeout_seconds,
-                )))
-            });
+    let scratch = ScratchSql::admit(run_root, scopes)
+        .map_err(|error| format!("scratch database could not be opened: {error}"))?
+        .map(|scratch| {
+            Arc::new(
+                scratch
+                    .with_query_timeout(Duration::from_secs(runtime.resolved.query_timeout_seconds))
+                    .with_workspace(Arc::clone(&workspace)),
+            )
+        });
     // Shared per run, admitted before anything runs (fail closed at start,
     // never mid-flight): one transport and one download wallet when the run
     // approved a fetch scope. The per-step toolsets put them behind the

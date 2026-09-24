@@ -26,6 +26,7 @@ pub const SCRATCH_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The opened scratch database. One DuckDB file per run, addressed only by
 /// the run's tools, dying with the run directory — nothing here outlives it.
+#[derive(Clone)]
 pub struct ScratchDb {
     pub(super) connection: Arc<Mutex<Connection>>,
     pub(super) interrupt: Arc<InterruptHandle>,
