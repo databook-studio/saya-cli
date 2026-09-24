@@ -83,14 +83,14 @@ fn light_palette_is_pinned() {
     let _guard = lock();
     set_theme(Theme::Light);
     let palette = theme_accessors();
-    assert_eq!(palette.accent, Color::Rgb(100, 67, 197));
-    assert_eq!(palette.user_color, Color::Rgb(41, 99, 162));
-    assert_eq!(palette.secondary, Color::Rgb(93, 89, 83));
-    assert_eq!(palette.success, Color::Rgb(54, 108, 47));
-    assert_eq!(palette.warning, Color::Rgb(139, 84, 16));
+    assert_eq!(palette.accent, Color::Rgb(109, 78, 200));
+    assert_eq!(palette.user_color, Color::Rgb(44, 108, 176));
+    assert_eq!(palette.secondary, Color::Rgb(107, 102, 96));
+    assert_eq!(palette.success, Color::Rgb(61, 122, 53));
+    assert_eq!(palette.warning, Color::Rgb(154, 93, 18));
     assert_eq!(palette.danger, Color::Rgb(181, 55, 44));
     assert_eq!(palette.status_bg, Color::Rgb(236, 233, 245));
-    assert_eq!(palette.code_color, Color::Rgb(43, 101, 147));
+    assert_eq!(palette.code_color, Color::Rgb(46, 109, 158));
     assert_eq!(palette.foreground, Color::Rgb(40, 38, 42));
     assert_eq!(palette.on_accent, Color::White);
 }
@@ -301,7 +301,7 @@ fn channel(v: u8) -> f64 {
     if s <= 0.03928 {
         s / 12.92
     } else {
-        ((s + 0.055) / 1.055).powi(2)
+        ((s + 0.055) / 1.055).powf(2.4)
     }
 }
 
@@ -313,4 +313,18 @@ fn contrast(a: Color, b: Color) -> f64 {
         if la >= lb { (la, lb) } else { (lb, la) }
     };
     (hi + 0.05) / (lo + 0.05)
+}
+
+/// The helpers are WCAG 2.x relative luminance and contrast, pinned to a
+/// published reference: `#767676` on white is 4.54:1, the canonical darkest
+/// grey that still passes AA for body text. An approximation of the sRGB
+/// transfer curve (a square instead of the 2.4 exponent) understates every
+/// mid-tone's contrast and would push the palette darker than it needs to be.
+#[test]
+fn the_contrast_helper_is_wcag() {
+    let ratio = contrast(Color::Rgb(0x76, 0x76, 0x76), Color::Rgb(255, 255, 255));
+    assert!(
+        (ratio - 4.54).abs() < 0.01,
+        "#767676 on white must be 4.54:1 (WCAG), got {ratio:.3}"
+    );
 }

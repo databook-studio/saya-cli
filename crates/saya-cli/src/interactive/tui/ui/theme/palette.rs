@@ -134,33 +134,26 @@ fn pick(dark: Color, light: Color) -> Color {
 }
 
 /// saya's signature accent (iris violet): brand, assistant, focus, borders.
-/// The light entry is darkened from the brand hue to clear 4.5:1 against
-/// white, cream (Solarized Light), and the light status bar tint.
 pub(in crate::interactive::tui) fn accent() -> Color {
-    pick(Color::Rgb(157, 139, 245), Color::Rgb(100, 67, 197))
+    pick(Color::Rgb(157, 139, 245), Color::Rgb(109, 78, 200))
 }
-/// User turns — a cool secondary so the accent stays saya's. The light entry
-/// is darkened to clear 4.5:1 against white and cream.
+/// User turns — a cool secondary so the accent stays saya's.
 pub(in crate::interactive::tui) fn user_color() -> Color {
-    pick(Color::Rgb(106, 155, 204), Color::Rgb(41, 99, 162))
+    pick(Color::Rgb(106, 155, 204), Color::Rgb(44, 108, 176))
 }
 /// Secondary/de-emphasised text: tool + system lines, hints, provider/model.
-/// The light entry is darkened to clear 4.5:1 against white, cream, and the
-/// light status bar tint.
 pub(in crate::interactive::tui) fn secondary() -> Color {
-    pick(Color::Rgb(168, 162, 154), Color::Rgb(93, 89, 83))
+    pick(Color::Rgb(168, 162, 154), Color::Rgb(107, 102, 96))
 }
 /// Status: success / safe (read-only approval, `sharing:off` — data stays
-/// local, passing checks). The light entry is darkened to clear 4.5:1
-/// against white and cream.
+/// local, passing checks).
 pub(in crate::interactive::tui) fn success() -> Color {
-    pick(Color::Rgb(127, 174, 107), Color::Rgb(54, 108, 47))
+    pick(Color::Rgb(127, 174, 107), Color::Rgb(61, 122, 53))
 }
 /// Status: caution (ask approval, approval-panel border, `sharing:on` — row
-/// values are being sent to the provider). The light entry is darkened to
-/// clear 4.5:1 against white and cream.
+/// values are being sent to the provider).
 pub(in crate::interactive::tui) fn warning() -> Color {
-    pick(Color::Rgb(224, 164, 88), Color::Rgb(139, 84, 16))
+    pick(Color::Rgb(224, 164, 88), Color::Rgb(154, 93, 18))
 }
 /// Status: error / danger (failures, never approval).
 pub(in crate::interactive::tui) fn danger() -> Color {
@@ -170,10 +163,9 @@ pub(in crate::interactive::tui) fn danger() -> Color {
 pub(in crate::interactive::tui) fn status_bg() -> Color {
     pick(Color::Rgb(30, 28, 36), Color::Rgb(236, 233, 245))
 }
-/// Inline `code` in assistant answers. The light entry is darkened to clear
-/// 4.5:1 against white and cream.
+/// Inline `code` in assistant answers.
 pub(in crate::interactive::tui) fn code_color() -> Color {
-    pick(Color::Rgb(127, 181, 214), Color::Rgb(43, 101, 147))
+    pick(Color::Rgb(127, 181, 214), Color::Rgb(46, 109, 158))
 }
 /// Primary foreground for body text on the terminal's default ground. The
 /// dark entry is the terminal's own text colour (`Reset`), never a fixed
