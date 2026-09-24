@@ -30,7 +30,9 @@
 
 use std::{fs, path::PathBuf};
 
-use saya_harness::endpoints::{CorpusProfile, EndpointSpec};
+#[cfg(target_os = "macos")]
+use saya_harness::endpoints::CorpusProfile;
+use saya_harness::endpoints::EndpointSpec;
 use saya_harness::run_dir::RunDir;
 use saya_harness::runner::nested_saya;
 use saya_types::{EndpointBindings, RunId, SecretRef};
@@ -55,6 +57,7 @@ fn endpoint(name: &str, api_key: Option<SecretRef>) -> EndpointSpec {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn corpus(name: &str, path: &str) -> CorpusProfile {
     CorpusProfile {
         name: name.to_string(),
