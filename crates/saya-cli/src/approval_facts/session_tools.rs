@@ -81,3 +81,32 @@ pub(super) fn scratch_facts(
         lines,
     ))
 }
+
+/// `scratch_import`'s fact lines name the contained source and the import
+/// bounds, without reflecting a CSV value into the approval surface.
+pub(super) fn scratch_import_facts(
+    arguments: &Value,
+    facts: &ApprovalFacts,
+    session_line: Option<String>,
+) -> Option<String> {
+    let path = arguments.get("path").and_then(Value::as_str)?;
+    let table = arguments.get("table").and_then(Value::as_str)?;
+    let mut lines = vec![
+        format!("  workspace CSV: {path}"),
+        format!("  scratch table: {table}"),
+    ];
+    lines.push("  ≤ 32 MiB · ≤ 500,000 rows · ≤ 512 columns · fields ≤ 64 KiB".to_string());
+    if let Some(scratch) = facts.scratch.as_ref() {
+        lines.push(format!(
+            "  session-local DuckDB · ≤ {} result rows · {}s scratch SQL timeout · external access off",
+            scratch.row_cap, scratch.timeout_seconds
+        ));
+    }
+    if let Some(session_line) = session_line {
+        lines.push(session_line);
+    }
+    Some(body(
+        "scratch_import — workspace CSV into scratch".to_string(),
+        lines,
+    ))
+}

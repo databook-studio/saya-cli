@@ -119,9 +119,10 @@ fn compose_result(
     SessionUniverse::compose(runtime, None, None, true, cwd, state_dir)
 }
 
-const SESSION_WRITE_TOOLS: [&str; 5] = [
+const SESSION_WRITE_TOOLS: [&str; 6] = [
     "workspace_write",
     "scratch_sql",
+    "scratch_import",
     "http_fetch",
     "http_download",
     "run_program",
@@ -228,6 +229,7 @@ fn a_session_without_path_still_starts() {
     let ask_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     for tool in [
         "scratch_sql",
+        "scratch_import",
         "http_fetch",
         "workspace_write",
         "http_download",
@@ -458,6 +460,10 @@ fn outside_a_worktree_the_write_shaped_tools_are_hidden_and_scratch_and_fetch_wo
         "no root, no runner: {names:?}"
     );
     assert!(
+        !names.contains(&"scratch_import".to_string()),
+        "no root, no contained import: {names:?}"
+    );
+    assert!(
         names.contains(&"scratch_sql".to_string()),
         "scratch needs no root: {names:?}"
     );
@@ -484,6 +490,7 @@ fn a_worktree_session_advertises_every_write_shaped_tool_ask_gated() {
     for tool in [
         "workspace_write",
         "scratch_sql",
+        "scratch_import",
         "http_fetch",
         "http_download",
     ] {
@@ -503,6 +510,7 @@ fn a_worktree_session_advertises_every_write_shaped_tool_ask_gated() {
     for tool in [
         "workspace_write",
         "scratch_sql",
+        "scratch_import",
         "http_fetch",
         "http_download",
     ] {
@@ -1327,9 +1335,10 @@ fn a_pre_workspace_resume_stays_silent_when_unbound() {
 /// plus the host lane. `run_program` joins the asserted absence only where
 /// the runner composes, so the runner-bearing test below names it explicitly
 /// while this shared list names the four the plain composition carries.
-const PLAN_HIDDEN_TOOLS: [&str; 6] = [
+const PLAN_HIDDEN_TOOLS: [&str; 7] = [
     "workspace_write",
     "scratch_sql",
+    "scratch_import",
     "http_fetch",
     "http_download",
     "run_program",
@@ -1450,6 +1459,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "tasks_set",
                 "workspace_write",
                 "scratch_sql",
+                "scratch_import",
                 "http_fetch",
                 "http_download",
                 "run_command",
@@ -1474,6 +1484,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "tasks_set",
                 "workspace_write",
                 "scratch_sql",
+                "scratch_import",
                 "http_fetch",
                 "http_download",
                 "run_command",

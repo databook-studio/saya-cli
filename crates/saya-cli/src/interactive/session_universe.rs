@@ -209,6 +209,10 @@ impl SessionUniverse {
         let scratch = ScratchSql::open(state_dir).map_err(|error| {
             format!("the session scratch database could not be opened: {error}")
         })?;
+        let scratch = match workspace.as_ref() {
+            Some(bound) => scratch.with_workspace(Arc::clone(&bound.workspace)),
+            None => scratch,
+        };
         // Fetch: the session-wide policy — HTTPS only, refused ranges still
         // refused, every host consented per call by the approval engine.
         let transport = ReqwestTransport::new()
@@ -513,6 +517,7 @@ impl SessionUniverse {
         }
         if self.workspace.is_some() {
             defs.push(session_definitions::workspace_write());
+            defs.push(session_definitions::scratch_import());
         }
         defs.push(session_definitions::scratch_sql());
         if self.fetch.is_some() {

@@ -7,6 +7,13 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+**`scratch_import` stages one contained workspace CSV into scratch.** The
+scratch grant now admits a bounded CSV import where a workspace is bound:
+one regular, contained file up to 32 MiB; up to 500,000 rows and 512 VARCHAR
+columns; fields up to 64 KiB. Quoted RFC 4180 CSV is parsed by the harness,
+then inserted transactionally, so a failed import never creates or replaces a
+table. DuckDB external access remains locked off; `read_csv` remains refused.
+
 **Post-turn extraction disables itself after two consecutive misses.** A
 session's extraction is a **miss** when the reply is cut off at the
 output-token limit or the transport stalls or times out; every other

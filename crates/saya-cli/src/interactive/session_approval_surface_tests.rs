@@ -107,9 +107,10 @@ fn compose(project: &Path, state_dir: &Path) -> SessionUniverse {
 /// runner composes (nothing staged a program dir), so no `run_program` —
 /// the honest shape, not a hidden capability. The unstated host lane does
 /// compose over a bound root, so `run_command` rides.
-const WRITE_SHAPED: [&str; 5] = [
+const WRITE_SHAPED: [&str; 6] = [
     "workspace_write",
     "scratch_sql",
+    "scratch_import",
     "http_fetch",
     "http_download",
     "run_command",

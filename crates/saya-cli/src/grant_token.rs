@@ -111,6 +111,8 @@ pub(crate) fn grant_token(
             .is_some()
             .then(|| "workspace-write".to_owned()),
         "scratch_sql" => facts.scratch.is_some().then(|| "scratch".to_owned()),
+        "scratch_import" => (facts.scratch.is_some() && facts.workspace_root.is_some())
+            .then(|| "scratch".to_owned()),
         "http_fetch" | "http_download" => facts
             .fetch
             .is_some()
