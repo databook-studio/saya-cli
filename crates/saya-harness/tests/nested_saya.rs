@@ -74,15 +74,22 @@ fn the_composed_argv_is_the_bench_question_shape() {
         &[],
     )
     .unwrap();
-    let state_dir = run.state().display().to_string();
     assert_eq!(
         state.ask_argv("orchestrator", "how many orders?"),
         vec![
             "ask".to_owned(),
             "--config".into(),
-            format!("{state_dir}/config/config.toml"),
+            run.state()
+                .join("config")
+                .join("config.toml")
+                .display()
+                .to_string(),
             "--connections".into(),
-            format!("{state_dir}/config/connections.toml"),
+            run.state()
+                .join("config")
+                .join("connections.toml")
+                .display()
+                .to_string(),
             "--profile".into(),
             "orchestrator".into(),
             "--non-interactive".into(),

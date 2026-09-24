@@ -12,27 +12,36 @@
 //! 4. Egress to a port not in `net_allow` is denied with `Operation not
 //!    permitted`; an allowed port connects — against a listener that
 //!    actually calls `accept()` (the spike's starved-listener lesson).
-//! 5. `#[cfg(windows)]`: the probe reports unavailable and the runner is not
-//!    registered.
+//! 5. `#[cfg(windows)]`: profile construction refuses the unsupported root,
+//!    so the runner is not registered.
 //! 6. The generated profile is rejected by `sandbox-exec` if a placeholder
 //!    was left unsubstituted — and because a *quoted* leftover is silently
 //!    accepted (measured on this host: exit 0), the generator itself refuses
 //!    leftovers.
 
+use std::{fs, path::PathBuf};
+
+#[cfg(unix)]
+use std::{collections::VecDeque, sync::Mutex};
+#[cfg(target_os = "macos")]
 use std::{
-    collections::VecDeque,
-    fs,
     net::TcpListener,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
-    sync::{Mutex, mpsc},
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
 use async_trait::async_trait;
+#[cfg(unix)]
 use saya_agent::{ChatMessage, ChatProvider, ChatRequest, ChatResponse, ProviderError};
+#[cfg(unix)]
 use saya_harness::engine::{PlanDriver, PlanError, PlanRejection, PlanRequest};
-use saya_harness::runner::sandbox::{RunSandbox, SandboxError, SandboxProvision};
+#[cfg(unix)]
+use saya_harness::runner::sandbox::SandboxProvision;
+use saya_harness::runner::sandbox::{RunSandbox, SandboxError};
+#[cfg(unix)]
 use saya_types::{Budgets, Capabilities, RunnerScope};
 
 /// A per-test scratch root: created, used, removed on drop.
@@ -61,11 +70,13 @@ impl Drop for TempRoot {
 /// A loopback listener whose accept thread hands every landed payload to the
 /// test — genuinely accepting, per the spike's starved-listener lesson: a
 /// listener that never accepts turns TCP timeouts into false denials.
+#[cfg(target_os = "macos")]
 struct AcceptingListener {
     port: u16,
     received: mpsc::Receiver<String>,
 }
 
+#[cfg(target_os = "macos")]
 impl AcceptingListener {
     fn bind() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("test listener must bind");
@@ -98,6 +109,7 @@ impl AcceptingListener {
 
 /// A bounded child run for the test canaries: a wedged sandboxed child is
 /// killed at the bound instead of hanging the suite.
+#[cfg(target_os = "macos")]
 fn bounded(cmd: &mut Command) -> std::process::Output {
     use std::io::Read as _;
     cmd.stdin(Stdio::null())
@@ -139,6 +151,7 @@ fn bounded(cmd: &mut Command) -> std::process::Output {
 /// runner tool joins the episode's tool universe only when the sandbox
 /// handed over a spawn configuration. M5-4 supplies the definition; the gate
 /// is this arm — there is no other way a runner tool may appear.
+#[cfg(unix)]
 fn runner_tool_names(provision: &SandboxProvision) -> Vec<&'static str> {
     provision
         .spawn()
@@ -147,6 +160,7 @@ fn runner_tool_names(provision: &SandboxProvision) -> Vec<&'static str> {
 }
 
 /// Builds the approved scopes a run would carry, with the runner allowed.
+#[cfg(unix)]
 fn approved_runner_scopes() -> Capabilities {
     let mut caps = Capabilities::default();
     caps.runner =
@@ -156,11 +170,13 @@ fn approved_runner_scopes() -> Capabilities {
 
 /// A scripted planner provider: serves its answers in order and records
 /// every request, so the refusal loop's attempt count is pinned.
+#[cfg(unix)]
 struct ScriptedPlanner {
     script: Mutex<VecDeque<String>>,
     requests: Mutex<Vec<ChatRequest>>,
 }
 
+#[cfg(unix)]
 impl ScriptedPlanner {
     fn new(script: Vec<String>) -> Self {
         Self {
@@ -174,6 +190,7 @@ impl ScriptedPlanner {
     }
 }
 
+#[cfg(unix)]
 #[async_trait]
 impl ChatProvider for ScriptedPlanner {
     fn name(&self) -> &str {
@@ -191,15 +208,17 @@ impl ChatProvider for ScriptedPlanner {
 
 /// The plan JSON one step needs: a goal, the runner-scoped capabilities, and
 /// nothing else the contract would refuse for shape.
+#[cfg(unix)]
 fn runner_plan_json() -> String {
     r#"{"steps": [{"goal": "run the approved program", "capabilities": {"runner": {"programs": ["echo"]}}, "budget": null, "expects": [], "endpoint": null}]}"#
         .to_owned()
 }
 
-/// One probe-failure policy, reachable on every platform: the root exists at
-/// construction, is deleted, and the probe `prepare` runs then fails on the
-/// real host surface — a changed environment, never an assumption (spike
-/// §9.3: hardening environments change under the run).
+/// One Unix probe-failure policy: the root exists at construction, is deleted,
+/// and the probe `prepare` runs then fails on the real host surface — a
+/// changed environment, never an assumption (spike §9.3: hardening
+/// environments change under the run).
+#[cfg(unix)]
 fn policy_with_vanished_root() -> (RunSandbox, TempRoot) {
     let root = TempRoot::new("probe-fails");
     let canonical = root.canonical();
@@ -209,24 +228,17 @@ fn policy_with_vanished_root() -> (RunSandbox, TempRoot) {
     (policy, root)
 }
 
-/// The platform-appropriate runner program directory for tests: the canary
-/// programs live in `/bin` on unix; on Windows nothing is provable and the
-/// directory only has to exist for `prepare` to reach the probe.
+/// The runner program directory for Unix probe tests.
+#[cfg(unix)]
 fn runner_program_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
-        std::env::temp_dir()
-    }
-    #[cfg(not(windows))]
-    {
-        PathBuf::from("/bin")
-    }
+    PathBuf::from("/bin")
 }
 
 /// Test 1 — the fail-closed chain: probe failure ⇒ the runner is not
 /// registered (no spawn configuration exists, so the tool universe carries
 /// no runner tool) ⇒ a plan requesting the runner scope is refused with the
 /// ordinary needs-approval outcome after the bounded attempts.
+#[cfg(unix)]
 #[tokio::test]
 async fn probe_failure_leaves_the_runner_unregistered_and_refuses_runner_scopes() {
     let (policy, _root) = policy_with_vanished_root();

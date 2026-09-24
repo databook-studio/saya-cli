@@ -577,6 +577,7 @@ fn a_launch_grammar_error_is_a_usage_error() {
 /// Regression: a launch `--allow command:git` seed still works after the
 /// relay fix — granted exactly once, journalled exactly once (the previous
 /// relay granted `command:` tokens through two separate paths).
+#[cfg(unix)]
 #[test]
 fn a_launch_command_seed_still_works() {
     let env = test_root("launch-command");

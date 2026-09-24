@@ -898,6 +898,18 @@ struct InteractiveRun {
     stream: String,
 }
 
+/// Answers terminal cursor-position queries so the PTY can render the prompt
+/// on platforms where the child waits for a Device Status Report.
+fn answer_cursor_queries(stream: &str, answered: &mut usize, writer: &mut dyn Write) {
+    let queries = stream.matches("\x1b[6n").count();
+    while *answered < queries {
+        writer
+            .write_all(b"\x1b[1;1R")
+            .expect("the pty cursor-position response");
+        *answered += 1;
+    }
+}
+
 /// Spawns `saya run` on a PTY, waits for the approval prompt to appear,
 /// answers with `answer`, and waits for the child to exit. A timeout kills
 /// the child and fails the test — an interactive ask that never resolves is
@@ -945,6 +957,7 @@ fn run_interactively(env: &TestEnv, args: &[&str], address: &str, answer: &str) 
     });
 
     let mut stream = String::new();
+    let mut cursor_queries_answered = 0;
     let started = std::time::Instant::now();
     let prompt_seen = loop {
         if started.elapsed() > DEADLINE {
@@ -953,6 +966,7 @@ fn run_interactively(env: &TestEnv, args: &[&str], address: &str, answer: &str) 
         }
         if let Ok(bytes) = rx.recv_timeout(Duration::from_millis(100)) {
             stream.push_str(&String::from_utf8_lossy(&bytes));
+            answer_cursor_queries(&stream, &mut cursor_queries_answered, &mut writer);
         }
         if stream.contains("Approve this plan") {
             break true;
@@ -970,9 +984,9 @@ fn run_interactively(env: &TestEnv, args: &[&str], address: &str, answer: &str) 
             let _ = child.kill();
             panic!("the run never exited after the approval; stream:\n{stream}");
         }
-        thread::sleep(Duration::from_millis(50));
-        if let Ok(bytes) = rx.try_recv() {
+        if let Ok(bytes) = rx.recv_timeout(Duration::from_millis(50)) {
             stream.push_str(&String::from_utf8_lossy(&bytes));
+            answer_cursor_queries(&stream, &mut cursor_queries_answered, &mut writer);
         }
     }
     let exit_code = child
