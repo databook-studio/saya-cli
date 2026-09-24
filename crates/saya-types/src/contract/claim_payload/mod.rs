@@ -118,6 +118,8 @@ pub enum ClaimPayload {
         #[serde(default)]
         reason: Option<String>,
     },
+    #[non_exhaustive]
+    TableUserNote { text: String },
 }
 
 /// Wire form used only while validating persisted or imported payloads. The
@@ -174,6 +176,9 @@ enum RawClaimPayload {
         columns: Vec<String>,
         #[serde(default)]
         reason: Option<String>,
+    },
+    TableUserNote {
+        text: String,
     },
 }
 
@@ -289,6 +294,10 @@ impl<'de> Deserialize<'de> for ClaimPayload {
                 reason,
             } => Self::metric_definition(name, definition, columns, reason.as_deref())
                 .map_err(invalid),
+            RawClaimPayload::TableUserNote { text } if text.is_empty() => {
+                Ok(Self::TableUserNote { text })
+            }
+            RawClaimPayload::TableUserNote { text } => Self::table_user_note(text).map_err(invalid),
         }
     }
 }
