@@ -12,6 +12,7 @@ use std::io::Read;
 use sha2::{Digest, Sha256};
 
 use super::download_error::DownloadError;
+#[cfg(unix)]
 use std::io;
 use std::path::PathBuf;
 

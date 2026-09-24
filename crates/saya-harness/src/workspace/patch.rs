@@ -166,7 +166,7 @@ impl Workspace {
             .read_to_end(&mut current)
             .map_err(|error| crate::io_error("read workspace file", &path, error))?;
         let patched = Self::splice(rel, range, expected_len, replacement, &current)?;
-        let parent = path.parent().unwrap_or(self.root.as_path()).to_path_buf();
+        let parent = path.parent().unwrap_or(self.root()).to_path_buf();
         let (temp_path, mut temp) = self.create_temp(&parent, rel)?;
         use std::io::Write as _;
         temp.write_all(&patched)

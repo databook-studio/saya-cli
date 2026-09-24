@@ -1,10 +1,10 @@
 //! The one process core both child lanes consume: the wait, the
-//! process-group kill, and the post-exit orphan sweep.
+//! process-tree kill, and the post-exit orphan sweep on unix.
 //!
 //! The contained lane (`runner`) and the host lane (`host`) share process
 //! mechanics — how a child is waited on, how a timeout or cancellation
-//! reaches the whole process group, how a detached descendant left behind
-//! after a natural exit is swept and reported. They share nothing about
+//! reaches its process tree, and how a detached descendant left behind after
+//! a natural unix exit is swept and reported. They share nothing about
 //! confinement: what is exec'd, what the child may touch, and what its
 //! environment holds are each lane's own decision. A group-kill that drifted
 //! between two copies is the bug that leaves orphaned children, so there is
@@ -20,6 +20,9 @@ use std::{
 use saya_agent::CancellationToken;
 
 use super::runner::output::{OUTPUT_CAP_BYTES, OutputRing, ProgramOutcome, StreamCapture};
+
+#[cfg(windows)]
+mod windows;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
@@ -43,13 +46,15 @@ pub struct Settled {
 }
 
 /// Waits on a spawned child under the timeout and the cancellation token.
-/// Both reach the child only by killing its process group; the killed
-/// child's wait is awaited to completion before anything is reported, so the
-/// child is reaped before the caller sees the outcome.
+/// Timeout and cancellation terminate the child's process tree. On unix that
+/// is its process group; on Windows it is `taskkill /T`. Once termination is
+/// accepted, the killed child's wait is awaited to completion before anything
+/// is reported, so the child is reaped before the caller sees the outcome.
 ///
-/// The child must lead its own process group (spawned with
-/// `process_group(0)` on unix): the group id is then the child's pid and
-/// every descendant — daemonized or not — is a member the kill reaches.
+/// Unix children lead their own group (`process_group(0)`), whose id is the
+/// child pid. On Windows, cleanup covers the tree while that root process is
+/// still present; a descendant that escapes after a natural parent exit has
+/// no equivalent post-exit group sweep.
 pub async fn wait(
     mut child: std::process::Child,
     timeout: Duration,
@@ -72,11 +77,11 @@ pub async fn wait(
     let (end, joined) = match end {
         End::Joined(joined) => (WaitEnd::Exited, flatten_join(joined)?),
         End::Cancelled => {
-            kill_process_group(pid);
+            kill_process_group(pid)?;
             (WaitEnd::Cancelled, flatten_join(wait.await)?)
         }
         End::TimedOut => {
-            kill_process_group(pid);
+            kill_process_group(pid)?;
             (WaitEnd::TimedOut, flatten_join(wait.await)?)
         }
     };
@@ -187,8 +192,32 @@ fn unix_signal(status: &ExitStatus) -> Option<i32> {
 /// is the child's pid and every descendant it created — daemonized or not —
 /// is a member. SIGKILL reaches the whole group, not just the child.
 #[cfg(unix)]
-pub fn kill_process_group(pgid: u32) {
-    unsafe { libc::killpg(pgid as libc::pid_t, libc::SIGKILL) };
+pub fn kill_process_group(pgid: u32) -> io::Result<()> {
+    if unsafe { libc::killpg(pgid as libc::pid_t, libc::SIGKILL) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+/// Terminates a Windows process and the descendants Windows can still find
+/// below it. Windows has no Unix process groups here, so `taskkill /T` is
+/// used for timeout and cancellation cleanup while the root process exists.
+#[cfg(windows)]
+pub fn kill_process_group(pid: u32) -> io::Result<()> {
+    windows::kill_process_tree(pid)
+}
+
+#[cfg(all(not(unix), not(windows)))]
+pub fn kill_process_group(_pid: u32) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "process-tree termination is unavailable on this platform",
+    ))
 }
 
 /// After the wait completes, probes the group and kills any live members
@@ -199,7 +228,7 @@ pub fn sweep_process_group(pgid: u32) -> bool {
     // Signal 0 probes membership without killing: ESRCH means the group is
     // already gone.
     if unsafe { libc::killpg(pgid as libc::pid_t, 0) } == 0 {
-        kill_process_group(pgid);
+        let _ = kill_process_group(pgid);
         true
     } else {
         false

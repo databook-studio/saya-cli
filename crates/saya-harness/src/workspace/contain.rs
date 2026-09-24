@@ -4,7 +4,7 @@
 //! identity check, and atomic writes with mode discipline.
 
 #[cfg(not(unix))]
-use std::io::{Read, Write};
+use std::io::Write;
 #[cfg(not(unix))]
 use std::process;
 use std::{
@@ -254,7 +254,7 @@ impl Workspace {
                 .map_err(|error| io_error("write workspace temp", &temp_path, error))?;
             temp.sync_all()
                 .map_err(|error| io_error("sync workspace temp", &temp_path, error))?;
-            let written = identity(
+            let written = identity_of(
                 &temp
                     .metadata()
                     .map_err(|error| io_error("stat workspace temp", &temp_path, error))?,
@@ -264,7 +264,7 @@ impl Workspace {
             let final_meta = fs::symlink_metadata(&path)
                 .map_err(|error| io_error("verify written workspace file", &path, error))?;
             let exec_bits = false;
-            if identity(&final_meta) != written || !final_meta.is_file() || exec_bits {
+            if identity_of(&final_meta) != written || !final_meta.is_file() || exec_bits {
                 return Err(HarnessError::IdentityChanged {
                     path: rel.to_string(),
                 });
@@ -495,7 +495,7 @@ impl Workspace {
         let opened = file
             .metadata()
             .map_err(|error| io_error("stat opened workspace file", path, error))?;
-        if identity(&opened) != identity(pre) {
+        if identity_of(&opened) != identity_of(pre) {
             return Err(HarnessError::IdentityChanged {
                 path: rel.to_string(),
             });
@@ -534,7 +534,7 @@ impl Workspace {
                 .map_err(|error| io_error("stat opened download part", &path, error))?;
             let current = fs::symlink_metadata(&path)
                 .map_err(|error| io_error("verify opened download part", &path, error))?;
-            if identity(&current) != identity(&opened) {
+            if identity_of(&current) != identity_of(&opened) {
                 return Err(HarnessError::IdentityChanged {
                     path: rel.to_string(),
                 });
@@ -569,14 +569,14 @@ impl Workspace {
                         path: dest.display().to_string(),
                     });
                 }
-                identity(&meta)
+                identity_of(&meta)
             };
             let part = self.root.join(part_rel);
             replace_file(&part, &dest)?;
             let final_meta = fs::symlink_metadata(&dest)
                 .map_err(|error| io_error("verify written workspace file", &dest, error))?;
             let exec_bits = false;
-            if identity(&final_meta) != part_identity || !final_meta.is_file() || exec_bits {
+            if identity_of(&final_meta) != part_identity || !final_meta.is_file() || exec_bits {
                 return Err(HarnessError::IdentityChanged {
                     path: dest_rel.to_string(),
                 });
@@ -683,7 +683,7 @@ fn create_dir_component(path: &Path, rel: &str) -> Result<(), HarnessError> {
 }
 
 #[cfg(unix)]
-pub(crate) fn identity(metadata: &fs::Metadata) -> (u64, u64) {
+pub(crate) fn identity_of(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
@@ -692,9 +692,9 @@ pub(crate) fn identity(metadata: &fs::Metadata) -> (u64, u64) {
 /// Shared with the range patch's non-unix commit path.
 #[cfg(not(unix))]
 pub(crate) fn identity_of(metadata: &fs::Metadata) -> (u64, u64) {
-    use std::os::windows::fs::MetadataExt as _;
     #[cfg(windows)]
     {
+        use std::os::windows::fs::MetadataExt as _;
         (metadata.len(), metadata.creation_time())
     }
     #[cfg(not(windows))]

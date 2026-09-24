@@ -7,11 +7,13 @@
 //! from a scratch write to a user database.
 
 use std::{
-    fs,
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
 };
+
+#[cfg(unix)]
+use std::fs;
 
 use duckdb::{AccessMode, Config, Connection, InterruptHandle};
 
