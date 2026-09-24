@@ -140,8 +140,15 @@ impl Workspace {
         use std::io::Read as _;
 
         let path = self.target(rel, false)?;
-        let pre = std::fs::symlink_metadata(&path)
-            .map_err(|error| crate::io_error("patch workspace file", &path, error))?;
+        let pre = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(HarnessError::NotFound {
+                    path: rel.to_string(),
+                });
+            }
+            Err(error) => return Err(crate::io_error("patch workspace file", &path, error)),
+        };
         if pre.file_type().is_symlink() {
             return Err(HarnessError::SymlinkRefused {
                 path: rel.to_string(),
@@ -173,16 +180,15 @@ impl Workspace {
             .map_err(|error| crate::io_error("write workspace temp", &temp_path, error))?;
         temp.sync_all()
             .map_err(|error| crate::io_error("sync workspace temp", &temp_path, error))?;
-        let written = super::contain::identity_of(
-            &temp
-                .metadata()
-                .map_err(|error| crate::io_error("stat workspace temp", &temp_path, error))?,
-        );
+        let written = super::contain::file_identity(&temp)
+            .map_err(|error| crate::io_error("stat workspace temp", &temp_path, error))?;
         drop(temp);
         super::contain::replace_workspace_file(&temp_path, &path)?;
         let final_meta = std::fs::symlink_metadata(&path)
             .map_err(|error| crate::io_error("verify written workspace file", &path, error))?;
-        if super::contain::identity_of(&final_meta) != written || !final_meta.is_file() {
+        let committed = super::contain::path_identity(&path)
+            .map_err(|error| crate::io_error("verify written workspace file", &path, error))?;
+        if committed != written || !final_meta.is_file() {
             return Err(HarnessError::IdentityChanged {
                 path: rel.to_string(),
             });

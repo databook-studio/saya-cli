@@ -41,10 +41,10 @@
 //! closed by the sandbox. Stated here, not silent. On Windows the posture is
 //! weaker still: there is no `openat` equivalent in the same shape, so no
 //! anchored walk — containment there rests on the component-by-path walk,
-//! the canonicalise-then-prefix check, the metadata checks, and a weaker
-//! post-open identity tuple (length, creation time) — a stated, weaker
-//! TOCTOU posture that includes the intermediate-component residual above;
-//! the runner fails closed on Windows regardless.
+//! the canonicalise-then-prefix check, metadata checks, and stable file IDs
+//! from opened handles — a weaker TOCTOU posture than the anchored Unix
+//! walk that includes the intermediate-component residual above; the runner
+//! fails closed on Windows regardless.
 
 #[cfg(unix)]
 pub(crate) mod anchor;
@@ -62,6 +62,8 @@ pub mod patch;
 pub mod pattern;
 pub mod search;
 pub mod walk;
+#[cfg(windows)]
+pub(crate) mod windows_identity;
 
 pub use contain::{EntryKind, ListEntry, ReadFile, Workspace};
 pub use contain::{MAX_IO_BYTES, MAX_LIST_ENTRIES, MAX_SCRATCH_IMPORT_BYTES};

@@ -22,6 +22,11 @@ use std::sync::Arc;
 
 use crate::{HarnessError, io_error};
 
+/// Opens a reparse point itself so a final-component link cannot be followed
+/// between the path scan and a Windows handle verification.
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
 /// Hard ceiling for ordinary workspace byte operations. Public methods still
 /// accept operation-specific bounds; scratch CSV import has its own read-only
 /// ceiling below, while ordinary reads and all writes stay at this one.
@@ -155,8 +160,15 @@ impl Workspace {
             use sha2::{Digest, Sha256};
 
             let path = self.target(rel, false)?;
-            let pre = fs::symlink_metadata(&path)
-                .map_err(|error| io_error("read workspace file", &path, error))?;
+            let pre = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(HarnessError::NotFound {
+                        path: rel.to_string(),
+                    });
+                }
+                Err(error) => return Err(io_error("read workspace file", &path, error)),
+            };
             if pre.file_type().is_symlink() {
                 return Err(HarnessError::SymlinkRefused {
                     path: rel.to_string(),
@@ -254,17 +266,16 @@ impl Workspace {
                 .map_err(|error| io_error("write workspace temp", &temp_path, error))?;
             temp.sync_all()
                 .map_err(|error| io_error("sync workspace temp", &temp_path, error))?;
-            let written = identity_of(
-                &temp
-                    .metadata()
-                    .map_err(|error| io_error("stat workspace temp", &temp_path, error))?,
-            );
+            let written = file_identity(&temp)
+                .map_err(|error| io_error("stat workspace temp", &temp_path, error))?;
             drop(temp);
             replace_file(&temp_path, &path)?;
             let final_meta = fs::symlink_metadata(&path)
                 .map_err(|error| io_error("verify written workspace file", &path, error))?;
             let exec_bits = false;
-            if identity_of(&final_meta) != written || !final_meta.is_file() || exec_bits {
+            let committed = path_identity(&path)
+                .map_err(|error| io_error("verify written workspace file", &path, error))?;
+            if committed != written || !final_meta.is_file() || exec_bits {
                 return Err(HarnessError::IdentityChanged {
                     path: rel.to_string(),
                 });
@@ -479,10 +490,17 @@ impl Workspace {
         pre: &fs::Metadata,
         rel: &str,
     ) -> Result<fs::File, HarnessError> {
+        #[cfg(windows)]
+        let _ = pre;
         let mut options = OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        }
         let file = options.open(path).map_err(|error| {
             #[cfg(unix)]
             if error.raw_os_error() == Some(libc::ELOOP) {
@@ -495,6 +513,32 @@ impl Workspace {
         let opened = file
             .metadata()
             .map_err(|error| io_error("stat opened workspace file", path, error))?;
+        #[cfg(windows)]
+        if super::windows_identity::is_reparse_point(&file)
+            .map_err(|error| io_error("stat opened workspace file", path, error))?
+        {
+            return Err(HarnessError::SymlinkRefused {
+                path: rel.to_string(),
+            });
+        }
+        if !opened.is_file() {
+            return Err(HarnessError::NotRegularFile {
+                path: rel.to_string(),
+            });
+        }
+        #[cfg(windows)]
+        {
+            let current = path_identity(path)
+                .map_err(|error| io_error("verify opened workspace file", path, error))?;
+            let opened = file_identity(&file)
+                .map_err(|error| io_error("stat opened workspace file", path, error))?;
+            if opened != current {
+                return Err(HarnessError::IdentityChanged {
+                    path: rel.to_string(),
+                });
+            }
+        }
+        #[cfg(not(windows))]
         if identity_of(&opened) != identity_of(pre) {
             return Err(HarnessError::IdentityChanged {
                 path: rel.to_string(),
@@ -506,8 +550,9 @@ impl Workspace {
     /// Opens the download machinery's partial file under containment: the same
     /// argument validation and component walk as any workspace write,
     /// then a no-follow open at 0600 — `truncate` for a fresh download,
-    /// append for a resume — with a post-open identity check so the file
-    /// streamed into is the one that was scanned. Never executable.
+    /// write-capable for a resume — with a post-open identity check so the
+    /// file streamed into is the one that was scanned. Resume seeks after
+    /// discarding an unaccounted tail. Never executable.
     pub(crate) fn open_download_part(
         &self,
         rel: &str,
@@ -521,10 +566,16 @@ impl Workspace {
             let path = self.target(rel, true)?;
             let mut options = OpenOptions::new();
             options.write(true).create(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt as _;
+                // Rust 1.88 maps create+truncate to OPEN_ALWAYS and truncates
+                // after opening; this is valid with OPEN_REPARSE_POINT, unlike
+                // CreateFile's CREATE_ALWAYS disposition.
+                options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
             if truncate {
                 options.truncate(true);
-            } else {
-                options.append(true);
             }
             let file = options
                 .open(&path)
@@ -532,9 +583,41 @@ impl Workspace {
             let opened = file
                 .metadata()
                 .map_err(|error| io_error("stat opened download part", &path, error))?;
+            #[cfg(windows)]
+            if super::windows_identity::is_reparse_point(&file)
+                .map_err(|error| io_error("stat opened download part", &path, error))?
+            {
+                return Err(HarnessError::SymlinkRefused {
+                    path: rel.to_string(),
+                });
+            }
+            if opened.file_type().is_symlink() {
+                return Err(HarnessError::SymlinkRefused {
+                    path: rel.to_string(),
+                });
+            }
+            if !opened.is_file() {
+                return Err(HarnessError::NotRegularFile {
+                    path: rel.to_string(),
+                });
+            }
             let current = fs::symlink_metadata(&path)
                 .map_err(|error| io_error("verify opened download part", &path, error))?;
-            if identity_of(&current) != identity_of(&opened) {
+            if current.file_type().is_symlink() {
+                return Err(HarnessError::SymlinkRefused {
+                    path: rel.to_string(),
+                });
+            }
+            if !current.is_file() {
+                return Err(HarnessError::NotRegularFile {
+                    path: rel.to_string(),
+                });
+            }
+            let current_identity = path_identity(&path)
+                .map_err(|error| io_error("verify opened download part", &path, error))?;
+            let opened_identity = file_identity(&file)
+                .map_err(|error| io_error("stat opened download part", &path, error))?;
+            if current_identity != opened_identity {
                 return Err(HarnessError::IdentityChanged {
                     path: rel.to_string(),
                 });
@@ -561,22 +644,27 @@ impl Workspace {
         #[cfg(not(unix))]
         {
             let dest = self.target(dest_rel, true)?;
+            let part = self.target(part_rel, false)?;
             let part_identity = {
-                let meta = fs::symlink_metadata(part_rel)
-                    .map_err(|error| io_error("stat download part", dest.as_path(), error))?;
+                let meta = fs::symlink_metadata(&part)
+                    .map_err(|error| io_error("stat download part", &part, error))?;
                 if !meta.is_file() {
                     return Err(HarnessError::NotRegularFile {
-                        path: dest.display().to_string(),
+                        path: part_rel.to_string(),
                     });
                 }
-                identity_of(&meta)
+                let file = open_identity_path(&part)
+                    .map_err(|error| io_error("stat download part", &part, error))?;
+                file_identity(&file)
+                    .map_err(|error| io_error("stat download part", &part, error))?
             };
-            let part = self.root.join(part_rel);
             replace_file(&part, &dest)?;
             let final_meta = fs::symlink_metadata(&dest)
                 .map_err(|error| io_error("verify written workspace file", &dest, error))?;
             let exec_bits = false;
-            if identity_of(&final_meta) != part_identity || !final_meta.is_file() || exec_bits {
+            let committed = path_identity(&dest)
+                .map_err(|error| io_error("verify written workspace file", &dest, error))?;
+            if committed != part_identity || !final_meta.is_file() || exec_bits {
                 return Err(HarnessError::IdentityChanged {
                     path: dest_rel.to_string(),
                 });
@@ -687,9 +775,57 @@ pub(crate) fn identity_of(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-/// File identity for the non-unix commit paths: (length, creation time),
-/// the weaker stated posture — length stands in where unix has (dev, inode).
-/// Shared with the range patch's non-unix commit path.
+/// The identity of an open file for non-unix verification paths. Windows
+/// uses the object identifier held by the kernel, not creation metadata that
+/// an overwrite may preserve on the destination.
+#[cfg(not(unix))]
+pub(crate) fn file_identity(file: &fs::File) -> std::io::Result<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        super::windows_identity::identity(file)
+    }
+    #[cfg(not(windows))]
+    {
+        file.metadata().map(|metadata| identity_of(&metadata))
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn path_identity(path: &Path) -> std::io::Result<(u64, u64)> {
+    let file = open_identity_path(path)?;
+    file_identity(&file)
+}
+
+#[cfg(not(unix))]
+fn open_identity_path(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    #[cfg(windows)]
+    if super::windows_identity::is_reparse_point(&file)? {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "workspace identity path is a reparse point",
+        ));
+    }
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "workspace identity path is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+/// Metadata identity for non-unix pre-open checks. Windows commit paths use
+/// [`file_identity`] instead, because a replacement can retain the
+/// destination's creation metadata.
 #[cfg(not(unix))]
 pub(crate) fn identity_of(metadata: &fs::Metadata) -> (u64, u64) {
     #[cfg(windows)]
