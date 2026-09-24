@@ -219,6 +219,7 @@ fn best_tier(
             ClaimPayload::TableDescription { text, .. } => Some(text.to_lowercase()),
             ClaimPayload::TableGrain { description, .. } => Some(description.to_lowercase()),
             ClaimPayload::ColumnDescription { text, .. } => Some(text.to_lowercase()),
+            ClaimPayload::TableUserNote { text, .. } => Some(text.to_lowercase()),
             _ => None,
         })
         .collect();
