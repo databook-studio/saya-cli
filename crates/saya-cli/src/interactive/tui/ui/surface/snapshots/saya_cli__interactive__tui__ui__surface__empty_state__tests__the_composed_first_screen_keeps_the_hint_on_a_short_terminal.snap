@@ -22,7 +22,7 @@ expression: buffer
 "                 compare row counts across the connected databases              "
 "                                                                                "
 "               / commands     @ tables     ? help     Ctrl+C quit               "
-" [analytics] ollama/qwen approval:read-only mode:build ws:unbound host:off shari"
+"analytics · qwen                                                      ? for help"
 "╭ saya ────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                   │"
 "╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

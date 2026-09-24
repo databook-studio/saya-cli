@@ -6,7 +6,7 @@ expression: buffer
 "                                                                                "
 "               / commands     @ tables     ? help     Ctrl+C quit               "
 "                                                                                "
-" [analytics] ollama/qwen approval:read-only mode:build ws:/home/user/proj host:o"
+"analytics · qwen                                                      ? for help"
 "╭ approval required ───────────────────────────────────────────────────────────╮"
 "│http_fetch — external fetch                                                   │"
 "│  url: https://api.github.com/repos/x/y                                       │"
