@@ -127,20 +127,24 @@ fn configuration_stays_locked_after_open() {
 /// not: `httpfs` is a *core* extension, so the community denial does not
 /// touch it, autoload governs implicit loading rather than an explicit
 /// statement, and `lock_configuration` locks settings rather than `INSTALL`.
-/// Both statements succeed, and `INSTALL` reaches DuckDB's extension
-/// repository over the network to do it.
+/// `INSTALL` reaches DuckDB's extension repository over the network to do
+/// it. Repository availability is outside this configuration's control, so
+/// the assertion distinguishes a policy refusal from an unavailable package.
 #[test]
-fn installing_a_core_extension_is_permitted_under_external_access() {
+fn installing_a_core_extension_is_not_refused_by_the_scratch_policy() {
     let dir = TempDir::new("extension");
     let conn = open(&dir.path.join("scratch.duckdb"));
-    assert!(
-        conn.execute_batch("INSTALL httpfs").is_ok(),
-        "observed: INSTALL is not blocked by this configuration"
-    );
-    assert!(
-        conn.execute_batch("LOAD httpfs").is_ok(),
-        "observed: LOAD is not blocked by this configuration"
-    );
+    if let Err(error) = conn.execute_batch("INSTALL httpfs") {
+        assert!(
+            !error.to_string().contains("Permission Error"),
+            "INSTALL must not be refused by the scratch policy: {error}"
+        );
+    } else {
+        assert!(
+            conn.execute_batch("LOAD httpfs").is_ok(),
+            "a core extension installed under this policy must load"
+        );
+    }
 }
 
 /// The consequence, pinned so it cannot regress unnoticed: once `httpfs` is

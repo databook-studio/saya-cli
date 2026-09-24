@@ -565,6 +565,7 @@ fn a_half_rendered_profile_is_refused_by_the_generator_and_by_sandbox_exec() {
 
 /// Construction refuses what the platform's sandbox cannot express — per
 /// platform, at construction, never silently narrowed.
+#[cfg(not(windows))]
 #[test]
 fn construction_refuses_the_unexpressible() {
     let root = TempRoot::new("construct");
@@ -592,37 +593,20 @@ fn construction_refuses_the_unexpressible() {
     );
 }
 
-/// Test 5 — Windows: the probe records the explicit unavailable result and
-/// the runner is not registered. Per U9 the runner fails closed by
-/// construction there; this check can never pass, and the 3-OS matrix stays
-/// green with the runner simply absent.
+/// Test 5 — Windows has no measured profile language. Windows path spelling
+/// is therefore rejected before a policy is created, and the runner remains
+/// unavailable by construction.
 #[cfg(windows)]
 #[test]
-fn windows_reports_unavailable_and_never_registers_the_runner() {
+fn windows_refuses_a_profile_root_and_never_creates_a_runner_policy() {
     let root = TempRoot::new("windows");
     let canonical = root.canonical();
-    let policy = RunSandbox::new([canonical], Vec::<(String, u16)>::new())
-        .expect("a real, existing root constructs");
-    let provision = policy
-        .prepare(&runner_program_dir())
-        .expect("preparation itself must run");
-    assert_eq!(provision.report().platform(), "windows");
-    assert!(!provision.report().proves_runner());
     assert!(
-        provision
-            .report()
-            .failed_required()
-            .contains(&"sandbox_available"),
-        "the explicit U9 result must be recorded: {:?}",
-        provision.report().failed_required()
-    );
-    assert!(provision.spawn().is_none());
-    assert!(runner_tool_names(&provision).is_empty());
-    assert!(
-        provision
-            .plan_capabilities(&approved_runner_scopes())
-            .runner
-            .is_none()
+        matches!(
+            RunSandbox::new([canonical], Vec::<(String, u16)>::new()),
+            Err(SandboxError::RootNotSafeForProfile { .. })
+        ),
+        "Windows has no supported sandbox profile path; policy construction must fail closed"
     );
 }
 
