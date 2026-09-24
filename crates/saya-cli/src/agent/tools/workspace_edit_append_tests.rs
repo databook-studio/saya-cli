@@ -490,6 +490,7 @@ async fn an_append_error_payload_never_carries_file_content() {
 /// file appended at offset 0 must refuse and leave the bytes byte-identical.
 /// The probe must not classify a permission refusal as absence and take the
 /// create branch.
+#[cfg(unix)]
 #[tokio::test]
 async fn append_to_an_unreadable_file_refuses_and_preserves_bytes() {
     use std::os::unix::fs::PermissionsExt as _;
