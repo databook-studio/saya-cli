@@ -705,7 +705,8 @@ pub(crate) fn identity_of(metadata: &fs::Metadata) -> (u64, u64) {
 }
 
 /// Atomic replace for the non-unix commit paths, shared with the range
-/// patch: rename on unix-shaped targets, copy+remove on Windows.
+/// patch. `rename` replaces an existing destination on Windows, preserving
+/// the temporary file's identity for the post-commit verification.
 #[cfg(not(unix))]
 pub(crate) fn replace_workspace_file(temp: &Path, target: &Path) -> Result<(), HarnessError> {
     replace_file(temp, target)
@@ -713,13 +714,6 @@ pub(crate) fn replace_workspace_file(temp: &Path, target: &Path) -> Result<(), H
 
 #[cfg(not(unix))]
 fn replace_file(temp: &Path, target: &Path) -> Result<(), HarnessError> {
-    #[cfg(windows)]
-    {
-        fs::copy(temp, target)
-            .map_err(|error| io_error("replace workspace file", target, error))?;
-        fs::remove_file(temp).map_err(|error| io_error("remove workspace temp", temp, error))
-    }
-    #[cfg(not(windows))]
     fs::rename(temp, target).map_err(|error| io_error("replace workspace file", target, error))
 }
 

@@ -199,6 +199,20 @@ fn reads_and_writes_round_trip_inside_the_root() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn overwriting_a_workspace_file_preserves_the_committed_temp_identity() {
+    let sandbox = Sandbox::new("windows-overwrite");
+    sandbox.ws.write("existing.txt", b"before").unwrap();
+
+    sandbox.ws.write("existing.txt", b"after").unwrap();
+
+    assert_eq!(
+        sandbox.ws.read("existing.txt", 4096).unwrap().bytes,
+        b"after"
+    );
+}
+
 #[test]
 fn root_is_resolved_once_and_canonical() {
     let sandbox = Sandbox::new("root");
