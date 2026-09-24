@@ -82,6 +82,7 @@ fn mock(script: Vec<Scripted>) -> (String, Arc<AtomicBool>) {
 
 /// Waits until the mock has served its first connection, with a generous
 /// bound so a wedged child fails the test instead of hanging it.
+#[cfg(unix)]
 fn wait_ready(flag: &Arc<AtomicBool>) {
     for _ in 0..200 {
         if flag.load(Ordering::SeqCst) {
