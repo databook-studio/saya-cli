@@ -19,6 +19,18 @@ fn resolve_with_user(toml: &str) -> saya_config::ResolvedConfig {
     .expect("resolution succeeds")
 }
 
+fn runner_program_dir() -> &'static str {
+    if cfg!(windows) {
+        r"C:\saya-programs"
+    } else {
+        "/opt/saya-programs"
+    }
+}
+
+fn toml_string(value: &str) -> String {
+    format!("{value:?}")
+}
+
 /// A run with nothing declared has no turn ceiling: `turns` is opt-in like
 /// every other budget dimension, and a ceiling left unset is unlimited at
 /// the contract level. `[jobs] turns` still resolves when declared.
@@ -344,9 +356,10 @@ fn jobs_runner_resolves_defaults_and_declared_values() {
         resolved.jobs.runner.allow
     );
 
-    let declared = resolve_with_user(
-        "[jobs.runner]\nallow = [\"duckdb\", \"jq\"]\ntimeout_seconds = 60\nprogram_dir = \"/opt/saya-programs\"\n",
-    );
+    let declared = resolve_with_user(&format!(
+        "[jobs.runner]\nallow = [\"duckdb\", \"jq\"]\ntimeout_seconds = 60\nprogram_dir = {}\n",
+        toml_string(runner_program_dir())
+    ));
     assert_eq!(
         declared.jobs.runner.allow,
         vec!["duckdb".to_owned(), "jq".to_owned()]
@@ -354,7 +367,7 @@ fn jobs_runner_resolves_defaults_and_declared_values() {
     assert_eq!(declared.jobs.runner.timeout_seconds, 60);
     assert_eq!(
         declared.jobs.runner.program_dir.as_deref(),
-        Some(std::path::Path::new("/opt/saya-programs")),
+        Some(std::path::Path::new(runner_program_dir())),
         "the staged programs' directory resolves as declared"
     );
 }
@@ -532,11 +545,14 @@ fn jobs_runner_allow_without_program_dir_is_rejected() {
 /// where programs would be staged without approving any program.
 #[test]
 fn jobs_runner_program_dir_alone_resolves() {
-    let resolved = resolve_with_user("[jobs.runner]\nprogram_dir = \"/opt/saya-programs\"\n");
+    let resolved = resolve_with_user(&format!(
+        "[jobs.runner]\nprogram_dir = {}\n",
+        toml_string(runner_program_dir())
+    ));
     assert!(resolved.jobs.runner.allow.is_empty());
     assert_eq!(
         resolved.jobs.runner.program_dir.as_deref(),
-        Some(std::path::Path::new("/opt/saya-programs"))
+        Some(std::path::Path::new(runner_program_dir()))
     );
 }
 
@@ -546,12 +562,18 @@ fn jobs_runner_program_dir_alone_resolves() {
 /// assemble instead.
 #[test]
 fn jobs_runner_dangling_program_dir_resolves() {
-    let resolved = resolve_with_user(
-        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"/nonexistent/saya-programs\"\n",
-    );
+    let dangling_dir = if cfg!(windows) {
+        r"C:\saya-this-directory-does-not-exist"
+    } else {
+        "/nonexistent/saya-programs"
+    };
+    let resolved = resolve_with_user(&format!(
+        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = {}\n",
+        toml_string(dangling_dir)
+    ));
     assert_eq!(
         resolved.jobs.runner.program_dir.as_deref(),
-        Some(std::path::Path::new("/nonexistent/saya-programs"))
+        Some(std::path::Path::new(dangling_dir))
     );
 }
 
@@ -633,31 +655,36 @@ fn diagnostics_report_the_runner_settings_like_their_neighbours() {
     assert_eq!(declared_unset.jobs_runner_program_dir, None);
     assert_eq!(declared_unset.jobs_runner_timeout_seconds, None);
 
-    let set = ConfigFile::from_toml(
-        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"/opt/saya-programs\"\ntimeout_seconds = 45\n",
-    )
+    let directory_toml = toml_string(runner_program_dir());
+    let set = ConfigFile::from_toml(&format!(
+        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = {directory_toml}\ntimeout_seconds = 45\n"
+    ))
     .unwrap();
     let declared = set.redacted_diagnostics();
     assert_eq!(declared.jobs_runner_allow, Some(vec!["bench".to_owned()]));
     assert_eq!(
         declared.jobs_runner_program_dir,
-        Some("/opt/saya-programs".to_owned())
+        Some(runner_program_dir().to_owned())
     );
     assert_eq!(declared.jobs_runner_timeout_seconds, Some(45));
 
-    let shown = resolve_with_user(
-        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"/opt/saya-programs\"\n",
-    )
+    let shown = resolve_with_user(&format!(
+        "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = {}\n",
+        directory_toml
+    ))
     .redacted_diagnostics();
     assert_eq!(shown.jobs_runner_allow, vec!["bench".to_owned()]);
     assert_eq!(
         shown.jobs_runner_program_dir,
-        Some("/opt/saya-programs".to_owned())
+        Some(runner_program_dir().to_owned())
     );
     assert_eq!(shown.jobs_runner_timeout_seconds, 300);
     let rendered = serde_json::to_string(&shown).unwrap();
     assert!(
-        rendered.contains("\"jobs_runner_program_dir\":\"/opt/saya-programs\""),
+        rendered.contains(&format!(
+            "\"jobs_runner_program_dir\":{}",
+            serde_json::to_string(runner_program_dir()).unwrap()
+        )),
         "resolved diagnostics must report the program directory: {rendered}"
     );
 }
