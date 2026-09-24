@@ -344,8 +344,9 @@ fn bound_failure_reason(reason: &str) -> String {
 /// D8 follow-up: an ordinary `token=next_token` or `password=args.password`
 /// shape is unremarkable in source code, and a model that reads its own file
 /// back and sees `[redacted]` cannot tell a masked secret from corruption —
-/// observed rewriting the "corrupted" line, destroying the real value on
-/// disk. When [`redact_counted`] changed anything, the content is prefixed
+/// observed calling it "a corruption" and rewriting the file; writing the
+/// shown text back would replace the real value on disk. When
+/// [`redact_counted`] changed anything, the content is prefixed
 /// once with a fixed note naming the count, so the model has the signal it
 /// needs to leave the masked span alone rather than "fix" it. A clean result
 /// gets no note and is byte-identical to before this change — the redaction
