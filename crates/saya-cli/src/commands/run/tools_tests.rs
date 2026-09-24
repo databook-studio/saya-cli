@@ -19,10 +19,13 @@ use saya_harness::fetch::{
 };
 use saya_harness::scratch::ScratchSql;
 use saya_harness::workspace::Workspace;
-use saya_types::{Capabilities, InterpreterScope, RunnerScope, StepSpec};
+#[cfg(target_os = "macos")]
+use saya_types::InterpreterScope;
+use saya_types::{Capabilities, RunnerScope, StepSpec};
 
 use crate::agent::tools::DatabaseTools;
 
+#[cfg(target_os = "macos")]
 use super::runner::RunRunner;
 use super::tools::{RunFetch, ToolsetInputs, toolsets};
 
@@ -72,6 +75,7 @@ const OPEN_GATE_WITH_CHART: &[&str] = &[
 /// runner's `run_program`.
 const SCRATCH_TAIL: &[&str] = &["scratch_sql", "scratch_import"];
 const FETCH_TAIL: &[&str] = &["http_fetch", "http_download"];
+#[cfg(target_os = "macos")]
 const RUNNER_TAIL: &[&str] = &["run_program"];
 
 /// The same universe with the privacy gate closed: every tool that touches

@@ -798,7 +798,7 @@ fn case_variants_do_not_alias_on_case_sensitive_filesystems() {
     // carries the workspace-relative name, exactly as the old `Io`-kind
     // `NotFound` did.
     assert!(matches!(
-        sandbox.ws.read("OK.TXT"),
+        sandbox.ws.read("OK.TXT", 4096),
         Err(HarnessError::NotFound { path }) if path == "OK.TXT"
     ));
 }

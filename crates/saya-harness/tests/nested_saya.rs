@@ -296,9 +296,12 @@ fn main() {
     fn helper() -> &'static PathBuf {
         static HELPER: OnceLock<PathBuf> = OnceLock::new();
         HELPER.get_or_init(|| {
-            let dir = std::env::var("CARGO_TARGET_TMPDIR")
+            let base = std::env::var("CARGO_TARGET_TMPDIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| std::env::temp_dir());
+            let dir = base.join(format!("saya-nested-helper-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("helper directory must be creatable");
             let source = dir.join("saya-nested-helper.rs");
             let binary = dir.join("saya-nested-helper");
             fs::write(&source, HELPER_SOURCE).expect("helper source must be written");
