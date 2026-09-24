@@ -257,12 +257,21 @@ fn absolute_paths_and_dotdot_above_root_refuse() {
     let sandbox = Sandbox::new("escape");
     sandbox.plant();
 
-    for arg in [
-        "../outside.txt",
-        "..",
-        "/etc/passwd",
-        "sub/../../outside.txt",
-    ] {
+    for arg in ["../outside.txt", "..", "sub/../../outside.txt"] {
+        let error = sandbox.ws.read(arg, 4096).expect_err("must refuse");
+        assert!(
+            matches!(error, HarnessError::PathOutsideRoot { .. }),
+            "read({arg:?}) → {error:?}"
+        );
+        let error = sandbox.ws.write(arg, b"escape").expect_err("must refuse");
+        assert!(
+            matches!(error, HarnessError::PathOutsideRoot { .. }),
+            "write({arg:?}) → {error:?}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        let arg = "/etc/passwd";
         let error = sandbox.ws.read(arg, 4096).expect_err("must refuse");
         assert!(
             matches!(error, HarnessError::PathOutsideRoot { .. }),
@@ -568,6 +577,14 @@ fn concurrent_writes_leave_one_whole_content_never_a_mix() {
                 match ws.write("shared.txt", &payload) {
                     Ok(()) => {}
                     Err(HarnessError::IdentityChanged { .. }) => {}
+                    // Windows cannot replace a file while another thread has
+                    // it open. The failed rename leaves the destination whole,
+                    // which satisfies this test's atomicity contract.
+                    Err(HarnessError::Io {
+                        context, source, ..
+                    }) if cfg!(windows)
+                        && context == "replace workspace file"
+                        && source.raw_os_error() == Some(32) => {}
                     Err(other) => panic!("unexpected write failure: {other:?}"),
                 }
             }
@@ -804,7 +821,7 @@ fn nfd_and_case_aliases_resolve_inside_the_root_or_refuse() {
 }
 
 #[test]
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(windows)))]
 fn case_variants_do_not_alias_on_case_sensitive_filesystems() {
     let sandbox = Sandbox::new("case-sensitive");
     sandbox.plant();
