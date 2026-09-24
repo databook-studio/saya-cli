@@ -92,8 +92,14 @@ pub(super) fn scratch_import_facts(
     let path = arguments.get("path").and_then(Value::as_str)?;
     let table = arguments.get("table").and_then(Value::as_str)?;
     let mut lines = vec![
-        format!("  workspace CSV: {path}"),
-        format!("  scratch table: {table}"),
+        format!(
+            "  workspace CSV: {}",
+            crate::agent::tools::collapse_whitespace(path)
+        ),
+        format!(
+            "  scratch table: {}",
+            crate::agent::tools::collapse_whitespace(table)
+        ),
     ];
     lines.push("  ≤ 32 MiB · ≤ 500,000 rows · ≤ 512 columns · fields ≤ 64 KiB".to_string());
     if let Some(scratch) = facts.scratch.as_ref() {
