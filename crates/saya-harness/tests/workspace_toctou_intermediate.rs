@@ -6,6 +6,8 @@
 //! be what is served, written, and listed — never what the path names after
 //! the swap.
 
+#![cfg(unix)]
+
 use std::{
     fs,
     path::{Path, PathBuf},
