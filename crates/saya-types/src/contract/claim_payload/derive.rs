@@ -19,6 +19,7 @@ impl ClaimPayload {
             Self::Relationship { .. } => "relationship",
             Self::JoinRule { .. } => "join_rule",
             Self::MetricDefinition { .. } => "metric_definition",
+            Self::TableUserNote { .. } => "table_user_note",
         }
     }
 
@@ -42,6 +43,7 @@ impl ClaimPayload {
                 local_columns.iter().map(|s| s.as_str()).collect()
             }
             Self::MetricDefinition { columns, .. } => columns.iter().map(|s| s.as_str()).collect(),
+            Self::TableUserNote { .. } => Vec::new(),
         }
     }
 
@@ -123,6 +125,9 @@ impl ClaimPayload {
                 definition: String::new(),
                 columns: columns.clone(),
                 reason: None,
+            },
+            Self::TableUserNote { .. } => Self::TableUserNote {
+                text: String::new(),
             },
             // Unreachable via the store (no slot names a relationship), so this
             // arm only keeps `blanked` total. Returning it unchanged preserves

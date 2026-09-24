@@ -19,6 +19,9 @@ mod reads;
 mod records;
 mod writes;
 
+#[cfg(test)]
+mod store_tests;
+
 use async_trait::async_trait;
 pub use error::KnowledgeStoreError;
 pub use keys::knowledge_item_id_for;

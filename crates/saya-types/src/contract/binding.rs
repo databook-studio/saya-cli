@@ -95,7 +95,8 @@ impl SchemaBinding {
     /// or if the payload is not slot-bound (e.g. `ClaimPayload::Relationship`).
     pub fn derive(slot: &KnowledgeSlot, payload: &ClaimPayload) -> Option<Self> {
         match (slot, payload) {
-            (KnowledgeSlot::TableDescription, ClaimPayload::TableDescription { .. })
+            (KnowledgeSlot::TableUserNote, ClaimPayload::TableUserNote { .. })
+            | (KnowledgeSlot::TableDescription, ClaimPayload::TableDescription { .. })
             | (KnowledgeSlot::TableAlias, ClaimPayload::TableAlias { .. })
             | (KnowledgeSlot::TableGrain, ClaimPayload::TableGrain { .. }) => Some(Self::Table),
             (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { column, .. }) => {
@@ -559,7 +560,7 @@ mod tests {
         assert!(BindingValidity::Invalid.is_invalid());
     }
 
-    /// Chunk 2 test: TableDescription, TableAlias, and TableGrain derive SchemaBinding::Table.
+    /// Table-scoped knowledge derives a table-existence binding.
     #[test]
     fn test_derive_table_slots() {
         let desc_slot = KnowledgeSlot::TableDescription;
@@ -580,6 +581,13 @@ mod tests {
         let grain_payload = ClaimPayload::table_grain("one row per rental event", None).unwrap();
         assert_eq!(
             SchemaBinding::derive(&grain_slot, &grain_payload),
+            Some(SchemaBinding::Table)
+        );
+
+        let note_slot = KnowledgeSlot::TableUserNote;
+        let note_payload = ClaimPayload::table_user_note("Keep refunds separate.").unwrap();
+        assert_eq!(
+            SchemaBinding::derive(&note_slot, &note_payload),
             Some(SchemaBinding::Table)
         );
     }

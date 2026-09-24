@@ -35,6 +35,23 @@ fn constructors_reject_control_chars() {
 }
 
 #[test]
+fn table_user_note_is_validated_and_round_trips() {
+    let note = ClaimPayload::table_user_note("Keep refunds separate from sales.").unwrap();
+    let json = serde_json::to_string(&note).unwrap();
+    let decoded: ClaimPayload = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, note);
+    assert!(ClaimPayload::table_user_note("").is_err());
+    assert!(ClaimPayload::table_user_note("line\nbreak").is_err());
+    assert!(ClaimPayload::table_user_note("x".repeat(MAX_TEXT_CHARS + 1)).is_err());
+    assert_eq!(
+        note.blanked(),
+        ClaimPayload::TableUserNote {
+            text: String::new()
+        }
+    );
+}
+
+#[test]
 fn table_alias_rejects_empty() {
     assert!(ClaimPayload::table_alias("").is_err());
 }
