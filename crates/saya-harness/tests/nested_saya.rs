@@ -77,32 +77,40 @@ fn the_composed_argv_is_the_bench_question_shape() {
         &[],
     )
     .unwrap();
+    let mut actual = state.ask_argv("orchestrator", "how many orders?");
+    let mut expected = vec![
+        "ask".to_owned(),
+        "--config".into(),
+        run.state()
+            .join("config")
+            .join("config.toml")
+            .display()
+            .to_string(),
+        "--connections".into(),
+        run.state()
+            .join("config")
+            .join("connections.toml")
+            .display()
+            .to_string(),
+        "--profile".into(),
+        "orchestrator".into(),
+        "--non-interactive".into(),
+        "--trust-project-config".into(),
+        "--approval-mode".into(),
+        "read-only".into(),
+        "--format".into(),
+        "ndjson".into(),
+        "how many orders?".into(),
+    ];
+    // The generated argv uses forward slashes even on Windows, while
+    // PathBuf::display uses native backslashes there. Compare the paths
+    // portably without weakening the pinned flag order.
+    for index in [2, 4] {
+        actual[index] = actual[index].replace('\\', "/");
+        expected[index] = expected[index].replace('\\', "/");
+    }
     assert_eq!(
-        state.ask_argv("orchestrator", "how many orders?"),
-        vec![
-            "ask".to_owned(),
-            "--config".into(),
-            run.state()
-                .join("config")
-                .join("config.toml")
-                .display()
-                .to_string(),
-            "--connections".into(),
-            run.state()
-                .join("config")
-                .join("connections.toml")
-                .display()
-                .to_string(),
-            "--profile".into(),
-            "orchestrator".into(),
-            "--non-interactive".into(),
-            "--trust-project-config".into(),
-            "--approval-mode".into(),
-            "read-only".into(),
-            "--format".into(),
-            "ndjson".into(),
-            "how many orders?".into(),
-        ],
+        actual, expected,
         "the invocation shape is bench.py:321-332, flag order pinned, plus the trust flag"
     );
     let _ = fs::remove_dir_all(run.root());
