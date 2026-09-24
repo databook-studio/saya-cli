@@ -10,6 +10,7 @@ fn temp_root(label: &str) -> PathBuf {
 /// A pid no real process can have on any supported platform: Linux caps pids
 /// well below 2^22 (`/proc/sys/kernel/pid_max`) and macOS well below 10^5, so
 /// this value is parseable but always names a dead process.
+#[cfg(unix)]
 const DEAD_PID: u32 = i32::MAX as u32 - 1;
 
 #[test]
