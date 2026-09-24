@@ -5,6 +5,8 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.4.1 — 2026-09-24
+
 ### Added
 
 **A `runner:<program>` grant with no runner to use it now says so.** Seeding
@@ -309,9 +311,7 @@ over the real value.
   SQL generation, tool, or loop behaviour changes — prompt text and its tests
   only. ([databook-studio/saya-cli#61])
 
-## 0.4.1 — 2026-09-07
-
-### Fixed
+### Fixed — earlier in this cycle
 
 - **A long question is no longer cut off as you type it.** The input box
   truncated any line wider than the terminal, leaving the rest invisible and the
