@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken, ToolExecutor};
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
     ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
@@ -524,6 +524,32 @@ fn a_worktree_session_advertises_every_write_shaped_tool_ask_gated() {
         );
     }
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+#[tokio::test]
+async fn advertised_scratch_import_routes_through_the_session_executor() {
+    let project = worktree("scratch-import-executor");
+    let state = temp_dir("scratch-import-executor-state");
+    std::fs::write(project.join("data.csv"), b"name\nAda\n").unwrap();
+    let universe = compose(&session_runtime(None), &project, &state);
+    assert!(
+        advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false)
+            .contains(&"scratch_import".to_owned())
+    );
+    let database = Arc::new(
+        crate::agent::tools::DatabaseTools::new(None, 100, true)
+            .with_workspace(universe.workspace()),
+    );
+    let result = universe
+        .executor(database, &CancellationToken::new())
+        .execute(
+            "scratch_import",
+            serde_json::json!({"path":"data.csv","table":"people"}),
+        )
+        .await
+        .expect("advertised import routes to scratch");
+    assert_eq!(result["rows_imported"], 1);
+    let _ = (fs::remove_dir_all(project), fs::remove_dir_all(state));
 }
 
 // ---------------------------------------------------------------------------

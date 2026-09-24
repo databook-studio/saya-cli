@@ -181,7 +181,7 @@ impl ToolExecutor for RunTools {
             }
         }
         match name {
-            "scratch_sql" => match &self.scratch {
+            "scratch_sql" | "scratch_import" => match &self.scratch {
                 Some(scratch) => scratch.execute(name, arguments).await,
                 None => Err(ToolError::UnsupportedTool),
             },

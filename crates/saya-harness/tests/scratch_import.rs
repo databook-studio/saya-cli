@@ -101,3 +101,81 @@ fn ragged_rows_name_the_line() {
     let rows = parse_csv(b"one,two\na\n", b',').expect("CSV parses before shape validation");
     assert_eq!(rows[1].len(), 1, "importer must name source line 2");
 }
+
+#[tokio::test]
+async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced() {
+    let root = std::env::temp_dir().join(format!("saya-import-policy-{}", std::process::id()));
+    let outside = root.with_extension("outside.csv");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("ok.csv"), b"name\nnew\n").unwrap();
+    std::fs::write(root.join("bad.csv"), b"name\n\xff\n").unwrap();
+    std::fs::write(&outside, b"name\noutside\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, root.join("link.csv")).unwrap();
+    let tool = ScratchSql::open(&root)
+        .unwrap()
+        .with_workspace(Arc::new(Workspace::open(&root).unwrap()));
+    tool.execute(
+        "scratch_sql",
+        json!({"sql":"CREATE TABLE target (name VARCHAR); INSERT INTO target VALUES ('old')"}),
+    )
+    .await
+    .err();
+    tool.execute(
+        "scratch_sql",
+        json!({"sql":"CREATE TABLE target (name VARCHAR)"}),
+    )
+    .await
+    .unwrap();
+    tool.execute(
+        "scratch_sql",
+        json!({"sql":"INSERT INTO target VALUES ('old')"}),
+    )
+    .await
+    .unwrap();
+    for path in ["../escape.csv", outside.to_str().unwrap(), "bad.csv"] {
+        assert!(
+            tool.execute(
+                "scratch_import",
+                json!({"path":path,"table":"target","if_exists":"replace"})
+            )
+            .await
+            .is_err()
+        );
+    }
+    #[cfg(unix)]
+    assert!(
+        tool.execute(
+            "scratch_import",
+            json!({"path":"link.csv","table":"target","if_exists":"replace"})
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        tool.execute("scratch_import", json!({"path":"ok.csv","table":"target"}))
+            .await
+            .is_err()
+    );
+    tool.execute(
+        "scratch_import",
+        json!({"path":"ok.csv","table":"target","if_exists":"replace"}),
+    )
+    .await
+    .unwrap();
+    let rows = tool
+        .execute("scratch_sql", json!({"sql":"SELECT name FROM target"}))
+        .await
+        .unwrap();
+    assert_eq!(rows["rows"], json!([["new"]]));
+    assert!(
+        tool.execute(
+            "scratch_sql",
+            json!({"sql":"SELECT * FROM read_csv('ok.csv')"})
+        )
+        .await
+        .is_err()
+    );
+    let _ = (std::fs::remove_dir_all(root), std::fs::remove_file(outside));
+}
