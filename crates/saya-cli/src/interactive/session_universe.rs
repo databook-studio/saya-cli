@@ -404,8 +404,9 @@ impl SessionUniverse {
         &self,
         database: Arc<DatabaseTools>,
         cancellation: &CancellationToken,
+        permit_chart_save: bool,
     ) -> Arc<dyn ToolExecutor> {
-        self.executor_with_journal(database, cancellation, None)
+        self.executor_with_journal(database, cancellation, None, permit_chart_save)
     }
 
     /// The executor with the session journal attached: a deny firing is
@@ -416,6 +417,7 @@ impl SessionUniverse {
         database: Arc<DatabaseTools>,
         cancellation: &CancellationToken,
         journal: Option<std::sync::Arc<saya_store::SessionJournal>>,
+        permit_chart_save: bool,
     ) -> Arc<dyn ToolExecutor> {
         let runner = self.runner.as_ref().map(|runner| {
             let resolver: SharedCredentialSource =
@@ -434,6 +436,7 @@ impl SessionUniverse {
         });
         let mut tools =
             RunTools::compose(database, self.scratch.clone(), self.fetch.clone(), runner)
+                .with_chart_save_permit(permit_chart_save && self.workspace.is_some())
                 .with_session_deny(self.deny.clone())
                 .with_tasks(self.tasks.clone());
         if let Some(journal) = journal {
@@ -495,12 +498,13 @@ impl SessionUniverse {
         // `external_side_effect: true`, so read-only, never, and plan
         // enforcement deny every call — it stays hidden there, not
         // advertised-and-denied.
-        let mut defs = DatabaseTools::definitions(
+        let mut defs = DatabaseTools::definitions_with_chart_save(
             allow_query_data,
             has_state_store,
             permit_candidate_writes,
             false,
             advertises,
+            self.workspace.is_some() && advertises,
         );
         if advertises_tasks {
             defs.push(super::session_tasks_render::tasks_set_definition());

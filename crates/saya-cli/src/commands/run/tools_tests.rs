@@ -301,6 +301,8 @@ fn a_step_without_egress_hides_render_chart_and_an_egress_step_advertises_it() {
         ])
         .expect("shaped"),
     );
+    let mut fetch_write_caps = fetch_caps.clone();
+    fetch_write_caps.workspace_write = true;
     let built = toolsets(
         ToolsetInputs {
             database: &database,
@@ -314,6 +316,7 @@ fn a_step_without_egress_hides_render_chart_and_an_egress_step_advertises_it() {
         &[
             step("read only", Capabilities::default()),
             step("pull the corpus", fetch_caps),
+            step("pull and save", fetch_write_caps),
         ],
     );
     assert!(
@@ -325,6 +328,29 @@ fn a_step_without_egress_hides_render_chart_and_an_egress_step_advertises_it() {
         names(&built, 1),
         [OPEN_GATE_WITH_CHART, FETCH_TAIL].concat(),
         "the fetch-asking step keeps the chart with its fetch tools"
+    );
+    let chart = |index: usize| {
+        built[index]
+            .definitions
+            .iter()
+            .find(|tool| tool.name == "render_chart")
+            .expect("egress step advertises the chart")
+    };
+    assert!(
+        chart(1).parameters["properties"].get("save_to").is_none(),
+        "egress without workspace-write must not offer chart saving"
+    );
+    assert_eq!(
+        chart(1).effect.local_state,
+        saya_agent::LocalStateEffect::None
+    );
+    assert!(
+        chart(2).parameters["properties"].get("save_to").is_some(),
+        "workspace-write permits chart save on that step"
+    );
+    assert_eq!(
+        chart(2).effect.local_state,
+        saya_agent::LocalStateEffect::WriteWorkspace
     );
 }
 

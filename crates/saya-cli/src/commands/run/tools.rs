@@ -93,12 +93,13 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
             // `net_allow`): a step that approved no egress never approved a
             // chart either, so `render_chart` stays hidden there — the same
             // advertised-but-always-refused defect the session surface had.
-            let mut definitions = DatabaseTools::definitions(
+            let mut definitions = DatabaseTools::definitions_with_chart_save(
                 allow_query_data,
                 false,
                 false,
                 step.capabilities.workspace_write,
                 step.capabilities.fetch.is_some() || step.capabilities.runner.is_some(),
+                step.capabilities.workspace_write,
             );
             let scratch = scratch.filter(|_| step.capabilities.scratch);
             if scratch.is_some() {
@@ -148,14 +149,17 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
                 definitions.push(runner.definition());
             }
             StepToolset {
-                executor: Arc::new(RunTools::compose(
-                    Arc::clone(database),
-                    scratch.cloned(),
-                    fetch.map(|run_fetch| {
-                        Arc::new(fetch_tools(run_fetch, &step.capabilities, workspace))
-                    }),
-                    runner,
-                )),
+                executor: Arc::new(
+                    RunTools::compose(
+                        Arc::clone(database),
+                        scratch.cloned(),
+                        fetch.map(|run_fetch| {
+                            Arc::new(fetch_tools(run_fetch, &step.capabilities, workspace))
+                        }),
+                        runner,
+                    )
+                    .with_chart_save_permit(step.capabilities.workspace_write),
+                ),
                 definitions,
             }
         })
