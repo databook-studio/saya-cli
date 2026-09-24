@@ -517,9 +517,11 @@ impl SessionUniverse {
         }
         if self.workspace.is_some() {
             defs.push(session_definitions::workspace_write());
-            defs.push(session_definitions::scratch_import());
         }
         defs.push(session_definitions::scratch_sql());
+        if self.workspace.is_some() {
+            defs.push(session_definitions::scratch_import());
+        }
         if self.fetch.is_some() {
             defs.push(session_definitions::http_fetch());
             if self.workspace.is_some() {

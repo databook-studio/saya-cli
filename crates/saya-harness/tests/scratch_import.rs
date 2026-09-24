@@ -174,6 +174,12 @@ async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced()
     )
     .await
     .unwrap();
+    for arguments in [
+        json!({"path":"ok.csv","table":"target","delimiter":1}),
+        json!({"path":"ok.csv","table":"target","if_exists":null}),
+    ] {
+        assert!(tool.execute("scratch_import", arguments).await.is_err());
+    }
     assert!(
         tool.execute(
             "scratch_import",

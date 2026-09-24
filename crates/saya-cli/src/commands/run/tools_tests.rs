@@ -70,7 +70,7 @@ const OPEN_GATE_WITH_CHART: &[&str] = &[
 /// The tools each scope-asking step gets appended after the database
 /// universe, in construction order: scratch, then fetch's pair, then the
 /// runner's `run_program`.
-const SCRATCH_TAIL: &[&str] = &["scratch_sql"];
+const SCRATCH_TAIL: &[&str] = &["scratch_sql", "scratch_import"];
 const FETCH_TAIL: &[&str] = &["http_fetch", "http_download"];
 const RUNNER_TAIL: &[&str] = &["run_program"];
 
