@@ -2838,6 +2838,14 @@ async fn a_non_miss_failure_resets_the_count() {
         skipped_reasons(&parse_failed),
         vec![LearningSkipReason::Failed]
     );
+    // The parse failure must not count as the second miss: had it tripped
+    // the breaker here, turn 3 would make no attempt and emit nothing, and a
+    // check on turn 3's events alone would pass vacuously.
+    assert_eq!(
+        disabled_event(&parse_failed),
+        None,
+        "a parse failure is not a miss: {parse_failed:?}"
+    );
     let (third, _) = run_breaker_turn(
         &runtime,
         miss_provider(),
@@ -2846,6 +2854,12 @@ async fn a_non_miss_failure_resets_the_count() {
         Some(Arc::clone(&session)),
     )
     .await;
+    assert!(
+        third
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+        "learning must still be enabled on turn 3, so extraction is attempted: {third:?}"
+    );
     assert_eq!(
         disabled_event(&third),
         None,
