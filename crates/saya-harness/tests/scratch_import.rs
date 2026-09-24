@@ -58,6 +58,27 @@ async fn imports_a_quoted_csv_into_a_varchar_table() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[tokio::test]
+async fn imports_headerless_csv_with_a_custom_delimiter() {
+    let root = std::env::temp_dir().join(format!("saya-headerless-import-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("data.csv"), b"Ada;42\nGrace;99\n").unwrap();
+    let tool = ScratchSql::open(&root)
+        .unwrap()
+        .with_workspace(Arc::new(Workspace::open(&root).unwrap()));
+    let result = tool
+        .execute(
+            "scratch_import",
+            json!({"path":"data.csv","table":"people","header":false,"delimiter":";"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["columns"], json!(["column_1", "column_2"]));
+    assert_eq!(result["rows_imported"], 2);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn invalid_utf8_is_refused() {
     assert!(parse_csv(b"name\n\xff\n", b',').is_err());
@@ -81,6 +102,12 @@ fn malformed_quote_tails_and_unsafe_delimiters_are_refused() {
         parse_csv(b"\"\"", b',').expect("empty quoted field"),
         vec![vec!["".to_owned()]]
     );
+}
+
+#[test]
+fn row_ceiling_refuses_more_than_five_hundred_thousand_data_rows() {
+    let csv = b"\n".repeat(500_002);
+    assert!(parse_csv(&csv, b',').is_err());
 }
 
 #[test]
