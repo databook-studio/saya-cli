@@ -28,7 +28,7 @@ impl TryFrom<usize> for SessionHistoryLimit {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionHistoryCursor {
-    modified_unix_ms: u128,
+    modified_unix_ns: u128,
     id: String,
 }
 
@@ -36,6 +36,11 @@ pub struct SessionHistoryCursor {
 pub struct SessionHistoryPage {
     pub entries: Vec<SessionSummary>,
     pub next_cursor: Option<SessionHistoryCursor>,
+}
+
+struct HistoryEntry {
+    summary: SessionSummary,
+    modified_unix_ns: u128,
 }
 
 impl SessionHistoryPage {
@@ -77,47 +82,53 @@ pub(crate) fn list(
         else {
             continue;
         };
-        let modified_unix_ms = entry
+        let modified_unix_ns = entry
             .metadata()
             .and_then(|meta| meta.modified())
             .ok()
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_millis())
+            .map(|duration| duration.as_nanos())
             .unwrap_or_default();
         if query.cursor().is_some_and(|cursor| {
-            modified_unix_ms > cursor.modified_unix_ms
-                || (modified_unix_ms == cursor.modified_unix_ms
+            modified_unix_ns > cursor.modified_unix_ns
+                || (modified_unix_ns == cursor.modified_unix_ns
                     && id.as_str() >= cursor.id.as_str())
         }) {
             continue;
         }
-        history.push(SessionSummary {
-            id,
-            modified_unix_ms,
+        history.push(HistoryEntry {
+            summary: SessionSummary {
+                id,
+                modified_unix_ms: modified_unix_ns / 1_000_000,
+            },
+            modified_unix_ns,
         });
-        history.sort_unstable_by(compare_summary);
+        history.sort_unstable_by(compare_entry);
         if history.len() > limit.saturating_add(1) {
             history.pop();
         }
     }
-    history.sort_unstable_by(compare_summary);
+    history.sort_unstable_by(compare_entry);
     let next_cursor = (history.len() > limit).then(|| {
         let entry = &history[limit - 1];
         SessionHistoryCursor {
-            modified_unix_ms: entry.modified_unix_ms,
-            id: entry.id.clone(),
+            modified_unix_ns: entry.modified_unix_ns,
+            id: entry.summary.id.clone(),
         }
     });
-    history.truncate(limit);
     Ok(SessionHistoryPage {
-        entries: history,
+        entries: history
+            .into_iter()
+            .take(limit)
+            .map(|entry| entry.summary)
+            .collect(),
         next_cursor,
     })
 }
 
-fn compare_summary(left: &SessionSummary, right: &SessionSummary) -> std::cmp::Ordering {
+fn compare_entry(left: &HistoryEntry, right: &HistoryEntry) -> std::cmp::Ordering {
     right
-        .modified_unix_ms
-        .cmp(&left.modified_unix_ms)
-        .then_with(|| right.id.cmp(&left.id))
+        .modified_unix_ns
+        .cmp(&left.modified_unix_ns)
+        .then_with(|| right.summary.id.cmp(&left.summary.id))
 }

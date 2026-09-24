@@ -177,6 +177,15 @@ fn history_lists_valid_sessions_in_recent_first_order() {
         ..Default::default()
     }))
     .unwrap();
+    let epoch = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(root.join("older.json"))
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new().set_modified(epoch + std::time::Duration::from_micros(100)),
+        )
+        .unwrap();
     block_on(store.save(RedactedSession {
         id: "newer".into(),
         profile_names: vec![],
@@ -184,6 +193,14 @@ fn history_lists_valid_sessions_in_recent_first_order() {
         ..Default::default()
     }))
     .unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(root.join("newer.json"))
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new().set_modified(epoch + std::time::Duration::from_micros(200)),
+        )
+        .unwrap();
     let history = block_on(store.history(SessionHistoryQuery::first_page(2).unwrap())).unwrap();
     assert_eq!(history.entries.len(), 2);
     assert_eq!(history.entries[0].id, "newer");
