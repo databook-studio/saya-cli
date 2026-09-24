@@ -269,7 +269,7 @@ fn required_string<'a>(
     arguments
         .get(key)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ScratchError::Import(ImportError::InvalidArguments))
+        .ok_or(ScratchError::Import(ImportError::InvalidArguments))
 }
 
 fn optional_bool(
@@ -281,7 +281,7 @@ fn optional_bool(
         None => Ok(default),
         Some(value) => value
             .as_bool()
-            .ok_or_else(|| ScratchError::Import(ImportError::InvalidArguments)),
+            .ok_or(ScratchError::Import(ImportError::InvalidArguments)),
     }
 }
 
