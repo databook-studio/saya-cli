@@ -164,13 +164,13 @@ async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced()
         .with_workspace(Arc::new(Workspace::open(&root).unwrap()));
     tool.execute(
         "scratch_sql",
-        json!({"sql":"CREATE TABLE target (name VARCHAR); INSERT INTO target VALUES ('old')"}),
+        json!({"sql":"CREATE TABLE target (name VARCHAR)"}),
     )
     .await
-    .err();
+    .unwrap();
     tool.execute(
         "scratch_sql",
-        json!({"sql":"CREATE TABLE target (name VARCHAR)"}),
+        json!({"sql":"INSERT INTO target VALUES ('old')"}),
     )
     .await
     .unwrap();
@@ -187,12 +187,6 @@ async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced()
         .await
         .unwrap();
     assert_eq!(unchanged["rows"], json!([["old"]]));
-    tool.execute(
-        "scratch_sql",
-        json!({"sql":"INSERT INTO target VALUES ('old')"}),
-    )
-    .await
-    .unwrap();
     for path in ["../escape.csv", outside.to_str().unwrap(), "bad.csv"] {
         assert!(
             tool.execute(
