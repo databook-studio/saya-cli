@@ -82,8 +82,15 @@ use crate::config::runtime::RuntimeConfig;
 /// one the lane composes nothing — and the session continues without it.
 /// The register matches the unbound-workspace notice: the fact, why the
 /// tool is absent, and the remedy.
+#[cfg(not(windows))]
 pub(crate) const NO_PATH_NOTICE: &str = "No PATH is set, so the host-command lane is not composed: \
     run_command is unavailable; set PATH to reach host programs.";
+
+/// The Windows host runner remains deliberately unavailable until its
+/// process-group termination guarantee is implemented and verified there.
+#[cfg(windows)]
+pub(crate) const WINDOWS_HOST_UNAVAILABLE_NOTICE: &str = "Host commands are unavailable on Windows, so the host-command lane is not composed: \
+    run_command is unavailable; host execution remains refused until the runner supports Windows.";
 
 /// Composes the lane from an explicit PATH value: `None` — no PATH in the
 /// environment — composes the lane away with the no-PATH notice, never an
@@ -98,10 +105,18 @@ pub(crate) fn compose_host_lane(
     let Some(root) = workspace_root else {
         return Ok((None, None));
     };
-    let Some(path_value) = path else {
-        return Ok((None, Some(NO_PATH_NOTICE.to_owned())));
-    };
-    Ok((compose_host(launch, Some(root), path_value)?, None))
+    #[cfg(windows)]
+    {
+        let _ = (launch, root, path);
+        return Ok((None, Some(WINDOWS_HOST_UNAVAILABLE_NOTICE.to_owned())));
+    }
+    #[cfg(not(windows))]
+    {
+        let Some(path_value) = path else {
+            return Ok((None, Some(NO_PATH_NOTICE.to_owned())));
+        };
+        Ok((compose_host(launch, Some(root), path_value)?, None))
+    }
 }
 
 /// What composing the lane produced: the executor config plus the facts the

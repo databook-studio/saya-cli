@@ -13,7 +13,7 @@ use saya_harness::lock::RunLock;
 use saya_store::{BypassSource, SessionJournal};
 
 use super::session_paths::create_state_dir;
-use super::session_universe::SessionUniverse;
+use super::session_universe::{SessionComposition, SessionUniverse};
 
 pub(crate) struct SessionRuntime {
     universe: Arc<SessionUniverse>,
@@ -169,20 +169,14 @@ impl SessionRuntime {
         &mut self,
         runtime: &crate::config::runtime::RuntimeConfig,
         trusted: &Path,
+        launch: Option<&super::session_host::HostLaunch>,
     ) -> Result<(), String> {
         if !self.fresh_start() || self.explicit_statement().is_some() {
             return Err(
                 "the trust answer applies only to a fresh start with no --workspace".into(),
             );
         }
-        let universe = SessionUniverse::compose(
-            runtime,
-            Some(trusted),
-            None,
-            true,
-            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            &self.state_dir,
-        )?;
+        let universe = self.compose_universe(runtime, Some(trusted), None, true, launch)?;
         self.explicit = Some(trusted.to_path_buf());
         self.universe = Arc::new(universe);
         Ok(())
@@ -207,16 +201,44 @@ impl SessionRuntime {
         Arc::clone(&self.journal)
     }
 
-    /// The state directory this session holds (`sessions/<id>/`) — what a
-    /// fresh-start recomposition re-enters.
-    pub(crate) fn state_dir(&self) -> PathBuf {
-        self.state_dir.clone()
+    /// Recompose after the launch statement is available. The lock, policy,
+    /// journal, pins, and live scratch connection ride the swap untouched.
+    pub(crate) fn recompose_with_launch(
+        &mut self,
+        runtime: &crate::config::runtime::RuntimeConfig,
+        pinned_root: Option<&str>,
+        launch: Option<&super::session_host::HostLaunch>,
+    ) -> Result<(), String> {
+        let universe = self.compose_universe(
+            runtime,
+            self.explicit_statement(),
+            pinned_root,
+            self.fresh_start,
+            launch,
+        )?;
+        self.universe = Arc::new(universe);
+        Ok(())
     }
 
-    /// Swaps the composed universe: the fresh-start host-lane recomposition.
-    /// The lock, policy, journal, and pins ride the swap untouched.
-    pub(crate) fn replace_universe(&mut self, universe: super::session_universe::SessionUniverse) {
-        self.universe = Arc::new(universe);
+    fn compose_universe(
+        &self,
+        runtime: &crate::config::runtime::RuntimeConfig,
+        explicit: Option<&Path>,
+        pinned_root: Option<&str>,
+        walk_when_unpinned: bool,
+        launch: Option<&super::session_host::HostLaunch>,
+    ) -> Result<SessionUniverse, String> {
+        SessionUniverse::compose_with_launch_and_path(SessionComposition {
+            runtime,
+            explicit,
+            pinned_root,
+            walk_when_unpinned,
+            cwd: &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            state_dir: &self.state_dir,
+            launch,
+            path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
+            scratch: self.universe.scratch(),
+        })
     }
 
     /// Journals one bypass activation and records a failure for the notice

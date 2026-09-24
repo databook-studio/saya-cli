@@ -50,6 +50,7 @@ fn the_universe_advertises_tasks_set_including_under_plan() {
                     state_dir: &state,
                     launch: None,
                     path: None,
+                    scratch: None,
                 },
             )
             .expect("composition succeeds");

@@ -31,20 +31,8 @@ pub(crate) fn tick_events(
                     && app.overlays.trust.is_none()
                     && let Some(dir) = app.take_trust_answer()
                 {
-                    match session.bind_trusted(runtime, &dir) {
+                    match session.bind_trusted(runtime, &dir, Some(launch)) {
                         Ok(()) => {
-                            let recomposed =
-                                    crate::interactive::session_universe::SessionUniverse::compose_with_launch(
-                                        runtime,
-                                        session.explicit_statement(),
-                                        state.workspace_root.as_deref(),
-                                        true,
-                                        &std::env::current_dir()
-                                            .unwrap_or_else(|_| std::path::PathBuf::from(".")),
-                                        &session.state_dir(),
-                                        Some(launch),
-                                    )?;
-                            session.replace_universe(recomposed);
                             app.session = session.universe();
                             if let Some(line) =
                                 crate::interactive::session_activation::line_if_bypass(

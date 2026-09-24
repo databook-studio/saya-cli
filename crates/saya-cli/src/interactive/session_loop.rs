@@ -149,16 +149,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // a root binds regardless, through the same composer — one composer
     // behind both paths — so every fresh start recomposes.
     if fresh {
-        let recomposed = super::session_universe::SessionUniverse::compose_with_launch(
-            &runtime,
-            cli.options.workspace.as_deref().or(trusted_dir.as_deref()),
-            state.workspace_root.as_deref(),
-            true,
-            &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-            &session.state_dir(),
-            Some(&launch),
-        )?;
-        session.replace_universe(recomposed);
+        session.recompose_with_launch(&runtime, state.workspace_root.as_deref(), Some(&launch))?;
     }
     // The deny list journals once at session start when non-empty — no noise
     // when empty — through the existing seam, never a second rule set. The

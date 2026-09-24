@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken, ToolExecutor};
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
     ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
@@ -145,6 +145,7 @@ fn advertised(
 /// sessions never see the tool — and a composed lane advertises under ask
 /// (with a prompt) and under bypass. The universe helper composes the lane
 /// here through the stated-launch helper below.
+#[cfg(not(windows))]
 #[test]
 fn the_lane_s_advertisement_follows_the_mode_rule() {
     let project = worktree("host-advertise");
@@ -205,6 +206,7 @@ fn a_session_without_path_still_starts() {
             state_dir: &state,
             launch: None,
             path: None,
+            scratch: None,
         },
     )
     .expect("a session without PATH still starts");
@@ -220,10 +222,14 @@ fn a_session_without_path_still_starts() {
         .notice
         .as_deref()
         .expect("no PATH says so at startup");
-    assert!(
-        notice.contains("No PATH is set"),
-        "the notice states the fact: {notice:?}"
-    );
+    if cfg!(windows) {
+        assert!(notice.contains("unavailable on Windows"), "{notice:?}");
+    } else {
+        assert!(
+            notice.contains("No PATH is set"),
+            "the notice states the fact: {notice:?}"
+        );
+    }
     // Everything else works: the session's own surface is intact — SQL,
     // schema reads, workspace file tools, and approvals.
     let ask_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
@@ -265,6 +271,7 @@ fn a_session_without_path_still_starts() {
             state_dir: &state,
             launch: Some(&launch),
             path: None,
+            scratch: universe.scratch(),
         },
     )
     .expect("deny composes without PATH too");
@@ -276,8 +283,69 @@ fn a_session_without_path_still_starts() {
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
 
+/// Windows keeps the session available while the Unix-only host runner is
+/// deliberately absent. The unavailable lane must contribute neither a tool
+/// nor approval facts, including under bypass where it would otherwise run.
+#[cfg(windows)]
+#[test]
+fn a_windows_session_starts_with_the_host_lane_off() {
+    let project = worktree("windows-host-off");
+    let state = temp_dir("windows-host-off-state");
+    let runtime = session_runtime(None);
+    let universe = SessionUniverse::compose_with_launch_and_path(
+        crate::interactive::session_universe::SessionComposition {
+            runtime: &runtime,
+            explicit: None,
+            pinned_root: None,
+            walk_when_unpinned: true,
+            cwd: &project,
+            state_dir: &state,
+            launch: None,
+            path: Some("C:\\Windows\\System32".to_owned()),
+            scratch: None,
+        },
+    )
+    .expect("Windows starts the session with host commands unavailable");
+
+    assert!(universe.root().is_some(), "the workspace still binds");
+    assert!(
+        universe.host_composed_for_tests().is_none(),
+        "host lane is off"
+    );
+    for (mode, can_obtain_approval, label) in [
+        (ApprovalPolicy::Ask, true, "ask"),
+        (ApprovalPolicy::Bypass, false, "bypass"),
+    ] {
+        let names = advertised(&universe, AgentMode::Build, mode, can_obtain_approval);
+        assert!(
+            !names.contains(&"run_command".to_string()),
+            "Windows {label} does not advertise an unavailable tool: {names:?}"
+        );
+    }
+    assert!(
+        universe.approval_facts(&runtime).host.is_none(),
+        "an unavailable host lane has no approval facts"
+    );
+    let notice = universe
+        .notice
+        .as_deref()
+        .expect("startup names the unavailable lane");
+    assert!(notice.contains("unavailable on Windows"), "{notice:?}");
+    assert!(notice.contains("run_command is unavailable"), "{notice:?}");
+    assert!(matches!(
+        crate::interactive::session_host::compose_host(
+            &crate::interactive::session_host::HostLaunch::unstated(&runtime),
+            Some(&project),
+            "C:\\Windows\\System32".to_owned(),
+        ),
+        Err(error) if error.contains("unavailable on Windows")
+    ));
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
 /// No-PATH property 2 — the missing-PATH notice names the fact, the
 /// consequence, and the remedy, in the unbound-workspace register.
+#[cfg(not(windows))]
 #[test]
 fn the_missing_path_notice_names_fact_consequence_and_remedy() {
     use crate::interactive::session_host::NO_PATH_NOTICE;
@@ -319,13 +387,6 @@ fn no_root_still_no_lane() {
         universe.host_composed_for_tests().is_none(),
         "no workspace root: the lane does not compose"
     );
-    // The unstated shape composes the same way: the helper exists so the
-    // pin reads as one call.
-    let unstated = SessionUniverse::compose_host_for_tests(&runtime, &plain, &state);
-    assert!(
-        unstated.host_composed_for_tests().is_none(),
-        "unstated: no lane either"
-    );
     let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     assert!(
         !names.contains(&"run_command".to_string()),
@@ -335,6 +396,26 @@ fn no_root_still_no_lane() {
     assert!(
         !bypass_names.contains(&"run_command".to_string()),
         "hidden under bypass too, not advertised: {bypass_names:?}"
+    );
+    // The unstated shape composes the same way while retaining the live
+    // scratch connection from the first universe.
+    let unstated = SessionUniverse::compose_with_launch_and_path(
+        crate::interactive::session_universe::SessionComposition {
+            runtime: &runtime,
+            explicit: None,
+            pinned_root: None,
+            walk_when_unpinned: true,
+            cwd: &plain,
+            state_dir: &state,
+            launch: None,
+            path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
+            scratch: universe.scratch(),
+        },
+    )
+    .expect("the unstated unbound session composes");
+    assert!(
+        unstated.host_composed_for_tests().is_none(),
+        "unstated: no lane either"
     );
     let _ = (fs::remove_dir_all(&plain), fs::remove_dir_all(&state));
 }
@@ -931,7 +1012,15 @@ fn bypass_composes_no_runner_where_the_probe_refuses_and_says_so() {
                 .notice
                 .as_deref()
                 .expect("a refused probe is said, never silent");
-            assert_eq!(notice, PROBE_REFUSED_NOTICE);
+            if cfg!(windows) {
+                assert!(notice.contains(PROBE_REFUSED_NOTICE), "{notice:?}");
+                assert!(
+                    notice.contains("Host commands are unavailable on Windows"),
+                    "{notice:?}"
+                );
+            } else {
+                assert_eq!(notice, PROBE_REFUSED_NOTICE);
+            }
             assert!(universe.probe_refused, "the activation line's fact rides");
             assert!(
                 !advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false)
@@ -1101,6 +1190,109 @@ async fn scratch_is_per_session_not_per_project() {
     let _ = fs::remove_dir_all(&project);
     let _ = fs::remove_dir_all(&state_a);
     let _ = fs::remove_dir_all(&state_b);
+}
+
+/// Recomposition keeps the first universe alive for active TUI snapshots,
+/// while both universes share the one DuckDB connection for this session.
+#[tokio::test]
+async fn recomposing_a_session_reuses_its_live_scratch_connection() {
+    let project = worktree("scratch-recompose");
+    let state = temp_dir("scratch-recompose-state");
+    let runtime = session_runtime(None);
+    let first = compose(&runtime, &project, &state);
+    let scratch = first.scratch.clone().expect("scratch composed");
+    first
+        .scratch
+        .as_ref()
+        .expect("scratch composed")
+        .run("CREATE TABLE stage AS SELECT 42 AS v")
+        .await
+        .expect("the first universe stages a table");
+
+    let second = SessionUniverse::compose_with_launch_and_path(
+        crate::interactive::session_universe::SessionComposition {
+            runtime: &runtime,
+            explicit: None,
+            pinned_root: None,
+            walk_when_unpinned: true,
+            cwd: &project,
+            state_dir: &state,
+            launch: None,
+            path: Some("test-path".to_owned()),
+            scratch: Some(scratch),
+        },
+    )
+    .expect("recomposition shares the live scratch database");
+
+    let second_scratch = second.scratch.as_ref().expect("scratch composed");
+    let rows = second_scratch
+        .run("SELECT v FROM stage")
+        .await
+        .expect("the second universe reads the first universe's stage");
+    assert_eq!(rows.rows.len(), 1, "the staged row remains available");
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// A later unbound universe retains scratch state but must clear the prior
+/// workspace binding, hiding the CSV importer from its tool surface.
+#[tokio::test]
+async fn recomposing_unbound_clears_scratch_import_access() {
+    let project = worktree("scratch-recompose-unbound");
+    let plain = temp_dir("scratch-recompose-plain");
+    let state = temp_dir("scratch-recompose-unbound-state");
+    let runtime = session_runtime(None);
+    let first = compose(&runtime, &project, &state);
+    first
+        .scratch
+        .as_ref()
+        .expect("scratch composed")
+        .run("CREATE TABLE stage AS SELECT 42 AS v")
+        .await
+        .expect("the bound universe stages a table");
+
+    let second = SessionUniverse::compose_with_launch_and_path(
+        crate::interactive::session_universe::SessionComposition {
+            runtime: &runtime,
+            explicit: None,
+            pinned_root: None,
+            walk_when_unpinned: false,
+            cwd: &plain,
+            state_dir: &state,
+            launch: None,
+            path: Some("test-path".to_owned()),
+            scratch: first.scratch(),
+        },
+    )
+    .expect("the unbound recomposition retains scratch");
+
+    let names = advertised(&second, AgentMode::Build, ApprovalPolicy::Ask, true);
+    assert!(
+        !names.contains(&"scratch_import".to_owned()),
+        "an unbound universe hides scratch imports: {names:?}"
+    );
+    second
+        .scratch
+        .as_ref()
+        .expect("scratch composed")
+        .execute(
+            "scratch_import",
+            serde_json::json!({"path": "data.csv", "table": "stage"}),
+        )
+        .await
+        .expect_err("an unbound universe refuses scratch imports");
+    let rows = second
+        .scratch
+        .as_ref()
+        .expect("scratch composed")
+        .run("SELECT v FROM stage")
+        .await
+        .expect("the shared scratch database retains staged data");
+    assert_eq!(rows.rows.len(), 1, "the staged row remains available");
+    let _ = (
+        fs::remove_dir_all(&project),
+        fs::remove_dir_all(&plain),
+        fs::remove_dir_all(&state),
+    );
 }
 
 /// The resume premise the session's own tool description must state (U7):
@@ -1294,11 +1486,22 @@ fn a_bound_session_carries_no_such_notice() {
         universe.root().is_some(),
         "inside a worktree, the root binds"
     );
-    assert!(
-        universe.notice.is_none(),
-        "a bound session stays silent: {:?}",
-        universe.notice
-    );
+    if cfg!(windows) {
+        assert!(
+            universe
+                .notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("Host commands are unavailable on Windows")),
+            "Windows names the unavailable host lane: {:?}",
+            universe.notice
+        );
+    } else {
+        assert!(
+            universe.notice.is_none(),
+            "a bound session stays silent: {:?}",
+            universe.notice
+        );
+    }
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
 
@@ -1306,6 +1509,7 @@ fn a_bound_session_carries_no_such_notice() {
 /// workspace root binds: the plain `compose` path (no launch statement)
 /// over a worktree carries the lane, and advertises `run_command` under
 /// ask-with-prompt and under bypass.
+#[cfg(not(windows))]
 #[test]
 fn unstated_lane_composes_where_a_root_binds() {
     let project = worktree("unstated-lane");
@@ -1442,6 +1646,7 @@ fn plan_hides_write_shaped_tools_under_bypass_too() {
 /// advertises the write-shaped set; `bypass` needs no surface; `read-only`
 /// and `never` hide whatever the surface. The `(Ask, false)` row — a
 /// surface that can obtain no approval — keeps the anti-pattern pinned.
+#[cfg(not(windows))]
 #[test]
 fn build_advertisement_is_pinned_for_every_approval_policy() {
     let project = worktree("build-pinned");

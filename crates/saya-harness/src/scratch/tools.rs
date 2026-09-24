@@ -25,6 +25,7 @@ pub const SCRATCH_SQL_TOOL: &str = "scratch_sql";
 pub const SCRATCH_IMPORT_TOOL: &str = "scratch_import";
 
 /// The admitted `scratch_sql` tool over one run's opened scratch database.
+#[derive(Clone)]
 pub struct ScratchSql {
     db: ScratchDb,
     workspace: Option<Arc<Workspace>>,
@@ -71,6 +72,13 @@ impl ScratchSql {
     /// this scratch database. Without it, import is hidden and refuses.
     pub fn with_workspace(mut self, workspace: Arc<Workspace>) -> Self {
         self.workspace = Some(workspace);
+        self
+    }
+
+    /// Rebinds the workspace import root for a recomposed session. `None`
+    /// clears a prior binding, so an unbound session cannot retain imports.
+    pub fn rebind_workspace(mut self, workspace: Option<Arc<Workspace>>) -> Self {
+        self.workspace = workspace;
         self
     }
 

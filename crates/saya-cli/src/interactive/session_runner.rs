@@ -17,13 +17,20 @@
 //! unproven host there is no runner at all, in any mode.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
-use saya_harness::runner::sandbox::{RunSandbox, RunnerSpawn};
+#[cfg(not(windows))]
+use std::sync::Arc;
+
+#[cfg(not(windows))]
+use saya_harness::runner::sandbox::RunSandbox;
+use saya_harness::runner::sandbox::RunnerSpawn;
+#[cfg(not(windows))]
 use saya_harness::runner::{RunProgram, SharedCredentialSource, StaticCredentialSource};
 
+#[cfg(not(windows))]
 use super::session_definitions;
+#[cfg(not(windows))]
 use crate::commands::run::runner::place_guard;
 
 /// The probe-refused fact, said on the composition notice seam (DESIGN §2):
@@ -113,66 +120,83 @@ pub(super) fn compose_runner(
             probe_notice: None,
         });
     }
-    let sandbox = RunSandbox::new([workspace_root.to_path_buf()], Vec::<(String, u16)>::new())
-        .map_err(|error| format!("the session's sandbox policy could not be composed: {error}"))?;
-    let program_dir = place_session(program_dir, sandbox.fs_roots())?;
-    let provision = sandbox
-        .prepare(&program_dir)
-        .map_err(|error| format!("the runner sandbox could not be prepared: {error}"))?;
-    let Some(spawn) = provision.spawn() else {
-        // Probe refused: the tool is absent for the session — no grant, no
-        // approval can conjure a capability the composition could not
-        // construct — and the absence is said, on the notice seam.
+    // Windows has no supported sandbox implementation. Do not let the
+    // Windows path spelling reach profile-language validation first: the
+    // lane is unavailable either way, and the session remains usable.
+    #[cfg(windows)]
+    {
+        let _ = (workspace_root, state_dir, program_dir);
         return Ok(RunnerComposition {
             runner: None,
             probe_notice: Some(PROBE_REFUSED_NOTICE.to_owned()),
         });
-    };
-    let scope = saya_types::RunnerScope::new(jobs.allow.clone())
-        .map_err(|error| format!("resolved [jobs.runner] allow is not a usable scope: {error}"))?;
-    // The interpreter door's universe: the trusted config's staged
-    // interpreters. `None` when nothing is staged — an empty `[jobs.interpreter]
-    // allow` is no capability, not a closed door on one that exists. The
-    // shape was validated at config resolve (`jobs.rs`); a failure here is a
-    // contract break, so it refuses the composition rather than opening a
-    // half-built door.
-    let interpreters = if runtime.resolved.jobs.interpreter.allow.is_empty() {
-        None
-    } else {
-        Some(
-            saya_types::InterpreterScope::new(runtime.resolved.jobs.interpreter.allow.clone())
-                .map_err(|error| {
-                    format!("resolved [jobs.interpreter] allow is not a usable scope: {error}")
-                })?,
-        )
-    };
-    let timeout = std::time::Duration::from_secs(jobs.timeout_seconds);
-    let record_dir = state_dir.join("run_program");
-    // The tool's own definition, built once at composition from the proven
-    // spawn (its effect reads the declared egress — empty here), then
-    // reworded and ask-gated for the session surface.
-    let resolver: SharedCredentialSource = Arc::new(StaticCredentialSource::new(Vec::new()));
-    let definition = session_definitions::run_program(
-        RunProgram::for_step(
-            spawn.clone(),
-            Some(scope.clone()),
-            interpreters.clone(),
-            timeout,
-            resolver,
-        )
-        .definition(),
-    );
-    Ok(RunnerComposition {
-        runner: Some(SessionRunner {
-            spawn: spawn.clone(),
-            scope,
-            interpreters,
-            timeout,
-            record_dir,
-            definition,
-        }),
-        probe_notice: None,
-    })
+    }
+    #[cfg(not(windows))]
+    {
+        let sandbox = RunSandbox::new([workspace_root.to_path_buf()], Vec::<(String, u16)>::new())
+            .map_err(|error| {
+                format!("the session's sandbox policy could not be composed: {error}")
+            })?;
+        let program_dir = place_session(program_dir, sandbox.fs_roots())?;
+        let provision = sandbox
+            .prepare(&program_dir)
+            .map_err(|error| format!("the runner sandbox could not be prepared: {error}"))?;
+        let Some(spawn) = provision.spawn() else {
+            // Probe refused: the tool is absent for the session — no grant, no
+            // approval can conjure a capability the composition could not
+            // construct — and the absence is said, on the notice seam.
+            return Ok(RunnerComposition {
+                runner: None,
+                probe_notice: Some(PROBE_REFUSED_NOTICE.to_owned()),
+            });
+        };
+        let scope = saya_types::RunnerScope::new(jobs.allow.clone()).map_err(|error| {
+            format!("resolved [jobs.runner] allow is not a usable scope: {error}")
+        })?;
+        // The interpreter door's universe: the trusted config's staged
+        // interpreters. `None` when nothing is staged — an empty `[jobs.interpreter]
+        // allow` is no capability, not a closed door on one that exists. The
+        // shape was validated at config resolve (`jobs.rs`); a failure here is a
+        // contract break, so it refuses the composition rather than opening a
+        // half-built door.
+        let interpreters = if runtime.resolved.jobs.interpreter.allow.is_empty() {
+            None
+        } else {
+            Some(
+                saya_types::InterpreterScope::new(runtime.resolved.jobs.interpreter.allow.clone())
+                    .map_err(|error| {
+                        format!("resolved [jobs.interpreter] allow is not a usable scope: {error}")
+                    })?,
+            )
+        };
+        let timeout = std::time::Duration::from_secs(jobs.timeout_seconds);
+        let record_dir = state_dir.join("run_program");
+        // The tool's own definition, built once at composition from the proven
+        // spawn (its effect reads the declared egress — empty here), then
+        // reworded and ask-gated for the session surface.
+        let resolver: SharedCredentialSource = Arc::new(StaticCredentialSource::new(Vec::new()));
+        let definition = session_definitions::run_program(
+            RunProgram::for_step(
+                spawn.clone(),
+                Some(scope.clone()),
+                interpreters.clone(),
+                timeout,
+                resolver,
+            )
+            .definition(),
+        );
+        Ok(RunnerComposition {
+            runner: Some(SessionRunner {
+                spawn: spawn.clone(),
+                scope,
+                interpreters,
+                timeout,
+                record_dir,
+                definition,
+            }),
+            probe_notice: None,
+        })
+    }
 }
 
 /// Shared remedy named by runner-family refusals when a `runner:<program>`
@@ -187,6 +211,7 @@ pub(crate) const RUNNER_GAP_REMEDY: &str =
 /// a containment relation to a session's only fs root, and the enforcement
 /// cannot express an exclusion: Seatbelt subpaths are allow-lists and
 /// Landlock has no subtractive rights.
+#[cfg(not(windows))]
 fn place_session(program_dir: &Path, roots: &[PathBuf]) -> Result<PathBuf, String> {
     place_guard(
         program_dir,

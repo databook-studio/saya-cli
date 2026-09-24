@@ -35,7 +35,7 @@ use saya_harness::scratch::ScratchSql;
 
 use super::session_definitions;
 use super::session_host::{self, SessionHost};
-use super::session_runner::{PROBE_REFUSED_NOTICE, SessionRunner, compose_runner};
+use super::session_runner::{SessionRunner, compose_runner};
 use super::session_workspace::{SessionWorkspace, bind_from_pins};
 use crate::agent::tools::{DatabaseTools, RunTools};
 
@@ -52,6 +52,10 @@ pub(crate) struct SessionComposition<'a> {
     pub(crate) state_dir: &'a Path,
     pub(crate) launch: Option<&'a session_host::HostLaunch>,
     pub(crate) path: Option<String>,
+    /// A prior universe's scratch tool when this session recomposes. Its
+    /// database handle stays alive for TUI snapshots, and a clone rebinds
+    /// only the workspace import root.
+    pub(crate) scratch: Option<Arc<ScratchSql>>,
 }
 
 /// One interactive session's tool universe.
@@ -169,6 +173,7 @@ impl SessionUniverse {
             state_dir,
             launch,
             path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
+            scratch: None,
         })
     }
 
@@ -190,6 +195,7 @@ impl SessionUniverse {
             state_dir,
             launch,
             path,
+            scratch,
         } = composition;
         // The deny list, once per session: the launch's `--deny` refusals
         // plus the user-layer `[session_commands] deny`. Launch-only — a
@@ -206,13 +212,14 @@ impl SessionUniverse {
         // Scratch: one DuckDB file per session state directory, the pinned
         // scratch semantics (external access off, 0600) either way. It is
         // engine state — a file tool cannot reach it and neither can a child.
-        let scratch = ScratchSql::open(state_dir).map_err(|error| {
-            format!("the session scratch database could not be opened: {error}")
-        })?;
-        let scratch = match workspace.as_ref() {
-            Some(bound) => scratch.with_workspace(Arc::clone(&bound.workspace)),
-            None => scratch,
+        let scratch = match scratch {
+            Some(scratch) => scratch.as_ref().clone(),
+            None => ScratchSql::open(state_dir).map_err(|error| {
+                format!("the session scratch database could not be opened: {error}")
+            })?,
         };
+        let scratch =
+            scratch.rebind_workspace(workspace.as_ref().map(|bound| Arc::clone(&bound.workspace)));
         // Fetch: the session-wide policy — HTTPS only, refused ranges still
         // refused, every host consented per call by the approval engine.
         let transport = ReqwestTransport::new()
@@ -226,12 +233,13 @@ impl SessionUniverse {
             DownloadBudget::default(),
         ));
         let mut runner_composed = None;
-        let mut probe_refused = false;
+        let mut runner_notice = None;
         if let Some(bound) = workspace.as_ref() {
             let composition = compose_runner(runtime, &bound.root, state_dir)?;
-            probe_refused = composition.probe_notice.is_some();
+            runner_notice = composition.probe_notice;
             runner_composed = composition.runner;
         }
+        let probe_refused = runner_notice.is_some();
         // The host lane, once per session: wherever a workspace root binds
         // — no root, no lane, structural, because the child's cwd is pinned
         // to the root. The child's PATH is the parent's own. With no root
@@ -253,16 +261,23 @@ impl SessionUniverse {
             None => (session_host::compose_host(lane, None, String::new())?, None),
         };
         // The startup notice names the exceptional shapes: a vanished pin,
-        // a refused probe, a missing PATH on a root-bound session. The
+        // a refused probe, a missing PATH on a root-bound session, or an
+        // unavailable Windows host lane. The lane facts may coincide, so
+        // retain each rather than hiding one behind another.
         // composed lane is not exceptional — the lane composes wherever a
         // root binds, and the status header's `host:` segment
         // (`host:unsandboxed` / `host:off`) already carries the fact — so
         // it rides no notice. The per-call ask under `ask`, and the bypass
         // activation line's lane fact under `bypass`, carry the consent
         // surfaces; there is no launch notice to emit for a stated frame.
-        let notice = notice
-            .or(no_path_notice)
-            .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()));
+        let notice = [notice, no_path_notice, runner_notice]
+            .into_iter()
+            .flatten()
+            .reduce(|mut notices, notice| {
+                notices.push('\n');
+                notices.push_str(&notice);
+                notices
+            });
         Ok(Self {
             workspace,
             scratch: Some(Arc::new(scratch)),
@@ -277,21 +292,6 @@ impl SessionUniverse {
             probe_refused,
             learning_breaker: LearningBreaker::new(),
         })
-    }
-
-    /// The test seam for the no-root pin: composes the unstated lane over
-    /// an unbound workspace — which is exactly the no-root-no-lane shape.
-    /// The caller passes its own runtime (the test module's
-    /// `session_runtime`); this helper only exists so the pin reads as one
-    /// call. Unused outside tests.
-    #[cfg(test)]
-    pub(crate) fn compose_host_for_tests(
-        runtime: &crate::config::runtime::RuntimeConfig,
-        cwd: &Path,
-        state_dir: &Path,
-    ) -> Self {
-        Self::compose(runtime, None, None, true, cwd, state_dir)
-            .expect("the unstated lane composes without a root")
     }
 
     /// Whether the host lane composed — the test seam the red tests read.
@@ -369,6 +369,12 @@ impl SessionUniverse {
         self.workspace
             .as_ref()
             .map(|bound| Arc::clone(&bound.workspace))
+    }
+
+    /// The live scratch handle for a recomposition. Cloning it keeps the
+    /// DuckDB connection alive while the next universe rebinds its workspace.
+    pub(crate) fn scratch(&self) -> Option<Arc<ScratchSql>> {
+        self.scratch.clone()
     }
 
     /// The deny list this universe carries — the programs every door
