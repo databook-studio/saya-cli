@@ -826,18 +826,9 @@ fn open_identity_path(path: &Path) -> std::io::Result<fs::File> {
 /// Metadata identity for non-unix pre-open checks. Windows commit paths use
 /// [`file_identity`] instead, because a replacement can retain the
 /// destination's creation metadata.
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(windows)))]
 pub(crate) fn identity_of(metadata: &fs::Metadata) -> (u64, u64) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt as _;
-        (metadata.len(), metadata.creation_time())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = metadata;
-        (metadata.len(), 0)
-    }
+    (metadata.len(), 0)
 }
 
 /// Atomic replace for the non-unix commit paths, shared with the range
