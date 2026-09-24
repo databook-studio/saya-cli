@@ -25,8 +25,10 @@
   <img src="docs/demo-live.gif" alt="saya answering a question against a live database" width="100%">
 </p>
 
-saya discovers the schema, writes the SQL, **shows it to you**, and runs it
-read-only and bounded against PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
+saya is a database-aware AI agent for the terminal. Ask questions in plain
+language or run SQL directly. For agent queries, saya discovers the schema,
+shows you the SQL, then runs it read-only with bounded results against
+PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
 
 ## Install
 
@@ -76,26 +78,27 @@ saya ask "how many orders shipped last week?"
 saya query --sql "SELECT count(*) FROM orders"
 ```
 
-## What you get
+## Work with your data
 
-- 🖥️ **A real terminal UI** — bottom-pinned input, streaming answers, a `/`
-  command popup with fuzzy matching, `@table` schema autocomplete, and copy-out
-  with `Ctrl+O` / `Ctrl+Y` / `Ctrl+B`. ([demo](docs/demo.gif))
-- 🛡️ **You see the SQL before it runs** — the exact statement appears in the
-  approval prompt and the transcript. `--approval-mode` picks `ask`,
-  `read-only`, or `never`.
-- 🧠 **Memory** — tell saya what a table means once and later questions carry
-  it. Facts are typed, bound to the schema shape they depend on, and go stale
-  when a column they rest on changes. saya never confirms a fact by itself and
-  never picks between contradictions. Off by default.
-  → [memory](docs/memory.md)
-- 🔌 **Databases** — PostgreSQL, MySQL, SQLite, DuckDB, Snowflake — and one
-  question can span several connected databases at once, with results side by
-  side. ([demo](docs/demo-cross.gif))
-- 🤖 **Providers** — Ollama, OpenAI, OpenAI-compatible gateways, Anthropic,
-  Gemini.
-- ⚙️ **Scriptable** — piped or non-TTY input runs headless with text, JSON, or
-  NDJSON output, and typed exit codes.
+- **Ask in plain language.** saya inspects your schema, proposes SQL, and
+  shows the statement in the transcript. Choose `ask`, `read-only`, or `never`
+  with `--approval-mode` to control approval prompts; `bypass` is an explicit
+  session-wide option.
+- **Run SQL directly.** Use `saya query` for a single read-only statement, or
+  use `saya` to open the interactive terminal UI. The UI streams answers,
+  offers `/` command search and `@table` schema completion, and supports
+  exporting results. ([TUI demo](docs/demo.gif), [export demo](docs/features/feat-export.gif))
+- **Connect more than one database.** Work with PostgreSQL, MySQL, SQLite,
+  DuckDB, and Snowflake; add profiles to a session so saya can inspect and
+  query each connection. ([cross-database demo](docs/demo-cross.gif))
+- **Keep useful context.** Optional memory carries typed facts about tables,
+  columns, relationships, and metrics into later questions. Facts are bound to
+  the schema, and inferred facts wait for your confirmation. Off by default.
+  → [Memory](docs/memory.md)
+- **Use local or hosted models.** Supported providers include Ollama, OpenAI,
+  OpenAI-compatible endpoints, Anthropic, and Gemini.
+- **Automate from scripts.** Piped input and non-interactive commands support
+  text, JSON, or NDJSON output with documented exit codes.
 - 🏃 **Long-running runs** — `saya run "<goal>"` asks the model for a plan,
   shows it to you once with its scopes and budgets, and executes it step by
   step, pausing (never silently stopping) when a declared budget trips so a
@@ -117,11 +120,15 @@ saya query --sql "SELECT count(*) FROM orders"
 
 ## Safety
 
-saya is read-only in two layers. Every statement is parsed and rejected if it
-writes, and the database session itself is opened read-only — Postgres
-`default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
+Database queries use two read-only layers. Every SQL statement is parsed and
+rejected if it writes, and the database session itself is opened read-only —
+Postgres `default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
 `PRAGMA query_only`, a read-only DuckDB open. Results are bounded by a row cap
 and byte budgets, and marked when truncated.
+
+Long-running runs require explicit `--allow` scopes before they start. Host
+commands require approval under `ask`; bypass is a deliberate session-wide
+approval and does not weaken SQL's read-only policy.
 
 Secrets live in your environment or on disk as *references*, never inline in
 committed config. Resolved secrets, provider headers, and raw result rows are
@@ -133,8 +140,8 @@ least-privilege, read-only database role. → [SECURITY.md](SECURITY.md)
 
 ## Documentation
 
-`saya --help` and `/help` in the TUI are generated from the code, so they are
-always current — start there for flags and commands. The guides cover the rest:
+Start with `saya --help` for current flags and commands, or `/help` inside the
+TUI. These guides cover setup and common tasks:
 
 | Guide | Covers |
 | --- | --- |
@@ -145,6 +152,7 @@ always current — start there for flags and commands. The guides cover the rest
 | [Commands](docs/commands.md) | the CLI surface and output formats |
 | [Querying databases](docs/querying-databases.md) | worked examples, cross-database queries |
 | [Memory](docs/memory.md) | what saya remembers, and the trust model behind it |
+| [Security policy](SECURITY.md) | security boundaries and vulnerability reporting |
 
 ## Development
 
