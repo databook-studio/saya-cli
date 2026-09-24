@@ -15,7 +15,6 @@ fn example_view() -> StatusView {
     StatusView {
         profile: "docker_postgres".into(),
         included: Vec::new(),
-        provider: "openai_compatible".into(),
         model: "glm-5.2".into(),
         approval_mode: "ask".into(),
         agent_mode: "build".into(),
@@ -40,7 +39,6 @@ fn posture_combos() -> Vec<StatusView> {
                         combos.push(StatusView {
                             profile: "docker_postgres".into(),
                             included: Vec::new(),
-                            provider: "openai_compatible".into(),
                             model: "glm-5.2".into(),
                             approval_mode: approval_mode.to_string(),
                             agent_mode: "build".into(),

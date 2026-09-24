@@ -4,7 +4,6 @@ fn bound_routine() -> StatusView {
     StatusView {
         profile: "analytics".into(),
         included: Vec::new(),
-        provider: "ollama".into(),
         model: "qwen".into(),
         approval_mode: "read-only".into(),
         agent_mode: "build".into(),
@@ -138,4 +137,27 @@ fn warnings_are_dropped_last_stated_first() {
         words.contains("Data sharing on") && !words.contains("Denied"),
         "the later warning is shed before the earlier one: {words}"
     );
+}
+
+/// The approval segment keeps the approval mode's own colour, so `bypass`
+/// ("every call runs without asking") and `never` read as danger at a
+/// glance, not as the same amber as `ask`. The bottom bar no longer names
+/// the mode, so this row is the only place the signal can live.
+#[test]
+fn the_approval_segment_is_coloured_by_its_mode() {
+    use super::super::status::approval_colour;
+    for mode in ["ask", "never", "bypass"] {
+        let mut view = bound_routine();
+        view.approval_mode = mode.into();
+        let spans = context_spans_for_test(&view, 200);
+        let segment = spans
+            .iter()
+            .find(|span| span.content.starts_with("Approval:"))
+            .unwrap_or_else(|| panic!("the row names a non-read-only approval ({mode})"));
+        assert_eq!(
+            segment.style.fg,
+            Some(approval_colour(mode)),
+            "Approval: {mode} must carry its mode's colour"
+        );
+    }
 }

@@ -110,7 +110,6 @@ fn running_sql_task_is_visible_in_the_status_bar() {
     let status = StatusView {
         profile: "analytics".into(),
         included: Vec::new(),
-        provider: "ollama".into(),
         model: "qwen".into(),
         approval_mode: "read-only".into(),
         agent_mode: "build".into(),

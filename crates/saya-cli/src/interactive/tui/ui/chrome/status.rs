@@ -20,13 +20,12 @@ use status_segments::{BarWords, bar_spans, bar_words, fit_bar, full_fit, segment
 #[path = "status_segments.rs"]
 mod status_segments;
 
-/// The approval segment's colour, one explicit arm per mode the grammar
-/// parses. No longer painted on the bottom bar (the posture lives on the top
-/// context line only, see the module doc), but kept for the mode grammar's
-/// own colour mapping — the catch-all is a named hole, not a licence: a mode
-/// added to `FromStr` but not here would render grey with nothing failing,
-/// which is exactly what the colour-map test pins.
-#[cfg(test)]
+/// The approval mode's colour, one explicit arm per mode the grammar parses
+/// — read-only green, ask amber, never and bypass red. Painted on the top
+/// context line's `Approval:` segment (the bottom bar no longer names the
+/// mode). The catch-all is a named hole, not a licence: a mode added to
+/// `FromStr` but not here would render grey with nothing failing, which is
+/// exactly what the colour-map test pins.
 pub(super) fn approval_colour(mode: &str) -> Color {
     match mode {
         "read-only" => super::super::theme::success(),

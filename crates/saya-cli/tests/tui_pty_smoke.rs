@@ -179,7 +179,7 @@ fn tui_paints_splash_with_memory_on_after_a_store_write() {
 /// the schema cache the REPL's `reload_at_refs` then reads at startup). If the
 /// defect is in the interaction of a freshly-written store and the REPL's
 /// startup open — the demos' exact condition — this is the rung that would
-/// surface it. The status bar shows `[docker_postgres]`, not `[demo]`.
+/// surface it. The status bar shows `docker_postgres · …`, not `demo · …`.
 #[test]
 fn tui_paints_splash_with_memory_on_after_schema_refresh() {
     // Cheapest reachability probe: a TCP connect to the docker postgres port.
@@ -465,7 +465,7 @@ enum Memory {
 /// Writes a minimal, offline config + connections file under `home`. No
 /// `--env-file`, no provider key, and a single `demo` profile pointing at a
 /// scratch SQLite file that is never opened — the test sends no question. The
-/// profile name shows up as `[demo]` in the status bar. When `memory` is
+/// profile name leads the status bar as `demo · smoke`. When `memory` is
 /// `Assisted` the config adds `[memory] mode = 'assisted'`, the suspect path
 /// for defect #51; `Off` keeps the original no-`[memory]` shape.
 fn write_scratch_config(home: &Path, memory: Memory) -> ScratchConfig {
@@ -671,11 +671,13 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
         &text,
     );
 
-    // Positive: the status bar names the active profile.
+    // Positive: the status bar names the active profile, followed by the
+    // bar's own separator (the splash's database list also names it, so the
+    // bare name alone would not prove the bar painted).
     assert_in(
         &text,
-        &format!("[{profile}]"),
-        &format!("status bar profile [{profile}] missing from {label}"),
+        &format!("{profile} · "),
+        &format!("status bar profile `{profile} · ` missing from {label}"),
         &text,
     );
 

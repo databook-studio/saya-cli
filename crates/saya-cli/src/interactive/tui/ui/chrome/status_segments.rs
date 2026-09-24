@@ -29,10 +29,6 @@ pub(super) struct BarWords {
 /// Builds the bar's words: the included count collapses to `+N`, and the
 /// mode segment is absent at the default (`build`).
 pub(super) fn bar_words(view: &StatusView) -> BarWords {
-    // `view.provider` stays unread: it fed the old provider/model pairing,
-    // but `StatusView` is the headless header's read-only contract, so the
-    // field stays there rather than being removed alongside its bar use.
-    let _ = &view.provider;
     BarWords {
         name: view.profile.clone(),
         plus_n: (!view.included.is_empty()).then(|| format!(" +{}", view.included.len())),

@@ -143,7 +143,6 @@ pub(crate) fn fixed_status() -> StatusView {
     StatusView {
         profile: "analytics".into(),
         included: Vec::new(),
-        provider: "ollama".into(),
         model: "qwen".into(),
         approval_mode: "read-only".into(),
         agent_mode: "build".into(),
