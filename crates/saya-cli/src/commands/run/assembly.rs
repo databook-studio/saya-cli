@@ -169,7 +169,7 @@ pub(super) async fn assemble(
             None,
             None,
         )
-        .with_workspace(Some(workspace)),
+        .with_workspace(Some(Arc::clone(&workspace))),
     );
     // Shared per run, admitted before anything runs (fail closed at start,
     // never mid-flight): one scratch database when the run approved
