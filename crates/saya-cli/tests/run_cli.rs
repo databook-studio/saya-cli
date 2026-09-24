@@ -163,6 +163,11 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+/// Encodes a filesystem path as a TOML string, including Windows separators.
+fn toml_path(path: &std::path::Path) -> String {
+    toml::Value::String(path.to_string_lossy().into_owned()).to_string()
+}
+
 /// Runs the real `saya` binary against the scratch tree and `base_url`.
 fn saya(env: &TestEnv, args: &[&str], address: &str) -> Output {
     ProcessCommand::new(env!("CARGO_BIN_EXE_saya"))
@@ -1183,8 +1188,8 @@ fn a_program_dir_containing_the_run_tree_refuses_the_run() {
     user_config(
         &env,
         &format!(
-            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
-            env.root.display()
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = {}\n",
+            toml_path(&env.root)
         ),
     );
     let (address, _ready) = mock(Vec::new());
@@ -1231,8 +1236,8 @@ fn an_unstaged_program_refuses_the_run_at_start() {
     user_config(
         &env,
         &format!(
-            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
-            programs.display()
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = {}\n",
+            toml_path(&programs)
         ),
     );
     let (address, _ready) = mock(vec![Scripted {
@@ -1282,8 +1287,8 @@ fn an_interpreter_name_refuses_the_run_at_start() {
     user_config(
         &env,
         &format!(
-            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
-            programs.display()
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = {}\n",
+            toml_path(&programs)
         ),
     );
     let (address, _ready) = mock(Vec::new());
@@ -1331,8 +1336,8 @@ fn a_correctly_staged_program_reaches_a_runner_asking_step() {
     user_config(
         &env,
         &format!(
-            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = \"{}\"\n",
-            programs.display()
+            "[jobs.runner]\nallow = [\"bench\"]\nprogram_dir = {}\n",
+            toml_path(&programs)
         ),
     );
     let (address, _ready) = mock(vec![
