@@ -609,9 +609,8 @@ fn list_and_show_render_a_run_and_an_unknown_id_fails_cleanly() {
 // ---------------------------------------------------------------------------
 // The run wire (NDJSON): lifecycle `RunEvent` lines tagged "type", interleaved
 // with the episode events in today's `TerminalEvent` envelope tagged "event".
-// The stream is the journal itself — every line is one JSON object, and the
-// Spider benchmark harness (which reads `event` keys) sees nothing new to
-// trip over.
+// The stream is the journal itself — every line is one JSON object, and
+// consumers that read `event` keys see no new episode events.
 // ---------------------------------------------------------------------------
 
 /// Parses `text` as one JSON object per line, every line, and returns the

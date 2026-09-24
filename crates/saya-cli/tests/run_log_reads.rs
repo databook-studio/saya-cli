@@ -217,8 +217,7 @@ async fn run_log_text_renders_the_journals_events_in_write_order() {
 }
 
 /// JSON and NDJSON keep the journal's own bytes: the message carries the
-/// events' one serde path, in write order — the framing the scripts and the
-/// benchmark harness parse.
+/// events' one serde path, in write order — the framing machine consumers parse.
 #[tokio::test]
 async fn run_log_ndjson_carries_the_journals_own_lines() {
     let _env = lock_env().await;

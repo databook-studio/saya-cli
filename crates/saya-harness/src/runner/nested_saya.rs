@@ -1,8 +1,6 @@
-//! The nested re-entry (M5-5): when a run re-enters saya as a child — the
-//! `bench/spider` question shape (`bench/spider/bench.py:321-332`), now
-//! engine-supervised — the child's world is the run's own state and nothing
-//! else. Three closures make that true, and this module composes all of
-//! them:
+//! The nested re-entry (M5-5): when a run re-enters saya as a child, the
+//! child's world is the run's own state and nothing else. Three closures
+//! make that true, and this module composes all of them:
 //!
 //! - **The generated config** — [`crate::endpoints::write_run_configs`],
 //!   whose first production caller is [`prepare`] here — writes
@@ -37,9 +35,8 @@
 //! authored by this composition root itself (0600, inside the run dir,
 //! references only), so the trust the flag declares is already structural;
 //! and pinning `SAYA_CONFIG_HOME` inside run state keeps the child's user
-//! layer empty — that emptiness is the production-profile absence (DESIGN
-//! §6.4), so the bench's trick of pointing both config layers at one file
-//! is not available here.
+//! layer empty, so pointing both config layers at one file is not available
+//! here.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -113,9 +110,8 @@ impl NestedState {
             (SESSION_DIR_VAR, self.state.join("sessions")),
         ]
     }
-    /// The exact `saya ask` invocation the run re-enters with — the
-    /// `bench/spider` question shape (`bench.py:321-332`), flag order
-    /// pinned, plus `--trust-project-config` (see the module docs).
+    /// The exact `saya ask` invocation the run re-enters with, with flag
+    /// order pinned and `--trust-project-config` (see the module docs).
     pub fn ask_argv(&self, profile: &str, question: &str) -> Vec<String> {
         vec![
             "ask".into(),

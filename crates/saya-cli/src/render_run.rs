@@ -5,17 +5,16 @@
 //! wire's bytes are made: [`journal_line`] serializes the event once, and
 //! Json and Ndjson render that same serialization — the framing (the
 //! newline) is the only difference. Two renderers for the same data drift,
-//! and the drift shows up as a benchmark harness silently parsing a field
-//! that changed name; the journal, `saya run log`, and the live wire all
-//! call [`journal_line`], so they cannot disagree.
+//! and consumers may silently parse a field that changed name. The journal,
+//! `saya run log`, and the live wire all call [`journal_line`], so they cannot
+//! disagree.
 //!
 //! The wire is a dual-tag stream and that is deliberate: a `RunEvent` line
 //! is tagged `"type"` (its serde derive), while the episode events
 //! interleaved with it keep today's `TerminalEvent` envelope, tagged
-//! `"event"`. The Spider benchmark harness (`bench/spider/bench.py`) reads
-//! `event` — a `RunEvent` line has no such key and is inert to it, so the
-//! wire the benchmark parses stays intact. A line with a `type` tag is a
-//! lifecycle event; a line with an `event` tag is an episode event.
+//! `"event"`. A `RunEvent` line has no `event` key and is inert to consumers
+//! of episode events. A line with a `type` tag is a lifecycle event; a line
+//! with an `event` tag is an episode event.
 //!
 //! Text is shaped here (`run_event_text`, `run_show_text`), following
 //! `render_memory.rs`: wording lives in one shaper that every adapter — the

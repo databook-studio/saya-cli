@@ -58,7 +58,7 @@ collapses on the text surface into one summary line (`▸ N tool calls · ok —
 before), so piped-text consumers that grepped `Using tool:` one line per
 call must match the `▸` summary or switch to NDJSON, the supported machine
 surface — NDJSON is unchanged, one `tool_requested` / `tool_completed`
-envelope per call, which is what `bench/spider/bench.py` already parses.
+envelope per call.
 Two live limits worth knowing: only the newest collapsed TUI group can be
 expanded (the transcript has no per-block cursor, so older groups cannot be
 reached), and groups are sparse in practice (assistant text between calls
