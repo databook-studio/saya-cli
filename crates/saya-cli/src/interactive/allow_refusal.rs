@@ -9,6 +9,7 @@
 //! refused at the seed, with the reason, never accepted and inert).
 
 use crate::approval_facts::ApprovalFacts;
+use crate::interactive::session_runner::RUNNER_GAP_REMEDY;
 
 /// The refusal for a scope that parses under the grammar but gates nothing
 /// in this session's composition, `None` when the composition carries it.
@@ -70,11 +71,11 @@ fn reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
 /// outside them would grant a name every call refuses.
 fn runner_family_reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
     let Some(runner) = facts.runner.as_ref() else {
-        return Some(
+        return Some(format!(
             "this session composed no runner, so no run_program call can \
-             occur — an unproven host or an unstaged config composes nothing"
-                .to_owned(),
-        );
+             occur — an unproven host or an unstaged config composes nothing, \
+             and {RUNNER_GAP_REMEDY}"
+        ));
     };
     if let Some(program) = token.strip_prefix("runner:") {
         return (!runner
@@ -84,7 +85,7 @@ fn runner_family_reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
         .then(|| {
             format!(
                 "the composed [jobs.runner] allow carries no `{program}`, so the \
-                     runner door refuses every call for it"
+                     runner door refuses every call for it, and {RUNNER_GAP_REMEDY}"
             )
         });
     }

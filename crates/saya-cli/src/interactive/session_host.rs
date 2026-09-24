@@ -47,6 +47,19 @@ impl HostLaunch {
             .collect()
     }
 
+    /// The bare program names the launch's `runner:` seeds stated, in
+    /// stated order: what the composition checks against the composed
+    /// runner's door to decide whether a launch-time runner-gap notice is
+    /// due — a grant this session's runner cannot honour is otherwise a
+    /// silent no-op, said nowhere.
+    pub(crate) fn runner_seed_programs(&self) -> Vec<String> {
+        self.seeds
+            .iter()
+            .filter_map(|seed| seed.strip_prefix("runner:"))
+            .map(str::to_owned)
+            .collect()
+    }
+
     /// A launch with no statement: no seeds, no refusals, over the
     /// runtime's own resolved `[host_commands]` shaping. The lane still
     /// composes wherever a root binds — unstated is not off.
@@ -65,6 +78,20 @@ impl HostLaunch {
         Self::from_options(
             &crate::cli::GlobalOptions {
                 allow: Vec::new(),
+                deny: Vec::new(),
+                ..Default::default()
+            },
+            runtime,
+        )
+    }
+
+    /// The test seam: a launch stating the given `--allow` seeds verbatim,
+    /// over the runtime's own resolved `[host_commands]`.
+    #[cfg(test)]
+    pub(crate) fn for_tests_seeded(seeds: Vec<String>, runtime: &RuntimeConfig) -> Self {
+        Self::from_options(
+            &crate::cli::GlobalOptions {
+                allow: seeds,
                 deny: Vec::new(),
                 ..Default::default()
             },

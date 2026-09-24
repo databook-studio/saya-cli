@@ -7,6 +7,19 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Added
 
+**A `runner:<program>` grant with no runner to use it says so.** Seeding
+`runner:<program>` — at launch with `--allow`, or mid-session with
+`/allow` — when this session composed no runner, or a composed runner's
+`[jobs.runner] allow` does not carry the program, now states the gap: "no
+runner is configured ([jobs.runner] program_dir and allow in config), so
+run_program is unavailable this session" (or "`<program>` is not in
+[jobs.runner] allow"), plus the fallback — host commands still run, they
+just ask for approval. The launch-time notice rides the session's existing
+startup-notice seam, so the TUI and the line REPL both show it once; the
+grant itself is unchanged (it still lands in the store). The `/allow`
+refusal for the same gap (U8 — a grant the composition cannot honour still
+seeds nothing) now names the same fallback.
+
 **Post-turn extraction disables itself after two consecutive misses.** A
 session's extraction is a **miss** when the reply is cut off at the
 output-token limit or the transport stalls or times out; every other

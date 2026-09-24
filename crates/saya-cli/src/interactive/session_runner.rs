@@ -175,6 +175,37 @@ pub(super) fn compose_runner(
     })
 }
 
+/// The runner-gap remedy every notice or refusal names: what still works
+/// while `run_program` cannot run the stated program. No leading capital or
+/// trailing period — every caller splices it into its own sentence.
+pub(crate) const RUNNER_GAP_REMEDY: &str =
+    "programs run only through host commands (run_command), which ask for approval";
+
+/// The notice a seeded `runner:<program>` grant states when this session's
+/// composed runner cannot honour it: no runner composed at all, or the
+/// program sits outside `[jobs.runner] allow`. `None` when the composed
+/// runner's door carries the program — the grant is fully usable, nothing
+/// to say. `runner_programs` is the composed runner's door
+/// (`SessionRunner::scope.programs` / `RunnerFacts::runner_programs`),
+/// `None` exactly when no runner composed.
+pub(crate) fn runner_grant_notice(
+    program: &str,
+    runner_programs: Option<&[String]>,
+) -> Option<String> {
+    match runner_programs {
+        None => Some(format!(
+            "runner:{program} granted, but no runner is configured ([jobs.runner] \
+             program_dir and allow in config), so run_program is unavailable this \
+             session — {RUNNER_GAP_REMEDY}."
+        )),
+        Some(programs) if !programs.iter().any(|allowed| allowed == program) => Some(format!(
+            "runner:{program} granted, but {program} is not in [jobs.runner] allow, so \
+             run_program cannot run it this session — {RUNNER_GAP_REMEDY}."
+        )),
+        Some(_) => None,
+    }
+}
+
 /// The placement guard, in the session's own words. The guard is not
 /// relaxed for sessions: the default recommended layout (the platform data
 /// home's program directory) is disjoint and fine, but a program directory
@@ -208,3 +239,7 @@ fn place_session(program_dir: &Path, roots: &[PathBuf]) -> Result<PathBuf, Strin
         },
     )
 }
+
+#[cfg(test)]
+#[path = "session_runner_tests.rs"]
+mod tests;
