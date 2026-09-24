@@ -5,7 +5,7 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
-## 0.4.1 — 2026-09-24
+## 0.4.1 — 2026-09-25
 
 ### Added
 
