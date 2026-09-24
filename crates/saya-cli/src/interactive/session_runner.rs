@@ -175,14 +175,8 @@ pub(super) fn compose_runner(
     })
 }
 
-/// The runner-gap remedy every refusal names: what still works while
-/// `run_program` cannot run the stated program. No leading capital or
-/// trailing period — every caller splices it into its own sentence. Read
-/// by `allow_refusal.rs`'s runner-family reasons: a `runner:<program>`
-/// grant the composition cannot honour is a usage error on every surface
-/// (launch and `/allow` alike), never a seeded-but-inert grant, so there is
-/// no separate "granted, but…" notice to build — only this shared remedy
-/// clause.
+/// Shared remedy named by runner-family refusals when a `runner:<program>`
+/// scope cannot be honoured by the session composition.
 pub(crate) const RUNNER_GAP_REMEDY: &str =
     "programs run only through host commands (run_command), which ask for approval";
 

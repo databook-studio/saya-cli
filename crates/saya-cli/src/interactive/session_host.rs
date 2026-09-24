@@ -16,12 +16,8 @@
 
 /// What the launch stated about the lane: the `--deny` refusals and the
 /// user-layer config — read together, once, at composition. Nothing here
-/// decides whether the lane composes: a bound root does. The `--allow`
-/// seeds are not carried here: every seed — `command:` included — rides
-/// `cli.options.allow` straight into `session_grants::seed_launch_allow`,
-/// the one grammar-then-composition gate `/allow` uses (a prior relay
-/// carried a `command:`-only copy here and fed only that filtered list to
-/// the shared gate, so every other scope type never reached it).
+/// decides whether the lane composes: a bound root does. Launch `--allow`
+/// seeds are handled by the session grant flow after composition.
 pub(crate) struct HostLaunch {
     deny: Vec<String>,
     config: saya_config::ResolvedHostCommands,

@@ -255,12 +255,7 @@ impl SessionUniverse {
         // (`host:unsandboxed` / `host:off`) already carries the fact — so
         // it rides no notice. The per-call ask under `ask`, and the bypass
         // activation line's lane fact under `bypass`, carry the consent
-        // surfaces; there is nothing left for a "stated" frame to say, so
-        // `launch_notice` (which named it) deleted with the flag. A
-        // launch-seeded `runner:<program>` grant the composition cannot
-        // honour no longer reaches here either: it is now a launch usage
-        // error, refused before the seed lands (`seed_launch_allow`'s own
-        // composition gate) — the same reason `/allow` gives mid-session.
+        // surfaces; there is no launch notice to emit for a stated frame.
         let notice = notice
             .or(no_path_notice)
             .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()));

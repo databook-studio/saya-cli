@@ -180,10 +180,8 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         // (`seed_launch_allow`): the grammar is the only authority a token
         // parses under, and a token this session's composition cannot
         // carry is a launch usage error with its own reason, never
-        // silently dropped. `cli.options.allow` rides here unfiltered — a
-        // prior relay fed this call only the pre-filtered `command:`
-        // subset (`HostLaunch::seed_grants`, now removed), so every other
-        // scope type never reached either check and seeded nothing.
+        // silently dropped. Pass `cli.options.allow` directly so every
+        // scope type reaches both checks.
         let seeded = super::session_grants::seed_launch_allow(
             &cli.options.allow,
             &session.universe().approval_facts(&runtime),
