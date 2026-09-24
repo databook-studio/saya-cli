@@ -474,6 +474,7 @@ fn a_run_paused_by_its_budget_exits_6_and_resume_continues_it() {
 }
 
 /// Ctrl-C cancels a run: exit 130, the documented cancelled class.
+#[cfg(unix)]
 #[test]
 fn ctrl_c_cancels_a_run_with_exit_130() {
     let env = test_root("ctrl-c");
