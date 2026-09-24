@@ -201,6 +201,13 @@ covered.
 **A dropped provider stream lost the run** instead of retrying at the turn
 boundary, and a failed salvage call discarded the work it was salvaging.
 
+**A redacted tool result read like corruption, and "fixing" it destroyed the
+secret.** A masked tool result now carries a note naming how many
+secret-shaped values were replaced, and `workspace_write`/`workspace_edit`
+refuse a write that would add `[redacted]` occurrences beyond what the file
+already holds on disk — the model can no longer copy the placeholder back
+over the real value.
+
 ### Added — earlier in this cycle
 
 - **A release now fails — loudly — when the Homebrew tap does not serve it.**

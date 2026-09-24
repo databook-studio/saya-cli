@@ -522,6 +522,63 @@ async fn workspace_write_rejects_a_non_string_content() {
     assert_eq!(error, ToolError::ContentNotString);
 }
 
+// -- the redaction-placeholder guard: refuse a write that would copy a ------
+// -- masked tool-result marker back over the real value on disk. -----------
+
+/// An existing file holds the real secret; writing back the content the
+/// model would have seen after the D8 scrub (the value replaced with the
+/// literal `[redacted]`) is refused, and the file on disk is byte-identical
+/// afterwards — the real value must survive.
+#[tokio::test]
+async fn workspace_write_refuses_to_add_redaction_placeholders() {
+    let sandbox = Sandbox::new("redaction-guard");
+    let tools = sandbox.tools();
+    tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "a.py", "content": "a = f(token=real_value)"}),
+        )
+        .await
+        .expect("the seed write must succeed");
+    let before = fs::read(sandbox.ws_root().join("a.py")).expect("seed file must exist");
+    let error = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "a.py", "content": "a = f(token=[redacted])"}),
+        )
+        .await
+        .expect_err("a write that adds a redaction placeholder must be refused");
+    let text = error.to_string();
+    assert!(
+        text.contains("[redacted]"),
+        "the refusal must name the marker: {text}"
+    );
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("a.py")).expect("file must survive"),
+        before,
+        "a refused write leaves the real value on disk untouched"
+    );
+}
+
+/// A brand-new file (0 markers on disk, since it doesn't exist) holding the
+/// literal marker is refused the same way — 0 to 1 is still growth.
+#[tokio::test]
+async fn a_new_file_with_the_marker_is_refused() {
+    let sandbox = Sandbox::new("new-file-marker");
+    let tools = sandbox.tools();
+    tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "new.txt", "content": "leaked: [redacted]"}),
+        )
+        .await
+        .expect_err("a new file holding the marker must be refused");
+    assert!(
+        !sandbox.ws_root().join("new.txt").exists(),
+        "a refused write must leave no file behind"
+    );
+}
+
 /// The definition is hidden unless workspace writes are permitted: a tool the
 /// model can see but never use wastes context and invites retries.
 #[test]
