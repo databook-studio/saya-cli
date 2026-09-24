@@ -6,7 +6,7 @@ use duckdb::params_from_iter;
 use serde::Serialize;
 use thiserror::Error;
 
-use super::csv::{CsvError, MAX_CSV_ROWS, parse_csv_rows, sanitize_headers};
+use super::csv::{CsvError, CsvRow, MAX_CSV_ROWS, parse_csv_rows, sanitize_headers};
 use super::open::ScratchDb;
 use crate::HarnessError;
 use crate::workspace::MAX_SCRATCH_IMPORT_BYTES;
@@ -103,15 +103,14 @@ pub(crate) fn import_bytes(
     if data.len() > MAX_CSV_ROWS {
         return Err(CsvError::TooManyRows { max: MAX_CSV_ROWS }.into());
     }
-    let data: Vec<Vec<String>> = data.iter().map(|row| row.fields.clone()).collect();
-    insert(db, table, &columns, &data, bytes.len(), replace, started)
+    insert(db, table, &columns, data, bytes.len(), replace, started)
 }
 
 fn insert(
     db: &ScratchDb,
     table: &str,
     columns: &[String],
-    rows: &[Vec<String>],
+    rows: &[CsvRow],
     bytes_read: usize,
     replace: bool,
     started: Instant,
@@ -143,7 +142,7 @@ fn insert(
             return Err(ImportError::TimedOut);
         }
         statement
-            .execute(params_from_iter(row.iter()))
+            .execute(params_from_iter(row.fields.iter()))
             .map_err(|_| ImportError::Database)?;
     }
     drop(statement);

@@ -98,7 +98,7 @@ pub(super) fn scratch_import_facts(
     lines.push("  ≤ 32 MiB · ≤ 500,000 rows · ≤ 512 columns · fields ≤ 64 KiB".to_string());
     if let Some(scratch) = facts.scratch.as_ref() {
         lines.push(format!(
-            "  session-local DuckDB · ≤ {} result rows · {}s scratch SQL timeout · external access off",
+            "  session-local DuckDB · ≤ {} result rows · {}s scratch SQL timeout · 60s import deadline · external access off",
             scratch.row_cap, scratch.timeout_seconds
         ));
     }

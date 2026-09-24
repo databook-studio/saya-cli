@@ -244,7 +244,7 @@ async fn path_escapes_invalid_utf8_and_existing_tables_are_refused_or_replaced()
     assert!(
         tool.execute(
             "scratch_sql",
-            json!({"sql":"SELECT * FROM read_csv('ok.csv')"})
+            json!({"sql":format!("SELECT * FROM read_csv('{}')", root.join("ok.csv").display())})
         )
         .await
         .is_err()

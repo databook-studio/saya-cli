@@ -158,16 +158,6 @@ impl ScratchSql {
         }
     }
 
-    /// Definitions for this concrete instance. Import has the second gate of
-    /// a bound workspace; scratch SQL itself does not depend on that root.
-    pub fn instance_definitions(&self, capabilities: &Capabilities) -> Vec<ToolDefinition> {
-        let mut definitions = Self::definitions(capabilities);
-        if capabilities.scratch && self.workspace.is_some() {
-            definitions.push(Self::import_definition());
-        }
-        definitions
-    }
-
     /// Executes one statement: validation first (the validator is the thing
     /// under test — its refusal happens before any statement reaches DuckDB),
     /// then the bounded engine run.
