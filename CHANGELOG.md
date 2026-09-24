@@ -11,6 +11,23 @@ for users of the `saya` binary.
 
 ### Added
 
+- **A read-only BigQuery connector.** Schema discovery, bounded queries, and a
+  per-job scan ceiling — the public datasets these questions sit on reach into
+  the terabytes, and one unbounded cross join is a typo away. Read-only is
+  enforced in the SQL safety layer and by the service account's IAM role rather
+  than by narrowing the token, because running any query at all creates a job:
+  a token scoped to `bigquery.readonly` looks safer and simply refuses every
+  query. A dataset may be written as `project.dataset`, and discovery reads a
+  public dataset's `INFORMATION_SCHEMA` from the project that owns it rather
+  than the one paying for the query — without that, only the paying project's
+  own datasets could be described at all. The dataset name is validated when
+  the connector is built, since it is formatted into that statement. Failures
+  whose reason code describes the submitted statement carry Google's message —
+  a missing table, an unrecognised column, a table that requires a partition
+  filter — while an unanticipated reason stays redacted and authentication
+  responses never echo the body. 401 and 403 are distinguished, so a permission
+  problem does not send a reader hunting a key that was never wrong.
+
 - **`--candidates N`** answers with the best of N independent attempts, choosing
   between them by what their queries *return* rather than what their SQL says.
   Defaults to 1 — today's behaviour exactly, at no extra cost — because each
@@ -84,30 +101,6 @@ for users of the `saya` binary.
 - **Dependency and CI action updates.** The duckdb pin moves to 1.10505.0 with
   the decode migration that release requires, and the pinned CI actions move
   forward. These supersede the Dependabot pull requests that proposed them.
-
-- **BigQuery can run a query at all.** Every statement failed with
-  "authentication failed". The credential was valid and the token exchange
-  succeeded; the query came back `ACCESS_TOKEN_SCOPE_INSUFFICIENT`, because
-  running a query creates a job and the `bigquery.readonly` scope permits
-  reading data and metadata but not job creation. The connector now requests
-  the scope that can run queries. Read-only is unchanged where it is actually
-  enforced — the SQL safety layer still refuses every write, and the service
-  account's IAM role is the bound no token scope can widen.
-- **BigQuery failures say what was wrong.** A missing table, an unrecognised
-  column and a table that requires a partition filter all reported the same
-  "BigQuery query failed", leaving the agent nothing to correct against; 401
-  and 403 also shared one message, which sent a reader hunting a bad key when
-  the key was fine and the permission was not. Failures whose reason code
-  describes the submitted statement now carry Google's message, an
-  unanticipated reason stays redacted, and authentication responses never echo
-  the body.
-- **BigQuery reads a public dataset's schema.** Discovery looked for
-  `INFORMATION_SCHEMA` in the project that pays for the query, so it could
-  describe only that project's own datasets. A dataset may now be written as
-  `project.dataset`, and the owning project is used both for the lookup and in
-  the reported schema. The dataset name is also validated when the connector is
-  built — it is formatted into that statement, and previously anything at all
-  was accepted.
 
 - **Snowflake sign-in works on regional and privatelink accounts.** The
   account name sent during authentication carried the full identifier the
