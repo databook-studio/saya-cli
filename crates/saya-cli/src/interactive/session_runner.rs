@@ -175,6 +175,11 @@ pub(super) fn compose_runner(
     })
 }
 
+/// Shared remedy named by runner-family refusals when a `runner:<program>`
+/// scope cannot be honoured by the session composition.
+pub(crate) const RUNNER_GAP_REMEDY: &str =
+    "programs run only through host commands (run_command), which ask for approval";
+
 /// The placement guard, in the session's own words. The guard is not
 /// relaxed for sessions: the default recommended layout (the platform data
 /// home's program directory) is disjoint and fine, but a program directory

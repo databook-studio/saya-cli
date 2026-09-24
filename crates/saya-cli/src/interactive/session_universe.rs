@@ -255,8 +255,7 @@ impl SessionUniverse {
         // (`host:unsandboxed` / `host:off`) already carries the fact — so
         // it rides no notice. The per-call ask under `ask`, and the bypass
         // activation line's lane fact under `bypass`, carry the consent
-        // surfaces; there is nothing left for a "stated" frame to say, so
-        // `launch_notice` (which named it) deleted with the flag.
+        // surfaces; there is no launch notice to emit for a stated frame.
         let notice = notice
             .or(no_path_notice)
             .or(probe_refused.then(|| PROBE_REFUSED_NOTICE.to_owned()));

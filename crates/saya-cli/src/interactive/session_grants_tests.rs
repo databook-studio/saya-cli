@@ -200,6 +200,49 @@ fn allow_journals_each_newly_seeded_token_once_as_a_seed() {
     );
 }
 
+/// A composition with every member `composed_facts` carries except the
+/// runner door — so a `runner:` token is the only family under test.
+fn facts_without_runner() -> ApprovalFacts {
+    ApprovalFacts {
+        runner: None,
+        ..composed_facts()
+    }
+}
+
+/// The `/allow` runner-family refusal for a program this session composed
+/// no runner for: still a usage error (U8 stands — a grant the composition
+/// cannot honour seeds nothing), and it now names the fallback: host
+/// commands still run, they just ask for approval. `bench` — not
+/// `python3` — is the program here: a name the grammar itself recognizes
+/// as a shell or interpreter is refused before composition is ever
+/// consulted (`scopes::parse`'s own family mirror), which is a different,
+/// already-said reason than the one this test pins.
+#[test]
+fn slash_allow_runner_without_a_runner_says_so() {
+    let dir = state_dir("allow-runner-no-runner");
+    let grants = SessionGrants::default();
+    let journal = SessionJournal::open(&dir);
+    let error = allow(
+        &["runner:bench".to_owned()],
+        &facts_without_runner(),
+        &grants,
+        &journal,
+    )
+    .expect_err("a runner grant with no composed runner is still a usage error");
+    assert!(
+        error.contains("composed no runner"),
+        "the refusal names the gap: {error}"
+    );
+    assert!(
+        error.contains("run_command") && error.contains("ask for approval"),
+        "the refusal names the fallback: {error}"
+    );
+    assert!(
+        !grants.is_granted("runner:bench"),
+        "U8 stands: the composition still refuses to seed a grant it cannot honour"
+    );
+}
+
 /// `/allow none` seeds nothing, so it journals nothing; a refused scope is
 /// a usage error that seeds nothing and journals nothing.
 #[test]
