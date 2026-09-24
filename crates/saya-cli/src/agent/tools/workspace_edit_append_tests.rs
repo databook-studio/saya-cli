@@ -259,6 +259,61 @@ async fn append_at_offset_zero_creates_the_file() {
     );
 }
 
+/// The guard also applies when appending to an existing file: a chunk that
+/// introduces the marker onto a file that had none is refused, and nothing
+/// is appended.
+#[tokio::test]
+async fn append_to_an_existing_file_refuses_a_chunk_with_the_marker() {
+    let sandbox = Sandbox::new("append-marker");
+    let seed = b"line one;";
+    sandbox
+        .ws
+        .write("log.txt", seed)
+        .expect("seed write must succeed");
+    let tools = sandbox.tools();
+    tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "log.txt",
+                "offset": seed.len() as u64,
+                "chunk": " leaked: [redacted]",
+            }),
+        )
+        .await
+        .expect_err("an appended chunk holding the marker must be refused");
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("log.txt")).expect("file must survive"),
+        seed,
+        "a refused append leaves the file byte-identical"
+    );
+}
+
+/// The redaction-placeholder guard applies to append-creates-a-new-file the
+/// same way it applies to `workspace_write`: a brand-new file starts at 0
+/// markers, so a first chunk holding the literal marker is refused and no
+/// file is created.
+#[tokio::test]
+async fn append_creating_a_new_file_with_the_marker_is_refused() {
+    let sandbox = Sandbox::new("create-marker");
+    let tools = sandbox.tools();
+    tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "fresh.txt",
+                "offset": 0,
+                "chunk": "leaked: [redacted]",
+            }),
+        )
+        .await
+        .expect_err("a new file's first chunk holding the marker must be refused");
+    assert!(
+        !sandbox.ws_root().join("fresh.txt").exists(),
+        "a refused append must leave no file behind"
+    );
+}
+
 /// A chunk over the bound refuses whole — never truncated — and leaves no
 /// partial append behind.
 #[tokio::test]

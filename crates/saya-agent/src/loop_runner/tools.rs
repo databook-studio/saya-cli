@@ -1,5 +1,5 @@
 use crate::{AgentLimits, ChatMessage, LocalStateEffect, ToolCall, ToolDefinition, ToolExecutor};
-use saya_types::redact;
+use saya_types::{redact, redact_counted};
 use serde_json::Value;
 
 /// Why a tool call cannot run as requested, or `None` when it is valid.
@@ -340,10 +340,26 @@ fn bound_failure_reason(reason: &str) -> String {
 /// `[redacted]` where the raw value once appeared. Redacting after the cap can
 /// grow the content past `cap` by at most the marker length per match; the
 /// cap is a budget bound, not a provider hard limit.
+///
+/// D8 follow-up: an ordinary `token=next_token` or `password=args.password`
+/// shape is unremarkable in source code, and a model that reads its own file
+/// back and sees `[redacted]` cannot tell a masked secret from corruption —
+/// observed calling it "a corruption" and rewriting the file; writing the
+/// shown text back would replace the real value on disk. When
+/// [`redact_counted`] changed anything, the content is prefixed
+/// once with a fixed note naming the count, so the model has the signal it
+/// needs to leave the masked span alone rather than "fix" it. A clean result
+/// gets no note and is byte-identical to before this change — the redaction
+/// itself is unchanged, only the announcement is new.
 pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (ChatMessage, bool) {
     let cap = tool_message_cap(byte_budget);
     let (content, truncated) = bounded_json(&result, cap);
-    let content = redact(&content);
+    let (content, redacted_count) = redact_counted(&content);
+    let content = if redacted_count > 0 {
+        format!("{}\n\n{content}", redaction_note(redacted_count))
+    } else {
+        content
+    };
     (
         ChatMessage {
             role: "tool".into(),
@@ -352,6 +368,17 @@ pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (Ch
             tool_call_id: Some(id),
         },
         truncated,
+    )
+}
+
+/// The fixed note prepended to a tool result [`redact_counted`] changed:
+/// names the count, restates that the source on disk is unchanged, and tells
+/// the model what not to do. Wording is fixed and count-parameterized only,
+/// so the model sees the identical shape on every call and can learn it.
+fn redaction_note(count: usize) -> String {
+    format!(
+        "[saya: {count} secret-shaped value(s) in this result were replaced with \
+         [redacted]; the source is unchanged — do not write [redacted] back]"
     )
 }
 

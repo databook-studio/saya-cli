@@ -19,6 +19,7 @@ mod result_shape;
 // A1: request-scoped log of override findings. Mirrors `propose/log.rs`; the
 // runtime drains it after the loop to emit one `KnowledgeOverridden` event.
 mod override_log;
+mod redaction_guard;
 mod workspace_edit;
 mod workspace_edit_anchor;
 mod workspace_glob;

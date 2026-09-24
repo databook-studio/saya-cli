@@ -10,6 +10,53 @@ pub fn redact(value: &str) -> String {
     )))
 }
 
+/// The two literal markers [`redact`] ever writes over secret-shaped
+/// material. Disjoint by construction: `[redacted]` never appears as a
+/// substring of `[redacted private key]` (the text between them differs), so
+/// counting each separately never double-counts one occurrence as the other.
+const MARKERS: [&str; 2] = ["[redacted]", "[redacted private key]"];
+
+/// Counting variant of [`redact`]: the same redacted text, plus the number of
+/// secret-shaped values replaced. Added for the model-context boundary (D8):
+/// a caller that tells the model redaction happened needs a count to say how
+/// many, not just that it happened. `redact` stays the plain entry point for
+/// every other caller — store/audit redaction, error-text scrubbing.
+///
+/// The count is the *increase* in marker-literal occurrences from input to
+/// output, not a per-pass tally. The passes are chained (each rescans the
+/// prior pass's output), and more than one pass's trigger shape can cover the
+/// same secret — `token=` is both a `key=value` marker and a credential-named
+/// env assignment, so an earlier pass already replaces the value before the
+/// later pass rescans it and matches the *marker* against the value it just
+/// wrote, which is already `[redacted]` — replacing it with itself, unchanged
+/// text. A per-pass tally would double-count that as two replacements of the
+/// one secret; the before/after delta counts the one marker that actually
+/// landed. A marker literal already present in the caller's own input is
+/// excluded the same way — it was not a replacement this call made.
+pub fn redact_counted(value: &str) -> (String, usize) {
+    let output = redact(value);
+    let before: usize = MARKERS
+        .iter()
+        .map(|marker| count_occurrences(value, marker))
+        .sum();
+    let after: usize = MARKERS
+        .iter()
+        .map(|marker| count_occurrences(&output, marker))
+        .sum();
+    (output, after.saturating_sub(before))
+}
+
+/// Non-overlapping occurrences of `needle` in `haystack`.
+fn count_occurrences(haystack: &str, needle: &str) -> usize {
+    let mut count = 0;
+    let mut cursor = 0;
+    while let Some(offset) = haystack[cursor..].find(needle) {
+        count += 1;
+        cursor += offset + needle.len();
+    }
+    count
+}
+
 fn redact_markers(value: &str) -> String {
     let markers = ["password=", "api_key=", "token=", "secret="];
     let lower = value.to_ascii_lowercase();

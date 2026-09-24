@@ -8,6 +8,7 @@
 use saya_agent::ToolError;
 
 use super::DatabaseTools;
+use super::redaction_guard;
 
 /// The bound on a workspace write's `content`, matched to
 /// `WORKSPACE_READ_MAX_BYTES` (64 KiB) so anything this tool writes can be
@@ -47,6 +48,19 @@ impl DatabaseTools {
                 limit: WORKSPACE_WRITE_MAX_BYTES,
             });
         }
+        // The redaction-placeholder guard: refuse before any byte is
+        // written when this write would grow the file's `[redacted]` count
+        // past what is already on disk (0 for a file that doesn't exist
+        // yet) — the model must not be able to copy a masked tool result
+        // back over the real secret it was standing in for.
+        let existing_markers = redaction_guard::existing_marker_count(workspace, rel)
+            .map_err(|error| ToolError::WorkspaceWrite(error.to_string()))?;
+        redaction_guard::refuse_marker_growth(
+            rel,
+            existing_markers,
+            content.as_bytes(),
+            ToolError::WorkspaceWrite,
+        )?;
         workspace
             .write(rel, content.as_bytes())
             .map_err(|error| ToolError::WorkspaceWrite(error.to_string()))?;

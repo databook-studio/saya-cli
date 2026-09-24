@@ -36,6 +36,7 @@
 use saya_agent::ToolError;
 
 use super::DatabaseTools;
+use super::redaction_guard;
 use super::workspace_edit_anchor::{find_matches, hex_digest, match_lines};
 use super::workspace_write::WORKSPACE_WRITE_MAX_BYTES;
 
@@ -297,6 +298,18 @@ impl DatabaseTools {
         }
         let start = hits[0] as u64;
         let end = start + old_text.len() as u64;
+        // The redaction-placeholder guard: build the resulting content in
+        // memory and refuse before any byte is written when it would grow
+        // the file's `[redacted]` count past what is already on disk — the
+        // model must not be able to copy a masked tool result back over the
+        // real secret it was standing in for.
+        let resulting = splice_text(current, start as usize..end as usize, new_text);
+        redaction_guard::refuse_marker_growth(
+            rel,
+            redaction_guard::count_markers(&file.bytes),
+            resulting.as_bytes(),
+            ToolError::WorkspaceEdit,
+        )?;
         commit_splice(workspace, rel, start..end, size, new_text.as_bytes())?;
         let after = workspace
             .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
@@ -361,6 +374,15 @@ impl DatabaseTools {
                         current_digest: hex_digest(&[]),
                     });
                 }
+                // The redaction-placeholder guard: a new file starts at 0
+                // markers, so any `[redacted]` in the first chunk is a
+                // growth from 0 and is refused the same as an existing file.
+                redaction_guard::refuse_marker_growth(
+                    rel,
+                    0,
+                    chunk.as_bytes(),
+                    ToolError::WorkspaceEdit,
+                )?;
                 write_new(workspace, rel, chunk.as_bytes())?;
                 let after = workspace
                     .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
@@ -423,6 +445,17 @@ impl DatabaseTools {
                 current_digest: digest,
             });
         }
+        // The redaction-placeholder guard: the resulting content is the
+        // current file plus `chunk` (an append only ever adds bytes at EOF).
+        // Concatenated rather than counted separately per half, so a marker
+        // split across the old EOF and the new chunk's start is still seen
+        // whole.
+        redaction_guard::refuse_marker_growth(
+            rel,
+            redaction_guard::count_markers(&file.bytes),
+            &[file.bytes.as_slice(), chunk.as_bytes()].concat(),
+            ToolError::WorkspaceEdit,
+        )?;
         commit_splice(workspace, rel, size..size, size, chunk.as_bytes())?;
         let after = workspace
             .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
@@ -433,6 +466,20 @@ impl DatabaseTools {
             "digest": hex_digest(&after.bytes),
         }))
     }
+}
+
+/// The `replace` half's resulting content, built in memory so the
+/// redaction-placeholder guard can inspect what the commit *would* write
+/// before any byte lands on disk: `current` with the byte range `range`
+/// (always a valid `old_text` match, so always a char boundary) swapped for
+/// `new_text`.
+fn splice_text(current: &str, range: std::ops::Range<usize>, new_text: &str) -> String {
+    let mut resulting =
+        String::with_capacity(current.len() - (range.end - range.start) + new_text.len());
+    resulting.push_str(&current[..range.start]);
+    resulting.push_str(new_text);
+    resulting.push_str(&current[range.end..]);
+    resulting
 }
 
 /// The one commit seam both variants share: the harness's anchored
