@@ -230,10 +230,15 @@ fn project_layer_cannot_declare_the_interpreter_universe() {
 /// program directory they are staged in, so both trusted fixtures carry it.
 #[test]
 fn trusted_layers_may_declare_the_interpreter_universe() {
-    let user = ConfigFile::from_toml(
-        "[jobs.runner]\nprogram_dir = '/opt/saya-programs'\n\
-         [jobs.interpreter]\nallow = ['python3']\n",
-    )
+    let program_dir = if cfg!(windows) {
+        "C:/saya-programs"
+    } else {
+        "/opt/saya-programs"
+    };
+    let user = ConfigFile::from_toml(&format!(
+        "[jobs.runner]\nprogram_dir = '{program_dir}'\n\
+         [jobs.interpreter]\nallow = ['python3']\n"
+    ))
     .unwrap();
     let resolved = resolve(
         ResolutionInput::new(ConnectionsFile::default())
@@ -248,10 +253,10 @@ fn trusted_layers_may_declare_the_interpreter_universe() {
     );
     assert!(resolved.ignored_project_overrides.is_empty());
 
-    let input = project_with(
-        "[jobs.runner]\nprogram_dir = '/opt/saya-programs'\n\
-         [jobs.interpreter]\nallow = ['python3']\n",
-    )
+    let input = project_with(&format!(
+        "[jobs.runner]\nprogram_dir = '{program_dir}'\n\
+         [jobs.interpreter]\nallow = ['python3']\n"
+    ))
     .with_cli(CliOverrides {
         trust_project_config: true,
         ..Default::default()

@@ -974,6 +974,10 @@ fn run_interactively(env: &TestEnv, args: &[&str], address: &str, answer: &str) 
     };
     let _ = prompt_seen;
     // The one answer: an explicit yes — nothing else approves.
+    // ConPTY treats carriage return as the Enter key. Sending LF is echoed
+    // as text but does not complete stdin's read_line on Windows.
+    #[cfg(windows)]
+    let answer = answer.replace('\n', "\r");
     writer.write_all(answer.as_bytes()).expect("the pty writer");
     while child
         .try_wait()
@@ -1225,13 +1229,21 @@ fn a_program_dir_containing_the_run_tree_refuses_the_run() {
         stderr(&output)
     );
     let message = stderr(&output);
+    #[cfg(not(windows))]
+    {
+        assert!(
+            message.contains("overlaps this run's filesystem root"),
+            "the refusal must state the containment: {message}"
+        );
+        assert!(
+            message.contains("child write the binary the next step's run_program validates"),
+            "the refusal must record the escape it prevents: {message}"
+        );
+    }
+    #[cfg(windows)]
     assert!(
-        message.contains("overlaps this run's filesystem root"),
-        "the refusal must state the containment: {message}"
-    );
-    assert!(
-        message.contains("child write the binary the next step's run_program validates"),
-        "the refusal must record the escape it prevents: {message}"
+        message.contains("sandbox root is refused for the profile language"),
+        "Windows refuses the unsupported sandbox root before placement analysis: {message}"
     );
     let _ = fs::remove_dir_all(&env.root);
 }
