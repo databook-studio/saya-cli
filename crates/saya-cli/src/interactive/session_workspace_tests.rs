@@ -100,7 +100,7 @@ fn a_state_root_inside_the_workspace_refuses_the_binding() {
         let error = check_state_overlap(&canonical, &state_canonical)
             .expect_err("the state root inside the project must refuse");
         assert!(
-            error.contains(project.display().to_string().as_str()),
+            error.contains(canonical.display().to_string().as_str()),
             "the refusal must name the workspace root: {error}"
         );
         assert!(
