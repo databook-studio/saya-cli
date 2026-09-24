@@ -101,6 +101,9 @@ mod group_live_tests;
 #[path = "group_mark_tests.rs"]
 mod group_mark_tests;
 #[cfg(test)]
+#[path = "knowledge_learning_disabled_tests.rs"]
+mod knowledge_learning_disabled_tests;
+#[cfg(test)]
 #[path = "knowledge_override_tests.rs"]
 mod knowledge_override_tests;
 #[cfg(test)]

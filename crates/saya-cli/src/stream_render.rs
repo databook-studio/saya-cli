@@ -214,6 +214,11 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         AgentEvent::KnowledgeLearningSkipped { reason } => {
             TerminalEvent::KnowledgeLearningSkipped { reason }
         }
+        // The extraction circuit breaker tripped — surface it the same way,
+        // rather than fall through to the `unrecognized agent event` catch-all.
+        AgentEvent::KnowledgeLearningDisabled { model, misses } => {
+            TerminalEvent::KnowledgeLearningDisabled { model, misses }
+        }
         // Learning used to fall through to the catch-all below and print
         // `unrecognized agent event` — an error string at the exact moment the
         // product did the thing it is for.
@@ -711,6 +716,59 @@ mod tests {
         assert!(
             !rendered.stdout.contains("not_implemented"),
             "must not fall through to NotImplemented: {:?}",
+            rendered.stdout
+        );
+    }
+
+    /// KnowledgeLearningDisabled maps to a real TerminalEvent variant (not
+    /// NotImplemented) and renders the spec line through the text adapter.
+    #[test]
+    fn knowledge_learning_disabled_renders_through_the_text_adapter() {
+        let event = AgentEvent::knowledge_learning_disabled("glm-5.2", 2);
+        let rendered = render_agent(event, RenderFormat::Text, &mut false);
+        assert!(
+            rendered
+                .stdout
+                .contains("memory: learning disabled for this session"),
+            "text adapter renders the disabled line: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            rendered.stdout.contains("glm-5.2") && rendered.stdout.contains('2'),
+            "the model and miss count appear: {:?}",
+            rendered.stdout
+        );
+        assert_eq!(rendered.stderr, "");
+    }
+
+    /// The JSON/NDJSON adapter carries KnowledgeLearningDisabled under its
+    /// type tag rather than the NotImplemented fallback, with the model and
+    /// miss count on the wire.
+    #[test]
+    fn json_adapter_carries_the_learning_disabled_event_under_its_type_tag() {
+        let event = AgentEvent::knowledge_learning_disabled("glm-5.2", 2);
+        let te = terminal_event(event).expect("this event renders headlessly");
+        let rendered = render_event(&te, RenderFormat::Json);
+        assert!(
+            rendered
+                .stdout
+                .contains(r#""event":"knowledge_learning_disabled""#),
+            "type tag: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            rendered.stdout.contains(r#""model":"glm-5.2""#),
+            "model carried: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            rendered.stdout.contains(r#""misses":2"#),
+            "misses carried: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            !rendered.stdout.contains("not_implemented"),
+            "{:?}",
             rendered.stdout
         );
     }

@@ -89,10 +89,9 @@ fn format_trace_line(
         Some(e) => format!(" error={}", redacted_trace_error(e)),
         None => String::new(),
     };
-    // Duration is what tells you whether EXTRACTION_TIMEOUT is generous or
-    // tight against a given gateway. Without it a `timed_out` line says the cap
-    // fired but not how close the successful turns were to it, which is the
-    // number the cap should be set from.
+    // Duration is the extraction's real cost on a given gateway and model:
+    // there is no wall-clock cap (owner decision), so this is how a slow
+    // model's post-turn wait — and what the session breaker saw — is read.
     let ms = match elapsed {
         Some(d) => format!(" ms={}", d.as_millis()),
         None => String::new(),

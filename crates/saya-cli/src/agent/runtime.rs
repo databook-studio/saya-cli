@@ -1,4 +1,3 @@
-use super::extraction_trace::trace_extraction;
 use super::knowledge_event::knowledge_supplied_event;
 use super::tools;
 #[cfg(test)]
@@ -336,118 +335,38 @@ pub(crate) async fn run_prompt_with_inputs(
         sink.emit(AgentEvent::knowledge_overridden(overridden.clone()))
             .await;
     }
-    // The usage the extraction call reported, if any. Stays `None` when
-    // learning is disabled, the gate declined, or the call produced no
-    // response (provider error or timeout) — absent is not zero.
-    let mut learning_usage: Option<saya_agent::TokenUsage> = None;
-    // Post-turn structured extraction (Safety Property 1: fail-soft isolation).
-    if learning.permit_candidate_writes
-        && let Some(store) = database.state_db()
-        && let Ok(out) = output.as_ref()
-    {
-        let drained_obs = observations_log
-            .as_ref()
-            .map(|l| l.drain())
-            .unwrap_or_default();
-        let turn_record = super::learning::TurnRecord::assemble(
-            prompt,
-            &out.answer,
-            database.registry(),
-            &drained_obs,
-            Some(&receipt),
-            &overridden,
-        );
-        let gate = super::learning::ProposalGating::evaluate(
-            &turn_record,
-            &drained_obs,
-            !overridden.is_empty(),
-        );
-        if gate.is_run() {
-            let object_count = turn_record.object_table.len();
-            // The answer is already on screen; this call is what the adapter is
-            // still waiting on, so say so before starting it.
-            sink.emit(AgentEvent::KnowledgeLearningStarted).await;
-            let extraction_started = std::time::Instant::now();
-            let extraction_res = tokio::time::timeout(
-                super::learning::EXTRACTION_TIMEOUT,
-                super::learning::run_extraction(
-                    &*provider,
-                    &ai.model,
-                    &turn_record,
-                    database.registry(),
-                    store,
-                    &receipt,
-                ),
-            )
-            .await;
-            let extraction_elapsed = Some(extraction_started.elapsed());
-
-            match extraction_res {
-                // Extraction completed: the outcome carries the proposals and
-                // the usage the provider reported, even when parsing or
-                // ingestion then failed (tokens may have been billed first).
-                Ok(outcome) => {
-                    learning_usage = outcome.usage;
-                    // The extraction call's report crosses the stream named as
-                    // an extraction call, so a consumer can keep it apart from
-                    // the answering rounds' — it is billed separately and would
-                    // otherwise lower the cache hit rate computed over the
-                    // answer's calls. `None` (a provider that reported nothing,
-                    // or no response at all) emits nothing.
-                    if let Some(counts) = outcome.usage {
-                        sink.emit(AgentEvent::usage(saya_agent::UsageCall::Extraction, counts))
-                            .await;
-                    }
-                    match outcome.dtos {
-                        Ok(dtos) => {
-                            trace_extraction(
-                                "ok",
-                                object_count,
-                                Some(dtos.len()),
-                                None,
-                                extraction_elapsed,
-                            );
-                            for dto in dtos {
-                                sink.emit(AgentEvent::knowledge_proposed(dto)).await;
-                            }
-                        }
-                        Err(error) => {
-                            trace_extraction(
-                                "failed",
-                                object_count,
-                                Some(0),
-                                Some(&error.to_string()),
-                                extraction_elapsed,
-                            );
-                            sink.emit(AgentEvent::knowledge_learning_skipped(
-                                saya_agent::LearningSkipReason::Failed,
-                            ))
-                            .await;
-                        }
-                    }
-                }
-                // Timeout fired before extraction returned; same fail-soft rule.
-                // No response was produced, so there is no usage to report.
-                Err(_) => {
-                    trace_extraction("timed_out", object_count, Some(0), None, extraction_elapsed);
-                    sink.emit(AgentEvent::knowledge_learning_skipped(
-                        saya_agent::LearningSkipReason::TimedOut,
-                    ))
-                    .await;
-                }
-            }
-        } else {
-            // Gate decline stays silent on screen (decision 2); trace it for
-            // observability when debugging the boundary.
-            trace_extraction(
-                "gate_declined",
-                turn_record.object_table.len(),
-                None,
-                None,
-                None,
-            );
+    // The breaker: session-scoped so it trips across this session's turns; a
+    // fresh one per call when there is no session (the one-shot `ask` path,
+    // each candidate attempt) — which can never trip within one turn, since
+    // there is no next turn for it to disable.
+    let fresh_breaker;
+    let breaker: &super::learning::LearningBreaker = match session.as_ref() {
+        Some(session) => session.learning_breaker(),
+        None => {
+            fresh_breaker = super::learning::LearningBreaker::new();
+            &fresh_breaker
         }
-    }
+    };
+    // The usage the extraction call reported, if any. Stays `None` when
+    // learning is disabled, the gate declined, the breaker has already
+    // tripped this session, or the call produced no response — absent is
+    // not zero.
+    let learning_usage = super::learning::post_turn::run_post_turn_extraction(
+        super::learning::post_turn::PostTurnInputs {
+            permit_candidate_writes: learning.permit_candidate_writes,
+            database: &database,
+            output: output.as_ref(),
+            prompt,
+            observations_log: observations_log.as_deref(),
+            receipt: &receipt,
+            overridden: &overridden,
+            provider: &*provider,
+            model: &ai.model,
+            breaker,
+        },
+        sink,
+    )
+    .await;
 
     // Attach the extraction usage to the output so both the TUI and headless
     // recorders can fold it into the learning total. A failed answering call

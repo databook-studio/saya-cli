@@ -2341,84 +2341,40 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
 }
 
 // ===========================================================================
-// Spec packet-54: a turn whose post-turn extraction times out or errors must
-// say so (KnowledgeLearningSkipped). Today it is silent — the red tests below
-// assert the event fires AND the turn still completes. The gate-declined case
-// emits nothing (decision 2).
-//
-// The timeout test sleeps *past* the production `EXTRACTION_TIMEOUT` constant
-// (15s) — the spec mandates a documented, bounded constant and a test that
-// sleeps past it, so this is one ~15s test by design, not a parameterized
-// shortcut. The extraction call is distinguished from the turn call by the
-// `precision schema knowledge extractor` system-prompt marker, the same stable
-// marker `TurnAndExtractionProvider` relies on above.
+// No extraction ceiling; the per-session circuit breaker (owner decisions
+// 1-3). Post-turn extraction is awaited directly — no `tokio::time::timeout`
+// — and a session's extraction disables itself after two consecutive misses
+// (a truncated reply or a stalled/timed-out transport), announced once via
+// `KnowledgeLearningDisabled`. The extraction call is distinguished from the
+// turn call by the `precision schema knowledge extractor` system-prompt
+// marker, the same stable marker `TurnAndExtractionProvider` relies on above.
 // ===========================================================================
 
-/// A provider that answers the turn normally but sleeps past the extraction
-/// timeout when called for extraction, so the runtime's `tokio::time::timeout`
-/// fires. Reuses the turn-steps + extraction-marker shape of
-/// `TurnAndExtractionProvider`.
-struct SleepingExtractionProvider {
-    turn_step: Mutex<usize>,
-    turn_steps: Vec<ChatResponse>,
-    extraction_calls: Mutex<usize>,
+/// Two turn steps — a `bounded_sql_query` call (object activity) followed by
+/// a non-trivial answer — so the gate admits extraction the same way
+/// `TurnAndExtractionProvider`'s callers above do.
+fn breaker_turn_steps(answer: &'static str) -> Vec<ChatResponse> {
+    vec![
+        ChatResponse::new(ChatMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                id: "call-1".into(),
+                name: "bounded_sql_query".into(),
+                arguments: serde_json::json!({
+                    "connection": "analytics",
+                    "sql": "SELECT id, status FROM catalog.public.orders",
+                }),
+            }],
+            tool_call_id: None,
+        }),
+        ChatResponse::new(ChatMessage::text("assistant", answer)),
+    ]
 }
 
-#[async_trait]
-impl ChatProvider for SleepingExtractionProvider {
-    fn name(&self) -> &str {
-        "sleeping-extraction-provider"
-    }
-    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-        let is_extraction = request
-            .messages
-            .first()
-            .map(|m| m.content.contains("precision schema knowledge extractor"))
-            .unwrap_or(false);
-        if is_extraction {
-            {
-                let mut calls = self.extraction_calls.lock().unwrap();
-                *calls += 1;
-            }
-            // Sleep past the production timeout so `tokio::time::timeout` fires.
-            tokio::time::sleep(
-                super::super::learning::EXTRACTION_TIMEOUT + std::time::Duration::from_secs(1),
-            )
-            .await;
-            Ok(ChatResponse::new(ChatMessage::text(
-                "assistant",
-                r#"{"proposals": []}"#,
-            )))
-        } else {
-            let mut step = self.turn_step.lock().unwrap();
-            let idx = *step;
-            *step += 1;
-            if idx < self.turn_steps.len() {
-                Ok(self.turn_steps[idx].clone())
-            } else {
-                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
-            }
-        }
-    }
-}
-
-/// One turn that issues a `bounded_sql_query` (object activity + non-trivial
-/// answer) so the gate admits extraction, then the extraction call sleeps past
-/// the timeout. Asserts `KnowledgeLearningSkipped { TimedOut }` is emitted and
-/// the turn still completes with its answer (Safety Property 1: fail-soft).
-#[tokio::test]
-async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes() {
-    let root = temp_root("p54_timeout");
-    let db = root.join("state.sqlite3");
-    let identity = identity_for("analytics");
-    let store = store_at(&db, &identity).await;
-
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let sink = RecordingSink {
-        events: events.clone(),
-        knowledge_log: Arc::new(Mutex::new(Vec::new())),
-    };
-    let inputs = TurnInputs {
+/// The `TurnInputs` every breaker test shares: only the provider varies.
+fn breaker_inputs(provider: Box<dyn ChatProvider>, identity: &ProfileIdentity) -> TurnInputs {
+    TurnInputs {
         ai: ResolvedAi {
             provider: AiProvider::Ollama,
             model: "test-model".into(),
@@ -2436,35 +2392,30 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
             compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
-        provider: Box::new(SleepingExtractionProvider {
-            turn_step: Mutex::new(0),
-            turn_steps: vec![
-                ChatResponse::new(ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({
-                            "connection": "analytics",
-                            "sql": "SELECT id, status FROM catalog.public.orders",
-                        }),
-                    }],
-                    tool_call_id: None,
-                }),
-                ChatResponse::new(ChatMessage::text(
-                    "assistant",
-                    "The orders table contains customer orders.",
-                )),
-            ],
-            extraction_calls: Mutex::new(0),
-        }),
-        registry: registry_for("analytics", &identity),
+        provider,
+        registry: registry_for("analytics", identity),
         failures: Vec::new(),
+    }
+}
+
+/// Runs one breaker-test turn against the shared harness shape, returning the
+/// captured events and the turn's answer.
+#[allow(clippy::too_many_arguments)]
+async fn run_breaker_turn(
+    runtime: &RuntimeConfig,
+    provider: Box<dyn ChatProvider>,
+    identity: &ProfileIdentity,
+    store: SqliteStateStore,
+    session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+) -> (Vec<AgentEvent>, String) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
     };
-    let runtime = test_runtime(assisted_memory());
+    let inputs = breaker_inputs(provider, identity);
     let out = run_prompt_with_inputs(
-        &runtime,
+        runtime,
         inputs,
         "table orders has alias orders",
         saya_agent::ApprovalPolicy::ReadOnly,
@@ -2473,37 +2424,484 @@ async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes(
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
-        Some(store.clone()),
+        Some(store),
         None,
         None,
-        None,
+        session,
         saya_agent::AgentMode::Build,
     )
     .await
-    .expect("turn completes despite extraction timeout (fail-soft)");
+    .expect("turn completes (fail-soft)");
+    let captured = events.lock().unwrap().clone();
+    (captured, out.answer)
+}
 
-    // The turn's answer is unaffected — extraction failure is not answer failure.
-    assert_eq!(out.answer, "The orders table contains customer orders.");
-
-    let captured = events.lock().unwrap();
-    let skipped = captured.iter().find_map(|event| match event {
-        AgentEvent::KnowledgeLearningSkipped { reason } => Some(*reason),
+fn disabled_event(events: &[AgentEvent]) -> Option<(&str, u32)> {
+    events.iter().find_map(|event| match event {
+        AgentEvent::KnowledgeLearningDisabled { model, misses } => Some((model.as_str(), *misses)),
         _ => None,
-    });
-    assert_eq!(
-        skipped,
-        Some(LearningSkipReason::TimedOut),
-        "timeout must emit KnowledgeLearningSkipped{{TimedOut}}: {captured:?}"
+    })
+}
+
+fn skipped_reasons(events: &[AgentEvent]) -> Vec<LearningSkipReason> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::KnowledgeLearningSkipped { reason } => Some(*reason),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A provider that answers the turn normally, then — for the extraction
+/// call — waits briefly before returning a valid proposal. Tokio's paused
+/// clock (`#[tokio::test(start_paused = true)]`) is not reachable here: the
+/// workspace's `tokio` dependency does not enable the `test-util` feature
+/// (Cargo.toml is outside this packet's owned paths), so this uses a short
+/// real sleep instead of simulating minutes. What is asserted is unchanged
+/// either way: the runtime awaits the call to completion — no
+/// `tokio::time::timeout` races it — and the proposal it returns is stored.
+struct SlowExtractionProvider {
+    turn_step: Mutex<usize>,
+    turn_steps: Vec<ChatResponse>,
+}
+
+#[async_trait]
+impl ChatProvider for SlowExtractionProvider {
+    fn name(&self) -> &str {
+        "slow-extraction-provider"
+    }
+    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        let is_extraction = request
+            .messages
+            .first()
+            .map(|m| m.content.contains("precision schema knowledge extractor"))
+            .unwrap_or(false);
+        if is_extraction {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
+            )))
+        } else {
+            let mut step = self.turn_step.lock().unwrap();
+            let idx = *step;
+            *step += 1;
+            if idx < self.turn_steps.len() {
+                Ok(self.turn_steps[idx].clone())
+            } else {
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
+            }
+        }
+    }
+}
+
+/// Red test 1: a slow extraction is awaited, not cut off. There is no
+/// wall-clock ceiling any more (owner decision 1) — the call above takes
+/// long enough to prove it is genuinely awaited, and its proposal is stored;
+/// no `KnowledgeLearningSkipped` fires.
+#[tokio::test]
+async fn a_slow_extraction_is_awaited_not_cut_off() {
+    let root = temp_root("no_ceiling_slow");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+
+    let started = std::time::Instant::now();
+    let (captured, answer) = run_breaker_turn(
+        &runtime,
+        Box::new(SlowExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+        }),
+        &identity,
+        store.clone(),
+        None,
+    )
+    .await;
+
+    assert_eq!(answer, "The orders table contains customer orders.");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(300),
+        "the call was genuinely awaited, not raced against a timeout"
     );
-    // No proposal was emitted — the timeout aborted extraction before ingest.
-    let proposed_count = captured
+    assert!(
+        skipped_reasons(&captured).is_empty(),
+        "an awaited extraction must not skip: {captured:?}"
+    );
+    let proposed = captured
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::KnowledgeProposed { .. }))
+        .count();
+    assert_eq!(proposed, 1, "the proposal is stored: {captured:?}");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 2: two consecutive truncated extractions (in one session) trip
+/// the breaker and say so exactly once; a third turn makes no extraction
+/// request at all.
+#[tokio::test]
+async fn two_consecutive_truncated_extractions_disable_learning_and_say_so() {
+    let root = temp_root("breaker_truncated");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let truncated = || ProviderError::output_truncated(String::new(), Vec::new());
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(truncated()),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    // Turn 1: one miss. Not disabled yet.
+    let (first, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(skipped_reasons(&first), vec![LearningSkipReason::Failed]);
+    assert_eq!(disabled_event(&first), None, "one miss must not trip it");
+
+    // Turn 2: the second consecutive miss trips the breaker.
+    let (second, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(skipped_reasons(&second), vec![LearningSkipReason::Failed]);
+    let skipped_at = second
+        .iter()
+        .position(|e| matches!(e, AgentEvent::KnowledgeLearningSkipped { .. }))
+        .expect("skipped fired");
+    let disabled_at = second
+        .iter()
+        .position(|e| matches!(e, AgentEvent::KnowledgeLearningDisabled { .. }))
+        .expect("disabled fired");
+    assert!(
+        skipped_at < disabled_at,
+        "KnowledgeLearningDisabled must follow this turn's own KnowledgeLearningSkipped: {second:?}"
+    );
+    assert_eq!(disabled_event(&second), Some(("test-model", 2)));
+
+    // Turn 3: the breaker is tripped — no extraction request at all. The
+    // provider is shared so its own `extraction_calls` counter (not the
+    // recording sink) proves the request was never sent — the same
+    // shared-provider pattern `a_gate_declined_turn_emits_no_learning_event`
+    // uses above.
+    let third_provider = Arc::new(TurnAndExtractionProvider {
+        turn_step: Mutex::new(0),
+        turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+        extraction_response: Err(truncated()),
+        extraction_calls: Mutex::new(0),
+    });
+    struct SharedBreakerProvider(Arc<TurnAndExtractionProvider>);
+    #[async_trait]
+    impl ChatProvider for SharedBreakerProvider {
+        fn name(&self) -> &str {
+            "shared-breaker-provider"
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            self.0.complete(req).await
+        }
+    }
+    let (third, _) = run_breaker_turn(
+        &runtime,
+        Box::new(SharedBreakerProvider(Arc::clone(&third_provider))),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        *third_provider.extraction_calls.lock().unwrap(),
+        0,
+        "no extraction request is made once the breaker has tripped"
+    );
+    assert!(
+        !third
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+        "no KnowledgeLearningStarted once disabled: {third:?}"
+    );
+    assert_eq!(
+        disabled_event(&third),
+        None,
+        "KnowledgeLearningDisabled never fires twice: {third:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 3: a stalled stream counts as a miss exactly like truncation —
+/// two in a row trip the breaker.
+#[tokio::test]
+async fn a_stalled_stream_counts_as_a_miss() {
+    let root = temp_root("breaker_stalled");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let stalled_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::Request("provider stream stalled".into())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    let (first, _) = run_breaker_turn(
+        &runtime,
+        stalled_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(disabled_event(&first), None);
+
+    let (second, _) = run_breaker_turn(
+        &runtime,
+        stalled_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        disabled_event(&second),
+        Some(("test-model", 2)),
+        "two consecutive stalls trip the breaker: {second:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 4: a success between two misses resets the count — the session
+/// is not disabled, and a fourth turn still extracts.
+#[tokio::test]
+async fn a_success_between_misses_resets_the_count() {
+    let root = temp_root("breaker_success_resets");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::output_truncated(String::new(), Vec::new())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+    let success_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": []}"#,
+            ))),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    // Miss, success, miss.
+    let (_, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    let (_, _) = run_breaker_turn(
+        &runtime,
+        success_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    let (third, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        disabled_event(&third),
+        None,
+        "a success between misses resets the count: {third:?}"
+    );
+
+    // A fourth turn still extracts: a real proposal is stored.
+    let (fourth, _) = run_breaker_turn(
+        &runtime,
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
+            ))),
+            extraction_calls: Mutex::new(0),
+        }),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert!(
+        fourth
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+        "the fourth turn still attempts extraction: {fourth:?}"
+    );
+    let proposed = fourth
         .iter()
         .filter(|e| matches!(e, AgentEvent::KnowledgeProposed { .. }))
         .count();
     assert_eq!(
-        proposed_count, 0,
-        "no proposals after timeout: {captured:?}"
+        proposed, 1,
+        "the fourth turn's proposal is stored: {fourth:?}"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 5: a non-miss failure (a non-JSON reply) between two misses also
+/// resets the count.
+#[tokio::test]
+async fn a_non_miss_failure_resets_the_count() {
+    let root = temp_root("breaker_non_miss_resets");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::output_truncated(String::new(), Vec::new())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+    // A parse failure: the reply's first visible character is not JSON.
+    let parse_failure_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "not json at all",
+            ))),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    let (_, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    let (parse_failed, _) = run_breaker_turn(
+        &runtime,
+        parse_failure_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        skipped_reasons(&parse_failed),
+        vec![LearningSkipReason::Failed]
+    );
+    // The parse failure must not count as the second miss: had it tripped
+    // the breaker here, turn 3 would make no attempt and emit nothing, and a
+    // check on turn 3's events alone would pass vacuously.
+    assert_eq!(
+        disabled_event(&parse_failed),
+        None,
+        "a parse failure is not a miss: {parse_failed:?}"
+    );
+    let (third, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert!(
+        third
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+        "learning must still be enabled on turn 3, so extraction is attempted: {third:?}"
+    );
+    assert_eq!(
+        disabled_event(&third),
+        None,
+        "a non-miss failure between misses resets the count: {third:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 6: with no session (the one-shot `saya ask` path, each candidate
+/// attempt), the breaker can never trip — every call gets a fresh one.
+#[tokio::test]
+async fn without_a_session_the_breaker_never_trips() {
+    let root = temp_root("breaker_no_session");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::output_truncated(String::new(), Vec::new())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    for label in ["first", "second"] {
+        let (captured, _) =
+            run_breaker_turn(&runtime, miss_provider(), &identity, store.clone(), None).await;
+        assert!(
+            captured
+                .iter()
+                .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+            "the {label} call still attempts extraction: {captured:?}"
+        );
+        assert_eq!(
+            disabled_event(&captured),
+            None,
+            "a fresh breaker per call can never trip within one turn: {captured:?}"
+        );
+    }
     let _ = fs::remove_dir_all(root);
 }
 
@@ -2524,15 +2922,17 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         events: events.clone(),
         knowledge_log: Arc::new(Mutex::new(Vec::new())),
     };
-    let provider = Arc::new(SleepingExtractionProvider {
+    let provider = Arc::new(TurnAndExtractionProvider {
         turn_step: Mutex::new(0),
         // A trivial turn with no tool call and a short answer: the gate would
         // decline (no object activity, <15-char answer). Memory is Off, so the
         // extraction block is never entered regardless — proving the silent path.
         turn_steps: vec![ChatResponse::new(ChatMessage::text("assistant", "ok"))],
+        // Never reached: the gate declines before this could be consulted.
+        extraction_response: Err(ProviderError::configuration("unused")),
         extraction_calls: Mutex::new(0),
     });
-    struct SharedProvider(Arc<SleepingExtractionProvider>);
+    struct SharedProvider(Arc<TurnAndExtractionProvider>);
     #[async_trait]
     impl ChatProvider for SharedProvider {
         fn name(&self) -> &str {

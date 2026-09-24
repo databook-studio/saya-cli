@@ -93,6 +93,17 @@ impl AgentEvent {
         Self::KnowledgeLearningSkipped { reason }
     }
 
+    /// Builds the once-per-session `KnowledgeLearningDisabled` event the
+    /// runtime emits when the extraction circuit breaker trips (two
+    /// consecutive misses). The caller is the runtime, immediately after
+    /// that turn's own `KnowledgeLearningSkipped`.
+    pub fn knowledge_learning_disabled(model: impl Into<String>, misses: u32) -> Self {
+        Self::KnowledgeLearningDisabled {
+            model: model.into(),
+            misses,
+        }
+    }
+
     pub fn complete() -> Self {
         Self::Complete
     }
