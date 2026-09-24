@@ -84,17 +84,32 @@ pub(super) fn chart_facts(arguments: &Value, primary: Option<&str>) -> Option<St
     if sql.is_empty() {
         return None;
     }
-    Some(body(
-        "render_chart — writes a chart file and opens your browser".to_string(),
-        vec![
-            format!(
-                "  target: {}",
-                target_line("render_chart", named_connection(arguments), primary)
-            ),
-            format!("  sql: {sql}"),
+    let mut lines = vec![
+        format!(
+            "  target: {}",
+            target_line("render_chart", named_connection(arguments), primary)
+        ),
+        format!("  sql: {sql}"),
+    ];
+    if let Some(path) = arguments.get("save_to").and_then(Value::as_str) {
+        lines.push(format!(
+            "  save_to: {}",
+            crate::agent::tools::collapse_whitespace(path)
+        ));
+        lines.push(
+            "  the same HTML is saved there; the browser opens a private temporary copy"
+                .to_string(),
+        );
+        lines.push("  an existing file at this path may be replaced".to_string());
+    } else {
+        lines.push(
             "  this is why it always asks: the chart file is written and opened in your \
              browser"
                 .to_string(),
-        ],
+        );
+    }
+    Some(body(
+        "render_chart — writes a chart file and opens your browser".to_string(),
+        lines,
     ))
 }

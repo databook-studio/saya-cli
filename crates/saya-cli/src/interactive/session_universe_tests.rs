@@ -541,7 +541,7 @@ async fn advertised_scratch_import_routes_through_the_session_executor() {
             .with_workspace(universe.workspace()),
     );
     let result = universe
-        .executor(database, &CancellationToken::new())
+        .executor(database, &CancellationToken::new(), false)
         .execute(
             "scratch_import",
             serde_json::json!({"path":"data.csv","table":"people"}),
@@ -640,7 +640,7 @@ async fn no_file_tool_reaches_the_session_state_dir() {
     let database = Arc::new(
         crate::agent::tools::DatabaseTools::new(None, 100, true).with_workspace(workspace),
     );
-    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new());
+    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new(), false);
     let read = executor
         .execute(
             "workspace_read",
@@ -708,7 +708,7 @@ async fn a_session_child_runs_with_the_workspace_root_as_its_cwd() {
     );
 
     let database = Arc::new(crate::agent::tools::DatabaseTools::new(None, 100, true));
-    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new());
+    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new(), false);
     let result = executor
         .execute(
             "run_program",
@@ -790,7 +790,7 @@ async fn a_granted_interpreter_actually_runs_under_ask() {
     // with INTERPRETER_REFUSAL: the user approved a capability the
     // composition never constructed.
     let database = Arc::new(crate::agent::tools::DatabaseTools::new(None, 100, true));
-    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new());
+    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new(), false);
     let result = executor
         .execute(
             "run_program",
@@ -878,7 +878,7 @@ async fn an_unstaged_interpreter_keeps_the_byte_identical_family_refusal() {
     let universe = compose(&runtime, &project, &state);
     assert!(universe.runner.is_some(), "the probe proves this host");
     let database = Arc::new(crate::agent::tools::DatabaseTools::new(None, 100, true));
-    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new());
+    let executor = universe.executor(Arc::clone(&database), &CancellationToken::new(), false);
     let result = executor
         .execute(
             "run_program",
@@ -994,7 +994,7 @@ async fn bypass_leaves_the_sql_safety_layer_untouched() {
         saya_agent::ApprovalDecision::Allow,
         "bypass allows the SQL call: the safety layer is the next line of defence, not approval"
     );
-    let executor = universe.executor(database, &CancellationToken::new());
+    let executor = universe.executor(database, &CancellationToken::new(), false);
     let refused = executor
         .execute(
             "bounded_sql_query",

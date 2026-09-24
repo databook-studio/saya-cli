@@ -26,6 +26,24 @@ impl DatabaseTools {
         permit_workspace_writes: bool,
         permit_external_effects: bool,
     ) -> Vec<ToolDefinition> {
+        Self::definitions_with_chart_save(
+            allow_query_data,
+            has_state_store,
+            permit_candidate_writes,
+            permit_workspace_writes,
+            permit_external_effects,
+            false,
+        )
+    }
+
+    pub(crate) fn definitions_with_chart_save(
+        allow_query_data: bool,
+        has_state_store: bool,
+        permit_candidate_writes: bool,
+        permit_workspace_writes: bool,
+        permit_external_effects: bool,
+        permit_chart_save: bool,
+    ) -> Vec<ToolDefinition> {
         let connection_prop = serde_json::json!({
             "type": "string",
             "description": "Optional. Name of the database connection to target; defaults to the primary. Available connections and their dialects are listed in the system context."
@@ -472,29 +490,47 @@ impl DatabaseTools {
                     comparing categories, `line` or `area` for trends over an ordered/time axis, `pie` or \
                     `doughnut` for a category's share of a total, `scatter` for the relationship between two \
                     numeric columns. Optionally name the x (label) column, the y (value) column(s), and a \
-                    title. The chart is written to a file and opened; only the file path is returned."
+                    title. The chart opens from a private temporary copy. When `save_to` is supplied, the same \
+                    HTML is also saved in the workspace and that relative path is returned."
                         .into(),
                     read_only: false,
-                    parameters: serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "connection": connection_prop.clone(),
-                            "sql": { "type": "string" },
-                            "chart_type": { "type": "string", "enum": ["bar","line","area","pie","doughnut","scatter"] },
-                            "x": { "type": "string" },
-                            "y": { "type": "array", "items": { "type": "string" } },
-                            "title": { "type": "string" }
-                        },
-                        "required": ["sql", "chart_type"],
-                        "additionalProperties": false
-                    }),
+                parameters: {
+                    let mut properties = serde_json::json!({
+                        "connection": connection_prop.clone(),
+                        "sql": { "type": "string" },
+                        "chart_type": { "type": "string", "enum": ["bar","line","area","pie","doughnut","scatter"] },
+                        "x": { "type": "string" },
+                        "y": { "type": "array", "items": { "type": "string" } },
+                        "title": { "type": "string" }
+                    });
+                    if permit_chart_save {
+                        properties["save_to"] = serde_json::json!({
+                            "type": "string",
+                            "description": "Optional workspace-relative destination for the chart HTML."
+                        });
+                    }
+                    serde_json::json!({
+                    "type": "object",
+                    "properties": properties,
+                    "required": ["sql", "chart_type"],
+                    "additionalProperties": false
+                    })
+                },
                     effect: ToolEffect {
                         database_data: false,
                         external_side_effect: true,
                         requires_approval: true,
-                        local_state: LocalStateEffect::None,
+                        local_state: if permit_chart_save {
+                            LocalStateEffect::WriteWorkspace
+                        } else {
+                            LocalStateEffect::None
+                        },
                     },
-                    completion: Some("chart written and opened".into()),
+                    completion: Some(if permit_chart_save {
+                        "chart opened from a private temporary copy".into()
+                    } else {
+                        "chart written and opened".into()
+                    }),
                 });
             }
             tools.push(ToolDefinition {
@@ -560,7 +596,15 @@ pub(super) fn validate_arguments(
         "column_health" => (&["connection", "sql"][..], true),
         "join_check" => (&["connection", "sql"][..], true),
         "render_chart" => (
-            &["connection", "sql", "chart_type", "x", "y", "title"][..],
+            &[
+                "connection",
+                "sql",
+                "chart_type",
+                "x",
+                "y",
+                "title",
+                "save_to",
+            ][..],
             true,
         ),
         "designate_answer" => (&["sql"][..], true),
@@ -579,6 +623,13 @@ pub(super) fn validate_arguments(
         return Err(ToolError::SqlNotString);
     }
     if name == "workspace_read" && !object.get("path").is_some_and(serde_json::Value::is_string) {
+        return Err(ToolError::PathNotString);
+    }
+    if name == "render_chart"
+        && object
+            .get("save_to")
+            .is_some_and(|value| !value.is_string())
+    {
         return Err(ToolError::PathNotString);
     }
     // Both `workspace_write` arguments are required strings; each names its

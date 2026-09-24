@@ -315,7 +315,11 @@ pub(crate) async fn run_prompt_with_inputs(
         permit_external_effects: false,
     };
     let executor: Arc<dyn saya_agent::ToolExecutor> = match session.as_ref() {
-        Some(session) => session.executor(Arc::clone(&database), &cancellation),
+        Some(session) => session.executor(
+            Arc::clone(&database),
+            &cancellation,
+            permit_workspace_writes,
+        ),
         None => Arc::clone(&database) as Arc<dyn saya_agent::ToolExecutor>,
     };
     let mut output = run_agent_with_sink(

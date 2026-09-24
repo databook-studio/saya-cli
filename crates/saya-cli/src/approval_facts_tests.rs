@@ -230,6 +230,27 @@ fn render_chart_prompt_pins_why_it_always_asks() {
     insta::assert_snapshot!(prompt);
 }
 
+#[test]
+fn render_chart_save_prompt_names_path_and_replacement_risk() {
+    let tool = database_tool("render_chart");
+    let arguments = serde_json::json!({
+        "sql": "SELECT region, count(*) FROM orders GROUP BY 1",
+        "connection": "analytics",
+        "chart_type": "bar",
+        "save_to": "reports/\nchart.html"
+    });
+    let prompt = approval_prompt(
+        &tool,
+        &arguments,
+        None,
+        &sql_facts(),
+        Some("analytics"),
+        None,
+    );
+    assert!(prompt.contains("save_to: reports/ chart.html"));
+    assert!(prompt.contains("existing file at this path may be replaced"));
+}
+
 /// A twentieth-prompt shape: the session's held grants are stated, with the
 /// allowed-call count, so a fresh ask reads as "still inside what you
 /// approved" rather than as a fresh ask.

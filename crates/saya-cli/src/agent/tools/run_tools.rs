@@ -24,6 +24,7 @@ use saya_harness::scratch::ScratchSql;
 /// tool and its executor cannot drift apart.
 pub(crate) struct RunTools {
     database: Arc<DatabaseTools>,
+    chart_save_permit: bool,
     /// The scratch database, present only where scratch was composed. Its
     /// absence refuses `scratch_sql` as an unknown tool.
     scratch: Option<Arc<ScratchSql>>,
@@ -65,6 +66,7 @@ impl RunTools {
     ) -> Self {
         Self {
             database,
+            chart_save_permit: false,
             scratch,
             fetch,
             runner,
@@ -73,6 +75,12 @@ impl RunTools {
             tasks: None,
             journal: None,
         }
+    }
+
+    /// Grants this composite permission to save charts into its workspace.
+    pub(crate) fn with_chart_save_permit(mut self, permit: bool) -> Self {
+        self.chart_save_permit = permit;
+        self
     }
 
     /// Composes with the session deny list: refused at the `run_command`,
@@ -146,6 +154,11 @@ impl ToolExecutor for RunTools {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
+        if name == "render_chart" && arguments.get("save_to").is_some() && !self.chart_save_permit {
+            return Err(ToolError::WorkspaceWrite(
+                "workspace-write is not permitted for this step".into(),
+            ));
+        }
         // Deny first, at every program-named door: before grant lookup,
         // before the approval prompt, before bypass's auto-allow. Deny is a
         // structural refusal — it holds in every mode, bypass included.
