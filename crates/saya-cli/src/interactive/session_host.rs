@@ -108,7 +108,7 @@ pub(crate) fn compose_host_lane(
     #[cfg(windows)]
     {
         let _ = (launch, root, path);
-        return Ok((None, Some(WINDOWS_HOST_UNAVAILABLE_NOTICE.to_owned())));
+        Ok((None, Some(WINDOWS_HOST_UNAVAILABLE_NOTICE.to_owned())))
     }
     #[cfg(not(windows))]
     {

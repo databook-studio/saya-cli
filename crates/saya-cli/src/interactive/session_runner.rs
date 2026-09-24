@@ -126,10 +126,10 @@ pub(super) fn compose_runner(
     #[cfg(windows)]
     {
         let _ = (workspace_root, state_dir, program_dir);
-        return Ok(RunnerComposition {
+        Ok(RunnerComposition {
             runner: None,
             probe_notice: Some(PROBE_REFUSED_NOTICE.to_owned()),
-        });
+        })
     }
     #[cfg(not(windows))]
     {
