@@ -3,11 +3,12 @@
 //! and any unusual permission or data-sharing condition.
 
 use super::super::theme::{secondary, warning};
+use super::status::approval_colour;
 use crate::interactive::session_prompt::StatusView;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -39,36 +40,45 @@ const DROP_LEAD: u8 = 0;
 const DROP_WORKSPACE: u8 = 1;
 const DROP_UNUSUAL: u8 = 2;
 
-/// One segment: its words, whether it names an unusual condition (warning
-/// colour), and how readily it may be dropped. Routine conditions are
-/// absent, never rendered as a zero or an "off" badge.
-fn segments(view: &StatusView) -> Vec<(String, bool, u8)> {
+/// One segment: its words, its colour (secondary for routine, warning for an
+/// unusual condition — the approval segment takes its mode's own colour, so
+/// `bypass` and `never` read as danger), and how readily it may be dropped.
+/// Routine conditions are absent, never rendered as a zero or an "off" badge.
+fn segments(view: &StatusView) -> Vec<(String, Color, u8)> {
     let mut out = vec![
-        ("saya".to_string(), false, DROP_LEAD),
+        ("saya".to_string(), secondary(), DROP_LEAD),
         // The posture carries no drop rank: `fit` never removes it.
-        ("Database read-only".to_string(), false, u8::MAX),
+        ("Database read-only".to_string(), secondary(), u8::MAX),
         match view.workspace_root.as_deref() {
-            Some(root) => (format!("Workspace {root}"), false, DROP_WORKSPACE),
-            None => ("No workspace bound".to_string(), false, DROP_WORKSPACE),
+            Some(root) => (format!("Workspace {root}"), secondary(), DROP_WORKSPACE),
+            None => (
+                "No workspace bound".to_string(),
+                secondary(),
+                DROP_WORKSPACE,
+            ),
         },
     ];
     if view.sharing_on {
-        out.push(("Data sharing on".to_string(), true, DROP_UNUSUAL));
+        out.push(("Data sharing on".to_string(), warning(), DROP_UNUSUAL));
     }
     if view.approval_mode != "read-only" {
         out.push((
             format!("Approval: {}", view.approval_mode),
-            true,
+            approval_colour(&view.approval_mode),
             DROP_UNUSUAL,
         ));
     }
     if view.host_composed {
-        out.push(("Host commands unsandboxed".to_string(), true, DROP_UNUSUAL));
+        out.push((
+            "Host commands unsandboxed".to_string(),
+            warning(),
+            DROP_UNUSUAL,
+        ));
     }
     if !view.denied_programs.is_empty() {
         out.push((
             format!("Denied: {}", view.denied_programs.join(", ")),
-            true,
+            warning(),
             DROP_UNUSUAL,
         ));
     }
@@ -78,8 +88,8 @@ fn segments(view: &StatusView) -> Vec<(String, bool, u8)> {
 /// Drops optional segments until the joined row fits `width`: the `saya`
 /// lead first, then the workspace binding, then unusual conditions
 /// last-stated-first. The posture is never dropped.
-fn fit(mut fitted: Vec<(String, bool, u8)>, width: usize) -> Vec<(String, bool, u8)> {
-    let joined_len = |fitted: &[(String, bool, u8)]| {
+fn fit(mut fitted: Vec<(String, Color, u8)>, width: usize) -> Vec<(String, Color, u8)> {
+    let joined_len = |fitted: &[(String, Color, u8)]| {
         fitted.iter().map(|(text, _, _)| text.len()).sum::<usize>()
             + fitted.len().saturating_sub(1) * " · ".len()
     };
@@ -118,11 +128,10 @@ fn context_words(view: &StatusView, width: usize) -> String {
 
 fn context_spans(view: &StatusView, width: usize) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
-    for (i, (text, unusual, _)) in fit(segments(view), width).into_iter().enumerate() {
+    for (i, (text, fg, _)) in fit(segments(view), width).into_iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(" · ", Style::default().fg(secondary())));
         }
-        let fg = if unusual { warning() } else { secondary() };
         spans.push(Span::styled(text, Style::default().fg(fg)));
     }
     spans

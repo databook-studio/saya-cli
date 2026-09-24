@@ -1,7 +1,7 @@
 //! Status bar rendering.
 
 use super::super::surface::SPINNER;
-use super::super::theme::{accent, danger, on_accent, secondary, success, warning};
+use super::super::theme::{accent, on_accent, secondary};
 use super::action_line::{
     CANCEL_HINT, SEPARATOR, action_text, bare_action_width, busy_row_plan, running_call,
 };
@@ -15,107 +15,76 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
+use status_segments::{BarWords, bar_spans, bar_words, fit_bar, full_fit, segments_width};
 
-/// The approval segment's colour, one explicit arm per mode the grammar
-/// parses — read-only green (auto-approves reads only), ask amber (a
-/// question is pending), never red (everything refuses), bypass red ("every
-/// call runs without asking" is the danger it is). The catch-all is a named
-/// hole, not a licence: a mode added to `FromStr` but not here would render
-/// grey with nothing failing, which is exactly what the colour-map test pins.
+#[path = "status_segments.rs"]
+mod status_segments;
+
+/// The approval mode's colour, one explicit arm per mode the grammar parses
+/// — read-only green, ask amber, never and bypass red. Painted on the top
+/// context line's `Approval:` segment (the bottom bar no longer names the
+/// mode). The catch-all is a named hole, not a licence: a mode added to
+/// `FromStr` but not here would render grey with nothing failing, which is
+/// exactly what the colour-map test pins.
 pub(super) fn approval_colour(mode: &str) -> Color {
     match mode {
-        "read-only" => success(),
-        "ask" => warning(),
-        "never" => danger(),
-        "bypass" => danger(),
+        "read-only" => super::super::theme::success(),
+        "ask" => super::super::theme::warning(),
+        "never" => super::super::theme::danger(),
+        "bypass" => super::super::theme::danger(),
         _ => secondary(),
     }
 }
 
 /// The status bar's plain-text words, in bar order — the seam the headless
-/// parity test reads. The headless header's task words are a substring of
-/// this line when a list is tracked, and absent from it when none is.
-/// Test seam: the bar's plain-text words for the parity test. Reachable as
+/// parity test reads. Reachable as
 /// `crate::interactive::tui::ui::chrome::status::status_words_for_test`.
 #[cfg(test)]
 pub(crate) fn status_words_for_test(view: &StatusView) -> String {
-    status_words(view)
+    let words = bar_words(view);
+    bar_spans(&words, full_fit(&words), Color::Reset)
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
 }
 
+/// The idle/selection bar's plain-text words at `width` cells — segments,
+/// then the right-aligned hint — the seam `status_split_tests` reads,
+/// through the same [`push_bar_row`] the real row paints with. Words, never
+/// spans: colour is decoration only, mirroring `context_words_for_test`.
 #[cfg(test)]
-fn status_words(view: &StatusView) -> String {
-    let mut words = format!(
-        "[{}] {}/{} approval:{} mode:{}",
-        view.profile, view.provider, view.model, view.approval_mode, view.agent_mode
+pub(crate) fn bar_words_for_test(view: &StatusView, hint: &'static str, width: u16) -> String {
+    let words = bar_words(view);
+    let mut spans = Vec::new();
+    push_bar_row(
+        &mut spans,
+        &words,
+        hint,
+        width as usize,
+        Color::Reset,
+        Style::default(),
     );
-    if let Some(summary) = view.task_summary.as_deref() {
-        words.push(' ');
-        words.push_str(summary);
-    }
-    words
+    spans.iter().map(|span| span.content.as_ref()).collect()
 }
 
-/// Builds the coloured status-bar segments (profile, provider/model, approval,
-/// mode, tasks, workspace, host, sharing), each on the bar background so they blend
-/// into the strip. The `mode:` segment mirrors the headless header's, so the
-/// two surfaces cannot drift.
-pub(super) fn status_spans(view: &StatusView, bg: Color) -> Vec<Span<'static>> {
-    let base = Style::default().bg(bg);
-    let approval_color = approval_colour(&view.approval_mode);
-    let mut label = view.profile.clone();
-    for inc in &view.included {
-        label.push_str(&format!(" +{inc}"));
+/// Fits the bar's segments to `width` cells, appends them, then — when the
+/// hint still fits — a padding span and the hint, so its last cell lands on
+/// the row's last column.
+fn push_bar_row(
+    spans: &mut Vec<Span<'static>>,
+    words: &BarWords,
+    hint: &'static str,
+    width: usize,
+    bg: Color,
+    bar: Style,
+) {
+    let keep = fit_bar(words, cell_width(hint), width);
+    spans.extend(bar_spans(words, keep, bg));
+    if keep.hint {
+        let pad = width.saturating_sub(segments_width(words, keep) + cell_width(hint));
+        spans.push(Span::styled(" ".repeat(pad), bar));
+        spans.push(Span::styled(hint, bar));
     }
-    let mut spans = vec![
-        Span::styled(
-            format!(" [{label}] "),
-            base.fg(accent()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{}/{} ", view.provider, view.model),
-            base.fg(secondary()),
-        ),
-        Span::styled(
-            format!("approval:{} ", view.approval_mode),
-            base.fg(approval_color),
-        ),
-        Span::styled(format!("mode:{} ", view.agent_mode), base.fg(secondary())),
-    ];
-    // The task segment names the done count while anything is tracked, and
-    // is absent on an empty list — the headless header's `tasks:` shape, so
-    // the two surfaces cannot drift.
-    if let Some(summary) = view.task_summary.as_deref() {
-        spans.push(Span::styled(format!("{summary} "), base.fg(secondary())));
-    }
-    // The workspace segment names the tree the session can touch, so the
-    // binding is visible at every moment it matters — including on a resume
-    // from a different directory.
-    match view.workspace_root.as_deref() {
-        Some(root) => spans.push(Span::styled(format!("ws:{root} "), base.fg(secondary()))),
-        None => spans.push(Span::styled("ws:unbound ", base.fg(secondary()))),
-    }
-    // The host segment names the lane: unsandboxed where the host-command
-    // lane composed, off where it did not, plus the denied names where the
-    // session's deny list is non-empty — the same words the headless status
-    // header carries, so the two surfaces cannot drift.
-    let mut host = if view.host_composed {
-        "host:unsandboxed".to_string()
-    } else {
-        "host:off".to_string()
-    };
-    if !view.denied_programs.is_empty() {
-        host.push_str(&format!(" deny:{}", view.denied_programs.join(",")));
-    }
-    spans.push(Span::styled(format!("{host} "), base.fg(secondary())));
-    spans.push(Span::styled(
-        format!("sharing:{}", if view.sharing_on { "on" } else { "off" }),
-        base.fg(if view.sharing_on {
-            warning()
-        } else {
-            success()
-        }),
-    ));
-    spans
 }
 
 /// The quiet "new activity" affordance: how many rows landed below a
@@ -146,6 +115,7 @@ pub(in crate::interactive::tui) fn draw_status(
         .fg(secondary());
     let bg = super::super::theme::status_bg();
     let unseen = unseen_span(app.unseen_new_rows(), bg);
+    let words = bar_words(status);
     let line = if app.is_busy() {
         let frame_char = SPINNER[app.spinner % SPINNER.len()];
         let elapsed = app
@@ -160,7 +130,7 @@ pub(in crate::interactive::tui) fn draw_status(
         // action detail truncates, and the notice yields last — so the hint
         // is never what the row drops (audit F06: it painted last and paid
         // for every other span's overflow).
-        let segments = status_spans(status, bg);
+        let segments = bar_spans(&words, full_fit(&words), bg);
         let widths: Vec<usize> = segments.iter().map(|span| span.width()).collect();
         let unseen_width = unseen.as_ref().map(|span| span.width()).unwrap_or(0);
         let elapsed_width = cell_width(&format!("{elapsed}s "));
@@ -200,33 +170,57 @@ pub(in crate::interactive::tui) fn draw_status(
         ));
         spans.push(Span::styled(SEPARATOR, bar));
         spans.extend(segments.into_iter().take(plan.status_segments));
+        // The cancel hint rides at the row's end whatever room is left: when
+        // there is spare width, a padding span pushes it to the last column;
+        // when there is none, it paints immediately, exactly as before.
+        let used = spans.iter().map(Span::width).sum::<usize>();
+        let hint_width = cell_width(CANCEL_HINT);
+        if used + hint_width < area.width as usize {
+            let pad = area.width as usize - used - hint_width;
+            spans.push(Span::styled(" ".repeat(pad), bar));
+        }
         spans.push(Span::styled(CANCEL_HINT, bar));
         Line::from(spans)
     } else if app.overlays.selection_mode {
         let mut spans = Vec::new();
+        let mut lead_width = 0usize;
         if let Some(span) = unseen {
+            lead_width += span.width();
             spans.push(span);
         }
-        spans.push(Span::styled(
+        let badge = Span::styled(
             " SELECT ",
             Style::default()
                 .bg(accent())
                 .fg(on_accent())
                 .add_modifier(Modifier::BOLD),
-        ));
-        spans.extend(status_spans(status, bg));
-        spans.push(Span::styled(
-            "  ·  drag to copy  ·  Ctrl+O to resume scrolling ",
+        );
+        lead_width += badge.width();
+        spans.push(badge);
+        push_bar_row(
+            &mut spans,
+            &words,
+            "drag to copy · Ctrl+O to resume scrolling",
+            (area.width as usize).saturating_sub(lead_width),
+            bg,
             bar,
-        ));
+        );
         Line::from(spans)
     } else {
         let mut spans = Vec::new();
+        let mut lead_width = 0usize;
         if let Some(span) = unseen {
+            lead_width = span.width();
             spans.push(span);
         }
-        spans.extend(status_spans(status, bg));
-        spans.push(Span::styled("  ·  ? for help ", bar));
+        push_bar_row(
+            &mut spans,
+            &words,
+            "? for help",
+            (area.width as usize).saturating_sub(lead_width),
+            bg,
+            bar,
+        );
         Line::from(spans)
     };
     frame.render_widget(Paragraph::new(line).style(bar), area);
@@ -239,7 +233,8 @@ mod cancel_tests;
 #[path = "status_cell_tests.rs"]
 mod status_cell_tests;
 #[cfg(test)]
+#[path = "status_split_tests.rs"]
+mod status_split_tests;
+#[cfg(test)]
 #[path = "status_tests.rs"]
 mod tests;
-#[cfg(test)]
-pub(super) use super::super::theme::status_bg;

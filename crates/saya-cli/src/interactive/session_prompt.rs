@@ -64,7 +64,6 @@ pub(crate) fn status_line(state: &SessionState) -> String {
 pub(crate) struct StatusView {
     pub(crate) profile: String,
     pub(crate) included: Vec<String>,
-    pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) approval_mode: String,
     /// The session's task posture — mirrors `status_line`'s `mode:` segment,
@@ -93,7 +92,6 @@ pub(crate) fn status_segments(state: &SessionState) -> StatusView {
             .clone()
             .unwrap_or_else(|| "(no profile)".to_string()),
         included: state.included_profiles.clone(),
-        provider: state.provider.clone(),
         model: state.model.clone(),
         approval_mode: state.approval_mode.clone(),
         agent_mode: state.agent_mode.clone(),

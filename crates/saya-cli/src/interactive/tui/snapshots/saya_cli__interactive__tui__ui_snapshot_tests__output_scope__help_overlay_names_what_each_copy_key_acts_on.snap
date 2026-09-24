@@ -22,7 +22,7 @@ expression: buffer
 "    │Ctrl+Y       copy last answer (last assistant block, not a table)     │    "
 "    │Ctrl+B       copy transcript (full, minus reasoning)                  │    "
 "    │? or F1      toggle this help                                         │    "
-" [an╰──────────────────────────────────────────────────────────────────────╯st:o"
+"anal╰──────────────────────────────────────────────────────────────────────╯help"
 "╭ saya ────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                   │"
 "╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

@@ -52,16 +52,21 @@ fn splash_stays_silent_when_a_workspace_is_bound() {
     }
 }
 
-/// G1 property 4 — the status line keeps `ws:unbound`: unchanged by this
-/// slice (pinned by `status_line_names_the_workspace_binding`; asserted
-/// here through the real render so the bar and the header cannot drift).
+/// G1 property 4 — an unbound workspace stays on screen: the top context
+/// line states `No workspace bound`, and the bottom bar (which names only
+/// the database and model since the split-by-job redesign) never carries a
+/// `ws:` token. Asserted through the real render.
 #[test]
-fn the_status_line_keeps_ws_unbound() {
+fn an_unbound_workspace_is_stated_on_the_context_line() {
     let mut status = fixed_status();
     status.workspace_root = None;
     let buffer = render_buffer(&empty_app(), &status, 80, 24);
     assert!(
-        buffer.contains("ws:unbound"),
-        "the status bar keeps ws:unbound:\n{buffer}"
+        buffer.contains("No workspace bound"),
+        "the context line states the unbound workspace:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("ws:"),
+        "the bottom bar no longer carries ws: tokens:\n{buffer}"
     );
 }

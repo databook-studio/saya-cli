@@ -119,7 +119,9 @@ fn cancel_hint_survives_beside_a_new_activity_notice() {
 /// The control: a short action on a wide frame paints the action, the status
 /// details and the hint together. Guards against a fix that always sheds the
 /// details to keep the arithmetic simple — green before the fix, so it is a
-/// guard, not evidence.
+/// guard, not evidence. The status detail is the split bar's own words
+/// (database, model) now, not the posture tokens the bar dropped — see
+/// `status_split_tests::posture_tokens_never_reach_the_bar`.
 #[test]
 fn a_short_action_at_a_wide_width_paints_details_and_hint_together() {
     let app = busy_app("select region, count(*) from orders");
@@ -129,16 +131,12 @@ fn a_short_action_at_a_wide_width_paints_details_and_hint_together() {
         "the short action paints in full at a wide frame:\n{buffer}"
     );
     assert!(
-        buffer.contains("approval:read-only"),
-        "the approval segment still paints when there is room:\n{buffer}"
+        buffer.contains("analytics · qwen"),
+        "the database and model segments still paint when there is room:\n{buffer}"
     );
     assert!(
-        buffer.contains("ws:/home/user/proj"),
-        "the workspace segment still paints when there is room:\n{buffer}"
-    );
-    assert!(
-        buffer.contains("sharing:on"),
-        "the sharing segment still paints when there is room:\n{buffer}"
+        !buffer.contains("approval:") && !buffer.contains("ws:") && !buffer.contains("sharing:"),
+        "the posture tokens never reach the bar, even with room to spare:\n{buffer}"
     );
     assert!(
         buffer.contains("Esc to cancel"),
