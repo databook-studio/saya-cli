@@ -1,9 +1,10 @@
 use super::{AgentError, check_cancelled, emit};
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
-    ProviderError, ProviderEvent, TokenUsage, ToolDefinition,
+    ProviderError, ProviderEvent, TokenUsage, ToolDefinition, UsageCall,
 };
 use futures_util::StreamExt;
+use std::time::Duration;
 
 /// Streams one provider turn: assembles the assistant message, captures the
 /// chain-of-thought the model produced, and reports the token usage the
@@ -18,6 +19,42 @@ use futures_util::StreamExt;
 /// is why `receive` keeps reasoning at all: the main loop must not suppress
 /// thinking, or SQL quality degrades; a reasoning model's chain-of-thought is
 /// held for the turn and forwarded when the stream completes.
+///
+/// A stream that fails **mid-response** — it drops (ends without `Done`), it
+/// stalls past the provider's idle timeout, it is incomplete, or it trips
+/// `MAX_STREAM_BYTES` — does not fail the turn: the partial assistant response
+/// is discarded, one [`AgentEvent::TurnReset`] tells sinks to replace the text
+/// emitted so far, and the turn is retried over the default backoff schedule
+/// (`providers::default_retry_delays`, 250ms/500ms/1s). Every attempt re-sends
+/// the conversation exactly as it stood at turn start — `messages` is the
+/// caller's slice and is not mutated until this returns, so no partial answer
+/// can enter a retried request. When the schedule is exhausted, the last
+/// failure falls through to the existing error path. A failure while
+/// *establishing* the stream is not retried here: `providers/http.rs` already
+/// retries until the response is established, and a refused request (bad key,
+/// bad model) stays an error. Neither is a stream that **completed** but
+/// carried no usable response — the model answered nothing, and every retry
+/// would fail the same way. A **truncated** response (the model hit its
+/// output-token limit) is likewise never retried: the cap is deterministic,
+/// so the identical request fails identically. Cancellation is never retried.
+/// How one streaming attempt ended. The retry policy in [`receive`] acts on
+/// the distinction: a stream that failed **mid-response** — an error event (a
+/// stall, a parse failure, a dropped connection), an end without `Done`, or a
+/// `MAX_STREAM_BYTES` trip — is retryable, because the transport failed and
+/// the same request may succeed. A stream that completed but carried no usable
+/// response, or a request that never established, is not: re-sending adds
+/// latency without new information, and the existing error path applies.
+enum AttemptError {
+    /// Cancellation: never retried.
+    Cancelled,
+    /// The stream failed mid-response; the turn may be retried.
+    MidStream(ProviderError),
+    /// Not a mid-stream failure; the existing error path applies immediately.
+    /// This includes truncation: the output cap is deterministic, so retrying
+    /// the identical request is pure waste.
+    Fatal(ProviderError),
+}
+
 pub(super) async fn receive(
     provider: &dyn ChatProvider,
     model: &str,
@@ -27,32 +64,92 @@ pub(super) async fn receive(
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
 ) -> Result<(ChatMessage, TokenUsage, Option<String>), AgentError> {
+    let request = ChatRequest {
+        model: model.into(),
+        messages: messages.into(),
+        tools: definitions.into(),
+        // JSON mode is for the extraction call only. The
+        // main loop never sets `response_format`, so it stays `Text`
+        // (the default) and a prose answer remains prose.
+        ..Default::default()
+    };
+    let delays = crate::providers::default_retry_delays();
+    let mut attempt = 0;
+    loop {
+        match stream_attempt(provider, &request, sink, cancellation, events).await {
+            Ok(turn) => return Ok(turn),
+            Err(AttemptError::Cancelled) => return Err(AgentError::Cancelled),
+            // Retryable mid-stream failure: tell sinks to discard the partial
+            // answer, then back off before the next attempt.
+            Err(AttemptError::MidStream(_)) if attempt < delays.len() => {
+                emit(events, sink, AgentEvent::turn_reset()).await;
+                wait(delays[attempt], cancellation).await?;
+                attempt += 1;
+            }
+            // The schedule is exhausted: the existing error path takes over.
+            Err(AttemptError::MidStream(error)) => {
+                return Err(AgentError::Provider(error));
+            }
+            Err(AttemptError::Fatal(error)) => return Err(AgentError::Provider(error)),
+        }
+    }
+}
+
+/// Sleeps `delay`, aborting immediately when the run is cancelled.
+async fn wait(delay: Duration, cancellation: &CancellationToken) -> Result<(), AgentError> {
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(AgentError::Cancelled),
+        _ = tokio::time::sleep(delay) => Ok(()),
+    }
+}
+
+/// One streaming attempt of the turn. The retry policy lives in [`receive`];
+/// this only classifies how the attempt ended.
+async fn stream_attempt(
+    provider: &dyn ChatProvider,
+    request: &ChatRequest,
+    sink: &dyn AgentEventSink,
+    cancellation: &CancellationToken,
+    events: &mut Vec<AgentEvent>,
+) -> Result<(ChatMessage, TokenUsage, Option<String>), AttemptError> {
+    // The attempt boundary, emitted before anything can be produced: a sink
+    // that rolls back on `TurnReset` needs to know where this attempt began,
+    // and nothing later in the stream marks it. Emitted on every attempt,
+    // first and retried alike, so the watermark always names the attempt in
+    // flight.
+    emit(events, sink, AgentEvent::turn_started()).await;
+    // A failure while establishing the stream is `Fatal`: the HTTP layer
+    // already retried establishment, and a refused request (bad key, bad
+    // model) would fail identically on every retry.
     let mut stream = provider
-        .stream(
-            ChatRequest {
-                model: model.into(),
-                messages: messages.into(),
-                tools: definitions.into(),
-                // JSON mode is for the extraction call only. The
-                // main loop never sets `response_format`, so it stays `Text`
-                // (the default) and a prose answer remains prose.
-                ..Default::default()
-            },
-            cancellation.clone(),
-        )
-        .await?;
+        .stream(request.clone(), cancellation.clone())
+        .await
+        .map_err(AttemptError::Fatal)?;
     let (mut content, mut calls, mut complete) = (String::new(), Vec::new(), false);
-    let mut usage = TokenUsage::default();
+    // `None` until the stream emits a `Usage` event, so a provider that reports
+    // nothing emits no usage event at all — absence means "unknown", not "this
+    // call cost nothing", and the last snapshot wins exactly as the response's
+    // own accumulator folds cumulative reports.
+    let mut usage = None;
     // `None` until the stream emits reasoning; accumulated under the same
     // `MAX_STREAM_BYTES` bound as content so a hostile endpoint cannot stream
     // unbounded "thinking" into memory.
     let mut reasoning = None;
     while let Some(event) = stream.next().await {
-        check_cancelled(cancellation)?;
-        match event? {
+        if check_cancelled(cancellation).is_err() {
+            return Err(AttemptError::Cancelled);
+        }
+        // An error surfaced by the stream itself (stall, dropped connection,
+        // unparseable chunk) is the definition of a mid-stream failure —
+        // except truncation, which is deterministic and never retried.
+        let event = event.map_err(|error| match error {
+            error @ ProviderError::OutputTruncated { .. } => AttemptError::Fatal(error),
+            error => AttemptError::MidStream(error),
+        })?;
+        match event {
             ProviderEvent::TextDelta(text) => {
                 if content.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
-                    return Err(AgentError::Provider(ProviderError::Request(
+                    return Err(AttemptError::MidStream(ProviderError::Request(
                         "provider stream exceeded size limit".into(),
                     )));
                 }
@@ -62,19 +159,33 @@ pub(super) async fn receive(
             ProviderEvent::ReasoningDelta(text) => {
                 let accumulated = reasoning.get_or_insert_with(String::new);
                 if accumulated.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
-                    return Err(AgentError::Provider(ProviderError::Request(
+                    return Err(AttemptError::MidStream(ProviderError::Request(
                         "provider stream exceeded size limit".into(),
                     )));
                 }
                 accumulated.push_str(&text);
             }
             ProviderEvent::ToolCalls(value) => calls.extend(value),
-            ProviderEvent::Usage(counts) => usage = counts,
+            ProviderEvent::Usage(counts) => usage = Some(counts),
             ProviderEvent::Done => complete = true,
         }
     }
-    if !complete || (content.trim().is_empty() && calls.is_empty()) {
-        return Err(AgentError::Provider(ProviderError::InvalidResponse));
+    // A stream that ended without `Done` was dropped or truncated mid-response:
+    // a failed attempt, whatever it managed to emit before dying.
+    if !complete {
+        return Err(AttemptError::MidStream(ProviderError::InvalidResponse));
+    }
+    // The stream completed but the model produced nothing usable. This is not
+    // a transport failure — every attempt would fail the same way — so it is
+    // not retried: the existing error path applies.
+    if content.trim().is_empty() && calls.is_empty() {
+        return Err(AttemptError::Fatal(ProviderError::InvalidResponse));
+    }
+    // The report crosses the boundary once per call that made one, named as an
+    // answering call so a consumer can keep it apart from the extraction call's
+    // report (emitted by the CLI runtime, which owns that call).
+    if let Some(counts) = usage {
+        emit(events, sink, AgentEvent::usage(UsageCall::Answer, counts)).await;
     }
     Ok((
         ChatMessage {
@@ -83,88 +194,11 @@ pub(super) async fn receive(
             tool_calls: calls,
             tool_call_id: None,
         },
-        usage,
+        usage.unwrap_or_default(),
         reasoning,
     ))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
-    use async_trait::async_trait;
-    use futures_util::stream;
-    use std::sync::Mutex;
-
-    /// A provider that records the one `ChatRequest` the main loop sent and
-    /// returns a minimal valid stream (a single text delta + Done).
-    struct RecordingProvider {
-        captured: Mutex<Option<ChatRequest>>,
-    }
-
-    #[async_trait]
-    impl ChatProvider for RecordingProvider {
-        fn name(&self) -> &str {
-            "recording"
-        }
-        async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-            unreachable!("receive uses stream, not complete")
-        }
-        async fn stream(
-            &self,
-            request: ChatRequest,
-            _cancellation: CancellationToken,
-        ) -> Result<ProviderStream, ProviderError> {
-            *self.captured.lock().unwrap() = Some(request);
-            let events = vec![
-                Ok(ProviderEvent::TextDelta("ok".into())),
-                Ok(ProviderEvent::Done),
-            ];
-            Ok(Box::pin(stream::iter(events)))
-        }
-    }
-
-    /// The main loop's request must NOT carry JSON
-    /// mode — a prose answer stays prose. `receive` builds the request with
-    /// `..Default::default()`, so `response_format` is `Text` and
-    /// `reasoning_effort` is `Default` (send nothing): the main loop keeps real
-    /// reasoning, leaving effort to the endpoint — only mechanical call sites
-    /// request less.
-    #[tokio::test]
-    async fn main_loop_request_does_not_set_json_mode() {
-        let provider = RecordingProvider {
-            captured: Mutex::new(None),
-        };
-        let sink = crate::NoopEventSink;
-        let mut events = Vec::new();
-        let cancellation = CancellationToken::new();
-        let messages = vec![ChatMessage::text("user", "hello")];
-        receive(
-            &provider,
-            "m",
-            &messages,
-            &[],
-            &sink,
-            &cancellation,
-            &mut events,
-        )
-        .await
-        .expect("receive succeeds");
-        let sent = provider
-            .captured
-            .lock()
-            .unwrap()
-            .take()
-            .expect("a request was sent");
-        assert_eq!(
-            sent.response_format,
-            ResponseFormat::Text,
-            "the main loop must not set JSON mode (invariant 1)"
-        );
-        assert_eq!(
-            sent.reasoning_effort,
-            ReasoningEffort::Default,
-            "the main loop must not request less effort"
-        );
-    }
-}
+#[path = "receive_tests.rs"]
+mod tests;

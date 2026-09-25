@@ -85,8 +85,24 @@ struct State {
     tools: ToolAssembly,
     content: bool,
     done: bool,
+    assembled_bytes: usize,
+    /// Text the wire emitted before any truncation signal, kept so the typed
+    /// error can carry the partial answer without re-walking emitted events.
+    text: String,
 }
 impl State {
+    fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
+        let next = self
+            .assembled_bytes
+            .checked_add(bytes)
+            .ok_or_else(size_error)?;
+        if next > crate::MAX_STREAM_BYTES {
+            return Err(size_error());
+        }
+        self.assembled_bytes = next;
+        Ok(())
+    }
+
     fn finish(&mut self) -> Result<(), ProviderError> {
         if self.done {
             return if whitespace(&self.bytes) {
@@ -133,11 +149,14 @@ impl State {
             serde_json::from_str(line).map_err(|_| ProviderError::InvalidResponse)?;
         if let Some(message) = chunk.message {
             if !message.content.is_empty() {
+                self.reserve(message.content.len())?;
                 self.content = true;
+                self.text.push_str(&message.content);
                 self.pending
                     .push_back(ProviderEvent::TextDelta(message.content));
             }
             if !message.thinking.is_empty() {
+                self.reserve(message.thinking.len())?;
                 self.pending
                     .push_back(ProviderEvent::ReasoningDelta(message.thinking));
             }
@@ -152,10 +171,20 @@ impl State {
                     Some(&call.function.name),
                     Some(&arguments),
                 )?;
+                if self.assembled_bytes.saturating_add(self.tools.bytes()) > crate::MAX_STREAM_BYTES
+                {
+                    return Err(size_error());
+                }
             }
         }
         if chunk.done {
             self.done = true;
+            if chunk.done_reason.as_deref() == Some("length") {
+                return Err(ProviderError::output_truncated(
+                    std::mem::take(&mut self.text),
+                    self.tools.partial_json(),
+                ));
+            }
             if let Some(input) = chunk.prompt_eval_count {
                 self.usage.input_tokens = input;
             }
@@ -181,4 +210,8 @@ impl State {
         self.pending.push_back(ProviderEvent::Done);
         Ok(())
     }
+}
+
+fn size_error() -> ProviderError {
+    ProviderError::Request("provider stream exceeded size limit".into())
 }

@@ -11,7 +11,7 @@ pub(crate) async fn run(
     can_prompt: bool,
     format: RenderFormat,
     store: &SqliteStateStore,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error>> {
     let name = profile.or(runtime.resolved.profile_name.as_deref());
     let Some(name) = name else {
         emit(
@@ -20,12 +20,12 @@ pub(crate) async fn run(
             },
             format,
         );
-        return Ok(());
+        return Ok(false);
     };
-    let _ =
+    let code =
         crate::commands::connection_schema::run(name, refresh, runtime, format, can_prompt, store)
             .await?;
-    Ok(())
+    Ok(code == 0)
 }
 
 fn emit(event: TerminalEvent, format: RenderFormat) {

@@ -1,9 +1,15 @@
-//! The agent event stream (`AgentEvent`) the loop emits across a turn, and the
-//! reasons post-turn learning was skipped.
+//! The agent event stream (`AgentEvent`) the loop emits across a turn. Its
+//! constructors live in `builders`; the reasons post-turn learning was skipped
+//! in `learning`.
 
 use serde::{Deserialize, Serialize};
 
-use super::{KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedContractDto};
+use crate::protocol::streaming::TokenUsage;
+
+use super::{
+    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
+    SuppliedContractDto, ToolEffect, UsageCall,
+};
 
 // `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
 // `PartialEq` only.
@@ -29,12 +35,46 @@ pub enum AgentEvent {
     ReasoningText {
         text: String,
     },
+    /// The provider stream for this turn failed mid-response (dropped, stalled,
+    /// incomplete, or over the `MAX_STREAM_BYTES` bound) and the loop is
+    /// retrying the turn with the conversation as it stood at the turn start.
+    /// Emitted once before each retried attempt, so a sink that has been
+    /// accumulating [`AgentEvent::AssistantText`] (and
+    /// [`AgentEvent::ReasoningText`]) deltas must **replace** the text emitted
+    /// so far for this turn, never append to it: the partial attempt's answer
+    /// is discarded, and the retried stream re-emits the full answer as fresh
+    /// deltas. Carries nothing — the replacement arrives as new deltas.
+    TurnReset,
+    /// A provider receive is about to begin — emitted once before a turn's
+    /// first attempt and once before each retried attempt. Carries nothing.
+    ///
+    /// This is the boundary [`AgentEvent::TurnReset`] rolls back to. Without
+    /// it a sink cannot tell where "this turn" began: after a
+    /// [`AgentEvent::ToolCompleted`], the next [`AgentEvent::AssistantText`]
+    /// may be the same receive continuing or a new one, and nothing else in
+    /// the stream distinguishes them. A sink that tried to infer the boundary
+    /// from presentation — the TUI used its request chapter — rolls back an
+    /// earlier step's delivered preamble and completed tool results
+    /// (re-audit R02).
+    ///
+    /// A sink that replays or accumulates should record a rollback watermark
+    /// here. A sink with nothing to roll back may ignore it; it carries no
+    /// content and means nothing to a pipe.
+    TurnStarted,
     /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
     /// surfaced so the user can see exactly what will run before approving it.
+    /// `effect` carries the tool's **declared effect** (`ToolEffect`) so a
+    /// renderer can say what the call may do to the user's machine from the
+    /// declaration the loop gates on — never from the tool's name. `None` only
+    /// when no declaration exists (a call to an unknown tool, which cannot
+    /// run); a declared effect is always carried whole, and the renderer — not
+    /// the loop — decides what the line claims from it.
     ToolRequested {
         name: String,
         #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
         arguments: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect: Option<ToolEffect>,
     },
     ToolCompleted {
         name: String,
@@ -106,7 +146,32 @@ pub enum AgentEvent {
     KnowledgeLearningSkipped {
         reason: LearningSkipReason,
     },
+    /// Post-turn extraction's per-session circuit breaker tripped: two
+    /// consecutive misses (a reply cut off at the output limit, or the
+    /// transport stalling or timing out) with no success or non-miss failure
+    /// between them. Emitted once, in the turn whose miss tripped it,
+    /// immediately after that turn's own
+    /// [`AgentEvent::KnowledgeLearningSkipped`] — never again this session.
+    /// From the next turn on the runtime makes **no** extraction request at
+    /// all: no [`AgentEvent::KnowledgeLearningStarted`], no provider call.
+    /// Recall and `/remember` are unaffected; only post-turn extraction
+    /// stops. `misses` is always 2 (the trip threshold); `model` is the
+    /// extraction model the misses were against.
+    KnowledgeLearningDisabled {
+        model: String,
+        misses: u32,
+    },
     Complete,
+    /// The token counts one provider call reported — one event per call that
+    /// reported any, named by `call` (every answering round is its own event;
+    /// the extraction call is a separate one). Emitted **only** when the
+    /// provider actually reported usage, so absence on the stream means
+    /// "unknown", not "cost nothing", and `usage` is carried verbatim: a
+    /// reported zero stays a number, an unreported one serializes `null`.
+    Usage {
+        call: UsageCall,
+        usage: TokenUsage,
+    },
     /// The model designated the SQL that answers the question — emitted once,
     /// at the terminal turn, so a headless reader can pair the prose answer
     /// with the query that produced it instead of guessing from the last query
@@ -138,111 +203,6 @@ pub enum AgentEvent {
     },
 }
 
-/// Why post-turn extraction was skipped after the gate admitted it
-/// (`AgentEvent::KnowledgeLearningSkipped`, spec packet-54 decision 1). Two
-/// unexpected outcomes — a timeout and an error — each surface; a gate decline
-/// is silent and has no variant here. `#[non_exhaustive]` so a future cause
-/// (e.g. a bounded-cancel) can be added without breaking serialization.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum LearningSkipReason {
-    /// Extraction exceeded the post-turn timeout. The turn's answer is already
-    /// in hand; learning is bounded so a long hang never gates the prompt.
-    TimedOut,
-    /// The provider, parse, or ingest step errored. Distinct from a timeout so a
-    /// render can name the right thing without re-deriving the outcome.
-    Failed,
-}
-
-impl AgentEvent {
-    pub fn assistant_text(text: impl Into<String>) -> Self {
-        Self::AssistantText { text: text.into() }
-    }
-
-    /// Builds one chain-of-thought delta event, mirroring [`AgentEvent::assistant_text`].
-    /// The caller is `receive`, forwarding a `ProviderEvent::ReasoningDelta` so the
-    /// turn's thinking crosses the crate boundary the same way the answer does.
-    /// Display is gated elsewhere; this event carries the text, it does not
-    /// decide whether to show it.
-    pub fn reasoning_text(text: impl Into<String>) -> Self {
-        Self::ReasoningText { text: text.into() }
-    }
-
-    pub fn tool_requested(name: impl Into<String>, arguments: serde_json::Value) -> Self {
-        Self::ToolRequested {
-            name: name.into(),
-            arguments,
-        }
-    }
-
-    /// Builds the per-turn `KnowledgeSupplied` event from recall's outcome, the
-    /// supplied contracts, and the count the bounds dropped.
-    pub fn knowledge_supplied(
-        outcome: KnowledgeOutcome,
-        contracts: Vec<SuppliedContractDto>,
-        dropped_by_bounds: usize,
-    ) -> Self {
-        Self::KnowledgeSupplied {
-            outcome,
-            contracts,
-            dropped_by_bounds,
-        }
-    }
-
-    /// Builds the per-proposal `KnowledgeProposed` event for one persisted
-    /// candidate claim. The caller is the propose tool, at the `Stored` arm.
-    pub fn knowledge_proposed(claim: ProposedClaimDto) -> Self {
-        Self::KnowledgeProposed { claim }
-    }
-
-    /// Builds the per-turn `KnowledgeOverridden` event carrying every finding
-    /// the detector raised across the turn's statements. The caller is the
-    /// runtime, after the loop drains the override log; an empty `findings`
-    /// means the caller emits nothing.
-    pub fn knowledge_overridden(findings: Vec<OverrideFindingDto>) -> Self {
-        Self::KnowledgeOverridden { findings }
-    }
-
-    /// Builds the per-turn `KnowledgeLearningSkipped` event the runtime emits
-    /// when the gate admitted extraction but it then timed out or errored (spec
-    /// packet-54). The caller is the runtime, after the loop; a gate decline
-    /// never calls this — declining is silent, and only an unexpected failure
-    /// surfaces.
-    pub fn knowledge_learning_skipped(reason: LearningSkipReason) -> Self {
-        Self::KnowledgeLearningSkipped { reason }
-    }
-
-    pub fn complete() -> Self {
-        Self::Complete
-    }
-
-    /// Builds the terminal `AnswerDesignated` event carrying the SQL the model
-    /// flagged as the answering query. Emitted once, at the terminal turn.
-    pub fn answer_designated(sql: impl Into<String>) -> Self {
-        Self::AnswerDesignated { sql: sql.into() }
-    }
-
-    /// Builds the `ConsensusDecided` event carrying the winning SQL (or `None`
-    /// when no winner emerged) and the vote tallies. Emitted once, after all
-    /// attempts, whenever more than one attempt ran.
-    pub fn consensus_decided(
-        sql: Option<String>,
-        attempts: usize,
-        voted: usize,
-        votes: usize,
-        margin: usize,
-        tied: bool,
-        probe_broke_tie: bool,
-    ) -> Self {
-        Self::ConsensusDecided {
-            sql,
-            attempts,
-            voted,
-            votes,
-            margin,
-            tied,
-            probe_broke_tie,
-        }
-    }
-}
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

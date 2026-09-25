@@ -1,8 +1,11 @@
+use super::super::session_facts::{SESSION_FACTS_HEADING, SessionFacts, session_facts_text};
+use super::super::turn_context::LAST_SQL_BLOCK_LABEL;
 use super::*;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{build_messages, turn_bytes};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
+use std::path::PathBuf;
 
 struct DummyConnector {
     dialect: SqlDialect,
@@ -84,7 +87,9 @@ fn memory_section_appears_under_assisted_and_absent_under_off() {
 #[test]
 fn assemble_system_prompt_single_connection_off() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Off, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None))
+            .expect("a prompt");
     // With one connection and memory off there is no context and no briefing —
     // but the model is still shown a catalog/schema/table tree by schema
     // discovery, so it still has to be told what SQL will accept.
@@ -95,7 +100,9 @@ fn assemble_system_prompt_single_connection_off() {
 #[test]
 fn assemble_system_prompt_single_connection_assisted() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(prompt.starts_with(MEMORY_SYSTEM_PROMPT));
     // A single PostgreSQL connection: the memory briefing, then its naming rule.
     assert!(prompt.contains("catalog.schema.object"));
@@ -107,7 +114,9 @@ fn assemble_system_prompt_single_connection_assisted() {
 #[test]
 fn assemble_system_prompt_with_last_sql_and_memory_off() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Off, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(!prompt.contains("durable knowledge"));
     assert!(
         !prompt.contains("most recent SQL you ran was"),
@@ -120,7 +129,9 @@ fn assemble_system_prompt_with_last_sql_and_memory_off() {
 #[test]
 fn assemble_system_prompt_with_last_sql_and_assisted() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(prompt.contains(MEMORY_SYSTEM_PROMPT));
     assert!(
         !prompt.contains("most recent SQL you ran was"),
@@ -133,12 +144,14 @@ fn assemble_system_prompt_with_last_sql_and_assisted() {
 #[test]
 fn assemble_system_prompt_multi_connection_assisted_and_sql() {
     let reg = multi_registry();
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None))
+            .expect("a prompt");
 
     // Contains all three sections in expected order.
     let conn_idx = prompt.find("Available database connections").unwrap();
     let mem_idx = prompt.find("SAYA maintains durable knowledge").unwrap();
-    let guidance_idx = prompt.find("Discover the schema").unwrap();
+    let guidance_idx = prompt.find("Multi-step work is expected").unwrap();
 
     assert!(conn_idx < mem_idx);
     assert!(mem_idx < guidance_idx);
@@ -161,7 +174,8 @@ fn assemble_system_prompt_multi_connection_assisted_and_sql() {
 #[test]
 fn assemble_system_prompt_stays_within_budget() {
     let reg = multi_registry();
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, true);
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, true, &facts(&reg, &None));
     assert!(prompt.is_some());
     let system_text = prompt.unwrap();
 
@@ -181,7 +195,9 @@ fn assemble_system_prompt_stays_within_budget() {
 #[test]
 fn memory_section_is_absent_when_memory_is_configured_on_but_unreachable() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Assisted, false).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Assisted, false, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(
         !prompt.contains("durable knowledge"),
         "memory is unreachable, so the briefing must not claim otherwise: {prompt}"
@@ -216,10 +232,12 @@ fn registry_with(dialect: SqlDialect) -> ConnectionRegistry {
 /// a wasted round trip on nearly every question before it corrects itself.
 #[test]
 fn the_naming_rule_matches_what_the_engine_accepts() {
-    let sqlite = assemble_system_prompt(
-        &registry_with(SqlDialect::Sqlite),
+    let sqlite_reg = registry_with(SqlDialect::Sqlite);
+    let sqlite = assemble_system_prompt_with_session(
+        &sqlite_reg,
         MemoryMode::Assisted,
         true,
+        &facts(&sqlite_reg, &None),
     )
     .expect("a prompt");
     assert!(
@@ -227,10 +245,12 @@ fn the_naming_rule_matches_what_the_engine_accepts() {
         "SQLite cannot parse a three-part name, so the prompt must not ask for one: {sqlite}"
     );
 
-    let postgres = assemble_system_prompt(
-        &registry_with(SqlDialect::Postgres),
+    let postgres_reg = registry_with(SqlDialect::Postgres);
+    let postgres = assemble_system_prompt_with_session(
+        &postgres_reg,
         MemoryMode::Assisted,
         true,
+        &facts(&postgres_reg, &None),
     )
     .expect("a prompt");
     assert!(
@@ -251,8 +271,13 @@ fn every_engine_is_still_told_to_qualify_names() {
         SqlDialect::DuckDb,
         SqlDialect::Snowflake,
     ] {
-        let prompt = assemble_system_prompt(&registry_with(dialect), MemoryMode::Assisted, true)
-            .expect("a prompt");
+        let prompt = assemble_system_prompt_with_session(
+            &registry_with(dialect),
+            MemoryMode::Assisted,
+            true,
+            &facts(&registry_with(dialect), &None),
+        )
+        .expect("a prompt");
         assert!(
             prompt.contains(dialect.qualified_name_form()),
             "{} must be told its own name form: {prompt}",
@@ -266,8 +291,13 @@ fn every_engine_is_still_told_to_qualify_names() {
 /// off, so the rule that keeps SQL valid has to be present either way.
 #[test]
 fn the_naming_rule_is_present_with_memory_off() {
-    let prompt = assemble_system_prompt(&registry_with(SqlDialect::Sqlite), MemoryMode::Off, false)
-        .expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &registry_with(SqlDialect::Sqlite),
+        MemoryMode::Off,
+        false,
+        &facts(&registry_with(SqlDialect::Sqlite), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains(SqlDialect::Sqlite.qualified_name_form()),
         "the SQL naming rule must survive memory being off: {prompt}"
@@ -281,24 +311,28 @@ fn the_naming_rule_is_present_with_memory_off() {
 /// A single connection is never named by `describe_context` (it stays silent
 /// for one connection), so the prompt itself must name the engine — the model
 /// is otherwise never told it is writing SQLite. The prompt must also coach
-/// multi-step work, refusing to repeat a failed query, and giving up with a
-/// reason when the question cannot be answered from this database.
+/// multi-step work, refusing to repeat a failed attempt, and giving up with a
+/// reason when the question cannot be answered from what the session offers.
 #[test]
 fn single_connection_prompt_names_engine_and_guides_giving_up() {
-    let prompt =
-        assemble_system_prompt(&registry_with(SqlDialect::Postgres), MemoryMode::Off, false)
-            .expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &registry_with(SqlDialect::Postgres),
+        MemoryMode::Off,
+        false,
+        &facts(&registry_with(SqlDialect::Postgres), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("postgresql"),
         "the engine must be named for a single connection: {prompt}"
     );
     assert!(
-        prompt.contains("multi-step"),
+        prompt.contains("Multi-step work is expected"),
         "the prompt must say multi-step work is expected: {prompt}"
     );
     assert!(
-        prompt.contains("Do not repeat a query that already failed"),
-        "the prompt must tell the model not to repeat a failed query: {prompt}"
+        prompt.contains("Do not repeat an attempt that already failed"),
+        "the prompt must tell the model not to repeat a failed attempt: {prompt}"
     );
     assert!(
         prompt.contains("Giving up with a reason"),
@@ -315,8 +349,13 @@ fn single_connection_prompt_names_engine_and_guides_giving_up() {
 /// answer, so the coaching must be present there too.
 #[test]
 fn multi_connection_prompt_also_guides_giving_up() {
-    let prompt =
-        assemble_system_prompt(&multi_registry(), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &multi_registry(),
+        MemoryMode::Off,
+        false,
+        &facts(&multi_registry(), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("Giving up with a reason"),
         "multi-connection prompt must also coach giving up: {prompt}"
@@ -329,8 +368,13 @@ fn multi_connection_prompt_also_guides_giving_up() {
 /// unconditionally alongside [`WORKING_GUIDANCE`].
 #[test]
 fn assembled_prompt_contains_the_answer_contract() {
-    let prompt =
-        assemble_system_prompt(&single_registry("main"), MemoryMode::Off, false).expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains(ANSWER_CONTRACT),
         "the answer contract must be part of every prompt: {prompt}"
@@ -352,7 +396,9 @@ fn answer_contract_present_regardless_of_connections_and_memory() {
         (multi_registry(), MemoryMode::Off, true),
     ];
     for (reg, mode, reachable) in cases {
-        let prompt = assemble_system_prompt(&reg, mode, reachable).expect("a prompt for this case");
+        let prompt =
+            assemble_system_prompt_with_session(&reg, mode, reachable, &facts(&reg, &None))
+                .expect("a prompt for this case");
         assert!(
             prompt.contains(ANSWER_CONTRACT),
             "answer contract missing for memory {}, reachable {reachable}: {prompt}",
@@ -366,6 +412,73 @@ fn answer_contract_present_regardless_of_connections_and_memory() {
 /// growing unbounded later. A new clause that crosses it must either tighten
 /// the wording or raise the ceiling deliberately.
 const ANSWER_CONTRACT_MAX_BYTES: usize = 1200;
+
+/// A measured class of benchmark failure: the agent gathers the operands of
+/// the computation a question asks for and stops, leaving the division or the
+/// subtraction to the reader. A question asking for a ratio or a percentage
+/// wants the quotient, not the two numbers it divides. Pinning the contract's
+/// compute directive here, not just in [`ANSWER_CONTRACT`], because the
+/// assembled prompt is what the model actually reads.
+#[test]
+fn answer_contract_directs_completing_a_computation_not_returning_its_operands() {
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
+    assert!(
+        prompt.contains("a ratio, a percentage, or a difference"),
+        "the directive must name the class of computations it covers: {prompt}"
+    );
+    assert!(
+        prompt.contains("compute that value and answer with it"),
+        "the contract must tell the model to finish the computation the question names: {prompt}"
+    );
+    // The directive targets the failure, not a query shape: the failures were
+    // correct operands handed back with the arithmetic left undone.
+    assert!(
+        prompt.contains("returning the operands alone stops one step short"),
+        "the directive must name the failure it fixes — stopping one step short: {prompt}"
+    );
+}
+
+/// A superlative names one thing. "Which driver had the fastest lap" has a
+/// single-row answer; handing back every driver ordered by lap time makes the
+/// reader find the answer the model already knew. The superlative clause is
+/// the same rule as the computation clause looked at from the other side: both
+/// are the agent stopping short of the value asked for.
+#[test]
+fn answer_contract_directs_a_superlative_to_name_one_row() {
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
+    assert!(
+        prompt.contains("\"the fastest\", \"the highest\", \"the top one\""),
+        "the directive must carry the examples the earlier contract was measured on: {prompt}"
+    );
+    // A superlative runs in both directions; "the fewest" keeps the rule from
+    // being read as a maximum only.
+    assert!(
+        prompt.contains("\"the fewest\""),
+        "the directive must cover a superlative in the other direction: {prompt}"
+    );
+    assert!(
+        prompt.contains("asks which one: answer with that row"),
+        "the contract must tell the model a superlative has a one-row answer: {prompt}"
+    );
+    // Ties are governed by the clause above: a superlative must not be read as
+    // permission to drop rows to manufacture a single answer.
+    assert!(
+        prompt.contains("Every row tied with it is part of the answer"),
+        "the one-row directive must not license dropping tied rows: {prompt}"
+    );
+}
 
 #[test]
 fn answer_contract_section_stays_under_documented_ceiling() {
@@ -387,12 +500,14 @@ fn answer_contract_section_stays_under_documented_ceiling() {
 
 /// The assembled system prompt must not contain the previous turn's SQL, for
 /// any input — the hint now lives on the user turn, so the system block is the
-/// same whether or not a query just ran. `assemble_system_prompt` takes no SQL,
+/// same whether or not a query just ran. The session-aware assembly takes no SQL,
 /// so the hint prose can never reach it; this locks that property.
 #[test]
 fn system_prompt_does_not_contain_the_previous_sql() {
     let reg = single_registry("main");
-    let prompt = assemble_system_prompt(&reg, MemoryMode::Off, true).expect("a prompt");
+    let prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None))
+            .expect("a prompt");
     assert!(
         !prompt.contains("most recent SQL you ran was"),
         "the SQL hint prose must not appear in the system prompt: {prompt}"
@@ -413,7 +528,8 @@ fn system_prompt_does_not_contain_the_previous_sql() {
 #[test]
 fn system_message_is_byte_identical_across_turns_differing_only_in_last_sql() {
     let reg = single_registry("main");
-    let system_prompt = assemble_system_prompt(&reg, MemoryMode::Off, true);
+    let system_prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None));
     let question = "refine the last query";
     // Turn A: no previous SQL. Turn B: a previous SQL hint on the user turn.
     let blocks_a: Vec<saya_agent::ContextBlock> = Vec::new();
@@ -449,8 +565,13 @@ fn system_message_is_byte_identical_across_turns_differing_only_in_last_sql() {
 /// declares.
 #[test]
 fn dialect_statement_names_the_connected_engine() {
-    let prompt = assemble_system_prompt(&registry_with(SqlDialect::Sqlite), MemoryMode::Off, false)
-        .expect("a prompt");
+    let prompt = assemble_system_prompt_with_session(
+        &registry_with(SqlDialect::Sqlite),
+        MemoryMode::Off,
+        false,
+        &facts(&registry_with(SqlDialect::Sqlite), &None),
+    )
+    .expect("a prompt");
     assert!(
         prompt.contains("The SQL dialect is sqlite's, whatever the DDL says"),
         "the dialect statement must name the connected engine: {prompt}"
@@ -468,7 +589,8 @@ fn dialect_statement_names_the_connected_engine() {
 #[test]
 fn last_sql_hint_reaches_user_turn_not_system_message() {
     let reg = single_registry("main");
-    let system_prompt = assemble_system_prompt(&reg, MemoryMode::Off, true);
+    let system_prompt =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, true, &facts(&reg, &None));
     let hint = last_sql_hint_block("SELECT 1 FROM tbl").expect("a hint block");
     let messages = build_messages(
         system_prompt.as_deref(),
@@ -509,4 +631,357 @@ fn last_sql_hint_block_is_none_for_empty_sql() {
     assert!(hint.body.contains("SELECT 1"));
     assert!(hint.body.contains("most recent SQL you ran was"));
     assert!(!hint.truncated);
+}
+
+// --- mode slice 5: what the model is told under Plan -----------------------
+//
+// Plan is enforced (hidden definitions, engine Deny, derived permits off),
+// advertised (absent from the tool list), reachable (`/mode`), visible
+// (the status segment) and durable — but the model was never told what Plan
+// means, so it could promise edits it cannot make. The fix is one appended
+// paragraph under Plan only. These tests pin: Build byte-identical to before,
+// Plan carrying the paragraph exactly once, and the append being the only
+// difference.
+
+use saya_agent::AgentMode;
+
+/// The Plan paragraph's bytes cannot drift unnoticed: pinned here and in
+/// `assemble_system_prompt_for_mode`.
+#[test]
+fn plan_paragraph_bytes_are_pinned() {
+    assert_eq!(
+        PLAN_SYSTEM_PROMPT,
+        "You are in Plan mode: investigate and answer with a plan. \
+        Write-shaped tools are absent from your tool list and would refuse if called; \
+        do not promise edits as if you had made them — describe the change you would make instead. \
+        Plan composes with the approval policy and never widens it."
+    );
+}
+
+/// Under Build the mode-aware prompt is byte-identical to the unmoded
+/// session-aware prompt for the same session inputs — the append-only Plan
+/// difference, asserted directly on the session-aware entry points.
+#[test]
+fn build_prompt_is_byte_identical_to_the_unmoded_prompt() {
+    for (reg, mode, reachable) in [
+        (single_registry("main"), MemoryMode::Off, false),
+        (single_registry("main"), MemoryMode::Assisted, true),
+        (single_registry("main"), MemoryMode::Assisted, false),
+        (multi_registry(), MemoryMode::Off, false),
+        (multi_registry(), MemoryMode::Assisted, true),
+        (multi_registry(), MemoryMode::Off, true),
+    ] {
+        assert_eq!(
+            assemble_system_prompt_for_mode(
+                &reg,
+                mode,
+                reachable,
+                &facts(&reg, &None),
+                AgentMode::Build
+            ),
+            assemble_system_prompt_with_session(&reg, mode, reachable, &facts(&reg, &None)),
+            "Build must be byte-identical to the unmoded prompt",
+        );
+    }
+}
+
+/// Under Plan the paragraph appears exactly once, and appending it is the
+/// only difference from Build.
+#[test]
+fn plan_prompt_appends_the_paragraph_exactly_once_and_nothing_else() {
+    for (reg, mode, reachable) in [
+        (single_registry("main"), MemoryMode::Off, false),
+        (single_registry("main"), MemoryMode::Assisted, true),
+        (multi_registry(), MemoryMode::Off, true),
+    ] {
+        let build = assemble_system_prompt_for_mode(
+            &reg,
+            mode,
+            reachable,
+            &facts(&reg, &None),
+            AgentMode::Build,
+        )
+        .expect("a prompt");
+        let plan = assemble_system_prompt_for_mode(
+            &reg,
+            mode,
+            reachable,
+            &facts(&reg, &None),
+            AgentMode::Plan,
+        )
+        .expect("a prompt");
+        assert_eq!(
+            plan.matches(PLAN_SYSTEM_PROMPT).count(),
+            1,
+            "the paragraph must appear exactly once: {plan}"
+        );
+        assert_eq!(
+            plan,
+            format!("{build}\n\n{PLAN_SYSTEM_PROMPT}"),
+            "appending the paragraph must be the only difference",
+        );
+    }
+}
+
+/// Pin: every `ANSWER_CONTRACT` bullet is byte-identical to `release/0.4.1`.
+/// Each clause fixes a measured class of benchmark failure; rewording risks
+/// regressions for zero truth gain, so a future tidy-up must trip here first.
+/// Only the header and the query-results scoping line may differ.
+#[test]
+fn answer_contract_bullets_are_byte_identical_to_release_0_4_1() {
+    let bullets = [
+        "- Return only the columns the question asks for; drop intermediate working columns.",
+        "- Do not round unless asked.",
+        "- Write dates as ISO YYYY-MM-DD.",
+        "- If the question asks for a ratio, a percentage, or a difference, compute that value and answer with it — returning the operands alone stops one step short.",
+        "- A superlative — \"the fastest\", \"the highest\", \"the top one\", \"the fewest\" — asks which one: answer with that row and the value that makes it so, not the ranking it came from. Every row tied with it is part of the answer.",
+        "- Answer every quantity the question names; if it asks for two things, answer both.",
+        "- Read measure words literally: \"volume\" is units, \"revenue\" is money.",
+        "- A qualifier on a metric is not a qualifier on the population — filter the metric, not the rows.",
+        "- Keep every row tied at a cut-off; never drop a tie to fit a limit.",
+        "- When a period is named, enumerate that whole period, not only the rows that happen to appear in the data.",
+    ];
+    for bullet in bullets {
+        assert!(
+            ANSWER_CONTRACT.contains(bullet),
+            "contract bullet changed or missing: {bullet}\n{ANSWER_CONTRACT}"
+        );
+    }
+    assert_eq!(
+        ANSWER_CONTRACT
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count(),
+        10,
+        "no bullet may be added or removed without tripping this pin: {ANSWER_CONTRACT}"
+    );
+}
+
+/// The column-selection rules are nonsense for a turn whose answer is "I wrote
+/// the file". The contract carries one scoping line limiting it to answers
+/// that report query results; every other answer is untouched.
+#[test]
+fn answer_contract_scopes_itself_to_query_results() {
+    assert!(
+        ANSWER_CONTRACT.contains("govern answers that report query results"),
+        "the contract must scope itself to query-result answers: {ANSWER_CONTRACT}"
+    );
+    assert!(
+        ANSWER_CONTRACT.contains("leave other answers untouched"),
+        "the contract must leave non-query answers alone: {ANSWER_CONTRACT}"
+    );
+}
+
+/// A workspace-only session has no database, so the assembled prompt must not
+/// assert "from this database" as the only place an answer can come from. The
+/// stopping rule covers whatever the session is actually working with.
+#[test]
+fn working_guidance_does_not_scope_answers_to_the_database() {
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
+    assert!(
+        !prompt.contains("from this database"),
+        "the stopping rule must cover the whole session, not just a database: {prompt}"
+    );
+}
+
+/// The schema-discovery advice is genuinely database counsel and stays — as
+/// the database case — in the assembled prompt of a database session.
+#[test]
+fn database_session_prompt_keeps_schema_discovery_advice() {
+    let prompt = assemble_system_prompt_with_session(
+        &single_registry("main"),
+        MemoryMode::Off,
+        false,
+        &facts(&single_registry("main"), &None),
+    )
+    .expect("a prompt");
+    assert!(
+        prompt.contains("discover the schema before you query it"),
+        "a database session must keep the schema-discovery advice: {prompt}"
+    );
+    assert!(
+        prompt.contains("a missing table or column"),
+        "a database session must keep the missing-table specifics: {prompt}"
+    );
+}
+
+/// The paragraph says what Plan means and how it is enforced, without
+/// overclaiming: it names Plan mode, the absent-then-refusing tools, the
+/// no-promised-edits rule, and the composition with the approval policy —
+/// and it never claims reads are unrestricted.
+#[test]
+fn plan_paragraph_says_the_mechanism_without_overclaiming_reads() {
+    let reg = single_registry("main");
+    let plan = assemble_system_prompt_for_mode(
+        &reg,
+        MemoryMode::Off,
+        false,
+        &facts(&reg, &None),
+        AgentMode::Plan,
+    )
+    .expect("a prompt");
+    assert!(
+        plan.contains("You are in Plan mode: investigate and answer with a plan"),
+        "must say the session is in Plan mode: {plan}"
+    );
+    assert!(
+        plan.contains("absent from your tool list and would refuse if called"),
+        "must state the honest mechanism — absent, and refusing if called: {plan}"
+    );
+    assert!(
+        plan.contains("describe the change you would make instead"),
+        "must tell it to describe the change, not promise made edits: {plan}"
+    );
+    assert!(
+        plan.contains("Plan composes with the approval policy and never widens it"),
+        "must state Plan composes with the policy: {plan}"
+    );
+    assert!(
+        !plan.contains("unrestricted"),
+        "must not claim reads are unrestricted: {plan}"
+    );
+}
+
+/// Slice 3 — session facts: what the session is, not what it may do.
+///
+/// The system prompt must orient the model — which connections are in scope,
+/// whether a workspace root is bound — without restating the tool list. The
+/// facts are session-stable inputs (the connection set, the bound root), so
+/// the section keeps one prefix-cache key across turns. Approval mode is out:
+/// it can change mid-session via `/approvals`, which would churn the key.
+fn facts<'a>(reg: &'a ConnectionRegistry, root: &'a Option<PathBuf>) -> SessionFacts<'a> {
+    SessionFacts {
+        registry: reg,
+        workspace_root: root.as_deref(),
+    }
+}
+
+/// A database-only session names its connection and says no workspace is
+/// bound — the model must not assume files it cannot see.
+#[test]
+fn database_only_session_names_connections_and_no_workspace() {
+    let reg = single_registry("main");
+    let text = session_facts_text(&facts(&reg, &None)).expect("a database session has facts");
+    assert!(
+        text.contains("main"),
+        "the facts must name the connection in scope: {text}"
+    );
+    assert!(
+        text.contains("No workspace is bound"),
+        "the facts must say no workspace is bound: {text}"
+    );
+}
+
+/// A workspace-only session names the root and does not claim a database.
+#[test]
+fn workspace_only_session_names_root_and_claims_no_database() {
+    let empty = ConnectionRegistry::new("main");
+    let root = Some(PathBuf::from("/repo"));
+    let text = session_facts_text(&facts(&empty, &root)).expect("a workspace session has facts");
+    assert!(
+        text.contains("/repo"),
+        "the facts must name the bound root: {text}"
+    );
+    assert!(
+        text.contains("No database is connected"),
+        "the facts must not imply a database is in scope: {text}"
+    );
+}
+
+/// Both bound: both are named.
+#[test]
+fn session_with_both_names_both() {
+    let reg = multi_registry();
+    let root = Some(PathBuf::from("/repo"));
+    let text = session_facts_text(&facts(&reg, &root)).expect("a session with both has facts");
+    assert!(text.contains("db1"), "both connections named: {text}");
+    assert!(text.contains("db2"), "both connections named: {text}");
+    assert!(text.contains("/repo"), "the root named: {text}");
+}
+
+/// Neither bound: no facts section at all — no empty heading. The legacy
+/// no-root entry point is the caller here, so `assemble_system_prompt` keeps
+/// a direct production-shaped caller alongside the session-aware paths.
+#[test]
+fn session_with_neither_produces_no_facts_section() {
+    let empty = ConnectionRegistry::new("main");
+    assert!(session_facts_text(&facts(&empty, &None)).is_none());
+    let prompt = assemble_system_prompt(&empty, MemoryMode::Off, false);
+    assert!(
+        !prompt
+            .as_deref()
+            .unwrap_or("")
+            .contains(SESSION_FACTS_HEADING),
+        "no empty facts heading may appear: {prompt:?}"
+    );
+}
+
+/// Byte-stability: the cache property, asserted directly.
+#[test]
+fn session_facts_are_byte_stable_for_the_same_session_inputs() {
+    let reg = multi_registry();
+    let root = Some(PathBuf::from("/repo"));
+    let first =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, false, &facts(&reg, &root));
+    let second =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, false, &facts(&reg, &root));
+    assert_eq!(
+        first, second,
+        "same session inputs must produce byte-identical prompts"
+    );
+}
+
+/// The facts section states facts about the session, never a tool
+/// inventory: the tool schemas are the authority on what is possible. (The
+/// adjacent multi-connection paragraph names query tools as its navigation
+/// instruction; that prose predates this section and is not the facts.)
+#[test]
+fn session_facts_name_no_tool() {
+    for tool in [
+        "workspace_write",
+        "workspace_edit",
+        "workspace_read",
+        "run_command",
+        "run_program",
+        "schema_discovery",
+    ] {
+        let single = single_registry("main");
+        let multi = multi_registry();
+        let empty = ConnectionRegistry::new("main");
+        let root = Some(PathBuf::from("/repo"));
+        for (reg, root) in [(&single, &None), (&multi, &root), (&empty, &root)] {
+            let text = session_facts_text(&facts(reg, root)).expect("session facts");
+            assert!(
+                !text.contains(tool),
+                "the facts section must not name the {tool} tool: {text}"
+            );
+        }
+    }
+}
+
+/// The session-aware prompt carries the facts. The workspace-less default
+/// entry point keeps its prior bytes only insofar as it passes an empty
+/// session; a single connection still yields a facts line naming the
+/// connection and saying no workspace is bound.
+#[test]
+fn session_aware_prompt_adds_facts() {
+    let reg = single_registry("main");
+    let root = Some(PathBuf::from("/repo"));
+    let with_session =
+        assemble_system_prompt_with_session(&reg, MemoryMode::Off, false, &facts(&reg, &root))
+            .expect("a prompt");
+    assert!(
+        with_session.contains(SESSION_FACTS_HEADING),
+        "the session-aware prompt carries the facts: {with_session}"
+    );
+    assert!(
+        with_session.contains("main") && with_session.contains("/repo"),
+        "the facts name the connection and the root: {with_session}"
+    );
 }

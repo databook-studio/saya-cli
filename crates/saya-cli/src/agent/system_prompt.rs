@@ -2,9 +2,27 @@
 //! model on its context and memory, and carry the last-SQL hint on the user
 //! turn (never the system prompt, where it would perturb the prefix cache).
 
+use super::session_facts::{SessionFacts, session_facts_text};
 use crate::connection::ConnectionRegistry;
-use saya_agent::ContextBlock;
+use saya_agent::AgentMode;
 use saya_config::MemoryMode;
+
+/// Plan-mode briefing, appended to the assembled system prompt under Plan
+/// only. It states what Plan means — investigate and answer with a plan —
+/// and the honest mechanism: write-shaped tools are absent from the model's
+/// tool list and would refuse if called. It tells the model not to promise
+/// edits as if made, and to describe the change it would make instead.
+///
+/// The closing sentence is load-bearing: Plan composes with the approval
+/// policy and never widens it, so the paragraph claims nothing about reads
+/// being unrestricted. What the paragraph *asks* of the model (ending with a
+/// plan) is prompt text, not enforcement; what is *enforced* is the hidden
+/// definitions, the engine `Deny` on non-read-shaped effects, and the derived
+/// write permits being off.
+pub(crate) const PLAN_SYSTEM_PROMPT: &str = "You are in Plan mode: investigate and answer with a plan. \
+    Write-shaped tools are absent from your tool list and would refuse if called; \
+    do not promise edits as if you had made them — describe the change you would make instead. \
+    Plan composes with the approval policy and never widens it.";
 
 /// Memory briefing prompt included when assisted memory mode is active.
 pub(crate) const MEMORY_SYSTEM_PROMPT: &str = "\
@@ -74,93 +92,95 @@ fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
 }
 
 /// Coaching that applies to every turn regardless of how many databases are
-/// connected: multi-step work is the norm, a failed query must not be repeated,
-/// and a question no connected database can answer must end with a stated reason
-/// rather than an endless loop. With no turn ceiling by default, the model
-/// giving up well is the primary stopping condition.
-const WORKING_GUIDANCE: &str = "Discover the schema before you query it; multi-step work is \
-    expected. Do not repeat a query that already failed — change your approach instead. When the \
-    question cannot be answered from this database, stop and say so, explaining what you tried and \
-    what is missing: a missing table or column, data that is not present, or a question the schema \
-    cannot express. Giving up with a reason is a correct outcome; looping is not.";
+/// connected: multi-step work is the norm, a failed attempt must not be
+/// repeated, and a question nothing in the session can answer must end with a
+/// stated reason rather than an endless loop. With no turn ceiling by default,
+/// the model giving up well is the primary stopping condition. The database
+/// specifics — schema discovery first, missing tables and columns — stay as
+/// the database case of that rule.
+const WORKING_GUIDANCE: &str = "Multi-step work is expected. Do not repeat an attempt that already \
+    failed — change your approach instead. When working with a database, discover the schema before \
+    you query it. When the question cannot be answered from what is available in this session, stop \
+    and say so, explaining what you tried and what is missing: a missing table or column, data that \
+    is not present, or a question the schema cannot express. Giving up with a reason is a correct \
+    outcome; looping is not.";
 
 /// The shape an answer must take. [`WORKING_GUIDANCE`] tells the model how to
 /// proceed; this tells it how to present the result. Each clause fixes a
 /// measured class of benchmark failure where the numbers were right and the
 /// presentation was wrong: extra working columns, rounding the question never
-/// asked for, non-ISO dates, a ranking where a single row was asked for, one
-/// quantity answered where several were named, a measure word read loosely, a
-/// metric qualifier applied to the whole population, a tie broken to fit a
-/// limit, and a named period replaced by the rows that happened to appear.
-/// Plain rules, no examples — this text rides on every request.
-const ANSWER_CONTRACT: &str = "Answer the question exactly as asked:\n\
+/// asked for, non-ISO dates, the operands of a computation handed back instead
+/// of the computation the question named, a superlative answered with the
+/// ranking it came from, one quantity answered where several were named, a
+/// measure word read loosely, a metric qualifier applied to the whole
+/// population, a tie broken to fit a limit, and a named period replaced by the
+/// rows that happened to appear. Plain rules, no examples — this text rides on
+/// every request.
+const ANSWER_CONTRACT: &str = "Answer the question exactly as asked. These rules govern answers that report query results, and leave other answers untouched:\n\
     - Return only the columns the question asks for; drop intermediate working columns.\n\
     - Do not round unless asked.\n\
     - Write dates as ISO YYYY-MM-DD.\n\
-    - \"The highest\" or \"the top one\" means that single row, not the ranking it came from.\n\
+    - If the question asks for a ratio, a percentage, or a difference, compute that value and answer with it — returning the operands alone stops one step short.\n\
+    - A superlative — \"the fastest\", \"the highest\", \"the top one\", \"the fewest\" — asks which one: answer with that row and the value that makes it so, not the ranking it came from. Every row tied with it is part of the answer.\n\
     - Answer every quantity the question names; if it asks for two things, answer both.\n\
     - Read measure words literally: \"volume\" is units, \"revenue\" is money.\n\
     - A qualifier on a metric is not a qualifier on the population — filter the metric, not the rows.\n\
     - Keep every row tied at a cut-off; never drop a tie to fit a limit.\n\
     - When a period is named, enumerate that whole period, not only the rows that happen to appear in the data.";
 
-/// Whether this turn can honour what the memory section promises.
-///
-/// The section tells the model that confirmed facts are already in context and
-/// that two named tools are available. Both are only true when the state store
-/// opened *and* the privacy gate is open — with either shut, recall never ran
-/// and the contract tools are not advertised. Briefing the model anyway would
-/// have it look for supplied facts that are not there and call tools it does
-/// not have, which is a worse failure than saying nothing.
-pub(crate) fn memory_reachable(has_state_store: bool, allow_query_data: bool) -> bool {
-    has_state_store && allow_query_data
-}
-
-/// Hint prose for adapting the most recent executed SQL query. Carried on the
-/// user turn as a [`ContextBlock`] body (see [`last_sql_hint_block`]) — never in
-/// the system prompt, where it would change on every follow-up that ran SQL and
-/// forfeit the provider's prefix cache.
-fn last_sql_hint(sql: &str) -> String {
-    format!(
-        "For context, the most recent SQL you ran was:\n{sql}\n\nIf the user's request \
-         refines, filters, sorts, or drills into that previous result, adapt this query \
-         instead of rediscovering the schema from scratch."
-    )
-}
-
-/// Label for the last-SQL hint context block, which rides the user turn beside
-/// the recall context block.
-pub(crate) const LAST_SQL_BLOCK_LABEL: &str = "last-sql";
-
-/// Builds the user-turn context block carrying the most recent SQL, so the
-/// model can adapt it without the hint polluting the session-stable system
-/// prompt. Returns `None` for empty/whitespace SQL. The body is untrusted data
-/// rendered into the user turn by `saya_agent::build_messages` (quoted,
-/// labelled, escaped) — never the system message.
-pub(crate) fn last_sql_hint_block(sql: &str) -> Option<ContextBlock> {
-    if sql.trim().is_empty() {
-        return None;
-    }
-    Some(ContextBlock {
-        label: LAST_SQL_BLOCK_LABEL.to_string(),
-        body: last_sql_hint(sql),
-        truncated: false,
-    })
-}
+pub(crate) use super::turn_context::{last_sql_hint_block, memory_reachable};
 
 /// Assembles the system prompt for a turn from connection registry context,
-/// the memory briefing (if assisted and reachable), working guidance, the answer
-/// contract, and the engine naming/dialect section.
+/// the memory briefing (if assisted and reachable), the session facts (what
+/// the session is — connections in scope, bound workspace root — never what
+/// the model may do), working guidance, the answer contract, and the engine
+/// naming/dialect section.
 ///
-/// This is **session-stable**: the same connections, memory mode, and reachability
-/// produce a byte-identical system prompt across turns. The per-turn last-SQL
-/// hint is deliberately absent — it rides the user turn as a context block (see
-/// [`last_sql_hint_block`]) so it never perturbs the system block a provider's
-/// prefix cache is keyed on.
+/// This entry point passes an empty session (no workspace root): it keeps
+/// the pre-session-facts bytes for callers without a root. The session-aware
+/// variant is [`assemble_system_prompt_with_session`]; production threads the
+/// session's bound root through it.
+///
+/// Both are **session-stable**: the same connections, memory mode,
+/// reachability, and session facts produce a byte-identical system prompt
+/// across turns. The per-turn last-SQL hint is deliberately absent — it rides
+/// the user turn as a context block (see [`last_sql_hint_block`]) so it never
+/// perturbs the system block a provider's prefix cache is keyed on.
+/// Mid-session connection or root changes recompute the block once and pay
+/// one cache miss; per-turn volatile content must never enter here.
+///
+/// This is the Build prompt: the mode-aware entry point is
+/// [`assemble_system_prompt_for_mode`], which returns this unchanged under
+/// [`AgentMode::Build`] and appends [`PLAN_SYSTEM_PROMPT`] under
+/// [`AgentMode::Plan`] — the append is the only difference.
+///
+/// Three-argument entry point: an empty session (no workspace root) passed
+/// into [`assemble_system_prompt_with_session`]. Production always threads
+/// the session's bound root through the session-aware entry points; this
+/// stays as the documented no-root shape. Called by the empty-session
+/// session-facts test, so the no-root shape keeps a direct caller.
 pub(crate) fn assemble_system_prompt(
     registry: &ConnectionRegistry,
     memory_mode: MemoryMode,
     memory_reachable: bool,
+) -> Option<String> {
+    let empty = SessionFacts {
+        registry,
+        workspace_root: None,
+    };
+    assemble_system_prompt_with_session(registry, memory_mode, memory_reachable, &empty)
+}
+
+/// Session-aware variant of [`assemble_system_prompt`]: the same sections
+/// plus the session-facts section (connections in scope, bound workspace
+/// root) rendered from `session`. The caller holds `session` stable across
+/// the turns of one session — same inputs, byte-identical bytes — so the
+/// system block keeps one prefix-cache key.
+pub(crate) fn assemble_system_prompt_with_session(
+    registry: &ConnectionRegistry,
+    memory_mode: MemoryMode,
+    memory_reachable: bool,
+    session: &SessionFacts<'_>,
 ) -> Option<String> {
     let base = registry.describe_context();
     let memory = if memory_reachable {
@@ -175,6 +195,9 @@ pub(crate) fn assemble_system_prompt(
     }
     if let Some(m) = memory {
         sections.push(m.to_string());
+    }
+    if let Some(f) = session_facts_text(session) {
+        sections.push(f);
     }
     sections.push(WORKING_GUIDANCE.to_string());
     sections.push(ANSWER_CONTRACT.to_string());
@@ -191,6 +214,28 @@ pub(crate) fn assemble_system_prompt(
         None
     } else {
         Some(sections.join("\n\n"))
+    }
+}
+
+/// Assembles the system prompt for a turn under an [`AgentMode`]: the Build
+/// prompt from [`assemble_system_prompt`], unchanged, plus — under Plan only —
+/// the [`PLAN_SYSTEM_PROMPT`] paragraph appended as its own section. The
+/// append is the only difference: under Build the result is byte-identical to
+/// [`assemble_system_prompt`]. Mode-aware entry point over
+/// [`assemble_system_prompt`]: the Plan-pinned tests read the real assembly
+/// through it.
+pub(crate) fn assemble_system_prompt_for_mode(
+    registry: &ConnectionRegistry,
+    memory_mode: MemoryMode,
+    memory_reachable: bool,
+    session: &SessionFacts<'_>,
+    agent_mode: AgentMode,
+) -> Option<String> {
+    let prompt =
+        assemble_system_prompt_with_session(registry, memory_mode, memory_reachable, session)?;
+    match agent_mode {
+        AgentMode::Build => Some(prompt),
+        AgentMode::Plan => Some(format!("{prompt}\n\n{PLAN_SYSTEM_PROMPT}")),
     }
 }
 

@@ -1,4 +1,45 @@
+use futures_util::StreamExt;
 use serde_json::Value;
+
+/// Maximum response body retained while decoding a connector HTTP response.
+/// Result rows have a separate byte budget, but the wire envelope must be
+/// bounded before JSON deserialisation can allocate it.
+pub(crate) const MAX_HTTP_BODY_BYTES: usize = 16 << 20;
+/// Error pages are only inspected for a small, vetted diagnostic fragment.
+pub(crate) const MAX_HTTP_ERROR_BYTES: usize = 64 << 10;
+
+/// Reads an HTTP body incrementally so a peer cannot make reqwest buffer an
+/// arbitrarily large response before the connector applies its result bound.
+pub(crate) async fn read_bytes(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ()> {
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| ())?;
+        append_body(&mut body, &chunk, max_bytes)?;
+    }
+    Ok(body)
+}
+
+fn append_body(body: &mut Vec<u8>, chunk: &[u8], max_bytes: usize) -> Result<(), ()> {
+    if body.len().saturating_add(chunk.len()) > max_bytes {
+        return Err(());
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
+}
+
+pub(crate) async fn read_text(response: reqwest::Response, max_bytes: usize) -> Result<String, ()> {
+    let body = read_bytes(response, max_bytes).await?;
+    String::from_utf8(body).map_err(|_| ())
+}
+
+pub(crate) async fn read_json(response: reqwest::Response, max_bytes: usize) -> Result<Value, ()> {
+    let body = read_bytes(response, max_bytes).await?;
+    serde_json::from_slice(&body).map_err(|_| ())
+}
 
 pub(crate) const MAX_CELL_BYTES: usize = 1 << 20;
 pub(crate) const MAX_RESULT_BYTES: usize = 16 << 20;
@@ -163,5 +204,13 @@ mod tests {
             result_bytes <= max_allowed,
             "Accumulation must stop immediately after crossing budget, got {result_bytes} vs max allowed {max_allowed}"
         );
+    }
+
+    #[test]
+    fn body_budget_is_checked_across_chunks() {
+        let mut body = Vec::new();
+        append_body(&mut body, b"12", 3).unwrap();
+        assert!(append_body(&mut body, b"34", 3).is_err());
+        assert_eq!(body, b"12");
     }
 }

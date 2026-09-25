@@ -24,8 +24,9 @@ use saya_agent::{
     SuppliedClaimDto, SuppliedContractDto, ToolCall,
 };
 use saya_config::{
-    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig, ResolvedMemory,
-    ThemeChoice,
+    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
+    ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
+    ResolvedRunnerJobs, ThemeChoice,
 };
 use saya_store::{KnowledgeItemRequest, KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -231,20 +232,35 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
                 timeout_seconds: 60,
                 idle_timeout_seconds: 90,
                 max_output_tokens: 4096,
+                max_output_tokens_is_default: true,
                 context_byte_budget: 256 * 1024,
+                context_window_tokens: None,
                 show_thinking: false,
+                compaction: saya_config::CompactionMode::Auto,
                 retry_delays_ms: vec![250, 500, 1000],
             },
             max_rows: 100,
             read_only: true,
             max_iterations: 4,
             candidates: 1,
+            jobs: ResolvedJobs {
+                wall_clock_seconds: None,
+                tokens_per_endpoint: BTreeMap::new(),
+                turns: Some(4),
+                tool_calls: None,
+                fetch: ResolvedFetchJobs::default(),
+                interpreter: ResolvedInterpreterJobs::default(),
+                runner: ResolvedRunnerJobs::default(),
+            },
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
             ui_theme: ThemeChoice::Auto,
             memory,
+            host_commands: ResolvedHostCommands::default(),
+            session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            endpoints: BTreeMap::new(),
         },
         connections: Default::default(),
         config_path: None,
@@ -297,6 +313,7 @@ impl AgentEventSink for RecordingSink {
 struct AnswerProvider {
     answer: &'static str,
     log: Arc<Mutex<Vec<&'static str>>>,
+    seen_system_prompt: Mutex<Option<Option<String>>>,
 }
 
 #[async_trait]
@@ -304,8 +321,15 @@ impl ChatProvider for AnswerProvider {
     fn name(&self) -> &str {
         "answer"
     }
-    async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.log.lock().unwrap().push("provider");
+        *self.seen_system_prompt.lock().unwrap() = Some(
+            request
+                .messages
+                .iter()
+                .find(|m| m.role == "system")
+                .map(|m| m.content.clone()),
+        );
         Ok(ChatResponse::new(ChatMessage::text(
             "assistant",
             self.answer,
@@ -351,6 +375,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
+        seen_system_prompt: Mutex::new(None),
     };
     let inputs = TurnInputs {
         ai: ResolvedAi {
@@ -363,8 +388,11 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -378,12 +406,15 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .unwrap();
@@ -452,6 +483,7 @@ async fn knowledge_supplied_precedes_the_provider_request() {
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
+        seen_system_prompt: Mutex::new(None),
     };
     let inputs = TurnInputs {
         ai: ResolvedAi {
@@ -464,8 +496,11 @@ async fn knowledge_supplied_precedes_the_provider_request() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -479,12 +514,15 @@ async fn knowledge_supplied_precedes_the_provider_request() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .unwrap();
@@ -673,6 +711,7 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
     let provider = AnswerProvider {
         answer: "done anyway",
         log: log.clone(),
+        seen_system_prompt: Mutex::new(None),
     };
     let inputs = TurnInputs {
         ai: ResolvedAi {
@@ -685,8 +724,11 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -700,12 +742,15 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await;
 
@@ -896,8 +941,11 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -937,12 +985,15 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
         "table orders has alias orders",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store.clone()),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -986,6 +1037,233 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// The extraction call's own token report reaches the event stream named as an
+/// extraction call. A turn may spend tokens on the answer and on the post-turn
+/// extraction, and they bill differently, so a consumer must be able to tell
+/// the two apart — the answering rounds' events are emitted by the agent loop,
+/// this one by the runtime that owns the extraction call. Emitted **before**
+/// the outcome events (proposals, skip reasons), matching how a tool's cost is
+/// reported before what it produced.
+#[tokio::test]
+async fn the_extraction_call_reports_its_usage_on_the_stream() {
+    let root = temp_root("extraction_usage");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let extraction_with_usage = ChatResponse::new(ChatMessage::text(
+        "assistant",
+        r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
+    ));
+    let mut extraction_response = extraction_with_usage;
+    extraction_response.usage = Some(saya_agent::TokenUsage::new(40, 10));
+
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+            timeout_seconds: 60,
+            idle_timeout_seconds: 90,
+            max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
+            context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
+            show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
+            retry_delays_ms: vec![250, 500, 1000],
+        },
+        provider: Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: {
+                let mut call = ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({
+                            "connection": "analytics",
+                            "sql": "SELECT id, status FROM catalog.public.orders",
+                        }),
+                    }],
+                    tool_call_id: None,
+                });
+                call.usage = Some(saya_agent::TokenUsage::new(10, 4));
+                let mut answer = ChatResponse::new(ChatMessage::text(
+                    "assistant",
+                    "The orders table contains customer orders.",
+                ));
+                answer.usage = Some(saya_agent::TokenUsage::new(25, 30));
+                vec![call, answer]
+            },
+            extraction_response: Ok(extraction_response),
+            extraction_calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(assisted_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "table orders has alias orders",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store.clone()),
+        None,
+        None,
+        None,
+        saya_agent::AgentMode::Build,
+    )
+    .await
+    .expect("turn completes");
+
+    let captured = events.lock().unwrap();
+    let extraction_usage: Vec<saya_agent::TokenUsage> = captured
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Usage {
+                call: saya_agent::UsageCall::Extraction,
+                usage,
+            } => Some(*usage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        extraction_usage.len(),
+        1,
+        "exactly one extraction usage event: {captured:?}"
+    );
+    assert_eq!(extraction_usage[0].input_tokens, 40);
+    assert_eq!(extraction_usage[0].output_tokens, 10);
+
+    // The answering rounds' reports are on the same stream, named differently,
+    // so the two call kinds cannot be confused.
+    let answering = captured
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                AgentEvent::Usage {
+                    call: saya_agent::UsageCall::Answer,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert!(
+        answering >= 1,
+        "the answering calls report too, under their own name: {captured:?}"
+    );
+
+    // The extraction report precedes the outcome events it belongs to.
+    let usage_index = captured
+        .iter()
+        .position(|event| matches!(event, AgentEvent::Usage { .. }))
+        .expect("a usage event exists");
+    let proposed_index = captured
+        .iter()
+        .position(|event| matches!(event, AgentEvent::KnowledgeProposed { .. }))
+        .expect("a proposal was emitted");
+    assert!(
+        usage_index < proposed_index,
+        "usage is reported before the proposals it cost: {captured:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// An extraction call that produced no response (here: a provider error) emits
+/// no usage event — no response means no report, and inventing a zero would
+/// read as a free call the provider never accounted.
+#[tokio::test]
+async fn an_extraction_with_no_response_emits_no_usage_event() {
+    let root = temp_root("extraction_no_usage");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+            timeout_seconds: 60,
+            idle_timeout_seconds: 90,
+            max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
+            context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
+            show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
+            retry_delays_ms: vec![250, 500, 1000],
+        },
+        provider: Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: vec![ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "The orders table contains customer orders.",
+            ))],
+            extraction_response: Err(ProviderError::Request("extraction blew up".into())),
+            extraction_calls: Mutex::new(0),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(assisted_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "table orders has alias orders",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store.clone()),
+        None,
+        None,
+        None,
+        saya_agent::AgentMode::Build,
+    )
+    .await
+    .expect("turn completes despite the extraction failure");
+
+    let captured = events.lock().unwrap();
+    assert!(
+        captured.iter().all(|event| !matches!(
+            event,
+            AgentEvent::Usage {
+                call: saya_agent::UsageCall::Extraction,
+                ..
+            }
+        )),
+        "no extraction response means no extraction usage event: {captured:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 /// 2. Mock provider returns error during extraction; agent output is returned successfully and unaffected (Safety Property 1).
 #[tokio::test]
 async fn test_runtime_extraction_failure_never_fails_turn() {
@@ -1010,8 +1288,11 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -1048,12 +1329,15 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
         "table orders has alias orders",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store.clone()),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes despite extraction failure (fail-soft)");
@@ -1133,8 +1417,11 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SharedProvider(provider.clone())),
@@ -1150,12 +1437,15 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
         "table orders has alias orders",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store.clone()),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -1173,7 +1463,7 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
 /// 4. Asserts contract_propose is absent from DatabaseTools::definitions(...).
 #[test]
 fn test_contract_propose_tool_not_advertised_to_model() {
-    let tools = super::tools::DatabaseTools::definitions(true, true, true);
+    let tools = super::tools::DatabaseTools::definitions(true, true, true, false, true);
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
     assert!(
         !names.contains(&"contract_propose"),
@@ -1227,8 +1517,11 @@ async fn test_anti_self_reinforcement_end_to_end() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -1271,12 +1564,15 @@ async fn test_anti_self_reinforcement_end_to_end() {
         "show me orders",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store.clone()),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -1312,6 +1608,7 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
+        seen_system_prompt: Mutex::new(None),
     };
     let identity = identity_for("analytics");
     let inputs = TurnInputs {
@@ -1325,8 +1622,11 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -1342,12 +1642,15 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         None,
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .unwrap();
@@ -1361,6 +1664,123 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
         })
         .expect("KnowledgeSupplied present");
     assert_eq!(outcome, KnowledgeOutcome::Off);
+}
+
+/// Slice 3 — the session-aware system prompt reaches the provider: a session
+/// turn names its connection and the session's bound root in the system
+/// message, while a session-less turn says no workspace is bound. The
+/// provider records the system message it saw, so this asserts the wiring —
+/// not just the rendering — end to end through `run_prompt_with_inputs`.
+#[tokio::test]
+async fn session_turn_system_prompt_names_connection_and_workspace_root() {
+    use crate::interactive::session_universe::SessionUniverse;
+
+    let answer_seen: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
+    struct CapturingProvider {
+        answer_seen: Arc<Mutex<Option<Option<String>>>>,
+    }
+    #[async_trait]
+    impl ChatProvider for CapturingProvider {
+        fn name(&self) -> &str {
+            "capturing"
+        }
+        async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            *self.answer_seen.lock().unwrap() = Some(
+                request
+                    .messages
+                    .iter()
+                    .find(|m| m.role == "system")
+                    .map(|m| m.content.clone()),
+            );
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
+        }
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let project =
+        std::env::temp_dir().join(format!("saya-facts-project-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(project.join(".git")).unwrap();
+    let state_dir =
+        std::env::temp_dir().join(format!("saya-facts-state-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(&state_dir).unwrap();
+
+    let runtime = test_runtime(default_memory());
+    let identity = identity_for("analytics");
+    let seen = Arc::clone(&answer_seen);
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+            timeout_seconds: 60,
+            idle_timeout_seconds: 90,
+            max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
+            context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
+            show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
+            retry_delays_ms: vec![250, 500, 1000],
+        },
+        provider: Box::new(CapturingProvider {
+            answer_seen: Arc::clone(&answer_seen),
+        }),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events,
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let session = Arc::new(
+        SessionUniverse::compose(&runtime, None, None, true, &project, &state_dir)
+            .expect("the session universe composes"),
+    );
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        None,
+        None,
+        None,
+        Some(Arc::clone(&session)),
+        saya_agent::AgentMode::Build,
+    )
+    .await
+    .expect("turn completes");
+    let system = seen
+        .lock()
+        .unwrap()
+        .clone()
+        .flatten()
+        .expect("a system message");
+    assert!(
+        system.contains("Session facts"),
+        "the session turn carries the facts section: {system}"
+    );
+    assert!(
+        system.contains("analytics"),
+        "the facts name the connection in scope: {system}"
+    );
+    assert!(
+        system.contains(&project.canonicalize().unwrap().display().to_string()),
+        "the facts name the session's bound root: {system}"
+    );
+    let _ = fs::remove_dir_all(&project);
+    let _ = fs::remove_dir_all(&state_dir);
 }
 
 // ===========================================================================
@@ -1379,6 +1799,7 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
+        seen_system_prompt: Mutex::new(None),
     };
     let identity = identity_for("analytics");
     let inputs = TurnInputs {
@@ -1392,8 +1813,11 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(provider),
@@ -1407,12 +1831,15 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         None,
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .unwrap();
@@ -1585,8 +2012,11 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -1603,6 +2033,7 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
@@ -1610,6 +2041,8 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -1656,8 +2089,11 @@ async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -1674,12 +2110,15 @@ async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -1716,8 +2155,11 @@ async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -1734,12 +2176,15 @@ async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -1777,8 +2222,11 @@ async fn a_candidate_claim_contradicted_emits_nothing() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -1795,12 +2243,15 @@ async fn a_candidate_claim_contradicted_emits_nothing() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -1846,8 +2297,11 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(QueryProvider {
@@ -1864,12 +2318,15 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
         "orders by month",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -1884,33 +2341,135 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
 }
 
 // ===========================================================================
-// Spec packet-54: a turn whose post-turn extraction times out or errors must
-// say so (KnowledgeLearningSkipped). Today it is silent — the red tests below
-// assert the event fires AND the turn still completes. The gate-declined case
-// emits nothing (decision 2).
-//
-// The timeout test sleeps *past* the production `EXTRACTION_TIMEOUT` constant
-// (15s) — the spec mandates a documented, bounded constant and a test that
-// sleeps past it, so this is one ~15s test by design, not a parameterized
-// shortcut. The extraction call is distinguished from the turn call by the
-// `precision schema knowledge extractor` system-prompt marker, the same stable
-// marker `TurnAndExtractionProvider` relies on above.
+// No extraction ceiling; the per-session circuit breaker (owner decisions
+// 1-3). Post-turn extraction is awaited directly — no `tokio::time::timeout`
+// — and a session's extraction disables itself after two consecutive misses
+// (a truncated reply or a stalled/timed-out transport), announced once via
+// `KnowledgeLearningDisabled`. The extraction call is distinguished from the
+// turn call by the `precision schema knowledge extractor` system-prompt
+// marker, the same stable marker `TurnAndExtractionProvider` relies on above.
 // ===========================================================================
 
-/// A provider that answers the turn normally but sleeps past the extraction
-/// timeout when called for extraction, so the runtime's `tokio::time::timeout`
-/// fires. Reuses the turn-steps + extraction-marker shape of
-/// `TurnAndExtractionProvider`.
-struct SleepingExtractionProvider {
+/// Two turn steps — a `bounded_sql_query` call (object activity) followed by
+/// a non-trivial answer — so the gate admits extraction the same way
+/// `TurnAndExtractionProvider`'s callers above do.
+fn breaker_turn_steps(answer: &'static str) -> Vec<ChatResponse> {
+    vec![
+        ChatResponse::new(ChatMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                id: "call-1".into(),
+                name: "bounded_sql_query".into(),
+                arguments: serde_json::json!({
+                    "connection": "analytics",
+                    "sql": "SELECT id, status FROM catalog.public.orders",
+                }),
+            }],
+            tool_call_id: None,
+        }),
+        ChatResponse::new(ChatMessage::text("assistant", answer)),
+    ]
+}
+
+/// The `TurnInputs` every breaker test shares: only the provider varies.
+fn breaker_inputs(provider: Box<dyn ChatProvider>, identity: &ProfileIdentity) -> TurnInputs {
+    TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+            timeout_seconds: 60,
+            idle_timeout_seconds: 90,
+            max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
+            context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
+            show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
+            retry_delays_ms: vec![250, 500, 1000],
+        },
+        provider,
+        registry: registry_for("analytics", identity),
+        failures: Vec::new(),
+    }
+}
+
+/// Runs one breaker-test turn against the shared harness shape, returning the
+/// captured events and the turn's answer.
+#[allow(clippy::too_many_arguments)]
+async fn run_breaker_turn(
+    runtime: &RuntimeConfig,
+    provider: Box<dyn ChatProvider>,
+    identity: &ProfileIdentity,
+    store: SqliteStateStore,
+    session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+) -> (Vec<AgentEvent>, String) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let inputs = breaker_inputs(provider, identity);
+    let out = run_prompt_with_inputs(
+        runtime,
+        inputs,
+        "table orders has alias orders",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+        session,
+        saya_agent::AgentMode::Build,
+    )
+    .await
+    .expect("turn completes (fail-soft)");
+    let captured = events.lock().unwrap().clone();
+    (captured, out.answer)
+}
+
+fn disabled_event(events: &[AgentEvent]) -> Option<(&str, u32)> {
+    events.iter().find_map(|event| match event {
+        AgentEvent::KnowledgeLearningDisabled { model, misses } => Some((model.as_str(), *misses)),
+        _ => None,
+    })
+}
+
+fn skipped_reasons(events: &[AgentEvent]) -> Vec<LearningSkipReason> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::KnowledgeLearningSkipped { reason } => Some(*reason),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A provider that answers the turn normally, then — for the extraction
+/// call — waits briefly before returning a valid proposal. Tokio's paused
+/// clock (`#[tokio::test(start_paused = true)]`) is not reachable here: the
+/// workspace's `tokio` dependency does not enable the `test-util` feature
+/// (Cargo.toml is outside this packet's owned paths), so this uses a short
+/// real sleep instead of simulating minutes. What is asserted is unchanged
+/// either way: the runtime awaits the call to completion — no
+/// `tokio::time::timeout` races it — and the proposal it returns is stored.
+struct SlowExtractionProvider {
     turn_step: Mutex<usize>,
     turn_steps: Vec<ChatResponse>,
-    extraction_calls: Mutex<usize>,
 }
 
 #[async_trait]
-impl ChatProvider for SleepingExtractionProvider {
+impl ChatProvider for SlowExtractionProvider {
     fn name(&self) -> &str {
-        "sleeping-extraction-provider"
+        "slow-extraction-provider"
     }
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let is_extraction = request
@@ -1919,18 +2478,10 @@ impl ChatProvider for SleepingExtractionProvider {
             .map(|m| m.content.contains("precision schema knowledge extractor"))
             .unwrap_or(false);
         if is_extraction {
-            {
-                let mut calls = self.extraction_calls.lock().unwrap();
-                *calls += 1;
-            }
-            // Sleep past the production timeout so `tokio::time::timeout` fires.
-            tokio::time::sleep(
-                super::super::learning::EXTRACTION_TIMEOUT + std::time::Duration::from_secs(1),
-            )
-            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             Ok(ChatResponse::new(ChatMessage::text(
                 "assistant",
-                r#"{"proposals": []}"#,
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
             )))
         } else {
             let mut step = self.turn_step.lock().unwrap();
@@ -1945,102 +2496,412 @@ impl ChatProvider for SleepingExtractionProvider {
     }
 }
 
-/// One turn that issues a `bounded_sql_query` (object activity + non-trivial
-/// answer) so the gate admits extraction, then the extraction call sleeps past
-/// the timeout. Asserts `KnowledgeLearningSkipped { TimedOut }` is emitted and
-/// the turn still completes with its answer (Safety Property 1: fail-soft).
+/// Red test 1: a slow extraction is awaited, not cut off. There is no
+/// wall-clock ceiling any more (owner decision 1) — the call above takes
+/// long enough to prove it is genuinely awaited, and its proposal is stored;
+/// no `KnowledgeLearningSkipped` fires.
 #[tokio::test]
-async fn a_turn_whose_extraction_times_out_emits_learning_skipped_and_completes() {
-    let root = temp_root("p54_timeout");
+async fn a_slow_extraction_is_awaited_not_cut_off() {
+    let root = temp_root("no_ceiling_slow");
     let db = root.join("state.sqlite3");
     let identity = identity_for("analytics");
     let store = store_at(&db, &identity).await;
-
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let sink = RecordingSink {
-        events: events.clone(),
-        knowledge_log: Arc::new(Mutex::new(Vec::new())),
-    };
-    let inputs = TurnInputs {
-        ai: ResolvedAi {
-            provider: AiProvider::Ollama,
-            model: "test-model".into(),
-            base_url: None,
-            api_key: None,
-            allow_data_sharing: true,
-            temperature: 0.0,
-            timeout_seconds: 60,
-            idle_timeout_seconds: 90,
-            max_output_tokens: 4096,
-            context_byte_budget: 256 * 1024,
-            show_thinking: false,
-            retry_delays_ms: vec![250, 500, 1000],
-        },
-        provider: Box::new(SleepingExtractionProvider {
-            turn_step: Mutex::new(0),
-            turn_steps: vec![
-                ChatResponse::new(ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: "call-1".into(),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({
-                            "connection": "analytics",
-                            "sql": "SELECT id, status FROM catalog.public.orders",
-                        }),
-                    }],
-                    tool_call_id: None,
-                }),
-                ChatResponse::new(ChatMessage::text(
-                    "assistant",
-                    "The orders table contains customer orders.",
-                )),
-            ],
-            extraction_calls: Mutex::new(0),
-        }),
-        registry: registry_for("analytics", &identity),
-        failures: Vec::new(),
-    };
     let runtime = test_runtime(assisted_memory());
-    let out = run_prompt_with_inputs(
+
+    let started = std::time::Instant::now();
+    let (captured, answer) = run_breaker_turn(
         &runtime,
-        inputs,
-        "table orders has alias orders",
-        saya_agent::ApprovalPolicy::ReadOnly,
-        false,
-        Vec::new(),
-        &sink,
-        saya_agent::CancellationToken::new(),
-        Some(store.clone()),
-        None,
+        Box::new(SlowExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+        }),
+        &identity,
+        store.clone(),
         None,
     )
-    .await
-    .expect("turn completes despite extraction timeout (fail-soft)");
+    .await;
 
-    // The turn's answer is unaffected — extraction failure is not answer failure.
-    assert_eq!(out.answer, "The orders table contains customer orders.");
-
-    let captured = events.lock().unwrap();
-    let skipped = captured.iter().find_map(|event| match event {
-        AgentEvent::KnowledgeLearningSkipped { reason } => Some(*reason),
-        _ => None,
-    });
-    assert_eq!(
-        skipped,
-        Some(LearningSkipReason::TimedOut),
-        "timeout must emit KnowledgeLearningSkipped{{TimedOut}}: {captured:?}"
+    assert_eq!(answer, "The orders table contains customer orders.");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(300),
+        "the call was genuinely awaited, not raced against a timeout"
     );
-    // No proposal was emitted — the timeout aborted extraction before ingest.
-    let proposed_count = captured
+    assert!(
+        skipped_reasons(&captured).is_empty(),
+        "an awaited extraction must not skip: {captured:?}"
+    );
+    let proposed = captured
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::KnowledgeProposed { .. }))
+        .count();
+    assert_eq!(proposed, 1, "the proposal is stored: {captured:?}");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 2: two consecutive truncated extractions (in one session) trip
+/// the breaker and say so exactly once; a third turn makes no extraction
+/// request at all.
+#[tokio::test]
+async fn two_consecutive_truncated_extractions_disable_learning_and_say_so() {
+    let root = temp_root("breaker_truncated");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let truncated = || ProviderError::output_truncated(String::new(), Vec::new());
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(truncated()),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    // Turn 1: one miss. Not disabled yet.
+    let (first, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(skipped_reasons(&first), vec![LearningSkipReason::Failed]);
+    assert_eq!(disabled_event(&first), None, "one miss must not trip it");
+
+    // Turn 2: the second consecutive miss trips the breaker.
+    let (second, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(skipped_reasons(&second), vec![LearningSkipReason::Failed]);
+    let skipped_at = second
+        .iter()
+        .position(|e| matches!(e, AgentEvent::KnowledgeLearningSkipped { .. }))
+        .expect("skipped fired");
+    let disabled_at = second
+        .iter()
+        .position(|e| matches!(e, AgentEvent::KnowledgeLearningDisabled { .. }))
+        .expect("disabled fired");
+    assert!(
+        skipped_at < disabled_at,
+        "KnowledgeLearningDisabled must follow this turn's own KnowledgeLearningSkipped: {second:?}"
+    );
+    assert_eq!(disabled_event(&second), Some(("test-model", 2)));
+
+    // Turn 3: the breaker is tripped — no extraction request at all. The
+    // provider is shared so its own `extraction_calls` counter (not the
+    // recording sink) proves the request was never sent — the same
+    // shared-provider pattern `a_gate_declined_turn_emits_no_learning_event`
+    // uses above.
+    let third_provider = Arc::new(TurnAndExtractionProvider {
+        turn_step: Mutex::new(0),
+        turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+        extraction_response: Err(truncated()),
+        extraction_calls: Mutex::new(0),
+    });
+    struct SharedBreakerProvider(Arc<TurnAndExtractionProvider>);
+    #[async_trait]
+    impl ChatProvider for SharedBreakerProvider {
+        fn name(&self) -> &str {
+            "shared-breaker-provider"
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            self.0.complete(req).await
+        }
+    }
+    let (third, _) = run_breaker_turn(
+        &runtime,
+        Box::new(SharedBreakerProvider(Arc::clone(&third_provider))),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        *third_provider.extraction_calls.lock().unwrap(),
+        0,
+        "no extraction request is made once the breaker has tripped"
+    );
+    assert!(
+        !third
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+        "no KnowledgeLearningStarted once disabled: {third:?}"
+    );
+    assert_eq!(
+        disabled_event(&third),
+        None,
+        "KnowledgeLearningDisabled never fires twice: {third:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 3: a stalled stream counts as a miss exactly like truncation —
+/// two in a row trip the breaker.
+#[tokio::test]
+async fn a_stalled_stream_counts_as_a_miss() {
+    let root = temp_root("breaker_stalled");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let stalled_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::Request("provider stream stalled".into())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    let (first, _) = run_breaker_turn(
+        &runtime,
+        stalled_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(disabled_event(&first), None);
+
+    let (second, _) = run_breaker_turn(
+        &runtime,
+        stalled_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        disabled_event(&second),
+        Some(("test-model", 2)),
+        "two consecutive stalls trip the breaker: {second:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 4: a success between two misses resets the count — the session
+/// is not disabled, and a fourth turn still extracts.
+#[tokio::test]
+async fn a_success_between_misses_resets_the_count() {
+    let root = temp_root("breaker_success_resets");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::output_truncated(String::new(), Vec::new())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+    let success_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": []}"#,
+            ))),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    // Miss, success, miss.
+    let (_, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    let (_, _) = run_breaker_turn(
+        &runtime,
+        success_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    let (third, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        disabled_event(&third),
+        None,
+        "a success between misses resets the count: {third:?}"
+    );
+
+    // A fourth turn still extracts: a real proposal is stored.
+    let (fourth, _) = run_breaker_turn(
+        &runtime,
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                r#"{"proposals": [{"object_id": "T0", "slot": "table.alias", "value": "orders", "origin": "user_explicit"}]}"#,
+            ))),
+            extraction_calls: Mutex::new(0),
+        }),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert!(
+        fourth
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+        "the fourth turn still attempts extraction: {fourth:?}"
+    );
+    let proposed = fourth
         .iter()
         .filter(|e| matches!(e, AgentEvent::KnowledgeProposed { .. }))
         .count();
     assert_eq!(
-        proposed_count, 0,
-        "no proposals after timeout: {captured:?}"
+        proposed, 1,
+        "the fourth turn's proposal is stored: {fourth:?}"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 5: a non-miss failure (a non-JSON reply) between two misses also
+/// resets the count.
+#[tokio::test]
+async fn a_non_miss_failure_resets_the_count() {
+    let root = temp_root("breaker_non_miss_resets");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+    let session = Arc::new(crate::interactive::session_universe::SessionUniverse::empty());
+
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::output_truncated(String::new(), Vec::new())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+    // A parse failure: the reply's first visible character is not JSON.
+    let parse_failure_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Ok(ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "not json at all",
+            ))),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    let (_, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    let (parse_failed, _) = run_breaker_turn(
+        &runtime,
+        parse_failure_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert_eq!(
+        skipped_reasons(&parse_failed),
+        vec![LearningSkipReason::Failed]
+    );
+    // The parse failure must not count as the second miss: had it tripped
+    // the breaker here, turn 3 would make no attempt and emit nothing, and a
+    // check on turn 3's events alone would pass vacuously.
+    assert_eq!(
+        disabled_event(&parse_failed),
+        None,
+        "a parse failure is not a miss: {parse_failed:?}"
+    );
+    let (third, _) = run_breaker_turn(
+        &runtime,
+        miss_provider(),
+        &identity,
+        store.clone(),
+        Some(Arc::clone(&session)),
+    )
+    .await;
+    assert!(
+        third
+            .iter()
+            .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+        "learning must still be enabled on turn 3, so extraction is attempted: {third:?}"
+    );
+    assert_eq!(
+        disabled_event(&third),
+        None,
+        "a non-miss failure between misses resets the count: {third:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Red test 6: with no session (the one-shot `saya ask` path, each candidate
+/// attempt), the breaker can never trip — every call gets a fresh one.
+#[tokio::test]
+async fn without_a_session_the_breaker_never_trips() {
+    let root = temp_root("breaker_no_session");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    let runtime = test_runtime(assisted_memory());
+
+    let miss_provider = || {
+        Box::new(TurnAndExtractionProvider {
+            turn_step: Mutex::new(0),
+            turn_steps: breaker_turn_steps("The orders table contains customer orders."),
+            extraction_response: Err(ProviderError::output_truncated(String::new(), Vec::new())),
+            extraction_calls: Mutex::new(0),
+        })
+    };
+
+    for label in ["first", "second"] {
+        let (captured, _) =
+            run_breaker_turn(&runtime, miss_provider(), &identity, store.clone(), None).await;
+        assert!(
+            captured
+                .iter()
+                .any(|e| matches!(e, AgentEvent::KnowledgeLearningStarted)),
+            "the {label} call still attempts extraction: {captured:?}"
+        );
+        assert_eq!(
+            disabled_event(&captured),
+            None,
+            "a fresh breaker per call can never trip within one turn: {captured:?}"
+        );
+    }
     let _ = fs::remove_dir_all(root);
 }
 
@@ -2061,15 +2922,17 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         events: events.clone(),
         knowledge_log: Arc::new(Mutex::new(Vec::new())),
     };
-    let provider = Arc::new(SleepingExtractionProvider {
+    let provider = Arc::new(TurnAndExtractionProvider {
         turn_step: Mutex::new(0),
         // A trivial turn with no tool call and a short answer: the gate would
         // decline (no object activity, <15-char answer). Memory is Off, so the
         // extraction block is never entered regardless — proving the silent path.
         turn_steps: vec![ChatResponse::new(ChatMessage::text("assistant", "ok"))],
+        // Never reached: the gate declines before this could be consulted.
+        extraction_response: Err(ProviderError::configuration("unused")),
         extraction_calls: Mutex::new(0),
     });
-    struct SharedProvider(Arc<SleepingExtractionProvider>);
+    struct SharedProvider(Arc<TurnAndExtractionProvider>);
     #[async_trait]
     impl ChatProvider for SharedProvider {
         fn name(&self) -> &str {
@@ -2090,8 +2953,11 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(SharedProvider(provider.clone())),
@@ -2107,12 +2973,15 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         "hi",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes");
@@ -2169,8 +3038,11 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
             timeout_seconds: 60,
             idle_timeout_seconds: 90,
             max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
             context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
             show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
             retry_delays_ms: vec![250, 500, 1000],
         },
         provider: Box::new(TurnAndExtractionProvider {
@@ -2207,12 +3079,15 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
         "table orders has alias orders",
         saya_agent::ApprovalPolicy::ReadOnly,
         false,
+        false,
         Vec::new(),
         &sink,
         saya_agent::CancellationToken::new(),
         Some(store),
         None,
         None,
+        None,
+        saya_agent::AgentMode::Build,
     )
     .await
     .expect("turn completes despite extraction error (fail-soft)");
@@ -2231,4 +3106,237 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
     );
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(root);
+}
+
+// ===========================================================================
+// U1: the one tool universe, ask-gated. An interactive session queries the
+// database, writes a file, and uses scratch — each via one ask — with no
+// scope flags, over the shared RunTools composite and the session's bound
+// workspace.
+// ===========================================================================
+
+/// A connector that answers one row, so the turn's database call produces
+/// observable shape.
+struct RowConnector;
+
+#[async_trait]
+impl saya_connectors::DatabaseConnector for RowConnector {
+    fn dialect(&self) -> SqlDialect {
+        SqlDialect::DuckDb
+    }
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Ok(SchemaTree::default())
+    }
+    async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        Ok(QueryResult {
+            columns: vec!["count".into()],
+            rows: vec![serde_json::json!([42])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: req.sql,
+        })
+    }
+}
+
+/// The ask path's user: the engine resolves the call, and an ask is answered
+/// "y" — exactly the shape the terminal prompt and the TUI modal render, so
+/// the engine (not the stub) owns the decision shape.
+struct AskYesDecider;
+
+#[async_trait]
+impl saya_agent::ApprovalDecider for AskYesDecider {
+    async fn approve(&self, tool: &saya_agent::ToolDefinition, _: &serde_json::Value) -> bool {
+        use saya_agent::{ApprovalDecision, SessionPolicy};
+        match SessionPolicy::new(saya_agent::ApprovalPolicy::Ask).resolve(&tool.effect, None) {
+            ApprovalDecision::Allow => true,
+            ApprovalDecision::Ask => true,
+            ApprovalDecision::Deny { reason: _ } => false,
+        }
+    }
+}
+
+/// Three tool calls in sequence, then the answer — one turn, three asks.
+struct ThreeCallsProvider;
+
+#[async_trait]
+impl ChatProvider for ThreeCallsProvider {
+    fn name(&self) -> &str {
+        "three-calls"
+    }
+    async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        unreachable!("stream path is used")
+    }
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: saya_agent::CancellationToken,
+    ) -> Result<saya_agent::ProviderStream, ProviderError> {
+        static CALL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = CALL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let events = match n {
+            0 => vec![
+                Ok(saya_agent::ProviderEvent::ToolCalls(vec![ToolCall {
+                    id: "c1".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql": "SELECT count(*) FROM orders"}),
+                }])),
+                Ok(saya_agent::ProviderEvent::Done),
+            ],
+            1 => vec![
+                Ok(saya_agent::ProviderEvent::ToolCalls(vec![ToolCall {
+                    id: "c2".into(),
+                    name: "workspace_write".into(),
+                    arguments: serde_json::json!({"path": "src/notes.md", "content": "written"}),
+                }])),
+                Ok(saya_agent::ProviderEvent::Done),
+            ],
+            2 => vec![
+                Ok(saya_agent::ProviderEvent::ToolCalls(vec![ToolCall {
+                    id: "c3".into(),
+                    name: "scratch_sql".into(),
+                    arguments: serde_json::json!({"sql": "CREATE TABLE staged AS SELECT 1 AS one"}),
+                }])),
+                Ok(saya_agent::ProviderEvent::Done),
+            ],
+            _ => vec![
+                Ok(saya_agent::ProviderEvent::TextDelta("done".into())),
+                Ok(saya_agent::ProviderEvent::Done),
+            ],
+        };
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
+/// The red test: an interactive session can query the database, write a file
+/// into the project, and stage a scratch table — each via one ask, with no
+/// scope flags anywhere in the composition.
+#[tokio::test]
+async fn an_interactive_session_queries_writes_and_scratches_each_via_one_ask() {
+    use crate::interactive::session_universe::SessionUniverse;
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let project = std::env::temp_dir().join(format!(
+        "saya-u1-session-project-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir_all(project.join(".git")).unwrap();
+    fs::create_dir_all(project.join("src")).unwrap();
+    let state_dir = std::env::temp_dir().join(format!(
+        "saya-u1-session-state-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&state_dir).unwrap();
+
+    let mut runtime = test_runtime(default_memory());
+    runtime.resolved.ai.provider = AiProvider::Ollama;
+    runtime.resolved.ai.allow_data_sharing = true;
+    let mut registry = ConnectionRegistry::new("primary");
+    registry.insert(
+        "primary",
+        ConnectionEntry {
+            connector: Box::new(RowConnector),
+            dialect: SqlDialect::DuckDb,
+            profile_id: None,
+        },
+    );
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+            timeout_seconds: 60,
+            idle_timeout_seconds: 90,
+            max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
+            context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
+            show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
+            retry_delays_ms: vec![250, 500, 1000],
+        },
+        provider: Box::new(ThreeCallsProvider),
+        registry,
+        failures: Vec::new(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    // The session's universe, composed over the temp worktree — no scope
+    // flags, no pre-authorisation, the ask is the gate.
+    let session = Arc::new(
+        SessionUniverse::compose(&runtime, None, None, true, &project, &state_dir)
+            .expect("the session universe composes"),
+    );
+    let result = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "work with the data and the tree",
+        saya_agent::ApprovalPolicy::Ask,
+        true,
+        true,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        None,
+        Some(Arc::new(AskYesDecider)),
+        None,
+        Some(Arc::clone(&session)),
+        saya_agent::AgentMode::Build,
+    )
+    .await
+    .expect("the turn completes");
+    assert_eq!(result.tool_metadata.len(), 3, "three calls ran");
+    for metadata in &result.tool_metadata {
+        assert_eq!(
+            metadata.status, "completed",
+            "every ask was answered and every call completed: {result:?}"
+        );
+    }
+    // The file landed in the project, where the user works.
+    assert!(
+        project.join("src/notes.md").exists(),
+        "the write lands in the project tree"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("src/notes.md")).unwrap(),
+        "written"
+    );
+    // The scratch table lives in the session's state dir, not the project.
+    assert!(
+        state_dir.join("scratch.duckdb").exists(),
+        "the scratch database is session state"
+    );
+    assert!(
+        !project.join("scratch.duckdb").exists(),
+        "the project gains no scratch file"
+    );
+    // The database call completed through the connector.
+    let events = events.lock().unwrap();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ToolCompleted { name, .. } if name == "bounded_sql_query"
+        )),
+        "the database call completed: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ToolRequested { name, .. } if name == "workspace_write"
+        )),
+        "the write was requested through the loop: {events:?}"
+    );
+    let _ = fs::remove_dir_all(&project);
+    let _ = fs::remove_dir_all(&state_dir);
 }

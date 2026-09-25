@@ -1,0 +1,10 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+expression: prompt
+---
+http_download — downloads into this session's workspace
+  url: https://example.com/model.bin
+  destination: artifacts/model.bin — contained to the workspace root
+  remaining download budget: 1073741824 bytes of 1073741824
+  [s] covers https on example.com, any path, for this session — not just this URL
+[a] allow once   [s] allow fetch:https+example.com for this session   [d] deny

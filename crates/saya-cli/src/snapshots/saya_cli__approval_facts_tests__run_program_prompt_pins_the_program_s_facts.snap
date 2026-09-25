@@ -1,0 +1,14 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+expression: prompt
+---
+run_program — bench
+  program: bench — allowlisted in [jobs.runner] allow
+  argv: bench --json --out state/bench.json
+  typed argv: no shell, no interpolation, one element per argument
+  sandbox: reads/writes/exec bounded to /home/user/proj · egress: none · cwd pinned to /home/user/proj
+  timeout: 120s — the call may narrow it, never widen it
+  credential injection: none declared
+  output: capped at 65536 bytes per stream · redacted before it reaches the model
+  [s] covers bench with any arguments for this session — not just this argv
+[a] allow once   [s] allow runner:bench for this session   [d] deny

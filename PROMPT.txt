@@ -1,0 +1,9 @@
+Implement the spec at .claude/specs/answer-contract.md in this repository.
+
+Read the spec first and follow its "How to read this spec" section exactly, including opening your
+report with SPEC REVIEW and saying what you did not do.
+
+Read AGENTS.md and the relevant module under docs/standards/ before writing code. A behaviour
+change starts with a failing test.
+
+Work only inside this worktree. Do not run git commit; leave changes in the working tree for review.

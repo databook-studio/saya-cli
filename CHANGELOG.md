@@ -3,6 +3,352 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+## 0.4.1 — 2026-09-25
+
+### Added
+
+**A `runner:<program>` grant with no runner to use it now says so.** Seeding
+`runner:<program>` — at launch with `--allow`, or mid-session with
+`/allow` — when this session composed no runner, or a composed runner's
+`[jobs.runner] allow` does not carry the program, is a usage error (U8: a
+grant the composition cannot honour seeds nothing) naming the gap and the
+fallback: host commands still run, they just ask for approval.
+
+**`scratch_import` stages one contained workspace CSV into scratch.** The
+scratch grant now admits a bounded CSV import where a workspace is bound:
+one regular, contained file up to 32 MiB; up to 500,000 rows and 512 VARCHAR
+columns; fields up to 64 KiB. Quoted RFC 4180 CSV is parsed by the harness,
+then inserted transactionally, so a failed import never creates or replaces a
+table. DuckDB external access remains locked off; `read_csv` remains refused.
+
+**Post-turn extraction disables itself after two consecutive misses.** A
+session's extraction is a **miss** when the reply is cut off at the
+output-token limit or the transport stalls or times out; every other
+outcome — success, a parse failure, a non-JSON reply, an HTTP error, an
+ingest failure — resets the count. On the second consecutive miss, learning
+is disabled for the rest of the session: from the next turn on no
+extraction request is made at all, and the turn whose miss tripped it says
+so once (`AgentEvent::KnowledgeLearningDisabled`, rendered on every surface
+— text, TUI, ndjson): "memory: learning disabled for this session —
+extraction with `<model>` was cut off or stalled `<misses>` times in a row.
+Recall still works; `/remember` still stores a rule." The breaker lives in
+the session, not persisted — a new or resumed session always starts
+enabled; the one-shot `saya ask` path and each candidate attempt get a
+fresh breaker per call, which can never trip within one turn.
+
+**Headless runs on the same approval engine (U4).** The run's per-call
+decider is the same `SessionPolicy` a session consults, frozen: seeded from
+the run's `--allow` tokens, unable to prompt, unable to accumulate. An
+`ask`-mode call the seeds do not cover denies with the engine's own reason —
+"cannot prompt: a headless run's approval is its `--allow` scopes" — instead
+of a bare refusal, and `record` refuses on the frozen policy, so a headless
+session grant is impossible by construction, not merely unused.
+
+- **`sql:<connection>` gates a run now.** The refusal entry left the
+  grammar's `NOT_YET_WIRED` list: the stated token seeds the frozen decider,
+  so under `--approval-mode ask` the read-shaped SQL tools' calls naming
+  that connection run without asking, on the connection it names only. The
+  token builds no plan capability; the run's `PlanApproved` journal payload
+  carries it, so a resume re-derives the grant from the journal — never from
+  an editable file. Run behaviour for every pre-existing scope is
+  byte-identical (the pinned run suites pass unmodified).
+- **`/run --seed-grants <tail…>`.** The slash adapter's one word: the
+  session's grants are filtered through the run's own parser — accepted
+  tokens join the child's `--allow`, refused ones are named to the user
+  before the child's stream begins, never silently dropped. The child's
+  parser stays the authority on everything it receives.
+- **`/grants` states the mode first under bypass.** "mode bypass: every call
+  runs without asking; grants are not consulted" precedes the listing — a
+  token count alone read as "nothing runs" when the truth is that everything
+  does.
+- **The scope refusal's tail names its surface.** A run re-runs the command
+  without the scope (exact bytes unchanged); a slash command has nothing to
+  re-run — `/allow` is re-issued without the token.
+
+**The fourth approval mode: `bypass` (sessions).** `--approval-mode bypass`
+(or `/approvals bypass`) runs every tool call without asking — one typed,
+global, informed consent, given once at the flag instead of once per call,
+in the mode's own word (never "yolo", "danger", or a softened "auto"). It is
+a consent transformation, not a containment transformation: the SQL safety
+layer, the sandbox, the placement guard, the probe, the allowlists, and every
+bound are untouched, and a run never takes bypass (`saya run --approval-mode
+bypass` refuses at start — a run's approval is its `--allow` scopes).
+
+- **Honest advertisement.** Under bypass the session advertises the
+  write-shaped tools whether or not a prompt surface exists — a piped REPL
+  runs under bypass too, which is the point of the demo surface. The
+  advertised-but-unusable anti-pattern cannot return: bypass's advertised
+  tools are usable, because the engine resolves `Allow`.
+- **The activation line.** At launch, at `/approvals bypass`, and again on a
+  resume, the session prints the mode's own words: what bypass does, what
+  still applies, the staged interpreter facts (the run surface's interpreter
+  warning adapted to the session — including "no process-fork is granted:
+  children an interpreter spawns are refused by the sandbox"), or the
+  none-staged sentence, and — where the host did not prove — "run_program is
+  unavailable: the sandbox probe did not prove this host", said under every
+  mode on the startup notice.
+- **The interpreter door is real.** The session's executor now composes the
+  interpreter scope from the trusted config's staged `[jobs.interpreter]
+  allow`, mode-independently. Before this release the session's prompt
+  offered `[s] allow interpreter:python3 for this session`, recorded the
+  grant, and the granted call still refused with the family refusal — a
+  lying approval. The fix is capability in the composition, consent in the
+  approval engine: under `ask`, a granted `interpreter:<program>` token now
+  actually runs; unstaged names keep the byte-identical family refusal.
+- **The red indicator.** The status bar and the headless status line render
+  `approval:bypass` in `danger()` red; the colour map carries an explicit
+  bypass arm, and a parity test closes the catch-all hole that would have
+  greyed a fourth variant silently.
+- `/approvals ask` leaves bypass mid-session (effective for turns started
+  after the change); grants made before the toggle ride it and are consulted
+  again under `ask` — bypass consults no grant and records none. A bypass
+  session's nested `/run` forwards no approval mode to the child, which
+  states its own scopes or takes the run default (read-only).
+
+**`saya run` — headless, resumable, budgeted runs.** A run takes a goal, proposes a
+plan, and executes it step by step without a person at the keyboard. It is the
+answer to a benchmark that dies at question 900 and has to start over.
+
+- **Resume.** Every lifecycle event is journalled before it is mirrored to the
+  store, so a run that dies resumes at its first incomplete step. A step that
+  was mid-flight restarts from its beginning rather than pretending to resume
+  inside an episode whose tool calls cannot be replayed. A crash that leaves a
+  torn final line is repaired before the first append, because appending after
+  a fragment produces a complete-looking line that parses as nothing.
+- **Scopes are approved once, with the plan** — not per tool call, which is what
+  makes a long run usable. A headless run states its scopes with `--allow` or
+  refuses to start; `--allow none` states the empty scope set — a deliberately
+  read-only run, with the episode's per-tool-call approval at its read-only
+  default. A plan asking for a capability the run does not hold is rejected,
+  naming the step and the missing scopes. There is no mid-run revision flow:
+  a resume replays the bound plan exactly as persisted, without re-validating
+  it against the run's scopes.
+  **Today exactly one scope binds: `workspace-write`.** `scratch`, `fetch:`,
+  `runner:` and `endpoint:` parse and are then *refused*, because no tool in a
+  run's universe consumes them yet — see `docs/commands.md`.
+- **Budgets pause rather than stop.** Wall-clock and token ceilings pause the
+  run (exit `6`, resumable); turns and tool-calls bound each episode. Budgets
+  come from `[jobs]` and `--budget`, never from the environment, so a run is
+  reproducible from its spec and config. Every episode calls the single
+  `orchestrator` endpoint, so `tokens.orchestrator` is the only token ceiling
+  a run accepts: a `tokens.<role>` key naming another role — from `--budget`
+  or a leftover `[jobs]` entry — is refused at start rather than silently
+  capping the run.
+- **Exit codes gain `6`** — paused and resumable. The previous scheme had no
+  class for incomplete-but-not-failed, so a paused run would have exited `0`.
+- `saya run list | show | log | resume | cancel`, `/run`, `/runs` and
+  `/run cancel`, and an NDJSON wire that is the run journal's own observer, so
+  the stream cannot drift from the durable record.
+
+**Workspace tools.** `workspace_read`, `workspace_list`, `workspace_write`,
+`workspace_edit`, `glob` and `grep`, all through one containment seam: arguments validated before
+any filesystem call, symlinks refused at every component, no-follow opens with a
+post-open identity check, atomic `0600` writes that are never executable.
+`grep` reports what it *skipped* alongside its matches, because a capped search
+rendered as empty reads as proof of absence.
+
+**A run-scoped scratch database** (ADR 0003) — the first writable SQL in the
+product, and deliberately not reachable through any `DatabaseConnector`. SQL
+against user-registered databases stays read-only by construction: the gate
+takes no mode and no permit, and the scratch writer is a different type with its
+own validator that never enters the connection registry.
+
+**Fetch.** `http_fetch` and `http_download` behind an egress policy: HTTPS only,
+private and link-local address ranges refused, destinations declared then
+approved, redirects re-judged per hop, and every DNS-resolved address checked
+before connecting. Fetched content reaches the model only as an escaped context
+block. Downloads are resumable by digest and bounded by a run budget.
+
+**Config.** `[[ai.endpoints]]` binds roles to named endpoints, with per-endpoint
+`base_url` and `api_key` on the trust boundary — a project-layer config cannot
+add an endpoint or retarget one without `--trust-project-config`. `[jobs]`
+declares default run budgets, and `[run] max_iterations` finally has a
+behavioural reader.
+
+### Fixed
+
+**Session history orders close saves correctly.** Listing and pagination now
+compare full filesystem modification timestamps, while the displayed time
+retains millisecond precision. Sessions saved within the same millisecond no
+longer reverse order because their IDs differ.
+
+**Launch `--allow` seeded only `command:` tokens — every other scope was a
+silent no-op.** `session_loop.rs` fed the shared grammar-then-composition
+gate (`seed_launch_allow`, the same one `/allow` uses) a pre-filtered copy
+of the launch's `--allow` tokens holding only `command:` seeds; a token of
+any other shape (`workspace-write`, `scratch`, `fetch:…`, `sql:…`,
+`runner:…`, `interpreter:…`) never reached either check, so it neither
+seeded nor refused — it just vanished, with the session starting normally
+as if nothing had been stated. Every launch seed now goes through the one
+gate `/allow` uses: honoured when the composition carries it, a launch
+usage error with its own reason when it does not (the same reason `/allow`
+gives), never silently dropped.
+
+**A grant offer named a capability the composition could not carry (U8).**
+The `[s]` answer offered `interpreter:<program>` for any interpreter-shaped
+call — with `[jobs.interpreter]` empty (the default) the fact line said
+"refused by name" while the answers line below offered the grant; pressing
+it recorded a dead token that pre-answered every later identical ask into
+the same refusal, with no further prompt, for the rest of the session. The
+suggester now consults the session's composed doors — a token is offered
+only for a program the composed `[jobs.runner]`/`[jobs.interpreter]` allow
+carries, a workspace root, scratch, or fetch member that exists — and the
+prompt falls back to its two answers when nothing is carried. `/allow`
+refuses a token the composition cannot carry, with its reason, in the
+surface-aware refusal register. The headless run's frozen decider is
+composed from the run's own scopes and wiring, so a `--allow` seed still
+pre-answers exactly what it always did.
+
+**A `--allow none` run's resume re-granted from the edited `spec.json`
+(U8).** The empty `PlanApproved` payload was indistinguishable from a
+journal written before the payload field existed, so the none run took the
+pre-field spec fallback. The payload is now `Option<Vec<String>>`: the
+field-less line stays "scopes unstated" (the documented back-compat
+fallback, unchanged), and `"scopes":[]` is the stated empty approval — a
+none run's resume re-grants exactly nothing, whatever the file says.
+
+**The session's process-fork fact was macOS's, stated on every platform
+(U8).** "Children an interpreter spawns are refused by the sandbox" is the
+macOS Seatbelt measurement; on Linux nothing in the Landlock + namespace
+confinement restricts fork, so the warning told the user children are
+refused while they ran. The clause is now the running platform's own: on
+Linux it says children run, under the same bounds as the interpreter.
+
+**`--approval-mode read-only` auto-approved every gated tool.** The decider
+returned true by construction, so a side-effecting tool would have run without
+asking. It now reads the tool's declared effect. This was harmless only while
+every tool was read-only; it is fixed before the first one that is not.
+
+**A resumed session ignored an explicit `--approval-mode`.** The persisted value
+won, so a deliberate attempt to tighten approval on resume was discarded.
+
+**Redaction ran before disk but not before the model.** Scrubbing now happens at
+the context boundary, closing a channel that writing-time redaction never
+covered.
+
+**Charts wrote unredacted query rows to a temp file nobody removed**, and the
+`0600` tightening was unix-only, so on Windows the file was world-readable.
+
+**A dropped provider stream lost the run** instead of retrying at the turn
+boundary, and a failed salvage call discarded the work it was salvaging.
+
+**A redacted tool result read like corruption, and "fixing" it destroyed the
+secret.** A masked tool result now carries a note naming how many
+secret-shaped values were replaced, and `workspace_write`/`workspace_edit`
+refuse a write that would add `[redacted]` occurrences beyond what the file
+already holds on disk — the model can no longer copy the placeholder back
+over the real value.
+
+### Added — earlier in this cycle
+
+- **A release now fails — loudly — when the Homebrew tap does not serve it.**
+  The 0.4.0 release looked complete while `brew install` kept serving 0.3.2 for
+  a month: the tap-bump job failed one second in on an expired
+  `HOMEBREW_TAP_TOKEN`, and nothing a person actually looks at noticed. A new
+  `verify-tap` release job runs after the bump and checks the public tap
+  token-free via `scripts/check-homebrew-tap.sh` — the check must not need the
+  tap token, because a check gated on that token could never detect the token
+  being broken, which is the failure it exists to catch. It runs on the bump's
+  success *and* failure, reads the tap anonymously, and fails the release with a
+  message naming the served and expected versions when they disagree. When the
+  token is deliberately unset (the documented bump no-op), staleness downgrades
+  to a `::warning` instead of a failure, so a channel that was opted out of
+  never blocks a release. A network failure during the check fails with "could
+  not run" (a distinct exit code), never as staleness, so infrastructure noise
+  does not train people to ignore the check.
+
+- **saya now knows how large a model's context window is.** Until now the only
+  bound on a conversation was `[ai] context_byte_budget`, a configured byte
+  ceiling with no relation to any model, so `glm-5.2` and a 32K-token local
+  model were treated identically and saya could not tell a 1M-token model from
+  a 32K-token one. A small built-in table maps published model names — GLM,
+  GPT, Claude, Gemini, and the common Ollama families, each entry carrying its
+  vendor source — to their documented window in tokens. The lookup is
+  exact-match and honest about what it does not know: a gateway-served model the
+  table has never heard of stays unknown rather than guessed at, because a wrong
+  window would either refuse work that would have succeeded or promise headroom
+  that does not exist. A new `[ai] context_window_tokens` setting declares the
+  window for a model the table will never list (a private gateway's own naming),
+  and a declared value wins over the table. Nothing blocks or truncates on the
+  answer yet — knowing a window and acting on it are separate changes.
+
+- **`saya ask --format ndjson` now reports token and cache usage.** The stream
+  gains a `usage` event carrying the token counts the provider reported for a
+  call — one event per provider call, labelled `call: "answer"` for the
+  answering rounds and `call: "extraction"` for the post-turn learning call,
+  which is billed separately. A benchmark reading the stream can now compute a
+  cache hit rate (`Σcached / Σinput` over the answering calls) without
+  hand-probing the gateway; previously a 1,534-question run produced no usage
+  data at all. Nothing else about the stream changes: no existing field is
+  renamed or restructured, and a provider that reports no usage emits no `usage`
+  event — absence means "unknown", not zero, and an unreported cache figure
+  serialises as `null` where a reported zero serialises as `0`.
+
+### Changed
+
+- **Post-turn extraction has no wall-clock ceiling.** The 25-second
+  `EXTRACTION_TIMEOUT` that wrapped the post-turn structured-extraction call
+  is gone — a deliberate departure from AGENTS.md's "bound untrusted work —
+  time" rule for this one path. A slow model may now take as long as it
+  needs; the call is bounded only by the provider transport's own limits
+  (the per-attempt connect timeout, the per-chunk stream idle timeout, the
+  output-token ceiling, bounded retries). In its place, a per-session
+  circuit breaker trips after two consecutive misses (see "Post-turn
+  extraction disables itself after two consecutive misses" above).
+  `LearningSkipReason::TimedOut` stays in the serialized contract (a
+  resumed session's history may still carry it) but the runtime no longer
+  produces it.
+- **The agent finishes the computation a question asks for.** Characterising all
+  867 failures of a 1,534-question benchmark run found two classes where the
+  agent had the right pieces and stopped short: it handed back the operands of
+  a ratio or a percentage and left the division to the reader (113 questions),
+  and it answered a superlative — "which driver had the fastest lap" — with
+  every driver ordered by lap time instead of the one row the question named
+  (65 questions, 61 with a single-row answer). The answer contract now states
+  both rules directly: compute the ratio, the percentage, or the difference and
+  answer with that value; answer a superlative with its row and the value that
+  makes it so, not the ranking it came from, with every row tied with it still
+  part of the answer. The previous "the top one" wording is folded into the
+  superlative clause, which generalizes it. The contract stays under its stated
+  byte ceiling (978 of 1200), so the added attention cost is two lines, and no
+  SQL generation, tool, or loop behaviour changes — prompt text and its tests
+  only. ([databook-studio/saya-cli#61])
+
+### Fixed — earlier in this cycle
+
+- **A long question is no longer cut off as you type it.** The input box
+  truncated any line wider than the terminal, leaving the rest invisible and the
+  cursor pinned to the border, and it did not grow. Nothing was ever lost on
+  send — the whole buffer was always submitted — but a pasted question could not
+  be proofread or edited. Lines now wrap and the box grows with them. Wrapping
+  counts characters rather than display width, so a full-width CJK character
+  still misplaces the cursor by a column.
+  ([databook-studio/saya-cli#57])
+
+- **Memory extraction no longer fails on every turn against gateways that
+  reject `reasoning_effort: "minimal"`.** The extraction call asked for minimal
+  reasoning using a spelling some OpenAI-compatible endpoints reject outright
+  with HTTP 400 — a Fireworks-backed gateway among them — so nothing was ever
+  learned and the failure read as a generic, apparently transient error. The
+  OpenAI-family wire now omits the field for that variant, as it already did for
+  the default, and the endpoint's own configuration decides.
+  ([databook-studio/saya-cli#56])
+
+- **The status-bar indicator no longer tells you data is protected when it is
+  being shared.** The interactive status line and the TUI status bar showed
+  `privacy:on` exactly when cloud data sharing was *enabled* — i.e. when row
+  values were being sent to the model provider — so a reader concluded the
+  opposite of what was happening. The segment is renamed `sharing:on` /
+  `sharing:off`, naming what is actually happening (`sharing:on` = row values
+  are sent to the provider) rather than a protection claim that a flipped label
+  could still be misread as. `sharing:on` is amber (caution: data is leaving
+  the machine); `sharing:off` is green (safe: data stays local). Enforcement is
+  unchanged — `query_data_allowed`, the CLI flags, and the config layering are
+  untouched. `/privacy` now reports `on`/`off` in the same vocabulary so the
+  two surfaces cannot disagree. ([databook-studio/saya-cli#59])
+
 ## 0.4.0 — 2026-09-06
 
 Not 0.3.3: this release changes two library-crate contracts, listed under
@@ -10,6 +356,23 @@ Not 0.3.3: this release changes two library-crate contracts, listed under
 for users of the `saya` binary.
 
 ### Added
+
+- **A read-only BigQuery connector.** Schema discovery, bounded queries, and a
+  per-job scan ceiling — the public datasets these questions sit on reach into
+  the terabytes, and one unbounded cross join is a typo away. Read-only is
+  enforced in the SQL safety layer and by the service account's IAM role rather
+  than by narrowing the token, because running any query at all creates a job:
+  a token scoped to `bigquery.readonly` looks safer and simply refuses every
+  query. A dataset may be written as `project.dataset`, and discovery reads a
+  public dataset's `INFORMATION_SCHEMA` from the project that owns it rather
+  than the one paying for the query — without that, only the paying project's
+  own datasets could be described at all. The dataset name is validated when
+  the connector is built, since it is formatted into that statement. Failures
+  whose reason code describes the submitted statement carry Google's message —
+  a missing table, an unrecognised column, a table that requires a partition
+  filter — while an unanticipated reason stays redacted and authentication
+  responses never echo the body. 401 and 403 are distinguished, so a permission
+  problem does not send a reader hunting a key that was never wrong.
 
 - **`--candidates N`** answers with the best of N independent attempts, choosing
   between them by what their queries *return* rather than what their SQL says.
@@ -84,30 +447,6 @@ for users of the `saya` binary.
 - **Dependency and CI action updates.** The duckdb pin moves to 1.10505.0 with
   the decode migration that release requires, and the pinned CI actions move
   forward. These supersede the Dependabot pull requests that proposed them.
-
-- **BigQuery can run a query at all.** Every statement failed with
-  "authentication failed". The credential was valid and the token exchange
-  succeeded; the query came back `ACCESS_TOKEN_SCOPE_INSUFFICIENT`, because
-  running a query creates a job and the `bigquery.readonly` scope permits
-  reading data and metadata but not job creation. The connector now requests
-  the scope that can run queries. Read-only is unchanged where it is actually
-  enforced — the SQL safety layer still refuses every write, and the service
-  account's IAM role is the bound no token scope can widen.
-- **BigQuery failures say what was wrong.** A missing table, an unrecognised
-  column and a table that requires a partition filter all reported the same
-  "BigQuery query failed", leaving the agent nothing to correct against; 401
-  and 403 also shared one message, which sent a reader hunting a bad key when
-  the key was fine and the permission was not. Failures whose reason code
-  describes the submitted statement now carry Google's message, an
-  unanticipated reason stays redacted, and authentication responses never echo
-  the body.
-- **BigQuery reads a public dataset's schema.** Discovery looked for
-  `INFORMATION_SCHEMA` in the project that pays for the query, so it could
-  describe only that project's own datasets. A dataset may now be written as
-  `project.dataset`, and the owning project is used both for the lookup and in
-  the reported schema. The dataset name is also validated when the connector is
-  built — it is formatted into that statement, and previously anything at all
-  was accepted.
 
 - **Snowflake sign-in works on regional and privatelink accounts.** The
   account name sent during authentication carried the full identifier the

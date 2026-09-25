@@ -6,7 +6,7 @@ use super::super::profile;
 use super::super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
 use super::AttemptRunner;
 use async_trait::async_trait;
-use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
 use saya_store::SqliteStateStore;
 use saya_types::{QueryRequest, QueryResult, SqlDialect};
@@ -87,12 +87,15 @@ pub(crate) struct LiveAttemptRunner<'a> {
     prompt: &'a str,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    can_obtain_approval: bool,
     overrides: PromptOverrides,
     sink: &'a dyn saya_agent::AgentEventSink,
     cancellation: CancellationToken,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
+    session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+    agent_mode: AgentMode,
 }
 
 impl<'a> LiveAttemptRunner<'a> {
@@ -102,24 +105,30 @@ impl<'a> LiveAttemptRunner<'a> {
         prompt: &'a str,
         approval: ApprovalPolicy,
         can_prompt: bool,
+        can_obtain_approval: bool,
         overrides: PromptOverrides,
         sink: &'a dyn saya_agent::AgentEventSink,
         cancellation: CancellationToken,
         state_db: Option<SqliteStateStore>,
         decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
         last_sql: Option<String>,
+        session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+        agent_mode: AgentMode,
     ) -> Self {
         Self {
             runtime,
             prompt,
             approval,
             can_prompt,
+            can_obtain_approval,
             overrides,
             sink,
             cancellation,
             state_db,
             decider,
             last_sql,
+            session,
+            agent_mode,
         }
     }
 }
@@ -132,6 +141,7 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
             self.prompt,
             self.approval,
             self.can_prompt,
+            self.can_obtain_approval,
             self.overrides.clone(),
             Vec::new(),
             self.sink,
@@ -139,6 +149,8 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
             self.state_db.clone(),
             self.decider.clone(),
             self.last_sql.clone(),
+            self.session.clone(),
+            self.agent_mode,
         ))
     }
 }

@@ -17,7 +17,10 @@ pub struct OllamaProvider {
 impl OllamaProvider {
     pub fn new(settings: ProviderSettings) -> Result<Self, ProviderError> {
         // No client-wide timeout: streams are bounded per chunk gap instead.
+        // Redirects are refused outright: a loopback endpoint classified as
+        // local must never replay its POST to another host on a 307.
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self { client, settings })
@@ -56,6 +59,7 @@ impl ChatProvider for OllamaProvider {
             &self.settings.retry_delays,
             &cancellation,
             &url,
+            self.settings.timeout,
         )
         .await?;
         Ok(ollama_stream::parse(

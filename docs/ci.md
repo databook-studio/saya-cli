@@ -12,9 +12,9 @@ Rust 1.88.0 exactly and runs `cargo check --workspace --locked`. This catches
 dependency or source MSRV drift without duplicating the stable test matrix.
 
 The workspace pins `duckdb` and its bundled `libduckdb-sys` implementation to
-`1.10504.0`. This release vendors fmt without the obsolete MSVC
+`1.10505.0`. This release vendors fmt without the obsolete MSVC
 `stdext::checked_array_iterator` branch. Its published
-[`libduckdb-sys` build script](https://docs.rs/crate/libduckdb-sys/1.10504.0/source/build_bundled_cc.rs)
+[`libduckdb-sys` build script](https://docs.rs/crate/libduckdb-sys/1.10505.0/source/build_bundled_cc.rs)
 enables `/EHsc` behind an MSVC target gate, so CI does not override dependency
 C++ flags.
 
@@ -28,7 +28,8 @@ it. `ci.yml` runs on pull requests and pushes to `main`.
 
 Releases use `.github/workflows/release-candidate.yml`, triggered by pushing a
 `vX.Y.Z` tag (or manually with `publish: false` to validate without releasing).
-Its build matrix covers Linux x86_64, macOS arm64, macOS x86_64 (cross-compiled
+Its build matrix covers Linux x86_64, Linux arm64 (native `ubuntu-24.04-arm`
+runner), macOS arm64, macOS x86_64 (cross-compiled
 on the Apple Silicon runner, since GitHub's Intel runners are scarce), and
 Windows x86_64. Each build compiles `saya` in release mode, smoke-tests
 `saya --version` and `--non-interactive config doctor` on native targets, and
@@ -37,10 +38,12 @@ Clippy are not re-run there — the branch ruleset gates `main` on them before a
 tag is cut.
 
 On a real tag, later jobs verify and aggregate `SHA256SUMS`, create the GitHub
-Release, publish the workspace to crates.io, and bump the Homebrew tap formula.
-See [`RELEASING.md`](../RELEASING.md) for the full sequence and the
-`CARGO_REGISTRY_TOKEN` / `HOMEBREW_TAP_TOKEN` secrets those jobs use; each no-ops
-when its secret is unset.
+Release, publish the workspace to crates.io, bump the Homebrew tap formula, and
+then verify the public tap serves the tagged version
+(`scripts/check-homebrew-tap.sh`, which needs no token). See
+[`RELEASING.md`](../RELEASING.md) for the full sequence, the stale-vs-warn
+decision, and the `CARGO_REGISTRY_TOKEN` / `HOMEBREW_TAP_TOKEN` secrets those
+jobs use; each no-ops when its secret is unset.
 
 Do not treat a green build as a signed release. Signing requires external
 credentials and a release plan; no signing step or fake signature is included.
@@ -49,8 +52,9 @@ Local parity is available with `scripts/package.sh`, which writes the archive
 and `.sha256` file under `dist/` unless `SAYA_PACKAGE_DIR` is set.
 Run `scripts/check-release-workflow.sh` to validate release and CI action
 pins, MSRV inheritance and its exact CI gate, resource limits, the matched
-bundled DuckDB pin, workflow YAML, publish permissions/gate, and the Windows
-UTF-8/LF checksum sidecar contract.
+bundled DuckDB pin, workflow YAML, publish permissions/gate, the Windows
+UTF-8/LF checksum sidecar contract, and the Homebrew tap-check contract
+(its fixture cases run the check script offline).
 
 ## Troubleshooting: every job fails at "Set up job"
 

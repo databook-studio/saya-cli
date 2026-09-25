@@ -1,5 +1,6 @@
 use saya_agent::{
-    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto, SuppliedContractDto,
+    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
+    SuppliedContractDto, TokenUsage, ToolEffect, UsageCall, read_only_permits,
 };
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
@@ -12,6 +13,9 @@ mod render_io;
 mod render_json;
 mod render_learned;
 mod render_memory;
+/// The shared tool-call grouper and shaper both adapters consume: the piped
+/// text renderer buffers through it, the TUI transcript follows in slice 3.
+pub(crate) mod tool_groups;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
@@ -25,6 +29,9 @@ pub(crate) use render_memory::knowledge_overridden_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeSupplied`] in
 /// `apply_event` and shares this shaper so the wording lives in one place.
 pub(crate) use render_memory::knowledge_supplied_text;
+/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningDisabled`]
+/// in `apply_event` and shares this shaper so the wording lives in one place.
+pub(crate) use render_memory::learning_disabled_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningSkipped`]
 /// in `apply_event` and shares this shaper so the wording lives in one place
 /// (packet-54).
@@ -63,6 +70,14 @@ pub enum TerminalEvent {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// The tool's **declared effect**, carried from the event the loop
+        /// emitted so the text line's effect claim is derived from the same
+        /// declaration the approval gate reads — never from the tool's name.
+        /// Absent only when no declaration exists (an unknown tool, which
+        /// cannot run), and skipped on the wire then, so a stream that never
+        /// declared a tool keeps the shape it always had.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect: Option<ToolEffect>,
     },
     ToolCompleted {
         name: String,
@@ -104,7 +119,23 @@ pub enum TerminalEvent {
     KnowledgeLearningSkipped {
         reason: LearningSkipReason,
     },
+    /// The extraction circuit breaker tripped this turn — no more extraction
+    /// requests this session (`AgentEvent::KnowledgeLearningDisabled`).
+    /// Trails the answer, after `KnowledgeLearningSkipped`. Text is shaped
+    /// in [`render_memory`]; JSON/NDJSON fall out of the serde derive.
+    KnowledgeLearningDisabled {
+        model: String,
+        misses: u32,
+    },
     Complete,
+    /// The provider stream failed mid-answer and the turn is being retried
+    /// (`AgentEvent::TurnReset`). The partial answer printed so far is
+    /// discarded; the retry re-streams the full answer. Carried on the
+    /// JSON/NDJSON stream under its own tag so a machine consumer can replace
+    /// the text it accumulated instead of appending; the text adapter prints a
+    /// one-line notice, because an answer that silently restarts mid-stream
+    /// would read as the model repeating itself.
+    TurnReset,
     /// The SQL the model designated as the answering query for the turn.
     /// Carried on the NDJSON stream so a harness can pair the answer with its
     /// query; silent in the text adapter, where the SQL was already shown when
@@ -125,6 +156,16 @@ pub enum TerminalEvent {
         margin: usize,
         tied: bool,
         probe_broke_tie: bool,
+    },
+    /// The token counts one provider call reported (`AgentEvent::Usage`),
+    /// named by `call` so a consumer can keep the answering rounds' cost apart
+    /// from the extraction call's. Carried on the JSON/NDJSON stream for
+    /// machine consumers; the text adapter renders nothing, because the
+    /// interactive surfaces for it already exist (the per-turn token line and
+    /// `/usage`) and a pipe's reader has the answer above it.
+    Usage {
+        call: UsageCall,
+        usage: TokenUsage,
     },
     Result {
         message: String,
@@ -193,7 +234,7 @@ pub fn render_event(event: &TerminalEvent, format: RenderFormat) -> Rendered {
     }
 }
 
-pub(super) fn sanitize_terminal(s: &str) -> String {
+pub(crate) fn sanitize_terminal(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -205,6 +246,35 @@ pub(super) fn sanitize_terminal(s: &str) -> String {
     out
 }
 
+/// Shapes the `ToolRequested` line: the one a pipe reader sees *before* a tool
+/// runs, naming what the call may do to their machine. The `read-only` claim
+/// is derived from the tool's **declared effect** through
+/// [`read_only_permits`] — the same predicate the approval policy gates on —
+/// so the line and the gate cannot drift: a workspace-write tool (including
+/// `scratch_sql`, which declares the same effect), a network-reaching tool,
+/// or any future effect that fails the predicate is never announced as
+/// read-only.
+///
+/// The other half of the wording is a deliberate non-claim: when the
+/// declaration does not prove read-only, the line says only "Using tool".
+/// A positive per-effect label ("writing the workspace", "network access")
+/// would need a match over the effect variants kept current by hand, and its
+/// default arm would be exactly the defect this fixes — a new variant silently
+/// rendering under the wrong claim. "Read-only" is the one claim the declared
+/// effect proves cheaply, and only that one is made; the detail line (the SQL,
+/// the path) and the tool's name carry what the call actually does.
+fn tool_requested_text(name: &str, detail: Option<&str>, effect: Option<&ToolEffect>) -> String {
+    let head = if effect.is_some_and(read_only_permits) {
+        format!("Using read-only tool: {name}\n")
+    } else {
+        format!("Using tool: {name}\n")
+    };
+    match detail {
+        Some(detail) => format!("{head}  {detail}\n"),
+        None => head,
+    }
+}
+
 fn text_event(event: &TerminalEvent) -> Rendered {
     let rendered = match event {
         TerminalEvent::Diagnostic { message } | TerminalEvent::Error { message } => Rendered {
@@ -212,11 +282,12 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stderr: format!("{message}\n"),
         },
         TerminalEvent::AssistantText { text } => render_delta::text(text),
-        TerminalEvent::ToolRequested { name, detail } => Rendered {
-            stdout: match detail {
-                Some(detail) => format!("Using read-only tool: {name}\n  {detail}\n"),
-                None => format!("Using read-only tool: {name}\n"),
-            },
+        TerminalEvent::ToolRequested {
+            name,
+            detail,
+            effect,
+        } => Rendered {
+            stdout: tool_requested_text(name, detail.as_deref(), effect.as_ref()),
             stderr: String::new(),
         },
         TerminalEvent::ToolCompleted { name, summary } => Rendered {
@@ -247,8 +318,16 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: render_memory::learning_skipped_text(*reason),
             stderr: String::new(),
         },
+        TerminalEvent::KnowledgeLearningDisabled { model, misses } => Rendered {
+            stdout: render_memory::learning_disabled_text(model, *misses),
+            stderr: String::new(),
+        },
         TerminalEvent::Complete => Rendered {
             stdout: "\n".into(),
+            stderr: String::new(),
+        },
+        TerminalEvent::TurnReset => Rendered {
+            stdout: "provider stream interrupted — retrying\n".into(),
             stderr: String::new(),
         },
         TerminalEvent::AnswerDesignated { .. } => Rendered {
@@ -272,6 +351,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
                 *tied,
                 *probe_broke_tie,
             ),
+            stderr: String::new(),
+        },
+        TerminalEvent::Usage { .. } => Rendered {
+            stdout: String::new(),
             stderr: String::new(),
         },
         TerminalEvent::Result { message } => Rendered {

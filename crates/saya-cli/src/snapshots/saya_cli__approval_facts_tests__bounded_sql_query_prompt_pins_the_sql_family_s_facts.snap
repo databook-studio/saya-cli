@@ -1,0 +1,11 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+assertion_line: 136
+expression: prompt
+---
+bounded_sql_query — read-only query
+  target: analytics
+  sql: SELECT region, count(*) FROM orders GROUP BY 1
+  bounds: one parsed read-only statement · ≤ 50 rows to the model · 60s timeout
+  rows are redacted before they reach the model
+[a] allow once   [s] allow sql:analytics for this session   [d] deny

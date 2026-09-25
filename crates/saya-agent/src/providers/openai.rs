@@ -19,8 +19,15 @@ pub struct OpenAiCompatibleProvider {
 
 impl OpenAiCompatibleProvider {
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
-        // No client-wide timeout: streams are bounded per chunk gap instead.
+        // Establishment is bounded per request; stream bodies are bounded by
+        // the parser's per-chunk idle timeout instead of a total cap.
+        // Redirects are refused outright: `base_url` is user-configurable, so
+        // a misconfigured or hostile endpoint could answer 307 and have the
+        // default policy replay the POST — prompt plus database-derived
+        // context — to another host. (`Authorization` would be stripped on
+        // the cross-host hop; the prompt body would not.)
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
@@ -44,7 +51,11 @@ impl ChatProvider for OpenAiCompatibleProvider {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
-        let body = OpenAiRequest::from_request(request, self.settings.temperature);
+        let body = OpenAiRequest::from_request(
+            request,
+            self.settings.temperature,
+            self.settings.max_output_tokens,
+        );
         let url = endpoint(
             self.settings.base_url.as_deref(),
             "https://api.openai.com/v1",
@@ -64,6 +75,7 @@ impl ChatProvider for OpenAiCompatibleProvider {
             &self.settings.retry_delays,
             &cancellation,
             &url,
+            self.settings.timeout,
         )
         .await?;
         Ok(openai_stream::parse(
@@ -83,6 +95,11 @@ struct OpenAiRequest {
     /// Sampling temperature (configurable via `[ai].temperature`, default 0.1).
     /// Lower keeps answers concise and deterministic (fewer tokens/loops).
     temperature: f32,
+    /// Per-response output-token ceiling. Sent as `max_completion_tokens`:
+    /// `max_tokens` is deprecated and rejected by newer reasoning models,
+    /// while `max_completion_tokens` covers visible output plus reasoning
+    /// tokens on every model.
+    max_completion_tokens: u32,
     /// Stable key derived from the **system message** so a caching gateway can
     /// reuse the prompt prefix across turns instead of reprocessing it each time.
     ///
@@ -107,8 +124,16 @@ struct OpenAiRequest {
     response_format: Option<ResponseFormatWire>,
     /// The OpenAI `reasoning_effort` spelling of [`ChatRequest::reasoning_effort`].
     /// Omitted for `Default` so the default path sends nothing and the endpoint's
-    /// own configuration wins; the wire spellings are the provider's own
-    /// (`minimal`/`low`/`medium`/`high`).
+    /// own configuration wins. Omitted for `Minimal` too: the `"minimal"` spelling
+    /// is the one variant outside the `{low, medium, high}` set that the
+    /// OpenAI-family wire spells, and it is not universally honoured — a
+    /// Fireworks-backed gateway rejects `reasoning_effort: "minimal"` with HTTP
+    /// 400 (databook-studio/saya-cli#56), which fails extraction every turn.
+    /// The `ReasoningEffort` contract is that a provider which cannot honour a
+    /// variant **drops it, never errors**, so `Minimal` is dropped on this wire
+    /// and the endpoint's own (lowest) effort configuration wins. The
+    /// `ChatRequest` still carries `Minimal`, so providers that do translate it
+    /// (Ollama's `think: false`, Anthropic/Gemini's token budget) are unaffected.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
 }
@@ -127,7 +152,7 @@ struct StreamOptions {
 }
 
 impl OpenAiRequest {
-    fn from_request(request: ChatRequest, temperature: f32) -> Self {
+    fn from_request(request: ChatRequest, temperature: f32, max_output_tokens: u32) -> Self {
         // The cache key derives from the system message — the session-stable
         // prefix a gateway caches. See `prompt_cache_key` for why the system
         // message is stable across turns (the per-turn SQL hint rides the user
@@ -143,6 +168,7 @@ impl OpenAiRequest {
             tools: tools(request.tools),
             stream: true,
             temperature,
+            max_completion_tokens: max_output_tokens,
             prompt_cache_key,
             stream_options: StreamOptions {
                 include_usage: true,
@@ -154,8 +180,7 @@ impl OpenAiRequest {
                 ResponseFormat::Text => None,
             },
             reasoning_effort: match request.reasoning_effort {
-                ReasoningEffort::Default => None,
-                ReasoningEffort::Minimal => Some("minimal"),
+                ReasoningEffort::Default | ReasoningEffort::Minimal => None,
                 ReasoningEffort::Low => Some("low"),
                 ReasoningEffort::Medium => Some("medium"),
                 ReasoningEffort::High => Some("high"),
@@ -195,6 +220,7 @@ mod tests {
                     requires_approval: false,
                     local_state: LocalStateEffect::None,
                 },
+                completion: None,
             }],
             response_format: format,
             reasoning_effort: effort,
@@ -209,11 +235,34 @@ mod tests {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::JsonObject, ReasoningEffort::Default),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
             json.contains(r#""response_format":{"type":"json_object"}"#),
             "json_object must appear on the wire: {json}"
+        );
+    }
+
+    /// The configured output ceiling rides the OpenAI body as
+    /// `max_completion_tokens` (`max_tokens` is deprecated and rejected by
+    /// newer reasoning models). The default path sends the settings default,
+    /// so the ceiling is always explicit — never an unknown server default.
+    #[test]
+    fn configured_output_ceiling_rides_the_body_as_max_completion_tokens() {
+        let body = OpenAiRequest::from_request(
+            request_with(ResponseFormat::Text, ReasoningEffort::Default),
+            0.1,
+            1234,
+        );
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            json.contains(r#""max_completion_tokens":1234"#),
+            "configured ceiling must ride the body: {json}"
+        );
+        assert!(
+            !json.contains("max_tokens\":") || json.contains("max_completion_tokens"),
+            "no bare max_tokens spelling: {json}"
         );
     }
 
@@ -225,6 +274,7 @@ mod tests {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::Text, ReasoningEffort::Default),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
@@ -233,18 +283,29 @@ mod tests {
         );
     }
 
-    /// A `Minimal` effort request carries OpenAI's `reasoning_effort: "minimal"`
-    /// spelling on the wire — the direct four-level mapping the provider offers.
+    /// `Minimal` is the one `reasoning_effort` value outside the
+    /// `{low, medium, high}` set that the OpenAI-family wire spells, and that
+    /// spelling is not universally honoured: a Fireworks-backed gateway rejects
+    /// `reasoning_effort: "minimal"` with HTTP 400 while accepting `low` and an
+    /// omitted field. The `ReasoningEffort` contract (see `chat.rs`) is that a
+    /// provider which cannot honour a variant **drops it, never errors** — so
+    /// the OpenAI wire must omit `reasoning_effort` for `Minimal`, the same as
+    /// `Default`. This is the regression test for the bug in
+    /// databook-studio/saya-cli#56: a `Minimal` extraction request no longer
+    /// hard-fails extraction every turn on a gateway that rejects the spelling.
+    /// It fails against the current code, which emits `"minimal"`.
     #[test]
-    fn minimal_effort_request_carries_reasoning_effort_on_wire() {
+    fn minimal_effort_request_omits_reasoning_effort_on_wire() {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::Text, ReasoningEffort::Minimal),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
-            json.contains(r#""reasoning_effort":"minimal""#),
-            "minimal effort must appear on the wire: {json}"
+            !json.contains("reasoning_effort"),
+            "minimal effort must not carry reasoning_effort on the OpenAI wire \
+             (gateways that reject 'minimal' would 400 every extraction call): {json}"
         );
     }
 
@@ -256,6 +317,7 @@ mod tests {
         let body = OpenAiRequest::from_request(
             request_with(ResponseFormat::Text, ReasoningEffort::Default),
             0.1,
+            4096,
         );
         let json = serde_json::to_string(&body).expect("serializes");
         assert!(
@@ -278,6 +340,7 @@ mod tests {
                 vec![system.clone(), ChatMessage::text("user", "first question")],
             ),
             0.1,
+            4096,
         );
         let req_b = OpenAiRequest::from_request(
             ChatRequest::new(
@@ -288,6 +351,7 @@ mod tests {
                 ],
             ),
             0.1,
+            4096,
         );
         assert_eq!(
             req_a.prompt_cache_key, req_b.prompt_cache_key,
@@ -311,6 +375,7 @@ mod tests {
                 vec![ChatMessage::text("system", "system prompt A")],
             ),
             0.1,
+            4096,
         );
         let b = OpenAiRequest::from_request(
             ChatRequest::new(
@@ -318,6 +383,7 @@ mod tests {
                 vec![ChatMessage::text("system", "system prompt B")],
             ),
             0.1,
+            4096,
         );
         assert_ne!(
             a.prompt_cache_key, b.prompt_cache_key,
@@ -332,6 +398,7 @@ mod tests {
         let body = OpenAiRequest::from_request(
             ChatRequest::new("test-model", vec![ChatMessage::text("user", "hi")]),
             0.1,
+            4096,
         );
         assert!(body.prompt_cache_key.is_none());
     }

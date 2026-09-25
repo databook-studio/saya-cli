@@ -1,6 +1,7 @@
 mod compaction;
 mod designation;
 mod failed_statements;
+mod failure_key;
 mod output;
 mod receive;
 mod salvage;
@@ -9,11 +10,23 @@ mod tools;
 mod turn_tools;
 
 use crate::{
-    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
-    TokenUsage, ToolDefinition, ToolExecutor,
+    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatMessage,
+    ChatProvider, ProviderError, TokenUsage, ToolDefinition, ToolExecutor,
 };
 
-pub use output::{AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, budgets_from_env};
+pub use output::{
+    AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
+};
+pub use tools::{MAX_TOOL_MESSAGE_BYTES, tool_message_cap};
+
+/// Re-instruction pushed as a user-role message after the provider caps a
+/// response mid-answer. The incomplete response is discarded, never replayed:
+/// replaying a half-assembled tool-argument JSON as history would invite the
+/// model to complete a write whose first half it never issued. Committed work
+/// needs no replay — `workspace_edit`'s append variant reports the file's size
+/// and digest in its tool result, and those results are already in the
+/// conversation, so the model resumes from there.
+const CONTINUATION_NOTE: &str = "Your previous response was cut off at the provider's output-token limit. The incomplete part was discarded and is not in the conversation. If you were writing a file, resume it with the append variant of workspace_edit using the size and digest reported in your earlier tool result, do not restart the file. Emit less per response so the next one fits.";
 
 /// Add a turn's optional count into a run total without inventing data.
 ///
@@ -51,13 +64,17 @@ pub async fn run_agent_with_sink(
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
     let mut turn_count = 0;
-    // Statements that failed during this run, so a byte-identical
-    // re-submission is refused rather than re-executed (loop invariant for the
-    // "do not repeat a failed query" advice the model does not always obey).
+    let mut continuation_count = 0;
+    // Calls that failed during this run — SQL statements keyed on the
+    // statement exactly as submitted, other tools on (tool, arguments) — so a
+    // byte-identical re-submission is refused rather than re-executed (loop
+    // invariant for the "do not repeat a failed call" advice the model does
+    // not always obey).
     let mut failed = failed_statements::FailedStatements::new();
     // The last statement that completed successfully, so a run that exhausts its
     // budget without nominating can still surface its best available answer.
     let mut last_successful_sql: Option<String> = None;
+    let mut designation = designation::State::new(limits.context_byte_budget);
     loop {
         check_cancelled(&cancellation)?;
         if let Some(max_turns) = limits.max_turns
@@ -75,12 +92,17 @@ pub async fn run_agent_with_sink(
                 &mut usage,
                 used_bounded_sql_query,
                 tool_metadata,
-                last_successful_sql,
+                designation.sql.clone().or(last_successful_sql),
             )
             .await;
         }
         turn_count += 1;
-        let (assistant, turn_usage, reasoning) = receive::receive(
+        // A truncation is deterministic — re-sending the identical request fails
+        // identically, so `receive` never retries it. Within budget the loop
+        // instead re-instructs: the partial stays discarded, one user-role note
+        // tells the model to resume compactly, and the turn is spent — the
+        // `turn_count += 1` above already ran, so `max_turns` keeps binding.
+        let (assistant, turn_usage, reasoning) = match receive::receive(
             provider,
             &request.model,
             &messages,
@@ -89,7 +111,28 @@ pub async fn run_agent_with_sink(
             &cancellation,
             &mut events,
         )
-        .await?;
+        .await
+        {
+            Err(AgentError::Provider(ProviderError::OutputTruncated { .. }))
+                if limits
+                    .max_continuations
+                    .is_some_and(|max| continuation_count < max) =>
+            {
+                continuation_count += 1;
+                messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
+                continue;
+            }
+            Err(error) if designation.recovering() => {
+                return designation::failed_follow_up(
+                    &designation,
+                    error,
+                    (&mut events, sink),
+                    (usage, used_bounded_sql_query, tool_metadata),
+                )
+                .await;
+            }
+            outcome => outcome?,
+        };
         // Providers report cumulative counts per response; sum across turns.
         usage.input_tokens += turn_usage.input_tokens;
         usage.output_tokens += turn_usage.output_tokens;
@@ -118,30 +161,19 @@ pub async fn run_agent_with_sink(
             emit(&mut events, sink, AgentEvent::reasoning_text(text)).await;
         }
         messages.push(assistant.clone());
-        // The model designates the SQL that answers the question by calling
-        // `designate_answer` in its terminal turn, alongside the prose answer.
-        // That ends the run: the prose is the answer, the SQL is carried on
-        // the output and an event, and no tool is executed. Optional — a turn
-        // without the call falls through to the normal terminal below.
-        if let Some(sql) = designation::designation_from(&assistant) {
-            emit(
-                &mut events,
-                sink,
-                AgentEvent::answer_designated(sql.clone()),
-            )
-            .await;
-            check_cancelled(&cancellation)?;
-            emit(&mut events, sink, AgentEvent::Complete).await;
-            return Ok(AgentOutput {
-                answer: assistant.content,
-                events,
-                used_bounded_sql_query,
-                tool_metadata,
-                usage,
-                learning_usage: None,
-                truncated: false,
-                answer_sql: Some(sql),
-            });
+        // Designation arm: see `designation` for the bounded prose recovery.
+        match designation::handle(
+            &mut designation,
+            &assistant,
+            (&mut events, sink, &cancellation),
+            &mut messages,
+            (usage, used_bounded_sql_query, &mut tool_metadata),
+        )
+        .await?
+        {
+            designation::Outcome::Done(output) => return Ok(*output),
+            designation::Outcome::Recovering => continue,
+            designation::Outcome::NotDesignated => {}
         }
         if assistant.tool_calls.is_empty() {
             check_cancelled(&cancellation)?;
@@ -154,7 +186,7 @@ pub async fn run_agent_with_sink(
                 usage,
                 learning_usage: None,
                 truncated: false,
-                answer_sql: None,
+                answer_sql: designation.sql.clone(),
             });
         }
         // The tool-call ceiling is a whole-run total checked once per turn,
@@ -176,7 +208,7 @@ pub async fn run_agent_with_sink(
                 &mut usage,
                 used_bounded_sql_query,
                 tool_metadata,
-                last_successful_sql,
+                designation.sql.clone().or(last_successful_sql),
             )
             .await;
         }

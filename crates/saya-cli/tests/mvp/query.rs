@@ -204,6 +204,12 @@ fn duckdb_schema_cache_fallback_refresh_and_interactive_schema_are_stable() {
             .count(),
         2
     );
+    #[cfg(windows)]
+    assert!(
+        String::from_utf8_lossy(&interactive.stderr)
+            .contains("Host commands are unavailable on Windows")
+    );
+    #[cfg(not(windows))]
     assert!(interactive.stderr.is_empty());
     std::fs::remove_file(&database).unwrap();
     let cached = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))

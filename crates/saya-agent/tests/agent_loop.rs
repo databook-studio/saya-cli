@@ -96,6 +96,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: true,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            completion: None,
         },
         ToolDefinition {
             name: "bounded_sql_query_all".into(),
@@ -108,6 +109,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: true,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            completion: None,
         },
         ToolDefinition {
             name: "schema_discovery".into(),
@@ -120,6 +122,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: false,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            completion: None,
         },
     ]
 }
@@ -714,8 +717,11 @@ async fn execute_batch_caps_simultaneous_concurrency() {
         AgentLimits {
             max_turns: Some(4),
             max_tool_calls: Some(64),
+            max_continuations: None,
             permit_candidate_writes: false,
             context_byte_budget: 1024 * 1024,
+            permit_workspace_writes: false,
+            permit_external_effects: false,
         },
         &AllowReadOnlyApproval,
     );
@@ -931,6 +937,332 @@ async fn optional_usage_counts_survive_the_run_and_absent_stays_absent() {
     );
 }
 
+/// Usage reaches the event stream too: one `Usage` event per provider call
+/// that reported any, carrying **that call's** counts — not the run total, so a
+/// consumer can sum them and keep the answer's cost apart from anything else.
+#[tokio::test]
+async fn each_answering_call_reports_its_own_usage_on_the_stream() {
+    use saya_agent::{ProviderEvent, ProviderStream, TokenUsage, UsageCall};
+
+    struct UsageProvider {
+        turns: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for UsageProvider {
+        fn name(&self) -> &str {
+            "usage"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            panic!("loop must drive providers through stream()");
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            let mut turns = self.turns.lock().unwrap();
+            *turns += 1;
+            let turn = *turns;
+            drop(turns);
+            let events = if turn == 1 {
+                vec![
+                    Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }])),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(3, 7))),
+                    Ok(ProviderEvent::Done),
+                ]
+            } else {
+                vec![
+                    Ok(ProviderEvent::TextDelta("final answer".into())),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(5, 9))),
+                    Ok(ProviderEvent::Done),
+                ]
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &UsageProvider {
+            turns: std::sync::Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "final answer");
+    let events = captured.lock().unwrap();
+    let reported: Vec<(UsageCall, saya_agent::TokenUsage)> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Usage { call, usage } => Some((*call, *usage)),
+            _ => None,
+        })
+        .collect();
+    // One event per call, each carrying that call's own counts — a snapshot,
+    // never the running total (which is `8/16` and belongs to `AgentOutput`).
+    assert_eq!(
+        reported.len(),
+        2,
+        "one event per answering call: {events:?}"
+    );
+    assert_eq!(reported[0], (UsageCall::Answer, TokenUsage::new(3, 7)));
+    assert_eq!(reported[1], (UsageCall::Answer, TokenUsage::new(5, 9)));
+}
+
+/// A provider that reports no usage emits no usage event: absence on the
+/// stream means "unknown", and a fabricated `0/0` line would read as a free
+/// call the provider never accounted.
+#[tokio::test]
+async fn a_silent_provider_emits_no_usage_event() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &MockProvider {
+            responses: Mutex::new(vec![ChatResponse::new(ChatMessage::text(
+                "assistant",
+                "the answer",
+            ))]),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "the answer");
+    let events = captured.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, AgentEvent::Usage { .. })),
+        "a silent provider must not produce a usage event: {events:?}"
+    );
+}
+
+/// The wire distinction the whole type exists for: a provider reporting zero
+/// cached tokens is saying something, and a provider reporting nothing is not.
+/// On the stream the reported zero survives as a number and the unreported
+/// serializes `null` — never folded into one another.
+#[tokio::test]
+async fn reported_zero_and_unreported_cached_tokens_stay_distinct_on_the_stream() {
+    use saya_agent::{ProviderEvent, ProviderStream, TokenUsage};
+
+    struct ZeroCacheProvider {
+        turns: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for ZeroCacheProvider {
+        fn name(&self) -> &str {
+            "zero-cache"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            panic!("loop must drive providers through stream()");
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            let mut turns = self.turns.lock().unwrap();
+            *turns += 1;
+            let turn = *turns;
+            drop(turns);
+            let usage = if turn == 1 {
+                // A cold cache, reported as a number.
+                TokenUsage::new(10, 5).with_cached_input(Some(0))
+            } else {
+                // No cache figure at all: the field stays absent.
+                TokenUsage::new(10, 5)
+            };
+            let events = if turn == 1 {
+                vec![
+                    Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({}),
+                    }])),
+                    Ok(ProviderEvent::Usage(usage)),
+                    Ok(ProviderEvent::Done),
+                ]
+            } else {
+                vec![
+                    Ok(ProviderEvent::TextDelta("final answer".into())),
+                    Ok(ProviderEvent::Usage(usage)),
+                    Ok(ProviderEvent::Done),
+                ]
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    run_agent_with_sink(
+        &ZeroCacheProvider {
+            turns: std::sync::Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let events = captured.lock().unwrap();
+    let reported: Vec<saya_agent::TokenUsage> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Usage { usage, .. } => Some(*usage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reported.len(), 2, "one event per call: {events:?}");
+    assert_eq!(
+        reported[0].cached_input_tokens,
+        Some(0),
+        "a reported zero must survive the stream as a reported zero"
+    );
+    assert_eq!(
+        reported[1].cached_input_tokens, None,
+        "an unreported cache figure must stay absent, not become zero"
+    );
+    // And the serialised forms differ, which is the property a consumer reads.
+    assert_ne!(
+        serde_json::to_string(&reported[0]).unwrap(),
+        serde_json::to_string(&reported[1]).unwrap(),
+        "reported zero and unreported must not serialize identically"
+    );
+}
+
+/// A salvaged run's final call produces the answer the reader sees, so its
+/// usage reaches the stream as an answering call — the salvage path drives its
+/// last call through the same `receive` the loop uses.
+#[tokio::test]
+async fn salvage_final_call_reports_its_usage_on_the_stream() {
+    use saya_agent::{ProviderEvent, ProviderStream, TokenUsage, UsageCall};
+
+    struct SalvageUsageProvider {
+        turns: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for SalvageUsageProvider {
+        fn name(&self) -> &str {
+            "salvage-usage"
+        }
+        async fn complete(
+            &self,
+            _: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            panic!("loop must drive providers through stream()");
+        }
+        async fn stream(
+            &self,
+            _: ChatRequest,
+            _: CancellationToken,
+        ) -> Result<ProviderStream, saya_agent::ProviderError> {
+            let turn = {
+                let mut turns = self.turns.lock().unwrap();
+                *turns += 1;
+                *turns
+            };
+            let events = if turn == 1 {
+                vec![
+                    Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "bounded_sql_query".into(),
+                        arguments: serde_json::json!({"sql":"select 1"}),
+                    }])),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(20, 4))),
+                    Ok(ProviderEvent::Done),
+                ]
+            } else {
+                // The salvage call: no tools, its own report.
+                vec![
+                    Ok(ProviderEvent::TextDelta("salvaged answer".into())),
+                    Ok(ProviderEvent::Usage(TokenUsage::new(30, 6))),
+                    Ok(ProviderEvent::Done),
+                ]
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &SalvageUsageProvider {
+            turns: std::sync::Mutex::new(0),
+        },
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_turns: Some(1),
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: captured.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(output.answer, "salvaged answer");
+    assert!(output.truncated, "the run was salvaged, not completed");
+    let events = captured.lock().unwrap();
+    let reported: Vec<(UsageCall, u64)> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Usage { call, usage } => Some((*call, usage.input_tokens)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        reported,
+        vec![(UsageCall::Answer, 20), (UsageCall::Answer, 30)],
+        "the salvage call is an answering call and reports its usage: {events:?}"
+    );
+}
+
 /// The intra-loop context bound still binds, but it no longer aborts the run
 /// Runaway context is trimmed to fit rather than surfacing an
 /// opaque `Limit("context bytes")` after the query already ran. Each provider
@@ -989,8 +1321,11 @@ async fn runaway_context_is_trimmed_not_aborted_and_the_bound_still_binds() {
         AgentLimits {
             max_turns: Some(8),
             max_tool_calls: Some(64),
+            max_continuations: None,
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
+            permit_workspace_writes: false,
+            permit_external_effects: false,
         },
         &AllowReadOnlyApproval,
     )
@@ -1102,8 +1437,11 @@ async fn single_oversized_tool_result_does_not_abort_the_run() {
         AgentLimits {
             max_turns: Some(4),
             max_tool_calls: Some(8),
+            max_continuations: None,
             permit_candidate_writes: false,
             context_byte_budget: 4_096,
+            permit_workspace_writes: false,
+            permit_external_effects: false,
         },
         &AllowReadOnlyApproval,
     )
@@ -1334,6 +1672,7 @@ fn external_side_effect_without_approval_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: saya_agent::LocalStateEffect::None,
         },
+        completion: None,
     }
 }
 
@@ -1905,10 +2244,14 @@ async fn salvage_on_tool_call_budget_returns_best_answer_marked_truncated() {
     );
 }
 
-/// If the salvage call itself fails, the error surfaces — the run does not
-/// invent an answer and does not swallow the provider failure.
+/// A provider failure on the salvage call itself must not lose the work
+/// already done: the run's turns executed tools, gathered events, and billed
+/// usage before the cliff, and propagating the error would discard all of it.
+/// The run therefore degrades to a structured truncated result — truncated
+/// flag set, executed work preserved, and no answer invented — instead of
+/// erroring.
 #[tokio::test]
-async fn salvage_surfaces_error_when_the_final_call_itself_fails() {
+async fn salvage_failure_degrades_to_a_truncated_result_keeping_the_work_done() {
     struct FailOnSalvage {
         turn: Mutex<usize>,
     }
@@ -1945,12 +2288,13 @@ async fn salvage_surfaces_error_when_the_final_call_itself_fails() {
             }
         }
     }
-    let error = run_agent(
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent(
         &FailOnSalvage {
             turn: Mutex::new(0),
         },
         &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
+            calls: calls.clone(),
         },
         request(),
         definitions(),
@@ -1961,10 +2305,19 @@ async fn salvage_surfaces_error_when_the_final_call_itself_fails() {
         &AllowReadOnlyApproval,
     )
     .await
-    .unwrap_err();
+    .expect("a failed salvage call must not discard the work already done");
     assert!(
-        matches!(error, AgentError::Provider(_)),
-        "a failed salvage call must surface its error, got {error:?}"
+        output.truncated,
+        "a degraded salvage run must be marked truncated, got {output:?}"
+    );
+    assert!(
+        output.answer.is_empty(),
+        "the run must not invent an answer when the salvage call fails"
+    );
+    assert_eq!(
+        &*calls.lock().unwrap(),
+        &["schema_discovery"],
+        "the turn's executed work must be preserved, not lost"
     );
 }
 
@@ -2075,5 +2428,1008 @@ async fn designate_answer_terminal_turn_carries_the_sql_and_emits_an_event() {
     assert!(
         plain.answer_sql.is_none(),
         "a turn without designation carries no SQL"
+    );
+}
+
+/// A provider whose first stream drops mid-answer (partial deltas, the stream
+/// ends without `Done`) and whose retry succeeds. Drives the M1-7 contract:
+/// the run completes, the sink saw reset-then-full text and never duplicated
+/// text, and the retry re-sent the conversation exactly as it stood at turn
+/// start.
+struct DropThenAnswerProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for DropThenAnswerProvider {
+    fn name(&self) -> &str {
+        "drop-then-answer"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        let attempt = {
+            let mut requests = self.requests.lock().unwrap();
+            requests.push(request);
+            requests.len() - 1
+        };
+        let events = if attempt == 0 {
+            // The stream drops mid-answer: partial deltas, no `Done`.
+            vec![
+                Ok(ProviderEvent::TextDelta("The an".into())),
+                Ok(ProviderEvent::TextDelta("sw".into())),
+            ]
+        } else {
+            vec![
+                Ok(ProviderEvent::TextDelta("The answer is 42.".into())),
+                Ok(ProviderEvent::Done),
+            ]
+        };
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
+#[tokio::test]
+async fn dropped_stream_retries_the_turn_and_the_sink_saw_reset_then_full_text() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = DropThenAnswerProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run completes after the retried turn");
+    assert_eq!(
+        output.answer, "The answer is 42.",
+        "the retried answer is the run's answer"
+    );
+
+    // The sink saw reset-then-full text: the partial attempt's deltas came
+    // before the reset, the full retry after it — never concatenated.
+    let seen = events.lock().unwrap().clone();
+    // Every attempt announces itself, the first and the retried one alike.
+    // A sink rolls back to this boundary, so a missing one would leave the
+    // TUI reaching for the request chapter instead and erasing an earlier
+    // step's delivered evidence (re-audit R02).
+    assert_eq!(
+        seen.iter()
+            .filter(|event| matches!(event, AgentEvent::TurnStarted))
+            .count(),
+        2,
+        "one TurnStarted before the first attempt and one before the retry:\n{seen:#?}"
+    );
+    assert!(
+        matches!(seen.first(), Some(AgentEvent::TurnStarted)),
+        "the attempt boundary precedes anything the attempt can produce"
+    );
+    let split = seen
+        .iter()
+        .position(|event| matches!(event, AgentEvent::TurnReset))
+        .expect("the sink saw a TurnReset before the retry");
+    assert!(
+        matches!(seen.get(split + 1), Some(AgentEvent::TurnStarted)),
+        "the retried attempt announces its own boundary right after the reset"
+    );
+    let partial: String = seen[..split]
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::AssistantText { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    let full: String = seen[split + 1..]
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::AssistantText { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        partial, "The answ",
+        "the partial attempt's deltas came before the reset: {seen:?}"
+    );
+    assert_eq!(
+        full, "The answer is 42.",
+        "the retry re-emitted the full answer after the reset: {seen:?}"
+    );
+    assert_eq!(
+        seen.iter()
+            .filter(|event| matches!(event, AgentEvent::TurnReset))
+            .count(),
+        1,
+        "exactly one reset for one retry: {seen:?}"
+    );
+    // Folding the stream — append deltas, clear at resets — reproduces the
+    // answer exactly, so no text was ever duplicated.
+    let mut folded = String::new();
+    for event in &seen {
+        match event {
+            AgentEvent::AssistantText { text } => folded.push_str(text),
+            AgentEvent::TurnReset => folded.clear(),
+            _ => {}
+        }
+    }
+    assert_eq!(folded, "The answer is 42.", "no duplicated text: {seen:?}");
+
+    // The retry re-sent the conversation exactly as it stood at turn start —
+    // no partial assistant message entered it.
+    let captured = requests.lock().unwrap();
+    assert_eq!(
+        captured.len(),
+        2,
+        "one original attempt and one retry: {:?}",
+        captured
+            .iter()
+            .map(|r| r.messages.len())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        captured[1].messages, captured[0].messages,
+        "the retry request carries the turn-start conversation unchanged"
+    );
+    assert!(
+        !captured[1]
+            .messages
+            .iter()
+            .any(|message| message.content.contains("The answ")),
+        "the dropped attempt's partial text never entered the conversation"
+    );
+}
+
+/// Retries are bounded: a provider that drops every attempt exhausts the
+/// backoff schedule (one attempt plus the three scheduled sleeps) and then
+/// falls through to the existing error path, never looping forever.
+struct AlwaysDroppingProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for AlwaysDroppingProvider {
+    fn name(&self) -> &str {
+        "always-dropping"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![Ok(
+            ProviderEvent::TextDelta("partial".into()),
+        )])))
+    }
+}
+
+#[tokio::test]
+async fn exhausted_retries_fall_through_to_the_existing_error_path() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = AlwaysDroppingProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::InvalidResponse)
+        ),
+        "the exhausted schedule falls through to the existing error: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        4,
+        "bounded: one attempt plus the three scheduled retries"
+    );
+    let seen = events.lock().unwrap().clone();
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Complete)),
+        "an exhausted retry run never completes: {seen:?}"
+    );
+}
+
+/// A stream that **completes** (`Done`) but carries no usable response is not
+/// a mid-stream failure: the model answered nothing, and every retry would
+/// fail the same way, so it errors immediately after the one attempt instead
+/// of burning the backoff schedule.
+struct EmptyCompletionProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for EmptyCompletionProvider {
+    fn name(&self) -> &str {
+        "empty-completion"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            Ok(ProviderEvent::TextDelta(String::new())),
+            Ok(ProviderEvent::Done),
+        ])))
+    }
+}
+
+#[tokio::test]
+async fn a_completed_but_empty_response_errors_after_one_attempt() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = EmptyCompletionProvider {
+        requests: requests.clone(),
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::InvalidResponse)
+        ),
+        "the existing error path applies: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "a completed-but-empty response is not retried"
+    );
+}
+
+/// A sink that records nothing, for tests where the events are not under test.
+struct NoopSink;
+
+#[async_trait]
+impl AgentEventSink for NoopSink {
+    async fn emit(&self, _: AgentEvent) {}
+}
+
+/// O1 property 5: a truncation is never retried — exactly one attempt, and no
+/// `TurnReset` (the renderer prints "interrupted — retrying" per reset). The
+/// cap is deterministic, so re-sending the identical request is pure waste.
+struct TruncatingProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for TruncatingProvider {
+    fn name(&self) -> &str {
+        "truncating"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            Ok(ProviderEvent::TextDelta("partial".into())),
+            Err(saya_agent::ProviderError::output_truncated(
+                "partial".into(),
+                Vec::new(),
+            )),
+        ])))
+    }
+}
+
+#[tokio::test]
+async fn truncation_is_never_retried_and_emits_no_reset() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = TruncatingProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    // O1 property 5 is per-turn: `receive` never retries a truncation. The
+    // loop-level continuation budget is disabled here so this test pins the
+    // single-attempt receive behavior, not the continuation policy.
+    let limits = AgentLimits {
+        max_continuations: Some(0),
+        ..AgentLimits::default()
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        limits,
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::OutputTruncated { .. })
+        ),
+        "the typed truncation error reaches the caller: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "a truncation is deterministic: exactly one attempt"
+    );
+    let seen = events.lock().unwrap().clone();
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TurnReset)),
+        "no reset means no 'interrupted — retrying' line: {seen:?}"
+    );
+}
+
+/// O1 property 6: a genuine transport failure still retries on the existing
+/// schedule — one attempt plus the three scheduled retries — and the sink saw
+/// a reset per retry. The truncation fix must not change this path.
+struct AlwaysFailingProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for AlwaysFailingProvider {
+    fn name(&self) -> &str {
+        "always-failing"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(futures_util::stream::iter(vec![Err(
+            saya_agent::ProviderError::Request("network request failed".into()),
+        )])))
+    }
+}
+
+#[tokio::test]
+async fn genuine_transport_failure_still_retries_on_the_existing_schedule() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = AlwaysFailingProvider {
+        requests: requests.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            AgentError::Provider(saya_agent::ProviderError::Request(_))
+        ),
+        "the transport error falls through after the schedule: {error:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        4,
+        "one attempt plus the three scheduled retries"
+    );
+    assert_eq!(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::TurnReset))
+            .count(),
+        3,
+        "one reset per retry"
+    );
+}
+
+/// A provider that records every request, answers the first call with one
+/// `schema_discovery` tool call, and answers the next with a plain final text.
+struct ToolThenAnswerProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait]
+impl ChatProvider for ToolThenAnswerProvider {
+    fn name(&self) -> &str {
+        "tool-then-answer"
+    }
+    async fn complete(
+        &self,
+        request: ChatRequest,
+    ) -> Result<ChatResponse, saya_agent::ProviderError> {
+        let first = self.requests.lock().unwrap().is_empty();
+        self.requests.lock().unwrap().push(request);
+        if first {
+            Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "schema_discovery".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                tool_call_id: None,
+            }))
+        } else {
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
+        }
+    }
+}
+
+/// M2-3(b): a tool result entering the model's context is scrubbed at the
+/// context boundary. A tool returning `api_key=sk-live-SENTINEL` must reach
+/// the provider as `api_key=[redacted]` — the loop byte-caps tool results but
+/// never scrubbed them, so the secret shape previously reached the model
+/// verbatim. SQL rows are included by design (D8): every tool result entering
+/// model context is scrubbed, and the answer may quote `[redacted]`.
+#[tokio::test]
+async fn tool_result_reaching_the_provider_is_redacted() {
+    struct SentinelTools;
+    #[async_trait::async_trait]
+    impl ToolExecutor for SentinelTools {
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            Ok(serde_json::json!({"rows": [["api_key=sk-live-SENTINEL"]]}))
+        }
+    }
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    run_agent(
+        &ToolThenAnswerProvider {
+            requests: requests.clone(),
+        },
+        &SentinelTools,
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .expect("the run completes");
+    let second = requests.lock().unwrap()[1].clone();
+    let tool_message = second
+        .messages
+        .iter()
+        .find(|message| message.role == "tool")
+        .expect("the tool result reaches the model as a tool message");
+    assert!(
+        !tool_message.content.contains("sk-live-SENTINEL"),
+        "secret-shaped tool result reached the provider unredacted: {}",
+        tool_message.content
+    );
+    assert!(
+        tool_message.content.contains("api_key=[redacted]"),
+        "the value must be replaced by the redaction marker, got: {}",
+        tool_message.content
+    );
+}
+
+/// A scripted stream provider for the continuation tests. The first turn (or
+/// every turn when `always_truncate`) streams the partial text and then caps
+/// mid-answer with `OutputTruncated`; later turns answer with fixed prose.
+/// Every request is recorded so tests can inspect what the provider saw.
+struct ContinuationScriptProvider {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+    calls: Mutex<usize>,
+    always_truncate: bool,
+    partial_text: String,
+    partial_tool_json: Vec<String>,
+}
+
+#[async_trait]
+impl ChatProvider for ContinuationScriptProvider {
+    fn name(&self) -> &str {
+        "continuation-script"
+    }
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("the main loop drives the provider through stream")
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        let turn = *calls;
+        drop(calls);
+        if !self.always_truncate && turn > 1 {
+            return Ok(Box::pin(futures_util::stream::iter(vec![
+                Ok(ProviderEvent::TextDelta("cooperative answer".into())),
+                Ok(ProviderEvent::Done),
+            ])));
+        }
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            Ok(ProviderEvent::TextDelta(self.partial_text.clone())),
+            Err(saya_agent::ProviderError::output_truncated(
+                self.partial_text.clone(),
+                self.partial_tool_json.clone(),
+            )),
+        ])))
+    }
+}
+
+fn continuation_script(
+    requests: &Arc<Mutex<Vec<ChatRequest>>>,
+    always_truncate: bool,
+    partial_text: &str,
+    partial_tool_json: Vec<String>,
+) -> ContinuationScriptProvider {
+    ContinuationScriptProvider {
+        requests: requests.clone(),
+        calls: Mutex::new(0),
+        always_truncate,
+        partial_text: partial_text.into(),
+        partial_tool_json,
+    }
+}
+
+/// Counts user-role messages in `messages` carrying the continuation note,
+/// keyed on its fixed wording rather than on the private constant.
+fn continuation_notes(messages: &[ChatMessage]) -> usize {
+    messages
+        .iter()
+        .filter(|message| message.role == "user" && message.content.contains("output-token limit"))
+        .count()
+}
+
+/// Recovery: a truncation on turn 1 followed by a cooperative turn completes
+/// the run. The partial is discarded, never replayed: it appears nowhere in
+/// the messages the provider received on turn 2, and exactly one user-role
+/// continuation note does.
+#[tokio::test]
+async fn continuation_recovers_after_truncation_and_discards_the_partial() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(
+        &requests,
+        false,
+        "TRUNCATED-PROSE-SENTINEL-7QZ",
+        vec!["PARTIAL-TOOL-SENTINEL-7QZ".into()],
+    );
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run recovers after one truncation");
+    assert_eq!(output.answer, "cooperative answer");
+    let seen = requests.lock().unwrap().clone();
+    assert_eq!(
+        seen.len(),
+        2,
+        "one truncated turn plus one cooperative turn"
+    );
+    let turn_two = seen[1].messages.clone();
+    for message in &turn_two {
+        assert!(
+            !message.content.contains("TRUNCATED-PROSE-SENTINEL-7QZ"),
+            "the partial text must never be replayed: {}",
+            message.content
+        );
+        assert!(
+            !message.content.contains("PARTIAL-TOOL-SENTINEL-7QZ"),
+            "the partial tool JSON must never be replayed: {}",
+            message.content
+        );
+        let calls = serde_json::to_string(&message.tool_calls).unwrap();
+        assert!(
+            !calls.contains("TRUNCATED-PROSE-SENTINEL-7QZ")
+                && !calls.contains("PARTIAL-TOOL-SENTINEL-7QZ"),
+            "no partial may hide in a replayed tool call: {calls}"
+        );
+    }
+    assert_eq!(
+        continuation_notes(&turn_two),
+        1,
+        "exactly one user-role continuation note on turn 2"
+    );
+}
+
+/// Budget exhausted: with `max_continuations: Some(3)` and a provider that
+/// truncates every turn, exactly 1 + 3 provider calls happen, then the run
+/// returns the original truncation error — same payload, same `Display`.
+#[tokio::test]
+async fn continuation_budget_exhausted_returns_the_original_truncation_error() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(&requests, true, "partial", Vec::new());
+    let limits = AgentLimits {
+        max_continuations: Some(3),
+        ..AgentLimits::default()
+    };
+    let error = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        limits,
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        4,
+        "one initial turn plus three continuations"
+    );
+    let saya_agent::ProviderError::OutputTruncated {
+        partial_text,
+        partial_tool_json,
+    } = saya_agent::ProviderError::output_truncated("partial".into(), Vec::new())
+    else {
+        unreachable!("the constructor builds the compared variant");
+    };
+    assert!(
+        matches!(
+            &error,
+            AgentError::Provider(saya_agent::ProviderError::OutputTruncated { .. })
+        ),
+        "the original truncation error surfaces: {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "provider response truncated: the model hit its output-token limit",
+        "the Display string is unchanged"
+    );
+    let AgentError::Provider(saya_agent::ProviderError::OutputTruncated {
+        partial_text: got_text,
+        partial_tool_json: got_json,
+    }) = error
+    else {
+        unreachable!("matched above");
+    };
+    assert_eq!(got_text, partial_text, "the partial text is byte-identical");
+    assert_eq!(
+        got_json, partial_tool_json,
+        "the partial tool JSON is byte-identical"
+    );
+}
+
+/// Disabled: `Some(0)` and `None` both surface the truncation immediately —
+/// one provider call, no continuation note pushed.
+#[tokio::test]
+async fn continuation_disabled_surfaces_truncation_immediately() {
+    for max_continuations in [Some(0), None] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = continuation_script(&requests, true, "partial", Vec::new());
+        let limits = AgentLimits {
+            max_continuations,
+            ..AgentLimits::default()
+        };
+        let error = run_agent_with_sink(
+            &provider,
+            &MockTools {
+                calls: Arc::new(Mutex::new(Vec::new())),
+            },
+            request(),
+            definitions(),
+            limits,
+            &AllowReadOnlyApproval,
+            &NoopSink,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                AgentError::Provider(saya_agent::ProviderError::OutputTruncated { .. })
+            ),
+            "max_continuations={max_continuations:?}: the error surfaces: {error:?}"
+        );
+        assert_eq!(
+            requests.lock().unwrap().len(),
+            1,
+            "max_continuations={max_continuations:?}: no second call, so no note was pushed"
+        );
+    }
+}
+
+/// A turn whose cap lands mid-tool-argument runs no tool at all: the partial
+/// call never reaches the executor.
+#[tokio::test]
+async fn truncated_tool_call_executes_nothing() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(
+        &requests,
+        false,
+        "half an answer",
+        vec!["{\"sql\": \"SELECT 1".into()],
+    );
+    let tool_calls = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: tool_calls.clone(),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run recovers after the truncated tool call");
+    assert_eq!(output.answer, "cooperative answer");
+    assert!(
+        tool_calls.lock().unwrap().is_empty(),
+        "the half-assembled tool call must never execute"
+    );
+}
+
+/// No `TurnReset` is emitted on any continuation path: a continuation is not
+/// a retry of the same request, so it must not borrow the retry wording.
+#[tokio::test]
+async fn continuation_emits_no_turn_reset() {
+    // The recovery path: one truncation, then a cooperative turn.
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    run_agent_with_sink(
+        &continuation_script(&requests, false, "partial", Vec::new()),
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: events.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run recovers");
+    // The exhausted path: truncations until the continuation budget runs out.
+    let exhausted_requests = Arc::new(Mutex::new(Vec::new()));
+    let exhausted_events = Arc::new(Mutex::new(Vec::new()));
+    run_agent_with_sink(
+        &continuation_script(&exhausted_requests, true, "partial", Vec::new()),
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        AgentLimits {
+            max_continuations: Some(3),
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+        &RecordingSink {
+            events: exhausted_events.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    for (seen, path) in [
+        (events.lock().unwrap().clone(), "recovery"),
+        (exhausted_events.lock().unwrap().clone(), "exhausted"),
+    ] {
+        assert!(
+            !seen
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnReset)),
+            "{path}: a continuation is not a retry, so no reset may be emitted: {seen:?}"
+        );
+    }
+}
+
+/// The ceilings compose: `max_turns: Some(2)` against a provider that
+/// truncates forever stops at the turn ceiling through the salvage path —
+/// two turns plus the salvage call — not after three continuations.
+#[tokio::test]
+async fn max_turns_ceiling_wins_over_continuations() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = continuation_script(&requests, true, "partial", Vec::new());
+    let limits = AgentLimits {
+        max_turns: Some(2),
+        ..AgentLimits::default()
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &MockTools {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        },
+        request(),
+        definitions(),
+        limits,
+        &AllowReadOnlyApproval,
+        &NoopSink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the turn ceiling salvages instead of erroring");
+    assert!(
+        output.truncated,
+        "the run stopped at the turn ceiling through salvage"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        3,
+        "two turns plus the salvage call — the tighter ceiling wins"
+    );
+}
+
+/// Guard against over-redaction (M2-3b): only the model-bound tool *result*
+/// message is scrubbed. The user-facing surfaces keep raw bytes — the sink's
+/// `ToolRequested` event carries the call's arguments verbatim (the one sink
+/// surface that carries raw call data — no sink event carries tool results),
+/// and the replayed assistant message keeps its raw arguments so the
+/// conversation the provider sees is unchanged on the argument side.
+#[tokio::test]
+async fn sink_events_keep_raw_arguments_while_only_the_result_message_is_scrubbed() {
+    struct PlainTools;
+    #[async_trait::async_trait]
+    impl ToolExecutor for PlainTools {
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            Ok(serde_json::json!({"ok": true}))
+        }
+    }
+    struct SentinelCallProvider {
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+    }
+    #[async_trait]
+    impl ChatProvider for SentinelCallProvider {
+        fn name(&self) -> &str {
+            "sentinel-call"
+        }
+        async fn complete(
+            &self,
+            request: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            let first = self.requests.lock().unwrap().is_empty();
+            self.requests.lock().unwrap().push(request);
+            if first {
+                Ok(ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "schema_discovery".into(),
+                        arguments: serde_json::json!({"sql": "SELECT 'api_key=sk-live-SENTINEL'"}),
+                    }],
+                    tool_call_id: None,
+                }))
+            } else {
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
+            }
+        }
+    }
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+    run_agent_with_sink(
+        &SentinelCallProvider {
+            requests: requests.clone(),
+        },
+        &PlainTools,
+        request(),
+        definitions(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("the run completes");
+    let requested = sink
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ToolRequested { arguments, .. } => Some(arguments.clone()),
+            _ => None,
+        })
+        .expect("the tool call was surfaced to the sink");
+    assert!(
+        requested.to_string().contains("sk-live-SENTINEL"),
+        "the sink event must keep the raw arguments: {requested}"
+    );
+    let second = requests.lock().unwrap()[1].clone();
+    let replay = second
+        .messages
+        .iter()
+        .find(|message| message.role == "assistant" && !message.tool_calls.is_empty())
+        .expect("the assistant turn is replayed to the provider");
+    let replayed_arguments = serde_json::to_string(&replay.tool_calls).unwrap();
+    assert!(
+        replayed_arguments.contains("sk-live-SENTINEL"),
+        "replayed arguments are never scrubbed: {replayed_arguments}"
     );
 }

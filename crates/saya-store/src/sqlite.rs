@@ -3,7 +3,14 @@ use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio::sync::OnceCell;
 
 /// The longest an opener will spend before reporting the store unavailable.
@@ -30,6 +37,7 @@ const OPEN_BUSY_BACKOFF: Duration = Duration::from_millis(250);
 pub struct SqliteStateStore {
     path: Arc<PathBuf>,
     pool: Arc<OnceCell<SqlitePool>>,
+    cleanup_failure: Arc<AtomicBool>,
 }
 
 impl SqliteStateStore {
@@ -37,6 +45,7 @@ impl SqliteStateStore {
         Self {
             path: Arc::new(path.into()),
             pool: Arc::new(OnceCell::new()),
+            cleanup_failure: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -50,11 +59,10 @@ impl SqliteStateStore {
                 // bound and retry with backoff; past the ceiling, fail honestly.
                 // A database written by a newer saya surfaces as
                 // `VersionUnsupported` from `open_once` and is returned at once
-                // — that is not busy and is not retried. `Unavailable` (a busy
-                // lock, or a malformed file that migration also reports as
-                // `Unavailable`) is retried up to the ceiling and then fails
-                // honestly; see the report's Gap note for why busy and corrupt
-                // are not distinguished here.
+                // — that is not busy and is not retried. `Unavailable` from
+                // SQLite is reserved for busy locks and is retried up to the
+                // ceiling; permanent malformed/path errors surface as
+                // `OpenFailed` and return immediately.
                 // Two failures are possible here and they need opposite
                 // treatment. A *refused* open — a sibling process finishing a
                 // WAL checkpoint holds the write lock — should be waited out
@@ -121,8 +129,19 @@ impl SqliteStateStore {
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(options)
             .await
-            .map_err(|_| StoreError::Unavailable)?;
+            .map_err(|error| sqlite_support::map_open_error(&error))?;
+        // Validate the existing file before migration. A corrupt database can
+        // otherwise be reported as `Unavailable` by a later migration query,
+        // which would incorrectly enter the lock retry loop.
+        let health: String = sqlx::query_scalar("PRAGMA quick_check")
+            .fetch_one(&pool)
+            .await
+            .map_err(|error| sqlite_support::map_open_error(&error))?;
+        if health != "ok" {
+            return Err(StoreError::OpenFailed);
+        }
         migration::migrate(&pool).await?;
+        crate::knowledge_items::recover_pending_cleanup(&pool, &self.path).await;
         sqlite_support::secure_files(&self.path)?;
         Ok(pool)
     }
@@ -133,5 +152,15 @@ impl SqliteStateStore {
     }
     pub(crate) fn secure_files(&self) -> Result<(), StoreError> {
         sqlite_support::secure_files(&self.path)
+    }
+
+    /// Inject one post-commit cleanup failure in tests.
+    #[doc(hidden)]
+    pub fn fail_next_cleanup_for_tests(&self) {
+        self.cleanup_failure.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn consume_cleanup_failure_for_tests(&self) -> bool {
+        self.cleanup_failure.swap(false, Ordering::AcqRel)
     }
 }

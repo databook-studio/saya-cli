@@ -196,7 +196,7 @@ async fn run_one_turn(mode: MemoryMode) -> (SqliteStateStore, ProfileIdentity, P
         &provider,
         &tools,
         agent_request(),
-        DatabaseTools::definitions(true, true, limits.permit_candidate_writes),
+        DatabaseTools::definitions(true, true, limits.permit_candidate_writes, false, true),
         limits,
         &AllowReadOnlyApproval,
     )
@@ -264,7 +264,7 @@ async fn mode_assisted_recalls_candidates_and_permits_proposals() {
     assert!(setup.observes());
 
     // 3. Definitions do NOT include contract_propose (deprecated in Phase F).
-    let defs = DatabaseTools::definitions(true, true, setup.permit_candidate_writes);
+    let defs = DatabaseTools::definitions(true, true, setup.permit_candidate_writes, false, true);
     assert!(
         defs.iter().all(|d| d.name != "contract_propose"),
         "contract_propose is removed from model tools"
@@ -337,7 +337,7 @@ async fn changing_memory_mode_takes_effect_on_the_next_turn() {
     let off = LearningSetup::from(MemoryMode::Off);
     assert!(!off.permit_candidate_writes);
     assert!(!off.observes());
-    let off_defs = DatabaseTools::definitions(true, true, off.permit_candidate_writes);
+    let off_defs = DatabaseTools::definitions(true, true, off.permit_candidate_writes, false, true);
     assert!(
         off_defs.iter().all(|d| d.name != "contract_propose"),
         "turn 1 (off): contract_propose is hidden"
@@ -347,7 +347,8 @@ async fn changing_memory_mode_takes_effect_on_the_next_turn() {
     let assisted = LearningSetup::from(MemoryMode::Assisted);
     assert!(assisted.permit_candidate_writes);
     assert!(assisted.observes());
-    let assisted_defs = DatabaseTools::definitions(true, true, assisted.permit_candidate_writes);
+    let assisted_defs =
+        DatabaseTools::definitions(true, true, assisted.permit_candidate_writes, false, true);
     assert!(
         assisted_defs.iter().all(|d| d.name != "contract_propose"),
         "turn 2 (assisted): contract_propose is never advertised to the model"

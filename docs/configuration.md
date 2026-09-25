@@ -76,6 +76,138 @@ also drives session-level read-only on connectors that support it. This is
 distinct from a profile's own `SAYA_DB_READ_ONLY`, which sets a file engine's
 (DuckDB/SQLite) access mode.
 
+`max_iterations` (default `12`) is a stored setting with no behavioural
+reader: `[jobs] turns` is opt-in, and unset means unlimited. A zero is
+refused as a typo.
+
+The `[jobs]` table sets the default budgets a `saya run` is declared with when
+its specification and each of its steps declare none. Each key is optional and
+independent; the run pauses when a declared budget trips rather than silently
+stopping.
+
+```toml
+[jobs]
+turns = 40                # per-episode turn ceiling
+tool_calls = 25           # per-episode tool-call ceiling
+wall_clock_seconds = 1800 # run wall-clock ceiling
+
+[jobs.tokens_per_endpoint]
+"local-ollama" = 200_000  # token ceiling per named endpoint
+```
+
+`turns` has no default: unset means no ceiling, like `wall_clock_seconds`
+and `tool_calls` — a ceiling left unset is unlimited at the contract level,
+and the run pauses when a declared budget trips rather than overrunning. `tokens_per_endpoint` is
+keyed by run-scoped endpoint name (the same shape `[[ai.endpoints]]` uses);
+more than eight keys, or a key outside the name shape, is a rejected config.
+With several ceilings declared, the tightest binds today.
+
+A zero on any budget is refused as a typo rather than clamped — zero turns or
+zero tool calls would pause a run before its first turn — with a typed error
+naming the field. There is no upper bound; the unlimited case is "leave it
+unset".
+
+`[jobs.fetch]` sets the download budgets the `http_download` tool spends
+from. Every key is optional and resolves to a conservative default, so a run
+is download-bounded even when nothing is declared:
+
+```toml
+[jobs.fetch]
+max_file_bytes = 268435456   # per file; default 256 MiB
+max_run_bytes = 1073741824   # whole run; default 1 GiB
+timeout_seconds = 60         # per request; default 60
+```
+
+A zero there is refused the same way. No `[jobs]` key has an environment
+override, deliberately: a run must be reproducible from its specification and
+config alone. Per-invocation overrides belong on the command line instead —
+`saya run --budget turns=40 --budget tokens.orchestrator=100000` — whose known
+keys are `wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`, and
+`tokens.orchestrator=<n>`: today every episode calls the orchestrator
+endpoint, so a `tokens.<role>` ceiling naming any other endpoint is refused at
+start (the map's shape is still validated here, at config resolve time).
+Unset keys fall back to `[jobs]`, and a zero is refused as a typo there too.
+
+`[jobs.runner]` declares the runner universe: the programs a run's
+`--allow runner:<name>` may draw from, the one directory they are staged in,
+and the default wall-clock ceiling for one child process:
+
+```toml
+[jobs.runner]
+allow = ["bench"]                    # the programs a runner scope may name
+program_dir = "/opt/saya-programs"   # where those programs are staged
+timeout_seconds = 300                # per-child ceiling; default 300
+```
+
+`allow` entries are bare program names — never paths — bounded at 32, with
+no repeats; a shell or interpreter name (`bash`, `python3`, `env`, …) is
+refused at resolve time, because the runner runs one allowlisted program
+with typed argv and an interpreter would spawn arbitrary children from
+inside the allowlist. An `allow` that names programs **requires**
+`program_dir`, an absolute path to the operator-owned directory the
+programs are staged in; a relative path is a typed resolve error (the
+canonical form must not depend on the working directory the config was
+loaded from), while `program_dir` alone — an empty `allow` — is harmless.
+Existence is deliberately not checked here: a dangling path must not break
+`saya ask` or `saya query`, and a run that approved the runner fails closed
+at start instead.
+
+The directory is operator-owned and staged by you, before the run: the
+engine never writes it, at claim or at any other point. Stage each
+allowlisted program as a regular, non-symlink, non-script file with its
+bare name — a symlink, a shebang script, or a missing file refuses the run
+at start (exit `3`) naming the program and the directory. The directory
+must also sit outside the run's filesystem roots in both directions — not
+inside, equal to, or containing one — and the run refuses to start
+otherwise: with programs inside the run tree, one step's child could write
+the binary the next step's `run_program` validates and executes. The same
+guard runs for interactive sessions against the session's workspace root —
+the project tree — so a project's checked-in tool directory, inside a
+session's fs root, is refused for sessions (the enforcement cannot express
+an exclusion: Seatbelt subpaths are allow-lists and Landlock has no
+subtractive rights); keep a session's program directory outside the
+workspace tree, in the default recommended layout beside the runs and
+sessions roots. The runner tool itself is admitted only where the startup
+sandbox probe proved the host; on a host the probe refused, plans asking for
+the runner refuse as needs-approval.
+
+The project layer may set `[jobs]` without `--trust-project-config`: it is a
+cost control, not a security-critical setting. Layering is per key: a layer
+that declares a key replaces that key's whole value from the lower layers, so
+the `tokens_per_endpoint` map and the `[jobs.fetch]` sub-table are replaced
+wholesale rather than merged field-wise.
+
+`[host_commands]` shapes the interactive session's unsandboxed host lane,
+which composes wherever a workspace root binds — no declaration needed.
+User-layer only — a project-layer `[host_commands]` is a typed resolve
+error, because a model-writable file must never shape unsandboxed execution:
+
+```toml
+[host_commands]
+pass_env = ["CI_TOKEN"]    # parent variable names the built child env carries
+timeout_seconds = 600      # per-call ceiling; a call may narrow, never widen
+```
+
+`run_command` claims no containment: the child runs as your user with your
+whole filesystem and network, resolved on your PATH. The contained lane's
+guarantees are `run_program`'s, not this one's. Under bypass, a hostile
+workspace file is effectively arbitrary code execution as the user.
+
+`[session_commands] deny` states the session's deny list of bare program
+names. User-layer only — a project-layer `[session_commands]` is a typed
+resolve error — and refusal-only: it composes nothing, and gates every
+session door that execs a program by name (`run_command`, `run_program`, the
+interpreter door), before every grant, every approval prompt, and bypass, in
+every mode. The deny list bounds the direct ask only — a denied `curl` does
+not stop an allowed `make` from invoking curl, nor a renamed copy (`mycurl`,
+a symlink or copy of curl) asked under its own spelling: deny matches the
+exact program name named in the ask, never content or resolved identity:
+
+```toml
+[session_commands]
+deny = ["curl", "ssh"]
+```
+
 The `[ui]` table sets the interactive TUI's colour palette:
 
 ```toml
@@ -110,6 +242,74 @@ precedence.
 [ai]
 context_byte_budget = 524288   # 512 KiB; default is 256 KiB
 ```
+
+`context_window_tokens` declares the model's context window in tokens. saya
+keeps a small built-in table of published models — GLM, GPT, Claude, Gemini,
+and the common Ollama families — and looks a model up by exact name, so
+`glm-5.2` and `qwen2.5-coder:14b` resolve to their documented windows without
+any configuration. A model the table does not know stays **unknown**: most
+saya users run through a gateway serving models the table will never list, and
+guessing a window for one would either refuse work that would have succeeded or
+promise headroom that does not exist. Nothing blocks or truncates on this value
+yet; it establishes the fact that a later change can act on.
+
+For a gateway model the table will never hear of, declare the window yourself —
+a declared value wins over the table, because it says something about *your*
+endpoint that a published fact for the model name cannot:
+
+```toml
+[ai]
+model = "my-gateway-model"
+context_window_tokens = 1048576
+```
+
+A declared value of `0` is rejected as a typo. There is no upper bound.
+
+The `[[ai.endpoints]]` array declares the named endpoints a run's roles can
+bind to (`saya run --allow endpoint:<role>=<endpoint>`). Each entry is a delta
+over the plain `[ai]` block: a field the entry declares wins, an unset field
+inherits `[ai]`'s resolved value, and `name` never inherits. The resolved pool
+is keyed by name and always contains `orchestrator` — the plain `[ai]` block
+when no entry carries that name — so a config without the section changes
+nothing.
+
+```toml
+[ai]
+model = "qwen2.5-coder:14b"
+api_key = { env = "SAYA_API_KEY" }
+
+[[ai.endpoints]]
+name = "planner"
+base_url = "https://gateway.internal/v1"
+api_key = { env = "SAYA_PLANNER_KEY" }
+```
+
+`name` is required and must have the run-scoped name shape: non-empty, at most
+128 characters, no whitespace or control characters. Two entries with the same
+name in one file are a typed error, not last-wins; more than eight entries are
+rejected; an unknown key inside an entry is a parse error naming the key.
+Across layers, an entry whose name a trusted layer already declared overlays
+that endpoint field-wise — an absent field leaves the lower layer's value.
+Declaring an entry named `orchestrator` replaces the fallback. Endpoints have
+no environment variable or CLI flag of their own.
+
+`api_key` is a secret and must be a reference — `{ env = "SAYA_VAR" }` or
+`{ file = "..." }` — never an inline value. An inline string fails to parse
+with a diagnostic that names the endpoint (`ai.endpoints["planner"].api_key`),
+not just the section.
+
+The project layer's `.saya/config.toml` is a security boundary here, and so is
+a file supplied with `--config`, which occupies the same untrusted slot.
+Without `--trust-project-config` (or `SAYA_TRUST_PROJECT_CONFIG`) the project
+layer cannot add an endpoint name the trusted layers never declared — the
+*name set* is protected, because an endpoint they never declared is still an
+attacker-chosen destination — and it cannot change an existing endpoint's
+`base_url` or `api_key`, the two fields that decide where a request goes and
+which credential authenticates it. Reverted attempts are reported naming the
+endpoint (`ai.endpoints["planner"].base_url`); every command prints a one-line
+warning and `config doctor` lists which settings were ignored. An endpoint's
+`provider` and `model` are ordinary settings, like `[ai] model`: they name
+which model answers, not where the request goes.
 
 `config doctor` reports paths and selection. `config show` emits the resolved
 configuration as display-safe references and settings only. It never resolves

@@ -171,7 +171,12 @@ pub trait ChatProvider: Send + Sync {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let events = if response.message.tool_calls.is_empty() {
+        // A provider whose only path is `complete()` (Gemini) reports usage on
+        // the response, not as a stream event. Mirroring it here means its
+        // counts cross the boundary the same way a streaming provider's do —
+        // and a provider that reported nothing still emits no `Usage` event, so
+        // absence on the stream keeps meaning "unknown".
+        let mut events = if response.message.tool_calls.is_empty() {
             vec![
                 ProviderEvent::TextDelta(response.message.content),
                 ProviderEvent::Done,
@@ -182,6 +187,9 @@ pub trait ChatProvider: Send + Sync {
                 ProviderEvent::Done,
             ]
         };
+        if let Some(usage) = response.usage {
+            events.insert(0, ProviderEvent::Usage(usage));
+        }
         Ok(Box::pin(futures_util::stream::iter(
             events.into_iter().map(Ok),
         )))
@@ -189,6 +197,7 @@ pub trait ChatProvider: Send + Sync {
     async fn collect(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut stream = self.stream(request, CancellationToken::new()).await?;
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
+        let mut assembled_bytes = 0usize;
         // Reasoning is accumulated alongside content: a single string
         // per turn, no ordering relative to text. The bound covers reasoning
         // too — a hostile endpoint streaming unbounded "thinking" must not
@@ -210,23 +219,34 @@ pub trait ChatProvider: Send + Sync {
         while let Some(event) = stream.next().await {
             match event? {
                 ProviderEvent::TextDelta(value) => {
-                    if content.len().saturating_add(value.len()) > MAX_STREAM_BYTES {
+                    if assembled_bytes.saturating_add(value.len()) > MAX_STREAM_BYTES {
                         return Err(ProviderError::Request(
                             "provider stream exceeded size limit".into(),
                         ));
                     }
+                    assembled_bytes += value.len();
                     content.push_str(&value);
                 }
                 ProviderEvent::ReasoningDelta(value) => {
-                    let accumulated = reasoning.get_or_insert_with(String::new);
-                    if accumulated.len().saturating_add(value.len()) > MAX_STREAM_BYTES {
+                    if assembled_bytes.saturating_add(value.len()) > MAX_STREAM_BYTES {
                         return Err(ProviderError::Request(
                             "provider stream exceeded size limit".into(),
                         ));
                     }
+                    assembled_bytes += value.len();
+                    let accumulated = reasoning.get_or_insert_with(String::new);
                     accumulated.push_str(&value);
                 }
-                ProviderEvent::ToolCalls(calls) => tool_calls.extend(calls),
+                ProviderEvent::ToolCalls(calls) => {
+                    let bytes = calls.iter().map(tool_call_bytes).sum::<usize>();
+                    if assembled_bytes.saturating_add(bytes) > MAX_STREAM_BYTES {
+                        return Err(ProviderError::Request(
+                            "provider stream exceeded size limit".into(),
+                        ));
+                    }
+                    assembled_bytes += bytes;
+                    tool_calls.extend(calls);
+                }
                 ProviderEvent::Usage(reported) => usage = Some(reported),
                 ProviderEvent::Done => complete = true,
             }
@@ -245,6 +265,12 @@ pub trait ChatProvider: Send + Sync {
             usage,
         })
     }
+}
+
+fn tool_call_bytes(call: &ToolCall) -> usize {
+    call.id.len()
+        + call.name.len()
+        + serde_json::to_string(&call.arguments).map_or(0, |value| value.len())
 }
 
 #[cfg(test)]
@@ -446,6 +472,89 @@ mod tests {
         let json = r#"{"message":{"role":"assistant","content":"hi","tool_calls":[],"tool_call_id":null},"usage":null}"#;
         let response: ChatResponse = serde_json::from_str(json).expect("null usage deserializes");
         assert_eq!(response.usage, None);
+    }
+
+    // --- the default stream(), for a provider with no streaming endpoint ----
+
+    /// A provider whose only path is `complete()` (Gemini is shaped exactly
+    /// this way) reports usage on the response, not as a stream event. The
+    /// default `stream()` mirrors that report onto the stream as a `Usage`
+    /// event, so its counts cross the boundary the same way a streaming
+    /// provider's do. A response reporting nothing emits no `Usage` event, so
+    /// absence on the stream still means "unknown" — and the mirrored event is
+    /// the response's own parsed value, untouched.
+    #[tokio::test]
+    async fn the_default_stream_mirrors_the_response_usage_onto_the_stream() {
+        struct ResponseOnlyProvider {
+            usage: Option<TokenUsage>,
+        }
+
+        #[async_trait]
+        impl ChatProvider for ResponseOnlyProvider {
+            fn name(&self) -> &str {
+                "response-only"
+            }
+            async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+                let mut response = ChatResponse::new(ChatMessage::text("assistant", "hi"));
+                response.usage = self.usage;
+                Ok(response)
+            }
+            // `stream` is deliberately not overridden: the default is under
+            // test, reached directly below exactly as the loop reaches it.
+        }
+
+        let with_usage = ResponseOnlyProvider {
+            usage: Some(TokenUsage {
+                input_tokens: 12,
+                output_tokens: 9,
+                cached_input_tokens: Some(7),
+                ..Default::default()
+            }),
+        };
+        let mut stream = with_usage
+            .stream(
+                ChatRequest {
+                    model: "m".into(),
+                    messages: Vec::new(),
+                    tools: Vec::new(),
+                    ..Default::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("stream opens");
+        let mut saw_usage = None;
+        while let Some(event) = stream.next().await {
+            if let ProviderEvent::Usage(usage) = event.expect("stream event") {
+                saw_usage = Some(usage);
+            }
+        }
+        let usage = saw_usage.expect("the response's usage must reach the stream");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 9);
+        assert_eq!(usage.cached_input_tokens, Some(7));
+
+        // And a response reporting nothing emits no Usage event at all.
+        let silent = ResponseOnlyProvider { usage: None };
+        let mut stream = silent
+            .stream(
+                ChatRequest {
+                    model: "m".into(),
+                    messages: Vec::new(),
+                    tools: Vec::new(),
+                    ..Default::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("stream opens");
+        let mut saw_usage = false;
+        while let Some(event) = stream.next().await {
+            if matches!(event.expect("stream event"), ProviderEvent::Usage(..)) {
+                saw_usage = true;
+            }
+        }
+        assert!(!saw_usage, "no report on the response means no event");
     }
 
     // --- reasoning capture -------------------------------------------------

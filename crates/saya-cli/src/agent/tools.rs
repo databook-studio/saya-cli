@@ -3,13 +3,24 @@
 #[cfg(test)]
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 
+#[cfg(test)]
+#[path = "tools/chart_save_tests.rs"]
+mod chart_save_tests;
 mod contract_tools;
 mod database_tools;
 mod executor;
+mod host_argv;
+#[cfg(test)]
+#[path = "tools/host_argv_tests.rs"]
+mod host_argv_tests;
+mod run_tools;
 mod sql_format;
 mod tool_calls;
 
 pub(crate) use database_tools::DatabaseTools;
+// The write bound the tool enforces, which the approval prompt states.
+pub(crate) use database_tools::WORKSPACE_WRITE_MAX_BYTES;
+pub(crate) use run_tools::RunTools;
 // Re-exported through `tools` (not the private `database_tools` module) so the
 // agent runtime's learning wiring and tests can reach the observation types.
 // `ToolObservation` is consumed only by tests; the others by `agent::learning`.
@@ -19,7 +30,7 @@ pub(crate) use database_tools::{
     DrainedObservations, ObservationLog, ObservationOutcome, OverrideLog, ToolObservation,
 };
 #[allow(unused_imports)]
-pub(crate) use sql_format::format_sql;
+pub(crate) use sql_format::{collapse_whitespace, format_sql};
 #[allow(unused_imports)]
 pub(crate) use tool_calls::{SqlCall, sql_tool_call, tool_call_detail};
 
@@ -50,3 +61,35 @@ mod column_health_tests;
 #[cfg(test)]
 #[path = "tools/join_check_tests.rs"]
 mod join_check_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_read_tests.rs"]
+mod workspace_read_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_search_tests.rs"]
+mod workspace_search_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_write_tests.rs"]
+mod workspace_write_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_edit_tests.rs"]
+mod workspace_edit_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_edit_append_tests.rs"]
+mod workspace_edit_append_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_edit_continuation_tests.rs"]
+mod workspace_edit_continuation_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_edit_docs_tests.rs"]
+mod workspace_edit_docs_tests;
+
+#[cfg(test)]
+#[path = "tools/workspace_read_digest_tests.rs"]
+mod workspace_read_digest_tests;

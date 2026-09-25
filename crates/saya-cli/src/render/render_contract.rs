@@ -56,6 +56,9 @@ pub(super) fn show(contract: &ContractView) -> Rendered {
 pub(super) fn changed(claim_id: &str, action: &str, status: &str) -> Rendered {
     // The full claim id, never abbreviated: the user pastes it into `contracts forget`.
     let line = match action {
+        "forgotten_cleanup_pending" => {
+            format!("forgotten {claim_id} (cleanup pending — retry to complete)\n")
+        }
         "duplicate" => match status {
             "forgotten" => format!("duplicate of {claim_id} — previously forgotten\n"),
             other => format!("duplicate of {claim_id} — already exists ({other})\n"),
@@ -111,8 +114,10 @@ pub(super) fn remembered(
 
 /// The review queue: one line per waiting claim with the fields a reviewer
 /// needs to decide — the full claim id (pasted into `contracts review`), the
-/// status word, kind, value, object, schema state, and evidence count. The
-/// status distinguishes a `candidate` (confirm or reject) from a persisted
+/// status word, kind, value, object, and schema state. The legacy evidence
+/// count is intentionally omitted: the evidence rows it once measured no
+/// longer exist, so rendering zero would imply a measurement we cannot make.
+/// The status distinguishes a `candidate` (confirm or reject) from a persisted
 /// `stale` claim (re-confirm or forget) so a reviewer can tell which decision
 /// is being asked. The claim id is never abbreviated here, unlike the recall
 /// stanza, because the reviewer's next action keys on it.
@@ -127,7 +132,7 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
     let mut stdout = String::new();
     for item in items {
         stdout.push_str(&format!(
-            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}  evidence {count}  (profile: {profile})\n",
+            "{id}  {status}  {kind}  {value}{column}  {object}  [{state}]{note}{incomplete}{truncated}  (profile: {profile})\n",
             id = item.claim_id,
             status = item.status,
             kind = item.kind,
@@ -136,7 +141,16 @@ pub(super) fn queue(items: &[ContractQueueItemView]) -> Rendered {
             object = item.object,
             state = item.schema_state,
             note = schema_state_note(&item.schema_state),
-            count = item.evidence_count,
+            incomplete = if item.incomplete {
+                "  — incomplete: some stored claims could not be read"
+            } else {
+                ""
+            },
+            truncated = if item.truncated {
+                "  — truncated: more stored claims remain"
+            } else {
+                ""
+            },
             profile = item.profile,
         ));
     }
@@ -167,6 +181,14 @@ fn stanza(contract: &ContractView, with_reason: bool) -> String {
         profile = profile_suffix(&contract.profile),
         state_note = schema_state_note(&contract.schema_state),
     ));
+    if contract.incomplete {
+        out.push_str("  [incomplete — some stored claims could not be read]\n");
+    }
+    if contract.truncated && !with_reason {
+        // A truncated contract must never read as a complete one, on either
+        // the human list or show surface.
+        out.push_str("  [partial contract — some claims were omitted]\n");
+    }
     for claim in &contract.claims {
         out.push_str(&format!(
             "  {id}  {kind}  {status}  {origin}  {value}\n",

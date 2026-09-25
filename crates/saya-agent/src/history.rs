@@ -1,15 +1,26 @@
 use crate::history_context::render_context;
 use crate::{AgentError, ChatMessage, ContextBlock};
 
-pub const MAX_HISTORY_MESSAGES: usize = 20;
-const SYSTEM_PROMPT: &str = "You are SAYA, a database assistant. Use only the supplied read-only tools. Never claim to have written data or used unsupported tools.";
+/// Fixed system prefix: identity and posture, deliberately capability-silent.
+///
+/// The tool list (schemas) and the approval engine decide what is possible
+/// this turn — not prose. Any sentence naming or describing capabilities here
+/// drifts false the moment a tool is added, so this prefix only names SAYA,
+/// defers to the tools actually given, and keeps the honesty rule. Do not add
+/// capability claims back.
+const SYSTEM_PROMPT: &str =
+    "You are SAYA. Act through the tools you were given. Never claim an action you did not take.";
 
 /// Builds the message list for the agent from optional extra system prompt context,
 /// untrusted context blocks, the user prompt, and conversation history.
 ///
-/// History fills what is left of `byte_budget` after the system and user turns;
-/// a prompt that alone fills the budget simply gets no history rather than
-/// failing the run. The loop bounds the conversation during execution with its
+/// History is bounded by bytes, not by message count: the replay loop keeps
+/// the newest user/assistant pairs that fit the byte budget left after the
+/// system and user turns. A count cap and a byte cap are two mechanisms for
+/// one job, and the byte cap is the one that tracks what the provider
+/// actually charges for — so there is no count cap here. A prompt that alone
+/// fills the budget simply gets no history rather than failing the run. The
+/// loop bounds the conversation during execution with its
 /// own `context_byte_budget` (the same value passed here), so the start-of-run
 /// bound and the in-loop bound agree.
 ///
@@ -32,16 +43,12 @@ pub fn build_messages(
     validate(history)?;
     let budget = byte_budget.saturating_sub(current_bytes);
     let mut chosen = Vec::new();
-    let mut selected_messages = 0;
     let mut history_bytes = 0;
     for pair in history.as_chunks::<2>().0.iter().rev() {
         let pair_bytes = pair.iter().map(message_bytes).sum::<usize>();
-        if selected_messages + pair.len() > MAX_HISTORY_MESSAGES
-            || history_bytes + pair_bytes > budget
-        {
+        if history_bytes + pair_bytes > budget {
             break;
         }
-        selected_messages += pair.len();
         history_bytes += pair_bytes;
         chosen.push(pair.to_vec());
     }
@@ -106,6 +113,10 @@ mod tests {
     /// the loop's `context_byte_budget` plays in production.
     const BUDGET: usize = 32 * 1024;
 
+    /// With the count cap (`MAX_HISTORY_MESSAGES = 20`) removed, a long run of
+    /// small turns replays in full when its bytes fit: history is bounded by
+    /// bytes, not by message count. Twenty-four pairs (48 messages) would have
+    /// been truncated to 10 pairs under the old cap.
     #[test]
     fn keeps_newest_complete_turns_with_stable_bounds() {
         let history = (0..24)
@@ -117,13 +128,81 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let messages = build_messages(None, &[], "current", &history, BUDGET).unwrap();
-        assert_eq!(messages.len(), 22);
-        assert_eq!(messages[1].content, "u14");
-        assert_eq!(messages[20].content, "a23");
+        assert_eq!(
+            messages.len(),
+            2 + history.len(),
+            "every pair must replay when its bytes fit the budget"
+        );
+        assert_eq!(messages[1].content, "u0");
+        assert_eq!(messages[messages.len() - 2].content, "a23");
         assert_eq!(messages[1].role, "user");
         assert_eq!(messages[2].role, "assistant");
         assert_eq!(messages[3].role, "user");
         assert!(messages.iter().map(message_bytes).sum::<usize>() <= BUDGET);
+    }
+
+    /// Byte-boundary pin: when history bytes exceed the budget, the oldest
+    /// pairs are dropped first and exactly the newest pairs that fit are kept.
+    #[test]
+    fn byte_budget_truncates_oldest_first_at_byte_boundary() {
+        let body = "x".repeat(1000);
+        let history = (0..5)
+            .flat_map(|index| {
+                [
+                    ChatMessage::text("user", format!("u{index}-{body}")),
+                    ChatMessage::text("assistant", format!("a{index}-{body}")),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let pair_bytes = history[history.len() - 2..]
+            .iter()
+            .map(message_bytes)
+            .sum::<usize>();
+        // Room for two pairs plus half a pair: the two newest pairs fit, the
+        // third does not.
+        let budget = turn_bytes(None, &[], "current") + 2 * pair_bytes + pair_bytes / 2;
+        let messages = build_messages(None, &[], "current", &history, budget).unwrap();
+        assert_eq!(
+            messages.len(),
+            2 + 4,
+            "only the two newest pairs fit the byte budget"
+        );
+        assert!(messages[1].content.starts_with("u3-"));
+        assert!(messages[4].content.starts_with("a4-"));
+        assert!(messages.iter().map(message_bytes).sum::<usize>() <= budget);
+    }
+
+    /// `as_chunks::<2>()` pin: a user/assistant pair is never split. When the
+    /// byte boundary falls mid-pair, the whole older pair is dropped rather
+    /// than keeping a lone user message.
+    #[test]
+    fn history_pair_is_never_split_at_the_byte_boundary() {
+        let body = "x".repeat(1000);
+        let history = (0..3)
+            .flat_map(|index| {
+                [
+                    ChatMessage::text("user", format!("u{index}-{body}")),
+                    ChatMessage::text("assistant", format!("a{index}-{body}")),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let pair_bytes = history[history.len() - 2..]
+            .iter()
+            .map(message_bytes)
+            .sum::<usize>();
+        // Room for one pair plus nearly another pair's worth: a second message
+        // would fit, but never half a pair.
+        let budget = turn_bytes(None, &[], "current") + 2 * pair_bytes - 1;
+        let messages = build_messages(None, &[], "current", &history, budget).unwrap();
+        assert_eq!(
+            messages.len(),
+            4,
+            "only the newest complete pair fits; it must not be split"
+        );
+        assert_eq!(messages[1].role, "user");
+        assert!(messages[1].content.starts_with("u2-"));
+        assert_eq!(messages[2].role, "assistant");
+        assert!(messages[2].content.starts_with("a2-"));
     }
 
     #[test]
@@ -173,6 +252,20 @@ mod tests {
         assert_eq!(messages[1].content, "current");
     }
 
+    /// The fixed prefix is capability-silent: it must never name or describe
+    /// what the model can do — the tool list is the authority on what is
+    /// possible this turn, and any prose inventory drifts false the moment a
+    /// tool is added. A failure here reads as the regression it is.
+    #[test]
+    fn system_prompt_prefix_states_no_capabilities() {
+        for word in ["read-only", "database assistant", "write", "file"] {
+            assert!(
+                !SYSTEM_PROMPT.contains(word),
+                "system prefix must stay capability-silent, found: {word}"
+            );
+        }
+    }
+
     #[test]
     fn appends_extra_system_context_when_provided() {
         let extra = "Available database connections:\n- a (postgresql)";
@@ -220,6 +313,12 @@ mod tests {
     /// built without the field.
     #[test]
     fn empty_context_blocks_is_byte_identical_to_today() {
+        // Byte-identity pin: the fixed prefix this test pins (91 bytes).
+        assert_eq!(
+            SYSTEM_PROMPT,
+            "You are SAYA. Act through the tools you were given. Never claim an action you did not take."
+        );
+        assert_eq!(SYSTEM_PROMPT.len(), 91);
         let with_field = build_messages(None, &[], "prompt", &[], BUDGET).unwrap();
         // The pre-2a shape: system + user(prompt), no context machinery.
         let baseline = vec![

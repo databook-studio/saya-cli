@@ -35,6 +35,23 @@ fn constructors_reject_control_chars() {
 }
 
 #[test]
+fn table_user_note_is_validated_and_round_trips() {
+    let note = ClaimPayload::table_user_note("Keep refunds separate from sales.").unwrap();
+    let json = serde_json::to_string(&note).unwrap();
+    let decoded: ClaimPayload = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, note);
+    assert!(ClaimPayload::table_user_note("").is_err());
+    assert!(ClaimPayload::table_user_note("line\nbreak").is_err());
+    assert!(ClaimPayload::table_user_note("x".repeat(MAX_TEXT_CHARS + 1)).is_err());
+    assert_eq!(
+        note.blanked(),
+        ClaimPayload::TableUserNote {
+            text: String::new()
+        }
+    );
+}
+
+#[test]
 fn table_alias_rejects_empty() {
     assert!(ClaimPayload::table_alias("").is_err());
 }
@@ -683,6 +700,28 @@ fn serde_round_trip() {
     let json = serde_json::to_string(&payload).unwrap();
     let deserialized: ClaimPayload = serde_json::from_str(&json).unwrap();
     assert_eq!(payload, deserialized);
+}
+
+#[test]
+fn serde_validates_payloads_but_accepts_blanked_tombstones() {
+    let oversized = serde_json::json!({
+        "kind": "table_description",
+        "text": "x".repeat(crate::MAX_TEXT_CHARS + 1),
+    });
+    assert!(serde_json::from_value::<ClaimPayload>(oversized).is_err());
+
+    let control = serde_json::json!({
+        "kind": "table_alias",
+        "alias": "orders\nsecret",
+    });
+    assert!(serde_json::from_value::<ClaimPayload>(control).is_err());
+
+    let blanked = ClaimPayload::table_alias("orders").unwrap().blanked();
+    let json = serde_json::to_value(&blanked).unwrap();
+    assert_eq!(
+        serde_json::from_value::<ClaimPayload>(json).unwrap(),
+        blanked
+    );
 }
 
 #[test]

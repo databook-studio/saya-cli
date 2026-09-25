@@ -94,11 +94,14 @@ fn build_contract(
     // than surfacing a half-built carrier downstream.
     let mut claims: Vec<ContractClaim> = Vec::with_capacity(items.len());
     let mut state = ContractSchemaState::Current;
+    let mut incomplete = false;
     for item in &items {
         let validity = item_validity_for(item, availability, freshness);
         state = state.aggregate(validity.into());
         if let Some(carrier) = ContractClaim::from_knowledge_item(item) {
             claims.push(carrier);
+        } else {
+            incomplete = true;
         }
     }
     let conflicts = conflicts_for(&claims);
@@ -108,5 +111,6 @@ fn build_contract(
         claims,
         conflicts,
         truncated,
+        incomplete,
     }
 }

@@ -19,6 +19,7 @@ pub(crate) fn slot_matches_payload(slot: &KnowledgeSlot, payload: &ClaimPayload)
         | (KnowledgeSlot::TableDefaultTime, ClaimPayload::DefaultTimeColumn { .. })
         | (KnowledgeSlot::RelationJoinRule, ClaimPayload::JoinRule { .. })
         | (KnowledgeSlot::MetricDefinition, ClaimPayload::MetricDefinition { .. }) => true,
+        (KnowledgeSlot::TableUserNote, ClaimPayload::TableUserNote { .. }) => true,
         (
             KnowledgeSlot::ColumnDescription { column: slot_col },
             ClaimPayload::ColumnDescription { column, .. },

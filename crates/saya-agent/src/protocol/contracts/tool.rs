@@ -6,11 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use super::ToolError;
 
-/// What local state a tool may touch — contracts, the schema cache, anything
-/// persisted on the user's machine. Declared per tool so "may this tool write
-/// local state?" is a property the loop reads rather than something inferred
-/// from a tool's name. Phase 3a introduces the type; Phase 3c adds the first
-/// tool that declares `WriteCandidate`.
+/// What local state a tool may touch — contracts, the schema cache, run
+/// workspaces, anything persisted on the user's machine. Declared per tool so
+/// "may this tool write local state?" is a property the loop reads rather than
+/// something inferred from a tool's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -23,6 +22,17 @@ pub enum LocalStateEffect {
     /// May persist a *candidate* claim. Never a confirmed one — confirmation is a
     /// human action and has no tool.
     WriteCandidate,
+    /// May write files inside the run workspace (contained, atomic, never
+    /// executable). Gated like [`LocalStateEffect::WriteCandidate`]: the loop
+    /// refuses it unless the runner was constructed with workspace writes
+    /// permitted, so a registered write tool cannot write merely by being
+    /// registered.
+    WriteWorkspace,
+    /// May write session-scoped metadata only — the task list on the session
+    /// record, never workspace files, never the database, never contracts or
+    /// the cache. A tool reaching any of those declares the effect for
+    /// *that*, not this one.
+    WriteSession,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +53,16 @@ pub struct ToolDefinition {
     pub read_only: bool,
     pub parameters: serde_json::Value,
     pub effect: ToolEffect,
+    /// One-line summary the loop reports when this tool succeeds, overriding
+    /// the generic read-only/write wording — a tool whose action is neither
+    /// "read-only database" nor "local-state write" (e.g. one that writes a
+    /// file and opens a browser) states what it actually did. The failure
+    /// summary is derived from the same text and always keeps the substring
+    /// "failed", which the status derivation and the statement-outcome memory
+    /// key on. `#[serde(default)]` accepts serialized forms without the key;
+    /// skipping `None` keeps serialized definitions byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<String>,
 }
 
 #[async_trait]

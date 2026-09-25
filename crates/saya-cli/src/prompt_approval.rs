@@ -1,42 +1,223 @@
-use saya_agent::ApprovalPolicy;
+use crate::approval_facts::ApprovalFacts;
+use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
+use saya_agent::{
+    ApprovalChoice, ApprovalDecision, ApprovalPolicy, SessionGrants, SessionPolicy, ToolDefinition,
+};
+use saya_store::SessionJournal;
+use std::sync::Arc;
 
 pub(crate) struct TerminalApproval {
-    policy: ApprovalPolicy,
+    policy: SessionPolicy,
+    /// Whether this surface may read stdin. This gates the stdin fallback
+    /// below — and ONLY that. The TUI answers false (it must never read
+    /// stdin under the alternate screen) while still obtaining approvals
+    /// through its modal; the advertisement gate
+    /// ([`SessionUniverse::definitions`]) reads the separate
+    /// `can_obtain_approval` flag, never this one. Merging the two is what
+    /// hid every write-shaped tool from the TUI under `ask`.
     can_prompt: bool,
+    /// The turn's primary connection, bound by the turn that owns this
+    /// decider; the SQL family's suggestion names it when the call names
+    /// no connection. Unbound — a run's construction — suggests no token.
+    primary: TurnPrimary,
+    /// The composition facts the prompt may state. Built from the session
+    /// universe (or the resolved config on the one-shot ask path); the
+    /// prompt states only these, never prose.
+    facts: ApprovalFacts,
+    /// The session journal, when this decider belongs to a session — a
+    /// `[s]` answer's new grant is journalled there, before the call it
+    /// allowed runs. `None` — the one-shot ask and the headless shapes —
+    /// records grants with no journal: there is no session to journal for.
+    journal: Option<Arc<SessionJournal>>,
 }
 
 impl TerminalApproval {
-    pub(crate) fn new(policy: ApprovalPolicy, can_prompt: bool) -> Self {
-        Self { policy, can_prompt }
+    pub(crate) fn new(
+        policy: ApprovalPolicy,
+        can_prompt: bool,
+        primary: TurnPrimary,
+        facts: ApprovalFacts,
+    ) -> Self {
+        Self {
+            policy: SessionPolicy::new(policy),
+            can_prompt,
+            primary,
+            facts,
+            journal: None,
+        }
+    }
+
+    /// The headless run's decider (U4: the same engine, frozen): built over a
+    /// [`SessionPolicy::frozen`] seeded from the run's `--allow` tokens — the
+    /// stated scopes are the approval — so a seed pre-answers the asks it
+    /// names and everything else an `ask` mode would raise denies with the
+    /// engine's own reason. `facts` is the run's own composition (built in
+    /// `commands/run` from the approved scopes and the runner wiring), so a
+    /// seed pre-answers exactly the calls the composition carries (U8): a
+    /// token the composition cannot honour is never suggested, on this
+    /// surface either. It prompts nothing and records nothing: a headless
+    /// session grant is impossible, not merely unused. The computed grant
+    /// token feeds seed matching, not an offer — no offer renders headlessly
+    /// (`can_prompt=false`, `Ask` denies at `approve`): removing the grant
+    /// computation would break `--allow` seed pre-answering (pinned at
+    /// `prompt_approval_tests.rs:409-424`). The primary stays
+    /// unbound — the run's fail-closed rule: only a call that names its
+    /// connection suggests a token, never a guessed one.
+    pub(crate) fn frozen(mode: ApprovalPolicy, seeds: &[String], facts: ApprovalFacts) -> Self {
+        Self {
+            policy: SessionPolicy::frozen(mode, seeds),
+            can_prompt: false,
+            primary: TurnPrimary::default(),
+            facts,
+            journal: None,
+        }
+    }
+
+    /// Built over the session's one approval policy — the hoisted instance a
+    /// session's turns clone, so a grant recorded through this decider's ask
+    /// is in force for every later turn of the same session. The primary is
+    /// the turn's handle: the turn binds the registry's primary into it
+    /// before the model runs. `facts` are the session composition's prompt
+    /// facts — what this decider's prompts may state about the session. The
+    /// session's journal rides along: a `[s]` answer's new grant is written
+    /// there before this call is allowed to run.
+    pub(crate) fn from_session(
+        policy: SessionPolicy,
+        can_prompt: bool,
+        primary: TurnPrimary,
+        facts: ApprovalFacts,
+        journal: Option<Arc<SessionJournal>>,
+    ) -> Self {
+        Self {
+            policy,
+            can_prompt,
+            primary,
+            facts,
+            journal,
+        }
+    }
+}
+
+/// The prompt shown when an `Ask` approval needs the user: the per-call fact
+/// body (`approval_facts::call_facts`) — the containment that makes the call
+/// safe, the bounds that cap it, the session's grant history — followed by
+/// the answers line; for a call with no facts worth showing, a generic
+/// sentence naming the tool, so nothing is ever approved under a sentence it
+/// does not match. The TUI's modal renders the same body and answers line
+/// (`interactive/tui/ui/panels`), so the two frontends cannot state
+/// different facts.
+pub(crate) fn approval_prompt(
+    tool: &ToolDefinition,
+    arguments: &serde_json::Value,
+    grant: Option<&str>,
+    facts: &ApprovalFacts,
+    primary: Option<&str>,
+    grants: Option<&SessionGrants>,
+) -> String {
+    let answers = session_answers_line(grant);
+    match crate::approval_facts::call_facts(&tool.name, arguments, grant, facts, primary, grants) {
+        Some(body) => format!("{body}\n{answers} "),
+        None => format!("Run tool `{}`? {answers} ", tool.name),
+    }
+}
+
+/// The user's typed answer mapped onto a [`ApprovalChoice`]. The habit and the
+/// script keep their meaning — `y`/`yes` allow once, `n`/`no` deny — `a` is
+/// the allow-once answer's key, `s` grants exactly the offered token (and is
+/// an unoffered deny when no token exists), and anything unrecognised denies.
+pub(crate) fn terminal_choice(answer: &str, grant: Option<&str>) -> ApprovalChoice {
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" | "a" => ApprovalChoice::AllowOnce,
+        "s" => match grant {
+            Some(token) => ApprovalChoice::AllowSession {
+                token: token.to_owned(),
+            },
+            None => ApprovalChoice::Deny,
+        },
+        _ => ApprovalChoice::Deny,
     }
 }
 
 #[async_trait::async_trait]
 impl saya_agent::ApprovalDecider for TerminalApproval {
-    async fn approve(
-        &self,
-        tool: &saya_agent::ToolDefinition,
-        arguments: &serde_json::Value,
-    ) -> bool {
-        match self.policy {
-            ApprovalPolicy::ReadOnly => true,
-            ApprovalPolicy::Never => false,
-            ApprovalPolicy::Ask if !self.can_prompt => false,
-            ApprovalPolicy::Ask => {
+    async fn approve(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> bool {
+        // Deny first, at every program-named door: a denied name refuses
+        // (`false`) before grant lookup, before the prompt, before bypass —
+        // the loop then relays this decider's typed refusal (see
+        // `refusal_detail` below), and the executor's own deny check stays
+        // as the second door for any caller that executes without approving.
+        if crate::interactive::session_deny::denied_call_program(
+            &tool.name,
+            arguments,
+            &self.facts.denied_programs,
+        )
+        .is_some()
+        {
+            return false;
+        }
+        let primary = self.primary.get();
+        let grant = grant_token(&tool.name, arguments, primary.as_deref(), &self.facts);
+        match self.policy.resolve(&tool.effect, grant.as_deref()) {
+            ApprovalDecision::Allow => true,
+            ApprovalDecision::Deny { .. } => false,
+            ApprovalDecision::Ask if !self.can_prompt => false,
+            ApprovalDecision::Ask => {
                 use std::io::{self, IsTerminal, Write};
                 if !io::stdin().is_terminal() {
                     return false;
                 }
-                // Show the exact SQL being approved when we can extract it.
-                if let Some(detail) = crate::agent::tools::tool_call_detail(&tool.name, arguments) {
-                    eprintln!("  {detail}");
-                }
-                eprint!("Allow bounded read-only SQL query? [y/N] ");
+                let primary = primary.as_deref();
+                eprint!(
+                    "{}",
+                    approval_prompt(
+                        tool,
+                        arguments,
+                        grant.as_deref(),
+                        &self.facts,
+                        primary,
+                        Some(self.policy.grants()),
+                    )
+                );
                 let _ = io::stderr().flush();
                 let mut answer = String::new();
-                io::stdin().read_line(&mut answer).is_ok()
-                    && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+                if !(io::stdin().read_line(&mut answer).is_ok()) {
+                    return false;
+                }
+                let choice = terminal_choice(&answer, grant.as_deref());
+                // Only "allow for this session" records anything; the grant
+                // lands in the session's one policy, so it outlives the turn,
+                // and a *new* grant is journalled there before this call is
+                // allowed to run — the shared operation, one wording. A
+                // failed journal write changes no consent: it is said on
+                // stderr, the prompt's own channel, and the session carries
+                // on.
+                let (_, warning) = crate::interactive::session_grants::record_prompt_answer(
+                    &self.policy,
+                    &choice,
+                    self.journal.as_deref(),
+                );
+                if let Some(warning) = warning {
+                    eprintln!("{warning}");
+                }
+                !matches!(choice, ApprovalChoice::Deny)
             }
         }
+    }
+
+    fn refusal_detail(
+        &self,
+        tool: &ToolDefinition,
+        arguments: &serde_json::Value,
+    ) -> Option<String> {
+        // The loop reads this only after `approve` denied, so the same pure
+        // seam answers the wording: the typed refusal for a denied program,
+        // `None` for every denial this decider did not word (mode denials,
+        // the user's `n`), where the loop's generic denial stands.
+        crate::interactive::session_deny::denied_call_program(
+            &tool.name,
+            arguments,
+            &self.facts.denied_programs,
+        )
+        .map(|program| crate::interactive::session_deny::denied_refusal(&program))
     }
 }

@@ -26,6 +26,23 @@ pub(crate) fn prepare_path(path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Keep the startup retry loop reserved for SQLite's lock errors. Other
+/// database errors describe a permanent state/path problem and retrying them
+/// only delays the useful typed failure.
+pub(crate) fn map_open_error(error: &sqlx::Error) -> StoreError {
+    let Some(database) = error.as_database_error() else {
+        return StoreError::Unavailable;
+    };
+    let Some(code) = database.code().and_then(|code| code.parse::<i32>().ok()) else {
+        return StoreError::OpenFailed;
+    };
+    match code & 0xff {
+        // SQLITE_BUSY and SQLITE_LOCKED, including their extended codes.
+        5 | 6 => StoreError::Unavailable,
+        _ => StoreError::OpenFailed,
+    }
+}
+
 pub(crate) fn secure_files(path: &Path) -> Result<(), StoreError> {
     #[cfg(unix)]
     for suffix in ["", "-wal", "-shm"] {

@@ -4,7 +4,7 @@
 //! returns; this function no longer signals which path ran, because both
 //! paths feed the same trim.
 
-use super::{check_cancelled, emit, failed_statements, output, tool_record, tools};
+use super::{check_cancelled, emit, failed_statements, failure_key, output, tool_record, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
     ChatMessage, ToolDefinition, ToolExecutor,
@@ -43,20 +43,25 @@ pub(super) async fn run_turn_tools(
     if batch_parallel {
         check_cancelled(cancellation)?;
         for call in &assistant.tool_calls {
+            // The batch precondition validated every call against the
+            // definitions, so the declared effect is at hand for the event —
+            // the renderer derives its label from this declaration, the same
+            // one the gates below consult.
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == call.name)
+                .expect("the batch precondition validated the call");
             emit(
                 events,
                 sink,
                 AgentEvent::ToolRequested {
                     name: call.name.clone(),
                     arguments: call.arguments.clone(),
+                    effect: Some(definition.effect),
                 },
             )
             .await;
-            if definitions
-                .iter()
-                .find(|definition| definition.name == call.name)
-                .is_some_and(|definition| definition.effect.database_data)
-            {
+            if definition.effect.database_data {
                 *used_bounded_sql_query = true;
             }
         }
@@ -65,10 +70,10 @@ pub(super) async fn run_turn_tools(
             failed_statements::record_outcome(
                 failed,
                 last_successful_sql,
-                failed_statements::sql_of(call),
+                failure_key::key_of(call),
                 &result,
                 true,
-                summary,
+                &summary,
             );
             // Read the value-free shape before `tool_message` takes ownership
             // of `result`: only `row_count` and `columns` are read, so no cell
@@ -94,7 +99,7 @@ pub(super) async fn run_turn_tools(
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name.clone(),
-                    summary: output::completion_summary(summary, truncated),
+                    summary: output::completion_summary(&summary, truncated),
                 },
             )
             .await;
@@ -107,12 +112,20 @@ pub(super) async fn run_turn_tools(
                 return Err(AgentError::InvalidToolCall);
             }
             check_cancelled(cancellation)?;
+            // A call to an unknown tool has no declared effect to carry —
+            // `None`, never a fabricated one; the renderer claims nothing it
+            // cannot prove for a tool that does not exist.
+            let effect = definitions
+                .iter()
+                .find(|definition| definition.name == call.name)
+                .map(|definition| definition.effect);
             emit(
                 events,
                 sink,
                 AgentEvent::ToolRequested {
                     name: call.name.clone(),
                     arguments: call.arguments.clone(),
+                    effect,
                 },
             )
             .await;
@@ -141,16 +154,17 @@ pub(super) async fn run_turn_tools(
             .await;
             continue;
         }
-        // A byte-identical repeat of a statement that already failed in this
-        // run is refused rather than re-executed: the failure is deterministic
-        // at parse/safety time, so re-running it wastes the turn (the benchmark
+        // A byte-identical repeat of a call that already failed in this run is
+        // refused rather than re-executed: the failure is deterministic at
+        // parse/safety time, so re-running it wastes the turn (the benchmark
         // saw one statement re-sent 384 times). Feed the prior error back as
         // the tool result so the model has the information it needs to change
         // approach. This does not fail the turn — the point is to return
-        // signal cheaply, not to abort.
-        if let Some(sql) = failed_statements::sql_of(&call)
-            && let Some(prior) = failed.prior_error(sql)
-        {
+        // signal cheaply, not to abort. The key is computed here, before
+        // `execute` below moves `call.arguments`, and reused for the outcome
+        // recording.
+        let key = failure_key::key_of(&call);
+        if let Some(prior) = failed.prior_error(&key) {
             check_cancelled(cancellation)?;
             let (result, summary) = failed_statements::refuse_repeat(prior);
             tool_metadata.push(crate::ToolMetadata {
@@ -173,35 +187,54 @@ pub(super) async fn run_turn_tools(
             continue;
         }
         check_cancelled(cancellation)?;
+        // The call was validated above, so the definition — and with it the
+        // declared effect the event carries — is known before anything runs.
+        let definition = definitions
+            .iter()
+            .find(|tool| tool.name == call.name)
+            .expect("validated");
         emit(
             events,
             sink,
             AgentEvent::ToolRequested {
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
+                effect: Some(definition.effect),
             },
         )
         .await;
-        let definition = definitions
-            .iter()
-            .find(|tool| tool.name == call.name)
-            .expect("validated");
         let approved = !definition.effect.requires_approval
             || approval.approve(definition, &call.arguments).await;
+        // A decider that refuses with its own typed wording (today, the
+        // session deny list's refusal) names it here; `None` keeps the
+        // loop's generic denial. The read is side-effect free by contract
+        // (`ApprovalDecider::refusal_detail`), so observing the refused call
+        // a second time prompts, grants, and journals nothing. The detail
+        // reaches both the user (the `ToolDenied` reason) and the model (the
+        // tool result): one refusal, in the right words, at both surfaces.
+        // The detail wins over the structural gates' own reasons below: a
+        // denied call was refused for being denied, not for needing a permit
+        // the session never grants — the gates still bind execution either
+        // way, only the wording prefers the decider.
+        let refusal_detail = if approved {
+            None
+        } else {
+            approval.refusal_detail(definition, &call.arguments)
+        };
         // Apply the same policy the batch path consults (`auto_runnable`),
         // split into its gates so the denial can name which one refused.
         // `requires_approval` was already resolved into `approved`, so a
         // tool that needed approval and got it still runs; the remaining
         // gates bind whether or not approval was granted. This is the one
-        // place the sequential path decides auto-run — keeping it here in
-        // terms of the shared gates means a gate added to `tools.rs`
-        // cannot apply to the batch path and not this one.
+        // place the sequential path decides auto-run. It consults the shared
+        // gates *by name* rather than through `auto_runnable`, so a gate added
+        // to `tools.rs` does NOT reach this path on its own — it must be added
+        // here too. A `WriteWorkspace` tool in a single-call turn ran despite
+        // the permit being false until this line existed.
         let candidate_denied = tools::candidate_denied(definition, limits);
-        let side_effect_denied = tools::external_side_effect_gated(definition);
-        let executed = approved && !candidate_denied && !side_effect_denied;
-        // Capture the SQL before `execute` moves `call.arguments`; only SQL
-        // statements are tracked for repeat refusal and salvage nomination.
-        let sql = failed_statements::sql_of(&call).map(str::to_owned);
+        let side_effect_denied = tools::external_side_effect_gated(definition, limits);
+        let workspace_denied = tools::workspace_write_denied(definition, limits);
+        let executed = approved && !candidate_denied && !side_effect_denied && !workspace_denied;
         // Capture the serialized arguments before `execute` moves
         // `call.arguments` — the persisted record carries what the model sent
         // (the statement for a SQL tool), and the value-free result shape is
@@ -214,17 +247,21 @@ pub(super) async fn run_turn_tools(
             if definition.effect.database_data {
                 *used_bounded_sql_query = true;
             }
-            tools::execute(tools, &call.name, call.arguments, definition.read_only).await
+            tools::execute(tools, &call.name, call.arguments, Some(definition)).await
         } else {
             emit(
                 events,
                 sink,
                 AgentEvent::ToolDenied {
                     name: call.name.clone(),
-                    reason: if side_effect_denied {
+                    reason: if let Some(detail) = refusal_detail.clone() {
+                        detail
+                    } else if side_effect_denied {
                         "external side effect requires approval".into()
                     } else if candidate_denied {
                         "candidate writes are not permitted".into()
+                    } else if workspace_denied {
+                        "workspace writes are not permitted".into()
                     } else {
                         "approval was not granted".into()
                     },
@@ -232,17 +269,22 @@ pub(super) async fn run_turn_tools(
             )
             .await;
             (
-                serde_json::json!({"error":"tool call denied by approval policy"}),
-                "read-only database tool denied",
+                match refusal_detail {
+                    Some(detail) => {
+                        serde_json::json!({"error":format!("tool call denied by approval policy: {detail}")})
+                    }
+                    None => serde_json::json!({"error":"tool call denied by approval policy"}),
+                },
+                "read-only database tool denied".to_owned(),
             )
         };
         failed_statements::record_outcome(
             failed,
             last_successful_sql,
-            sql.as_deref(),
+            key,
             &result,
             executed,
-            summary,
+            &summary,
         );
         tool_metadata.push(crate::ToolMetadata {
             name: call.name.clone(),
@@ -268,7 +310,7 @@ pub(super) async fn run_turn_tools(
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name,
-                    summary: output::completion_summary(summary, truncated),
+                    summary: output::completion_summary(&summary, truncated),
                 },
             )
             .await;

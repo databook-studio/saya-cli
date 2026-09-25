@@ -1,7 +1,11 @@
+use std::collections::BTreeMap;
+
 use saya_types::DatabaseProfile;
 
 use crate::{
     AiProvider, ColorChoice, ConfigError, ConfigFile, OutputFormat, ResolutionInput, ThemeChoice,
+    endpoints::{ResolvedEndpoint, require_unique_endpoints, resolve_endpoints},
+    jobs::{ResolvedJobs, require_max_iterations},
     layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
     profile_env::overlay_database_environment,
@@ -47,6 +51,12 @@ const MIN_CANDIDATES: usize = 1;
 /// leaves room to opt into a wider search while keeping the worst case bounded.
 const MAX_CANDIDATES: usize = 16;
 
+/// Default `[run] max_iterations`: a stored setting with no behavioural
+/// reader — `[jobs] turns` is opt-in, and unset means unlimited. Kept
+/// parsed and range-checked so existing configs keep resolving; nothing
+/// consumes it.
+const DEFAULT_MAX_ITERATIONS: usize = 12;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {
     pub profile_name: Option<String>,
@@ -57,8 +67,23 @@ pub struct ResolvedConfig {
     pub max_iterations: usize,
     /// Independent agent attempts per question. Defaults to `1` (today's
     /// single-run behaviour); each extra candidate is a full additional agent
-    /// run. Bounded to `1..=16` at resolve time. Nothing reads this yet.
+    /// run. Bounded to `1..=16` at resolve time. Read by the `ask` command,
+    /// which runs one attempt per candidate and votes on their nominated SQL
+    /// (`crates/saya-cli/src/agent/candidates`).
     pub candidates: usize,
+    /// The default budgets a run is declared with: `[jobs]` resolved per
+    /// dimension — a ceiling left unset is unlimited at the contract level.
+    /// The engine layers RunSpec and step budgets over these; there is
+    /// deliberately no environment input to any of it (plan G3).
+    pub jobs: ResolvedJobs,
+    /// The `[host_commands]` shaping: user-layer `pass_env` and
+    /// the per-call ceiling. The project layer may never state it (typed
+    /// resolve error) — see `HostCommandsFromProject`.
+    pub host_commands: crate::jobs::ResolvedHostCommands,
+    /// The user-layer `[session_commands] deny` list: bare program names
+    /// every session door refuses before grant, prompt, and bypass. The
+    /// project layer may never state it (typed resolve error).
+    pub session_deny: crate::jobs::ResolvedSessionDeny,
     pub query_timeout_seconds: u64,
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
@@ -68,6 +93,13 @@ pub struct ResolvedConfig {
     /// that the project layer tried to override and were ignored. Empty when
     /// the project layer is trusted or set none of them.
     pub ignored_project_overrides: Vec<String>,
+    /// The named AI endpoints a run's roles bind to, keyed by run-scoped
+    /// name. Always contains `orchestrator`: the plain `[ai]` block whenever
+    /// no `[[ai.endpoints]]` entry is declared with that name, so an existing
+    /// config resolves the same pool it did before endpoints existed. An
+    /// endpoint's `api_key` stays a reference here; values are resolved only
+    /// at request time.
+    pub endpoints: BTreeMap<String, ResolvedEndpoint>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +117,10 @@ pub struct ResolvedAi {
     pub idle_timeout_seconds: u64,
     /// Per-response output-token ceiling requested from the provider.
     pub max_output_tokens: u32,
+    /// True when `max_output_tokens` is the built-in default because no layer
+    /// stated it. Data, not presentation: callers that report the ceiling
+    /// (doctor) need the distinction, and only resolution can see it.
+    pub max_output_tokens_is_default: bool,
     /// Provider retry backoff in milliseconds, tried in order before the
     /// provider gives up. An empty list means one attempt with no sleeps.
     pub retry_delays_ms: Vec<u64>,
@@ -92,18 +128,47 @@ pub struct ResolvedAi {
     /// assembles. The loop trims under it instead of aborting, so a user on a
     /// model with a large context window can raise it to keep more history.
     pub context_byte_budget: usize,
+    /// The model's context window in tokens, as the user declared it in
+    /// `[ai] context_window_tokens`. `None` is the normal case: the user did
+    /// not declare one, and the answer is whatever the built-in table says for
+    /// `model` (or nothing, for a model it does not know). Absent is not zero —
+    /// a declared value is a fact about this deployment; an undeclared one is
+    /// not a fact at all.
+    pub context_window_tokens: Option<u64>,
     /// Show the model's chain-of-thought in the transcript. Off by default;
     /// display only — reasoning is never persisted regardless of this setting.
     pub show_thinking: bool,
+    /// How context compaction behaves once the window fills. `auto` (the
+    /// default) summarises older turns on crossing the compact threshold;
+    /// `manual` keeps `/compact` working and never fires on its own; `off`
+    /// additionally silences the 70% warning.
+    pub compaction: crate::CompactionMode,
 }
 
 pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let mut file = ConfigFile::default();
     if let Some(user) = input.user.as_ref() {
+        require_unique_endpoints(&user.ai.endpoints)?;
         merge(&mut file, user);
     }
     let protected = snapshot_protected(&file);
     if let Some(project) = input.project.as_ref() {
+        require_unique_endpoints(&project.ai.endpoints)?;
+        // A project-layer `[host_commands]` is a hard refusal — not a
+        // revert: a model-writable file must never shape unsandboxed
+        // execution (not enable it, not widen its timeout, not name its
+        // env), and `--trust-project-config` does not unlock it.
+        if !project.host_commands.pass_env.is_empty()
+            || project.host_commands.timeout_seconds.is_some()
+        {
+            return Err(ConfigError::HostCommandsFromProject);
+        }
+        // A project-layer `[session_commands]` is a hard refusal — not a
+        // revert: a model-writable deny could name every `[jobs.runner]`
+        // allow entry, herding the session's work onto the unsandboxed lane.
+        if !project.session_commands.deny.is_empty() {
+            return Err(ConfigError::SessionCommandsFromProject);
+        }
         merge(&mut file, project);
     }
     let ignored_project_overrides = if input.cli.trust_project_config {
@@ -145,6 +210,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .context_byte_budget
         .unwrap_or(DEFAULT_CONTEXT_BYTE_BUDGET);
     require_context_byte_budget(context_byte_budget)?;
+    require_context_window_tokens(file.ai.context_window_tokens)?;
     let retry_delays_ms = file
         .ai
         .retry_delays_ms
@@ -153,33 +219,53 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     require_retry_delays(&retry_delays_ms)?;
     let candidates = file.run.candidates.unwrap_or(DEFAULT_CANDIDATES);
     require_candidates(candidates)?;
+    let max_iterations = file.run.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
+    require_max_iterations(max_iterations)?;
+    let jobs = crate::jobs::resolve(&file.jobs)?;
+    let host_commands = crate::jobs::resolve_host_commands(file.host_commands.clone())?;
+    let session_deny = crate::jobs::resolve_session_deny(file.session_commands.clone())?;
+    let ai = ResolvedAi {
+        provider: file.ai.provider.unwrap_or(AiProvider::Ollama),
+        model: file
+            .ai
+            .model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_MODEL.into()),
+        // Cloned, not moved: the endpoint map inherits these same fields as
+        // its fallback, and the file is read again by `resolve_endpoints`.
+        base_url: file.ai.base_url.clone(),
+        api_key: file.ai.api_key.clone(),
+        allow_data_sharing: file.ai.allow_data_sharing.unwrap_or(false),
+        temperature: file.ai.temperature.unwrap_or(0.1),
+        timeout_seconds: file.ai.timeout_seconds.unwrap_or(60),
+        idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
+        max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
+        max_output_tokens_is_default: file.ai.max_output_tokens.is_none(),
+        context_byte_budget,
+        context_window_tokens: file.ai.context_window_tokens,
+        show_thinking: file.ai.show_thinking.unwrap_or(false),
+        compaction: file.ai.compaction.unwrap_or_default(),
+        retry_delays_ms,
+    };
+    let endpoints = resolve_endpoints(&file.ai, &ai)?;
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
-        ai: ResolvedAi {
-            provider: file.ai.provider.unwrap_or(AiProvider::Ollama),
-            model: file.ai.model.unwrap_or_else(|| DEFAULT_MODEL.into()),
-            base_url: file.ai.base_url,
-            api_key: file.ai.api_key,
-            allow_data_sharing: file.ai.allow_data_sharing.unwrap_or(false),
-            temperature: file.ai.temperature.unwrap_or(0.1),
-            timeout_seconds: file.ai.timeout_seconds.unwrap_or(60),
-            idle_timeout_seconds: file.ai.idle_timeout_seconds.unwrap_or(90),
-            max_output_tokens: file.ai.max_output_tokens.unwrap_or(4096),
-            context_byte_budget,
-            show_thinking: file.ai.show_thinking.unwrap_or(false),
-            retry_delays_ms,
-        },
+        ai,
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
-        max_iterations: file.run.max_iterations.unwrap_or(12),
+        max_iterations,
         candidates,
+        jobs,
+        host_commands,
+        session_deny,
         query_timeout_seconds: file.run.query_timeout_seconds.unwrap_or(60),
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
         ui_theme: file.ui.theme.unwrap_or(ThemeChoice::Auto),
         memory,
         ignored_project_overrides,
+        endpoints,
     })
 }
 
@@ -195,6 +281,24 @@ fn require_context_byte_budget(value: usize) -> Result<(), ConfigError> {
             field: "context_byte_budget",
             value,
             min: MIN_CONTEXT_BYTE_BUDGET,
+        })
+    }
+}
+
+/// Rejects a declared `[ai] context_window_tokens` of zero. A window of zero
+/// tokens is a typo, not a deployment: no model turns every prompt into a
+/// refusal. There is no upper bound — a user declaring their gateway's window
+/// is stating a fact saya has no other way to learn, and the largest published
+/// window today is a few million tokens, so any plausible ceiling would
+/// outlive its reason.
+fn require_context_window_tokens(value: Option<u64>) -> Result<(), ConfigError> {
+    if value.is_none_or(|tokens| tokens > 0) {
+        Ok(())
+    } else {
+        Err(ConfigError::SettingBelowMinimum {
+            field: "context_window_tokens",
+            value: value.unwrap_or_default() as usize,
+            min: 1,
         })
     }
 }

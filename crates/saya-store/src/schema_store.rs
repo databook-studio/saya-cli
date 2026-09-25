@@ -3,14 +3,27 @@ use crate::{
     sqlite_support,
 };
 use async_trait::async_trait;
-use saya_types::SchemaTree;
+use saya_types::{MAX_SCHEMA_BYTES, SchemaTree};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[async_trait]
 impl SchemaStore for SqliteStateStore {
     async fn upsert_schema(&self, profile_id: &str, schema: &SchemaTree) -> Result<(), StoreError> {
         sqlite_support::validate_profile_id(profile_id)?;
-        let json = serde_json::to_string(schema).map_err(|_| StoreError::Unavailable)?;
+        schema.validate().map_err(|_| StoreError::LimitExceeded)?;
+        // Bounded serialization: the tree streams into a writer that refuses
+        // at the byte ceiling, so a valid-but-huge tree fails mid-stream —
+        // never after a full `String` materialization.
+        let mut capped = crate::bounded::BoundedWriter::new(Vec::new(), MAX_SCHEMA_BYTES);
+        match serde_json::to_writer(&mut capped, schema) {
+            Ok(()) => {}
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::QuotaExceeded) => {
+                return Err(StoreError::LimitExceeded);
+            }
+            Err(_) => return Err(StoreError::Unavailable),
+        }
+        let json = capped.into_inner();
+        let json = String::from_utf8(json).map_err(|_| StoreError::Unavailable)?;
         let mut tx = self
             .pool()
             .await?
@@ -24,21 +37,38 @@ impl SchemaStore for SqliteStateStore {
     }
     async fn get_schema(&self, profile_id: &str) -> Result<Option<CachedSchema>, StoreError> {
         sqlite_support::validate_profile_id(profile_id)?;
-        let row = sqlx::query_as::<_, (String, i64, i64)>(
-            "SELECT schema_json, updated_unix_ms, version FROM schema_cache WHERE profile_id=?",
+        // Bounded single-row fetch: the byte gate runs inside SQLite and the
+        // guarded column comes back NULL for an oversized row, so it refuses
+        // without materializing the whole `String` — never fetch-then-measure.
+        // `length()` on TEXT counts characters; the bound is bytes, so the gate
+        // measures `CAST(.. AS BLOB)`. Bytes and freshness metadata come from
+        // the same statement, so no concurrent upsert or delete can pair one
+        // version's bytes with another's timestamp between two reads.
+        let row = sqlx::query_as::<_, (i64, Option<String>, i64, i64)>(
+            "SELECT length(CAST(schema_json AS BLOB)), CASE WHEN length(CAST(schema_json AS BLOB)) <= ? THEN schema_json END, updated_unix_ms, version FROM schema_cache WHERE profile_id=?",
         )
+        .bind(i64::try_from(MAX_SCHEMA_BYTES).map_err(|_| StoreError::Unavailable)?)
         .bind(profile_id)
         .fetch_optional(self.pool().await?)
         .await
         .map_err(|_| StoreError::Unavailable)?;
-        row.map(|(json, updated_unix_ms, version)| {
-            Ok(CachedSchema {
-                schema: serde_json::from_str(&json).map_err(|_| StoreError::Unavailable)?,
-                updated_unix_ms,
-                version: version as u32,
-            })
-        })
-        .transpose()
+        let Some((len, capped, updated_unix_ms, version)) = row else {
+            return Ok(None);
+        };
+        if len > i64::try_from(MAX_SCHEMA_BYTES).map_err(|_| StoreError::Unavailable)? {
+            return Err(StoreError::LimitExceeded);
+        }
+        let Some(json) = capped else {
+            return Err(StoreError::Unavailable);
+        };
+        let schema: SchemaTree =
+            serde_json::from_str(&json).map_err(|_| StoreError::Unavailable)?;
+        schema.validate().map_err(|_| StoreError::LimitExceeded)?;
+        Ok(Some(CachedSchema {
+            schema,
+            updated_unix_ms,
+            version: version as u32,
+        }))
     }
     async fn invalidate_schema(&self, profile_id: &str) -> Result<(), StoreError> {
         sqlite_support::validate_profile_id(profile_id)?;

@@ -9,6 +9,16 @@ impl DatabaseTools {
         &self,
         arguments: &serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
+        let saved_path = arguments.get("save_to").and_then(serde_json::Value::as_str);
+        let workspace = if saved_path.is_some() {
+            Some(
+                self.workspace
+                    .as_ref()
+                    .ok_or(ToolError::WorkspaceUnavailable)?,
+            )
+        } else {
+            None
+        };
         let sql = arguments
             .get("sql")
             .and_then(serde_json::Value::as_str)
@@ -46,21 +56,33 @@ impl DatabaseTools {
         }
 
         let html = crate::chart::render_html(&result, &spec).map_err(ToolError::Chart)?;
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!("saya-chart-{unique}.html"));
-        crate::chart::write_html(&html, &path).map_err(ToolError::Chart)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        if let Some(path) = saved_path {
+            if html.len() > saya_harness::workspace::MAX_IO_BYTES {
+                return Err(ToolError::WorkspaceWrite(format!(
+                    "content is over the {}-byte workspace write bound",
+                    saya_harness::workspace::MAX_IO_BYTES
+                )));
+            }
+            workspace
+                .ok_or(ToolError::WorkspaceUnavailable)?
+                .write(path, html.as_bytes())
+                .map_err(|error| ToolError::WorkspaceWrite(error.to_string()))?;
         }
+        let mut chart = crate::chart::reserve_temp_chart().map_err(ToolError::Chart)?;
+        chart.write_html(&html).map_err(ToolError::Chart)?;
+        let path = chart.path().to_path_buf();
         let _ = crate::chart::open_file(&path);
+        let result_path = saved_path
+            .map(str::to_owned)
+            .unwrap_or_else(|| path.display().to_string());
+        let note = if saved_path.is_some() {
+            "The same chart HTML was saved to the workspace path and opened from a private temporary copy."
+        } else {
+            "Interactive chart written to a private temporary file and opened in the browser."
+        };
         Ok(serde_json::json!({
-            "path": path.display().to_string(),
-            "note": "Interactive chart written and opened in the browser."
+            "path": result_path,
+            "note": note
         }))
     }
 }

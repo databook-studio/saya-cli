@@ -100,7 +100,11 @@ pub(crate) fn complete(
                 sql: task.sql.clone(),
                 connection: connection.clone(),
             });
-            transcript.push(BlockKind::Table, super::table::format_table(&result));
+            let table = super::table::format_table(&result);
+            transcript.push(
+                BlockKind::Table,
+                super::table::with_scope_line(table, connection.as_deref(), &result.executed_sql),
+            );
         }
         Followup::Export { path } => {
             match super::export::write_result(&result, std::path::Path::new(path)) {
@@ -140,14 +144,32 @@ fn complete_chart(
             return;
         }
     };
-    let path = path_arg
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("saya-chart.html"));
-    if let Err(msg) = crate::chart::write_html(&html, &path) {
+    let path = match path_arg {
+        Some(path) => std::path::PathBuf::from(path),
+        None => match crate::chart::reserve_temp_chart() {
+            Ok(mut chart) => {
+                if let Err(msg) = chart.write_html(&html) {
+                    transcript.push(BlockKind::Error, msg);
+                    return;
+                }
+                chart.path().to_path_buf()
+            }
+            Err(msg) => {
+                transcript.push(BlockKind::Error, msg);
+                return;
+            }
+        },
+    };
+    if path_arg.is_some()
+        && let Err(msg) = crate::chart::write_html(&html, &path)
+    {
         transcript.push(BlockKind::Error, msg);
         return;
     }
     let mut note = format!("Chart written to {}", path.display());
+    if result.truncated {
+        note.push_str(" (result was truncated)");
+    }
     match crate::chart::open_file(&path) {
         Ok(()) => note.push_str(" (opening in your browser)"),
         Err(e) => note.push_str(&format!(" — open it manually ({e})")),

@@ -1,25 +1,41 @@
-use super::extraction_trace::trace_extraction;
 use super::knowledge_event::knowledge_supplied_event;
 use super::tools;
+#[cfg(test)]
+pub(crate) use super::turn_config::query_data_allowed;
 pub(crate) use super::turn_config::{
-    AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed,
+    AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed_for_endpoint,
 };
 use super::turn_inputs::{TurnInputs, prepare_turn};
-use crate::{config::runtime::RuntimeConfig, prompt_approval::TerminalApproval};
+use crate::interactive::session_universe::SessionUniverse;
+use crate::{
+    config::runtime::RuntimeConfig, grant_token::TurnPrimary, prompt_approval::TerminalApproval,
+};
 use saya_agent::{
-    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, AgentRequest,
-    ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, run_agent_with_sink,
+    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentMode, AgentOutput, AgentRequest,
+    ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, LocalStateEffect,
+    run_agent_with_sink,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
 /// Production entry point: builds provider + registry from config and executes the turn.
+///
+/// `can_prompt` means "this surface may read stdin" — it feeds the
+/// connector's secret prompt, the turn's fallback [`TerminalApproval`], and
+/// nothing else. `can_obtain_approval` means "this surface can obtain a
+/// per-call approval at all" — it feeds the advertisement gate
+/// ([`SessionUniverse::definitions`] for sessions, the one-shot branch
+/// below for `ask`), never the stdin fallback. The line REPL passes its
+/// live-terminal fact for both; the TUI passes `false` for the first and
+/// `true` for the second (its modal); the one-shot `ask` path passes the
+/// same value for both (unchanged behaviour). Keep them split.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_prompt_with_sink(
     runtime: &RuntimeConfig,
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    can_obtain_approval: bool,
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
@@ -27,6 +43,13 @@ pub(crate) async fn run_prompt_with_sink(
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
+    // The session's tool universe, composed once per interactive session.
+    // `None` (the one-shot `ask` path) leaves `workspace_read` denying with
+    // a typed error and the write-shaped tools hidden.
+    session: Option<Arc<SessionUniverse>>,
+    // The agent's task posture, threaded like `approval`: the session's
+    // `/mode` state at the composition root.
+    agent_mode: AgentMode,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let inputs = prepare_turn(runtime, &overrides, can_prompt)
         .await
@@ -37,12 +60,15 @@ pub(crate) async fn run_prompt_with_sink(
         prompt,
         approval,
         can_prompt,
+        can_obtain_approval,
         history,
         sink,
         cancellation,
         state_db,
         decider,
         last_sql,
+        session,
+        agent_mode,
     )
     .await
 }
@@ -55,17 +81,38 @@ pub(crate) async fn run_prompt_with_inputs(
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    can_obtain_approval: bool,
     history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
+    // The session's tool universe, composed once per interactive session.
+    // `None` (the one-shot `ask` path) leaves `workspace_read` denying with
+    // a typed error and the write-shaped tools hidden.
+    session: Option<Arc<SessionUniverse>>,
+    // The agent's task posture, threaded like `approval`.
+    agent_mode: AgentMode,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = inputs.ai;
     let provider = inputs.provider;
     let registry = inputs.registry;
-    let allow_query_data = query_data_allowed(ai.provider, ai.allow_data_sharing);
+    let allow_query_data =
+        query_data_allowed_for_endpoint(ai.provider, ai.base_url.as_deref(), ai.allow_data_sharing);
+
+    // The turn's registry is the turn's connection fact: the deciders hold
+    // the session universe's primary handle, and this binds the turn's
+    // primary into it — before the registry moves into the tools. The
+    // fallback decider (the one-shot `ask` path, no decider passed in)
+    // owns its own handle, bound the same way, so its SQL suggestions name
+    // the turn's real primary.
+    let fallback_primary = TurnPrimary::default();
+    if let Some(session) = session.as_ref() {
+        session.primary.bind(&registry);
+    } else {
+        fallback_primary.bind(&registry);
+    }
 
     for (name, reason) in inputs.failures {
         sink.emit(AgentEvent::assistant_text(format!(
@@ -74,10 +121,48 @@ pub(crate) async fn run_prompt_with_inputs(
         .await;
     }
 
-    let system_prompt = super::system_prompt::assemble_system_prompt(
+    // Session-stable facts: the turn's connection set plus the session's
+    // bound root, held unchanged across the turns of one session so the
+    // system block keeps one prefix-cache key. The root borrows from the
+    // session universe for exactly this call — the facts render now, and no
+    // reference escapes into the request.
+    let root;
+    let facts = match session.as_ref() {
+        Some(universe) => {
+            root = universe.root().map(std::path::Path::to_path_buf);
+            super::session_facts::SessionFacts {
+                registry: &registry,
+                workspace_root: root.as_deref(),
+            }
+        }
+        None => super::session_facts::SessionFacts {
+            registry: &registry,
+            workspace_root: None,
+        },
+    };
+    // The plain entry point is the same assembly over an empty session
+    // (no workspace root); the mode-aware entry point takes the session
+    // facts. Both stay live: the session-aware prompt is what the turn
+    // sends, and the empty-session prompt is the no-root shape the pins
+    // read. Debug-assert they agree when no root binds — same inputs,
+    // same bytes — so the two shapes cannot drift.
+    let reachable = super::system_prompt::memory_reachable(state_db.is_some(), allow_query_data);
+    let empty_prompt = super::system_prompt::assemble_system_prompt(
         &registry,
         runtime.resolved.memory.mode,
-        super::system_prompt::memory_reachable(state_db.is_some(), allow_query_data),
+        reachable,
+    );
+    let system_prompt = super::system_prompt::assemble_system_prompt_for_mode(
+        &registry,
+        runtime.resolved.memory.mode,
+        reachable,
+        &facts,
+        agent_mode,
+    );
+    debug_assert!(
+        facts.workspace_root.is_some()
+            || agent_mode != saya_agent::AgentMode::Build
+            || system_prompt == empty_prompt
     );
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let memory = &runtime.resolved.memory;
@@ -115,21 +200,39 @@ pub(crate) async fn run_prompt_with_inputs(
     {
         context_blocks.push(hint);
     }
+    // The session task list rides the same lane, last: only when non-empty,
+    // so an empty list costs zero tokens. The block is the live cell's own
+    // rendering (see `session_tasks_render`), quoted as data through the
+    // same untrusted lane — never the system prompt, which stays
+    // byte-identical whether or not a list exists.
+    if let Some(session) = session.as_ref()
+        && let Some(block) = super::super::interactive::session_tasks_render::render_tasks_block(
+            &session.tasks().current(),
+        )
+    {
+        context_blocks.push(block);
+    }
     sink.emit(knowledge_supplied_event(&receipt)).await;
     let receipt = Arc::new(receipt);
     let learning = super::learning::LearningSetup::from(memory.mode);
     let observations_log = learning.observations.clone();
     let has_state_store = state_db.is_some();
     let override_log = Arc::new(tools::OverrideLog::new());
-    let tools = tools::DatabaseTools::with_learning(
-        registry,
-        runtime.resolved.max_rows,
-        allow_query_data,
-        state_db,
-        learning.observations,
-    )
-    .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect())
-    .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()));
+    let database = Arc::new(
+        tools::DatabaseTools::with_learning(
+            registry,
+            runtime.resolved.max_rows,
+            allow_query_data,
+            state_db,
+            learning.observations,
+        )
+        .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect())
+        .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()))
+        // The session's bound workspace — the only file I/O the read tools
+        // reach. `None` (the one-shot `ask` path) leaves them denying with
+        // their typed error.
+        .with_workspace(session.as_ref().and_then(|session| session.workspace())),
+    );
     let request = AgentRequest {
         prompt: prompt.into(),
         profile_names,
@@ -138,30 +241,92 @@ pub(crate) async fn run_prompt_with_inputs(
         history,
         context_blocks,
     };
-    let fallback_approval = TerminalApproval::new(approval, can_prompt);
+    let fallback_approval = TerminalApproval::new(
+        approval,
+        can_prompt,
+        fallback_primary,
+        crate::approval_facts::ApprovalFacts::for_ask(runtime),
+    );
     let approver: &dyn ApprovalDecider = match decider.as_deref() {
         Some(decider) => decider,
         None => &fallback_approval,
     };
     // Turn and tool-call ceilings come from the environment and are unbounded
     // when unset: SAYA_AGENT_MAX_TURNS / SAYA_AGENT_MAX_TOOL_CALLS, with no
-    // upper limit on a set value.
+    // upper limit on a set value. The continuation ceiling defaults to its
+    // bound when unset (SAYA_AGENT_MAX_CONTINUATIONS), with `0` disabling
+    // continuation.
     let env_budgets = saya_agent::budgets_from_env(|name| std::env::var(name).ok());
+    // The turn's universe and its executor ride together: a session dispatches
+    // through the shared `RunTools` composite and advertises its write-shaped
+    // members only where an approval surface exists to answer the asks; the
+    // one-shot `ask` path keeps the database surface alone, where
+    // `workspace_read` denies with a typed error.
+    let definitions = match session.as_ref() {
+        Some(session) => session.definitions(
+            agent_mode,
+            approval,
+            can_obtain_approval,
+            allow_query_data,
+            has_state_store,
+            learning.permit_candidate_writes,
+        ),
+        None => tools::DatabaseTools::definitions(
+            allow_query_data,
+            has_state_store,
+            learning.permit_candidate_writes,
+            false,
+            // The one-shot `ask` path builds a `TerminalApproval` over this
+            // same mode (below) and keeps `permit_external_effects: false`,
+            // so the loop's misconfiguration guard stays armed — and a
+            // `render_chart` call (`external_side_effect: true`,
+            // `requires_approval: true`, no grant token) goes to the
+            // decider, which resolves it exactly as a session under the same
+            // policy would: per-call ask when an approval surface exists.
+            // The chart is advertised exactly there and hidden everywhere
+            // else.
+            agent_mode == AgentMode::Build
+                && match approval {
+                    ApprovalPolicy::Ask => can_obtain_approval,
+                    ApprovalPolicy::Bypass => true,
+                    _ => false,
+                },
+        ),
+    };
+    // The fail-closed permits are the definitions' own enforcement, read off
+    // them: a turn that advertises a workspace-writing tool must permit
+    // workspace writes, or the loop's gate would deny after the ask — and a
+    // turn that advertises none keeps the permit off, so nothing can write.
+    // Derived, never stated twice, so advertisement and enforcement cannot
+    // drift.
+    let permit_workspace_writes = definitions
+        .iter()
+        .any(|definition| definition.effect.local_state == LocalStateEffect::WriteWorkspace);
     let limits = AgentLimits {
-        max_turns: env_budgets.0,
-        max_tool_calls: env_budgets.1,
+        max_turns: env_budgets.max_turns,
+        max_tool_calls: env_budgets.max_tool_calls,
+        max_continuations: env_budgets.max_continuations,
         permit_candidate_writes: learning.permit_candidate_writes,
         context_byte_budget: runtime.resolved.ai.context_byte_budget,
+        permit_workspace_writes,
+        // An ask turn approves nothing by scope: the plan-gated egress
+        // permit stays off, so a tool with an undeclared approval shape
+        // still refuses — the author check, not a user gate.
+        permit_external_effects: false,
+    };
+    let executor: Arc<dyn saya_agent::ToolExecutor> = match session.as_ref() {
+        Some(session) => session.executor(
+            Arc::clone(&database),
+            &cancellation,
+            permit_workspace_writes,
+        ),
+        None => Arc::clone(&database) as Arc<dyn saya_agent::ToolExecutor>,
     };
     let mut output = run_agent_with_sink(
         &*provider,
-        &tools,
+        executor.as_ref(),
         request,
-        tools::DatabaseTools::definitions(
-            allow_query_data,
-            has_state_store,
-            limits.permit_candidate_writes,
-        ),
+        definitions,
         limits,
         approver,
         sink,
@@ -174,108 +339,38 @@ pub(crate) async fn run_prompt_with_inputs(
         sink.emit(AgentEvent::knowledge_overridden(overridden.clone()))
             .await;
     }
-    // The usage the extraction call reported, if any. Stays `None` when
-    // learning is disabled, the gate declined, or the call produced no
-    // response (provider error or timeout) — absent is not zero.
-    let mut learning_usage: Option<saya_agent::TokenUsage> = None;
-    // Post-turn structured extraction (Safety Property 1: fail-soft isolation).
-    if learning.permit_candidate_writes
-        && let Some(store) = tools.state_db()
-        && let Ok(out) = output.as_ref()
-    {
-        let drained_obs = observations_log
-            .as_ref()
-            .map(|l| l.drain())
-            .unwrap_or_default();
-        let turn_record = super::learning::TurnRecord::assemble(
-            prompt,
-            &out.answer,
-            tools.registry(),
-            &drained_obs,
-            Some(&receipt),
-            &overridden,
-        );
-        let gate = super::learning::ProposalGating::evaluate(
-            &turn_record,
-            &drained_obs,
-            !overridden.is_empty(),
-        );
-        if gate.is_run() {
-            let object_count = turn_record.object_table.len();
-            // The answer is already on screen; this call is what the adapter is
-            // still waiting on, so say so before starting it.
-            sink.emit(AgentEvent::KnowledgeLearningStarted).await;
-            let extraction_started = std::time::Instant::now();
-            let extraction_res = tokio::time::timeout(
-                super::learning::EXTRACTION_TIMEOUT,
-                super::learning::run_extraction(
-                    &*provider,
-                    &ai.model,
-                    &turn_record,
-                    tools.registry(),
-                    store,
-                    &receipt,
-                ),
-            )
-            .await;
-            let extraction_elapsed = Some(extraction_started.elapsed());
-
-            match extraction_res {
-                // Extraction completed: the outcome carries the proposals and
-                // the usage the provider reported, even when parsing or
-                // ingestion then failed (tokens may have been billed first).
-                Ok(outcome) => {
-                    learning_usage = outcome.usage;
-                    match outcome.dtos {
-                        Ok(dtos) => {
-                            trace_extraction(
-                                "ok",
-                                object_count,
-                                Some(dtos.len()),
-                                None,
-                                extraction_elapsed,
-                            );
-                            for dto in dtos {
-                                sink.emit(AgentEvent::knowledge_proposed(dto)).await;
-                            }
-                        }
-                        Err(error) => {
-                            trace_extraction(
-                                "failed",
-                                object_count,
-                                Some(0),
-                                Some(&error.to_string()),
-                                extraction_elapsed,
-                            );
-                            sink.emit(AgentEvent::knowledge_learning_skipped(
-                                saya_agent::LearningSkipReason::Failed,
-                            ))
-                            .await;
-                        }
-                    }
-                }
-                // Timeout fired before extraction returned; same fail-soft rule.
-                // No response was produced, so there is no usage to report.
-                Err(_) => {
-                    trace_extraction("timed_out", object_count, Some(0), None, extraction_elapsed);
-                    sink.emit(AgentEvent::knowledge_learning_skipped(
-                        saya_agent::LearningSkipReason::TimedOut,
-                    ))
-                    .await;
-                }
-            }
-        } else {
-            // Gate decline stays silent on screen (decision 2); trace it for
-            // observability when debugging the boundary.
-            trace_extraction(
-                "gate_declined",
-                turn_record.object_table.len(),
-                None,
-                None,
-                None,
-            );
+    // The breaker: session-scoped so it trips across this session's turns; a
+    // fresh one per call when there is no session (the one-shot `ask` path,
+    // each candidate attempt) — which can never trip within one turn, since
+    // there is no next turn for it to disable.
+    let fresh_breaker;
+    let breaker: &super::learning::LearningBreaker = match session.as_ref() {
+        Some(session) => session.learning_breaker(),
+        None => {
+            fresh_breaker = super::learning::LearningBreaker::new();
+            &fresh_breaker
         }
-    }
+    };
+    // The usage the extraction call reported, if any. Stays `None` when
+    // learning is disabled, the gate declined, the breaker has already
+    // tripped this session, or the call produced no response — absent is
+    // not zero.
+    let learning_usage = super::learning::post_turn::run_post_turn_extraction(
+        super::learning::post_turn::PostTurnInputs {
+            permit_candidate_writes: learning.permit_candidate_writes,
+            database: &database,
+            output: output.as_ref(),
+            prompt,
+            observations_log: observations_log.as_deref(),
+            receipt: &receipt,
+            overridden: &overridden,
+            provider: &*provider,
+            model: &ai.model,
+            breaker,
+        },
+        sink,
+    )
+    .await;
 
     // Attach the extraction usage to the output so both the TUI and headless
     // recorders can fold it into the learning total. A failed answering call

@@ -30,14 +30,8 @@ pub(crate) fn transport_query(error: Error) -> ConnectionError {
     }
 }
 
-pub(crate) fn body(error: Error) -> ConnectionError {
-    if error.is_timeout() {
-        ConnectionError::query_failed("BigQuery query timed out")
-    } else if error.is_decode() {
-        ConnectionError::query_failed("BigQuery returned an unreadable result")
-    } else {
-        ConnectionError::query_failed("BigQuery query failed")
-    }
+pub(crate) fn body_decode() -> ConnectionError {
+    ConnectionError::query_failed("BigQuery returned an unreadable result")
 }
 
 pub(crate) fn query_status(status: StatusCode) -> ConnectionError {

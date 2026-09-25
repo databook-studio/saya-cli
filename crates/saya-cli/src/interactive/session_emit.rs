@@ -2,7 +2,9 @@ use super::{
     session_commands::SessionAction, session_resume::block_on, session_state::SessionState,
 };
 use crate::render::{RenderFormat, TerminalEvent, render_event};
-use saya_store::{FsSessionStore, SessionStore};
+use saya_store::{
+    FsSessionStore, MAX_SESSION_HISTORY_PAGE_SIZE, SessionHistoryQuery, SessionStore,
+};
 
 pub(crate) fn emit_action(
     action: SessionAction,
@@ -20,11 +22,22 @@ pub(crate) fn emit_action(
         // Doctor is intercepted in the session loop (it needs `runtime`) and
         // never reaches here; the arm keeps the match exhaustive.
         SessionAction::Doctor => {}
-        SessionAction::Agent(_)
+        SessionAction::Compact
+        | SessionAction::Agent(_)
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)
         | SessionAction::Contracts(_)
         | SessionAction::Resume(_)
+        // The `/run` family is intercepted in the session loop (it needs the
+        // runtime, and the nested run's output never passes through this
+        // seam); the arms keep the match exhaustive. `/allow` and `/grants`
+        // are intercepted too — they seed and read the session's grant
+        // store, which lives in the runtime.
+        | SessionAction::Allow(_)
+        | SessionAction::Grants
+        | SessionAction::Run(_)
+        | SessionAction::RunCancel(_)
+        | SessionAction::Runs(_)
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {
@@ -64,15 +77,22 @@ fn history(
     state: &mut SessionState,
     store: &FsSessionStore,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let entries = block_on(store.history())?;
+    let page = block_on(
+        store.history(
+            SessionHistoryQuery::first_page(MAX_SESSION_HISTORY_PAGE_SIZE)
+                .expect("history page bound is valid"),
+        ),
+    )?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_millis())
         .unwrap_or(0);
-    let message = if entries.is_empty() {
+    let message = if page.entries.is_empty() {
         "No saved sessions.".into()
     } else {
-        entries
+        let more = page.next_cursor.is_some();
+        let mut message = page
+            .entries
             .into_iter()
             .map(|entry| {
                 let age = super::tui::replay::relative_time(
@@ -81,7 +101,11 @@ fn history(
                 format!("{}\t{}", entry.id, age)
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        if more {
+            message.push_str("\n(more saved sessions available)");
+        }
+        message
     };
     emit(
         TerminalEvent::Result {

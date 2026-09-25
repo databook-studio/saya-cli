@@ -1221,8 +1221,8 @@ async fn queue_evidence_count_is_zero_without_an_evidence_table() {
     .unwrap();
     assert_eq!(queued.len(), 1);
     // `contract_evidence` is gone by design: a successful query is not evidence
-    // a business definition is true. The carried count is always zero — kept
-    // on the carrier only until the presentation layer drops the field.
+    // a business definition is true. The legacy count remains zero for the
+    // serialized compatibility shape; queue rendering omits it.
     assert_eq!(
         queued[0].evidence_count, 0,
         "no evidence is attached to a knowledge item"

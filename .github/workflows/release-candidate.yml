@@ -33,6 +33,8 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x86_64
+          - os: ubuntu-24.04-arm # native ARM64 -> aarch64-unknown-linux-gnu
+            platform: linux-arm64
           - os: macos-latest # Apple Silicon -> aarch64-apple-darwin
             platform: macos-arm64
           - os: macos-latest # cross-compiled on Apple Silicon -> x86_64-apple-darwin
@@ -165,10 +167,31 @@ jobs:
           path: artifacts/SHA256SUMS
           if-no-files-found: error
 
+  guard-tag:
+    name: Guard tag/manifest agreement
+    # Runs on every trigger — including workflow_dispatch validation builds —
+    # so a side-effecting job can never skip it. On a validation build there
+    # is no tag, and the check passes unchanged. On a tag push the pushed tag
+    # must equal the manifest version, naming both on refusal, before any
+    # release, crates.io publish, or Homebrew tap write can run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Refuse a pushed tag that disagrees with the manifest
+        shell: bash
+        run: |
+          MANIFEST=$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' crates/saya-cli/Cargo.toml | head -n 1)
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            bash scripts/check-tag-manifest.sh "${GITHUB_REF_NAME#v}" "$MANIFEST"
+          else
+            bash scripts/check-tag-manifest.sh "" "$MANIFEST"
+          fi
+          # The failure message names both values: the pushed tag and the manifest.
+
   publish:
     name: Publish verified release
     if: ${{ inputs.publish == true || startsWith(github.ref, 'refs/tags/v') }}
-    needs: [build, checksums]
+    needs: [build, checksums, guard-tag]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -197,7 +220,7 @@ jobs:
     # CARGO_REGISTRY_TOKEN secret is not configured, so it never blocks a
     # release before the maintainer opts in.
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    needs: [build, checksums]
+    needs: [build, checksums, guard-tag]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -213,7 +236,7 @@ jobs:
     # The script regenerates the tap formula from the published checksums and
     # no-ops if HOMEBREW_TAP_TOKEN is unset, so it never blocks a release.
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    needs: [publish]
+    needs: [publish, guard-tag]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -221,3 +244,34 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: bash scripts/update-homebrew-formula.sh "${GITHUB_REF_NAME#v}"
+
+  verify-tap:
+    name: Verify tap serves the release
+    # The tap is the last mile of a release: until the tap's formula serves the
+    # tagged version, `brew install` quietly hands out the previous one (0.4.0
+    # shipped while the tap kept 0.3.2 for a month). So the check runs after the
+    # bump on success AND failure (!cancelled()) — a rejected token is exactly
+    # when the tap is stale — and reads the public tap with no token, because a
+    # check that required HOMEBREW_TAP_TOKEN could never detect that token
+    # being broken. If the bump was skipped (publish failed), there is nothing
+    # to verify and the primary failure stands alone.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !cancelled() }}
+    needs: [bump-homebrew]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify the tap serves the tagged version
+        if: needs.bump-homebrew.result != 'skipped'
+        env:
+          # Observes only *that* the token is configured, never its value: an
+          # unset token is the deliberate no-op (RELEASING.md), so a stale tap
+          # warns; a configured token makes staleness fail the release.
+          TAP_CHECK_WARN_ONLY: "${{ secrets.HOMEBREW_TAP_TOKEN != '' && '0' || '1' }}"
+        run: |
+          if [ "${{ needs.bump-homebrew.result }}" != "success" ]; then
+            echo "bump-homebrew finished with result '${{ needs.bump-homebrew.result }}' — the tap likely still serves the previous release." >&2
+          fi
+          bash scripts/check-homebrew-tap.sh "${GITHUB_REF_NAME#v}"
+      - name: Nothing to verify — the bump did not run
+        if: needs.bump-homebrew.result == 'skipped'
+        run: echo "bump-homebrew was skipped (the release publish failed or was skipped); the tap check has nothing to verify."

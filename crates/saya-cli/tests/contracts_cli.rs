@@ -964,8 +964,8 @@ async fn queue_lists_candidates_and_decide_transitions_them() {
     // The queue is a worklist: each entry carries the decision a reviewer is
     // being asked to make as a status word. A fresh candidate reads
     // `candidate`; a persisted stale claim reads `stale`. The fields a
-    // reviewer needs are the id, the status, the kind/value, the object, the
-    // schema state, and the evidence count.
+    // reviewer needs are the id, the status, the kind/value, the object, and
+    // the schema state.
     assert!(
         out.contains(cand_id.as_str()),
         "queue must name the candidate's full id: {out}"
@@ -982,8 +982,8 @@ async fn queue_lists_candidates_and_decide_transitions_them() {
         "queue must show schema state: {out}"
     );
     assert!(
-        out.contains("evidence 0"),
-        "queue must show evidence count: {out}"
+        !out.contains("evidence 0"),
+        "queue must not show a placeholder evidence count: {out}"
     );
 
     // Confirm the candidate: it becomes recallable (show lists it) and leaves

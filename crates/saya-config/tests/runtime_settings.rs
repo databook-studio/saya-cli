@@ -109,6 +109,41 @@ fn resolved_diagnostics_masks_base_url_userinfo_and_query_string() {
 }
 
 #[test]
+fn resolved_diagnostics_report_effective_provider_settings_without_secrets() {
+    let config = ConfigFile::from_toml(
+        "[ai]\n\
+         base_url = 'https://user:password@example.test/v1?api_key=resolved-secret-sentinel'\n\
+         api_key = { env = 'SAYA_PROVIDER_SECRET' }\n\
+         timeout_seconds = 123\n\
+         idle_timeout_seconds = 234\n\
+         max_output_tokens = 5678\n\
+         retry_delays_ms = [11, 22]\n\
+         context_byte_budget = 131072\n\
+         context_window_tokens = 987654\n\
+         show_thinking = true\n\
+         [output]\nformat = 'json'\n",
+    )
+    .unwrap();
+    let diagnostics = resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config))
+        .unwrap()
+        .redacted_diagnostics();
+
+    assert_eq!(diagnostics.timeout_seconds, 123);
+    assert_eq!(diagnostics.idle_timeout_seconds, 234);
+    assert_eq!(diagnostics.max_output_tokens, 5678);
+    assert_eq!(diagnostics.retry_delays_ms, vec![11, 22]);
+    assert_eq!(diagnostics.context_byte_budget, 131072);
+    assert_eq!(diagnostics.context_window_tokens, Some(987654));
+    assert!(diagnostics.show_thinking);
+    assert_eq!(diagnostics.output_format, OutputFormat::Json);
+
+    let rendered = serde_json::to_string(&diagnostics).unwrap();
+    assert!(rendered.contains("env:SAYA_PROVIDER_SECRET"));
+    assert!(!rendered.contains("resolved-secret-sentinel"));
+    assert!(!rendered.contains("password"));
+}
+
+#[test]
 fn ai_request_budgets_resolve_from_file_with_defaults() {
     let config = ConfigFile::from_toml(
         "[ai]\ntimeout_seconds = 120\nidle_timeout_seconds = 45\nmax_output_tokens = 2048\ntemperature = 0.7\n",

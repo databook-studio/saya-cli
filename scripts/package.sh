@@ -36,7 +36,14 @@ EXTRACTED="$SMOKE_DIR/saya-${VERSION}-${HOST}/saya"
 "$EXTRACTED" --version >/dev/null
 (
     cd "$SMOKE_DIR"
+    set +e
     "$EXTRACTED" --non-interactive config doctor >/dev/null
+    doctor_status=$?
+    set -e
+    if [ "$doctor_status" -ne 0 ] && [ "$doctor_status" -ne 3 ]; then
+        echo "config doctor exited $doctor_status; expected 0 (configured) or 3 (nothing configured)" >&2
+        exit 1
+    fi
 )
 
 echo "archive: $ARCHIVE"

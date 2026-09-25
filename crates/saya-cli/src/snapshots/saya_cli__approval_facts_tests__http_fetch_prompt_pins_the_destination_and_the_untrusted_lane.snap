@@ -1,0 +1,12 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+expression: prompt
+---
+http_fetch — external fetch
+  url: https://api.github.com/repos/x/y
+  destination a session grant would record: fetch:https+api.github.com
+  https only · private, loopback, and link-local addresses are refused
+  the body arrives as an escaped, labelled untrusted block — never raw bytes into context
+  bounds: body ≤ 61440 bytes · 30s wall clock · ≤ 5 redirects
+  [s] covers https on api.github.com, any path, for this session — not just this URL
+[a] allow once   [s] allow fetch:https+api.github.com for this session   [d] deny

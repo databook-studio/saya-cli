@@ -19,7 +19,7 @@ use crate::commands::output::{emit, failure_message};
 use crate::contracts::args::{build_payload, parse_qualified};
 use crate::contracts::{RememberOutcome, forget, remember as remember_op};
 use crate::render::{RenderFormat, TerminalEvent};
-use saya_store::{ForgetReason, SqliteStateStore};
+use saya_store::{ForgetOutcome, ForgetReason, SqliteStateStore};
 use saya_types::{
     ClaimStatus, DatabaseObjectKind, DatabaseObjectRef, KnowledgeState, ProfileIdentity,
 };
@@ -168,13 +168,18 @@ pub(super) async fn forget_claim(
         Ok(id) => id,
         Err(message) => return failure_message(EXIT_CONTRACT_ERROR, message, format),
     };
-    if let Err(error) = forget(store, &id, forget_reason(reason)).await {
-        return op_failure(error, format);
-    }
+    let outcome = match forget(store, &id, forget_reason(reason)).await {
+        Ok(outcome) => outcome,
+        Err(error) => return op_failure(error, format),
+    };
+    let action = match outcome {
+        ForgetOutcome::Cleaned => "forgotten",
+        ForgetOutcome::CleanupPending => "forgotten_cleanup_pending",
+    };
     emit(
         TerminalEvent::ContractChanged {
             claim_id: id.as_str().to_string(),
-            action: "forgotten".into(),
+            action: action.into(),
             status: "forgotten".into(),
         },
         format,

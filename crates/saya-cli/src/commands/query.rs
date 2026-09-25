@@ -4,7 +4,7 @@ use crate::{
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
-use saya_agent::{ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken};
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::{ConnectionError, QueryRequest};
 use std::{path::PathBuf, time::Instant};
@@ -32,10 +32,15 @@ pub(super) async fn ask(
     }
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
+    // The one-shot `ask` path composes no session universe at all — writes
+    // stay hidden, reads deny — so both capabilities ride the same
+    // live-terminal fact: stdin readability and approval obtainability are
+    // the same fact here. Unchanged behaviour.
     let work = crate::agent::candidates::run_with_candidates(
         runtime,
         &prompt,
         approval,
+        can_prompt,
         can_prompt,
         PromptOverrides {
             included_profiles,
@@ -47,6 +52,9 @@ pub(super) async fn ask(
         Some(state_db.clone()),
         None,
         None,
+        None,
+        // The real source arrives with `/mode` in the next slice.
+        AgentMode::Build,
         runtime.resolved.candidates,
     );
     tokio::pin!(work);
