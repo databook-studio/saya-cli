@@ -60,6 +60,8 @@ pub enum KnowledgeSlot {
     /// The metric's underlying columns are carried in the payload so the
     /// binding can invalidate the fact when one of them disappears.
     MetricDefinition,
+    /// A user-authored note bound to this table, preserved verbatim.
+    TableUserNote,
 }
 
 impl KnowledgeSlot {
@@ -80,6 +82,7 @@ impl KnowledgeSlot {
             Self::ColumnRole { column } => format!("column:{column}.role"),
             Self::RelationJoinRule => "relation.join_rule".to_owned(),
             Self::MetricDefinition => "metric.definition".to_owned(),
+            Self::TableUserNote => "table.user_note".to_owned(),
         }
     }
 
@@ -97,6 +100,7 @@ impl KnowledgeSlot {
             "table.default_time" => Some(Self::TableDefaultTime),
             "relation.join_rule" => Some(Self::RelationJoinRule),
             "metric.definition" => Some(Self::MetricDefinition),
+            "table.user_note" => Some(Self::TableUserNote),
             _ => {
                 let rest = value.strip_prefix("column:")?;
                 if let Some(col) = rest.strip_suffix(".description") {
@@ -131,9 +135,11 @@ impl KnowledgeSlot {
             }
             // A table joins many targets, and a table carries many metrics;
             // distinct values are distinct rows, refused past the bound.
-            Self::RelationJoinRule | Self::MetricDefinition => SlotCardinality::Multi {
-                max: MAX_MULTI_SLOT_VALUES,
-            },
+            Self::RelationJoinRule | Self::MetricDefinition | Self::TableUserNote => {
+                SlotCardinality::Multi {
+                    max: MAX_MULTI_SLOT_VALUES,
+                }
+            }
         }
     }
 
@@ -235,6 +241,7 @@ mod tests {
             },
             KnowledgeSlot::RelationJoinRule,
             KnowledgeSlot::MetricDefinition,
+            KnowledgeSlot::TableUserNote,
         ];
         for slot in slots {
             let s = slot.as_str();
@@ -260,6 +267,7 @@ mod tests {
             KnowledgeSlot::ColumnDescription { column: "c".into() },
             KnowledgeSlot::RelationJoinRule,
             KnowledgeSlot::MetricDefinition,
+            KnowledgeSlot::TableUserNote,
         ] {
             assert!(!multi.cardinality().is_single());
             assert_eq!(multi.cardinality().max(), MAX_MULTI_SLOT_VALUES);

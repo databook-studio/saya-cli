@@ -15,9 +15,9 @@ brand-guidelines (`github.com/anthropics/skills`).
 | Blue | `#6a9bcc` | **User** turns (a cool secondary, so the accent stays saya's) |
 | Text | `#faf9f5` | Primary foreground (assistant body) |
 | Warm gray (secondary) | `#a8a29a` | Tool/step lines, the SQL echo, hints, timestamps, provider/model |
-| Green (success) | `#7fae6b` | Passing checks, `read-only` approval, `privacy:on` |
-| Amber (warning) | `#e0a458` | `ask` approval, the approval-panel border, caution |
-| Red (error) | `#e5695f` | Failures, `never` approval |
+| Green (success) | `#7fae6b` | Passing checks, `read-only` approval, `sharing:off` (data stays local) |
+| Amber (warning) | `#e0a458` | `ask` approval, the approval-panel border, `sharing:on` (data sent to provider), caution |
+| Red (error) | `#e5695f` | Failures, `never` and `bypass` approval |
 | Code blue | `#7fb5d6` | Inline `` `code` `` in answers |
 | Status/badge bg | `#1e1c24` | Status-bar strip (a faint iris-tinted dark) |
 | Base bg reference | `#141413` | Terminal background it's tuned against |
@@ -33,7 +33,8 @@ brand-guidelines (`github.com/anthropics/skills`).
 - **Secondary content recedes.** Tool/step lines, the SQL echo, and hints sit in warm
   gray so the answer is what stands out.
 - **Status is coded by meaning, not decoration.** Green = safe/success, amber = needs
-  attention, red = error. Approval mode follows this: read-only green, ask amber, never red.
+  attention, red = error. Approval mode follows this: read-only green, ask amber, never and
+  bypass red — a mode that runs every call without asking is the danger its colour says.
 - **Re-tintable.** Everything keys off a small set of named constants in
   `ui/theme.rs`; changing saya's signature is a one-line edit to the `ACCENT` constant.
 
@@ -48,8 +49,8 @@ brand-guidelines (`github.com/anthropics/skills`).
 | Tool lines / SQL echo / system lines / hints / provider·model | Warm gray `#a8a29a` |
 | Error lines | Red `#e5695f` |
 | Status-bar background | `#1e1c24` |
-| Status: approval read-only / ask / never | Green `#7fae6b` / Amber `#e0a458` / Red `#e5695f` |
-| Status: privacy on / off | Green `#7fae6b` / warm gray `#a8a29a` |
+| Status: approval read-only / ask / never / bypass | Green `#7fae6b` / Amber `#e0a458` / Red `#e5695f` / Red `#e5695f` |
+| Status: sharing on / off | Amber `#e0a458` (data sent to provider) / Green `#7fae6b` (data stays local) |
 | Approval panel border | Amber `#e0a458` |
 | Inline `code` in answers | Code blue `#7fb5d6` |
 | Selection-mode badge | Iris bg, black text |

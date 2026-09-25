@@ -34,7 +34,9 @@ pub(crate) async fn schema(connector: &ClickHouseConnector) -> Result<SchemaTree
     if !response.status().is_success() {
         return Err(errors::schema());
     }
-    let value: Value = response.json().await.map_err(|_| errors::schema())?;
+    let value: Value = crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES)
+        .await
+        .map_err(|_| errors::schema())?;
     let rows = value
         .get("data")
         .and_then(Value::as_array)

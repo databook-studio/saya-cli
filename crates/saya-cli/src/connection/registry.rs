@@ -57,6 +57,15 @@ impl ConnectionRegistry {
         &self.primary
     }
 
+    /// The primary connection's registry name, when one is connected — the
+    /// same resolution `resolve(None)` performs, so a session grant names a
+    /// connection the registry would actually resolve a call to. `None`
+    /// when the registry holds no connection (no primary to name — never a
+    /// guessed name).
+    pub(crate) fn primary(&self) -> Option<&str> {
+        self.resolve(None).ok().map(|_| self.primary.as_str())
+    }
+
     /// Returns the number of connections in the registry.
     pub(crate) fn len(&self) -> usize {
         self.map.len()

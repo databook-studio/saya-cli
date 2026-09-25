@@ -1,5 +1,7 @@
 use saya_store::{
-    KnowledgeItemRequest, KnowledgeItemStore, KnowledgeStoreError, SqliteStateStore, StoreError,
+    KnowledgeItemRequest, KnowledgeItemStore, KnowledgeItemsQuery, KnowledgeObjectsQuery,
+    KnowledgeStoreError, MAX_KNOWLEDGE_PAGE_SIZE, MAX_SCHEMA_BINDING_BYTES, SqliteStateStore,
+    StoreError,
 };
 use saya_types::{
     ClaimOrigin, ClaimPayload, ColumnRole, DatabaseObjectKind, DatabaseObjectRef, KnowledgeSlot,
@@ -26,6 +28,55 @@ fn temp_root(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&root).unwrap();
     root
+}
+
+#[tokio::test]
+async fn paged_profile_reads_are_bounded_deterministic_and_continuable() {
+    let root = temp_root("pages");
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let prof = profile('a');
+    for name in ["zulu", "alpha", "mango"] {
+        let obj = object(&prof, name);
+        store
+            .put_knowledge_item(request(
+                &obj,
+                KnowledgeSlot::TableGrain,
+                ClaimPayload::table_grain(name, None).unwrap(),
+                ClaimOrigin::UserExplicit,
+                KnowledgeState::Active,
+                1,
+            ))
+            .await
+            .unwrap();
+    }
+
+    assert!(KnowledgeItemsQuery::first_page(0).is_err());
+    assert!(KnowledgeItemsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE + 1).is_err());
+    assert!(KnowledgeObjectsQuery::first_page(0).is_err());
+
+    let mut query = KnowledgeItemsQuery::first_page(1).unwrap();
+    let mut names = Vec::new();
+    let mut pages = 0;
+    loop {
+        let page = store
+            .knowledge_for_profile_page(&prof, query.clone())
+            .await
+            .unwrap();
+        pages += 1;
+        assert!(page.entries.len() <= 1);
+        names.extend(
+            page.entries
+                .iter()
+                .map(|item| item.object.object().to_owned()),
+        );
+        let Some(next) = query.next_page(&page) else {
+            break;
+        };
+        query = next;
+    }
+    assert_eq!(pages, 3);
+    assert_eq!(names, ["alpha", "mango", "zulu"]);
+    let _ = fs::remove_dir_all(root);
 }
 
 fn profile(hex_char: char) -> ProfileIdentity {
@@ -695,6 +746,47 @@ async fn test_revalidate_knowledge_item_updates_binding_and_activates() {
 }
 
 #[tokio::test]
+async fn schema_binding_size_is_capped_on_insert_and_revalidate() {
+    let root = temp_root("binding-cap");
+    let db = root.join("state.sqlite3");
+    let store = SqliteStateStore::new(&db);
+    let obj = object(&profile('a'), "orders");
+    let oversized = "x".repeat(MAX_SCHEMA_BINDING_BYTES + 1);
+    let mut req = request(
+        &obj,
+        KnowledgeSlot::TableGrain,
+        ClaimPayload::table_grain("grain", None).unwrap(),
+        ClaimOrigin::UserExplicit,
+        KnowledgeState::Pending,
+        1,
+    );
+    req.schema_binding_json = oversized.clone();
+    assert_eq!(
+        store.put_knowledge_item(req).await,
+        Err(KnowledgeStoreError::Store(StoreError::LimitExceeded))
+    );
+    assert!(store.knowledge_for_object(&obj).await.unwrap().is_empty());
+
+    let req = request(
+        &obj,
+        KnowledgeSlot::TableGrain,
+        ClaimPayload::table_grain("grain", None).unwrap(),
+        ClaimOrigin::UserExplicit,
+        KnowledgeState::Pending,
+        1,
+    );
+    store.put_knowledge_item(req.clone()).await.unwrap();
+    let id = store.knowledge_for_object(&obj).await.unwrap().remove(0).id;
+    assert_eq!(
+        store
+            .revalidate_knowledge_item(&id, req.fingerprint, oversized,)
+            .await,
+        Err(KnowledgeStoreError::Store(StoreError::LimitExceeded))
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn test_delete_knowledge_item_removes_row() {
     let root = temp_root("delete");
     let db = root.join("state.sqlite3");
@@ -866,4 +958,52 @@ async fn test_single_valued_slot_db_constraint() {
     );
     pool.close().await;
     let _ = fs::remove_dir_all(root);
+}
+
+/// A041: a persisted `fingerprint_version` outside `u32` fails closed. The
+/// write path can only persist a `u32` version (it binds `version as i64`), so
+/// negative and over-`u32` rows arrive only from an incompatible writer — the
+/// fixtures persist them directly and assert the read rejects them with the
+/// typed `Store(Invalid)` error, on both the single-row and the paged path.
+#[tokio::test]
+async fn persisted_out_of_range_fingerprint_versions_are_rejected_as_invalid() {
+    for (label, version) in [("negative", -1_i64), ("over-u32", i64::from(u32::MAX) + 1)] {
+        let root = temp_root(&format!("fingerprint-{label}"));
+        let db = root.join("state.sqlite3");
+        let store = SqliteStateStore::new(&db);
+        let obj = object(&profile('a'), "orders");
+        store
+            .put_knowledge_item(request(
+                &obj,
+                KnowledgeSlot::TableGrain,
+                ClaimPayload::table_grain("one row per order", None).unwrap(),
+                ClaimOrigin::UserExplicit,
+                KnowledgeState::Active,
+                1,
+            ))
+            .await
+            .unwrap();
+        let id = store.knowledge_for_object(&obj).await.unwrap().remove(0).id;
+
+        let pool = read_pool(&db).await;
+        sqlx::query("UPDATE knowledge_items SET fingerprint_version=? WHERE id=?")
+            .bind(version)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        assert_eq!(
+            store.get_knowledge_item(&id).await,
+            Err(KnowledgeStoreError::Store(StoreError::Invalid)),
+            "{label} fingerprint_version ({version}) must fail closed as Invalid"
+        );
+        assert_eq!(
+            store.knowledge_for_object(&obj).await,
+            Err(KnowledgeStoreError::Store(StoreError::Invalid)),
+            "{label} fingerprint_version ({version}) must fail closed on the paged path too"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }

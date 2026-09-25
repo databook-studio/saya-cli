@@ -74,6 +74,11 @@ pub enum ExtractionError {
     InvalidPayload(String),
     #[error("no valid proposals found in extraction response")]
     Empty,
+    /// The reply's first visible character was neither `{` nor a markdown
+    /// fence, so it can never parse as JSON. Set before any parsing, by the
+    /// stream collector that stopped the provider.
+    #[error("extraction reply is not JSON")]
+    NotJson,
 }
 
 /// Wire envelope for model extraction JSON responses.

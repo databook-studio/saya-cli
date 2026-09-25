@@ -20,7 +20,14 @@ impl AnthropicProvider {
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
         // No client-wide timeout: streaming responses are bounded per chunk
         // gap (`idle_timeout`) so long healthy generations are never killed.
+        // Redirects are refused outright: `base_url` is user-configurable, so
+        // a misconfigured or hostile endpoint could answer 307 and have the
+        // default policy replay the POST to another host — prompt plus
+        // database-derived context in the body, and the `x-api-key` header
+        // untouched by reqwest's cross-host strip (which removes only
+        // `Authorization` and cookie headers).
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
@@ -71,6 +78,7 @@ impl ChatProvider for AnthropicProvider {
             &self.settings.retry_delays,
             &cancellation,
             &url,
+            self.settings.timeout,
         )
         .await?;
         Ok(anthropic_stream::parse(

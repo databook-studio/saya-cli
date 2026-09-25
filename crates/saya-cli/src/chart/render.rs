@@ -1,5 +1,6 @@
 //! Chart.js HTML rendering.
 
+use saya_store::redact;
 use saya_types::QueryResult;
 
 use super::{ChartKind, ChartSpec, cell_to_f64, is_numeric_column, normalize_row};
@@ -20,7 +21,7 @@ fn escape_json_for_script(s: &str) -> String {
     for c in s.chars() {
         match c {
             '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u0026"),
+            '>' => out.push_str("\\u003e"),
             '&' => out.push_str("\\u0026"),
             '\u{2028}' => out.push_str("\\u2028"),
             '\u{2029}' => out.push_str("\\u2029"),
@@ -30,12 +31,18 @@ fn escape_json_for_script(s: &str) -> String {
     out
 }
 
+/// Renders a cell as a plain string. Every cell string passes `redact()`
+/// before it is embedded in the chart HTML: the document is written to a temp
+/// file and opened in a browser, so secret-shaped material in a cell must not
+/// reach it verbatim (DESIGN §6.6). Numeric cells can only produce digits and
+/// punctuation, so the pass is a no-op for them.
 fn cell_to_string(value: &serde_json::Value) -> String {
-    match value {
+    let raw = match value {
         serde_json::Value::Null => String::new(),
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
-    }
+    };
+    redact(&raw)
 }
 
 /// Builds a self-contained HTML document string containing an interactive Chart.js chart.
@@ -89,7 +96,7 @@ pub(crate) fn render_html(result: &QueryResult, spec: &ChartSpec) -> Result<Stri
                         }
                     }
                     serde_json::json!({
-                        "label": y_name,
+                        "label": redact(y_name),
                         "data": points,
                         "backgroundColor": PALETTE[i % PALETTE.len()]
                     })
@@ -143,7 +150,7 @@ pub(crate) fn render_html(result: &QueryResult, spec: &ChartSpec) -> Result<Stri
                         .collect();
                     let color = PALETTE[i % PALETTE.len()];
                     let mut ds = serde_json::json!({
-                        "label": y_name,
+                        "label": redact(y_name),
                         "data": data,
                         "backgroundColor": color,
                         "borderColor": color,

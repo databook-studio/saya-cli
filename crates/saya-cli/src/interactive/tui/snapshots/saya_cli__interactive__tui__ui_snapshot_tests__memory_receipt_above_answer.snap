@@ -2,13 +2,15 @@
 source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
 expression: buffer
 ---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
 "· memory supplied · 2 claims (1 unconfirmed — review with /queue)               "
 "·   catalog.public.orders  [current]  (profile: analytics)                      "
 "·     ki-abc…  table_alias  orders  confirmed                                   "
 "·     ki-bbb…  default_time_column  created_at  col:created_at  candidate       "
 "· (unconfirmed)                                                                 "
 "                                                                                "
-"◆ The orders table uses created_at as its time column.                          "
+"SAYA                                                                            "
+"  The orders table uses created_at as its time column.                          "
 "                                                                                "
 "                                                                                "
 "                                                                                "
@@ -20,9 +22,7 @@ expression: buffer
 "                                                                                "
 "                                                                                "
 "                                                                                "
-"                                                                                "
-"                                                                                "
-" [analytics] ollama/qwen approval:read-only privacy:on  ·  ? for help           "
+"analytics · qwen                                                      ? for help"
 "╭ saya ────────────────────────────────────────────────────────────────────────╮"
 "│Ask about your data, or type / for commands                                   │"
-"╰──────────────────────────────────────────────────────────────────────────────╯"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

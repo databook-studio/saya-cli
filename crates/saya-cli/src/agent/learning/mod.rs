@@ -16,43 +16,33 @@
 //!   nothing (§2). `Assisted` attaches an observation log and permits candidate
 //!   writes via `contract_propose`.
 
+pub(crate) mod binder;
+pub(crate) mod breaker;
+pub(crate) mod collector;
+pub(crate) mod extraction_stream;
 pub(crate) mod extractor;
 pub(crate) mod extractor_prompt;
 pub(crate) mod extractor_schema;
 pub(crate) mod gate;
 pub(crate) mod ingest;
+pub(crate) mod post_turn;
 pub(crate) mod profile_catalog;
 pub(crate) mod resolver;
 pub(crate) mod runner;
 pub(crate) mod turn_record;
 pub(crate) mod turn_table;
 
-/// The wall-clock budget for one post-turn extraction call. The user already
-/// has their answer when extraction runs — it
-/// trails the loop, after the assistant text — but the loop still awaits it, so
-/// an adapter stays busy until it resolves. This bounds that wait, not the work
-/// that produced the answer, and it is never unbounded: a half-open connection
-/// would otherwise hold the session open indefinitely.
-///
-/// Set from measurement rather than estimate. Over 12 sequential turns against a
-/// shared gateway, successful extractions ran 2.6s (min) / 4.7s (p50) / 13.1s
-/// (max), and cost scales with how many objects the turn touched — single-object
-/// turns finished near 4s and were never at risk, while every timeout was a
-/// multi-object turn. At 15s a 13.1s extraction had under two seconds of
-/// headroom on exactly the shape that was failing; 25s covers the observed worst
-/// case with margin.
-///
-/// A fixed budget is admittedly the wrong shape for a cost that scales with
-/// object count — a base plus per-object allowance would fit the curve better.
-/// That is left undone deliberately: it is a tuning knob to maintain, and the
-/// sample is sequential and single-gateway, so it does not exercise the
-/// concurrent load the earlier 5s value was raised for. Widen the measurement
-/// before adding the knob.
-///
-/// The runtime emits `KnowledgeLearningSkipped { TimedOut }` when it fires, and
-/// `KnowledgeLearningStarted` when the call begins so the wait can be labelled.
-pub(crate) const EXTRACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+// Post-turn extraction has no wall-clock ceiling (an explicit owner
+// decision documented on `post_turn::run_post_turn_extraction`): a slow
+// model may take as long as it needs, bounded only by the provider
+// transport's own limits. In its place, `breaker::LearningBreaker` trips
+// per session after two consecutive misses — a reply cut off at the output
+// limit or a transport stall/timeout — and disables further extraction
+// requests for the rest of the session, announced once via
+// `AgentEvent::KnowledgeLearningDisabled`.
 
+#[allow(unused_imports)]
+pub(crate) use breaker::LearningBreaker;
 #[allow(unused_imports)]
 pub(crate) use extractor::parse_extraction_response;
 #[allow(unused_imports)]

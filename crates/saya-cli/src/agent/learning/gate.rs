@@ -125,6 +125,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         }
     }
 
@@ -138,6 +139,7 @@ mod tests {
             user_corrections: Vec::new(),
             override_findings: Vec::new(),
             supplied_claims: Vec::new(),
+            omitted: 0,
         }
     }
 

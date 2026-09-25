@@ -16,189 +16,37 @@
 //! truncation. A larger snapshot set gets accepted reflexively, which is the
 //! same failure as a weakened assertion.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+#[cfg(test)]
+#[path = "ui_snapshot_claims.rs"]
+mod claims;
+#[cfg(test)]
+#[path = "ui_snapshot_cursor_labels.rs"]
+mod cursor_labels;
+#[cfg(test)]
+#[path = "ui_snapshot_drafts.rs"]
+mod drafts;
+#[cfg(test)]
+#[path = "ui_snapshot_fold_composer.rs"]
+mod fold_composer;
+#[cfg(test)]
+#[path = "ui_snapshot_gate_action.rs"]
+mod gate_action;
+#[cfg(test)]
+#[path = "ui_snapshot_splash_wide.rs"]
+mod splash_wide;
+#[cfg(test)]
+#[path = "ui_snapshot_support.rs"]
+mod support;
+#[cfg(test)]
+#[path = "ui_snapshot_tables.rs"]
+mod tables;
 
-use saya_agent::{
-    AgentEvent, KnowledgeOutcome, ProposedClaimDto, SuppliedClaimDto, SuppliedContractDto,
-};
-use saya_config::{
-    AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedMemory, ThemeChoice,
-};
-use saya_store::SqliteStateStore;
-use saya_types::ClaimStatus;
+pub(crate) use claims::{proposed_claim, supplied_claim, supplied_contract};
+pub(crate) use support::{empty_app, fixed_status, render_buffer, unused_runtime, unused_store};
 
-use super::history::History;
-use super::input::InputBuffer;
 use super::stream_events::apply_event;
-use super::transcript::Transcript;
-use super::types::{App, OverlayState, RequestState};
-use crate::interactive::session_prompt::StatusView;
-
-/// A minimal `RuntimeConfig` that satisfies the `App` fields `ui::draw` never
-/// reads. Built as a struct literal so no config file, env file, or connection
-/// file is touched — the only requirement is that the type constructs.
-fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
-    Arc::new(crate::config::runtime::RuntimeConfig {
-        resolved: ResolvedConfig {
-            profile_name: None,
-            profile: None,
-            ai: ResolvedAi {
-                provider: AiProvider::Ollama,
-                model: "test-model".into(),
-                base_url: None,
-                api_key: None,
-                allow_data_sharing: true,
-                temperature: 0.0,
-                timeout_seconds: 60,
-                idle_timeout_seconds: 90,
-                max_output_tokens: 4096,
-                context_byte_budget: 256 * 1024,
-                show_thinking: false,
-                retry_delays_ms: vec![250, 500, 1000],
-            },
-            max_rows: 100,
-            read_only: true,
-            max_iterations: 4,
-            candidates: 1,
-            query_timeout_seconds: 5,
-            output_format: OutputFormat::Text,
-            output_color: ColorChoice::Auto,
-            ui_theme: ThemeChoice::Auto,
-            memory: ResolvedMemory {
-                mode: MemoryMode::Off,
-                max_contracts: 5,
-                max_claims_per_contract: 12,
-                max_context_bytes: 16384,
-            },
-            ignored_project_overrides: Vec::new(),
-        },
-        connections: ConnectionsFile::default(),
-        config_path: None,
-        connections_path: None,
-        cache_scope: PathBuf::new(),
-        secret_values: BTreeMap::new(),
-    })
-}
-
-/// A lazy `SqliteStateStore` whose pool is never initialized — `ui::draw` never
-/// calls `pool()`, so no file is created or read. The path is empty and never
-/// touched.
-fn unused_store() -> SqliteStateStore {
-    SqliteStateStore::new(PathBuf::new())
-}
-
-/// An idle `App` with an empty transcript and a fixed profile list. Built
-/// directly so no history file is read (`App::new` calls `History::load`).
-fn empty_app() -> App {
-    App {
-        sql_task: None,
-        input: InputBuffer::new(),
-        transcript: Transcript::new(),
-        profiles: vec!["analytics".into(), "billing".into()],
-        pending: None,
-        request: RequestState::default(),
-        overlays: OverlayState::default(),
-        spinner: 0,
-        history: History::with_path_disabled(PathBuf::new()),
-        viewport: std::cell::Cell::new((0, 0)),
-        ctrl_c_armed: false,
-        at_refs: Vec::new(),
-        pending_clipboard: None,
-        clipboard_copy: None,
-        session_save: None,
-        pending_session_save: None,
-        last_query: None,
-        wide_table: Default::default(),
-        runtime: unused_runtime(),
-        state_db: unused_store(),
-        should_quit: false,
-    }
-}
-
-/// A stable status bar: profile `analytics`, `ollama/qwen`, `read-only`
-/// approval, privacy on. The spinner/elapsed fields are not read when the app
-/// is idle, so this is the whole status strip.
-fn fixed_status() -> StatusView {
-    StatusView {
-        profile: "analytics".into(),
-        included: Vec::new(),
-        provider: "ollama".into(),
-        model: "qwen".into(),
-        approval_mode: "read-only".into(),
-        privacy_on: true,
-    }
-}
-
-/// A stable, fixed claim id. `abbreviate_id` keeps the first six chars + `…`
-/// (len > 7), so `ki-abcdef1234` renders as `ki-abc…` — deterministic for fixed
-/// input (spec: a `ki-…` prefix is fine when stable).
-fn claim_id(id: &str) -> saya_types::ClaimId {
-    saya_types::ClaimId::parse(id).expect("fixed claim id parses")
-}
-
-fn supplied_claim(
-    id: &str,
-    kind: &str,
-    value: &str,
-    column: Option<&str>,
-    status: ClaimStatus,
-) -> SuppliedClaimDto {
-    SuppliedClaimDto {
-        claim_id: claim_id(id),
-        kind: kind.into(),
-        value: value.into(),
-        column: column.map(str::to_string),
-        status,
-    }
-}
-
-fn supplied_contract(
-    profile: &str,
-    object: &str,
-    state: &str,
-    claims: Vec<SuppliedClaimDto>,
-) -> SuppliedContractDto {
-    SuppliedContractDto {
-        profile: profile.into(),
-        object: object.into(),
-        schema_state: state.into(),
-        claims,
-    }
-}
-
-fn proposed_claim(
-    id: &str,
-    profile: &str,
-    object: &str,
-    kind: &str,
-    value: &str,
-    column: Option<&str>,
-    status: ClaimStatus,
-) -> ProposedClaimDto {
-    ProposedClaimDto {
-        claim_id: claim_id(id),
-        profile: profile.into(),
-        object: object.into(),
-        kind: kind.into(),
-        value: value.into(),
-        column: column.map(str::to_string),
-        status,
-    }
-}
-
-/// Draws `app` at `w×h` through the real `ui::draw` and returns the backend's
-/// buffer view (one quoted line per screen row, trailing whitespace preserved).
-fn render_buffer(app: &App, status: &StatusView, w: u16, h: u16) -> String {
-    let backend = ratatui::backend::TestBackend::new(w, h);
-    let mut terminal = ratatui::Terminal::new(backend).expect("test backend builds");
-    terminal
-        .draw(|frame| super::ui::draw(frame, app, status))
-        .expect("draw completes");
-    format!("{}", terminal.backend())
-}
+use saya_agent::{AgentEvent, KnowledgeOutcome};
+use saya_types::ClaimStatus;
 
 // --- Screen 1: a memory receipt above an answer. ----------------------------
 
@@ -295,229 +143,117 @@ fn learned_and_noted_trailing_answer() {
     insta::assert_snapshot!(buffer);
 }
 
-// --- Screen 3: long content at a real width (wrap + truncation). -------------
-
-/// A wide SQL block (a `WHERE` clause wider than the text area) and a long
-/// claim value, at 100×30. The SQL wraps across rows; the claim value wraps
-/// too; and because the whole exceeds the transcript height, the top is
-/// truncated (only the tail is visible). This is where layout regressions hide.
+/// Phase 3 packet 2: a folded finished chapter paints as one body row
+/// carrying the verbatim request — never a summary — and unfolding restores
+/// the painted rows.
 #[test]
-fn long_content_at_real_width() {
+fn a_folded_chapter_paints_its_request_as_one_row() {
+    use super::transcript::BlockKind;
     let mut app = empty_app();
-    // A wide SQL block: format_sql puts each clause on its own line; the long
-    // SELECT list and WHERE each wrap at the text width (98).
-    apply_event(
-        &mut app.transcript,
-        AgentEvent::tool_requested(
-            "bounded_sql_query",
-            serde_json::json!({
-                "sql": "select order_id, customer_id, placed_at, fulfilled_at, shipped_at, total_amount, tax_amount, discount_amount, currency, status, region, country, city, postal_code, carrier, tracking_number from catalog.public.orders where placed_at >= '2024-01-01' and status in ('fulfilled','shipped','delivered') and total_amount > 100 and region in ('north','south','east','west','central','pacific','mountain') and currency = 'USD' and carrier is not null order by placed_at desc, total_amount desc limit 50",
-                "connection": "analytics",
-            }),
-        ),
-        false,
+    app.transcript.push(BlockKind::User, "count the red orders");
+    app.transcript
+        .push(BlockKind::Assistant, "the red orders total 42");
+    app.transcript.push(BlockKind::User, "and the blue ones");
+    let unfolded_rows = app.transcript.total_lines(78);
+    assert!(app.transcript.toggle_chapter(1));
+    let folded_rows = app.transcript.total_lines(78);
+    assert!(
+        folded_rows < unfolded_rows,
+        "folding removes painted rows ({unfolded_rows} -> {folded_rows})"
     );
-    apply_event(
-        &mut app.transcript,
-        AgentEvent::ToolCompleted {
-            name: "bounded_sql_query".into(),
-            summary: "50 rows".into(),
-        },
-        false,
+    let folded = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        folded.contains("count the red orders"),
+        "the folded screen keeps the verbatim request:\n{folded}"
     );
-    // A second wide SQL block so the transcript overflows the 26-row region at
-    // 100×30: the tail-view truncates the top, cutting off the first SQL header.
-    apply_event(
-        &mut app.transcript,
-        AgentEvent::tool_requested(
-            "bounded_sql_query",
-            serde_json::json!({
-                "sql": "select customer_id, count(*) as orders, sum(total_amount) as spend, avg(total_amount) as avg_order, max(placed_at) as last_order from catalog.public.orders where placed_at >= '2024-01-01' and status in ('fulfilled','shipped','delivered') group by customer_id having count(*) > 1 order by spend desc limit 25",
-                "connection": "analytics",
-            }),
-        ),
-        false,
+    assert!(
+        !folded.contains("the red orders total 42"),
+        "the hidden answer leaves the screen:\n{folded}"
     );
-    apply_event(
-        &mut app.transcript,
-        AgentEvent::ToolCompleted {
-            name: "bounded_sql_query".into(),
-            summary: "25 rows".into(),
-        },
-        false,
-    );
-    apply_event(
-        &mut app.transcript,
-        AgentEvent::assistant_text(
-            "Here are the fulfilled orders and the top spenders over 100 USD.",
-        ),
-        false,
-    );
-    // A long claim value: the supplied path renders the value raw (no eliding),
-    // so a 180-char description wraps across several lines.
-    apply_event(
-        &mut app.transcript,
-        AgentEvent::knowledge_supplied(
-            KnowledgeOutcome::Ran {
-                store_unavailable: false,
-            },
-            vec![supplied_contract(
-                "analytics",
-                "catalog.public.customer_notes",
-                "current",
-                vec![supplied_claim(
-                    "ki-longdesc1",
-                    "table_description",
-                    "Free-text notes captured by support agents during customer interactions including follow-up reminders, escalation flags, and the internal handling summary used by the tier-two team when triaging escalations, plus the resolved-action log",
-                    None,
-                    ClaimStatus::Confirmed,
-                )],
-            )],
-            0,
-        ),
-        false,
-    );
+    insta::assert_snapshot!(folded);
+}
 
-    let buffer = render_buffer(&app, &fixed_status(), 100, 30);
+// --- The tool-approval modal renders the shared fact body. -------------------
+
+/// The approval modal renders the per-call fact body verbatim — the same
+/// `call_facts` output the terminal prompt renders — plus the shared answers
+/// line. This is the modal half of the parity property: the body the modal
+/// shows is the body the terminal prompt shows, byte for byte.
+#[test]
+fn approval_modal_renders_the_shared_fact_body() {
+    let mut app = empty_app();
+    let tool = crate::interactive::session_definitions::http_fetch();
+    let arguments = serde_json::json!({"url": "https://api.github.com/repos/x/y"});
+    let facts = crate::approval_facts::ApprovalFacts {
+        fetch: Some(crate::approval_facts::FetchFacts {
+            fetch_body_bytes: 61_440,
+            fetch_seconds: 30,
+            fetch_redirects: 5,
+            download: None,
+        }),
+        ..crate::approval_facts::ApprovalFacts::default()
+    };
+    let grant = crate::grant_token::grant_token(&tool.name, &arguments, None, &facts);
+    let detail = crate::approval_facts::call_facts(
+        &tool.name,
+        &arguments,
+        grant.as_deref(),
+        &facts,
+        None,
+        None,
+    );
+    let (respond, _answer) = tokio::sync::oneshot::channel();
+    app.request.pending_approval = Some(super::types::PendingApproval {
+        tool: tool.name.clone(),
+        detail,
+        grant,
+        scroll: 0,
+        respond,
+    });
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
     insta::assert_snapshot!(buffer);
 }
 
-// --- Wide-table horizontal scrolling + copy. ---------------------------------
+// --- Fieldnotes phase 8, packet 2: new activity below the fold. -------------
 
-use super::table::format_table;
-use super::transcript::BlockKind;
-use saya_types::QueryResult;
-
-/// A 12-column result that overflows the text area at 80×24, so the view must
-/// scroll horizontally rather than word-wrap the grid into noise.
-fn wide_table_result() -> QueryResult {
-    QueryResult {
-        columns: vec![
-            "id".into(),
-            "name".into(),
-            "status".into(),
-            "region".into(),
-            "country".into(),
-            "city".into(),
-            "postal".into(),
-            "carrier".into(),
-            "tracking".into(),
-            "total".into(),
-            "tax".into(),
-            "shipped_at".into(),
-        ],
-        rows: vec![serde_json::json!([
-            1,
-            "alice",
-            "fulfilled",
-            "north",
-            "CA",
-            "SF",
-            "94105",
-            "UPS",
-            "1Z999",
-            120,
-            12,
-            "2024-01-03"
-        ])],
-        row_count: 1,
-        truncated: false,
-        executed_sql: "SELECT * FROM orders".into(),
-    }
-}
-
-fn app_with_wide_table() -> App {
+/// A scrolled-up reader with rows below the fold sees the quiet count and the
+/// key back in the status bar, while the transcript window stays put. This is
+/// the whole packet on the real paint path: an invitation, never a jump.
+#[test]
+fn new_activity_below_the_fold_shows_the_count_and_the_key_back() {
+    use super::transcript::BlockKind;
     let mut app = empty_app();
-    // A direct /sql command lands as a user line, then the result table — the
-    // table alone would not count as a "turn", so the user line is needed for
-    // the transcript pane (not the splash) to render.
+    for i in 0..12 {
+        app.transcript
+            .push(BlockKind::Assistant, format!("line {i}"));
+    }
+    app.transcript.scroll_up(3, 78, 8);
+    let _ = app.transcript.view(78, 8);
     app.transcript
-        .push(BlockKind::User, "/sql SELECT * FROM orders");
-    app.transcript
-        .push(BlockKind::Table, format_table(&wide_table_result()));
-    app
-}
-
-/// At the left edge the first columns are painted and the last column is off
-/// the right side; scrolling right reveals it. This asserts real paint through
-/// `ui::draw` (the same path the PTY smoke tests exercise at the process level).
-#[test]
-fn wide_table_scrolls_horizontally_in_the_transcript() {
-    let mut app = app_with_wide_table();
-    app.wide_table.h_offset = 0;
-
-    let left = render_buffer(&app, &fixed_status(), 80, 24);
+        .push(BlockKind::Assistant, "a late answer lands");
     assert!(
-        left.contains("id"),
-        "first column is visible at the left edge:\n{left}"
+        app.unseen_new_rows() > 0,
+        "precondition: the row landed below the fold"
     );
-    assert!(
-        !left.contains("shipped_at"),
-        "last column does not fit before scrolling:\n{left}"
-    );
-
-    // Scroll far enough that the early columns leave the window.
-    app.wide_table.h_offset = 11;
-    let right = render_buffer(&app, &fixed_status(), 80, 24);
-    assert!(
-        right.contains("shipped_at"),
-        "scrolling right reveals the last column:\n{right}"
-    );
-    assert!(
-        !right.contains("│ id"),
-        "scrolling right drops the first column:\n{right}"
-    );
-}
-
-/// Pinning the first column holds it in place while the rest scroll, so the
-/// key column (an id) never leaves the screen while reading wide rows.
-#[test]
-fn pin_first_column_stays_put_while_scrolling() {
-    let mut app = app_with_wide_table();
-    app.wide_table.pin_first = true;
-    app.wide_table.h_offset = 11;
-
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
     assert!(
-        buffer.contains("│ id"),
-        "pinned first column stays on screen:\n{buffer}"
+        buffer.contains("new line"),
+        "the bar names the arrival:\n{buffer}"
     );
     assert!(
-        buffer.contains("shipped_at"),
-        "a far column is reached by scrolling:\n{buffer}"
+        buffer.contains("Shift+End"),
+        "the bar names the key back:\n{buffer}"
     );
+    insta::assert_snapshot!(buffer);
 }
 
-/// The view offset is presentation only: the transcript block text is the full
-/// untruncated table, so copy (Ctrl+B) still yields every column even while the
-/// screen is scrolled and clipped.
-#[test]
-fn copy_transcript_yields_the_full_untruncated_table_while_scrolled() {
-    let mut app = app_with_wide_table();
-    app.wide_table.h_offset = 11;
-    app.wide_table.pin_first = true;
+// --- Fieldnotes phase 6, packet 3: output actions name their scope. ---------
+//
+// `copy_behaviour_is_unchanged` proves the packet changed words only: Ctrl+Y
+// still yields the last assistant block (never a table, never thinking) and
+// Ctrl+B still yields the full transcript minus `Thinking`. The help-overlay
+// hint test pins that both copy keys name their scope before acting.
 
-    app.copy_transcript();
-    let copied = app.pending_clipboard.expect("transcript was queued");
-    assert!(
-        copied.contains("id") && copied.contains("name") && copied.contains("shipped_at"),
-        "copy must include every column, not just the visible window:\n{copied}"
-    );
-    assert!(
-        copied.contains("1 row(s)"),
-        "copy must include the row-count footer:\n{copied}"
-    );
-}
-
-/// `copy_last_answer` copies the assistant answer, not the table; the table is
-/// never mistaken for the answer. (Guards the new BlockKind against regressing
-/// the copy-last-answer path.)
-#[test]
-fn copy_last_answer_does_not_grab_a_table_block() {
-    let mut app = app_with_wide_table();
-    app.transcript
-        .push(BlockKind::Assistant, "the answer is here");
-    app.copy_last_answer();
-    let copied = app.pending_clipboard.expect("answer was queued");
-    assert_eq!(copied, "the answer is here");
-}
+#[cfg(test)]
+#[path = "ui_snapshot_output_scope.rs"]
+mod output_scope;

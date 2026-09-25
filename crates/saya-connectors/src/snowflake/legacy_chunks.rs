@@ -50,13 +50,13 @@ pub(crate) async fn collect(
         }
         // Buffer the body under the same deadline and byte budget as the
         // rest of the result pipeline instead of reading unbounded text.
-        let body = timeout(connector.timeout, response.bytes())
-            .await
-            .map_err(|_| errors::query())?
-            .map_err(|_| errors::query())?;
-        if body.len() > crate::common::MAX_RESULT_BYTES {
-            return Err(errors::query());
-        }
+        let body = timeout(
+            connector.timeout,
+            crate::common::read_bytes(response, crate::common::MAX_RESULT_BYTES),
+        )
+        .await
+        .map_err(|_| errors::query())?
+        .map_err(|_| errors::query())?;
         let text = std::str::from_utf8(&body).map_err(|_| errors::query())?;
         output.rows.extend(result::chunk_rows(text)?);
     }

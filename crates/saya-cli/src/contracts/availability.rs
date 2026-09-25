@@ -122,10 +122,11 @@ impl SchemaAvailability {
                 now_unix_ms,
                 max_age_ms,
             } => {
-                // A cache whose age exceeds the bound (or whose clock compare
-                // underflows) cannot vouch for currency. "Older than" is
-                // strict: a cache exactly `max_age` old is still fresh.
-                if now_unix_ms.saturating_sub(*observed_at_unix_ms) <= max_age_ms {
+                // Future-dated observations cannot vouch for currency. "Older
+                // than" is strict: a cache exactly `max_age` old is still fresh.
+                if *observed_at_unix_ms <= now_unix_ms
+                    && now_unix_ms.saturating_sub(*observed_at_unix_ms) <= max_age_ms
+                {
                     Some(schema)
                 } else {
                     None
@@ -226,6 +227,17 @@ mod tests {
                 .live_table_schema(SchemaFreshness::for_model(max_age))
                 .is_some(),
             "a cache exactly at the bound is fresh, not stale-by-age"
+        );
+    }
+
+    #[test]
+    fn future_cache_observation_is_not_fresh_for_model_path() {
+        let avail = SchemaAvailability::available(tree(), 1);
+        assert!(
+            avail
+                .live_table_schema(SchemaFreshness::for_model(0))
+                .is_none(),
+            "a future-dated cache must not vouch for current schema"
         );
     }
 }

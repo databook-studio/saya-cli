@@ -9,12 +9,14 @@ use std::{
 pub(crate) struct TerminalSink {
     format: RenderFormat,
     text_open: Mutex<bool>,
+    group: Mutex<TextGroupState>,
 }
 impl TerminalSink {
     pub(crate) fn new(format: RenderFormat) -> Self {
         Self {
             format,
             text_open: Mutex::new(false),
+            group: Mutex::new(TextGroupState::new()),
         }
     }
 }
@@ -22,16 +24,116 @@ impl TerminalSink {
 #[async_trait]
 impl AgentEventSink for TerminalSink {
     async fn emit(&self, event: AgentEvent) {
-        let rendered = render_agent(
+        let rendered = render_text_stream(
             event,
             self.format,
             &mut self.text_open.lock().expect("terminal state"),
+            &mut self.group.lock().expect("terminal state"),
         );
         print!("{}", rendered.stdout);
         eprint!("{}", rendered.stderr);
         let _ = io::stdout().flush();
         let _ = io::stderr().flush();
     }
+}
+
+/// Append-only text groups collapse by buffer-then-decide: tool events
+/// accumulate from group-open until the next boundary event, then the shaped
+/// summary flushes where the group's first line would have printed. The
+/// buffer is bounded — a force-flush every [`GROUP_CALL_BOUND`] completed
+/// calls degrades a runaway group into chunk summaries, never unbounded
+/// memory. Only the `Text` adapter groups; `Json`/`Ndjson` bypass entirely.
+const GROUP_CALL_BOUND: usize = 32;
+
+/// The pending run the text adapter has buffered but not yet decided on.
+/// `completed` counts completed calls purely to bound the buffer (see
+/// `GROUP_CALL_BOUND`); rendering decisions come from the shared grouper at
+/// flush time, never from this counter.
+#[derive(Debug, Default)]
+struct TextGroupState {
+    pending: Vec<AgentEvent>,
+    completed: usize,
+}
+
+impl TextGroupState {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+fn is_group_member(event: &AgentEvent) -> bool {
+    matches!(
+        event,
+        AgentEvent::ToolRequested { .. } | AgentEvent::ToolCompleted { .. }
+    )
+}
+
+/// The stream entry point: `Text` groups tool runs through the shared
+/// grouper before rendering; `Json`/`Ndjson` bypass the grouper entirely so
+/// the machine surface stays event-for-event. The boundary rule mirrors the
+/// grouper exactly — every non-member event flushes the open group, including
+/// silent ones — so the pipe renders the shared grouping, never a second one.
+fn render_text_stream(
+    event: AgentEvent,
+    format: RenderFormat,
+    text_open: &mut bool,
+    group: &mut TextGroupState,
+) -> Rendered {
+    if !matches!(format, RenderFormat::Text) {
+        return render_agent(event, format, text_open);
+    }
+    if is_group_member(&event) {
+        let completed_call = matches!(event, AgentEvent::ToolCompleted { .. });
+        group.pending.push(event);
+        if completed_call {
+            group.completed += 1;
+        }
+        if group.completed >= GROUP_CALL_BOUND {
+            return flush_group(group, text_open);
+        }
+        return Rendered {
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+    }
+    let mut out = flush_group(group, text_open);
+    let rendered = render_agent(event, format, text_open);
+    out.stdout.push_str(&rendered.stdout);
+    out.stderr.push_str(&rendered.stderr);
+    out
+}
+
+/// Shapes the buffered run into the Decision-2 summary (or today's verbatim
+/// lines for a single call) and renders it through the text adapter,
+/// preserving the assistant-delta close the ungrouped path applies.
+fn flush_group(group: &mut TextGroupState, text_open: &mut bool) -> Rendered {
+    if group.pending.is_empty() {
+        return Rendered {
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+    }
+    let pending = std::mem::take(&mut group.pending);
+    group.completed = 0;
+    let mut out = Rendered {
+        stdout: String::new(),
+        stderr: String::new(),
+    };
+    let groups = crate::render::tool_groups::group_tool_events(&pending);
+    for shaped in &groups {
+        for line in crate::render::tool_groups::shape_group(shaped) {
+            let line = crate::render::sanitize_terminal(&line);
+            if *text_open {
+                out.stdout.push('\n');
+                *text_open = false;
+            }
+            out.stdout.push_str(&line);
+            if !line.ends_with('\n') {
+                out.stdout.push('\n');
+            }
+        }
+    }
+    out
 }
 
 fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -> Rendered {
@@ -79,9 +181,17 @@ fn render_agent(event: AgentEvent, format: RenderFormat, text_open: &mut bool) -
 pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
     Some(match event {
         AgentEvent::AssistantText { text } => TerminalEvent::AssistantText { text },
-        AgentEvent::ToolRequested { name, arguments } => {
+        AgentEvent::ToolRequested {
+            name,
+            arguments,
+            effect,
+        } => {
             let detail = crate::agent::tools::tool_call_detail(&name, &arguments);
-            TerminalEvent::ToolRequested { name, detail }
+            TerminalEvent::ToolRequested {
+                name,
+                detail,
+                effect,
+            }
         }
         AgentEvent::ToolCompleted { name, summary } => {
             TerminalEvent::ToolCompleted { name, summary }
@@ -104,6 +214,11 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         AgentEvent::KnowledgeLearningSkipped { reason } => {
             TerminalEvent::KnowledgeLearningSkipped { reason }
         }
+        // The extraction circuit breaker tripped — surface it the same way,
+        // rather than fall through to the `unrecognized agent event` catch-all.
+        AgentEvent::KnowledgeLearningDisabled { model, misses } => {
+            TerminalEvent::KnowledgeLearningDisabled { model, misses }
+        }
         // Learning used to fall through to the catch-all below and print
         // `unrecognized agent event` — an error string at the exact moment the
         // product did the thing it is for.
@@ -112,6 +227,12 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // no spinner to label. Dropped rather than rendered — not forgotten,
         // which is what the catch-all would make of it.
         AgentEvent::KnowledgeLearningStarted => return None,
+        // A provider attempt began. The TUI records a rollback watermark here;
+        // a pipe has nothing to roll back and nothing to say. Explicitly None
+        // rather than left to the catch-all, which would print `unrecognized
+        // agent event` at the user — the regression the note above says has
+        // already shipped three times for contentless variants.
+        AgentEvent::TurnStarted => return None,
         // The model's chain-of-thought. This is the one case where rendering to
         // nothing is a *scope* decision rather than a *nature-of-the-event*
         // decision: reasoning is content (it mirrors `AssistantText`), so by its
@@ -124,6 +245,14 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // reasoning is progress, and a future change cannot silence the
         // catch-all to pass one and break the other.
         AgentEvent::ReasoningText { .. } => return None,
+        // The token counts one provider call reported. This is data the JSON/NDJSON
+        // adapter carries whole; the text adapter renders it to nothing (the
+        // interactive surfaces for it are the per-turn token line and `/usage`,
+        // and a pipe's reader has the answer above it). It must not fall through
+        // to the catch-all below, which would print `unrecognized agent event`
+        // under a correct answer — the same regression that has shipped for
+        // contentless variants here three times.
+        AgentEvent::Usage { call, usage } => TerminalEvent::Usage { call, usage },
         AgentEvent::AnswerDesignated { sql } => TerminalEvent::AnswerDesignated { sql },
         AgentEvent::ConsensusDecided {
             sql,
@@ -143,6 +272,11 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
             probe_broke_tie,
         },
         AgentEvent::Complete => TerminalEvent::Complete,
+        // The turn's provider stream failed mid-answer and the loop is
+        // retrying it. Carried under its own type tag so a machine consumer
+        // can replace the text it accumulated for this turn; the text adapter
+        // prints a notice (see `TerminalEvent::TurnReset`).
+        AgentEvent::TurnReset => TerminalEvent::TurnReset,
         // AgentEvent is #[non_exhaustive]; a future variant this renderer does not
         // yet understand must not silently terminate the stream (Complete) — surface
         // it as an unimplemented event instead.
@@ -157,8 +291,8 @@ mod tests {
     use super::*;
     use crate::render::{RenderFormat, render_event};
     use saya_agent::{
-        KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, SuppliedClaimDto,
-        SuppliedContractDto,
+        KnowledgeOutcome, LearningSkipReason, LocalStateEffect, OverrideFindingDto,
+        SuppliedClaimDto, SuppliedContractDto, ToolEffect,
     };
     use saya_types::{ClaimId, ClaimStatus};
 
@@ -326,9 +460,20 @@ mod tests {
             .stdout,
             "thinking"
         );
+        // `schema_discovery`'s declared effect: touches nothing and reaches
+        // nothing, so the read-only claim is earned and the line keeps it.
         assert_eq!(
             render_agent(
-                AgentEvent::tool_requested("schema", serde_json::Value::Null),
+                AgentEvent::tool_requested(
+                    "schema",
+                    serde_json::Value::Null,
+                    Some(ToolEffect {
+                        database_data: false,
+                        external_side_effect: false,
+                        requires_approval: false,
+                        local_state: LocalStateEffect::None,
+                    }),
+                ),
                 RenderFormat::Text,
                 &mut open
             )
@@ -338,6 +483,99 @@ mod tests {
         assert_eq!(
             render_agent(AgentEvent::complete(), RenderFormat::Text, &mut open).stdout,
             ""
+        );
+    }
+
+    /// The write-shaped class — `workspace_write` and `scratch_sql` both
+    /// declare `LocalStateEffect::WriteWorkspace` — must never be announced as
+    /// read-only. The old renderer hardcoded the claim on the request line, so
+    /// a run that wrote a file announced "Using read-only tool: workspace_write"
+    /// at the exact moment it was about to write. The label is derived from the
+    /// declaration the loop carries on the event; against the old code this
+    /// test fails, because the claim was hardcoded regardless of the effect.
+    #[test]
+    fn a_write_shaped_tool_is_never_announced_as_read_only() {
+        let rendered = render_agent(
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "the run's note"}),
+                Some(ToolEffect {
+                    database_data: false,
+                    external_side_effect: false,
+                    requires_approval: false,
+                    local_state: LocalStateEffect::WriteWorkspace,
+                }),
+            ),
+            RenderFormat::Text,
+            &mut false,
+        );
+        assert_eq!(
+            rendered.stdout, "Using tool: workspace_write\n  notes.md\n",
+            "a write-shaped tool gets the claim-free line with the named file: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            !rendered.stdout.contains("read-only"),
+            "the read-only claim must not appear for a write-shaped tool: {:?}",
+            rendered.stdout
+        );
+        assert_eq!(rendered.stderr, "");
+    }
+
+    /// A side-effecting tool — one whose declaration carries
+    /// `external_side_effect`, like `http_fetch` and `http_download` — must
+    /// never be announced as read-only either, with or without a visible call
+    /// detail (the detail arm is `render_chart`'s: SQL shown, effect still
+    /// side-effecting). The old code printed "Using read-only tool" for every
+    /// tool, so both assertions failed against it.
+    #[test]
+    fn a_side_effecting_tool_is_never_announced_as_read_only() {
+        let effect = ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: false,
+            local_state: LocalStateEffect::None,
+        };
+        let fetched = render_agent(
+            AgentEvent::tool_requested(
+                "http_fetch",
+                serde_json::json!({"url": "https://example.com/feed"}),
+                Some(effect),
+            ),
+            RenderFormat::Text,
+            &mut false,
+        );
+        assert_eq!(
+            fetched.stdout, "Using tool: http_fetch\n",
+            "a side-effecting tool gets the claim-free line: {:?}",
+            fetched.stdout
+        );
+        assert!(
+            !fetched.stdout.contains("read-only"),
+            "the read-only claim must not appear for a side-effecting tool: {:?}",
+            fetched.stdout
+        );
+
+        // The detail arm: a side-effecting tool with a visible call detail
+        // keeps the detail line and still carries no read-only claim.
+        let charted = render_agent(
+            AgentEvent::tool_requested(
+                "render_chart",
+                serde_json::json!({"sql": "SELECT 1", "chart_type": "bar"}),
+                Some(effect),
+            ),
+            RenderFormat::Text,
+            &mut false,
+        );
+        assert_eq!(
+            charted.stdout, "Using tool: render_chart\n  SELECT 1  (chart: bar)\n",
+            "the detail survives on the claim-free line: {:?}",
+            charted.stdout
+        );
+        assert!(
+            !charted.stdout.contains("read-only"),
+            "the read-only claim must not appear beside a detail either: {:?}",
+            charted.stdout
         );
     }
     #[test]
@@ -482,6 +720,59 @@ mod tests {
         );
     }
 
+    /// KnowledgeLearningDisabled maps to a real TerminalEvent variant (not
+    /// NotImplemented) and renders the spec line through the text adapter.
+    #[test]
+    fn knowledge_learning_disabled_renders_through_the_text_adapter() {
+        let event = AgentEvent::knowledge_learning_disabled("glm-5.2", 2);
+        let rendered = render_agent(event, RenderFormat::Text, &mut false);
+        assert!(
+            rendered
+                .stdout
+                .contains("memory: learning disabled for this session"),
+            "text adapter renders the disabled line: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            rendered.stdout.contains("glm-5.2") && rendered.stdout.contains('2'),
+            "the model and miss count appear: {:?}",
+            rendered.stdout
+        );
+        assert_eq!(rendered.stderr, "");
+    }
+
+    /// The JSON/NDJSON adapter carries KnowledgeLearningDisabled under its
+    /// type tag rather than the NotImplemented fallback, with the model and
+    /// miss count on the wire.
+    #[test]
+    fn json_adapter_carries_the_learning_disabled_event_under_its_type_tag() {
+        let event = AgentEvent::knowledge_learning_disabled("glm-5.2", 2);
+        let te = terminal_event(event).expect("this event renders headlessly");
+        let rendered = render_event(&te, RenderFormat::Json);
+        assert!(
+            rendered
+                .stdout
+                .contains(r#""event":"knowledge_learning_disabled""#),
+            "type tag: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            rendered.stdout.contains(r#""model":"glm-5.2""#),
+            "model carried: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            rendered.stdout.contains(r#""misses":2"#),
+            "misses carried: {:?}",
+            rendered.stdout
+        );
+        assert!(
+            !rendered.stdout.contains("not_implemented"),
+            "{:?}",
+            rendered.stdout
+        );
+    }
+
     /// A progress-only event must render to nothing, not to
     /// `unrecognized agent event`. The catch-all is deliberately loud so a
     /// content-bearing variant cannot be dropped silently, which means every
@@ -618,6 +909,585 @@ mod tests {
         assert!(
             tied_text.stdout.contains("tied, no winner"),
             "a tie with no winner says so: {tied_text:?}"
+        );
+    }
+
+    /// The token counts one provider call reported reach the NDJSON stream
+    /// under their own type tag, named by which call they describe so a
+    /// consumer can keep the answer's cost apart from the extraction call's.
+    #[test]
+    fn usage_reaches_ndjson_under_its_type_tag_named_by_call() {
+        let event = AgentEvent::usage(
+            saya_agent::UsageCall::Extraction,
+            saya_agent::TokenUsage::new(40, 10),
+        );
+        let terminal = terminal_event(event).expect("usage renders headlessly");
+        assert!(
+            !matches!(terminal, TerminalEvent::NotImplemented { .. }),
+            "Usage must not fall through to the catch-all: {terminal:?}"
+        );
+        let json = render_event(&terminal, RenderFormat::Ndjson);
+        assert!(
+            json.stdout.contains(r#""event":"usage""#),
+            "ndjson must tag the usage event: {json:?}"
+        );
+        assert!(
+            json.stdout.contains(r#""call":"extraction""#),
+            "the call kind must name the extraction call: {json:?}"
+        );
+        assert!(
+            json.stdout.contains(r#""input_tokens":40"#)
+                && json.stdout.contains(r#""output_tokens":10"#),
+            "the counts must be carried: {json:?}"
+        );
+
+        let answering = render_event(
+            &terminal_event(AgentEvent::usage(
+                saya_agent::UsageCall::Answer,
+                saya_agent::TokenUsage::new(3, 7),
+            ))
+            .expect("renders"),
+            RenderFormat::Ndjson,
+        );
+        assert!(
+            answering.stdout.contains(r#""call":"answer""#),
+            "the answering call is named too: {answering:?}"
+        );
+    }
+
+    /// A reported zero and an unreported number must not collapse on the wire.
+    /// `cached_input_tokens` is `Option` precisely so "the provider says zero
+    /// cached tokens" stays a claim it made, and "the provider said nothing"
+    /// stays `null` — a cache hit rate computed over the two has to be able to
+    /// tell "0%" from "unknown".
+    #[test]
+    fn reported_zero_and_unreported_cached_tokens_serialize_distinctly() {
+        let reported_zero = render_event(
+            &terminal_event(AgentEvent::usage(
+                saya_agent::UsageCall::Answer,
+                saya_agent::TokenUsage::new(10, 5).with_cached_input(Some(0)),
+            ))
+            .expect("renders"),
+            RenderFormat::Ndjson,
+        );
+        assert!(
+            reported_zero.stdout.contains(r#""cached_input_tokens":0"#),
+            "a reported zero must serialize as a number: {:?}",
+            reported_zero.stdout
+        );
+        let unreported = render_event(
+            &terminal_event(AgentEvent::usage(
+                saya_agent::UsageCall::Answer,
+                saya_agent::TokenUsage::new(10, 5),
+            ))
+            .expect("renders"),
+            RenderFormat::Ndjson,
+        );
+        assert!(
+            unreported.stdout.contains(r#""cached_input_tokens":null"#),
+            "an unreported figure must serialize as null: {:?}",
+            unreported.stdout
+        );
+        assert_ne!(
+            reported_zero.stdout, unreported.stdout,
+            "the two must be distinguishable on the wire"
+        );
+    }
+
+    /// The text adapter renders nothing for a usage event: the interactive
+    /// surfaces for it already exist (the per-turn token line and `/usage`),
+    /// and it must not fall through to `Not implemented: unrecognized agent
+    /// event` under a correct answer.
+    #[test]
+    fn usage_renders_to_nothing_in_the_text_adapter() {
+        let event = AgentEvent::usage(
+            saya_agent::UsageCall::Answer,
+            saya_agent::TokenUsage::new(3, 7),
+        );
+        let rendered = render_agent(event, RenderFormat::Text, &mut false);
+        assert_eq!(rendered.stdout, "", "the text adapter stays silent");
+        assert_eq!(rendered.stderr, "", "nothing on stderr either");
+    }
+
+    /// A usage event carries no content, so a text consumer that ignores it
+    /// sees byte-identical output whether or not it arrives. It renders to
+    /// nothing itself, and it closes an open delta line the way any other
+    /// non-assistant event does — it arrives after the answer's text finished
+    /// streaming, where closing is what `ToolRequested` already does. The
+    /// property pinned is the invariant on the stream's shape: interleaving
+    /// usage into a run changes nothing a text reader sees.
+    #[test]
+    fn interleaving_usage_leaves_the_text_output_unchanged() {
+        let mut open = false;
+        let answer = render_agent(
+            AgentEvent::assistant_text("thinking"),
+            RenderFormat::Text,
+            &mut open,
+        );
+        let closed = render_agent(AgentEvent::complete(), RenderFormat::Text, &mut open);
+        let without_usage = format!("{}{}", answer.stdout, closed.stdout);
+
+        let mut open = false;
+        let answer = render_agent(
+            AgentEvent::assistant_text("thinking"),
+            RenderFormat::Text,
+            &mut open,
+        );
+        let usage = render_agent(
+            AgentEvent::usage(
+                saya_agent::UsageCall::Answer,
+                saya_agent::TokenUsage::new(3, 7),
+            ),
+            RenderFormat::Text,
+            &mut open,
+        );
+        let closed = render_agent(AgentEvent::complete(), RenderFormat::Text, &mut open);
+        let with_usage = format!("{}{}{}", answer.stdout, usage.stdout, closed.stdout);
+
+        assert_eq!(
+            with_usage, without_usage,
+            "usage must not change the text stream"
+        );
+        // And the delta line was still closed, not left hanging open.
+        assert!(!open, "the line must be closed after Complete");
+    }
+
+    /// The JSON adapter carries the usage event under its type tag rather than
+    /// the NotImplemented fallback (every adapter that renders events).
+    #[test]
+    fn json_adapter_carries_the_usage_event_under_its_type_tag() {
+        let event = AgentEvent::usage(
+            saya_agent::UsageCall::Answer,
+            saya_agent::TokenUsage::new(3, 7).with_cached_input(Some(2)),
+        );
+        let te = terminal_event(event).expect("this event renders headlessly");
+        let rendered = render_event(&te, RenderFormat::Json);
+        assert!(
+            rendered.stdout.contains(r#""event":"usage""#),
+            "{:?}",
+            rendered.stdout
+        );
+        assert!(
+            !rendered.stdout.contains("not_implemented"),
+            "{:?}",
+            rendered.stdout
+        );
+    }
+
+    /// `TurnReset` maps to a real TerminalEvent variant (not the
+    /// NotImplemented catch-all) — a retry signal the renderer understands
+    /// must never print `unrecognized agent event`.
+    #[test]
+    fn turn_reset_renders_as_its_own_variant_not_the_catch_all() {
+        let terminal = terminal_event(AgentEvent::turn_reset()).expect("turn reset renders");
+        assert!(
+            matches!(terminal, TerminalEvent::TurnReset),
+            "must map to the dedicated variant: {terminal:?}"
+        );
+    }
+
+    /// The text adapter closes the open delta line and prints a notice, so a
+    /// restart mid-answer is legible rather than reading as the model
+    /// repeating itself; the retried deltas then start on a fresh line.
+    #[test]
+    fn turn_reset_closes_the_partial_answer_and_notes_the_retry_in_text() {
+        let mut open = false;
+        let _ = render_agent(
+            AgentEvent::assistant_text("The an"),
+            RenderFormat::Text,
+            &mut open,
+        );
+        assert!(open, "the partial answer leaves the delta line open");
+
+        let reset = render_agent(AgentEvent::turn_reset(), RenderFormat::Text, &mut open);
+        assert_eq!(
+            reset.stdout, "\nprovider stream interrupted — retrying\n",
+            "the open line closes and the notice prints on its own line"
+        );
+        assert!(!open, "the reset closes the delta line");
+
+        // The re-streamed answer starts a fresh line, not appended to the
+        // partial text the reset discarded.
+        let retried = render_agent(
+            AgentEvent::assistant_text("The answer is 42."),
+            RenderFormat::Text,
+            &mut open,
+        );
+        assert_eq!(retried.stdout, "The answer is 42.");
+        assert!(open);
+    }
+
+    /// The JSON/NDJSON adapter carries the reset under its type tag so a
+    /// machine consumer can replace accumulated text instead of appending.
+    #[test]
+    fn turn_reset_reaches_ndjson_under_its_type_tag() {
+        let terminal = terminal_event(AgentEvent::turn_reset()).expect("renders");
+        let json = render_event(&terminal, RenderFormat::Ndjson);
+        assert!(
+            json.stdout.contains(r#""event":"turn_reset""#),
+            "ndjson must tag the reset: {json:?}"
+        );
+        assert!(
+            !json.stdout.contains("not_implemented"),
+            "must not fall through to NotImplemented: {json:?}"
+        );
+    }
+
+    fn drain_text_stream(events: Vec<AgentEvent>) -> String {
+        let mut open = false;
+        let mut group = TextGroupState::new();
+        let mut stdout = String::new();
+        for event in events {
+            let rendered = render_text_stream(event, RenderFormat::Text, &mut open, &mut group);
+            stdout.push_str(&rendered.stdout);
+        }
+        stdout.push_str(&flush_group(&mut group, &mut open).stdout);
+        stdout
+    }
+
+    fn drain_ndjson_stream(events: Vec<AgentEvent>) -> String {
+        let mut open = false;
+        let mut group = TextGroupState::new();
+        let mut stdout = String::new();
+        for event in events {
+            let rendered = render_text_stream(event, RenderFormat::Ndjson, &mut open, &mut group);
+            stdout.push_str(&rendered.stdout);
+        }
+        stdout.push_str(&flush_group(&mut group, &mut open).stdout);
+        stdout
+    }
+
+    fn write_effect() -> ToolEffect {
+        ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::WriteWorkspace,
+        }
+    }
+
+    fn run_effect() -> ToolEffect {
+        ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: false,
+            local_state: LocalStateEffect::WriteWorkspace,
+        }
+    }
+
+    fn mixed_sequence() -> Vec<AgentEvent> {
+        vec![
+            AgentEvent::assistant_text("the plan"),
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "run_command",
+                serde_json::json!({"program": "pytest", "args": ["-q"]}),
+                Some(run_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "run_command".into(),
+                summary: "failed pytest".into(),
+            },
+            AgentEvent::assistant_text("done"),
+            AgentEvent::complete(),
+        ]
+    }
+
+    /// C2 property 1: a run of successful calls through the piped text
+    /// surface emits one summary line, not a line per call.
+    #[test]
+    fn piped_text_run_of_successful_calls_emits_one_summary_line() {
+        let write = ToolEffect {
+            database_data: false,
+            external_side_effect: false,
+            requires_approval: false,
+            local_state: LocalStateEffect::WriteWorkspace,
+        };
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "other.md", "content": "hi"}),
+                Some(write),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "other.md written".into(),
+            },
+        ];
+        let stdout = drain_text_stream(events);
+        assert_eq!(
+            stdout.lines().count(),
+            1,
+            "a run of successful calls is one summary line, not a line per call: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("2 tool calls · ok"),
+            "the summary line collapses the run: {stdout:?}"
+        );
+    }
+
+    /// C2 property 2: a group with a failure emits the header plus that
+    /// failure's full pair — today's request and completion lines verbatim.
+    #[test]
+    fn piped_text_group_with_failure_emits_header_plus_full_pair() {
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "run_command",
+                serde_json::json!({"program": "pytest", "args": ["-q"]}),
+                Some(run_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "run_command".into(),
+                summary: "failed pytest".into(),
+            },
+            AgentEvent::complete(),
+        ];
+        let stdout = drain_text_stream(events);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "▸ 2 tool calls · 1 failed (run_command [pytest -q]) — details below",
+                "Using tool: run_command",
+                "  [pytest -q]",
+                "run_command: failed pytest",
+            ],
+            "header plus the failure's full pair, successes collapsed: {stdout:?}"
+        );
+    }
+
+    /// C2 property 3: a one-member group emits today's lines, byte for byte.
+    #[test]
+    fn piped_text_single_call_matches_todays_lines_byte_for_byte() {
+        let arguments = serde_json::json!({"path": "notes.md", "content": "hi"});
+        let events = vec![
+            AgentEvent::tool_requested("workspace_write", arguments, Some(write_effect())),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::complete(),
+        ];
+        let grouped = drain_text_stream(events);
+        let mut open = false;
+        let ungrouped = format!(
+            "{}{}",
+            render_agent(
+                AgentEvent::tool_requested(
+                    "workspace_write",
+                    serde_json::json!({"path": "notes.md", "content": "hi"}),
+                    Some(write_effect()),
+                ),
+                RenderFormat::Text,
+                &mut open,
+            )
+            .stdout,
+            render_agent(
+                AgentEvent::ToolCompleted {
+                    name: "workspace_write".into(),
+                    summary: "notes.md written".into(),
+                },
+                RenderFormat::Text,
+                &mut open,
+            )
+            .stdout,
+        );
+        assert_eq!(
+            grouped, ungrouped,
+            "a one-member group must keep today's bytes: grouped={grouped:?}"
+        );
+    }
+
+    /// C2 property 4: NDJSON output is byte-identical to before this slice —
+    /// the same event sequence renders event-for-event through the bypass,
+    /// with no grouping applied.
+    #[test]
+    fn ndjson_output_is_byte_identical_with_groups_failures_and_boundaries() {
+        let events = mixed_sequence();
+        let grouped = drain_ndjson_stream(events.clone());
+        let mut open = false;
+        let ungrouped: String = events
+            .into_iter()
+            .map(|event| render_agent(event, RenderFormat::Ndjson, &mut open).stdout)
+            .collect();
+        assert_eq!(
+            grouped, ungrouped,
+            "NDJSON must bypass the grouper entirely"
+        );
+        assert!(
+            grouped.lines().count() >= 6,
+            "the sequence must contain groups, failures and boundaries: {grouped:?}"
+        );
+        assert!(
+            grouped.contains(r#""event":"tool_requested""#)
+                && grouped.contains(r#""event":"tool_completed""#),
+            "tool events stay one-per-line on the machine surface: {grouped:?}"
+        );
+        assert!(
+            !grouped.contains("tool calls ·"),
+            "no summary line may leak into NDJSON: {grouped:?}"
+        );
+    }
+
+    /// C2 property 5: text ordering is preserved — the summary appears where
+    /// the group's first line would have, relative to surrounding text.
+    #[test]
+    fn piped_text_summary_keeps_position_relative_to_surrounding_text() {
+        let events = vec![
+            AgentEvent::assistant_text("before"),
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "notes.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "notes.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "other.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "other.md written".into(),
+            },
+            AgentEvent::assistant_text("after"),
+            AgentEvent::complete(),
+        ];
+        let stdout = drain_text_stream(events);
+        let before = stdout.find("before").expect("leading text renders");
+        let summary = stdout.find("2 tool calls · ok").expect("summary renders");
+        let after = stdout.find("after").expect("trailing text renders");
+        assert!(
+            before < summary && summary < after,
+            "the flush happens where the first line would have printed: {stdout:?}"
+        );
+    }
+
+    /// C2 property 6: a group exceeding the bound flushes rather than
+    /// growing — 40 completed calls degrade into chunk summaries.
+    #[test]
+    fn piped_text_group_exceeding_the_bound_flushes_in_chunks() {
+        let mut events = Vec::new();
+        for index in 0..40 {
+            events.push(AgentEvent::tool_requested(
+                "schema_discovery",
+                serde_json::json!({"n": index}),
+                None,
+            ));
+            events.push(AgentEvent::ToolCompleted {
+                name: "schema_discovery".into(),
+                summary: "discovered".into(),
+            });
+        }
+        events.push(AgentEvent::complete());
+        let stdout = drain_text_stream(events);
+        assert!(
+            stdout.contains("32 tool calls · ok"),
+            "the bound force-flushes a full chunk: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("8 tool calls · ok"),
+            "the remainder flushes as its own chunk: {stdout:?}"
+        );
+        assert_eq!(
+            stdout.lines().count(),
+            2,
+            "a runaway group degrades into chunk summaries: {stdout:?}"
+        );
+    }
+
+    /// Property 2 (piped half): `approvals_are_untouched` — a ToolDenied
+    /// boundary flushes the open group first and renders the denial line
+    /// byte-identical to the ungrouped path, so a call can never collapse
+    /// into a group that swallows a consent moment. The prompt/answer half
+    /// lives beside the seam that owns it
+    /// (`prompt_approval_tests::ask_prompt_keeps_its_bytes_and_answers_under_grouping`);
+    /// the bypass-line half beside its seam
+    /// (`session_activation_tests::bypass_line_keeps_its_bytes_under_grouping`):
+    /// the grouper never sees either string, so grouping cannot touch them.
+    #[test]
+    fn approvals_are_untouched() {
+        let events = vec![
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "a.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "a.md written".into(),
+            },
+            AgentEvent::tool_requested(
+                "workspace_write",
+                serde_json::json!({"path": "b.md", "content": "hi"}),
+                Some(write_effect()),
+            ),
+            AgentEvent::ToolCompleted {
+                name: "workspace_write".into(),
+                summary: "b.md written".into(),
+            },
+            AgentEvent::ToolDenied {
+                name: "run_command".into(),
+                reason: "denied".into(),
+            },
+            AgentEvent::complete(),
+        ];
+        let stdout = drain_text_stream(events);
+        assert!(
+            stdout.contains("2 tool calls · ok"),
+            "the pre-denial run collapses on its own: {stdout:?}"
+        );
+        let denied = AgentEvent::ToolDenied {
+            name: "run_command".into(),
+            reason: "denied".into(),
+        };
+        let mut open = false;
+        let ungrouped = render_agent(denied, RenderFormat::Text, &mut open).stdout;
+        assert_eq!(
+            ungrouped, "Approval denied for run_command: denied\n",
+            "precondition: the denial line under test"
+        );
+        assert!(
+            stdout.contains(&ungrouped),
+            "the denial renders byte-identical after the flush: {stdout:?}"
+        );
+        assert!(
+            stdout.find("2 tool calls · ok").expect("summary")
+                < stdout.find("Approval denied").expect("denial"),
+            "the summary flushes before the boundary: {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("▸ 3 tool calls"),
+            "the denied call never joins the collapsed count: {stdout:?}"
         );
     }
 }

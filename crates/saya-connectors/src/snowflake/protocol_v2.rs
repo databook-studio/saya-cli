@@ -61,7 +61,9 @@ async fn send(
     .map_err(|_| errors::query())?
     .map_err(|_| errors::connect())?;
     let status = response.status();
-    let value = response.json().await.map_err(|_| errors::query())?;
+    let value = crate::common::read_json(response, crate::common::MAX_HTTP_BODY_BYTES)
+        .await
+        .map_err(|_| errors::query())?;
     if status.is_client_error() && status != StatusCode::REQUEST_TIMEOUT {
         return Err(if status == StatusCode::UNAUTHORIZED {
             errors::auth()

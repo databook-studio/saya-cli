@@ -15,7 +15,9 @@ use crate::contracts::now;
 use crate::knowledge_items::KnowledgeStoreError;
 use crate::knowledge_items::binding::slot_matches_payload;
 use crate::knowledge_items::keys::{knowledge_item_id, knowledge_item_id_value};
-use crate::knowledge_items::records::MAX_KNOWLEDGE_ITEM_BYTES;
+use crate::knowledge_items::records::{
+    CleanupState, MAX_KNOWLEDGE_ITEM_BYTES, MAX_SCHEMA_BINDING_BYTES,
+};
 use crate::{SqliteStateStore, StoreError, redact};
 use saya_types::{KnowledgeState, MAX_MULTI_SLOT_VALUES, SchemaFingerprint};
 
@@ -43,6 +45,9 @@ pub(crate) async fn insert_or_replace(
     admission::check(&serialized)?;
     if redact(&request.schema_binding_json) != request.schema_binding_json {
         return Err(StoreError::Invalid.into());
+    }
+    if request.schema_binding_json.len() > MAX_SCHEMA_BINDING_BYTES {
+        return Err(StoreError::LimitExceeded.into());
     }
     admission::check(&request.schema_binding_json)?;
 
@@ -93,7 +98,7 @@ pub(crate) async fn insert_or_replace(
         }
     }
 
-    sqlx::query("INSERT INTO knowledge_items(id, profile_id, catalog, schema, object, object_kind, slot, cardinality, value_json, source, state, schema_binding_json, fingerprint_version, created_unix_ms, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET value_json=excluded.value_json, source=excluded.source, state=excluded.state, schema_binding_json=excluded.schema_binding_json, fingerprint_version=excluded.fingerprint_version, updated_unix_ms=excluded.updated_unix_ms")
+    sqlx::query("INSERT INTO knowledge_items(id, profile_id, catalog, schema, object, object_kind, slot, cardinality, value_json, source, state, schema_binding_json, cleanup_state, fingerprint_version, created_unix_ms, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET value_json=excluded.value_json, source=excluded.source, state=excluded.state, schema_binding_json=excluded.schema_binding_json, cleanup_state=excluded.cleanup_state, fingerprint_version=excluded.fingerprint_version, updated_unix_ms=excluded.updated_unix_ms")
         .bind(&id)
         .bind(request.object.profile().as_str())
         .bind(request.object.catalog())
@@ -106,6 +111,7 @@ pub(crate) async fn insert_or_replace(
         .bind(request.source.as_str())
         .bind(request.state.as_str())
         .bind(&request.schema_binding_json)
+        .bind(CleanupState::Complete.as_str())
         .bind(request.fingerprint.version() as i64)
         .bind(stamp)
         .bind(stamp)
@@ -119,11 +125,7 @@ pub(crate) async fn insert_or_replace(
     // the freed cell. Without this, `forget` honours the deletion promise in the
     // API and breaks it in the bytes — which is what `knowledge_security.rs`
     // scans for. TRUNCATE rather than PASSIVE so the WAL does not keep the copy.
-    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(store.pool().await?)
-        .await
-        .map_err(|_| StoreError::Unavailable)?;
-    store.secure_files()?;
+    cleanup_files(store).await?;
     Ok(())
 }
 
@@ -154,6 +156,9 @@ pub(crate) async fn revalidate_item(
     fingerprint: SchemaFingerprint,
     schema_binding_json: String,
 ) -> Result<(), KnowledgeStoreError> {
+    if schema_binding_json.len() > MAX_SCHEMA_BINDING_BYTES {
+        return Err(StoreError::LimitExceeded.into());
+    }
     if redact(&schema_binding_json) != schema_binding_json {
         return Err(StoreError::Invalid.into());
     }
@@ -224,7 +229,7 @@ const BLANKED_BINDING_JSON: &str = r#"{"type":"table"}"#;
 pub(crate) async fn forget_item(
     store: &SqliteStateStore,
     id: &str,
-) -> Result<(), KnowledgeStoreError> {
+) -> Result<crate::knowledge_items::ForgetOutcome, KnowledgeStoreError> {
     let stamp = now();
     let mut tx = store
         .pool()
@@ -233,18 +238,24 @@ pub(crate) async fn forget_item(
         .begin()
         .await
         .map_err(|_| StoreError::Unavailable)?;
-    let value_json: Option<String> =
-        sqlx::query_scalar("SELECT value_json FROM knowledge_items WHERE id=?")
+    let row: Option<(String, String, String)> =
+        sqlx::query_as("SELECT value_json, state, cleanup_state FROM knowledge_items WHERE id=?")
             .bind(id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(|_| StoreError::Unavailable)?;
-    let Some(value_json) = value_json else {
+    let Some((value_json, state, cleanup_state)) = row else {
         // An unknown id is a typed `NotFound`, not a silent no-op — the caller
         // asked to forget a fact that is not there.
         tx.rollback().await.map_err(|_| StoreError::Unavailable)?;
         return Err(StoreError::NotFound.into());
     };
+    if state == KnowledgeState::Dismissed.as_str()
+        && cleanup_state == CleanupState::Pending.as_str()
+    {
+        tx.rollback().await.map_err(|_| StoreError::Unavailable)?;
+        return finish_cleanup(store, id).await;
+    }
     // Derive the blanked payload from the stored value rather than trusting a
     // caller's claim about it. A row written by an incompatible build whose
     // value this build cannot decode cannot be safely blanked — fail closed
@@ -253,7 +264,7 @@ pub(crate) async fn forget_item(
         serde_json::from_str(&value_json).map_err(|_| StoreError::Invalid)?;
     let blanked = serde_json::to_string(&payload.blanked()).map_err(|_| StoreError::Invalid)?;
     sqlx::query(
-        "UPDATE knowledge_items SET value_json=?, schema_binding_json=?, state='dismissed', updated_unix_ms=? WHERE id=?",
+        "UPDATE knowledge_items SET value_json=?, schema_binding_json=?, state='dismissed', cleanup_state='pending', updated_unix_ms=? WHERE id=?",
     )
     .bind(&blanked)
     .bind(BLANKED_BINDING_JSON)
@@ -263,14 +274,42 @@ pub(crate) async fn forget_item(
     .await
     .map_err(|_| StoreError::Unavailable)?;
     tx.commit().await.map_err(|_| StoreError::Unavailable)?;
-    // Blanking the row is not erasure on its own. In WAL mode the pre-update
-    // page image lives in the `-wal` file, so the original text stays readable
-    // on disk until a checkpoint folds the WAL back and `secure_delete` zeroes
-    // the freed cell. Without this, `forget` honours the deletion promise in the
-    // API and breaks it in the bytes — which is what `knowledge_security.rs`
-    // scans for. TRUNCATE rather than PASSIVE so the WAL does not keep the copy.
+    finish_cleanup(store, id).await
+}
+
+/// Complete physical cleanup after the logical tombstone commits. If the
+/// checkpoint fails, the row remains pending and a later call can retry it.
+async fn finish_cleanup(
+    store: &SqliteStateStore,
+    id: &str,
+) -> Result<crate::knowledge_items::ForgetOutcome, KnowledgeStoreError> {
+    if let Err(error) = cleanup_files(store).await {
+        return match error {
+            KnowledgeStoreError::Store(_) => {
+                Ok(crate::knowledge_items::ForgetOutcome::CleanupPending)
+            }
+            other => Err(other),
+        };
+    }
+    let marked = sqlx::query(
+        "UPDATE knowledge_items SET cleanup_state='complete', updated_unix_ms=? WHERE id=?",
+    )
+    .bind(now())
+    .bind(id)
+    .execute(store.pool().await.map_err(|_| StoreError::Unavailable)?)
+    .await;
+    if marked.is_err() {
+        return Ok(crate::knowledge_items::ForgetOutcome::CleanupPending);
+    }
+    Ok(crate::knowledge_items::ForgetOutcome::Cleaned)
+}
+
+async fn cleanup_files(store: &SqliteStateStore) -> Result<(), KnowledgeStoreError> {
+    if store.consume_cleanup_failure_for_tests() {
+        return Err(StoreError::Unavailable.into());
+    }
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(store.pool().await?)
+        .execute(store.pool().await.map_err(|_| StoreError::Unavailable)?)
         .await
         .map_err(|_| StoreError::Unavailable)?;
     store.secure_files()?;

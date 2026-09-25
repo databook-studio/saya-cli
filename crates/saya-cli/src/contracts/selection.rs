@@ -27,7 +27,10 @@
 
 use super::name_match::{alias_matches, name_matches};
 use crate::contracts::availability::SchemaAvailability;
-use saya_store::{KnowledgeItem, KnowledgeItemStore, SqliteStateStore};
+use saya_store::{
+    KnowledgeItem, KnowledgeItemStore, KnowledgeItemsQuery, KnowledgeObjectsQuery,
+    MAX_KNOWLEDGE_PAGE_SIZE, SqliteStateStore,
+};
 use saya_types::{ClaimPayload, DatabaseObjectRef, KnowledgeState, ProfileIdentity};
 use std::collections::HashMap;
 
@@ -47,6 +50,7 @@ pub(crate) struct Selection {
     pub candidates: Vec<Candidate>,
     pub considered: usize,
     pub excluded_by_status: usize,
+    pub repository_truncated: bool,
 }
 
 /// Builds the ranked candidate list for `request` against `store`. Returns the
@@ -56,9 +60,9 @@ pub(crate) async fn select(
     request: &super::RecallRequest<'_>,
     live_schemas: &[(ProfileIdentity, SchemaAvailability)],
 ) -> Result<Selection, saya_store::KnowledgeStoreError> {
-    let active: Vec<DatabaseObjectRef> = collect_objects(store, request.profiles).await?;
+    let (active, objects_truncated) = collect_objects(store, request.profiles).await?;
     let considered = active.len();
-    let items_by_object = collect_items(store, request.profiles).await?;
+    let (items_by_object, items_truncated) = collect_items(store, request.profiles).await?;
 
     let mut by_object: Vec<Candidate> = Vec::new();
     let mut excluded_by_status = 0usize;
@@ -120,6 +124,7 @@ pub(crate) async fn select(
         candidates: by_object,
         considered,
         excluded_by_status,
+        repository_truncated: objects_truncated || items_truncated,
     })
 }
 
@@ -135,12 +140,17 @@ fn admissible_once(item: &saya_store::KnowledgeItem, request: &super::RecallRequ
 async fn collect_objects(
     store: &SqliteStateStore,
     profiles: &[ProfileIdentity],
-) -> Result<Vec<DatabaseObjectRef>, saya_store::KnowledgeStoreError> {
+) -> Result<(Vec<DatabaseObjectRef>, bool), saya_store::KnowledgeStoreError> {
     let mut out = Vec::new();
+    let mut truncated = false;
     for profile in profiles {
-        out.extend(store.objects_for_profile(profile).await?);
+        let query = KnowledgeObjectsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE)
+            .map_err(saya_store::KnowledgeStoreError::from)?;
+        let page = store.objects_for_profile_page(profile, query).await?;
+        truncated |= page.has_more();
+        out.extend(page.entries);
     }
-    Ok(out)
+    Ok((out, truncated))
 }
 
 /// Every knowledge item of every active profile, grouped by object — one
@@ -151,16 +161,24 @@ async fn collect_items(
     store: &SqliteStateStore,
     profiles: &[ProfileIdentity],
 ) -> Result<
-    HashMap<DatabaseObjectRef, Vec<saya_store::KnowledgeItem>>,
+    (
+        HashMap<DatabaseObjectRef, Vec<saya_store::KnowledgeItem>>,
+        bool,
+    ),
     saya_store::KnowledgeStoreError,
 > {
     let mut by_object: HashMap<DatabaseObjectRef, Vec<saya_store::KnowledgeItem>> = HashMap::new();
+    let mut truncated = false;
     for profile in profiles {
-        for item in store.knowledge_for_profile(profile).await? {
+        let query = KnowledgeItemsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE)
+            .map_err(saya_store::KnowledgeStoreError::from)?;
+        let page = store.knowledge_for_profile_page(profile, query).await?;
+        truncated |= page.has_more();
+        for item in page.entries {
             by_object.entry(item.object.clone()).or_default().push(item);
         }
     }
-    Ok(by_object)
+    Ok((by_object, truncated))
 }
 
 fn best_tier(
@@ -201,6 +219,7 @@ fn best_tier(
             ClaimPayload::TableDescription { text, .. } => Some(text.to_lowercase()),
             ClaimPayload::TableGrain { description, .. } => Some(description.to_lowercase()),
             ClaimPayload::ColumnDescription { text, .. } => Some(text.to_lowercase()),
+            ClaimPayload::TableUserNote { text, .. } => Some(text.to_lowercase()),
             _ => None,
         })
         .collect();

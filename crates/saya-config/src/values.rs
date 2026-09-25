@@ -85,6 +85,45 @@ impl ThemeChoice {
     }
 }
 
+/// How context compaction behaves once the window fills.
+///
+/// - `Auto`: `/compact` works and a finished turn at or past the compact
+///   threshold summarises older turns on its own.
+/// - `Manual`: `/compact` works but nothing ever fires on its own.
+/// - `Off`: neither the automatic trigger nor the 70% warning fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionMode {
+    /// Automatic compaction on crossing the threshold (the default).
+    #[default]
+    Auto,
+    /// Only an explicit `/compact` compacts.
+    Manual,
+    /// No automatic trigger and no context warning; `/compact` still works
+    /// when explicitly asked (it is working-memory maintenance, not a
+    /// background behaviour).
+    Off,
+}
+
+impl CompactionMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Manual => "manual",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "manual" => Some(Self::Manual),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
 /// Memory operational mode.
 ///
 /// - `Off`: memory is completely disabled — no store queries, no proposals, no observation logging.

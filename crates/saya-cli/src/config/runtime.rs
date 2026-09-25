@@ -178,6 +178,7 @@ pub fn approval_name(options: &GlobalOptions) -> Result<String, RuntimeError> {
         saya_agent::ApprovalPolicy::Ask => "ask",
         saya_agent::ApprovalPolicy::ReadOnly => "read-only",
         saya_agent::ApprovalPolicy::Never => "never",
+        saya_agent::ApprovalPolicy::Bypass => "bypass",
     }
     .into())
 }
@@ -190,5 +191,38 @@ pub fn format_name(
         options.format.into()
     } else {
         resolved.output_format.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The name map carries every mode the grammar parses, and each name
+    /// round-trips through the parser — the maps and `FromStr` cannot drift,
+    /// so a mode the flag accepts is a mode the status bar, the session
+    /// record, and `/approvals` can all name.
+    #[test]
+    fn the_approval_name_map_covers_the_whole_vocabulary() {
+        for (value, name) in [
+            ("ask", "ask"),
+            ("read-only", "read-only"),
+            ("never", "never"),
+            ("bypass", "bypass"),
+        ] {
+            let options = GlobalOptions {
+                approval_mode: Some(value.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(approval_name(&options).unwrap(), name);
+            assert_eq!(
+                approval_name(&options)
+                    .unwrap()
+                    .parse::<saya_agent::ApprovalPolicy>()
+                    .unwrap(),
+                approval_mode(&options).unwrap(),
+                "the name re-parses to the same mode: the vocabulary round-trips"
+            );
+        }
     }
 }

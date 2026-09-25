@@ -6,7 +6,7 @@ saya ask \"count orders per region\"     one-shot question\n  \
 echo \"SELECT 1\" | saya query           piped SQL works too\n  \
 saya query --sql \"SELECT 1\"            bounded read-only SQL\n  \
 saya config doctor                     diagnose setup problems\n  \
-saya completions --shell zsh > completion.zsh\n\nExit codes: 0 ok · 2 usage · 3 connection/config · 4 safety/query · 5 agent · 130 cancelled";
+saya completions --shell zsh > completion.zsh\n\nExit codes: 0 ok · 2 usage · 3 connection/config · 4 safety/query · 5 agent · 6 paused · 130 cancelled";
 
 #[derive(Debug, Clone, Parser)]
 #[command(
@@ -26,11 +26,43 @@ pub struct Cli {
 #[derive(Debug, Clone, Args, Default)]
 pub struct GlobalOptions {
     /// Continue the most recent session.
-    #[arg(long = "continue", global = true)]
+    ///
+    /// Not a global flag: its only consumer is the interactive session this
+    /// flag sits beside, and a run is not a session — `saya run --continue`
+    /// is a usage error, never a silently ignored intent. The pre-subcommand
+    /// spelling (`saya --continue run`) is refused by the dispatch guard.
+    #[arg(long = "continue")]
     pub continue_session: bool,
     /// Resume a saved session by id (see `saya config doctor` / /sessions).
     #[arg(long, global = true)]
     pub resume: Option<String>,
+    /// Bind the session's workspace root explicitly to this directory
+    /// (canonicalised and pinned into the session). Without it the root is
+    /// the git worktree top above the launch directory, and outside any
+    /// worktree nothing binds: the write-shaped tools stay hidden and the
+    /// workspace reads refuse.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<std::path::PathBuf>,
+    /// Seed session grants at launch, stated in the `--allow` grammar.
+    /// Session-only: a subcommand is not a session — `saya ask` and `saya run`
+    /// refuse it rather than silently ignoring a stated intent.
+    #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
+    pub allow: Vec<String>,
+    /// Deny programs for the session, by bare name (repeatable): a
+    /// user-stated refusal evaluated before every grant, every approval
+    /// prompt, and bypass, at every session door that execs a program by
+    /// name — `run_command`, `run_program`, the interpreter door.
+    /// Refusal-only: it composes nothing. Session-only: `saya ask` and
+    /// `saya run` refuse it rather than silently ignoring a stated intent.
+    #[arg(long = "deny", value_name = "PROGRAM")]
+    pub deny: Vec<String>,
+    /// Read one turn from this file instead of stdin, run exactly that turn,
+    /// then exit. The bytes reach the turn unaltered — blank lines, trailing
+    /// whitespace, code fences — where piped stdin reads line by line and
+    /// folds layout. Session-surface only: `saya ask` and `saya run` refuse
+    /// it rather than silently ignoring a stated intent.
+    #[arg(long = "turn-file", value_name = "PATH")]
+    pub turn_file: Option<std::path::PathBuf>,
     /// Connection profile to use (overrides `default_profile` in config).
     #[arg(long, global = true)]
     pub profile: Option<String>,
@@ -50,7 +82,10 @@ pub struct GlobalOptions {
     /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
-    /// When tool calls need approval: ask | read-only | never.
+    /// When tool calls need approval: ask | read-only | never | bypass.
+    /// Read-only auto-approves read-shaped tools only; tools with external
+    /// side effects are denied. `bypass` runs every call without asking;
+    /// every structural guard still applies.
     #[arg(long, value_name = "MODE", global = true)]
     pub approval_mode: Option<String>,
     /// Output format for subcommands: text | json | ndjson.
@@ -68,7 +103,7 @@ pub struct GlobalOptions {
     /// Explicit env file with SAYA_* overrides (never implicit .env).
     #[arg(long, global = true)]
     pub env_file: Option<std::path::PathBuf>,
-    /// Enable cloud data sharing for this invocation (privacy:on), overriding any
+    /// Enable cloud data sharing for this invocation (sharing:on), overriding any
     /// config layer that disabled it.
     #[arg(long, global = true)]
     pub allow_data_sharing: bool,
@@ -169,6 +204,46 @@ pub enum Command {
         #[command(subcommand)]
         command: ContractsCommand,
     },
+    /// Run a long-running, resumable job against the configured database:
+    /// `saya run "<goal>"` plans and executes it step by step, pausing (never
+    /// silently stopping) when a budget trips; `saya run resume|cancel|list|
+    /// show|log` manage runs. Scopes must be declared up front with `--allow`:
+    /// a headless run pre-authorizes them, an interactive terminal approves
+    /// the bound plan, its scopes, and its budgets once.
+    Run {
+        /// The run's goal.
+        prompt: Option<String>,
+        /// Approved capability scopes, comma-separated. `none` states a
+        /// deliberately read-only run — the empty scope set — and must stand
+        /// alone. The wired scopes bind: `workspace-write` (writes outside
+        /// reads), `scratch` (a scratch database), `fetch:<scheme>+<host>`
+        /// (network fetches to that scheme and bare host), and
+        /// `runner:<program>` (a program the runner executes directly).
+        /// `interpreter:<program>` grants a shell or interpreter — a program
+        /// that can spawn arbitrary children, so the runner will not choose
+        /// one on its own; naming it here is the only way a run may use one.
+        /// `sql:<connection>` seeds the run's decider with the connection's
+        /// per-call grant: under `--approval-mode ask`, the read-shaped SQL
+        /// tools' calls that name that connection run without asking, and a
+        /// resume re-derives the grant from the run's journal.
+        /// `command:<program>` is refused with a usage error: a run is
+        /// unattended and this scope names unconfined host execution.
+        /// `endpoint:<role>=<endpoint>` is refused with a usage error:
+        /// per-step endpoint roles are not bound. A run states its scopes
+        /// up front or does not start —
+        /// nothing runs unapproved.
+        #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
+        allow: Vec<String>,
+        /// Budget overrides as KEY=VALUE: `wall-clock=<seconds>`,
+        /// `turns=<n>`, `tool-calls=<n>`, or `tokens.orchestrator=<n>` —
+        /// the only token ceiling a run accepts, since every episode calls
+        /// the orchestrator endpoint. Unset keys fall back to `[jobs]`; a
+        /// zero ceiling is refused as a typo, not clamped.
+        #[arg(long, value_name = "KEY=VALUE")]
+        budget: Vec<String>,
+        #[command(subcommand)]
+        command: Option<RunCommand>,
+    },
     /// Generate shell completion scripts for `saya`.
     Completions {
         /// Shell to generate completions for.
@@ -190,8 +265,9 @@ pub enum ConfigCommand {
         #[arg(long)]
         project: bool,
     },
-    /// Diagnose configuration: secrets resolve? provider reachable? Exits
-    /// non-zero (3) when the setup cannot run a query, so a script can tell.
+    /// Diagnose configuration: secrets resolve? what provider endpoint is
+    /// configured? Exits non-zero (3) when the setup cannot run a query, so a
+    /// script can tell.
     Doctor,
     /// Print the effective (redacted) configuration as JSON.
     Show,
@@ -331,6 +407,35 @@ pub enum ContractsCommand {
         /// Why the claim is being forgotten.
         #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
         reason: ForgetReasonArg,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum RunCommand {
+    /// Continue a paused (or crashed) run at its first incomplete step. The
+    /// run's journal is the authority; a run with a live holder refuses.
+    Resume {
+        /// The id of the run to resume (`saya run list` prints them).
+        run_id: String,
+    },
+    /// Record a run cancelled. A run with a live holder refuses — cancel the
+    /// process that owns it (Ctrl-C) instead; a finished run changes nothing.
+    Cancel {
+        /// The id of the run to cancel.
+        run_id: String,
+    },
+    /// List every run, most recent first.
+    List,
+    /// Show one run's status, goal, scopes, pause reason, and the
+    /// deliverables its steps recorded.
+    Show {
+        /// The id of the run to show.
+        run_id: String,
+    },
+    /// Print one run's journal — every lifecycle and step event, in order.
+    Log {
+        /// The id of the run whose journal to print.
+        run_id: String,
     },
 }
 

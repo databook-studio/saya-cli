@@ -16,6 +16,8 @@ use std::sync::OnceLock;
 /// `--verbose`, before any turn runs) or lazily from the environment.
 static ENABLED: OnceLock<bool> = OnceLock::new();
 
+const MAX_TRACE_ERROR_BYTES: usize = 160;
+
 /// Turns the trace on for this process, whatever the environment says.
 ///
 /// Called once at startup when `--verbose` is passed. Seeding the gate is what
@@ -66,23 +68,60 @@ pub(crate) fn trace_extraction(
     if !enabled() {
         return;
     }
+    eprintln!(
+        "{}",
+        format_trace_line(outcome, object_count, proposal_count, error, elapsed)
+    );
+}
+
+fn format_trace_line(
+    outcome: &'static str,
+    object_count: usize,
+    proposal_count: Option<usize>,
+    error: Option<&str>,
+    elapsed: Option<std::time::Duration>,
+) -> String {
     let proposals = match proposal_count {
         Some(n) => format!(" proposals={n}"),
         None => String::new(),
     };
     let err = match error {
-        Some(e) => format!(" error={e}"),
+        Some(e) => format!(" error={}", redacted_trace_error(e)),
         None => String::new(),
     };
-    // Duration is what tells you whether EXTRACTION_TIMEOUT is generous or
-    // tight against a given gateway. Without it a `timed_out` line says the cap
-    // fired but not how close the successful turns were to it, which is the
-    // number the cap should be set from.
+    // Duration is the extraction's real cost on a given gateway and model:
+    // there is no wall-clock cap (owner decision), so this is how a slow
+    // model's post-turn wait — and what the session breaker saw — is read.
     let ms = match elapsed {
         Some(d) => format!(" ms={}", d.as_millis()),
         None => String::new(),
     };
-    eprintln!("saya extraction: outcome={outcome} objects={object_count}{proposals}{err}{ms}");
+    format!("saya extraction: outcome={outcome} objects={object_count}{proposals}{err}{ms}")
+}
+
+fn redacted_trace_error(error: &str) -> String {
+    let safe = saya_types::redact(error)
+        .chars()
+        .map(|ch| {
+            if ch.is_control() && ch != '\t' {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect::<String>();
+    if safe.len() <= MAX_TRACE_ERROR_BYTES {
+        return safe;
+    }
+
+    // Keep the cap byte-based while preserving UTF-8 boundaries. The ellipsis
+    // makes truncation visible without retaining an unbounded provider detail.
+    let marker = "…";
+    let mut end = MAX_TRACE_ERROR_BYTES.saturating_sub(marker.len());
+    while end > 0 && !safe.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &safe[..end], marker)
 }
 
 #[cfg(test)]
@@ -104,5 +143,23 @@ mod tests {
         // Idempotent: a second call is a no-op, not a panic or a reset.
         enable();
         assert!(enabled());
+    }
+
+    #[test]
+    fn trace_error_is_redacted_and_bounded() {
+        let sentinel = "provider-json-secret-sentinel";
+        let detail = format!(
+            "extraction provider failed password={sentinel} {}\nterminal-noise",
+            "x".repeat(MAX_TRACE_ERROR_BYTES * 2)
+        );
+        let line = format_trace_line("failed", 1, Some(0), Some(&detail), None);
+
+        assert!(line.contains("password=[redacted]"));
+        assert!(!line.contains(sentinel));
+        assert!(!line.contains('\n'));
+        assert!(
+            line.len() < 320,
+            "trace must remain bounded even for an oversized provider error"
+        );
     }
 }

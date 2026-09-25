@@ -4,23 +4,37 @@
 //! per-concern submodules.
 
 mod approval;
+mod builders;
 mod chat;
+mod context;
 mod error;
 mod event;
 mod knowledge;
+mod learning;
+mod session_policy;
 mod tool;
+mod usage;
 
-pub use approval::{AllowReadOnlyApproval, ApprovalDecider};
+#[cfg(test)]
+mod session_policy_tests;
+
+pub use approval::{
+    AgentMode, AgentModeParseError, AllowReadOnlyApproval, ApprovalDecider, read_only_permits,
+};
 pub use chat::{
     AgentRequest, ChatMessage, ChatRequest, ChatResponse, ContextBlock, ReasoningEffort,
     ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,
 };
+pub use context::{CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, context_utilisation_percent};
 pub use error::{ProviderError, ToolError};
-pub use event::{AgentEvent, LearningSkipReason};
+pub use event::AgentEvent;
 pub use knowledge::{
     KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedClaimDto, SuppliedContractDto,
 };
+pub use learning::LearningSkipReason;
+pub use session_policy::{ApprovalChoice, ApprovalDecision, SessionGrants, SessionPolicy};
 pub use tool::{LocalStateEffect, ToolDefinition, ToolEffect, ToolExecutor};
+pub use usage::UsageCall;
 
 #[cfg(test)]
 mod tests {
@@ -205,6 +219,8 @@ mod tests {
             (LocalStateEffect::None, "none"),
             (LocalStateEffect::Read, "read"),
             (LocalStateEffect::WriteCandidate, "write_candidate"),
+            (LocalStateEffect::WriteWorkspace, "write_workspace"),
+            (LocalStateEffect::WriteSession, "write_session"),
         ] {
             let text = serde_json::to_string(&variant).expect("serializes");
             assert_eq!(text, format!("\"{expected}\""), "{variant:?}");

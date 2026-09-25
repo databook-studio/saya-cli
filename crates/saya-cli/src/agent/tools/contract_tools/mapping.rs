@@ -31,6 +31,8 @@ pub(super) const REASON_NO_CONTRACT: &str = "no contract is stored for this obje
 /// from `REASON_NO_MATCH` so the model does not retry the same terms expecting a
 /// different answer, and so the exclusion is not silent.
 pub(super) const REASON_STALE: &str = "every matching contract is stale; refresh the schema";
+pub(super) const REASON_TRUNCATED: &str =
+    "knowledge repository result is truncated; refine the query or continue it";
 
 /// Serializes one object's contract for the model. The `ContractView` DTO has
 /// no field for the opaque identity, so neither does this payload.

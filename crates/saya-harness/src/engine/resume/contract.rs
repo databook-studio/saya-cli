@@ -1,0 +1,109 @@
+//! The resume entry point's public contract: its typed outcome and error,
+//! and the inputs the composition root supplies once per resume.
+//!
+//! These types are constructible by design — the composition root's side of
+//! the resume, not data the model or plan produces.
+
+use std::{sync::Arc, time::Duration};
+
+use saya_agent::AgentEventSink;
+use saya_store::RunStore;
+use saya_types::{RunId, RunPlan};
+
+use crate::fetch::DownloadBudget;
+use crate::{HarnessError, journal::JournalWire, workspace::Workspace};
+
+use crate::engine::episode::{EpisodeCollaborators, EpisodeError, EpisodeRequest, ManifestBounds};
+use crate::engine::sink::EngineSinkError;
+use crate::engine::state::RunState;
+
+/// What resume found in the journal and what it did about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumeOutcome {
+    /// The run continues at the plan's first incomplete step — an in-flight
+    /// step restarted from its beginning — and every remaining step ran
+    /// through the episode driver. `state` is where the run ended.
+    Resumed { first_step: usize, state: RunState },
+    /// Nothing was left to run: the journal already records a terminal
+    /// state, or every step is complete and resume recorded the completion
+    /// the crash had left unwritten.
+    Settled { state: RunState },
+    /// The journal's run has no approval on record. Approval is explicit;
+    /// resume runs nothing and records nothing.
+    Unapproved,
+    /// The journal holds no run.
+    NoRun,
+}
+
+/// Why resume refused or stopped. Data, not prose: `saya-cli` renders these.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResumeError {
+    /// The run directory's single-writer lock is held by a live process:
+    /// another engine owns the run.
+    #[error("run directory is locked by another engine: {source}")]
+    Lock {
+        #[source]
+        source: HarnessError,
+    },
+    /// The journal could not be read, repaired, or replayed.
+    #[error("run journal replay failed: {source}")]
+    Journal {
+        #[source]
+        source: HarnessError,
+    },
+    /// A resumed step failed, or a gate refused it.
+    #[error("resumed episode failed: {source}")]
+    Episode {
+        #[source]
+        source: EpisodeError,
+    },
+    /// A lifecycle transition was refused — by the machine, its journal
+    /// write, or its store mirror.
+    #[error("run transition failed: {source}")]
+    Transition {
+        #[source]
+        source: EngineSinkError,
+    },
+}
+
+/// The composition root's side of a resume: everything but the journal and
+/// the machine state, which resume derives from the journal itself.
+pub struct ResumeRun<'a> {
+    pub run_id: RunId,
+    pub store: Arc<dyn RunStore>,
+    pub plan: RunPlan,
+    pub workspace: Workspace,
+    pub collaborators: EpisodeCollaborators<'a>,
+    pub request: EpisodeRequest,
+    pub bounds: ManifestBounds,
+    /// The run's declared wall-clock ceiling, armed again for the resumed steps.
+    pub wall_clock: Option<Duration>,
+    /// The run's token ceiling. It binds the **run**, not each invocation:
+    /// `resume` seeds the sink's usage totals from the journal's usage
+    /// record, so a resumed run continues against the same ceiling instead
+    /// of re-arming it in full — resuming a run that already paused on this
+    /// ceiling, without raising it, trips on the first tick. The wall clock
+    /// above, which no record can replay, re-arms per invocation.
+    pub token_ceiling: Option<u64>,
+    /// The run's download wallet, armed again so a resumed run keeps its
+    /// declared download posture: the composition root hands the same
+    /// wallet it put behind the fetch-capable steps' executors, and
+    /// `resume` seeds it with the download spend the run's journal already
+    /// records — the same carry the token ceiling gets from its usage
+    /// record — so the budget binds the run, not each invocation: resuming
+    /// a run that already spent against the wallet continues against the
+    /// bytes already claimed, and a run already past its limit is refused
+    /// on its next download claim. The seed rides the repaired record and
+    /// never touches the trip latch: a carried level is not a refusal, and
+    /// the latch keeps recording only refusals that happened. `None` keeps
+    /// the check inert.
+    pub download_budget: Option<DownloadBudget>,
+    /// Optional observer every journaled event notifies — the headless run
+    /// wire attaches one so a resumed run streams its journal as it writes
+    /// it. `None` renders nothing; the durable record is unaffected either way.
+    pub journal_wire: Option<JournalWire>,
+    /// Optional downstream sink the episode's agent events mirror to, in the
+    /// caller's format. `None` keeps the resume silent, as before.
+    pub agent_stream: Option<Arc<dyn AgentEventSink>>,
+}

@@ -1,6 +1,6 @@
 [package]
 name = "saya-cli"
-version = "0.4.0"
+version = "0.4.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,11 +30,12 @@ async-trait.workspace = true
 clap.workspace = true
 clap_complete = "4"
 futures-util.workspace = true
-saya-agent = { path = "../saya-agent", version = "0.4.0" }
-saya-config = { path = "../saya-config", version = "0.4.0" }
-saya-connectors = { path = "../saya-connectors", version = "0.4.0" }
-saya-store = { path = "../saya-store", version = "0.4.0" }
-saya-types = { path = "../saya-types", version = "0.4.0" }
+saya-agent = { path = "../saya-agent", version = "0.4.1" }
+saya-config = { path = "../saya-config", version = "0.4.1" }
+saya-connectors = { path = "../saya-connectors", version = "0.4.1" }
+saya-harness = { path = "../saya-harness", version = "0.4.1" }
+saya-store = { path = "../saya-store", version = "0.4.1" }
+saya-types = { path = "../saya-types", version = "0.4.1" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -44,6 +45,12 @@ sha2.workspace = true
 ratatui.workspace = true
 base64.workspace = true
 url.workspace = true
+terminal-colorsaurus.workspace = true
+# Transcript wrapping measures display cells and breaks on grapheme bounds.
+# Both are already in Cargo.lock (transitive via ratatui); these pins add no
+# new supply chain.
+unicode-segmentation = "=1.13.3"
+unicode-width = "=0.2.2"
 
 [dev-dependencies]
 duckdb.workspace = true

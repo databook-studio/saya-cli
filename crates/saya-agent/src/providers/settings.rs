@@ -1,5 +1,17 @@
 use std::time::Duration;
 
+/// The default backoff schedule slept between retryable provider failures, in
+/// order: the one definition behind both the HTTP establishment path
+/// (`http.rs`) and the loop's turn-level retry (`loop_runner::receive`). An
+/// empty list means one attempt with no retries.
+pub(crate) fn default_retry_delays() -> Vec<Duration> {
+    vec![
+        Duration::from_millis(250),
+        Duration::from_millis(500),
+        Duration::from_millis(1000),
+    ]
+}
+
 #[derive(Clone)]
 pub struct ProviderSettings {
     pub model: String,
@@ -27,11 +39,7 @@ impl ProviderSettings {
             base_url,
             timeout: Duration::from_secs(60),
             idle_timeout: Duration::from_secs(90),
-            retry_delays: vec![
-                Duration::from_millis(250),
-                Duration::from_millis(500),
-                Duration::from_millis(1000),
-            ],
+            retry_delays: default_retry_delays(),
             temperature: 0.1,
             max_output_tokens: 4096,
         }

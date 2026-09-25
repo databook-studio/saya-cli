@@ -141,6 +141,308 @@ fn legacy_messages_migrate_to_one_safe_turn() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// M0-2: persist with `read-only`, resume with an explicit
+/// `--approval-mode never` — the flag must override the persisted mode
+/// instead of being silently ignored.
+#[test]
+fn resume_honors_an_explicit_approval_mode_override() {
+    let root = std::env::temp_dir().join(format!("saya-resume-override-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    super::block_on(store.save(RedactedSession {
+        version: saya_store::SESSION_VERSION,
+        id: "override".into(),
+        approval_mode: "read-only".into(),
+        ..Default::default()
+    }))
+    .unwrap();
+    let cli = Cli {
+        options: GlobalOptions {
+            continue_session: true,
+            approval_mode: Some("never".into()),
+            ..Default::default()
+        },
+        command: None,
+    };
+    let mut state = load_session(
+        &store,
+        &cli,
+        &SessionDefaults {
+            provider: "openai".into(),
+            model: "current-model".into(),
+            allow_data_sharing: true,
+            approval_mode: "never".into(),
+        },
+    )
+    .unwrap();
+    // Loading alone keeps resume continuity: the persisted mode stands...
+    assert_eq!(state.approval_mode, "read-only");
+    // ...and the loop's resume resolution lets the explicit flag win.
+    state.approval_mode =
+        super::super::session_loop::resume_approval_mode(&cli.options, &state.approval_mode)
+            .unwrap();
+    assert_eq!(state.approval_mode, "never");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// M0-2: resume without the flag keeps the persisted mode (resume
+/// continuity).
+#[test]
+fn resume_without_the_flag_keeps_the_persisted_mode() {
+    let root = std::env::temp_dir().join(format!("saya-resume-keep-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    super::block_on(store.save(RedactedSession {
+        version: saya_store::SESSION_VERSION,
+        id: "keep".into(),
+        approval_mode: "read-only".into(),
+        ..Default::default()
+    }))
+    .unwrap();
+    let cli = cli();
+    let mut state = load_session(
+        &store,
+        &cli,
+        &SessionDefaults {
+            provider: "openai".into(),
+            model: "current-model".into(),
+            allow_data_sharing: true,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(state.approval_mode, "read-only");
+    // The resume resolution without the flag keeps the persisted mode.
+    state.approval_mode =
+        super::super::session_loop::resume_approval_mode(&cli.options, &state.approval_mode)
+            .unwrap();
+    assert_eq!(state.approval_mode, "read-only");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A Plan session survives the persist/resume round trip with its posture
+/// and its status-line word intact: the user who set Plan is not silently
+/// handed write tools on return.
+#[test]
+fn a_plan_session_resumes_as_plan_with_its_status_word() {
+    use saya_agent::AgentMode;
+    let root = std::env::temp_dir().join(format!("saya-mode-resume-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    let mut state = crate::SessionState::new("planned", None, "m");
+    state.agent_mode = AgentMode::Plan.as_str().into();
+    super::block_on(store.save(state.redacted())).unwrap();
+    let resumed = load_session(
+        &store,
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(resumed.agent_mode, "plan");
+    assert_eq!(resumed.agent_mode_parsed(), AgentMode::Plan);
+    assert!(
+        super::super::session_prompt::status_line(&resumed).contains("mode:plan"),
+        "the status line names the resumed posture"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A session file written before the mode field existed resumes as Build
+/// without error: the default is today's behaviour for every existing
+/// session, not a silent read-only session the user never chose. The
+/// fixture is raw JSON with no mode key, so deserialization — not struct
+/// construction — proves the old record loads.
+#[test]
+fn a_session_file_without_the_mode_field_resumes_as_build() {
+    use saya_agent::AgentMode;
+    let root = std::env::temp_dir().join(format!("saya-mode-legacy-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("old.json"),
+        r#"{"version":2,"id":"old","profile_names":[],"turns":[],"messages":[]}"#,
+    )
+    .unwrap();
+    let state = load_session(
+        &FsSessionStore::new(&root),
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(state.agent_mode, "build");
+    assert_eq!(state.agent_mode_parsed(), AgentMode::Build);
+    assert!(
+        super::super::session_prompt::status_line(&state).contains("mode:build"),
+        "the old session reads exactly as before"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A resumed Plan session starts with an empty grant store: the mode rides
+/// the record, and grants still die with the process — the persisted plan
+/// posture never re-grants anything.
+#[test]
+fn a_resumed_plan_session_starts_with_an_empty_grant_store() {
+    let state = super::state_from_redacted(
+        RedactedSession {
+            version: saya_store::SESSION_VERSION,
+            id: "planned-grants".into(),
+            agent_mode: "plan".into(),
+            ..Default::default()
+        },
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    );
+    assert_eq!(state.agent_mode, "plan");
+    let policy = saya_agent::SessionPolicy::new(saya_agent::ApprovalPolicy::Ask);
+    assert!(
+        policy.grants().is_empty(),
+        "a resumed session builds its policy empty, from the mode alone"
+    );
+}
+
+/// The additive-field rule for session files: a new persisted field stays
+/// `#[serde(default)]` at `SESSION_VERSION` 2 — absence deserializes to the
+/// old behaviour — so a pre-slice record resumes without error and without
+/// the version-skew fallback rewriting its live fields.
+#[test]
+fn the_mode_is_an_additive_field_at_the_current_session_version() {
+    assert_eq!(saya_store::SESSION_VERSION, 2);
+    let record: RedactedSession = serde_json::from_str(
+        r#"{"version":2,"id":"old","profile_names":[],"turns":[],"messages":[]}"#,
+    )
+    .expect("a record without the mode field deserializes");
+    assert!(
+        record.agent_mode.is_empty(),
+        "a pre-slice record carries no mode"
+    );
+}
+
+/// A task list survives the persist/resume round trip identical: the list
+/// rides the record the way the mode does, and the resume restores it behind
+/// the list's own `validate()` gate.
+#[test]
+fn a_task_list_round_trips_through_persist_and_resume() {
+    use saya_types::{SessionTask, SessionTaskList, TaskStatus};
+    let root = std::env::temp_dir().join(format!("saya-tasks-resume-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    let mut state = crate::SessionState::new("tasked", None, "m");
+    state.task_list = SessionTaskList::new(vec![
+        SessionTask::with_note(
+            "profile the tables",
+            TaskStatus::InProgress,
+            Some("halfway"),
+        )
+        .unwrap(),
+        SessionTask::new("write the report", TaskStatus::Pending).unwrap(),
+    ])
+    .unwrap();
+    super::block_on(store.save(state.redacted())).unwrap();
+    let resumed = load_session(
+        &store,
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(resumed.task_list, state.task_list);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A session file written before the task-list field existed resumes with an
+/// empty list: the field is `#[serde(default)]`, so absence deserializes to
+/// the starting state. The fixture is raw JSON with no task-list key, so
+/// deserialization — not struct construction — proves the old record loads.
+#[test]
+fn a_session_file_without_the_task_list_field_resumes_empty() {
+    let root = std::env::temp_dir().join(format!("saya-tasks-legacy-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("old.json"),
+        r#"{"version":2,"id":"old","profile_names":[],"turns":[],"messages":[]}"#,
+    )
+    .unwrap();
+    let state = load_session(
+        &FsSessionStore::new(&root),
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert!(
+        state.task_list.is_empty(),
+        "a pre-slice record resumes with an empty list"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A record whose stored list fails `validate()` — hand-edited, or written
+/// by an older buggy build — resumes empty rather than failing the session:
+/// a corrupt todo list must never make a session unopenable. The fixture is
+/// raw JSON with two tasks in progress, so deserialization proves the resume
+/// path validates the stored list instead of trusting it.
+#[test]
+fn a_session_file_with_an_invalid_task_list_resumes_empty_without_error() {
+    let root = std::env::temp_dir().join(format!("saya-tasks-invalid-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("bad.json"),
+        r#"{"version":2,"id":"bad","profile_names":[],"turns":[],"messages":[],"task_list":{"tasks":[{"title":"one","status":"in_progress"},{"title":"two","status":"in_progress"}]}}"#,
+    )
+    .unwrap();
+    let state = load_session(
+        &FsSessionStore::new(&root),
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .expect("an invalid stored list must not fail the resume");
+    assert!(
+        state.task_list.is_empty(),
+        "an invalid stored list resumes empty"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The additive-field rule holds for the task list too: it stays
+/// `#[serde(default)]` at `SESSION_VERSION` 2 — absence deserializes to the
+/// empty list — so no version bump is owed, exactly the `agent_mode`
+/// precedent.
+#[test]
+fn the_task_list_is_an_additive_field_at_the_current_session_version() {
+    assert_eq!(saya_store::SESSION_VERSION, 2);
+    let record: RedactedSession = serde_json::from_str(
+        r#"{"version":2,"id":"old","profile_names":[],"turns":[],"messages":[]}"#,
+    )
+    .expect("a record without the task-list field deserializes");
+    assert!(
+        record.task_list.is_empty(),
+        "a pre-slice record carries no tasks"
+    );
+}
+
 /// An older session file written before the `arguments` and `result_shape`
 /// fields existed still loads: the new fields are `#[serde(default)]`, so a
 /// tool record carrying only `name` and `status` deserializes with empty
@@ -174,4 +476,168 @@ fn an_old_session_file_without_the_new_tool_fields_still_loads() {
         "missing result_shape defaults to None"
     );
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The resume pin: a session whose record carries a workspace root re-opens
+/// that root on resume, whatever directory the resume happens from — the
+/// root follows the record, not the shell. A session written before the
+/// workspace existed carries no root and resumes unbound, exactly its old
+/// behaviour.
+#[test]
+fn the_recorded_workspace_root_rides_the_resume() {
+    let root = std::env::temp_dir().join(format!("saya-ws-pin-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    super::block_on(store.save(RedactedSession {
+        version: saya_store::SESSION_VERSION,
+        id: "pinned".into(),
+        workspace_root: Some("/projects/saya".into()),
+        ..Default::default()
+    }))
+    .unwrap();
+    let state = load_session(
+        &store,
+        &cli(),
+        &SessionDefaults {
+            provider: "openai".into(),
+            model: "current-model".into(),
+            allow_data_sharing: true,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        state.workspace_root.as_deref(),
+        Some("/projects/saya"),
+        "the pin follows the record, not the resume cwd"
+    );
+    // A record written before the workspace existed: no root, unbound.
+    super::block_on(store.save(RedactedSession {
+        version: saya_store::SESSION_VERSION,
+        id: "legacy".into(),
+        ..Default::default()
+    }))
+    .unwrap();
+    let legacy = Cli {
+        options: GlobalOptions {
+            resume: Some("legacy".into()),
+            ..Default::default()
+        },
+        command: None,
+    };
+    let old = load_session(
+        &store,
+        &legacy,
+        &SessionDefaults {
+            provider: "openai".into(),
+            model: "current-model".into(),
+            allow_data_sharing: true,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert!(
+        old.workspace_root.is_none(),
+        "no record, no pin: the old session resumes unbound"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A saved bypass session carries the mode across the resume — the persisted
+/// record is the durable activation fact — and the resume path re-prints the
+/// activation line for it, so a user returning to the session reads the
+/// mode's own words again rather than a bare `approval:bypass` on the bar.
+#[test]
+fn a_resumed_session_carries_bypass_and_reprints_the_line() {
+    let root = std::env::temp_dir().join(format!("saya-bypass-resume-{}", std::process::id()));
+    let store = FsSessionStore::new(&root);
+    super::block_on(store.save(RedactedSession {
+        version: saya_store::SESSION_VERSION,
+        id: "bypassed".into(),
+        approval_mode: "bypass".into(),
+        ..Default::default()
+    }))
+    .unwrap();
+    let state = load_session(
+        &store,
+        &cli(),
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(state.approval_mode, "bypass", "the record carries the mode");
+    // Resume continuity keeps it when no explicit flag overrides, and the
+    // activation line fires for exactly this mode.
+    let kept =
+        super::super::session_loop::resume_approval_mode(&GlobalOptions::default(), "bypass")
+            .unwrap();
+    assert_eq!(kept, "bypass");
+    assert!(
+        crate::interactive::session_activation::is_bypass_mode(&state),
+        "the resumed session is a bypass session"
+    );
+    let line = crate::interactive::session_activation::bypass_line(
+        &["python3".to_owned()],
+        false,
+        false,
+        &[],
+    );
+    assert!(
+        line.contains("bypass on:") && line.contains("python3"),
+        "the line the resume path re-prints is the activation line: {line}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The version-skew direction (DESIGN §7.5): a mode string no binary can
+/// parse falls back to `ask` at every parse site — the safe direction — and
+/// never into bypass. The parse sites are `unwrap_or(ApprovalPolicy::Ask)`;
+/// this pins the fallback's value and the refusal of unknown words, so a
+/// typo or a newer mode name degrades to asking, never to running.
+#[test]
+fn an_unparseable_mode_falls_back_to_ask_never_into_bypass() {
+    use saya_agent::ApprovalPolicy;
+    assert_eq!(
+        ApprovalPolicy::default(),
+        ApprovalPolicy::Ask,
+        "the mode type's default is the safe direction"
+    );
+    for unknown in ["bogus", "", "bypass ", "BYPASS", "auto"] {
+        assert!(
+            unknown.parse::<ApprovalPolicy>().is_err(),
+            "`{unknown}` is not a mode: the parse refuses it"
+        );
+        assert_eq!(
+            unknown
+                .parse::<ApprovalPolicy>()
+                .unwrap_or(ApprovalPolicy::Ask),
+            ApprovalPolicy::Ask,
+            "the parse sites' fallback is ask, never bypass"
+        );
+    }
+    // A persisted unparseable mode is carried verbatim (resume continuity)
+    // and degrades to ask at the parse sites — the state itself never
+    // invents a mode.
+    let state = super::state_from_redacted(
+        RedactedSession {
+            version: saya_store::SESSION_VERSION,
+            id: "skew".into(),
+            approval_mode: "bogus".into(),
+            ..Default::default()
+        },
+        &SessionDefaults {
+            provider: "ollama".into(),
+            model: "m".into(),
+            allow_data_sharing: false,
+            approval_mode: "ask".into(),
+        },
+    );
+    assert_eq!(state.approval_mode, "bogus");
+    assert!(
+        !crate::interactive::session_activation::is_bypass_mode(&state),
+        "an unparseable mode is never bypass"
+    );
 }

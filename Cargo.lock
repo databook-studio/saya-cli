@@ -2905,9 +2905,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -2974,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "saya-agent"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2989,7 +2989,7 @@ dependencies = [
 
 [[package]]
 name = "saya-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3005,22 +3005,26 @@ dependencies = [
  "saya-agent",
  "saya-config",
  "saya-connectors",
+ "saya-harness",
  "saya-store",
  "saya-types",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
+ "terminal-colorsaurus",
  "thiserror 2.0.20",
  "tokio",
  "toml",
+ "unicode-segmentation",
+ "unicode-width",
  "url",
  "vt100",
 ]
 
 [[package]]
 name = "saya-config"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "saya-types",
  "serde",
@@ -3031,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "saya-connectors"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3056,8 +3060,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "saya-harness"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "duckdb",
+ "futures-util",
+ "libc",
+ "proptest",
+ "reqwest",
+ "saya-agent",
+ "saya-connectors",
+ "saya-store",
+ "saya-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlparser",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "saya-store"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "saya-types",
@@ -3071,7 +3100,7 @@ dependencies = [
 
 [[package]]
 name = "saya-types"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "proptest",
  "serde",
@@ -3712,6 +3741,32 @@ dependencies = [
  "parking_lot",
  "rustix 1.1.4",
  "signal-hook",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "terminal-colorsaurus"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a46bb5364467da040298c573c8a95dbf9a512efc039630409a03126e3703e90"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "memchr",
+ "mio",
+ "terminal-trx",
+ "windows-sys 0.61.2",
+ "xterm-color",
+]
+
+[[package]]
+name = "terminal-trx"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b3f27d9a8a177e57545481faec87acb45c6e854ed1e5a3658ad186c106f38ed"
+dependencies = [
+ "cfg-if",
+ "libc",
  "windows-sys 0.61.2",
 ]
 
@@ -4749,6 +4804,12 @@ dependencies = [
  "libc",
  "rustix 1.1.4",
 ]
+
+[[package]]
+name = "xterm-color"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7008a9d8ba97a7e47d9b2df63fcdb8dade303010c5a7cd5bf2469d4da6eba673"
 
 [[package]]
 name = "yoke"

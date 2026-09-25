@@ -227,6 +227,21 @@ pub(crate) fn learning_skipped_text(reason: LearningSkipReason) -> String {
     }
 }
 
+/// Shapes the text line for one [`AgentEvent::KnowledgeLearningDisabled`]
+/// event — the extraction circuit breaker's once-per-session notice. Trails
+/// the answer, immediately after that turn's own [`learning_skipped_text`]
+/// line, so the two read together: "this turn wasn't learned from, and
+/// here's why nothing further will be either." The wording is fixed by the
+/// spec: it names the model and the miss count, and it says plainly that
+/// recall and `/remember` still work — the breaker stops one call, not the
+/// feature.
+pub(crate) fn learning_disabled_text(model: &str, misses: u32) -> String {
+    format!(
+        "memory: learning disabled for this session — extraction with {model} was cut off or \
+         stalled {misses} times in a row. Recall still works; /remember still stores a rule.\n"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,5 +668,19 @@ mod tests {
         assert!(failed.contains("memory not recorded"));
         assert!(timed_out.contains("not learned from"));
         assert!(failed.contains("not learned from"));
+    }
+
+    // --- Learning breaker: the KnowledgeLearningDisabled shaper. ---
+
+    /// The shaper's exact text (owner decision 3), naming the model and the
+    /// miss count and stating that recall and `/remember` are unaffected.
+    #[test]
+    fn learning_disabled_text_is_the_exact_spec_line() {
+        let text = learning_disabled_text("glm-5.2", 2);
+        assert_eq!(
+            text,
+            "memory: learning disabled for this session — extraction with glm-5.2 was cut off \
+             or stalled 2 times in a row. Recall still works; /remember still stores a rule.\n"
+        );
     }
 }

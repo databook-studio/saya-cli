@@ -19,9 +19,62 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CRATES=(saya-types saya-config saya-store saya-agent saya-connectors saya-cli)
+CRATES=(saya-types saya-config saya-store saya-agent saya-connectors saya-harness saya-cli)
 DRY_RUN="${DRY_RUN:-0}"
 UA="saya-release (github.com/databook-studio/saya-cli)"
+METADATA=""
+
+crate_index() {
+  local i
+  for i in "${!CRATES[@]}"; do
+    if [ "${CRATES[$i]}" = "$1" ]; then
+      printf '%s\n' "$i"
+      return 0
+    fi
+  done
+  printf '%s\n' '-1'
+}
+
+validate_workspace() {
+  METADATA="$(cargo metadata --locked --no-deps --format-version=1)"
+  local release_version workspace_names expected_names actual_names
+  release_version="$(jq -er '[.packages[] | select(.name == "saya-cli") | .version] | if length == 1 then .[0] else error("saya-cli package missing or duplicated") end' <<<"$METADATA")"
+  workspace_names="$(jq -r '[.workspace_members[] as $id | .packages[] | select(.id == $id) | .name] | .[]' <<<"$METADATA")"
+  expected_names="$(printf '%s\n' "${CRATES[@]}" | LC_ALL=C sort)"
+  actual_names="$(printf '%s\n' "$workspace_names" | LC_ALL=C sort)"
+  if [ "$actual_names" != "$expected_names" ]; then
+    echo "publish order does not cover the workspace exactly" >&2
+    echo "expected: ${CRATES[*]}" >&2
+    echo "workspace: $(tr '\n' ' ' <<<"$workspace_names")" >&2
+    exit 1
+  fi
+
+  while IFS=$'\t' read -r crate version; do
+    if [ "$version" != "$release_version" ]; then
+      echo "workspace crate $crate has version $version; expected $release_version" >&2
+      exit 1
+    fi
+  done < <(jq -r '[.workspace_members[] as $id | .packages[] | select(.id == $id) | [.name, .version] | @tsv] | .[]' <<<"$METADATA")
+
+  while IFS=$'\t' read -r crate dependency requirement; do
+    if [ "$requirement" != "^$release_version" ]; then
+      echo "workspace dependency $crate -> $dependency requires $requirement; expected ^$release_version" >&2
+      exit 1
+    fi
+  done < <(jq -r '[.workspace_members[] as $id | .packages[] | select(.id == $id) as $package | $package.dependencies[]? | select(.path != null) | [$package.name, .name, .req] | @tsv] | .[]' <<<"$METADATA")
+
+  while IFS=$'\t' read -r crate dependency; do
+    local crate_position dependency_position
+    crate_position="$(crate_index "$crate")"
+    dependency_position="$(crate_index "$dependency")"
+    if [ "$dependency_position" -lt 0 ] || [ "$dependency_position" -ge "$crate_position" ]; then
+      echo "publish order violates workspace dependency: $dependency must precede $crate" >&2
+      exit 1
+    fi
+  done < <(jq -r '[.workspace_members[] as $id | .packages[] | select(.id == $id) as $package | $package.dependencies[]? | select(.path != null) | [$package.name, .name] | @tsv] | .[]' <<<"$METADATA")
+}
+
+validate_workspace
 
 # In CI, skip gracefully if the registry token hasn't been configured yet, so a
 # release run doesn't fail before the maintainer opts in.
@@ -32,7 +85,7 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "$DRY_RUN" != "1" ] && [ -z "${CARGO_
 fi
 
 crate_version() {
-  cargo metadata --no-deps --format-version=1 | jq -r --arg n "$1" '.packages[] | select(.name==$n) | .version'
+  jq -er --arg n "$1" '[.packages[] | select(.name == $n) | .version] | if length == 1 then .[0] else error("crate missing or duplicated: \($n)") end' <<<"$METADATA"
 }
 
 is_published() {

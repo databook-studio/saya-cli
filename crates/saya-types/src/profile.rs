@@ -112,8 +112,10 @@ const fn default_true() -> bool {
     true
 }
 
-/// PostgreSQL TLS verification mode. `None` preserves PostgreSQL's `prefer`
-/// default for existing profiles that omit `sslmode`.
+/// PostgreSQL TLS verification mode. `None` leaves `sslmode` unspecified in the
+/// profile; the connector applies `Require` (encrypted, without certificate
+/// verification) when it builds a connection. Explicit `Prefer` remains
+/// available for profiles that need PostgreSQL's downgrade-capable behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PostgresSslMode {
     #[serde(rename = "disable")]

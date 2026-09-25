@@ -16,7 +16,7 @@ mod live;
 mod orchestrate;
 
 use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
-use saya_agent::{AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
 use saya_store::SqliteStateStore;
 use std::future::Future;
 use std::pin::Pin;
@@ -44,12 +44,18 @@ pub(crate) trait AttemptRunner: Sync {
 /// extra connector, no consensus event — today's single-run path, byte for
 /// byte. `candidates > 1` builds a live [`CandidateExecutor`] for the active
 /// profile, then hands the loop to [`orchestrate`].
+///
+/// `can_prompt` means "may read stdin" (the connector's secret prompt);
+/// `can_obtain_approval` means "can obtain a per-call approval at all" (the
+/// advertisement gate). The one-shot `ask` path passes the same value for
+/// both — unchanged behaviour.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_with_candidates(
     runtime: &crate::config::runtime::RuntimeConfig,
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
+    can_obtain_approval: bool,
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     sink: &dyn saya_agent::AgentEventSink,
@@ -57,6 +63,11 @@ pub(crate) async fn run_with_candidates(
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
+    // The run's contained session, when a run engine opened one. `None`
+    // leaves `workspace_read` denying with a typed error.
+    session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+    // The agent's task posture, threaded like `approval`.
+    agent_mode: AgentMode,
     candidates: usize,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
@@ -65,6 +76,7 @@ pub(crate) async fn run_with_candidates(
             prompt,
             approval,
             can_prompt,
+            can_obtain_approval,
             overrides,
             history,
             sink,
@@ -72,6 +84,8 @@ pub(crate) async fn run_with_candidates(
             state_db,
             decider,
             last_sql,
+            session,
+            agent_mode,
         )
         .await;
     }
@@ -81,12 +95,15 @@ pub(crate) async fn run_with_candidates(
         prompt,
         approval,
         can_prompt,
+        can_obtain_approval,
         overrides,
         sink,
         cancellation.clone(),
         state_db,
         decider,
         last_sql,
+        session,
+        agent_mode,
     );
     orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await
 }

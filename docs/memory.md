@@ -128,13 +128,22 @@ initial state.
 A proposal duplicating something already supplied that turn is dropped. Otherwise a fact could
 strengthen itself simply by being recalled.
 
-Extraction is best-effort and isolated: if it fails, times out, or returns nothing usable, your query
-and your answer are unaffected.
+Extraction is best-effort and isolated: if it fails or returns nothing usable, your query and your
+answer are unaffected. There is no wall-clock ceiling on the extraction call itself — a slow model is
+simply awaited — so it is bounded only by your AI provider's own connection and streaming limits.
 
-It is not silent about it, though. A turn whose extraction failed or timed out prints
-`memory not recorded · …` beneath the answer, so a fact you stated and expected to stick is never
-quietly dropped. A turn the gate declined — most ordinary turns, where there was nothing durable to
-learn — says nothing, because a line on every turn would train you to ignore the line that matters.
+It is not silent about it, though. A turn whose extraction failed prints `memory not recorded · …`
+beneath the answer, so a fact you stated and expected to stick is never quietly dropped. A turn the
+gate declined — most ordinary turns, where there was nothing durable to learn — says nothing, because
+a line on every turn would train you to ignore the line that matters.
+
+If a reply comes back cut off at your provider's output limit, or the connection stalls or times out,
+that counts as a miss. Two misses in a row — with no success or other kind of failure between them —
+disable learning for the rest of the session: SAYA tells you once ("learning disabled for this
+session — extraction with `<model>` was cut off or stalled `<n>` times in a row. Recall still works;
+`/remember` still stores a rule.") and makes no further extraction requests until you start a new
+session. Recall and `/remember` keep working regardless — only the automatic post-turn extraction
+stops.
 
 If you want to see the boundary itself, `--verbose` (or `SAYA_EXTRACTION_TRACE=1`) reports the gate
 decision, how many objects the turn involved, the outcome, and how many facts were recorded. It is
@@ -168,10 +177,11 @@ a mode is a preference, sharing is a boundary.
 `saya contracts forget <id>` stops an item influencing anything immediately: it leaves recall,
 listings, and the model's view on the next turn.
 
-Its content is erased. The value and the schema dependency are blanked in the same transaction that
-records the deletion, the freed space is overwritten rather than left in the page, and the
-write-ahead log is folded back so the original text does not survive in a sidecar. A byte scan
-asserts this — an API that returns nothing while the text remains readable on disk is not deletion.
+Its content is logically erased first. The value and the schema dependency are blanked in the same
+transaction that records the deletion. The freed space is then overwritten rather than left in the
+page, and the write-ahead log is folded back so the original text does not survive in a sidecar. If
+that physical cleanup is unavailable after the commit, the command reports `cleanup pending`
+instead of claiming byte erasure; a retry or the next store open recovers it.
 
 **The row itself remains**, carrying no content: its id, its object, its slot, its state and its
 timestamps. That keeps "why did SAYA stop using that?" answerable, and means re-remembering the same

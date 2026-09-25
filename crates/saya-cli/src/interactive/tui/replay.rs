@@ -24,10 +24,9 @@ pub(crate) fn history_blocks(state: &SessionState) -> Vec<(BlockKind, String)> {
                 BlockKind::Tool,
                 format!("{glyph} {} ({})", tool.name, tool.status),
             ));
-            // Show what the call ran: the statement (or arguments) and the
-            // value-free result shape. A resumed session can now answer "what
-            // did it actually do?" without the live event stream. Cell values
-            // are never on the persisted record, so they cannot appear here.
+            // Live sessions may show the statement and value-free result
+            // shape alongside the call. Those details are intentionally not
+            // persisted, so a resumed session only replays name and status.
             if let Some(line) = statement_line(&tool.arguments) {
                 blocks.push((BlockKind::Tool, line));
             }
@@ -51,7 +50,7 @@ pub(crate) fn history_blocks(state: &SessionState) -> Vec<(BlockKind, String)> {
     blocks
 }
 
-/// Renders the persisted tool-call arguments as a single display line: the SQL
+/// Renders live-session tool-call arguments as a single display line: the SQL
 /// statement when the arguments carry one (a SQL tool), otherwise the raw
 /// arguments. `None` when the arguments are empty (a tool with no recorded
 /// request, e.g. an older session file).
@@ -70,7 +69,7 @@ fn statement_line(arguments: &str) -> Option<String> {
     Some(format!("  {}", sql.unwrap_or_else(|| arguments.to_owned())))
 }
 
-/// Renders the value-free result shape as a single display line: `→ N rows:
+/// Renders a live-session value-free result shape as a single display line: `→ N rows:
 /// col1, col2`. `None` when no shape was recorded (a non-query tool, a denied
 /// call, or an older session file).
 fn shape_line(shape: Option<&saya_store::RedactedToolResultShape>) -> Option<String> {
@@ -158,6 +157,60 @@ mod tests {
             blocks[8].1.contains("sess-1") && blocks[8].1.contains("2 earlier turn"),
             "divider should name the session and turn count: {}",
             blocks[8].1
+        );
+    }
+
+    /// Property 5: `journal_and_replay_unchanged` — replay renders through
+    /// this module, never the grouper, so grouping cannot touch it. There is
+    /// no "grouping off" toggle to compare against (the slice constraint
+    /// forbids inventing one); the equivalent pin is structural: replay reads
+    /// only the persisted `SessionState` (role + content + per-call
+    /// `ToolMetadata`), which the grouping slices never write — `git diff`
+    /// C0–C3 touches no journal or replay path — and its output carries no
+    /// group marker, before or after a grouped live session.
+    #[test]
+    fn journal_and_replay_unchanged() {
+        use saya_agent::{ToolMetadata, ToolResultShape};
+
+        let mut state = SessionState::new("sess-9", None, "m");
+        state.record_turn(
+            "run it twice",
+            "ran both",
+            false,
+            vec![
+                ToolMetadata {
+                    name: "workspace_write".into(),
+                    status: "completed".into(),
+                    arguments: r#"{"path":"notes.md"}"#.into(),
+                    result_shape: None,
+                },
+                ToolMetadata {
+                    name: "run_command".into(),
+                    status: "failed".into(),
+                    arguments: r#"{"program":"pytest"}"#.into(),
+                    result_shape: Some(ToolResultShape {
+                        row_count: 0,
+                        columns: vec![],
+                    }),
+                },
+            ],
+        );
+        let first = history_blocks(&state);
+        let second = history_blocks(&state);
+        assert_eq!(
+            first, second,
+            "replay is a pure function of the persisted turn: no group state leaks in"
+        );
+        assert!(
+            first.iter().all(|(_, text)| !text.contains("tool calls ·")),
+            "replay carries no group marker: {first:?}"
+        );
+        assert!(
+            first
+                .iter()
+                .any(|(_, text)| text.contains("workspace_write"))
+                && first.iter().any(|(_, text)| text.contains("run_command")),
+            "every recorded call replays per-call, never collapsed: {first:?}"
         );
     }
 }

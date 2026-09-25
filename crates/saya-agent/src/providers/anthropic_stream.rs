@@ -95,9 +95,28 @@ struct State {
     tools: BTreeMap<usize, ToolUseBlock>,
     usage: TokenUsage,
     done: bool,
+    assembled_bytes: usize,
+    /// Text the wire emitted before any truncation signal, kept so the typed
+    /// error can carry the partial answer without re-walking emitted events.
+    text: String,
+    /// The `stop_reason` the final `message_delta` reported, checked at
+    /// `message_stop`. A capped response reports `"max_tokens"`.
+    stop_reason: Option<String>,
 }
 
 impl State {
+    fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
+        let next = self
+            .assembled_bytes
+            .checked_add(bytes)
+            .ok_or_else(size_error)?;
+        if next > crate::MAX_STREAM_BYTES {
+            return Err(size_error());
+        }
+        self.assembled_bytes = next;
+        Ok(())
+    }
+
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
         if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
             return Err(ProviderError::Request(
@@ -141,6 +160,7 @@ impl State {
                             .as_str()
                             .unwrap_or("")
                             .to_string();
+                        self.reserve(id.len().saturating_add(name.len()))?;
                         self.tools.insert(
                             index,
                             ToolUseBlock {
@@ -158,6 +178,7 @@ impl State {
                             .as_str()
                             .filter(|text| !text.is_empty())
                         {
+                            self.reserve(thinking.len())?;
                             self.pending
                                 .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
                         }
@@ -175,6 +196,8 @@ impl State {
                         let text = json["delta"]["text"]
                             .as_str()
                             .ok_or(ProviderError::InvalidResponse)?;
+                        self.reserve(text.len())?;
+                        self.text.push_str(text);
                         self.pending
                             .push_back(ProviderEvent::TextDelta(text.to_string()));
                     } else if delta_type == "thinking_delta" {
@@ -183,6 +206,7 @@ impl State {
                         let thinking = json["delta"]["thinking"]
                             .as_str()
                             .ok_or(ProviderError::InvalidResponse)?;
+                        self.reserve(thinking.len())?;
                         if !thinking.is_empty() {
                             self.pending
                                 .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
@@ -191,6 +215,7 @@ impl State {
                         let partial = json["delta"]["partial_json"]
                             .as_str()
                             .ok_or(ProviderError::InvalidResponse)?;
+                        self.reserve(partial.len())?;
                         if let Some(block) = self.tools.get_mut(&index) {
                             block.json.push_str(partial);
                         } else {
@@ -199,6 +224,15 @@ impl State {
                     }
                 }
                 "message_stop" => {
+                    if self.stop_reason.as_deref() == Some("max_tokens") {
+                        return Err(ProviderError::output_truncated(
+                            std::mem::take(&mut self.text),
+                            self.tools
+                                .values()
+                                .map(|block| block.json.clone())
+                                .collect(),
+                        ));
+                    }
                     let mut calls = Vec::new();
                     for (_index, block) in std::mem::take(&mut self.tools) {
                         let arguments = if block.json.trim().is_empty() {
@@ -231,6 +265,9 @@ impl State {
                     if apply_usage(&mut self.usage, usage) {
                         self.pending.push_back(ProviderEvent::Usage(self.usage));
                     }
+                    if let Some(reason) = json["delta"]["stop_reason"].as_str() {
+                        self.stop_reason = Some(reason.to_string());
+                    }
                 }
                 "error" => {
                     return Err(ProviderError::InvalidResponse);
@@ -247,6 +284,10 @@ impl State {
         }
         Ok(())
     }
+}
+
+fn size_error() -> ProviderError {
+    ProviderError::Request("provider stream exceeded size limit".into())
 }
 
 fn boundary(value: &[u8]) -> Option<(usize, usize)> {

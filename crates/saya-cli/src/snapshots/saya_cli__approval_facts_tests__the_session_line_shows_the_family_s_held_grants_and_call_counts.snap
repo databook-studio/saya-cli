@@ -1,0 +1,12 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+assertion_line: 223
+expression: prompt
+---
+bounded_sql_query — read-only query
+  target: warehouse
+  sql: SELECT 1
+  bounds: one parsed read-only statement · ≤ 50 rows to the model · 60s timeout
+  rows are redacted before they reach the model
+  session: sql:analytics granted (3 calls)
+[a] allow once   [s] allow sql:warehouse for this session   [d] deny

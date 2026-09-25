@@ -1,15 +1,19 @@
 //! Generates self-contained interactive Chart.js HTML documents.
 
+mod cleanup;
 mod kind;
 mod render;
 mod spec;
+mod temp_chart;
 
 #[cfg(test)]
 use saya_types::QueryResult;
 
+pub(crate) use cleanup::cleanup_session_charts;
 pub(crate) use kind::{ChartKind, ChartSpec};
 pub(crate) use render::render_html;
 pub(crate) use spec::suggest_spec;
+pub(crate) use temp_chart::reserve_temp_chart;
 
 pub(super) fn is_numeric_column(rows: &[Vec<serde_json::Value>], col_idx: usize) -> bool {
     let mut non_null_count = 0;
@@ -204,6 +208,57 @@ mod chart_gen_tests {
         assert_eq!(suggest_spec(&result).kind, ChartKind::Scatter);
     }
 
+    // M0-4: chart HTML is written to a temp file a browser opens, so cell
+    // strings carrying secret-shaped material must not reach it verbatim.
+    #[test]
+    fn chart_html_redacts_secret_shaped_cell_values() {
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "value".to_string()],
+            rows: vec![json!(["api_key=sk-live-SENTINEL", 10]), json!(["safe", 20])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, value FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["value".to_string()],
+            title: None,
+        };
+        let html = render_html(&result, &spec).unwrap();
+        assert!(
+            html.contains("[redacted]"),
+            "secret-shaped cell value was not redacted"
+        );
+        assert!(
+            !html.contains("sk-live-SENTINEL"),
+            "secret leaked into chart HTML"
+        );
+    }
+
+    #[test]
+    fn chart_html_redacts_secret_shaped_dataset_labels() {
+        let secret_alias = "api_key=sk-live-ALIAS-SENTINEL";
+        let result = QueryResult {
+            columns: vec!["label".to_string(), secret_alias.to_string()],
+            rows: vec![json!(["safe", 10])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: "SELECT label, value AS \"api_key=sk-live-ALIAS-SENTINEL\" FROM t"
+                .to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec![secret_alias.to_string()],
+            title: None,
+        };
+
+        let html = render_html(&result, &spec).unwrap();
+        assert!(html.contains("api_key=[redacted]"));
+        assert!(!html.contains(secret_alias));
+    }
+
     #[test]
     fn test_render_html_script_injection_prevention() {
         let result = QueryResult {
@@ -233,5 +288,35 @@ mod chart_gen_tests {
 
         assert!(html.contains("\\u003c/script"));
         assert!(html.contains("\\u003c/SCRIPT"));
+    }
+
+    #[test]
+    fn script_embedded_config_round_trips_html_sensitive_labels() {
+        let labels = vec![
+            "greater>than & less<than".to_string(),
+            "</script>".to_string(),
+        ];
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "value".to_string()],
+            rows: vec![json!([labels[0], 10]), json!([labels[1], 20])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, value FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["value".to_string()],
+            title: None,
+        };
+
+        let html = render_html(&result, &spec).unwrap();
+        let config_json = html
+            .split_once("<script id=\"saya-chart-config\" type=\"application/json\">")
+            .and_then(|(_, rest)| rest.split_once("</script>"))
+            .map(|(config, _)| config)
+            .expect("chart config script is present");
+        let config: serde_json::Value = serde_json::from_str(config_json).unwrap();
+        assert_eq!(config["data"]["labels"], json!(labels));
     }
 }

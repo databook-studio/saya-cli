@@ -8,6 +8,8 @@
 # the formula always matches the exact published artifacts.
 #
 # Auth (push): HOMEBREW_TAP_TOKEN — a PAT with contents:write on the tap repo.
+#   * The token is supplied to Git through a short-lived askpass helper; it is
+#     never placed in a remote URL or persisted in the clone's config.
 #   * In CI: set it as the HOMEBREW_TAP_TOKEN secret.
 #   * The script no-ops in CI if the secret is unset, so it never fails a release
 #     before the maintainer opts in.
@@ -28,12 +30,22 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "$DRY_RUN" != "1" ] && [ -z "${HOMEBR
   exit 0
 fi
 
+SUMS=""
+WORK=""
+ASKPASS=""
+cleanup() {
+  [ -z "$SUMS" ] || rm -f -- "$SUMS"
+  [ -z "$ASKPASS" ] || rm -f -- "$ASKPASS"
+  [ -z "$WORK" ] || rm -rf -- "$WORK"
+}
+trap cleanup EXIT
+
 # Pull the published checksums so the formula matches the exact release artifacts.
-sums=$(mktemp)
-curl -fsSL "${REL}/SHA256SUMS" -o "$sums"
+SUMS=$(mktemp)
+curl -fsSL "${REL}/SHA256SUMS" -o "$SUMS"
 sha_for() {
   local hash
-  hash=$(awk -v f="saya-${VERSION}-$1.tar.gz" '$2==f {print $1}' "$sums")
+  hash=$(awk -v f="saya-${VERSION}-$1.tar.gz" '$2==f {print $1}' "$SUMS")
   [ -n "$hash" ] || { echo "no checksum for saya-${VERSION}-$1.tar.gz in SHA256SUMS" >&2; exit 1; }
   printf '%s' "$hash"
 }
@@ -41,16 +53,26 @@ SHA_ARM_MAC=$(sha_for aarch64-apple-darwin)
 SHA_INTEL_MAC=$(sha_for x86_64-apple-darwin)
 SHA_LINUX=$(sha_for x86_64-unknown-linux-gnu)
 
-# Clone the tap (token embedded for push; anonymous for a dry run).
-work=$(mktemp -d)
+# Clone the tap with a plain remote URL. If a token is configured, Git asks the
+# short-lived helper for it only when the remote needs authentication.
+WORK=$(mktemp -d)
 if [ -n "${HOMEBREW_TAP_TOKEN:-}" ]; then
-  git clone -q "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO}.git" "$work"
-else
-  git clone -q "https://github.com/${TAP_REPO}.git" "$work"
+  ASKPASS=$(mktemp)
+  cat > "$ASKPASS" <<'EOF'
+#!/usr/bin/env sh
+case "${1:-}" in
+  *[Uu]sername*) printf '%s\n' 'x-access-token' ;;
+  *) printf '%s\n' "${HOMEBREW_TAP_TOKEN:?}" ;;
+esac
+EOF
+  chmod 700 "$ASKPASS"
+  export GIT_ASKPASS="$ASKPASS"
+  export GIT_TERMINAL_PROMPT=0
 fi
+git clone -q "https://github.com/${TAP_REPO}.git" "$WORK"
 
-mkdir -p "$work/Formula"
-cat > "$work/Formula/saya.rb" <<EOF
+mkdir -p "$WORK/Formula"
+cat > "$WORK/Formula/saya.rb" <<EOF
 class Saya < Formula
   desc "Database-aware terminal AI agent: TUI, schema discovery, read-only SQL"
   homepage "https://github.com/databook-studio/saya-cli"
@@ -84,7 +106,7 @@ class Saya < Formula
 end
 EOF
 
-cd "$work"
+cd "$WORK"
 if git diff --quiet -- Formula/saya.rb; then
   echo "Formula already up to date for ${VERSION}."
   exit 0

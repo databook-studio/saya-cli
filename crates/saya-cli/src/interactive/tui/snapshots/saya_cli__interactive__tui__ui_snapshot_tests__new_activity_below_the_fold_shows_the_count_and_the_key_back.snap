@@ -1,0 +1,28 @@
+---
+source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
+expression: buffer
+---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
+"SAYA                                                                           ║"
+"  line 1                                                                       █"
+"SAYA                                                                           █"
+"  line 2                                                                       █"
+"SAYA                                                                           █"
+"  line 3                                                                       █"
+"SAYA                                                                           █"
+"  line 4                                                                       █"
+"SAYA                                                                           █"
+"  line 5                                                                       ║"
+"SAYA                                                                           ║"
+"  line 6                                                                       ║"
+"SAYA                                                                           ║"
+"  line 7                                                                       ║"
+"SAYA                                                                           ║"
+"  line 8                                                                       ║"
+"SAYA                                                                           ║"
+"  line 9                                                                       ║"
+"SAYA                                                                           ║"
+"2 new lines below · Shift+End to catch up analytics · qwen            ? for help"
+"╭ saya ────────────────────────────────────────────────────────────────────────╮"
+"│Ask about your data, or type / for commands                                   │"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

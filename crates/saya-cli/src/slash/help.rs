@@ -20,6 +20,12 @@
 /// `/connect` and `/include` carry the contrast (one replaces, one adds a
 /// secondary) so a user reading the listing can tell them apart without two more
 /// `/help <name>` round-trips.
+///
+/// The bypass-composition sentence, shared verbatim by the `/mode` help entry
+/// and both `/mode` answers: under `bypass`, Plan still denies writes. One
+/// constant so the surfaces state it in the same words; tests assert each
+/// surface contains it verbatim. Kept beside the command it documents.
+pub(crate) const PLAN_BYPASS_SENTENCE: &str = "Plan still denies writes under `bypass`";
 pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("connect", "Replace the active database profile"),
     ("connections", "List configured database connections"),
@@ -29,15 +35,28 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("model", "Set or view the AI model"),
     ("privacy", "Enable or disable data sharing privacy"),
     ("approvals", "Set approval policy for tool execution"),
+    ("mode", "Set the agent's task posture: build or plan"),
     ("schema", "Inspect or refresh database schema"),
     ("doctor", "Diagnose config: secrets, provider endpoint"),
     ("usage", "Show session token usage and cache hit rate"),
+    ("workspace", "Show the session's bound workspace root"),
     ("thinking", "Toggle display of the model's chain-of-thought"),
+    (
+        "tasks",
+        "Show the session's task list, or clear it with /tasks clear",
+    ),
     ("sql", "Run a raw SQL query against the active profile"),
-    ("export", "Export the last query result as CSV or JSON"),
-    ("chart", "Render the last query as an HTML chart"),
+    (
+        "export",
+        "Re-run the last query and export the fresh result as CSV or JSON",
+    ),
+    (
+        "chart",
+        "Re-run the last query and render the fresh result as an HTML chart",
+    ),
     ("explain", "Explain the given or last SQL statement"),
     ("clear", "Clear current session context"),
+    ("compact", "Summarise older turns to shrink working memory"),
     ("history", "List saved sessions as text"),
     (
         "sessions",
@@ -56,6 +75,13 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "approve-all",
         "Approve the whole review queue (needs --yes)",
     ),
+    ("run", "Start or operate a headless run from the session"),
+    ("runs", "List runs, or show one run by id"),
+    (
+        "allow",
+        "Seed pre-authorised scopes into this session's grant store",
+    ),
+    ("grants", "List the session's granted scopes"),
     ("help", "Show help for slash commands"),
     ("exit", "Exit the REPL"),
     ("quit", "Exit the REPL"),
@@ -69,6 +95,10 @@ pub(crate) fn description_for(name: &str) -> Option<&'static str> {
         .map(|(_, description)| *description)
 }
 
+/// The bypass-composition sentence shared by the `/mode` help entry and both
+/// `/mode` answers: under `bypass`, Plan still denies writes. One constant so
+/// the surfaces state it in the same words; tests assert each surface contains
+/// it verbatim.
 /// The grouped, described listing printed by `/help` with no argument. Built
 /// from [`LISTING_GROUPS`] (the usage form and group heading) plus the
 /// description text from [`COMMAND_DESCRIPTIONS`], so every line carries a
@@ -120,7 +150,10 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("provider", "/provider [name]"),
             ("model", "/model [name]"),
             ("privacy", "/privacy [on|off]"),
-            ("approvals", "/approvals [ask|read-only|never]"),
+            ("approvals", "/approvals [ask|read-only|never|bypass]"),
+            ("mode", "/mode [plan|build]"),
+            ("allow", "/allow <scopes…>"),
+            ("grants", "/grants"),
         ],
     ),
     (
@@ -138,12 +171,15 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
         "Session",
         &[
             ("clear", "/clear"),
+            ("compact", "/compact"),
             ("history", "/history"),
             ("sessions", "/sessions"),
             ("resume", "/resume <id>"),
             ("doctor", "/doctor"),
             ("usage", "/usage"),
+            ("workspace", "/workspace"),
             ("thinking", "/thinking [on|off]"),
+            ("tasks", "/tasks [clear]"),
             ("help", "/help [command]"),
             ("exit", "/exit  (alias /quit)"),
         ],
@@ -158,6 +194,13 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("confirm", "/confirm <prefix>"),
             ("reject", "/reject <prefix>"),
             ("approve-all", "/approve-all [--yes] [limit]"),
+        ],
+    ),
+    (
+        "Runs",
+        &[
+            ("run", "/run <goal…> --allow <scopes>"),
+            ("runs", "/runs [id]"),
         ],
     ),
 ];
@@ -186,7 +229,20 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             Some("privacy [on|off] — view or toggle cloud data sharing. Example: /privacy off")
         }
         "approvals" => Some(
-            "approvals [ask|read-only|never] — view or set tool execution approval policy. Example: /approvals ask",
+            "approvals [ask|read-only|never|bypass] — view or set tool execution approval policy. \
+             `bypass` runs every call without asking (a typed, global consent given at the flag or \
+             this command); every structural guard still applies. Example: /approvals ask",
+        ),
+        "mode" => Some(
+            "mode [plan|build] — view or set the agent's task posture. `plan` investigates \
+             read-only: write-shaped tools are hidden from the model and refuse before the \
+             approval match runs, so Plan still denies writes under `bypass` (bypass \
+             auto-allows reads; Plan refuses writes). What Plan guarantees is that a write \
+             attempt fails — hidden definitions, engine denial, derived write permits off; \
+             ending with a plan rather than a half-done edit is what the model is asked to \
+             do, not what Plan guarantees. Plan is the task posture — what the \
+             agent may do — while `read-only` is the consent posture — what an approval \
+             answers. Example: /mode plan",
         ),
         "schema" => Some(
             "schema [refresh] — display or refresh database schema context. Example: /schema refresh",
@@ -195,18 +251,26 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "sql <query> — execute a raw SQL query directly. Example: /sql SELECT * FROM users LIMIT 10;",
         ),
         "export" => Some(
-            "export <path> — write the last query's rows to a .csv or .json file. Example: /export results.csv",
+            "export <path> — re-run the last query and write the fresh result's rows to a .csv or .json file. The file reflects that fresh read, not the displayed table (/columns, scroll, and folds do not apply). Example: /export results.csv",
         ),
         "chart" => Some(
-            "chart [type] [path] — render the last query as an interactive HTML chart and open it. type: bar|line|area|pie|doughnut|scatter (default auto)",
+            "chart [type] [path] — re-run the last query and render the fresh result as an interactive HTML chart, then open it. The chart reflects that fresh read, not the displayed table. type: bar|line|area|pie|doughnut|scatter (default auto)",
         ),
         "explain" => Some(
             "explain [sql] — show the query plan (EXPLAIN) for the given SQL, or the last query if omitted",
         ),
         "columns" => Some(
-            "columns [name,name,… | all] — choose which columns wide result tables show in the TUI. Names match column headers (case-insensitive); unmatched names are ignored, and a filter that matches nothing falls back to all columns. /columns or /columns all resets. The full table is still copied by Ctrl+Y/Ctrl+B; this only changes what is painted. Example: /columns id, total   or   /columns all",
+            "columns [name,name,… | all] — choose which columns wide result tables show in the TUI. Names match column headers (case-insensitive); unmatched names are ignored, and a filter that matches nothing falls back to all columns. /columns or /columns all resets. The full table is still copied by Ctrl+B; this only changes what is painted. Example: /columns id, total   or   /columns all",
         ),
         "clear" => Some("clear — clear the conversation and context. Example: /clear"),
+        "compact" => Some(
+            "compact — summarise the older turns into a short summary the model replays ahead of \
+             the newest verbatim turns. Working memory only: the transcript is unchanged \
+             (/export first if you want the full text). Automatic at 95% of the known context \
+             window when `[ai] compaction` is `auto` (the default); `manual` keeps only this \
+             command, `off` additionally silences the 70% warning — and a failed compaction \
+             leaves the conversation exactly as it was. Example: /compact",
+        ),
         "history" => Some("history — list saved sessions as text. Example: /history"),
         "sessions" => {
             Some("sessions — browse saved sessions; opens a picker in the TUI. Example: /sessions")
@@ -217,8 +281,16 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "usage" => Some(
             "usage — show session token usage: input, output, reasoning, cached input, cache creation, and the cache hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a mean of per-turn rates). Fields the provider did not report show —; the hit rate shows 'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
         ),
+        "workspace" => Some(
+            "workspace — show the session's bound workspace root, the one tree every file tool \
+             and run_program child is contained to. Unbound means the write-shaped tools are \
+             hidden and workspace reads refuse. Example: /workspace",
+        ),
         "thinking" => Some(
             "thinking [on|off] — toggle display of the model's chain-of-thought in the transcript. Off by default: thinking is verbose (often longer than the answer) and restates database contents in prose. With no argument, toggles; with on/off, sets explicitly. Display only — reasoning is never written to a saved session, and the copy keys (Ctrl+Y, Ctrl+B) leave it out. Selection mode (Ctrl+O) hands the screen to your terminal, so a mouse drag can still copy thinking that is visible. Example: /thinking on",
+        ),
+        "tasks" => Some(
+            "tasks [clear] — show the session's task list: what the model is tracking, one line per task with its state. Bare /tasks shows the list (No tasks are being tracked. when empty); /tasks clear empties it, so the next turn injects no task block. The model's list to write, yours to inspect or clear — no per-task editing lives here. Example: /tasks   or   /tasks clear",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
         "contracts" => Some(
@@ -246,6 +318,18 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "approve-all" => Some(
             "approve-all [--yes] [limit] — approve every candidate in the review queue: the same set /queue shows. Each candidate still gets the per-item validation /confirm applies, so some may be refused; every approval and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /approve-all --yes",
+        ),
+        "run" => Some(
+            "run <goal…> --allow <scopes> [--budget k=v…] — start a headless run from the session: the nested `saya run` streams its events and lands where the headless command lands (completed 0, paused 6 — resume it with /run resume <id> — cancelled 130). `none` states a read-only run with no capabilities; the wired scopes are `workspace-write`, `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`, `interpreter:<program>` (a shell or interpreter — a program that can spawn arbitrary children, so naming it is the only grant), and `sql:<connection>` (seeds the run's decider: under `--approval-mode ask` the read-shaped SQL tools' calls naming that connection run without asking). `command:<program>` is refused here: a run is unattended and this scope names unconfined host execution. `endpoint:<role>=<endpoint>` is refused here: per-step endpoint roles are not bound. Prefix the tail with `--seed-grants` to seed the child's `--allow` from this session's grant store — only tokens a run accepts are forwarded, and the rest are named, not silently dropped. `/run cancel <id>` records a run cancelled the same way `saya run cancel` does; a run with a live holder refuses. Example: /run survey the data --allow workspace-write",
+        ),
+        "runs" => Some(
+            "runs [id] — list every run, most recent first, or show one run's status, goal, scopes, pause reason, and deliverables when you name its id. Same rendering as `saya run list|show`. Example: /runs   or   /runs r1726820000000-1234",
+        ),
+        "allow" => Some(
+            "allow <scopes…> — seed pre-authorized scopes into this session's grant store: a granted scope pre-answers the asks it names until the session ends (grants die with the session and are never persisted; a resumed session starts empty). The grammar is the same one `--allow` parses, judged for the session surface: the wired scopes are `workspace-write`, `scratch`, `fetch:<scheme>+<host>`, `runner:<program>`, `interpreter:<program>`, `command:<program>` (a host program — unsandboxed, as your user with your filesystem and network — gated on the lane, which composes wherever a workspace root binds; refused here when no root is bound), and `sql:<connection>` (one SQL grant covers the read-shaped SQL family — bounded_sql_query, result_shape, column_health, join_check — against that connection). `endpoint:<role>=<endpoint>` is refused here: a session binds no per-step endpoint roles. A scope naming a denied program refuses here: a grant cannot override the deny list, and the deny list bounds only the program named in the ask — allowed programs may still invoke it. `none` states the empty approval and must stand alone: it seeds nothing, and it is not a revoke — the store keeps whatever it already holds. /allow only adds. Example: /allow sql:analytics   or   /allow sql:analytics runner:bench",
+        ),
+        "grants" => Some(
+            "grants — list this session's grant store verbatim: one granted scope per line, sorted, under a header stating the lifetime, with a count. The words are the record, and they are the same words /allow seeded and the prompts offered. Example: /grants",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",
@@ -411,6 +495,8 @@ mod tests {
     /// `/columns` is a slash command, so it needs a `/help` entry, a listing
     /// line, and a description shared with the popup — and the help must say
     /// that copy still yields the full table (the view filter is paint-only).
+    /// The path that does is Ctrl+B (`copy_transcript` keeps the full
+    /// untruncated table text); Ctrl+Y copies the last assistant block only.
     #[test]
     fn columns_has_help_listing_and_copy_guarantee() {
         assert!(
@@ -428,13 +514,98 @@ mod tests {
             "/columns help names what it selects: {help}"
         );
         assert!(
-            help.contains("Ctrl+Y"),
+            help.contains("Ctrl+B"),
             "/columns help must say copy still yields the full table: {help}"
         );
         assert!(
             description_for("columns").is_some(),
             "columns has a popup description"
         );
+    }
+
+    // --- Fieldnotes phase 6, packet 3: output actions name their scope. -------
+    //
+    // Red tests first: the `/columns` long help claims Ctrl+Y copies the full
+    // table (it copies the last assistant block only), and the `/export` and
+    // `/chart` helps never say the query is run again from a fresh read.
+
+    /// The `/columns` filter is paint-only, and the help must not credit
+    /// Ctrl+Y with copying tables: `copy_last_answer` finds only
+    /// `BlockKind::Assistant` (`application/input_actions/clipboard.rs`).
+    #[test]
+    fn the_columns_help_does_not_claim_ctrl_y_copies_tables() {
+        let help = command_help("columns").expect("columns has help");
+        assert!(
+            !help.contains("Ctrl+Y/Ctrl+B"),
+            "must not claim both copy keys yield the full table: {help}"
+        );
+        assert!(
+            !help.contains("copied by Ctrl+Y"),
+            "must not claim Ctrl+Y copies the table: {help}"
+        );
+    }
+
+    /// Removing the false Ctrl+Y half must not drop the true Ctrl+B half:
+    /// `copy_transcript` keeps the full untruncated table text outside the
+    /// visible window (`ui_snapshot_tables.rs`), so the help still names it.
+    #[test]
+    fn the_columns_help_still_names_the_path_that_does() {
+        let help = command_help("columns").expect("columns has help");
+        assert!(
+            help.contains("Ctrl+B"),
+            "must still tell the user Ctrl+B copies the full table: {help}"
+        );
+    }
+
+    /// `/export` dispatches a fresh `SqlTask` from `lq.sql` (`dispatch/query.rs`),
+    /// so the help must say the query is run again and the file reflects that
+    /// fresh read, not the displayed table.
+    #[test]
+    fn export_help_says_the_query_is_run_again() {
+        let help = command_help("export").expect("export has help");
+        let lower = help.to_lowercase();
+        assert!(
+            lower.contains("run") && (lower.contains("again") || lower.contains("re-run")),
+            "/export help must say the query is run again: {help}"
+        );
+        assert!(
+            lower.contains("fresh"),
+            "/export help must say the output reflects a fresh read, not the displayed table: {help}"
+        );
+    }
+
+    /// `/chart` dispatches the same fresh `SqlTask` shape as `/export`, so its
+    /// help carries the same re-run statement.
+    #[test]
+    fn chart_help_says_the_query_is_run_again() {
+        let help = command_help("chart").expect("chart has help");
+        let lower = help.to_lowercase();
+        assert!(
+            lower.contains("run") && (lower.contains("again") || lower.contains("re-run")),
+            "/chart help must say the query is run again: {help}"
+        );
+        assert!(
+            lower.contains("fresh"),
+            "/chart help must say the output reflects a fresh read, not the displayed table: {help}"
+        );
+    }
+
+    /// No output help may predict a row count: the count is not known before
+    /// the re-run, so a "will copy/export N rows" string would be invented.
+    #[test]
+    fn no_output_help_promises_a_row_count() {
+        for name in ["columns", "export", "chart"] {
+            let help = command_help(name).expect("output command has help");
+            let lower = help.to_lowercase();
+            assert!(
+                !lower.contains("will copy") && !lower.contains("will export"),
+                "/{name} help must not promise a pre-action row count: {help}"
+            );
+            assert!(
+                !lower.contains("n rows"),
+                "/{name} help must not predict an N-rows count: {help}"
+            );
+        }
     }
 
     /// the listing groups commands under short headings, so 28 described
@@ -457,6 +628,47 @@ mod tests {
                 "listing must have a {heading:?} heading on its own line, got:\n{summary}"
             );
         }
+    }
+
+    /// The `/run` family is wired at every hand-maintained touchpoint, not just
+    /// the parser: the registry, the description table (the popup's single
+    /// source), the `/help` listing, and the per-command help. A command that
+    /// parses but is absent from help is exactly the defect this test exists to
+    /// catch — a half-existing command.
+    #[test]
+    fn run_and_runs_are_registered_listed_and_described() {
+        for name in ["run", "runs"] {
+            assert!(
+                registry::KNOWN_COMMANDS.contains(&name),
+                "{name} is registered"
+            );
+            assert!(
+                description_for(name).is_some(),
+                "{name} has a popup description"
+            );
+            let help = command_help(name).expect("per-command help exists");
+            assert!(!help.is_empty(), "{name} help is not empty");
+        }
+        let listing = help_text();
+        assert!(
+            listing.contains("/run <goal…> --allow <scopes>"),
+            "the listing shows the /run usage: {listing}"
+        );
+        assert!(
+            listing.contains("/runs [id]"),
+            "the listing shows the /runs usage: {listing}"
+        );
+        // `/run cancel` is reachable and documented where a reader decides how to
+        // stop a run.
+        let run_help = command_help("run").expect("run has help");
+        assert!(
+            run_help.contains("/run cancel"),
+            "the /run help names the cancel form: {run_help}"
+        );
+        assert!(
+            run_help.contains("paused 6"),
+            "the /run help names the paused exit the headless scheme documents: {run_help}"
+        );
     }
 
     /// the merged `/contracts` command has one help entry covering both
@@ -510,6 +722,118 @@ mod tests {
         assert!(
             contract.contains("show one object's contract"),
             "/contract help must describe the merged show form, got: {contract}"
+        );
+    }
+
+    /// The approvals grammar has one authority (`ApprovalPolicy::from_str`)
+    /// and every help surface must name the whole vocabulary it parses —
+    /// including `bypass`. A mode that parses but no help names is the exact
+    /// drift the run grammar's parity test (`scopes.rs`) exists to catch, on
+    /// the session's own mode word. The clap doc, the `/approvals` per-command
+    /// help, and the `/help` listing must all carry it.
+    #[test]
+    fn every_help_surface_names_bypass() {
+        use clap::CommandFactory as _;
+        let cmd = crate::cli::Cli::command();
+        let approval_mode = cmd
+            .get_arguments()
+            .find(|arg| arg.get_id() == "approval_mode")
+            .expect("`--approval-mode` is declared on the global options");
+        let clap_doc = approval_mode
+            .get_long_help()
+            .or_else(|| approval_mode.get_help())
+            .expect("the --approval-mode doc comment reaches clap")
+            .to_string();
+        assert!(
+            clap_doc.contains("bypass"),
+            "the clap `--approval-mode` doc must name the `bypass` value, got: {clap_doc}"
+        );
+
+        let help = command_help("approvals").expect("approvals has per-command help");
+        assert!(
+            help.contains("bypass"),
+            "the /approvals help must name the `bypass` value, got: {help}"
+        );
+
+        let listing = help_text();
+        assert!(
+            listing.contains("/approvals [ask|read-only|never|bypass]"),
+            "the /help listing must show the full mode vocabulary: {listing}"
+        );
+    }
+
+    /// `/tasks` is wired at every hand-maintained touchpoint the
+    /// cli-application standard names: the registry, the description table
+    /// (the popup's single source), the `/help` listing, and the per-command
+    /// help. The detailed entry states the ownership split: the model's list
+    /// to write, the user's to inspect or clear — no per-task editing here.
+    #[test]
+    fn tasks_is_registered_listed_and_described() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"tasks"),
+            "tasks is registered"
+        );
+        assert!(
+            description_for("tasks").is_some(),
+            "tasks has a popup description"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/tasks [clear]"),
+            "the listing shows the /tasks usage: {listing}"
+        );
+        let help = command_help("tasks").expect("tasks has per-command help");
+        assert!(
+            help.contains("/tasks clear"),
+            "the /tasks help names the clear form: {help}"
+        );
+        assert!(
+            help.contains("No tasks are being tracked."),
+            "the /tasks help names the empty-list words: {help}"
+        );
+    }
+
+    /// `/mode` is wired at every hand-maintained touchpoint the
+    /// cli-application standard names: the registry, the description table
+    /// (the popup's single source), the `/help` listing, and the per-command
+    /// help. The detailed entry states the composition honestly: under
+    /// `bypass`, Plan still denies writes (bypass auto-allows reads, Plan
+    /// refuses writes), and Plan is a task posture while `read-only` is a
+    /// consent posture. The entry says both halves — the enforced half
+    /// (hidden definitions, refusal before the approval match, derived write
+    /// permits off) and the asked-of-the-model half (ending with a plan) —
+    /// and never claims Plan guarantees the model's behaviour.
+    #[test]
+    fn mode_is_registered_listed_described_and_honest() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"mode"),
+            "mode is registered"
+        );
+        assert!(
+            description_for("mode").is_some(),
+            "mode has a popup description"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/mode [plan|build]"),
+            "the listing shows the /mode usage: {listing}"
+        );
+        let help = command_help("mode").expect("mode has per-command help");
+        assert!(
+            help.contains(PLAN_BYPASS_SENTENCE),
+            "the /mode help states the bypass composition verbatim: {help}"
+        );
+        assert!(
+            help.contains("task posture") && help.contains("consent posture"),
+            "the /mode help separates Plan from read-only: {help}"
+        );
+        assert!(
+            help.contains("hidden definitions") && help.contains("ending with a plan"),
+            "the /mode help says both halves — enforced denial and asked-of-the-model plan: {help}"
+        );
+        assert!(
+            !help.contains("guarantees the model"),
+            "the /mode help must never claim Plan guarantees the model's behaviour: {help}"
         );
     }
 }

@@ -5,7 +5,10 @@ use super::super::replay::{history_blocks, relative_time};
 use super::super::transcript::BlockKind;
 use super::super::types::{App, Picker, PickerEntry};
 use crate::interactive::session_state::SessionState;
-use saya_store::{FsSessionStore, SchemaStore, SessionStore};
+use saya_agent::ApprovalChoice;
+use saya_store::{
+    FsSessionStore, MAX_SESSION_HISTORY_PAGE_SIZE, SchemaStore, SessionHistoryQuery, SessionStore,
+};
 
 impl App {
     /// Opens the session picker with the most recent saved sessions, enriched
@@ -40,13 +43,14 @@ impl App {
         let Some(result) = result else { return };
         self.overlays.picker_loading = None;
         match result {
-            Ok(entries) if entries.is_empty() => self
+            Ok((entries, _)) if entries.is_empty() => self
                 .transcript
                 .push(BlockKind::System, "No saved sessions to resume."),
-            Ok(entries) => {
+            Ok((entries, has_more)) => {
                 self.overlays.picker = Some(Picker {
                     entries,
                     selected: 0,
+                    has_more,
                     query: String::new(),
                 });
             }
@@ -55,15 +59,22 @@ impl App {
     }
 }
 
-fn load_picker_entries(store: &FsSessionStore) -> Result<Vec<PickerEntry>, String> {
+fn load_picker_entries(store: &FsSessionStore) -> Result<(Vec<PickerEntry>, bool), String> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let entries = crate::interactive::session_resume::block_on(store.history())
-        .map_err(|error| error.to_string())?
+    let page = crate::interactive::session_resume::block_on(
+        store.history(
+            SessionHistoryQuery::first_page(MAX_SESSION_HISTORY_PAGE_SIZE)
+                .expect("history page bound is valid"),
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    let has_more = page.has_more();
+    let entries = page
+        .entries
         .into_iter()
-        .take(20)
         .map(|entry| {
             let when = relative_time(now_ms.saturating_sub(entry.modified_unix_ms));
             let (profile, model, turns) =
@@ -81,7 +92,7 @@ fn load_picker_entries(store: &FsSessionStore) -> Result<Vec<PickerEntry>, Strin
             }
         })
         .collect::<Vec<_>>();
-    Ok(entries)
+    Ok((entries, has_more))
 }
 
 impl App {
@@ -143,13 +154,32 @@ impl App {
         }
     }
 
-    /// Answers the pending tool-approval request and records the decision.
-    pub(crate) fn answer_approval(&mut self, allow: bool) {
+    /// Answers the pending tool-approval request: the user's [`ApprovalChoice`]
+    /// goes back to the turn's decider, which records it into the session policy
+    /// (a session grant survives the turn; allow-once and deny leave nothing
+    /// behind). The transcript names what the answer actually did.
+    pub(crate) fn answer_approval(&mut self, choice: ApprovalChoice) {
         if let Some(pending) = self.request.pending_approval.take() {
-            let _ = pending.respond.send(allow);
-            let verb = if allow { "Approved" } else { "Denied" };
-            self.transcript
-                .push(BlockKind::System, format!("{verb} tool: {}", pending.tool));
+            let verb = match &choice {
+                ApprovalChoice::AllowOnce => format!("Approved tool: {}", pending.tool),
+                ApprovalChoice::AllowSession { token } => {
+                    format!("Allowed for session ({token}): {}", pending.tool)
+                }
+                ApprovalChoice::Deny => format!("Denied tool: {}", pending.tool),
+            };
+            let _ = pending.respond.send(choice);
+            self.transcript.push(BlockKind::System, verb);
+        }
+    }
+
+    /// Scrolls the pending approval's fact body by `delta` wrapped rows
+    /// (negative scrolls up). The offset floors at the top here; the paint
+    /// clamps the bottom against the live panel geometry, so no delta can
+    /// scroll the facts out of reach. The offset dies with the approval —
+    /// a fresh one starts at the top.
+    pub(crate) fn scroll_approval(&mut self, delta: isize) {
+        if let Some(pending) = &mut self.request.pending_approval {
+            pending.scroll = pending.scroll.saturating_add_signed(delta);
         }
     }
 

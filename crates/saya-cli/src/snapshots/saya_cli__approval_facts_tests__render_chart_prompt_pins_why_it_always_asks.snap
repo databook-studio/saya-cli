@@ -1,0 +1,10 @@
+---
+source: crates/saya-cli/src/approval_facts_tests.rs
+assertion_line: 195
+expression: prompt
+---
+render_chart — writes a chart file and opens your browser
+  target: analytics
+  sql: SELECT region, count(*) FROM orders GROUP BY 1
+  this is why it always asks: the chart file is written and opened in your browser
+[a] allow once   [d] deny   (no session grant for this tool)

@@ -18,7 +18,7 @@ use saya_types::{DatabaseObjectKind, DatabaseObjectRef, ProfileIdentity};
 
 use mapping::{
     REASON_NO_CONTRACT, REASON_NO_IDENTITY, REASON_NO_MATCH, REASON_PRIVACY, REASON_STALE,
-    REASON_STORE, contract, contract_payload, contracts, empty_for, read_payload,
+    REASON_STORE, REASON_TRUNCATED, contract, contract_payload, contracts, empty_for, read_payload,
 };
 use validation::validate_arguments;
 
@@ -131,6 +131,9 @@ impl DatabaseTools {
             // Distinguish "nothing matched" from "matched but every match was
             // stale": a stale exclusion is non-silent, so the model does not
             // retry the same terms expecting a different answer.
+            if outcome.diagnostics.repository_truncated {
+                return Ok(empty(REASON_TRUNCATED));
+            }
             if outcome.diagnostics.excluded_by_schema > 0 {
                 return Ok(empty(REASON_STALE));
             }

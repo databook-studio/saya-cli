@@ -1,0 +1,97 @@
+; ==========================================================================
+; saya runner child sandbox — macOS Seatbelt profile DRAFT (M5-3 spike)
+; --------------------------------------------------------------------------
+; Source policy: RunSandbox { fs_roots: [run dir, child temp],
+;                             net_allow: [(host, port)] }
+;
+; Placeholders substituted by the profile generator at spawn time:
+;   {RUNNER_PROGRAM_DIR} - directory holding the one allowlisted runner program
+;   {RUN_DIR}            - canonicalised run directory (workspace + state)
+;   {CHILD_TEMP}         - canonicalised child temp dir inside the run dir
+;   {PORT_I}             - one rule per net_allow (host, port) entry
+;
+; Measured host: macOS 26.6.2 (Darwin 25.6.0, arm64), /usr/bin/sandbox-exec.
+; Probe: crates/saya-harness/tests/sandbox_probe.rs (12 required checks, all
+; passed with enforcement evidence on the measured host; see
+; docs/sandbox-spike.md for the verbatim trail).
+;
+; Comment syntax: `;` is the ONLY comment form sandbox-exec accepts on this
+; host. Measured: /* */, // and # are all rejected at parse (exit 65).
+; ==========================================================================
+
+(version 1)
+
+; Deny by default. Every allow below carries its measured reason. Anything
+; not listed is refused with EPERM — measured for exec, mkdir, cat, and
+; connect, with "Operation not permitted" in the child's stderr in each case.
+(deny default)
+
+; -- exec -------------------------------------------------------------------
+; The runner (M5-4) spawns exactly one allowlisted program, by absolute path,
+; typed argv, no shell. This allow lets that child start; every other exec
+; path stays denied.
+; Measured: subpath "/bin" covers the probe's children (/bin/echo, /bin/mkdir,
+; /bin/cat, /bin/bash). The program directory is a parameter of the runner.
+(allow process-exec
+    (subpath "{RUNNER_PROGRAM_DIR}"))
+
+; -- loader startup (measured, required, cause unverified) ------------------
+; With (deny default) and no read allow on the root directory itself, every
+; sandboxed child dies with SIGABRT (exit 134) before dyld prints anything.
+; Allowing file-read-data on the literal root fixes it. Measured narrower
+; variants that do NOT work: file-read-metadata, file-read-attr, file-ioctl,
+; and read allows on /usr/lib, /System/Library, /private/var/db/dyld,
+; /System/Volumes/Preboot/Cryptexes, /dev, /usr/share, /usr/libexec, or
+; combinations of those.
+; The dyld shared cache itself needs no explicit allow: on macOS 26 the cache
+; lives at /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/ and its
+; mapping rides on process-exec (measured; mechanism unverified — on older
+; macOS versions this allow may be unnecessary but it has not been measured
+; to harm anything).
+(allow file-read-data (literal "/"))
+
+; -- fs_roots ---------------------------------------------------------------
+; Children read back what they produce and write only inside these roots.
+; Measured: mkdir inside the root exits 0 and the directory exists afterwards
+; unsandboxed; mkdir outside is refused with EPERM and nothing lands on disk.
+; Paths MUST be canonicalised before substitution. Measured: seatbelt matches
+; the resolved path, so a non-canonical /var/folders/... root does NOT match
+; its own /private/var/folders/... form — mkdir inside such a root gets
+; EPERM. The same canonicalise-then-match rule the workspace containment
+; (saya-harness/src/workspace/contain.rs) already applies.
+(allow file-read* (subpath "{RUN_DIR}"))
+(allow file-write* (subpath "{RUN_DIR}"))
+(allow file-read* (subpath "{CHILD_TEMP}"))
+(allow file-write* (subpath "{CHILD_TEMP}"))
+
+; -- net_allow: one rule per (host, port) -----------------------------------
+; Measured on this host, all of it:
+;   - the host position accepts ONLY "*" or "localhost". A raw IP
+;     ("127.0.0.1:P") or a DNS name ("example.com:443") is REJECTED at parse:
+;     "sandbox-exec: host must be * or localhost in network address". This is
+;     a parse-time rejection, independent of any endpoint state.
+;   - the policy host 127.0.0.1 maps to seatbelt "localhost". Measured with an
+;     accepting endpoint: 10/10 attempted connects land, and the port is
+;     exact — connecting to a port the rule does not name is refused with
+;     EPERM 5/5.
+;   - "(remote ip \"localhost:P\")" and "(remote tcp \"*:P\")" also compile and
+;     also passed 10/10 with an accepting endpoint; the exact form is
+;     preferred because it matches the policy shape. (A first measurement
+;     round reported these as blocking or flaky — that was an artifact of a
+;     starved listener backlog, see docs/sandbox-spike.md; the failure mode
+;     was TCP timeout, never sandbox denial.)
+; Consequence recorded for the design: net_allow endpoints can only be
+; loopback (mapped to "localhost") or a port-exact "*" — selective egress to
+; a named remote host is NOT expressible in this profile language on macOS
+; 26.6.2. Anything else must be empty net_allow plus another mechanism.
+(allow network-outbound (remote tcp "localhost:{PORT_I}"))
+
+; -- deliberately not allowed (measured denied) ------------------------------
+; process-fork: the probe's children never needed it while they ran single
+; commands, and a compound `sleep 0.5; exec ...` measured:
+;   /bin/bash: fork: Operation not permitted
+; If the allowlisted runner program ever forks (shells, wrappers), add
+; (allow process-fork) ONLY with a measured reason — every new allow widens
+; the sandbox. UNMEASURED for arbitrary runner programs.
+; mach-lookup, sysctl-read, network-inbound, file access outside the roots
+; above: denied by default; denials were measured and carry EPERM evidence.

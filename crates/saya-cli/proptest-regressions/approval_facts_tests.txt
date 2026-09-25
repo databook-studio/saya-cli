@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 254807e6d05ccb43f4ba7935b74a6de05b9a7e6cdf39cd985d3e70c41e865380 # shrinks to (tool, arguments) = (ToolDefinition { name: "bounded_sql_query_all", description: "Run one bounded read-only SQL query against EVERY connected database at once and return the per-database results. Use this when the same question should be answered across all connected databases; each database runs independently, so a failure on one (e.g. a dialect mismatch) is reported alongside the successes rather than aborting the rest. Do not pass a `connection` argument.", read_only: true, parameters: Object {"additionalProperties": Bool(false), "properties": Object {"sql": Object {"type": String("string")}}, "required": Array [String("sql")], "type": String("object")}, effect: ToolEffect { database_data: true, external_side_effect: false, requires_approval: true, local_state: None }, completion: None }, Object {"connection": String("analytics"), "sql": String("SELECT a")}), grant = None

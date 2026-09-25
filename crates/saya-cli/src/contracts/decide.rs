@@ -18,10 +18,9 @@
 //! silently write the wrong item: it resolves to the same one, or refuses.
 //!
 //! There is no store-level prefix scan: [`KnowledgeItemStore::get_knowledge_item`]
-//! is an exact `WHERE id = ?`. The only whole-profile read is
-//! [`KnowledgeItemStore::knowledge_for_profile`], so the prefix is matched in
-//! Rust against every item of the resolved profile. The item set per profile is
-//! small (a worklist, not an archive), so this is bounded.
+//! is an exact `WHERE id = ?`. Prefix resolution walks bounded profile pages
+//! through their typed continuation cursor, stopping as soon as two matches
+//! prove ambiguity. The store never materialises the profile in one query.
 //!
 //! Chunk 3 moved the decision ops onto `knowledge_items`; the ids the receipt
 //! prints are now `ki-…`, so a resolver that only matched the legacy `c-…` ids
@@ -30,7 +29,9 @@
 
 use super::op_error::ContractOpError;
 
-use saya_store::{KnowledgeItemStore, SqliteStateStore};
+use saya_store::{
+    KnowledgeItemStore, KnowledgeItemsQuery, MAX_KNOWLEDGE_PAGE_SIZE, SqliteStateStore,
+};
 use saya_types::{ClaimId, ProfileIdentity};
 
 /// Resolves `prefix` to exactly one item id among `profile`'s knowledge items,
@@ -49,12 +50,26 @@ pub(crate) async fn resolve_prefix(
     profile: &ProfileIdentity,
     prefix: &str,
 ) -> Result<ClaimId, ContractOpError> {
-    let items = store.knowledge_for_profile(profile).await?;
-    let matching: Vec<ClaimId> = items
-        .into_iter()
-        .filter_map(|item| ClaimId::parse(&item.id).ok())
-        .filter(|id| id.as_str().starts_with(prefix))
-        .collect();
+    let mut query = KnowledgeItemsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE)
+        .map_err(saya_store::KnowledgeStoreError::from)?;
+    let mut matching = Vec::new();
+    loop {
+        let page = store
+            .knowledge_for_profile_page(profile, query.clone())
+            .await?;
+        let next = query.next_page(&page);
+        matching.extend(
+            page.entries
+                .into_iter()
+                .filter_map(|item| ClaimId::parse(&item.id).ok())
+                .filter(|id| id.as_str().starts_with(prefix)),
+        );
+        if matching.len() > 1 {
+            break;
+        }
+        let Some(next) = next else { break };
+        query = next;
+    }
     match matching.len() {
         0 => Err(ContractOpError::NotFound),
         1 => Ok(matching.into_iter().next().expect("len == 1")),

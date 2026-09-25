@@ -2,6 +2,15 @@ use crate::{ChatMessage, ChatResponse, ProviderError, TokenUsage, ToolCall};
 use serde_json::Value;
 
 pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
+    // A capped response reports `finishReason: "MAX_TOKENS"` on the first
+    // candidate. Without this check it would end and look complete — silent
+    // truncation, strictly worse than the loud failure. The partial content
+    // below is redacted at construction, like every other model output.
+    if body["candidates"][0]["finishReason"].as_str() == Some("MAX_TOKENS") {
+        let mut partial_text = String::new();
+        collect_text(&body, &mut partial_text);
+        return Err(ProviderError::output_truncated(partial_text, Vec::new()));
+    }
     let parts = body
         .get("candidates")
         .and_then(|c| c.get(0))
@@ -76,8 +85,24 @@ pub(super) fn parse(body: Value) -> Result<ChatResponse, ProviderError> {
     })
 }
 
-/// Extracts token usage from a Gemini `generateContent` response's
-/// `usageMetadata`, or `None` when the response carries no `usageMetadata` at
+/// Gathers the non-thought text parts of the first candidate, so a capped
+/// response still carries the partial answer on the truncation signal.
+fn collect_text(body: &Value, out: &mut String) {
+    let Some(parts) = body["candidates"][0]["content"]["parts"].as_array() else {
+        return;
+    };
+    for part in parts {
+        let is_thought = part
+            .get("thought")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false);
+        if !is_thought && let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+            out.push_str(text);
+        }
+    }
+}
+
+/// Extracts token usage from a Gemini `generateContent` response's/// `usageMetadata`, or `None` when the response carries no `usageMetadata` at
 /// all. Gemini reports `promptTokenCount`/`candidatesTokenCount` (input/output)
 /// plus `cachedContentTokenCount` (a cache read, inclusive of the prompt) and
 /// `thoughtsTokenCount` (reasoning, **separate** from

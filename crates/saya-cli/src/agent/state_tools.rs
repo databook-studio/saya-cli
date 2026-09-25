@@ -12,6 +12,14 @@ use std::time::Instant;
 /// hundreds of rows only bloats context and slows every later turn.
 const MODEL_ROW_CAP: usize = 50;
 
+/// The model-facing row cap for one SQL call: the configured cap, narrowed to
+/// [`MODEL_ROW_CAP`]. The query path applies exactly this number
+/// (`query`), so the approval prompt states the same figure by calling the
+/// same function — the prompt's bound and the enforcement cannot drift.
+pub(crate) fn model_row_cap(max_rows: usize) -> usize {
+    max_rows.min(MODEL_ROW_CAP)
+}
+
 /// One table's worth of rendered schema, gathered before keys are resolved so
 /// a foreign key can find its target anywhere in the tree.
 struct CompactEntry {
@@ -260,7 +268,7 @@ pub(crate) async fn query(
 ) -> Result<serde_json::Value, ToolError> {
     let started = Instant::now();
     // Cap the rows the MODEL sees (not the /sql display path, which keeps max_rows).
-    let model_rows = max_rows.min(MODEL_ROW_CAP);
+    let model_rows = model_row_cap(max_rows);
     match connector.execute(QueryRequest::new(sql, model_rows)).await {
         Ok(result) => {
             if let (Some(store), Some(profile_id)) = (store, profile_id) {

@@ -8,9 +8,9 @@
 //! is one a user cannot work through. The legacy queue sorted by
 //! `evidence_count` from `contract_evidence`; that table is gone by design (a
 //! successful query is not evidence a business definition is true), so the
-//! queue no longer orders by evidence and the carried `evidence_count` is
-//! always zero — kept on the carrier only until the presentation layer (a
-//! later chunk) drops the field from its render DTO.
+//! queue no longer orders by evidence. The carrier still carries the legacy
+//! zero-valued count for wire compatibility, but presentation does not render
+//! it because there are no evidence rows left to measure.
 //!
 //! The queue reads `knowledge_items` via [`KnowledgeItemStore`] — the same
 //! rows the harness-owned learning path writes — so a candidate the model
@@ -23,7 +23,10 @@
 use crate::contracts::availability::{SchemaAvailability, SchemaFreshness};
 use crate::contracts::knowledge_validity::item_validity_for;
 use crate::contracts::view::ContractSchemaState;
-use saya_store::{KnowledgeItem, KnowledgeItemStore, SqliteStateStore};
+use saya_store::{
+    KnowledgeItem, KnowledgeItemStore, KnowledgeItemsQuery, MAX_KNOWLEDGE_PAGE_SIZE,
+    SqliteStateStore,
+};
 use saya_types::{
     ClaimId, ClaimPayload, ClaimStatus, DatabaseObjectRef, KnowledgeState, ProfileIdentity,
 };
@@ -42,8 +45,9 @@ pub(crate) const QUEUE_DEFAULT_LIMIT: usize = 50;
 /// The render carrier for one queued item. Carries the fields the
 /// presentation layer's `queue_item_view` reads (`payload`, `id`, `status`,
 /// `object`) projected from the [`KnowledgeItem`] — plus the `schema_state`
-/// and `evidence_count` that ride on [`QueuedCandidate`]. A dedicated carrier
-/// rather than the recall path's `ContractClaim` because the queue view reads
+/// and the legacy `evidence_count` that rides on [`QueuedCandidate`]. A
+/// dedicated carrier rather than the recall path's `ContractClaim` because the
+/// queue view reads
 /// `payload: Option<ClaimPayload>` (a forgotten-tombstone fallback the recall
 /// carrier's non-optional `value` does not model); a dedicated carrier rather
 /// than the legacy `StoredClaim` because reconstructing one would fabricate a
@@ -88,15 +92,20 @@ fn status_for_queue(state: KnowledgeState) -> ClaimStatus {
 }
 
 /// One item waiting for review — a `Pending` candidate. Carries the projected
-/// claim, the per-item schema state (a candidate about a table that has since
-/// changed says so), and the evidence count. The evidence *rows* are gone
-/// (`contract_evidence` is dropped by design), so `evidence_count` is always
-/// zero; it stays on the carrier until the presentation layer drops it.
+/// claim and the per-item schema state (a candidate about a table that has
+/// since changed says so). The legacy evidence count remains zero for the
+/// serialized compatibility shape, but is not a measured queue property.
 #[derive(Debug)]
 pub(crate) struct QueuedCandidate {
     pub claim: QueuedClaim,
     pub schema_state: ContractSchemaState,
     pub evidence_count: usize,
+    /// A sibling pending row was malformed and could not be projected. The
+    /// queue remains usable, but its visible entries must not imply a complete
+    /// review set.
+    pub incomplete: bool,
+    /// The bounded repository page had more rows after this queue preview.
+    pub truncated: bool,
 }
 
 /// The candidate review queue for `profiles`. `Pending` items only, ordered
@@ -121,9 +130,19 @@ pub(crate) async fn review_queue(
     // sort can key on the item's created stamp and slot (fields the render
     // carrier does not carry) before projecting to the carrier.
     let mut entries: Vec<(KnowledgeItem, ContractSchemaState)> = Vec::new();
+    let mut incomplete = false;
+    let mut truncated = false;
     for profile in profiles {
-        for item in store.knowledge_for_profile(profile).await? {
+        let query = KnowledgeItemsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE)
+            .map_err(saya_store::KnowledgeStoreError::from)?;
+        let page = store.knowledge_for_profile_page(profile, query).await?;
+        truncated |= page.has_more();
+        for item in page.entries {
             if item.state != KnowledgeState::Pending {
+                continue;
+            }
+            if ClaimId::parse(&item.id).is_err() {
+                incomplete = true;
                 continue;
             }
             let live = live_schema(schemas, item.object.profile());
@@ -155,6 +174,8 @@ pub(crate) async fn review_queue(
                 schema_state,
                 // contract_evidence is gone; there is no evidence to count.
                 evidence_count: 0,
+                incomplete,
+                truncated,
             })
         })
         .collect();

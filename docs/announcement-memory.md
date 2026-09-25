@@ -133,8 +133,10 @@ Change provider or setting and it takes effect on your next question.
 
 ## Deleting means deleting — with one honest caveat
 
-`saya contracts forget <id>` stops a fact influencing anything immediately, and erases its content and
-its evidence in the same transaction that records the deletion.
+`saya contracts forget <id>` stops a fact influencing anything immediately, and blanks its content
+and evidence in the same transaction that records the deletion. The following physical cleanup
+normally folds the WAL and overwrites freed pages; if that step is unavailable, the command says
+`cleanup pending` and a retry (or the next store open) completes it.
 
 The row survives, carrying no content: an id, a table, a status, timestamps. That's deliberate, and
 it buys two things — "why did SAYA stop using that?" stays answerable, and remembering the same fact

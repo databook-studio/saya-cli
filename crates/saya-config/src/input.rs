@@ -15,8 +15,9 @@ pub struct CliOverrides {
     pub theme: Option<ThemeChoice>,
     /// Explicitly trust security-critical settings from the project layer's
     /// `.saya/config.toml` (`ai.base_url`, `ai.api_key`,
-    /// `ai.allow_data_sharing`, `run.read_only`). Off by default because a
-    /// cloned repository is untrusted input.
+    /// `ai.allow_data_sharing`, `run.read_only`, and the endpoint pool's
+    /// additions, `base_url`s and `api_key`s under `[[ai.endpoints]]`). Off
+    /// by default because a cloned repository is untrusted input.
     pub trust_project_config: bool,
 }
 

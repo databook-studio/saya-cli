@@ -124,7 +124,9 @@ pub(crate) async fn recall_context_blocks(
     }
     // §4: nothing selected → no block, no error; an empty Ran receipt.
     if outcome.contracts.is_empty() {
-        return (Vec::new(), RecallReceipt::ran_empty(false));
+        let mut receipt = RecallReceipt::ran_empty(false);
+        receipt.dropped_by_bounds = usize::from(outcome.diagnostics.repository_truncated);
+        return (Vec::new(), receipt);
     }
 
     let name_of = render::name_by_identity(registry);
@@ -147,7 +149,13 @@ pub(crate) async fn recall_context_blocks(
         .iter()
         .map(|c| c.claims.len())
         .sum();
-    let dropped_by_bounds = outcome.diagnostics.excluded_by_count_bounds + byte_dropped_claims;
+    // A repository continuation means at least one stored row was beyond the
+    // bounded page. The exact tail is intentionally not counted: the page
+    // boundary is the safe, truthful signal and the next cursor is available
+    // to a future explicit continuation operation.
+    let repository_dropped = usize::from(outcome.diagnostics.repository_truncated);
+    let dropped_by_bounds =
+        outcome.diagnostics.excluded_by_count_bounds + byte_dropped_claims + repository_dropped;
     let receipt = RecallReceipt {
         kind: RecallOutcomeKind::Ran {
             store_unavailable: false,

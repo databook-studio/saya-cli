@@ -31,6 +31,12 @@ fn validate_reason(reason: Option<&str>) -> Result<Option<String>, ContractError
 }
 
 impl ClaimPayload {
+    pub fn table_user_note(text: impl Into<String>) -> Result<Self, ContractError> {
+        let text = text.into();
+        validate_text(&text)?;
+        Ok(Self::TableUserNote { text })
+    }
+
     pub fn table_description(text: impl Into<String>) -> Result<Self, ContractError> {
         let text = text.into();
         validate_text(&text)?;
