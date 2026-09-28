@@ -8,6 +8,7 @@ use super::{
     InvestigationError, MAX_CONNECTION_CHARS, MAX_DESCRIPTION_BYTES, MAX_FINGERPRINT_BYTES,
     MAX_NAME_CHARS, MAX_OBJECT_BYTES, MAX_OBJECTS, MAX_SQL_BYTES,
 };
+use crate::params::ParameterSpec;
 
 impl InvestigationDefinitionV1 {
     /// Re-checks every bound for a definition that may have arrived as JSON,
@@ -71,6 +72,11 @@ impl InvestigationDefinitionV1 {
         if !self.objects.iter().all(|object| seen.insert(object)) {
             return Err(InvestigationError::DuplicateObject);
         }
+        // The declared list is checked here: count cap, per-spec bounds, and
+        // unique names. Whether the SQL's `:name` placeholders match the
+        // declarations is the CLI's job — that check needs a SQL parser.
+        ParameterSpec::validate_list(&self.parameters)
+            .map_err(InvestigationError::InvalidParameterSpec)?;
         if let Some(fingerprint) = &self.schema_fingerprint {
             if fingerprint.is_empty() || fingerprint.chars().any(char::is_control) {
                 return Err(InvestigationError::InvalidFingerprint);

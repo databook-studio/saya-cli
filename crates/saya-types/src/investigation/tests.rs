@@ -1,6 +1,7 @@
 //! Tests for the saved-investigation contract.
 
 use super::*;
+use crate::params::{MAX_PARAMETERS, ParamError, ParamType, ParameterSpec};
 use proptest::prelude::*;
 
 const CREATED: i64 = 1_700_000_000_000;
@@ -32,6 +33,7 @@ fn valid_definition() -> InvestigationDefinitionV1 {
         name: "Revenue".to_string(),
         description: None,
         sql: "select 1".to_string(),
+        parameters: Vec::new(),
         dialect: SqlDialect::Postgres,
         connection: "prod".to_string(),
         objects: vec!["public.orders".to_string()],
@@ -43,6 +45,106 @@ fn valid_definition() -> InvestigationDefinitionV1 {
 
 fn definition_json(definition: &InvestigationDefinitionV1) -> String {
     serde_json::to_string_pretty(definition).expect("a valid definition serializes")
+}
+
+fn parameter_spec(name: &str, param_type: ParamType) -> ParameterSpec {
+    ParameterSpec {
+        name: name.to_owned(),
+        param_type,
+        required: false,
+        description: None,
+    }
+}
+
+fn definition_with_parameters() -> InvestigationDefinitionV1 {
+    let mut definition = valid_definition();
+    definition.sql = "select * from orders where region = :region".to_string();
+    definition.parameters = vec![parameter_spec("region", ParamType::String)];
+    definition
+}
+
+#[test]
+fn definition_without_parameters_loads_unchanged() {
+    let definition = valid_definition();
+    let json = definition_json(&definition);
+    assert!(
+        !json.contains("parameters"),
+        "a parameter-free definition omits the field"
+    );
+    let reparsed = InvestigationDefinitionV1::from_json_bytes(json.as_bytes())
+        .expect("old-shaped JSON still loads");
+    assert_eq!(reparsed, definition);
+    assert!(reparsed.parameters.is_empty());
+}
+
+#[test]
+fn parameters_round_trip_through_json() {
+    let mut definition = definition_with_parameters();
+    definition
+        .parameters
+        .push(parameter_spec("since", ParamType::Date));
+    definition
+        .parameters
+        .iter_mut()
+        .find(|spec| spec.name == "since")
+        .expect("the date spec exists")
+        .required = true;
+    let json = definition
+        .to_json_pretty()
+        .expect("a valid definition serializes");
+    assert!(json.contains("\"parameters\""));
+    // The wire shape spells the type field "type" per the v1 contract.
+    assert!(json.contains("\"type\": \"date\""));
+    let reparsed =
+        InvestigationDefinitionV1::from_json_bytes(json.as_bytes()).expect("parameters reparses");
+    assert_eq!(reparsed, definition);
+}
+
+#[test]
+fn validate_refuses_bad_parameter_spec_lists() {
+    let mut definition = definition_with_parameters();
+    definition
+        .parameters
+        .push(parameter_spec("region", ParamType::String));
+    assert_eq!(
+        definition.validate(),
+        Err(InvestigationError::InvalidParameterSpec(
+            ParamError::DuplicateName("region".to_owned())
+        ))
+    );
+    definition.parameters = (0..=MAX_PARAMETERS)
+        .map(|i| parameter_spec(&format!("p{i:02}"), ParamType::String))
+        .collect();
+    assert!(matches!(
+        definition.validate(),
+        Err(InvestigationError::InvalidParameterSpec(
+            ParamError::TooManySpecs(33)
+        ))
+    ));
+    definition.parameters = vec![parameter_spec("Region", ParamType::String)];
+    assert!(matches!(
+        definition.validate(),
+        Err(InvestigationError::InvalidParameterSpec(
+            ParamError::InvalidName(_)
+        ))
+    ));
+}
+
+#[test]
+fn oversize_cap_still_applies_with_parameters() {
+    let mut definition = definition_with_parameters();
+    definition.description = Some("x".repeat(MAX_DESCRIPTION_BYTES));
+    definition.objects = (0..MAX_OBJECTS)
+        .map(|i| format!("{i:0>3}{}", "x".repeat(MAX_OBJECT_BYTES - 3)))
+        .collect();
+    definition.sql = "s".repeat(MAX_SQL_BYTES);
+    definition
+        .validate()
+        .expect("every individual bound holds, yet the whole document cannot fit");
+    assert!(matches!(
+        definition.to_json_pretty(),
+        Err(InvestigationError::Oversize(len)) if len > MAX_DEFINITION_BYTES
+    ));
 }
 
 #[test]
