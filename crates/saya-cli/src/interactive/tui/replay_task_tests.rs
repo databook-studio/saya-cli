@@ -463,6 +463,50 @@ fn failed_replay_keeps_previous_capture() {
     assert_eq!(last_query.connection.as_deref(), Some("other"));
 }
 
+/// A successful replay whose captured output and stderr are both empty
+/// pushes no block: an empty System block is a transcript glitch, not a
+/// message.
+#[test]
+fn successful_replay_with_no_output_pushes_no_block() {
+    let mut transcript = Transcript::new();
+    let mut last_query: Option<LastQuery> = None;
+    let mut captured: Option<CapturedResult> = None;
+    complete(
+        done(0, "", None),
+        None,
+        &mut transcript,
+        &mut last_query,
+        &mut captured,
+    );
+    assert!(
+        transcript.blocks().is_empty(),
+        "an empty output is no block at all: {:?}",
+        transcript.blocks()
+    );
+    assert!(last_query.is_none() && captured.is_none());
+}
+
+/// The same skip for a failure: empty text is no block of any kind — the
+/// completion never pushes a block it has nothing to say in.
+#[test]
+fn failed_replay_with_no_output_pushes_no_block() {
+    let mut transcript = Transcript::new();
+    let mut last_query: Option<LastQuery> = None;
+    let mut captured: Option<CapturedResult> = None;
+    complete(
+        done(2, "", None),
+        None,
+        &mut transcript,
+        &mut last_query,
+        &mut captured,
+    );
+    assert!(
+        transcript.blocks().is_empty(),
+        "an empty failure text is no block at all: {:?}",
+        transcript.blocks()
+    );
+}
+
 /// While a replay runs, a second replay or /sql submitted is queued (the
 /// `is_busy` gate), a task reaching the dispatch handler is refused by the
 /// backstop guard — in both directions — and Esc detaches. A second replay

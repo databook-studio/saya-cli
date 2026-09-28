@@ -108,8 +108,9 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
 }
 
 /// Applies a finished replay: the shared operation's output as a system
-/// block (exit 0) or an error block, and — only when the operation returned
-/// a replay — the latest selectable query plus the ephemeral capture. The
+/// block (exit 0) or an error block, skipped entirely when it is empty, and
+/// — only when the operation returned a replay — the latest selectable query
+/// plus the ephemeral capture. The
 /// capture honours the same accounted budget the direct-/sql path uses:
 /// `accounted` is the result's verdict against it — production passes
 /// [`super::capture::accounted_bytes`]; tests a small-budget walk via
@@ -124,10 +125,15 @@ pub(crate) fn complete(
     last_query: &mut Option<LastQuery>,
     captured: &mut Option<CapturedResult>,
 ) {
-    if done.code == 0 {
-        transcript.push(BlockKind::System, done.text);
-    } else {
-        transcript.push(BlockKind::Error, done.text);
+    // The output block — unless there is nothing to say: a replay whose
+    // captured output and stderr are both empty is no block at all, since
+    // an empty block is a transcript glitch, not a message.
+    if !done.text.is_empty() {
+        if done.code == 0 {
+            transcript.push(BlockKind::System, done.text);
+        } else {
+            transcript.push(BlockKind::Error, done.text);
+        }
     }
     if let Some(replay) = done.replay {
         *last_query = Some(LastQuery {

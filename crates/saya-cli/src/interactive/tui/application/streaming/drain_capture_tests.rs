@@ -312,6 +312,47 @@ fn desync_promotes_no_capture() {
     assert_eq!(app.agent_captures.gap, None);
 }
 
+/// R4-9: a TurnReset discards the failed attempt's whole pairing state — the
+/// pending FIFO and the unmatched-capture queue — so the retry's completion
+/// can only ever promote the retry's own request and pair the retry's own
+/// capture, never a stale candidate from the attempt that was thrown away.
+#[test]
+fn a_turn_reset_discards_the_discarded_attempt_s_pairing_state() {
+    let (mut app, mut state) = app_and_state();
+    let retry_capture = capture_of("SELECT 2", "analytics", 2);
+    let retry_result = retry_capture.result.clone();
+    app.request.stream = Some(stream_with(vec![
+        // The discarded attempt: its request and its queued capture.
+        sql_request("SELECT 1", Some("analytics")),
+        StreamMsg::QueryCaptured(capture_of("SELECT 1", "analytics", 1)),
+        // The attempt failed mid-stream; the turn retries.
+        StreamMsg::Event(AgentEvent::turn_reset()),
+        // The retry: its own request, its own capture, its completion.
+        sql_request("SELECT 2", Some("analytics")),
+        StreamMsg::QueryCaptured(retry_capture),
+        completed("2 rows"),
+    ]));
+    app.drain_stream(&mut state);
+    assert_eq!(
+        selectable_sql(&app),
+        Some("SELECT 2"),
+        "the retry's completion promotes the retry's own request, never the \
+         discarded attempt's stale candidate"
+    );
+    let held = app
+        .captured
+        .as_ref()
+        .expect("the retry's completion pairs the retry's own capture");
+    assert_eq!(
+        held.result, retry_result,
+        "the slot holds the retry's capture, never the discarded attempt's"
+    );
+    assert!(
+        app.pending_queries.is_empty(),
+        "the retry consumed its own candidate"
+    );
+}
+
 /// The queue never survives a turn: an unmatched capture (its completion
 /// never came) is dropped when the turn ends.
 #[test]

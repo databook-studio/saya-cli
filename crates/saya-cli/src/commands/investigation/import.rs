@@ -31,6 +31,22 @@ pub(super) fn import(
     format: RenderFormat,
     path: &Path,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    import_with_racer(repo, format, path, &no_racer)
+}
+
+/// Production's raced window: nothing runs between the pre-check and the
+/// create.
+fn no_racer() {}
+
+/// The import flow with the raced-window seam (R4-7): a test passes the
+/// concurrent import that wins between the pre-check and the create, so the
+/// raced `create` conflict is reached deterministically.
+fn import_with_racer(
+    repo: &InvestigationRepository,
+    format: RenderFormat,
+    path: &Path,
+    racer: &dyn Fn(),
+) -> Result<i32, Box<dyn std::error::Error>> {
     let definition = match read_definition(path) {
         Ok(definition) => definition,
         Err((code, message)) => return failure_message(code, message, format),
@@ -60,37 +76,58 @@ pub(super) fn import(
         );
     }
     match repo.get(&definition.id) {
-        Ok(existing) if existing == definition => {
-            return result(preview(&definition, ALREADY_PRESENT_NOTE), format);
-        }
-        Ok(_) => {
-            return failure_message(
-                EXIT_INVESTIGATION_ERROR,
-                format!(
-                    "an investigation with id {} already exists with different content; delete it or import a different document",
-                    definition.id.as_str()
-                ),
-                format,
-            );
-        }
+        Ok(existing) => return stored_outcome(existing, &definition, format),
         Err(StoreError::NotFound) => {}
         Err(error) => return store_failure(error, definition.id.as_str(), format),
     }
+    racer();
     if let Err(error) = repo.create(&definition) {
-        // A conflict here is a raced concurrent import; same refusal.
-        let id = definition.id.as_str();
+        // A conflict here is a raced concurrent import: what is stored NOW
+        // decides, exactly as the pre-check decided.
         if matches!(error, StoreError::Conflict) {
-            return failure_message(
-                EXIT_INVESTIGATION_ERROR,
-                format!(
-                    "an investigation with id {id} already exists with different content; delete it or import a different document"
-                ),
-                format,
-            );
+            return raced_conflict(repo, &definition, format);
         }
-        return store_failure(error, id, format);
+        return store_failure(error, definition.id.as_str(), format);
     }
     result(preview(&definition, IMPORTED_NOTE), format)
+}
+
+/// The raced `create` conflict: another import stored an investigation with
+/// this id between the pre-check and the create. What is stored NOW decides
+/// — identical content is the idempotent no-op, anything else the
+/// different-content refusal — never the stale refusal for identical
+/// content the pre-check's absence suggested.
+fn raced_conflict(
+    repo: &InvestigationRepository,
+    definition: &InvestigationDefinitionV1,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    match repo.get(&definition.id) {
+        Ok(existing) => stored_outcome(existing, definition, format),
+        Err(error) => store_failure(error, definition.id.as_str(), format),
+    }
+}
+
+/// The stored document decides a re-import's outcome: identical content is
+/// the idempotent no-op; anything else the different-content refusal. The
+/// pre-check and the raced conflict decide this way alike.
+fn stored_outcome(
+    existing: InvestigationDefinitionV1,
+    definition: &InvestigationDefinitionV1,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    if existing == *definition {
+        result(preview(definition, ALREADY_PRESENT_NOTE), format)
+    } else {
+        failure_message(
+            EXIT_INVESTIGATION_ERROR,
+            format!(
+                "an investigation with id {} already exists with different content; delete it or import a different document",
+                definition.id.as_str()
+            ),
+            format,
+        )
+    }
 }
 
 /// Reads at most `MAX_DEFINITION_BYTES + 1` bytes from a regular file, then
@@ -146,3 +183,7 @@ fn preview(definition: &InvestigationDefinitionV1, note: &str) -> String {
         definition.sql,
     )
 }
+
+#[cfg(test)]
+#[path = "import_tests.rs"]
+mod tests;
