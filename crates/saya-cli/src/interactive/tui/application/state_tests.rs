@@ -1,10 +1,17 @@
 use super::tests_support::{idle_app, in_flight_task};
 use super::*;
+use crate::interactive::tui::worker_permits::test_permit_lock;
 
 #[test]
 fn idle_app_admits_a_sql_command() {
+    // Admission acquires a process-wide worker permit on Start, so the test
+    // must not race the cap tests' held phase over the shared pool.
+    let _serialized = test_permit_lock();
     let app = idle_app();
-    assert!(matches!(app.admit_second_sql(), SecondSqlDecision::Start));
+    assert!(matches!(
+        app.admit_second_sql(),
+        SecondSqlDecision::Start(_)
+    ));
     assert!(!app.is_busy(), "idle app is not busy");
 }
 
@@ -45,7 +52,7 @@ fn second_sql_command_at_the_handler_is_rejected_not_silently_dropped() {
                 "reject must not claim cancellation: {msg}"
             );
         }
-        SecondSqlDecision::Start => panic!(
+        SecondSqlDecision::Start(_) => panic!(
             "a second SQL command at the handler must be rejected, not started (silent result loss)"
         ),
     }

@@ -21,6 +21,10 @@
 //!   held by the queued-prompt gate until the first finishes (both results
 //!   report). The dispatch handler additionally refuses a `SqlTask` that
 //!   reaches it while one is already running (`App::admit_second_sql`).
+//! - **No unbounded workers.** Every spawn holds one process-wide worker
+//!   permit (`super::worker_permits`) from just before the thread starts
+//!   until its thread function returns, so detached workers still count
+//!   against the cap and admission refuses when all are held.
 //!
 //! Dispatch shares the existing `Arc<RuntimeConfig>` with the worker rather
 //! than deep-cloning the resolved config (plaintext secrets included) per
@@ -30,6 +34,7 @@
 
 use super::exec;
 use super::transcript::{BlockKind, Transcript};
+use super::worker_permits::WorkerPermit;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::tui::types::LastQuery;
 use crate::render::TerminalEvent;
@@ -67,10 +72,18 @@ pub(crate) struct SqlTask {
 }
 
 /// Spawns the query on a worker thread with its own tokio runtime and returns
-/// a non-blocking receiver for its [`TerminalEvent`].
-pub(crate) fn spawn(runtime: Arc<RuntimeConfig>, task: SqlTask) -> Receiver<TerminalEvent> {
+/// a non-blocking receiver for its [`TerminalEvent`]. The permit acquired by
+/// admission is moved into the thread: it is released only when this thread
+/// function returns — normally, on error, or on panic — so a detached worker
+/// keeps its slot and the cap stays honest.
+pub(crate) fn spawn(
+    permit: WorkerPermit,
+    runtime: Arc<RuntimeConfig>,
+    task: SqlTask,
+) -> Receiver<TerminalEvent> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
+        let _permit = permit;
         let event = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

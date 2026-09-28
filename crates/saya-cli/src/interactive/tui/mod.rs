@@ -57,6 +57,9 @@ pub(crate) mod ui;
 mod ui_snapshot_tests;
 mod usage_footer;
 mod usage_totals;
+mod worker_permits;
+#[cfg(test)]
+mod worker_permits_tests;
 pub(crate) mod wrap;
 
 pub(crate) use session::{TrustOutcome, TuiSession, run};
