@@ -1,5 +1,6 @@
 //! The UI-bound message channel for one streaming turn.
 
+use crate::agent::tools::AgentCapture;
 use saya_agent::{AgentEvent, AgentOutput, ApprovalChoice, CancellationToken};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
@@ -20,6 +21,17 @@ pub(crate) enum StreamMsg {
         detail: Option<String>,
         grant: Option<String>,
         respond: oneshot::Sender<ApprovalChoice>,
+    },
+    /// The typed result of one successful agent `bounded_sql_query` — exactly
+    /// what the model saw, sent before the loop's `ToolCompleted` for the
+    /// same call. Consumed by the capture pairing (C2).
+    QueryCaptured(AgentCapture),
+    /// One successful `bounded_sql_query` was over the accounted capture
+    /// budget: nothing is held, not even a partial. Consumed by the capture
+    /// pairing (C2).
+    QueryCaptureRefused {
+        sql: String,
+        connection: String,
     },
     /// A system fact the decider must say into the transcript — today, that
     /// the session journal could not record a grant the user just made. The
