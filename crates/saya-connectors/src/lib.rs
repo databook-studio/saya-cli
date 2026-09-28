@@ -23,8 +23,8 @@ pub use mysql::MySqlConnector;
 pub use postgres::PostgresConnector;
 pub use safety::{
     SqlReferences, prepare_bigquery_sql, prepare_clickhouse_sql, prepare_duckdb_sql,
-    prepare_mysql_sql, prepare_postgres_sql, prepare_snowflake_sql, prepare_sqlite_sql,
-    sql_references,
+    prepare_for_dialect, prepare_mysql_sql, prepare_postgres_sql, prepare_snowflake_sql,
+    prepare_sqlite_sql, sql_references,
 };
 pub use snowflake::SnowflakeConnector;
 pub use sqlite::SqliteConnector;
