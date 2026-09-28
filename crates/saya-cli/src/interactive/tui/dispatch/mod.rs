@@ -83,6 +83,7 @@ pub(crate) fn dispatch(
                         state_db,
                         format,
                         session,
+                        last_query,
                     ) {
                         result = outcome;
                     } else if grants::apply_grant_action(

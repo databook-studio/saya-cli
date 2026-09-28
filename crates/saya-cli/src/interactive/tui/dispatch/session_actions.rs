@@ -4,8 +4,10 @@
 
 use super::super::dispatch_actions::{list_sessions, resume};
 use super::super::dispatch_contracts::run_contracts;
+use super::super::dispatch_investigation::run_investigation;
 use super::super::dispatch_runs;
 use super::super::transcript::{BlockKind, Transcript};
+use super::super::types::LastQuery;
 use super::outcome::Dispatch;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_commands::SessionAction;
@@ -24,6 +26,7 @@ pub(super) fn apply_session_action(
     state_db: &saya_store::SqliteStateStore,
     format: RenderFormat,
     session: &mut SessionRuntime,
+    last_query: &Option<LastQuery>,
 ) -> Option<Dispatch> {
     match action.take().expect("dispatch passes the action through") {
         SessionAction::History => list_sessions(transcript, store),
@@ -43,6 +46,12 @@ pub(super) fn apply_session_action(
         }
         SessionAction::Contracts(command) => {
             run_contracts(transcript, state, runtime, state_db, format, &command)
+        }
+        SessionAction::Investigation(command) => {
+            // The saved-investigation adapter: the shared `run_investigation`
+            // dispatcher plus the TUI's save-without-SQL fill (the last
+            // selectable query, read-only here — the fill never edits it).
+            run_investigation(transcript, runtime, state_db, format, &command, last_query)
         }
         SessionAction::Runs(run_id) => {
             let command = match run_id {

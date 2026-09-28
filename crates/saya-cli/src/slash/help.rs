@@ -55,6 +55,11 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "Write a Markdown report (SQL + provenance) of the captured /sql result",
     ),
     (
+        "investigation",
+        "Save, list, show, run, export, import, or delete a saved investigation",
+    ),
+    ("investigations", "Alias for /investigation list"),
+    (
         "chart",
         "Re-run the last query and render the fresh result as an HTML chart",
     ),
@@ -170,6 +175,10 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "/export [--snapshot|--refresh] [--overwrite] <path>",
             ),
             ("report", "/report [--rows N] [--overwrite] <path>"),
+            (
+                "investigation",
+                "/investigation save|list|show|run|export|import|delete",
+            ),
             ("chart", "/chart [type] [path]"),
             ("explain", "/explain [sql]"),
             ("columns", "/columns [name,name,… | all]"),
@@ -278,6 +287,26 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              links, HTML, and control characters cannot be carried into the file — the report \
              must still be reviewed before sharing. Use /export for data files (.csv/.json). \
              Example: /report notes.md   or   /report --rows 20 notes.md",
+        ),
+        "investigation" => Some(
+            "investigation <save|list|show|run|export|import|delete> — manage saved \
+             investigations: portable JSON documents holding one exact, bounded, \
+             read-only SQL query and nothing else. `/investigation save <name>` \
+             saves the latest successful, concrete query on the connection that \
+             actually ran it; pass --sql <SQL> (or --file <PATH>) to save \
+             different SQL, and --connection <PROFILE> to save against another \
+             profile. Saving validates the SQL with the same read-only gate \
+             execution uses but never runs it; the exact SQL is stored verbatim, \
+             so review it before sharing. `run <id>` replays one on its explicit \
+             connection — it runs in the foreground, so the transcript waits for \
+             the query. `list`, `show`, `delete`, `export <id> <path>`, and \
+             `import <path>` are the same operations the `saya investigation` \
+             commands provide. Example: /investigation save recent orders   or   \
+             /investigation list",
+        ),
+        "investigations" => Some(
+            "investigations — alias for /investigation list: the saved investigations, \
+             one line each. Example: /investigations",
         ),
         "chart" => Some(
             "chart [type] [path] — re-run the last query and render the fresh result as an interactive HTML chart, then open it. The chart reflects that fresh read, not the displayed table. type: bar|line|area|pie|doughnut|scatter (default auto)",
