@@ -264,7 +264,10 @@ fn run_parses_the_id_connection_and_revalidate() {
         InvestigationCommand::Run {
             id: "abc-123".into(),
             connection: None,
-            revalidate: false
+            revalidate: false,
+            report: None,
+            rows: None,
+            overwrite: false
         }
     );
     assert_eq!(
@@ -272,7 +275,10 @@ fn run_parses_the_id_connection_and_revalidate() {
         InvestigationCommand::Run {
             id: "abc".into(),
             connection: Some("staging".into()),
-            revalidate: true
+            revalidate: true,
+            report: None,
+            rows: None,
+            overwrite: false
         }
     );
     assert_eq!(
@@ -280,7 +286,10 @@ fn run_parses_the_id_connection_and_revalidate() {
         InvestigationCommand::Run {
             id: "abc".into(),
             connection: None,
-            revalidate: true
+            revalidate: true,
+            report: None,
+            rows: None,
+            overwrite: false
         }
     );
     assert!(parsed("investigation", "run").is_err());
@@ -357,7 +366,10 @@ fn every_subcommand_parses_through_the_slash_parser() {
         Some(Inv(InvestigationCommand::Run {
             id: "abc".into(),
             connection: Some("staging".into()),
-            revalidate: false
+            revalidate: false,
+            report: None,
+            rows: None,
+            overwrite: false
         }))
     );
 }

@@ -148,6 +148,10 @@ fn parse_run(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
         id: id_from(&scan.positional, USAGE)?,
         connection: take_value(&mut scan.values, "--connection"),
         revalidate: scan.booleans.contains(&"--revalidate"),
+        // The TUI writes reports with /report; the slash run takes no report flags.
+        report: None,
+        rows: None,
+        overwrite: false,
     })
 }
 
