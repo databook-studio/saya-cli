@@ -1,10 +1,13 @@
 //! Second-query admission guard: refuse a direct-SQL command or an
 //! `/investigation run` replay that arrives while one is already running,
-//! instead of silently replacing (and dropping) the first.
+//! instead of silently replacing (and dropping) the first — and hold one
+//! process-wide worker permit per started query, so the cap on background
+//! workers (attached or detached) is honoured at admission time.
 
 use super::super::replay_task::ReplayTask;
 use super::super::transcript::BlockKind;
 use super::super::types::App;
+use super::super::worker_permits;
 use std::sync::Arc;
 
 impl App {
@@ -14,7 +17,10 @@ impl App {
     /// runs is held in `pending` and dispatches only after the first finishes
     /// (both results report). This guard is the backstop: should a `SqlTask`
     /// ever reach the dispatch handler while one is already running, it is
-    /// refused with a message instead of replacing the first receiver.
+    /// refused with a message instead of replacing the first receiver. On
+    /// [`SecondSqlDecision::Start`] the guard also holds one process-wide
+    /// worker permit — acquired here, before the spawn — which the caller
+    /// must move into the worker thread.
     pub(crate) fn admit_second_sql(&self) -> super::SecondSqlDecision {
         self.admit_second_command(
             "A SQL command is already running — wait for it to finish before starting another.",
@@ -33,9 +39,15 @@ impl App {
 
     fn admit_second_command(&self, message: &'static str) -> super::SecondSqlDecision {
         if self.sql_task.is_some() || self.replay_task.is_some() {
-            super::SecondSqlDecision::Reject(message)
-        } else {
-            super::SecondSqlDecision::Start
+            return super::SecondSqlDecision::Reject(message);
+        }
+        // One attached task at a time is the rule above; the process-wide
+        // worker cap is the second door, and detached workers — workers the
+        // UI no longer tracks — count against it like attached ones. When
+        // every permit is held the dispatch is refused, never queued.
+        match worker_permits::try_acquire_worker_permit() {
+            Some(permit) => super::SecondSqlDecision::Start(permit),
+            None => super::SecondSqlDecision::Reject(worker_permits::CAP_REFUSAL),
         }
     }
 
@@ -45,12 +57,16 @@ impl App {
     /// is said, never silently dropped.
     pub(crate) fn start_replay(&mut self, task: ReplayTask) {
         match self.admit_second_replay() {
-            super::SecondSqlDecision::Start => {
+            super::SecondSqlDecision::Start(permit) => {
                 let started = std::time::Instant::now();
                 self.request.started = Some(started);
                 self.request.activity = Some(format!("investigation {}", task.id));
                 self.replay_task = Some((
-                    super::super::replay_task::spawn(Arc::clone(&self.runtime), task.clone()),
+                    super::super::replay_task::spawn(
+                        permit,
+                        Arc::clone(&self.runtime),
+                        task.clone(),
+                    ),
                     task,
                     started,
                 ));
@@ -122,13 +138,16 @@ impl App {
 }
 
 /// The dispatch decision when a second direct-SQL command (or replay) arrives
-/// while one is already running. A pure function over [`App`] state so the
-/// result-loss behaviour is testable without a live database (see
+/// while one is already running — or while the process-wide worker cap is
+/// full (detached workers included). A pure function over [`App`] state so
+/// the result-loss behaviour is testable without a live database (see
 /// [`App::admit_second_sql`]).
 pub(crate) enum SecondSqlDecision {
-    /// No SQL command is in flight — start this one.
-    Start,
-    /// One is already running — refuse rather than silently drop the first
-    /// result. The message is shown to the user.
+    /// No SQL command is in flight and a worker permit was acquired — start
+    /// this one. The permit must be moved into the spawned worker thread; it
+    /// is released when that thread function returns.
+    Start(worker_permits::WorkerPermit),
+    /// One is already running, or all worker permits are held — refuse rather
+    /// than silently drop the first result. The message is shown to the user.
     Reject(&'static str),
 }
