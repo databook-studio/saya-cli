@@ -130,11 +130,15 @@ impl App {
                             }
                         }
                         // The failed attempt's partial answer was discarded
-                        // and the turn is retrying; the spinner falls back to
-                        // plain thinking instead of a stale tool label until
-                        // the re-streamed answer arrives.
+                        // and the turn is retrying: the spinner falls back
+                        // to plain thinking instead of a stale tool label,
+                        // and the discarded attempt's pairing state resets
+                        // as at turn end, so the retry pairs only its own.
                         AgentEvent::TurnReset => {
                             self.request.activity = None;
+                            self.pending_queries.clear();
+                            self.pending_queries_desync = false;
+                            self.agent_captures.clear_queue();
                         }
                         // The answer has streamed but the turn is not over:
                         // extraction is a second provider call the loop awaits.

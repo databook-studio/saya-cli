@@ -364,6 +364,50 @@ fn restore_failure_prints_failures_and_never_the_success_text() {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// A recovery marker that cannot be read stops the flow at once, naming the
+/// marker path and the manual way out: `commit` would refuse the pending
+/// state only at the very end, after the whole flow has been answered. The
+/// marker is never deleted automatically.
+#[test]
+fn unreadable_marker_stops_the_flow_naming_the_way_out() {
+    let dir = temp_dir("rec-unreadable");
+    let marker_path = dir.join(MARKER_FILE);
+    fs::write(&marker_path, b"{ interrupted, but corrupt").unwrap();
+
+    let mut opts = options(&dir);
+    // A full script: if the flow continued, it would run to the commit that
+    // refuses at the very end.
+    let mut input = Cursor::new(SQLITE_SCRIPT);
+    let mut output = Vec::new();
+    let result = run_with(&mut opts, &mut input, &mut output);
+
+    let error = result.expect_err("an unreadable marker stops the flow");
+    let message = error.to_string();
+    let marker = marker_path.to_str().unwrap();
+    assert!(
+        message.contains(marker),
+        "the message names the marker path: {message}"
+    );
+    assert!(
+        message.contains("inspect or remove") && message.contains("then run `saya setup` again"),
+        "the message names the manual way out: {message}"
+    );
+    let out = String::from_utf8(output).unwrap();
+    assert!(
+        !out.contains("database") && !out.contains("Nothing to configure"),
+        "the flow stopped before any prompt: {out}"
+    );
+    assert!(
+        marker_path.exists(),
+        "the marker is never deleted automatically"
+    );
+    assert!(
+        !dir.join("connections.toml").exists() && !dir.join("config.toml").exists(),
+        "nothing was written"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
 #[test]
 fn three_invalid_answers_cancel() {
     let dir = temp_dir("three-bad");
