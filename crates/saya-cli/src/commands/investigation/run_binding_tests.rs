@@ -22,6 +22,7 @@ fn definition(revision: u32, objects: Vec<String>) -> InvestigationDefinitionV1 
         name: "Order events".into(),
         description: None,
         sql: "SELECT id, label FROM events".into(),
+        parameters: Vec::new(),
         dialect: SqlDialect::Sqlite,
         connection: "local".into(),
         objects,
