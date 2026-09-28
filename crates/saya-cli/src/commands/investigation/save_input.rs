@@ -7,11 +7,11 @@
 use super::connection::resolve_connection;
 use super::{EXIT_INVESTIGATION_ERROR, EXIT_SAFETY};
 use crate::config::runtime::RuntimeConfig;
-use saya_connectors::{prepare_for_dialect, sql_references};
+use saya_connectors::prepare_for_dialect;
 use saya_types::investigation::{
     INVESTIGATION_FORMAT, INVESTIGATION_FORMAT_VERSION, InvestigationDefinitionV1, InvestigationId,
 };
-use saya_types::{ProfileIdentity, SqlDialect, redact};
+use saya_types::{ProfileIdentity, redact};
 use std::path::PathBuf;
 
 /// One save request, as the adapter parsed it: the exact SQL from `--sql` or
@@ -71,7 +71,10 @@ pub(super) fn checked_definition(
     }
     let now = now_unix_ms();
     let name = name.trim();
-    let objects = referenced_objects(&sql, dialect);
+    // The informational objects field, canonically rendered from the SQL
+    // (A2 decision 2): each part bare or double-quoted, parts joined with
+    // "." — a dotted table name stays one object.
+    let objects = super::objects::canonical_objects(&sql, dialect);
     let definition = InvestigationDefinitionV1 {
         format: INVESTIGATION_FORMAT.to_string(),
         version: INVESTIGATION_FORMAT_VERSION,
@@ -91,19 +94,6 @@ pub(super) fn checked_definition(
         .validate()
         .map_err(|error| (EXIT_INVESTIGATION_ERROR, error.to_string()))?;
     Ok((definition, profile_name, identity))
-}
-
-/// Referenced objects as written, each part joined with "."; empty when the
-/// SQL does not parse (the safety gate already refused it in that case).
-fn referenced_objects(sql: &str, dialect: SqlDialect) -> Vec<String> {
-    let Some(references) = sql_references(sql, dialect) else {
-        return Vec::new();
-    };
-    references
-        .objects
-        .iter()
-        .map(|parts| parts.join("."))
-        .collect()
 }
 
 fn now_unix_ms() -> i64 {
