@@ -383,4 +383,53 @@ mod tests {
         assert_eq!(r.objects, Vec::<Vec<String>>::new());
         assert!(!r.partial);
     }
+
+    #[test]
+    fn nonrecursive_cte_body_sees_the_base_table() {
+        // A non-recursive CTE cannot see its own alias: the `orders` inside
+        // the body is the base table and must be reported; the `orders` in
+        // the main body is the CTE and must not be.
+        let r = sql_references(
+            "WITH orders AS (SELECT * FROM orders WHERE x > 1) SELECT * FROM orders",
+            D,
+        )
+        .unwrap();
+        assert_eq!(r.objects, vec![vec!["orders"]]);
+        assert!(!r.partial);
+    }
+
+    #[test]
+    fn later_cte_alias_not_visible_in_earlier_body() {
+        // CTE bodies see only earlier CTEs of the same WITH: `b` inside `a`'s
+        // body is the base table, while the main body's `a` is the CTE.
+        let r = sql_references(
+            "WITH a AS (SELECT * FROM b), b AS (SELECT 1) SELECT * FROM a",
+            D,
+        )
+        .unwrap();
+        assert_eq!(r.objects, vec![vec!["b"]]);
+        assert!(!r.partial);
+    }
+
+    #[test]
+    fn earlier_cte_visible_in_later_body() {
+        // An earlier CTE's alias is visible in a later CTE's body.
+        let r = sql_references(
+            "WITH a AS (SELECT 1), b AS (SELECT * FROM a) SELECT * FROM b",
+            D,
+        )
+        .unwrap();
+        assert_eq!(r.objects, Vec::<Vec<String>>::new());
+        assert!(!r.partial);
+    }
+
+    #[test]
+    fn subquery_inside_nonrecursive_cte_body_sees_the_base_table() {
+        // The derived subquery sits inside the CTE's own body, which cannot
+        // see its own alias: `t` there is the base table, not the CTE.
+        assert_eq!(
+            objects("WITH t AS (SELECT * FROM (SELECT * FROM t) s) SELECT * FROM t"),
+            vec![vec!["t"]]
+        );
+    }
 }
