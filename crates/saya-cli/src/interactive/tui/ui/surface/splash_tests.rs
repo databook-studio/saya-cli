@@ -49,6 +49,7 @@ fn first_run_guidance_names_no_config_path() {
 fn first_run_guidance_names_real_commands() {
     let all = NO_DATABASE_STEPS.join(" ") + NO_DATABASE_FOOTER;
     for command in [
+        "saya demo",
         "saya config init",
         "saya connection test",
         "saya config doctor",

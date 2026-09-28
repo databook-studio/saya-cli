@@ -12,13 +12,19 @@ pub(crate) const NO_DATABASE_HEADLINE: &str = "No database is configured yet.";
 
 /// The steps under that headline.
 ///
+/// The first step is the one-command way forward: the synthetic demo
+/// database, opened read-only, needs no configuration at all. The
+/// `config init` route stays behind it for the real database a serious
+/// session needs.
+///
 /// Deliberately names no config path. `config init` writes the user config
 /// directory by default, `--project` writes `.saya/`, and init prints whichever
 /// it chose — so the one place that knows the answer is the command itself.
 /// The previous copy hardcoded `.saya/connections.toml` and kept saying it
 /// after the default moved, sending first-run users to a file that is not
 /// created any more.
-pub(in crate::interactive::tui) const NO_DATABASE_STEPS: [&str; 3] = [
+pub(in crate::interactive::tui) const NO_DATABASE_STEPS: [&str; 4] = [
+    "Try it now: `saya demo` — a read-only sample database.",
     "Run `saya config init` — it prints where it wrote the files.",
     "Add your database there, then `saya connection test <name>`.",
     "Restart saya to pick it up.",
