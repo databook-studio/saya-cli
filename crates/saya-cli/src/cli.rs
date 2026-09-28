@@ -217,10 +217,11 @@ pub enum Command {
     },
     /// Manage saved investigations: save a bounded read-only SQL query as a
     /// portable JSON document (no credentials, rows, or machine state), list
-    /// or show the saved definitions, export or import one as a portable
-    /// JSON file, or delete one. Saving validates the SQL
+    /// or show the saved definitions, replay one with `run`, export or import
+    /// one as a portable JSON file, or delete one. Saving validates the SQL
     /// with the same read-only gate execution uses but never runs it, and no
-    /// connection is made. Replay (`investigation run`) is coming soon.
+    /// connection is made. Review the saved SQL before sharing: literals are
+    /// stored verbatim.
     Investigation {
         #[command(subcommand)]
         command: InvestigationCommand,
@@ -517,6 +518,28 @@ pub enum InvestigationCommand {
         /// Path to the definition file to import.
         #[arg(value_name = "PATH")]
         path: std::path::PathBuf,
+    },
+    /// Replay a saved investigation against an explicit local connection:
+    /// the same bounded, read-only query path as `saya query`, with no AI
+    /// provider involved. The target comes only from `--connection` or the
+    /// stored local review binding — never the active or default profile —
+    /// and the review must still match the definition, the target, and the
+    /// referenced objects' schema, or the run is refused.
+    Run {
+        /// The id of the investigation to run (`investigation list` prints
+        /// the ids).
+        id: String,
+        /// Connection profile to replay against. Required on the first run
+        /// of an investigation that has no local review binding on this
+        /// machine (e.g. one that was imported); the mapping it creates is
+        /// remembered so later runs need no flag.
+        #[arg(long, value_name = "PROFILE")]
+        connection: Option<String>,
+        /// Accept the current state and rewrite the local review binding:
+        /// use this when a revision, target, or schema change is expected
+        /// and reviewed.
+        #[arg(long)]
+        revalidate: bool,
     },
 }
 

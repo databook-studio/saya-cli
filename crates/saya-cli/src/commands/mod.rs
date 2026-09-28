@@ -77,7 +77,7 @@ pub async fn run(
             contracts::run_contracts(command, runtime, format, &state).await
         }
         Command::Investigation { command } => {
-            investigation::run_investigation(command, runtime, format)
+            investigation::run_investigation(command, runtime, format, can_prompt, &state).await
         }
         Command::Run {
             prompt,

@@ -4,7 +4,7 @@
 
 use crate::commands::output::{failure_message, result};
 use crate::render::RenderFormat;
-use saya_store::{InvestigationRepository, MAX_LIST_PAGE};
+use saya_store::{InvestigationRepository, MAX_DOCUMENTS, MAX_LIST_PAGE};
 
 pub(super) fn list(
     repo: &InvestigationRepository,
@@ -43,8 +43,14 @@ pub(super) fn list(
     for issue in &page.issues {
         lines.push(format!("warning: {}: {}", issue.file_stem, issue.error));
     }
-    if page.capped {
+    // "(capped at 500)" is only for a collection at the store's scan bound
+    // (more candidates than the cap can hold) — ordinary pagination names
+    // the next offset instead, so a small collection never reads as capped.
+    let next = offset.saturating_add(limit);
+    if page.total_seen > MAX_DOCUMENTS {
         lines.push("(capped at 500)".to_string());
+    } else if page.total_seen > next {
+        lines.push(format!("more: --offset {next}"));
     }
     result(lines.join("\n"), format)
 }

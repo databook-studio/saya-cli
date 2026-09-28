@@ -11,9 +11,12 @@
 mod connection;
 mod delete;
 mod export;
+mod fingerprint;
 mod import;
 mod list;
 mod paths;
+mod run;
+mod run_binding;
 mod save;
 mod save_input;
 mod show;
@@ -23,7 +26,7 @@ mod tests;
 use crate::cli::InvestigationCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
-use saya_store::{InvestigationRepository, StoreError};
+use saya_store::{InvestigationRepository, SqliteStateStore, StoreError};
 use saya_types::investigation::InvestigationId;
 
 /// Exit code for typed investigation-command failures (usage and domain
@@ -37,27 +40,34 @@ pub(super) const EXIT_SAFETY: i32 = 4;
 
 /// Runs one investigation subcommand against the on-disk repository for this
 /// invocation (D2 root: `SAYA_INVESTIGATIONS_DIR`, else beside the state DB).
-pub fn run_investigation(
+pub async fn run_investigation(
     command: InvestigationCommand,
     runtime: &RuntimeConfig,
     format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     run_investigation_in(
         &InvestigationRepository::new(paths::investigations_root()),
         command,
         runtime,
         format,
+        can_prompt,
+        state_db,
     )
+    .await
 }
 
 /// The repository-explicit seam: tests and later adapters pass the repository
 /// they own instead of relying on process env; the public entry is a
 /// one-liner over this.
-pub(crate) fn run_investigation_in(
+pub(crate) async fn run_investigation_in(
     repo: &InvestigationRepository,
     command: InvestigationCommand,
     runtime: &RuntimeConfig,
     format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match command {
         InvestigationCommand::Save {
@@ -89,6 +99,25 @@ pub(crate) fn run_investigation_in(
             overwrite,
         } => export::export(repo, format, &id, &path, overwrite),
         InvestigationCommand::Import { path } => import::import(repo, format, &path),
+        InvestigationCommand::Run {
+            id,
+            connection,
+            revalidate,
+        } => {
+            run::run(
+                repo,
+                runtime,
+                format,
+                can_prompt,
+                state_db,
+                run::RunRequest {
+                    id: &id,
+                    connection: connection.as_deref(),
+                    revalidate,
+                },
+            )
+            .await
+        }
     }
 }
 
