@@ -3,9 +3,10 @@
 //! local binding at `<root>/local/<id>.json` that never leaves the machine.
 //!
 //! Every mutation runs entirely under the cross-process repository lock
-//! (the `lock` submodule) — read/check/publish is one critical section —
-//! and create's publish never replaces, so a document that appears after the checks is a
-//! conflict, never an overwrite. Every write stages private temp bytes
+//! (the `lock` submodule: an OS advisory file lock) — read/check/publish is
+//! one critical section — and create's publish never replaces, so a
+//! document that appears after the checks is a conflict, never an
+//! overwrite. Every write stages private temp bytes
 //! beside its target and publishes with an atomic rename; every read is
 //! bounded and never quarantines, rewrites, or deletes a file it cannot
 //! parse. A corrupt document is reported, so a bad file can never be
@@ -15,7 +16,6 @@ mod binding;
 mod documents;
 mod list;
 mod lock;
-mod stale;
 
 #[cfg(test)]
 mod exclusivity_tests;
@@ -49,7 +49,6 @@ pub(crate) const LIST_SCAN_BOUND: usize = MAX_DOCUMENTS + 1;
 pub struct InvestigationRepository {
     root: PathBuf,
     lock_wait: Duration,
-    stale_after: Duration,
 }
 
 impl InvestigationRepository {
@@ -57,7 +56,6 @@ impl InvestigationRepository {
         Self {
             root,
             lock_wait: lock::LOCK_WAIT,
-            stale_after: lock::STALE_AFTER,
         }
     }
 

@@ -1,6 +1,6 @@
 # Contributing
 
-SAYA CLI is a small Rust workspace (edition 2024, MSRV 1.88). This guide is the
+SAYA CLI is a small Rust workspace (edition 2024, MSRV 1.89). This guide is the
 quick start; the sections below are self-contained.
 
 ## The loop
