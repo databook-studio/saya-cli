@@ -83,6 +83,7 @@ pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
         config_path: None,
         connections_path: None,
         cache_scope: PathBuf::new(),
+        investigations_root: crate::config::runtime::temp_investigations_root(),
         secret_values: BTreeMap::new(),
     })
 }

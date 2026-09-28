@@ -189,6 +189,9 @@ fn a_running_sql_task_or_replay_hints_detach_not_cancel() {
                 overwrite: false,
             },
             format: RenderFormat::Text,
+            // The status bar never runs the worker; the lazy empty-path
+            // store is the shape any dispatched task carries.
+            state_db: crate::interactive::tui::ui_snapshot_tests::unused_store(),
         },
         std::time::Instant::now(),
     ));

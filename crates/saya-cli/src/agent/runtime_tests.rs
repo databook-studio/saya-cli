@@ -266,6 +266,7 @@ fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
         config_path: None,
         connections_path: None,
         cache_scope: PathBuf::from("/tmp/saya-runtime-p1b"),
+        investigations_root: crate::config::runtime::temp_investigations_root(),
         secret_values: BTreeMap::new(),
     }
 }
