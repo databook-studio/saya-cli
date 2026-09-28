@@ -1,8 +1,8 @@
 //! Exclusivity tests for investigation-store writes (A1): concurrent
 //! conflicting writers through separate repositories on one root must let
-//! exactly one win, the cross-process `.lock` protocol must respect live
-//! holders and break only verified-stale ones, and the create publish must
-//! never replace a file that appeared after the checks.
+//! exactly one win, the cross-process `.lock` OS lock must respect live
+//! holders, and the create publish must never replace a file that appeared
+//! after the checks.
 
 use crate::StoreError;
 use crate::investigations::{InvestigationRepository, LocalBinding};
@@ -15,15 +15,12 @@ use saya_types::{
     },
 };
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// A generous contention budget for the concurrency tests: every critical
 /// section is sub-millisecond, so contention burns retry sleeps, never the
 /// budget.
 const WAIT: Duration = Duration::from_secs(10);
-/// Longer than any contended critical section in these tests, so live
-/// locks are never mistaken for stale ones here.
-const STALE: Duration = Duration::from_secs(30);
 
 fn temp_root(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -67,18 +64,7 @@ fn binding(name_id: &str) -> LocalBinding {
 }
 
 fn repo(root: &Path) -> InvestigationRepository {
-    InvestigationRepository::with_lock_params(root.to_path_buf(), WAIT, STALE)
-}
-
-fn now_unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
-}
-
-fn lock_bytes(acquired_unix_ms: i64) -> Vec<u8> {
-    format!("{{\"pid\":1,\"acquired_unix_ms\":{acquired_unix_ms}}}\n").into_bytes()
+    InvestigationRepository::with_lock_params(root.to_path_buf(), WAIT)
 }
 
 fn one_winner_and_conflicts(results: &[Result<(), StoreError>]) -> usize {
@@ -207,57 +193,6 @@ fn update_racing_delete_never_resurrects_or_loses_silently() {
             }
         }
     }
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn stale_lock_is_broken_live_lock_is_respected() {
-    let root = temp_root("stale-lock");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    // Test-sized protocol budget: 250 ms of contention wait, 1 s staleness
-    // horizon (the production defaults are 2 s and 30 s).
-    let repo = InvestigationRepository::with_lock_params(
-        root.clone(),
-        Duration::from_millis(250),
-        Duration::from_secs(1),
-    );
-
-    // A lock older than the staleness horizon is broken — renamed aside,
-    // never deleted — and the mutation proceeds; the aside the break left
-    // is removed after the successful re-claim, so none accumulate.
-    let stale_bytes = lock_bytes(now_unix_ms() - 60_000);
-    std::fs::write(root.join(".lock"), &stale_bytes).unwrap();
-    repo.put_binding(&binding("stale-me")).unwrap();
-    assert!(
-        !root.join(".lock").exists(),
-        "the acquired lock must be released after the mutation"
-    );
-    assert!(
-        std::fs::read_dir(&root)
-            .unwrap()
-            .filter_map(Result::ok)
-            .all(|entry| !entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".lock.stale-")),
-        "the aside left by the break must be removed after the successful \
-         re-claim, not left to accumulate"
-    );
-
-    // A fresh lock is respected: the mutation waits out its budget and
-    // reports Unavailable, leaving the live lock byte-for-byte intact.
-    let fresh_bytes = lock_bytes(now_unix_ms());
-    std::fs::write(root.join(".lock"), &fresh_bytes).unwrap();
-    assert_eq!(
-        repo.put_binding(&binding("stale-me")),
-        Err(StoreError::Unavailable)
-    );
-    assert_eq!(
-        std::fs::read(root.join(".lock")).unwrap(),
-        fresh_bytes,
-        "a live lock must never be deleted or broken"
-    );
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -34,19 +34,19 @@ jobs:
           fi
 
   msrv:
-    name: Rust 1.88 MSRV
+    name: Rust 1.89 MSRV
     runs-on: ubuntu-latest
     env:
       CARGO_BUILD_JOBS: "1"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.88.0
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.89.0
         with:
-          toolchain: 1.88.0
+          toolchain: 1.89.0
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          shared-key: "msrv-1.88"
+          shared-key: "msrv-1.89"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --locked
 
