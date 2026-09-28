@@ -1,6 +1,6 @@
 use crate::{
     cli::{Cli, Command, ConfigCommand, ConnectionCommand},
-    commands, config, interactive,
+    commands, config, demo, interactive,
 };
 use std::{io::IsTerminal, path::Path};
 
@@ -34,6 +34,9 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     } = &command
     {
         return commands::run_config_init(cli.options.format.into(), *project);
+    }
+    if let Command::Demo { reset } = command {
+        return demo::run(&cli, reset);
     }
     // `--verbose` seeds the extraction-boundary trace before any turn runs.
     // Until now the flag was declared and read nowhere, so passing it did

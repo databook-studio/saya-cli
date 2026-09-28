@@ -164,6 +164,17 @@ impl ThemeArg {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
+    /// Build (or reuse) the deterministic demo database — synthetic customers
+    /// and orders designed to exercise tricky SQL — and open it read-only in
+    /// an interactive session. Without a terminal (or with `--non-interactive`)
+    /// it prints the database and connections paths, the launch command, and
+    /// example SQL instead of launching.
+    Demo {
+        /// Rebuild the demo database even when a current fixture already
+        /// exists on disk.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Manage saya's configuration: write starter templates, diagnose setup,
     /// or print the effective configuration.
     Config {
