@@ -3,7 +3,7 @@
 use super::super::history::History;
 use super::super::input::InputBuffer;
 use super::super::transcript::{BlockKind, Transcript};
-use super::super::types::{App, MAX_INPUT_ROWS, OverlayState, RequestState};
+use super::super::types::{AgentCaptures, App, MAX_INPUT_ROWS, OverlayState, RequestState};
 use crate::config::runtime::RuntimeConfig;
 use saya_store::SqliteStateStore;
 use std::cell::Cell;
@@ -46,6 +46,7 @@ impl App {
             captured: None,
             pending_queries: VecDeque::new(),
             pending_queries_desync: false,
+            agent_captures: AgentCaptures::new(),
             wide_table: Default::default(),
             run_panel: None,
             runtime,

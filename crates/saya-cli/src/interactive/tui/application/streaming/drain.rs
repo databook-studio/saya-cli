@@ -7,6 +7,7 @@ use super::super::super::types::{
     App, LastQuery, MAX_PENDING_QUERIES, PendingApproval, PendingQuery,
 };
 use crate::interactive::session_state::SessionState;
+use crate::interactive::tui::capture_agent::{AgentCaptureOutcome, promote_agent_capture};
 use crate::render::tool_groups::is_failure_summary;
 use saya_agent::{AgentEvent, UsageCall};
 
@@ -30,6 +31,9 @@ impl App {
         for msg in messages {
             match msg {
                 StreamMsg::Event(event) => {
+                    // The capture a successful completion pairs, if any; its
+                    // provenance line is pushed after the event has rendered.
+                    let mut promoted = None;
                     match &event {
                         AgentEvent::ToolRequested {
                             name, arguments, ..
@@ -73,6 +77,10 @@ impl App {
                                 if self.pending_queries.len() > MAX_PENDING_QUERIES {
                                     self.pending_queries.clear();
                                     self.pending_queries_desync = true;
+                                    // The pairing is off for the rest of the
+                                    // turn: no queued capture can be paired
+                                    // with its completion either.
+                                    self.agent_captures.clear_queue();
                                 }
                             }
                         }
@@ -96,6 +104,15 @@ impl App {
                                 && let Some(pending) = self.pending_queries.pop_front()
                                 && !is_failure_summary(summary)
                             {
+                                // D12/C2 pairing: THIS query's capture decides
+                                // the slot — held, refused (cleared, gap
+                                // named), or absent (cleared). No silent
+                                // fallback to an older result.
+                                promoted = promote_agent_capture(
+                                    &pending,
+                                    &mut self.agent_captures,
+                                    &mut self.captured,
+                                );
                                 self.last_query = Some(LastQuery {
                                     sql: pending.sql,
                                     connection: pending.connection,
@@ -139,16 +156,30 @@ impl App {
                         _ => {}
                     }
                     apply_event(&mut self.transcript, event, state.show_thinking);
+                    // A promoted capture's provenance is visible: source,
+                    // connection, rows, short id, model-limited scope.
+                    if let Some(evidence) = promoted {
+                        self.transcript
+                            .push(BlockKind::System, evidence.human_line());
+                    }
                 }
-                StreamMsg::QueryCaptured(_capture) => {
-                    // The typed result of one successful agent query and its
-                    // over-budget refusal: consumed by the capture pairing
-                    // (C2). The drain deliberately does nothing with them yet.
+                StreamMsg::QueryCaptured(capture) => {
+                    // The typed result of one successful agent query (D12),
+                    // queued for the pairing below. Skipped while the FIFO is
+                    // desynchronised: nothing pairs from an untrusted turn.
+                    if !self.pending_queries_desync {
+                        self.agent_captures
+                            .push(AgentCaptureOutcome::Captured(capture));
+                    }
                 }
-                StreamMsg::QueryCaptureRefused {
-                    sql: _sql,
-                    connection: _connection,
-                } => {}
+                StreamMsg::QueryCaptureRefused { sql, connection } => {
+                    // The query ran but is over the capture budget: queued so
+                    // its completion pairs, clears the slot, names the gap.
+                    if !self.pending_queries_desync {
+                        self.agent_captures
+                            .push(AgentCaptureOutcome::Refused { sql, connection });
+                    }
+                }
                 StreamMsg::Notice(message) => {
                     // A system fact the decider said — today, that the
                     // session journal could not record a grant the user
@@ -188,6 +219,9 @@ impl App {
             // the next turn pairs from a trusted FIFO again.
             self.pending_queries.clear();
             self.pending_queries_desync = false;
+            // No unmatched capture survives the turn either: its completion
+            // never came, and pairing it later would attach a foreign result.
+            self.agent_captures.clear_queue();
             // The numerator belongs to the turn that reported it; the next
             // turn must not show this one's figure if the provider goes
             // silent.

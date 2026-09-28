@@ -5,7 +5,7 @@ use crate::interactive::tui::history::History;
 use crate::interactive::tui::input::InputBuffer;
 use crate::interactive::tui::sql_task::{Followup, SqlTask};
 use crate::interactive::tui::transcript::Transcript;
-use crate::interactive::tui::types::{App, OverlayState, RequestState};
+use crate::interactive::tui::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::render::TerminalEvent;
 use saya_store::SqliteStateStore;
 use std::collections::BTreeMap;
@@ -39,6 +39,7 @@ pub(crate) fn idle_app() -> App {
         captured: None,
         pending_queries: std::collections::VecDeque::new(),
         pending_queries_desync: false,
+        agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
         run_panel: None,
         runtime: Arc::new(unused_runtime()),

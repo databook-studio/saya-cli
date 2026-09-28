@@ -43,6 +43,7 @@ pub(crate) fn dispatch(
     format: RenderFormat,
     last_query: &mut Option<LastQuery>,
     captured: &Option<CapturedResult>,
+    capture_gap: Option<super::capture_agent::CaptureGap>,
     session: &mut SessionRuntime,
 ) -> Dispatch {
     // In the TUI, /sessions opens an interactive picker rather than a text list.
@@ -98,6 +99,7 @@ pub(crate) fn dispatch(
                         state,
                         last_query,
                         captured,
+                        capture_gap,
                     ) {
                         result = outcome;
                     } else if let Some(outcome) = run::apply_run_action(

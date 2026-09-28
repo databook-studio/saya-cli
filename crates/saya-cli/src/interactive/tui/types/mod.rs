@@ -7,6 +7,7 @@ pub(crate) mod tasks;
 pub(crate) mod usage;
 
 pub(crate) use super::capture::CapturedResult;
+pub(crate) use super::capture_agent::AgentCaptures;
 pub(crate) use app::App;
 pub(crate) use overlays::{
     Menu, OverlayState, Picker, PickerEntry, SearchKind, SearchOverlay, TrustPrompt,
