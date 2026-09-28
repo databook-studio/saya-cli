@@ -83,10 +83,7 @@ fn unbound_workspace_line_names_the_fact_and_the_remedy() {
 }
 
 /// The splash is centred, so a line wider than a narrow terminal wraps and
-/// breaks the centring for every line under it. The bar is the longest
-/// guidance line, not a round number: the demo step is deliberately one
-/// char over the classic 64-col bar — its copy is fixed by the milestone
-/// decision — so the guard tracks it instead of silently failing.
+/// breaks the centring for every line under it.
 #[test]
 fn first_run_guidance_fits_a_narrow_terminal() {
     for line in NO_DATABASE_STEPS
@@ -94,7 +91,7 @@ fn first_run_guidance_fits_a_narrow_terminal() {
         .chain([&NO_DATABASE_HEADLINE, &NO_DATABASE_FOOTER])
         .chain(&NO_WORKSPACE_LINES)
     {
-        assert!(line.chars().count() <= 65, "too wide to centre: {line}");
+        assert!(line.chars().count() <= 64, "too wide to centre: {line}");
     }
 }
 

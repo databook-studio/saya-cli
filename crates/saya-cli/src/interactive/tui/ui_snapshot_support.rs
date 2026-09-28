@@ -111,6 +111,7 @@ pub(crate) fn empty_app() -> App {
         viewport: std::cell::Cell::new((0, 0)),
         ctrl_c_armed: false,
         at_refs: Vec::new(),
+        starter_questions: Vec::new(),
         pending_clipboard: None,
         clipboard_copy: None,
         session_save: None,
