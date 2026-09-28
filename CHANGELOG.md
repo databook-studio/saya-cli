@@ -5,6 +5,8 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+## 0.4.2 — 2026-09-28
+
 ### Added
 
 **`saya demo` — a read-only sample database in one command.** It builds a

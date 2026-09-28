@@ -1,6 +1,6 @@
 [package]
 name = "saya-harness"
-version = "0.4.1"
+version = "0.4.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,9 +8,9 @@ repository.workspace = true
 description = "Run engine for SAYA: run directories, paths, and the single-writer lock."
 
 [dependencies]
-saya-agent = { path = "../saya-agent", version = "0.4.1" }
-saya-store = { path = "../saya-store", version = "0.4.1" }
-saya-types = { path = "../saya-types", version = "0.4.1" }
+saya-agent = { path = "../saya-agent", version = "0.4.2" }
+saya-store = { path = "../saya-store", version = "0.4.2" }
+saya-types = { path = "../saya-types", version = "0.4.2" }
 async-trait.workspace = true
 bytes.workspace = true
 chrono.workspace = true
@@ -32,4 +32,4 @@ libc = "0.2"
 
 [dev-dependencies]
 proptest.workspace = true
-saya-connectors = { path = "../saya-connectors", version = "0.4.1" }
+saya-connectors = { path = "../saya-connectors", version = "0.4.2" }
