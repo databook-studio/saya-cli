@@ -14,7 +14,6 @@ use saya_types::investigation::InvestigationDefinitionV1;
 use saya_types::{EvidenceSource, ResultScope, SqlDialect};
 use std::{
     collections::BTreeMap,
-    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
 };
@@ -747,26 +746,4 @@ async fn run_outcome_has_no_replay_on_stale_or_failure() {
     assert!(err.contains("nosuchcol"), "err: {err}");
 
     let _ = fs::remove_dir_all(root);
-}
-
-// -- paths -----------------------------------------------------------------
-
-#[test]
-fn investigations_root_prefers_env_then_the_state_parent() {
-    use super::paths::root_from;
-    assert_eq!(
-        root_from(
-            Some(OsStr::new("/tmp/inv")),
-            Path::new("/data/saya/state.sqlite3")
-        ),
-        PathBuf::from("/tmp/inv")
-    );
-    assert_eq!(
-        root_from(None, Path::new("/data/saya/state.sqlite3")),
-        PathBuf::from("/data/saya/investigations")
-    );
-    assert_eq!(
-        root_from(None, Path::new("state.sqlite3")),
-        PathBuf::from("investigations")
-    );
 }

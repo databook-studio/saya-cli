@@ -3,9 +3,24 @@ use crate::cli::GlobalOptions;
 use saya_config::{CliOverrides, ConnectionsFile, ResolutionInput, resolve};
 use std::{
     collections::BTreeMap,
+    ffi::OsStr,
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+
+/// Pure investigations-root resolution: the `SAYA_INVESTIGATIONS_DIR` env
+/// override wins; otherwise the documents sit beside the state database.
+/// The one resolver the composition uses — operations read the composed
+/// [`RuntimeConfig::investigations_root`] field and never the environment.
+pub(crate) fn investigations_root_from(env: Option<&OsStr>, state_db: &Path) -> PathBuf {
+    if let Some(path) = env {
+        return PathBuf::from(path);
+    }
+    state_db
+        .parent()
+        .map(|dir| dir.join("investigations"))
+        .unwrap_or_else(|| PathBuf::from("investigations"))
+}
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -29,6 +44,12 @@ pub struct RuntimeConfig {
     pub config_path: Option<PathBuf>,
     pub connections_path: Option<PathBuf>,
     pub cache_scope: PathBuf,
+    /// Where saved-investigation documents live, resolved once here at
+    /// composition (`SAYA_INVESTIGATIONS_DIR`, else beside the state DB —
+    /// D2/adr-0004). Every in-process caller builds its repository from this
+    /// field and never re-reads the environment at operation time, so tests
+    /// point a composed runtime at a private temp root.
+    pub investigations_root: PathBuf,
     pub(crate) secret_values: BTreeMap<String, String>,
 }
 
@@ -99,6 +120,16 @@ pub fn load_with_sources(
     };
     let mut secret_values = env_file.clone();
     secret_values.extend(process.clone());
+    // The investigations root is resolved here, once: the env override comes
+    // from the process-env map this loader is given (in production the real
+    // environment), the default from beside the state-DB path. After this,
+    // every operation reads the composed field and never the environment.
+    let investigations_root = investigations_root_from(
+        process
+            .get("SAYA_INVESTIGATIONS_DIR")
+            .map(|value| OsStr::new(value.as_str())),
+        &crate::state_path::state_db_path(),
+    );
     let provider = match options.provider.as_deref() {
         Some(raw) => Some(saya_config::AiProvider::parse(raw).ok_or_else(|| {
             RuntimeError::Config(saya_config::ConfigError::Parse(format!(
@@ -142,6 +173,7 @@ pub fn load_with_sources(
         config_path: selected_config.cloned(),
         connections_path: selected_connections.cloned(),
         cache_scope,
+        investigations_root,
         secret_values,
     })
 }
@@ -155,6 +187,7 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("config_path", &self.config_path)
             .field("connections_path", &self.connections_path)
             .field("cache_scope", &"[redacted]")
+            .field("investigations_root", &self.investigations_root)
             .field("secret_values", &"[redacted]")
             .finish()
     }
@@ -194,35 +227,22 @@ pub fn format_name(
     }
 }
 
+/// A test-only investigations root under the temp dir: the initializer every
+/// hand-built test runtime uses, so no fixture can resolve into the machine's
+/// real data directory. Uniquely named per call — two fixtures never share a
+/// root, and nothing is created until something writes.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The name map carries every mode the grammar parses, and each name
-    /// round-trips through the parser — the maps and `FromStr` cannot drift,
-    /// so a mode the flag accepts is a mode the status bar, the session
-    /// record, and `/approvals` can all name.
-    #[test]
-    fn the_approval_name_map_covers_the_whole_vocabulary() {
-        for (value, name) in [
-            ("ask", "ask"),
-            ("read-only", "read-only"),
-            ("never", "never"),
-            ("bypass", "bypass"),
-        ] {
-            let options = GlobalOptions {
-                approval_mode: Some(value.to_string()),
-                ..Default::default()
-            };
-            assert_eq!(approval_name(&options).unwrap(), name);
-            assert_eq!(
-                approval_name(&options)
-                    .unwrap()
-                    .parse::<saya_agent::ApprovalPolicy>()
-                    .unwrap(),
-                approval_mode(&options).unwrap(),
-                "the name re-parses to the same mode: the vocabulary round-trips"
-            );
-        }
-    }
+pub(crate) fn temp_investigations_root() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "saya-investigations-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ))
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

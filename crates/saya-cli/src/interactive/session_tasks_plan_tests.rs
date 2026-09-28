@@ -288,6 +288,7 @@ fn test_runtime() -> crate::config::runtime::RuntimeConfig {
         config_path: None,
         connections_path: None,
         cache_scope: std::path::PathBuf::from("/tmp/saya-tasks-tests"),
+        investigations_root: crate::config::runtime::temp_investigations_root(),
         secret_values: Default::default(),
     }
 }
