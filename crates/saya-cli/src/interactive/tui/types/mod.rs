@@ -11,7 +11,10 @@ pub(crate) use overlays::{
     Menu, OverlayState, Picker, PickerEntry, SearchKind, SearchOverlay, TrustPrompt,
 };
 pub(crate) use request::{MAX_INPUT_ROWS, PendingApproval, RequestState};
-pub(crate) use tasks::{ClipboardCopy, CompactOutcome, LastQuery, SessionSave, WideTableView};
+pub(crate) use tasks::{
+    ClipboardCopy, CompactOutcome, LastQuery, MAX_PENDING_QUERIES, PendingQuery, SessionSave,
+    WideTableView,
+};
 pub(crate) use usage::SessionUsage;
 
 #[cfg(test)]
