@@ -46,6 +46,11 @@ pub enum SlashCommand {
     /// write and where, parsed once here so every adapter sees the same
     /// request. No mode flag is the legacy refresh.
     Export(ExportRequest),
+    /// `/report [--rows N] [--overwrite] <path>` — write a shareable
+    /// Markdown report of the captured `/sql` result: SQL + provenance by
+    /// default, rows only on request. Parsed once here like `/export` so
+    /// every adapter sees the same request.
+    Report(ReportRequest),
     Chart(String),
     Explain(String),
     Clear,
@@ -138,6 +143,22 @@ pub struct ExportRequest {
     pub path: String,
 }
 
+/// The `--rows` cap for `/report`: at most this many rows of the captured
+/// result land in the report's table. The report renderer clamps to the
+/// same bound — one source — so a caller that skips the parser cannot
+/// exceed it either.
+pub(crate) const MAX_REPORT_ROWS: usize = 100;
+
+/// The parsed arguments of one `/report`: the destination path (everything
+/// after the flags, verbatim), the row request, and whether an existing
+/// destination may be replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportRequest {
+    pub path: String,
+    pub rows: Option<usize>,
+    pub overwrite: bool,
+}
+
 /// Parses the `/export` tail: leading flags in any order, then the path —
 /// the rest of the tail verbatim. Unknown `--flag`s, both modes together,
 /// and a missing path are usage errors, so a flag is never read as path
@@ -189,6 +210,75 @@ fn parse_export(tail: &str) -> Result<ExportRequest, SlashParseError> {
     })
 }
 
+/// Parses the `/report` tail: leading `--rows N` / `--overwrite` flags in any
+/// order, then the path — the rest of the tail verbatim. `--rows` takes the
+/// next whitespace-delimited token as its value; a value above
+/// [`MAX_REPORT_ROWS`], a non-number, a repeated `--rows`, and unknown
+/// `--flag`s are usage errors, so a flag is never read as path text and a
+/// path is never read as a flag. A `.csv`/`.json` destination is refused
+/// with the hint that data files belong to `/export`.
+fn parse_report(tail: &str) -> Result<ReportRequest, SlashParseError> {
+    const USAGE: &str = " (usage: /report [--rows N] [--overwrite] <path>)";
+    let mut rows: Option<usize> = None;
+    let mut overwrite = false;
+    let mut rest = tail;
+    loop {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let (token, remainder) = (&rest[..end], rest[end..].trim_start());
+        match token {
+            "--overwrite" => overwrite = true,
+            "--rows" => {
+                let value_end = remainder
+                    .find(char::is_whitespace)
+                    .unwrap_or(remainder.len());
+                let (value, after) = (&remainder[..value_end], remainder[value_end..].trim_start());
+                if value.is_empty() {
+                    return Err(SlashParseError(format!("--rows needs a number{USAGE}")));
+                }
+                let parsed = value
+                    .parse::<usize>()
+                    .map_err(|_| SlashParseError(format!("--rows needs a number{USAGE}")))?;
+                if parsed > MAX_REPORT_ROWS {
+                    return Err(SlashParseError(format!(
+                        "--rows is capped at {MAX_REPORT_ROWS}{USAGE}"
+                    )));
+                }
+                if rows.is_some() {
+                    return Err(SlashParseError(format!("--rows given twice{USAGE}")));
+                }
+                rows = Some(parsed);
+                rest = after;
+                continue;
+            }
+            other if other.starts_with("--") => {
+                return Err(SlashParseError(format!(
+                    "unknown report flag: {other}{USAGE}"
+                )));
+            }
+            _ => break,
+        }
+        rest = remainder;
+    }
+    let path = rest.trim();
+    if path.is_empty() {
+        return Err(SlashParseError(
+            "report requires a file path, e.g. /report out.md".into(),
+        ));
+    }
+    let lowered = path.to_lowercase();
+    if lowered.ends_with(".csv") || lowered.ends_with(".json") {
+        return Err(SlashParseError(format!(
+            "a report is Markdown text; {path} looks like a data file — use /export for \
+             data files{USAGE}"
+        )));
+    }
+    Ok(ReportRequest {
+        path: path.to_string(),
+        rows,
+        overwrite,
+    })
+}
+
 pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashParseError> {
     let trimmed = input.trim();
     if !trimmed.starts_with('/') {
@@ -223,6 +313,10 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "export" => {
             let tail = trimmed.strip_prefix("/export").unwrap_or("").trim_start();
             SlashCommand::Export(parse_export(tail)?)
+        }
+        "report" => {
+            let tail = trimmed.strip_prefix("/report").unwrap_or("").trim_start();
+            SlashCommand::Report(parse_report(tail)?)
         }
         "chart" => SlashCommand::Chart(arg.trim().to_string()),
         "explain" => SlashCommand::Explain(arg.trim().to_string()),
@@ -533,6 +627,118 @@ mod tests {
                 true,
                 "my file.csv"
             ))))
+        );
+    }
+
+    fn report_request(path: &str, rows: Option<usize>, overwrite: bool) -> SlashCommand {
+        SlashCommand::Report(ReportRequest {
+            path: path.into(),
+            rows,
+            overwrite,
+        })
+    }
+
+    #[test]
+    fn test_parse_report_command() {
+        assert_eq!(
+            parse_slash_command("/report notes.md"),
+            Ok(Some(report_request("notes.md", None, false)))
+        );
+        assert_eq!(
+            parse_slash_command("/report --rows 20 notes.md"),
+            Ok(Some(report_request("notes.md", Some(20), false)))
+        );
+        assert_eq!(
+            parse_slash_command("/report --overwrite notes.md"),
+            Ok(Some(report_request("notes.md", None, true)))
+        );
+        // Flags in any order before the path; the path stays verbatim.
+        assert_eq!(
+            parse_slash_command("/report --rows 20 --overwrite my notes.md"),
+            Ok(Some(report_request("my notes.md", Some(20), true)))
+        );
+        assert_eq!(
+            parse_slash_command("/report --overwrite --rows 20 notes.md"),
+            Ok(Some(report_request("notes.md", Some(20), true)))
+        );
+        // A bare /report and a flagless tail are usage errors.
+        assert_eq!(
+            parse_slash_command("/report"),
+            Err(SlashParseError(
+                "report requires a file path, e.g. /report out.md".into()
+            ))
+        );
+        assert_eq!(
+            parse_slash_command("/report --rows 20"),
+            Err(SlashParseError(
+                "report requires a file path, e.g. /report out.md".into()
+            ))
+        );
+    }
+
+    /// `--rows` is capped at the shared 100-row bound; the bound and below
+    /// parse, above it is a usage error naming the cap.
+    #[test]
+    fn report_rows_bound_is_a_usage_error() {
+        assert_eq!(
+            parse_slash_command("/report --rows 100 out.md"),
+            Ok(Some(report_request("out.md", Some(100), false)))
+        );
+        assert_eq!(
+            parse_slash_command("/report --rows 0 out.md"),
+            Ok(Some(report_request("out.md", Some(0), false)))
+        );
+        let error = parse_slash_command("/report --rows 101 out.md").unwrap_err();
+        assert!(
+            error.0.contains("capped at 100") && error.0.contains("usage"),
+            "the cap is named with usage: {error}"
+        );
+    }
+
+    /// An unknown `--flag`, `--rows` twice, `--rows` without a number, and a
+    /// number-shaped value are usage errors — never read as path text.
+    #[test]
+    fn report_flag_mistakes_are_usage_errors() {
+        let unknown = parse_slash_command("/report --bogus out.md").unwrap_err();
+        assert!(
+            unknown.0.contains("unknown report flag: --bogus") && unknown.0.contains("usage"),
+            "an unknown flag must be a usage error: {unknown}"
+        );
+        let twice = parse_slash_command("/report --rows 5 --rows 6 out.md").unwrap_err();
+        assert!(
+            twice.0.contains("--rows given twice"),
+            "a repeated --rows is refused: {twice}"
+        );
+        let no_value = parse_slash_command("/report --rows").unwrap_err();
+        assert!(
+            no_value.0.contains("--rows needs a number"),
+            "a valueless --rows is refused: {no_value}"
+        );
+        let not_number = parse_slash_command("/report --rows abc out.md").unwrap_err();
+        assert!(
+            not_number.0.contains("--rows needs a number"),
+            "a non-numeric --rows is refused: {not_number}"
+        );
+    }
+
+    /// `.csv`/`.json` destinations get the usage hint pointing at `/export`;
+    /// any other extension is fine — `.md` is conventional, not enforced.
+    #[test]
+    fn report_data_file_extension_gets_a_usage_hint() {
+        for path in ["out.csv", "out.json"] {
+            let error = parse_slash_command(&format!("/report {path}")).unwrap_err();
+            assert!(
+                error.0.contains("use /export for data files"),
+                "the hint names /export: {error}"
+            );
+        }
+        assert_eq!(
+            parse_slash_command("/report out.txt"),
+            Ok(Some(report_request("out.txt", None, false)))
+        );
+        assert_eq!(
+            parse_slash_command("/report out"),
+            Ok(Some(report_request("out", None, false)))
         );
     }
 
