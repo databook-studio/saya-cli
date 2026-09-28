@@ -155,7 +155,7 @@ pub(super) async fn run(
     let references = sql_references(&definition.sql, definition.dialect);
     let analysis = if fingerprint::needs_schema(references.as_ref()) {
         match connector.schema().await {
-            Ok(tree) => fingerprint::analyze(Some(&tree), references.as_ref()),
+            Ok(tree) => fingerprint::analyze(Some(&tree), definition.dialect, references.as_ref()),
             Err(error) => {
                 audit(
                     state_db,
@@ -171,7 +171,7 @@ pub(super) async fn run(
             }
         }
     } else {
-        fingerprint::analyze(None, references.as_ref())
+        fingerprint::analyze(None, definition.dialect, references.as_ref())
     };
     // An unverifiable review is refused before anything executes (A2);
     // `--revalidate` runs it once and binds no fingerprint, so the next run
