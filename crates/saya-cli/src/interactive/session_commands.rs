@@ -24,7 +24,10 @@ pub enum SessionAction {
     Resume(String),
     Schema(bool),
     Sql(String),
-    Export(String),
+    /// `/export` — the parsed request (mode, overwrite, path) the TUI's
+    /// export dispatch acts on. Headless sessions never receive it: they
+    /// refuse export as TUI-only.
+    Export(crate::slash::ExportRequest),
     Chart(String),
     Explain(String),
     /// A contract slash command, translated to the same `ContractsCommand` the
@@ -153,7 +156,7 @@ impl SessionState {
             }
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
-            SlashCommand::Export(path) => SessionAction::Export(path),
+            SlashCommand::Export(request) => SessionAction::Export(request),
             SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Explain(sql) => SessionAction::Explain(sql),
             SlashCommand::Compact => SessionAction::Compact,
@@ -348,6 +351,22 @@ mod tests {
         } else {
             panic!("Expected SessionAction::Message");
         }
+    }
+
+    /// `/export` carries the parsed request through unchanged — the TUI's
+    /// export dispatch owns the behaviour; the adapter owns nothing but the
+    /// mapping.
+    #[test]
+    fn export_request_maps_to_the_same_action() {
+        use crate::slash::{ExportMode, ExportRequest};
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let request = ExportRequest {
+            mode: Some(ExportMode::Snapshot),
+            overwrite: true,
+            path: "out.csv".into(),
+        };
+        let action = state.apply(SlashCommand::Export(request.clone()), &[]);
+        assert_eq!(action, SessionAction::Export(request));
     }
 
     /// `/history` and `/sessions` are one command under two names: both map to

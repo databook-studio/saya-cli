@@ -1,9 +1,9 @@
-//! CSV export: formula neutralisation, field quoting, and file writing.
+//! CSV export: formula neutralisation, field quoting, and encoding under
+//! the export ceiling.
 
 use saya_types::QueryResult;
-use std::path::Path;
 
-use super::shared::normalize_row;
+use super::shared::{BoundedWriter, normalize_row};
 
 fn cell_to_csv_string(value: &serde_json::Value) -> String {
     match value {
@@ -38,15 +38,20 @@ fn escape_csv_field(field: &str) -> String {
     }
 }
 
-pub(super) fn export_csv(result: &QueryResult, path: &Path) -> Result<usize, String> {
+/// Encodes the result as CSV bytes — header line, one line per row, every
+/// line newline-terminated — checking the ceiling while writing so an
+/// oversize result stops early instead of materialising in full.
+pub(super) fn encode_csv(result: &QueryResult, ceiling: usize) -> Result<Vec<u8>, String> {
     let col_count = result.columns.len();
+    let mut out = BoundedWriter::new(ceiling);
     let header = result
         .columns
         .iter()
         .map(|c| escape_csv_field(&neutralize_formula(c)))
         .collect::<Vec<_>>()
         .join(",");
-    let mut lines = vec![header];
+    out.write_str(&header)?;
+    out.write_str("\n")?;
     for row in &result.rows {
         let cells = normalize_row(row, col_count);
         let line = cells
@@ -54,9 +59,8 @@ pub(super) fn export_csv(result: &QueryResult, path: &Path) -> Result<usize, Str
             .map(|cell| escape_csv_field(&neutralize_formula(&cell_to_csv_string(cell))))
             .collect::<Vec<_>>()
             .join(",");
-        lines.push(line);
+        out.write_str(&line)?;
+        out.write_str("\n")?;
     }
-    let content = lines.join("\n") + "\n";
-    std::fs::write(path, content).map_err(|e| format!("failed to write CSV file: {e}"))?;
-    Ok(result.rows.len())
+    Ok(out.into_inner())
 }

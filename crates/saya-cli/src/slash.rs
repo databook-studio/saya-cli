@@ -42,7 +42,10 @@ pub enum SlashCommand {
     Mode(Option<AgentMode>),
     Schema(bool),
     Sql(String),
-    Export(String),
+    /// `/export [--snapshot|--refresh] [--overwrite] <path>` — what to
+    /// write and where, parsed once here so every adapter sees the same
+    /// request. No mode flag is the legacy refresh.
+    Export(ExportRequest),
     Chart(String),
     Explain(String),
     Clear,
@@ -113,6 +116,79 @@ impl fmt::Display for SlashParseError {
 }
 impl std::error::Error for SlashParseError {}
 
+/// Which result an `/export` writes: the result the user already inspected
+/// (a snapshot of the latest captured `/sql` success, no query) or a fresh
+/// read (the last query re-run on its original connection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportMode {
+    /// Export the captured result; nothing is executed.
+    Snapshot,
+    /// Re-run the last query and export the fresh result.
+    Refresh,
+}
+
+/// The parsed arguments of one `/export`: the mode (`None` is the legacy
+/// form, which refreshes), whether an existing destination may be replaced,
+/// and the destination path — everything after the flags, whitespace
+/// included, so paths with spaces keep working.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportRequest {
+    pub mode: Option<ExportMode>,
+    pub overwrite: bool,
+    pub path: String,
+}
+
+/// Parses the `/export` tail: leading flags in any order, then the path —
+/// the rest of the tail verbatim. Unknown `--flag`s, both modes together,
+/// and a missing path are usage errors, so a flag is never read as path
+/// text and a path is never read as a flag.
+fn parse_export(tail: &str) -> Result<ExportRequest, SlashParseError> {
+    const USAGE: &str = " (usage: /export [--snapshot|--refresh] [--overwrite] <path>)";
+    let mut mode: Option<ExportMode> = None;
+    let mut overwrite = false;
+    let mut rest = tail;
+    loop {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let (token, remainder) = (&rest[..end], rest[end..].trim_start());
+        match token {
+            "--snapshot" | "--refresh" => {
+                let next = if token == "--snapshot" {
+                    ExportMode::Snapshot
+                } else {
+                    ExportMode::Refresh
+                };
+                if let Some(previous) = mode
+                    && previous != next
+                {
+                    return Err(SlashParseError(format!(
+                        "use either --snapshot or --refresh, not both{USAGE}"
+                    )));
+                }
+                mode = Some(next);
+            }
+            "--overwrite" => overwrite = true,
+            other if other.starts_with("--") => {
+                return Err(SlashParseError(format!(
+                    "unknown export flag: {other}{USAGE}"
+                )));
+            }
+            _ => break,
+        }
+        rest = remainder;
+    }
+    let path = rest.trim();
+    if path.is_empty() {
+        return Err(SlashParseError(
+            "export requires a file path, e.g. /export out.csv".into(),
+        ));
+    }
+    Ok(ExportRequest {
+        mode,
+        overwrite,
+        path: path.to_string(),
+    })
+}
+
 pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashParseError> {
     let trimmed = input.trim();
     if !trimmed.starts_with('/') {
@@ -145,13 +221,8 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             SlashCommand::Sql(query.to_string())
         }
         "export" => {
-            let path = trimmed.strip_prefix("/export").unwrap_or("").trim();
-            if path.is_empty() {
-                return Err(SlashParseError(
-                    "export requires a file path, e.g. /export out.csv".into(),
-                ));
-            }
-            SlashCommand::Export(path.to_string())
+            let tail = trimmed.strip_prefix("/export").unwrap_or("").trim_start();
+            SlashCommand::Export(parse_export(tail)?)
         }
         "chart" => SlashCommand::Chart(arg.trim().to_string()),
         "explain" => SlashCommand::Explain(arg.trim().to_string()),
@@ -345,17 +416,123 @@ mod tests {
         );
     }
 
+    fn export_request(mode: Option<ExportMode>, overwrite: bool, path: &str) -> ExportRequest {
+        ExportRequest {
+            mode,
+            overwrite,
+            path: path.to_string(),
+        }
+    }
+
     #[test]
     fn test_parse_export_command() {
         assert_eq!(
             parse_slash_command("/export out.csv"),
-            Ok(Some(SlashCommand::Export("out.csv".into())))
+            Ok(Some(SlashCommand::Export(export_request(
+                None, false, "out.csv"
+            ))))
         );
         assert_eq!(
             parse_slash_command("/export"),
             Err(SlashParseError(
                 "export requires a file path, e.g. /export out.csv".into()
             ))
+        );
+    }
+
+    /// `/export --snapshot|--refresh` choose what is written; the legacy
+    /// form (no mode flag) stays a refresh. Flags may appear in any order
+    /// before the path, and `--overwrite` composes with either mode.
+    #[test]
+    fn export_mode_flags_parse_in_any_order() {
+        assert_eq!(
+            parse_slash_command("/export --snapshot out.csv"),
+            Ok(Some(SlashCommand::Export(export_request(
+                Some(ExportMode::Snapshot),
+                false,
+                "out.csv"
+            ))))
+        );
+        assert_eq!(
+            parse_slash_command("/export --refresh out.csv"),
+            Ok(Some(SlashCommand::Export(export_request(
+                Some(ExportMode::Refresh),
+                false,
+                "out.csv"
+            ))))
+        );
+        assert_eq!(
+            parse_slash_command("/export --overwrite out.csv"),
+            Ok(Some(SlashCommand::Export(export_request(
+                None, true, "out.csv"
+            ))))
+        );
+        // Any order before the path.
+        assert_eq!(
+            parse_slash_command("/export --overwrite --snapshot out.csv"),
+            Ok(Some(SlashCommand::Export(export_request(
+                Some(ExportMode::Snapshot),
+                true,
+                "out.csv"
+            ))))
+        );
+        assert_eq!(
+            parse_slash_command("/export --refresh --overwrite out.csv"),
+            Ok(Some(SlashCommand::Export(export_request(
+                Some(ExportMode::Refresh),
+                true,
+                "out.csv"
+            ))))
+        );
+    }
+
+    /// Both modes together, an unknown `--flag`, and a flag with no path are
+    /// usage errors — never silently read as path text.
+    #[test]
+    fn export_flag_mistakes_are_usage_errors() {
+        let both = parse_slash_command("/export --snapshot --refresh out.csv").unwrap_err();
+        assert!(
+            both.0.contains("--snapshot or --refresh, not both") && both.0.contains("usage"),
+            "both modes together must be refused with usage: {both}"
+        );
+        let unknown = parse_slash_command("/export --bogus out.csv").unwrap_err();
+        assert!(
+            unknown.0.contains("unknown export flag: --bogus") && unknown.0.contains("usage"),
+            "an unknown flag must be a usage error: {unknown}"
+        );
+        assert_eq!(
+            parse_slash_command("/export --snapshot"),
+            Err(SlashParseError(
+                "export requires a file path, e.g. /export out.csv".into()
+            ))
+        );
+        assert_eq!(
+            parse_slash_command("/export --snapshot --overwrite"),
+            Err(SlashParseError(
+                "export requires a file path, e.g. /export out.csv".into()
+            ))
+        );
+    }
+
+    /// The path is everything after the flags, whitespace included — the
+    /// pre-flags grammar let paths contain spaces and that must survive.
+    #[test]
+    fn export_paths_may_contain_spaces() {
+        assert_eq!(
+            parse_slash_command("/export my file.csv"),
+            Ok(Some(SlashCommand::Export(export_request(
+                None,
+                false,
+                "my file.csv"
+            ))))
+        );
+        assert_eq!(
+            parse_slash_command("/export --snapshot --overwrite my file.csv"),
+            Ok(Some(SlashCommand::Export(export_request(
+                Some(ExportMode::Snapshot),
+                true,
+                "my file.csv"
+            ))))
         );
     }
 

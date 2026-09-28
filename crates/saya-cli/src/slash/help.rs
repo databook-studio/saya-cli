@@ -48,7 +48,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("sql", "Run a raw SQL query against the active profile"),
     (
         "export",
-        "Re-run the last query and export the fresh result as CSV or JSON",
+        "Export the last query's fresh result, or the captured /sql result with --snapshot",
     ),
     (
         "chart",
@@ -161,7 +161,10 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("schema", "/schema [refresh]"),
             ("sql", "/sql <query>"),
-            ("export", "/export <path>"),
+            (
+                "export",
+                "/export [--snapshot|--refresh] [--overwrite] <path>",
+            ),
             ("chart", "/chart [type] [path]"),
             ("explain", "/explain [sql]"),
             ("columns", "/columns [name,name,… | all]"),
@@ -251,7 +254,12 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "sql <query> — execute a raw SQL query directly. Example: /sql SELECT * FROM users LIMIT 10;",
         ),
         "export" => Some(
-            "export <path> — re-run the last query and write the fresh result's rows to a .csv or .json file. The file reflects that fresh read, not the displayed table (/columns, scroll, and folds do not apply). Example: /export results.csv",
+            "export [--snapshot|--refresh] [--overwrite] <path> — write rows to a .csv or .json file. \
+             The default (and --refresh) re-runs the last query and exports that fresh read — the file \
+             reflects the fresh result, not the displayed table (/columns, scroll, and folds do not apply). \
+             --snapshot exports the result you already have: the latest /sql capture, held for this session \
+             only, with no query at all. An existing destination needs --overwrite. \
+             Example: /export results.csv or /export --snapshot results.csv",
         ),
         "chart" => Some(
             "chart [type] [path] — re-run the last query and render the fresh result as an interactive HTML chart, then open it. The chart reflects that fresh read, not the displayed table. type: bar|line|area|pie|doughnut|scatter (default auto)",
