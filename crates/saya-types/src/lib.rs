@@ -5,6 +5,7 @@ mod dialect;
 mod error;
 pub mod evidence;
 pub mod investigation;
+mod params;
 mod profile;
 mod query;
 mod redaction;
@@ -32,6 +33,10 @@ pub use investigation::{
     INVESTIGATION_FORMAT, INVESTIGATION_FORMAT_VERSION, InvestigationDefinitionV1,
     InvestigationError, InvestigationId, MAX_CONNECTION_CHARS, MAX_DEFINITION_BYTES,
     MAX_DESCRIPTION_BYTES, MAX_FINGERPRINT_BYTES, MAX_OBJECT_BYTES, MAX_OBJECTS, MAX_SQL_BYTES,
+};
+pub use params::{
+    BoundParam, MAX_PARAM_DESCRIPTION_BYTES, MAX_PARAM_NAME_CHARS, MAX_PARAMETERS, ParamError,
+    ParamType, ParamValue, ParameterSpec, is_valid_param_name,
 };
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
 pub use query::{QueryRequest, QueryResult};

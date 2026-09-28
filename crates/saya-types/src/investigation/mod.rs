@@ -10,6 +10,7 @@ mod validate;
 use serde::{Deserialize, Serialize};
 
 use crate::dialect::SqlDialect;
+use crate::params::ParameterSpec;
 
 pub use error::InvestigationError;
 pub use id::InvestigationId;
@@ -46,6 +47,11 @@ pub struct InvestigationDefinitionV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub sql: String,
+    /// Declared parameters for the `:name` placeholders in the SQL. Empty —
+    /// and omitted from serialization — for parameter-free investigations;
+    /// changing the list is a new revision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<ParameterSpec>,
     pub dialect: SqlDialect,
     pub connection: String,
     #[serde(default)]

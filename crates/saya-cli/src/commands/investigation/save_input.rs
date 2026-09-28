@@ -83,6 +83,7 @@ pub(super) fn checked_definition(
         name: name.to_string(),
         description: description.map(str::to_string),
         sql,
+        parameters: Vec::new(),
         dialect,
         connection: profile_name.clone(),
         objects,
