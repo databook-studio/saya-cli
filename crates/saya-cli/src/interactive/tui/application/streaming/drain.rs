@@ -43,6 +43,7 @@ impl App {
                             // with /sql — so it never enters the FIFO.
                             if name == "bounded_sql_query"
                                 && let Some(sql) = arguments.get("sql").and_then(|v| v.as_str())
+                                && !self.pending_queries_desync
                             {
                                 // The connection that actually runs an unnamed
                                 // query is the session's one profile, read at
@@ -60,9 +61,18 @@ impl App {
                                     connection,
                                 });
                                 // Bounded: a runaway agent cannot grow this
-                                // past the cap; the oldest candidate drops.
+                                // past the cap. Beyond it the pairing is
+                                // already broken — dropping the oldest
+                                // candidate would make every later completion
+                                // pop one position late, promoting a failed
+                                // query's SQL — so the whole FIFO is
+                                // discarded and marked desynchronised: for
+                                // the rest of the turn no completion promotes
+                                // anything and no candidate is queued. Both
+                                // reset when the turn ends.
                                 if self.pending_queries.len() > MAX_PENDING_QUERIES {
-                                    self.pending_queries.pop_front();
+                                    self.pending_queries.clear();
+                                    self.pending_queries_desync = true;
                                 }
                             }
                         }
@@ -76,8 +86,13 @@ impl App {
                             // the selectable query and the transcript can
                             // never disagree. A failure (or an unmatched
                             // completion, when the FIFO is empty) leaves
-                            // `last_query` untouched.
+                            // `last_query` untouched. After an overflow the
+                            // FIFO is desynchronised for the rest of the
+                            // turn: completions can no longer be paired with
+                            // their requests, so none promotes anything and
+                            // `last_query` keeps its previous value.
                             if name == "bounded_sql_query"
+                                && !self.pending_queries_desync
                                 && let Some(pending) = self.pending_queries.pop_front()
                                 && !is_failure_summary(summary)
                             {
@@ -90,8 +105,10 @@ impl App {
                         AgentEvent::ToolDenied { name, .. } => {
                             // A denied call never ran: its candidate is
                             // consumed without promoting. The activity
-                            // indicator is untouched, as before.
-                            if name == "bounded_sql_query" {
+                            // indicator is untouched, as before. While the
+                            // FIFO is desynchronised nothing is popped: the
+                            // pairing is not trusted for the rest of the turn.
+                            if name == "bounded_sql_query" && !self.pending_queries_desync {
                                 self.pending_queries.pop_front();
                             }
                         }
@@ -158,8 +175,10 @@ impl App {
             self.request.activity = None;
             // The turn is over: no pending candidate may survive into the
             // next turn, where it could be promoted by an unmatched
-            // completion.
+            // completion. The desynchronised mark resets with the FIFO:
+            // the next turn pairs from a trusted FIFO again.
             self.pending_queries.clear();
+            self.pending_queries_desync = false;
             // The numerator belongs to the turn that reported it; the next
             // turn must not show this one's figure if the provider goes
             // silent.

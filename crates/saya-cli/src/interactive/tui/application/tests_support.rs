@@ -38,6 +38,7 @@ pub(crate) fn idle_app() -> App {
         last_query: None,
         captured: None,
         pending_queries: std::collections::VecDeque::new(),
+        pending_queries_desync: false,
         wide_table: Default::default(),
         run_panel: None,
         runtime: Arc::new(unused_runtime()),
