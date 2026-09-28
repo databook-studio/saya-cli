@@ -71,16 +71,18 @@ pub(crate) fn tick_pending(
                 // runs is held until the first finishes. This guard is the
                 // backstop — should a SqlTask reach the handler while one
                 // is already running, refuse rather than silently drop the
-                // first result.
+                // first result. It also holds one process-wide worker
+                // permit (detached workers count against the same cap);
+                // when all are held the dispatch is refused, never queued.
                 match app.admit_second_sql() {
-                    SecondSqlDecision::Start => {
+                    SecondSqlDecision::Start(permit) => {
                         let started = std::time::Instant::now();
                         // Share the existing `Arc<RuntimeConfig>` instead of
                         // deep-cloning the whole config (resolved plaintext
                         // secrets included) onto a detached thread per
                         // command.
                         app.sql_task = Some((
-                            sql_task::spawn(Arc::clone(&app.runtime), task.clone()),
+                            sql_task::spawn(permit, Arc::clone(&app.runtime), task.clone()),
                             task,
                             started,
                         ));
