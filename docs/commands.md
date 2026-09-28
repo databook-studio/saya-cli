@@ -4,12 +4,14 @@ Running `saya` without a subcommand starts the scrollback-preserving terminal
 session. It accepts `/help`, `/connect`, `/connections`, `/include`,
 `/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/allow`,
 `/grants`, `/schema`,
+`/sql`, `/export`, `/report`, `/investigation`,
 `/clear`, `/history`, and `/exit`.
 
 Examples:
 
 ```bash
 saya config init
+saya demo
 saya --profile analytics
 saya --profile prod --include-profile staging ask "compare row counts"
 saya --continue
@@ -117,6 +119,201 @@ instead. It is credential-free, refuses to overwrite either file,
 and makes a best-effort rollback after an ordinary creation error; it is not
 crash-atomic. Use `--format text|json|ndjson` for a stable result envelope;
 errors and diagnostics remain on stderr.
+
+## Try it: `saya demo`
+
+`saya demo` builds a deterministic synthetic SQLite database — 240
+customers, 560 orders, and 123 customer_contacts rows — and opens it
+read-only in an interactive session. No AI provider is needed for schema
+browsing and `/sql`; asking questions in plain language needs a configured
+provider.
+
+The fixture is designed to exercise tricky SQL: nulls in emails and amounts,
+a `customer_contacts` table that multiplies rows when joined, order dates
+straddling the year boundary (2025-12-31 against 2026-01-01), and statuses
+(`active`, `inactive`, `churned`) that disagree with recent-order activity
+for some customers — so "active customer" has two defensible meanings:
+`customers.status = 'active'`, or ordered in the last 90 days of the data.
+
+```bash
+saya demo            # build (or reuse) the fixture, then open the TUI
+saya demo --reset    # rebuild the fixture even when one exists on disk
+```
+
+The database lives under the platform data directory at `saya/demo/`
+(`demo.sqlite3` plus a generated `connections.toml` with a `demo` profile);
+set `SAYA_DEMO_DIR` to place it elsewhere. Without a terminal (or with
+`--non-interactive`) the command launches nothing: it prints the database
+and connections paths, the launch command (`saya --connections … --profile
+demo`), and example SQL to try.
+
+## Guided setup: `saya setup`
+
+`saya setup` is an interactive flow: choose an AI provider and a database
+profile, review the exact file changes, probe, then confirm. Nothing is
+written until you confirm, and no prompt ever asks for a secret value — the
+API key is requested only as an environment-variable **name**, and its
+presence (never its value) is reported.
+
+- **AI provider** — five choices: ollama (local, default base URL,
+  no key), openai, openai_compatible (asks for its base URL), anthropic, and
+  gemini; plus skip.
+- **Database** — four engines: sqlite, duckdb, postgresql, and mysql (duckdb
+  asks about its read-only flag); plus skip. Any other engine — Snowflake,
+  ClickHouse, BigQuery — is configured in `connections.toml` by hand as
+  before, per [connections](connections.md).
+- **Review** — the exact TOML that will be written, before anything is
+  written. An existing `connections.toml` is appended to: the existing bytes
+  are kept as an exact prefix and a new profile block is added (a profile
+  name that already exists is refused). An existing `config.toml` is never
+  modified — setup prints the `[ai]` snippet for you to apply yourself.
+- **Probes** — one at a time, 15 seconds each. The database probe checks the
+  connection; the provider probe runs only with explicit consent, states
+  that a request will be sent, and sends only the word "ping" — no schema,
+  no rows. A failed probe does not block writing; it says so and leaves the
+  choice with you.
+- **Commit** — files are backed up privately (`.setup-backup/`) before
+  replacing, writes go through private temp files and atomic renames, and a
+  reload check verifies the result loads. A failed reload restores the
+  originals. An interruption mid-commit leaves a recovery marker that later
+  startups warn about (stderr); the next `saya setup` offers to restore or
+  finish the interrupted write.
+
+`saya setup` needs a terminal. With `--non-interactive` or no TTY it prompts
+for nothing, writes nothing, and exits `2` with guidance to
+`saya config init` (starter templates) or `saya demo` (sample database).
+A cancelled flow changes nothing and exits `0`.
+
+The first screen: with no database configured, the TUI leads with
+`saya demo`, then `saya setup`; once a schema is cached, the empty state
+shows up to three starter questions derived from it.
+
+## Saved investigations: `saya investigation`
+
+A saved investigation is one portable JSON document: an exact, bounded,
+read-only SQL statement plus its name, description, dialect, connection
+alias, and referenced tables — no credentials, rows, results, prompts, or
+machine-specific identity. Saving validates the SQL
+with the same read-only gate execution uses but never executes it, never
+connects, and never involves an AI provider. **Literals are stored verbatim:
+review the SQL before sharing**, and the command says so where you save.
+
+Documents live at one file per id under the platform data directory
+`investigations/` (set `SAYA_INVESTIGATIONS_DIR` to place them elsewhere),
+mode `0600` in a `0700` directory, capped at 500 documents. Ids are derived
+from the name plus a hash suffix, so they are always safe filename stems —
+`investigation list` prints them. Per-machine state (the review binding) is
+kept separately under `investigations/local/<id>.json` and is never
+exported.
+
+Subcommands:
+
+- `saya investigation save --name <NAME> [--description <TEXT>] [--sql <SQL> | --file <PATH>] [--connection <PROFILE>]`
+  — store the exact SQL as a new document (revision 1); with neither `--sql`
+  nor `--file`, and stdin piped in, the statement is read from stdin. The
+  SQL is checked by the read-only safety gate for the target dialect;
+  multi-statement or write SQL is refused (exit `4`). Credential-shaped
+  content is refused (exit `2`), not redacted — the document keeps SQL
+  semantics exactly. The saving profile is recorded locally as the review
+  binding.
+- `saya investigation list [--limit <N>] [--offset <N>]`
+  — one line per saved investigation (id, revision, dialect, connection,
+  name), at most 50 per page; unreadable documents appear as warnings, not
+  failures.
+- `saya investigation show <ID>` — print the exact definition as JSON plus
+  this machine's local review binding (the opaque profile identity is never
+  printed).
+- `saya investigation delete <ID> [--revision <N>]` — delete the document
+  and its local binding; the current revision is checked first, so a
+  document changed underneath the command is refused rather than deleted
+  unseen.
+- `saya investigation export <ID> <PATH> [--overwrite]` — write the portable
+  definition to a file for sharing. Only the definition travels; the write
+  is atomic and an existing destination needs `--overwrite` (directories and
+  symlinks are refused).
+- `saya investigation import <PATH>` — read a definition file, validate the
+  whole document (including re-gating the SQL), print a preview (SQL,
+  dialect, connection requirement), and store it **without a binding**.
+  Nothing is executed and no connection is made. Identical id and content is
+  an idempotent no-op; the same id with different content is a conflict
+  (exit `2`). The first run afterwards needs `--connection`.
+- `saya investigation run <ID> [--connection <PROFILE>] [--revalidate] [--report <PATH> [--rows <N>] [--overwrite]]`
+  — replay the saved SQL against an explicit local connection: the same
+  bounded, read-only query path as `saya query`, with no AI provider
+  involved. The target comes only from `--connection` or the stored local
+  binding — never the active or default profile. A dialect mismatch is
+  refused (exit `2`).
+
+The review is bound to the definition's revision, the target profile's
+identity, and the schema fingerprint of the referenced tables. When any of
+the three changes, the run is refused — `review is stale (…)` — until
+`--revalidate` is passed; a revalidated run rewrites the binding. This is
+deliberate friction: a saved query that silently runs against a changed
+table is worse than one that stops.
+
+`run` writes a Markdown report with `--report <PATH>`: the same report the
+TUI's `/report` writes — exact SQL and provenance by default, result rows
+only with `--rows <N>` (at most 100). The report is written only after a
+successful replay, and an existing destination needs `--overwrite`.
+
+Exit codes follow the global scheme: `0` ok; `2` usage and domain errors
+(unknown id, id conflict, stale review, credential-shaped SQL, an unusable
+document); `3` store unavailable or connection/config failure; `4` a
+safety/query refusal. Exit `5` (agent) never occurs here — replay builds no
+provider.
+
+## Session commands: `/investigation`, `/export`, `/report`
+
+`/investigation save|list|show|run|export|import|delete` is the same
+operation module the `saya investigation` commands run, so the two surfaces
+cannot disagree. `/investigations` is an alias for `/investigation list`.
+Three TUI-only details:
+
+- `/investigation save <name>` takes the name **positionally** — unlike the
+  CLI, which spells it `--name <NAME>`. With neither `--sql` nor `--file` it
+  saves the
+  **latest successful, concrete query** — a `/sql` result or a direct agent
+  SQL query — on the connection that actually ran it. Failed or denied agent
+  queries never become selectable, and fan-out (`bounded_sql_query_all`)
+  never counts; pass `--sql <SQL>` (or `--file <PATH>`) to save different
+  SQL, and `--connection <PROFILE>` to save against another profile.
+- `/investigation run <id>` runs in the foreground: the transcript waits for
+  the query to finish.
+- `/investigation run` takes no `--report` flags in the TUI — write reports
+  with `/report`.
+
+`/export [--snapshot|--refresh] [--overwrite] <path>` writes rows to a
+`.csv` or `.json` file (chosen by extension):
+
+- The default form — and `--refresh` — re-runs the last query on its
+  original connection and exports that **fresh read**; the file reflects the
+  fresh result, not the displayed table (column filters, scroll, and folds
+  do not apply). The legacy spelling stays a refresh and its success line
+  says so.
+- `--snapshot` writes the result you already inspected: the latest direct
+  `/sql` capture, held for this session only, with **no query at all**. The
+  success line names the execution id and capture time (UTC) it came from.
+- An existing destination needs `--overwrite`; a refused or failed export
+  leaves the destination unchanged. Writes are atomic (private temp +
+  rename), symlink and directory destinations are refused, and encoded
+  output is capped at 32 MiB.
+- Only direct `/sql` results are captured: agent-run query results are not
+  (their rows are model-limited and not in the event stream). For those, use
+  `/sql` or `/export --refresh`.
+
+`/report [--rows N] [--overwrite] <path>` writes a shareable Markdown report
+of the captured `/sql` result — it never queries a database and never opens
+a browser or uploads anything. By default it carries the exact SQL and
+provenance only (connection label, submitted-SQL hash, execution id, times
+in UTC, row counts, truncation, scope) with the rows section labelled as
+omitted; `--rows N` (at most 100) adds a table of the first N captured
+rows. Cell values are neutralised — links, images, HTML, table-breaking
+characters, and control characters cannot be carried into the file — and a
+bare `https://…`
+text value may still be auto-linked by a Markdown renderer, so review the
+report before sharing. The report is capped at 2 MiB, written atomically,
+and an existing destination needs `--overwrite`. Use `/export` for data
+files (`.csv`/`.json`).
 
 ## Runs: `saya run`
 
