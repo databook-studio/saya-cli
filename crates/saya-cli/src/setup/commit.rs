@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::recover::{self, MarkerEntry, PendingCommit};
+use super::restore;
 use super::{MAX_FILE_BYTES, SetupError, SetupPlan, atomic};
 
 /// What a successful commit did, by plain file name.
@@ -77,8 +78,8 @@ pub fn commit(
                 started_unix_ms: started,
                 entries,
             };
-            match recover::restore(dir, &pending) {
-                Ok(()) => Err(SetupError::ReloadFailed(message)),
+            match restore::restore(dir, &pending) {
+                Ok(_) => Err(SetupError::ReloadFailed(message)),
                 Err(restore) => Err(SetupError::ReloadRestoreFailed {
                     message,
                     restore: restore.to_string(),
