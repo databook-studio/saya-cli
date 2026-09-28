@@ -24,6 +24,11 @@ const MAX_COLUMNS: usize = 256;
 pub struct SqlReferences {
     /// Table-ish names as written, each split into its parts (1, 2 or 3).
     pub objects: Vec<Vec<String>>,
+    /// For each part of each object, `true` when the SQL quoted it (`"x"`,
+    /// `` `x` ``, `[x]`) — the engine then matches that identifier exactly
+    /// rather than applying its unquoted folding rules. Same shape as
+    /// `objects`.
+    pub object_quoting: Vec<Vec<bool>>,
     /// Column identifiers as written. Unqualified names appear bare.
     pub columns: Vec<String>,
     /// `true` when parsing succeeded but the statement used a construct this
@@ -70,6 +75,7 @@ pub fn sql_references(sql: &str, dialect: SqlDialect) -> Option<SqlReferences> {
     let stopped_early = query.visit(&mut ex).is_break();
     Some(SqlReferences {
         objects: ex.objects,
+        object_quoting: ex.object_quoting,
         columns: ex.columns,
         partial: ex.partial || stopped_early,
     })
@@ -95,6 +101,9 @@ mod tests {
     }
     fn partial(sql: &str) -> bool {
         sql_references(sql, D).expect("should parse").partial
+    }
+    fn quoting(sql: &str) -> Vec<Vec<bool>> {
+        sql_references(sql, D).expect("should parse").object_quoting
     }
 
     #[test]
@@ -431,5 +440,41 @@ mod tests {
             objects("WITH t AS (SELECT * FROM (SELECT * FROM t) s) SELECT * FROM t"),
             vec![vec!["t"]]
         );
+    }
+
+    #[test]
+    fn quoting_is_recorded_per_part() {
+        // Re-audit R1: `quote_style` must survive extraction — it is the only
+        // way the review can tell `Orders` (which the engine folds) from
+        // `"Orders"` (which it matches exactly). Same shape as `objects`.
+        assert_eq!(quoting("SELECT * FROM Orders"), vec![vec![false]]);
+        assert_eq!(quoting(r#"SELECT * FROM "Orders""#), vec![vec![true]]);
+        assert_eq!(
+            quoting(r#"SELECT * FROM "analytics".public.orders"#),
+            vec![vec![true, false, false]]
+        );
+        assert_eq!(
+            quoting("SELECT a FROM orders o JOIN \"customers\" c ON o.cid = c.id"),
+            vec![vec![false], vec![true]]
+        );
+    }
+
+    #[test]
+    fn mysql_backtick_quoting_is_recorded() {
+        // Any quote style the dialect writes marks the part quoted; the
+        // review only ever asks "was it quoted".
+        let r = sql_references("SELECT * FROM `Orders`", SqlDialect::Mysql).unwrap();
+        assert_eq!(r.objects, vec![vec!["Orders"]]);
+        assert_eq!(r.object_quoting, vec![vec![true]]);
+    }
+
+    #[test]
+    fn same_spelling_with_different_quoting_are_distinct_objects() {
+        // Postgres folds the unquoted factor to `orders` and reads the
+        // quoted one as `Orders` — two different tables — so dedup must not
+        // collapse them on spelling alone.
+        let r = sql_references(r#"SELECT * FROM Orders, "Orders""#, D).unwrap();
+        assert_eq!(r.objects, vec![vec!["Orders"], vec!["Orders"]]);
+        assert_eq!(r.object_quoting, vec![vec![false], vec![true]]);
     }
 }
