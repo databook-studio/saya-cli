@@ -151,6 +151,8 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
             self.last_sql.clone(),
             self.session.clone(),
             self.agent_mode,
+            // Headless: no stream channel, no capture hook (C1).
+            None,
         ))
     }
 }

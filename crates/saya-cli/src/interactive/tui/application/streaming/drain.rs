@@ -140,6 +140,15 @@ impl App {
                     }
                     apply_event(&mut self.transcript, event, state.show_thinking);
                 }
+                StreamMsg::QueryCaptured(_capture) => {
+                    // The typed result of one successful agent query and its
+                    // over-budget refusal: consumed by the capture pairing
+                    // (C2). The drain deliberately does nothing with them yet.
+                }
+                StreamMsg::QueryCaptureRefused {
+                    sql: _sql,
+                    connection: _connection,
+                } => {}
                 StreamMsg::Notice(message) => {
                     // A system fact the decider said — today, that the
                     // session journal could not record a grant the user

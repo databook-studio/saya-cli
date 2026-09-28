@@ -83,6 +83,8 @@ pub(crate) async fn run(
         None,
         Some(session),
         agent_mode,
+        // Headless: no stream channel, no capture hook (C1).
+        None,
     );
     tokio::pin!(work);
     tokio::select! {
