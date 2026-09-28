@@ -1,5 +1,6 @@
 //! The interruption marker: what an interrupted commit leaves behind, how a
-//! later run finds it, and the restore/finish recovery it offers.
+//! later run finds it, and the finish recovery it offers. The restore half
+//! lives in [`super::restore`].
 //!
 //! The marker (`<dir>/.setup-commit.json`) is written before any target is
 //! touched and removed only after the commit (or its rollback) is done, so a
@@ -9,7 +10,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{CONFIG_FILE, CONNECTIONS_FILE, MAX_FILE_BYTES, SetupError, atomic};
+use super::{CONFIG_FILE, CONNECTIONS_FILE, SetupError, atomic};
 
 pub(crate) const MARKER_FILE: &str = ".setup-commit.json";
 pub(crate) const BACKUP_DIR: &str = ".setup-backup";
@@ -109,26 +110,6 @@ fn known_file(name: &str) -> Result<(), SetupError> {
         )));
     }
     Ok(())
-}
-
-/// Restores an interrupted commit's originals: every backed-up file goes back
-/// byte-for-byte, files the commit created are deleted, then marker and
-/// backups are removed. Idempotent.
-pub fn restore(dir: &Path, pending: &PendingCommit) -> Result<(), SetupError> {
-    for entry in &pending.entries {
-        let target = dir.join(&entry.file);
-        if let Some(backup) = &entry.backup {
-            let backup_path = dir.join(BACKUP_DIR).join(backup);
-            if let Some(bytes) = atomic::read_optional_bounded(&backup_path, MAX_FILE_BYTES)? {
-                atomic::refuse_symlink(&target)?;
-                atomic::publish(&target, &bytes)?;
-            }
-        } else if entry.created {
-            atomic::refuse_symlink(&target)?;
-            let _ = std::fs::remove_file(&target);
-        }
-    }
-    clear(dir)
 }
 
 /// Keeps the current files and removes the marker and backups. Idempotent.

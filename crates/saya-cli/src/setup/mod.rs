@@ -11,6 +11,7 @@ mod draft;
 mod plan;
 mod recover;
 mod render;
+mod restore;
 
 // S16 adapters: the interactive flow and its steps, the prompts and the
 // question sets, the probes, and the review renderer. The engine above stays
@@ -77,6 +78,12 @@ pub enum SetupError {
              ({restore}); `saya setup` will offer to restore the original files on the next run"
     )]
     ReloadRestoreFailed { message: String, restore: String },
+    #[error(
+        "restore did not complete: {}; the recovery marker and backups were kept; \
+             fix the file and run `saya setup` again",
+        .failures.join("; ")
+    )]
+    RestoreIncomplete { failures: Vec<String> },
     #[error("setup marker unusable: {0}")]
     Marker(String),
     #[error("an interrupted setup commit is pending in {path}; restore or finish it first")]
