@@ -467,6 +467,84 @@ fn import_conflict_for_same_id_different_content() {
     let _ = fs::remove_dir_all(&b.root);
 }
 
+/// Exports `id` from `a` and rewrites its `objects` field to `objects` in a
+/// second file, as an editor (or a lying exporter) would hand a document in.
+fn exported_with_objects(a: &Harness, id: &str, objects: serde_json::Value) -> PathBuf {
+    let exported = a.root.join("shared.json");
+    let out = a.run(&["investigation", "export", id, exported.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "export failed: {}{}",
+        a.stderr(&out),
+        a.stdout(&out)
+    );
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&exported).unwrap()).unwrap();
+    document["objects"] = objects;
+    let tampered = a.root.join("tampered.json");
+    fs::write(&tampered, serde_json::to_string_pretty(&document).unwrap()).unwrap();
+    tampered
+}
+
+#[test]
+fn imported_empty_objects_cannot_skip_schema_review() {
+    // The audit repro (A2): a document whose objects list is emptied must not
+    // import, because run takes its review dependencies from the SQL and an
+    // empty stored list could otherwise make a changed table replay cleanly.
+    let a = harness_with_database("empty-objects-a");
+    let id = saved_id(&a, "empty-objects-a");
+    let tampered = exported_with_objects(&a, &id, serde_json::json!([]));
+
+    let b = harness_with_database("empty-objects-b");
+    let imported = b.run(&["investigation", "import", tampered.to_str().unwrap()]);
+    assert_eq!(
+        imported.status.code(),
+        Some(2),
+        "the emptied objects list is refused: {}{}",
+        b.stderr(&imported),
+        b.stdout(&imported)
+    );
+    assert!(
+        b.stderr(&imported)
+            .contains("objects do not match the SQL; re-export the investigation"),
+        "err: {}",
+        b.stderr(&imported)
+    );
+    assert!(
+        b.document_ids().is_empty(),
+        "a refused import stores nothing"
+    );
+    let _ = fs::remove_dir_all(&a.root);
+    let _ = fs::remove_dir_all(&b.root);
+}
+
+#[test]
+fn imported_wrong_objects_are_refused() {
+    let a = harness_with_database("wrong-objects-a");
+    let id = saved_id(&a, "wrong-objects-a");
+    let tampered = exported_with_objects(&a, &id, serde_json::json!(["somewhere.else"]));
+
+    let b = harness_with_database("wrong-objects-b");
+    let imported = b.run(&["investigation", "import", tampered.to_str().unwrap()]);
+    assert_eq!(
+        imported.status.code(),
+        Some(2),
+        "objects that disagree with the SQL are refused: {}{}",
+        b.stderr(&imported),
+        b.stdout(&imported)
+    );
+    assert!(
+        b.stderr(&imported)
+            .contains("objects do not match the SQL; re-export the investigation"),
+        "err: {}",
+        b.stderr(&imported)
+    );
+    assert!(b.document_ids().is_empty());
+    let _ = fs::remove_dir_all(&a.root);
+    let _ = fs::remove_dir_all(&b.root);
+}
+
 #[test]
 fn export_refuses_existing_destination() {
     let a = harness_with_database("export-exists");
