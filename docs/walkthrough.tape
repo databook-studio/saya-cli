@@ -62,10 +62,16 @@ Sleep 2s
 # Launch the TUI read-only on the demo profile — from the neutral scratch
 # directory (the binary is copied there), with --workspace binding that
 # directory explicitly: no trust modal, and the header names the neutral
-# canonical path (/private/tmp/… on macOS) instead of the checkout.
+# canonical path (/private/tmp/… on macOS) instead of the checkout. The
+# terminal is cleared first, so no pre-TUI shell text (sandbox paths, demo
+# output) is ever on screen around the app: it is empty when the TUI takes
+# over and empty again when it exits.
 Type "cp target/release/saya /tmp/saya-walkthrough-record/saya && cd /tmp/saya-walkthrough-record"
 Enter
 Sleep 1s
+Type "clear"
+Enter
+Sleep 300ms
 Type "./saya --connections $W/demo/connections.toml --profile demo --workspace /tmp/saya-walkthrough-record"
 Enter
 Sleep 3s
@@ -121,17 +127,17 @@ Enter
 Wait+Screen /saved investigation: demo · 4 rows/
 Sleep 1.2s
 
-# Quit (from a filled line Ctrl+C clears first, twice quits — as in
-# demo.tape; from the empty line after the run the first Ctrl+C arms).
+# Quit and clean up, hidden: the last recorded frame is the TUI itself — the
+# post-quit shell repaint (and the cleared screen it restores) is never
+# captured. (From a filled line Ctrl+C clears first, twice quits — as in
+# demo.tape; from the empty line after the run the first Ctrl+C arms.)
+Hide
 Ctrl+U
 Sleep 400ms
 Ctrl+C
 Sleep 400ms
 Ctrl+C
 Sleep 800ms
-
-# Cleanup: leave the scratch directory, then remove it and the sandbox.
-Hide
 Type "cd /tmp && rm -rf /tmp/saya-walkthrough-record $W"
 Enter
 Sleep 500ms
