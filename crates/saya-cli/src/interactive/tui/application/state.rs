@@ -7,6 +7,7 @@ use super::super::types::{App, MAX_INPUT_ROWS, OverlayState, RequestState};
 use crate::config::runtime::RuntimeConfig;
 use saya_store::SqliteStateStore;
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 impl App {
@@ -41,6 +42,7 @@ impl App {
             compact_task: None,
             pending_session_save: None,
             last_query: None,
+            pending_queries: VecDeque::new(),
             wide_table: Default::default(),
             run_panel: None,
             runtime,
