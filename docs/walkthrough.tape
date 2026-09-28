@@ -24,7 +24,9 @@
 # — no AI provider and no network. The sandbox lives in a temp dir so the
 # tree stays clean; the exported environment persists across the tape's
 # commands, and the snapshot/report destinations are a fixed scratch
-# directory under /tmp that the hidden phases create and remove.
+# directory under /tmp that the hidden phases create and remove. The TUI
+# itself is launched from that scratch directory, so the recording names no
+# checkout path and no recorder identity.
 
 Output docs/walkthrough.gif
 
@@ -57,8 +59,14 @@ Type "target/release/saya --connections $W/demo/connections.toml --non-interacti
 Enter
 Sleep 2s
 
-# Launch the TUI read-only on the demo profile.
-Type "target/release/saya --connections $W/demo/connections.toml --profile demo"
+# Launch the TUI read-only on the demo profile — from the neutral scratch
+# directory (the binary is copied there), with --workspace binding that
+# directory explicitly: no trust modal, and the header names the neutral
+# canonical path (/private/tmp/… on macOS) instead of the checkout.
+Type "cp target/release/saya /tmp/saya-walkthrough-record/saya && cd /tmp/saya-walkthrough-record"
+Enter
+Sleep 1s
+Type "./saya --connections $W/demo/connections.toml --profile demo --workspace /tmp/saya-walkthrough-record"
 Enter
 Sleep 3s
 Show
@@ -122,8 +130,8 @@ Sleep 400ms
 Ctrl+C
 Sleep 800ms
 
-# Cleanup: the scratch export directory and the sandbox.
+# Cleanup: leave the scratch directory, then remove it and the sandbox.
 Hide
-Type "rm -rf /tmp/saya-walkthrough-record $W"
+Type "cd /tmp && rm -rf /tmp/saya-walkthrough-record $W"
 Enter
 Sleep 500ms
