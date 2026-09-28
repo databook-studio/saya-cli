@@ -6,7 +6,7 @@
 //! two copies that can drift.
 
 use crate::StoreError;
-use crate::replace::{Replacer, publish_staged};
+use crate::replace::{Replacer, publish_staged, publish_staged_no_replace};
 use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
@@ -56,6 +56,30 @@ pub(crate) fn set_mode(path: &Path, mode: u32) -> Result<(), StoreError> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(io_error)
 }
 
+/// Stages `data` at `temp` — created `create_new`, mode 0600 on unix,
+/// fully written and fsynced. On failure the partial temp is removed.
+fn stage(temp: &Path, data: &[u8]) -> Result<(), StoreError> {
+    let result = (|| {
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(temp).map_err(io_error)?;
+        file.write_all(data).map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+        #[cfg(unix)]
+        set_mode(temp, 0o600)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
+}
+
 /// Stages `data` at a private temp beside `target` — created `create_new`,
 /// mode 0600 on unix, fully written and fsynced — then publishes it through
 /// `replacer`, whose rename either installs the complete new file or leaves
@@ -67,23 +91,21 @@ pub(crate) fn stage_and_publish(
     replacer: &dyn Replacer,
 ) -> Result<(), StoreError> {
     let temp = temporary_path(target);
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temp).map_err(io_error)?;
-        file.write_all(data).map_err(io_error)?;
-        file.sync_all().map_err(io_error)?;
-        #[cfg(unix)]
-        set_mode(&temp, 0o600)?;
-        publish_staged(&temp, target, replacer)
-    })();
+    let result = stage(&temp, data).and_then(|()| publish_staged(&temp, target, replacer));
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
+    result
+}
+
+/// Stages `data` as [`stage`] does, then publishes it at `target` without
+/// replacement via [`publish_staged_no_replace`] — the exclusive publish
+/// create uses, so a target that appears after the caller's checks is a
+/// conflict, never an overwrite. The temp link is removed on every outcome:
+/// a successful exclusive publish leaves it beside the newly linked target.
+pub(crate) fn stage_and_publish_no_replace(target: &Path, data: &[u8]) -> Result<(), StoreError> {
+    let temp = temporary_path(target);
+    let result = stage(&temp, data).and_then(|()| publish_staged_no_replace(&temp, target));
+    let _ = fs::remove_file(&temp);
     result
 }

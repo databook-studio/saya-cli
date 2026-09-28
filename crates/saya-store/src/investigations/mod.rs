@@ -2,14 +2,23 @@
 //! document per investigation id at `<root>/<id>.json`, plus a per-machine
 //! local binding at `<root>/local/<id>.json` that never leaves the machine.
 //!
-//! Every write stages private temp bytes beside its target and publishes
-//! with an atomic rename; every read is bounded and never quarantines,
-//! rewrites, or deletes a file it cannot parse. A corrupt document is
-//! reported, so a bad file can never be silently promoted to good.
+//! Every mutation runs entirely under the cross-process repository lock
+//! (the `lock` submodule) — read/check/publish is one critical section —
+//! and create's publish never replaces, so a document that appears after the checks is a
+//! conflict, never an overwrite. Every write stages private temp bytes
+//! beside its target and publishes with an atomic rename; every read is
+//! bounded and never quarantines, rewrites, or deletes a file it cannot
+//! parse. A corrupt document is reported, so a bad file can never be
+//! silently promoted to good.
 
 mod binding;
 mod documents;
 mod list;
+mod lock;
+mod stale;
+
+#[cfg(test)]
+mod exclusivity_tests;
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +26,7 @@ mod tests;
 use crate::{StoreError, private_file};
 use saya_types::investigation::InvestigationId;
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub use binding::{LocalBinding, MAX_BINDING_BYTES};
 pub use list::{InvestigationListIssue, InvestigationPage, InvestigationSummary, MAX_LIST_PAGE};
@@ -35,11 +45,17 @@ pub(crate) const LIST_SCAN_BOUND: usize = MAX_DOCUMENTS + 1;
 /// documents. Cheap to construct and clone; every method takes `&self`.
 pub struct InvestigationRepository {
     root: PathBuf,
+    lock_wait: Duration,
+    stale_after: Duration,
 }
 
 impl InvestigationRepository {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            lock_wait: lock::LOCK_WAIT,
+            stale_after: lock::STALE_AFTER,
+        }
     }
 
     /// The document path for `id`. The id is re-checked here — never
