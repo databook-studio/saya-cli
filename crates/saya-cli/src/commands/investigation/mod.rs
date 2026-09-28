@@ -17,6 +17,7 @@ mod list;
 mod paths;
 mod run;
 mod run_binding;
+mod run_report;
 mod save;
 mod save_input;
 mod show;
@@ -103,6 +104,9 @@ pub(crate) async fn run_investigation_in(
             id,
             connection,
             revalidate,
+            report,
+            rows,
+            overwrite,
         } => {
             run::run(
                 repo,
@@ -114,6 +118,9 @@ pub(crate) async fn run_investigation_in(
                     id: &id,
                     connection: connection.as_deref(),
                     revalidate,
+                    report: report.as_deref(),
+                    rows,
+                    overwrite,
                 },
             )
             .await

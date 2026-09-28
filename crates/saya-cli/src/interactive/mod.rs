@@ -58,7 +58,7 @@ pub(crate) mod session_trust;
 mod session_trust_tests;
 pub(crate) mod session_universe;
 mod session_workspace;
-mod tui;
+pub(crate) mod tui;
 
 pub use session_commands::SessionAction;
 pub use session_loop::run;
