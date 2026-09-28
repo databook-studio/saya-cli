@@ -1,13 +1,13 @@
+#[cfg(unix)]
+use crate::private_file::set_mode;
+use crate::private_file::{bounded_read, io_error, stage_and_publish};
 use crate::redaction::redact;
-use crate::replace::{AtomicReplace, Replacer, publish_staged};
+use crate::replace::{AtomicReplace, Replacer};
 use crate::{RedactedSession, SessionHistoryPage, SessionHistoryQuery, SessionStore, StoreError};
 use async_trait::async_trait;
 use std::{
     fs,
-    fs::OpenOptions,
-    io::{Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,8 +15,6 @@ use std::{
 /// writes so a malformed or untrusted record cannot force an unbounded
 /// allocation during resume.
 pub const MAX_SESSION_BYTES: usize = 4 << 20;
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct FsSessionStore {
@@ -45,7 +43,7 @@ impl FsSessionStore {
     }
 
     fn load_file(&self, path: &Path) -> Result<Option<RedactedSession>, StoreError> {
-        let bytes = match bounded_read(path)? {
+        let bytes = match bounded_read(path, MAX_SESSION_BYTES)? {
             Some(value) => value,
             None => return Ok(None),
         };
@@ -92,30 +90,11 @@ impl FsSessionStore {
             Err(_) => return Err(StoreError::unavailable()),
         }
         let data = capped.into_inner();
-        let temp = temporary_path(&path);
-        let result = (|| {
-            let mut options = OpenOptions::new();
-            options.create_new(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temp).map_err(io_error)?;
-            file.write_all(&data).map_err(io_error)?;
-            file.sync_all().map_err(io_error)?;
-            #[cfg(unix)]
-            set_mode(&temp, 0o600)?;
-            // Atomic publish: `publish_staged` (rename on every platform)
-            // either installs the complete new file or leaves the existing
-            // target untouched — it never truncates the target before
-            // failing, unlike the old Windows copy-then-remove.
-            publish(&temp, &path, replacer)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temp);
-        }
-        result
+        // Private staging beside the target plus atomic publish: the rename
+        // either installs the complete new file or leaves the existing
+        // target untouched — it never truncates the target before failing,
+        // unlike the old Windows copy-then-remove.
+        stage_and_publish(&path, &data, replacer)
     }
 
     /// Test-only save through an injected [`Replacer`]: proves a failed
@@ -164,48 +143,9 @@ impl SessionStore for FsSessionStore {
     }
 }
 
-fn publish(temp: &Path, target: &Path, replacer: &dyn Replacer) -> Result<(), StoreError> {
-    publish_staged(temp, target, replacer)
-}
-
 fn stamp() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_millis())
         .unwrap_or_default()
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("session.json");
-    let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    path.with_file_name(format!(".{name}.{}.{}.tmp", std::process::id(), sequence))
-}
-
-fn bounded_read(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
-    let file = match fs::File::open(path) {
-        Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(io_error(error)),
-    };
-    let mut bytes = Vec::new();
-    file.take(MAX_SESSION_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io_error)?;
-    if bytes.len() > MAX_SESSION_BYTES {
-        return Err(StoreError::LimitExceeded);
-    }
-    Ok(Some(bytes))
-}
-
-fn io_error(_: std::io::Error) -> StoreError {
-    StoreError::unavailable()
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> Result<(), StoreError> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(io_error)
 }
