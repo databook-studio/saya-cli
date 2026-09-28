@@ -29,8 +29,8 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
-SAYA supports `postgresql`, `mysql`, `sqlite`, `duckdb`, and `snowflake`.
-PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
+SAYA supports `postgresql`, `mysql`, `sqlite`, `duckdb`, `snowflake`,
+`clickhouse`, and `bigquery`. PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-full`; MySQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-identity`.
 
@@ -101,6 +101,8 @@ type = "sqlite"
 path = "./data/warehouse.sqlite3"
 read_only = true
 ```
+
+### Snowflake profiles
 
 Snowflake profiles require `account`, `user`, and `auth_type`. Account values
 are identifiers such as `xy12345` or `org-account.us-east-1.aws`, not URLs.
@@ -193,6 +195,52 @@ Snowflake schema discovery pages through `INFORMATION_SCHEMA` rather than
 truncating silently, and enforces a hard cap on total columns; a schema larger
 than the cap fails with an explicit "too large to enumerate" error asking you to
 narrow the database/schema, instead of returning a partial schema.
+
+### ClickHouse profiles
+
+ClickHouse profiles are configured by hand (not in guided setup). `host` is
+required; `port` defaults to 8123 over plain HTTP or 8443 over TLS, and
+`secure = true` selects TLS:
+
+```toml
+[profiles.click]
+type = "clickhouse"
+host = "clickhouse.internal.example"
+secure = true
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_CLICKHOUSE_PASSWORD" }
+```
+
+A password over plain HTTP to any host other than the loopback interface is
+refused: a remote profile must set `secure = true`; a local (loopback)
+server may stay plain HTTP. SQL crosses the same read-only safety gate as
+every other engine; grant ClickHouse a read-only user.
+
+### BigQuery profiles
+
+BigQuery profiles are configured by hand (not in guided setup). `project`
+(the GCP project whose datasets the connector reads) and
+`service_account_key` — a secret reference to the service-account JSON,
+never a literal — are required:
+
+```toml
+[profiles.bq]
+type = "bigquery"
+project = "my-gcp-project"
+dataset = "warehouse"
+service_account_key = { file = "/absolute/path/to/service-account.json" }
+```
+
+`dataset` is the default dataset for discovery and unqualified names,
+`location` pins the job location, and `max_bytes_billed` caps the bytes any
+one query may scan (default 1 TiB — BigQuery bills by bytes scanned).
+Read-only is enforced by the SQL safety layer and by the service account's
+IAM role, not by narrowing the token: run queries with a role scoped to
+`bigquery.readonly`. Schema discovery reads a dataset's `INFORMATION_SCHEMA`
+from the project that owns it — a dataset may be written as
+`project.dataset`, which is how a public dataset the paying project does not
+own is browsed.
 
 A primary execution profile is selected for a command with `--profile`.
 `--include-profile` (and interactive `/include`) connect additional read-only

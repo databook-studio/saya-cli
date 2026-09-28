@@ -159,9 +159,20 @@ presence (never its value) is reported.
   no key), openai, openai_compatible (asks for its base URL), anthropic, and
   gemini; plus skip.
 - **Database** — four engines: sqlite, duckdb, postgresql, and mysql (duckdb
-  asks about its read-only flag); plus skip. Any other engine — Snowflake,
-  ClickHouse, BigQuery — is configured in `connections.toml` by hand as
-  before, per [connections](connections.md).
+  asks about its read-only flag); plus skip. Snowflake, ClickHouse, and
+  BigQuery are not in the guided flow: they are configured in
+  `connections.toml` by hand, per the engine's section in
+  [connections](connections.md):
+
+  | Engine | In guided setup? | Configure by hand — see |
+  | --- | --- | --- |
+  | SQLite | yes | (not needed — guided) |
+  | DuckDB | yes | (not needed — guided) |
+  | PostgreSQL | yes | (not needed — guided) |
+  | MySQL | yes | (not needed — guided) |
+  | Snowflake | no | [Snowflake profiles](connections.md#snowflake-profiles) |
+  | ClickHouse | no | [ClickHouse profiles](connections.md#clickhouse-profiles) |
+  | BigQuery | no | [BigQuery profiles](connections.md#bigquery-profiles) |
 - **Review** — the exact TOML that will be written, before anything is
   written. An existing `connections.toml` is appended to: the existing bytes
   are kept as an exact prefix and a new profile block is added (a profile
@@ -177,7 +188,9 @@ presence (never its value) is reported.
   reload check verifies the result loads. A failed reload restores the
   originals. An interruption mid-commit leaves a recovery marker that later
   startups warn about (stderr); the next `saya setup` offers to restore or
-  finish the interrupted write.
+  finish the interrupted write. A restore step that fails says which file it
+  could not restore, keeps the recovery marker, and exits `2` — setup never
+  reports success it did not achieve.
 
 `saya setup` needs a terminal. With `--non-interactive` or no TTY it prompts
 for nothing, writes nothing, and exits `2` with guidance to
@@ -204,7 +217,11 @@ mode `0600` in a `0700` directory, capped at 500 documents. Ids are derived
 from the name plus a hash suffix, so they are always safe filename stems —
 `investigation list` prints them. Per-machine state (the review binding) is
 kept separately under `investigations/local/<id>.json` and is never
-exported.
+exported. Every write to the collection — save, import, delete, binding
+updates — is exclusive across processes: mutations run under a repository
+lock and a create never replaces an existing document, so a conflicting
+concurrent writer is refused (`the saved investigation changed underneath
+this command; retry`) instead of silently overwriting.
 
 Subcommands:
 
@@ -249,12 +266,27 @@ identity, and the schema fingerprint of the referenced tables. When any of
 the three changes, the run is refused — `review is stale (…)` — until
 `--revalidate` is passed; a revalidated run rewrites the binding. This is
 deliberate friction: a saved query that silently runs against a changed
-table is worse than one that stops.
+table is worse than one that stops. The referenced tables are derived from
+the SQL itself at run time — the document's `objects` list is
+informational, and `investigation import` refuses a document whose
+`objects` do not match its SQL. A table that cannot be resolved against the
+live schema, an ambiguous name, or an incomplete dependency analysis makes
+the review **unverifiable**: the run is refused (`schema review
+unavailable: …`) unless `--revalidate` is passed, and such a run is never
+recorded as reviewed — a revalidated unverifiable run rewrites the binding
+without a schema fingerprint, and the next unverifiable run is refused the
+same way. Quoted names containing dots (`"orders.v1"`) are kept as one
+object, never re-split.
 
 `run` writes a Markdown report with `--report <PATH>`: the same report the
 TUI's `/report` writes — exact SQL and provenance by default, result rows
 only with `--rows <N>` (at most 100). The report is written only after a
 successful replay, and an existing destination needs `--overwrite`.
+
+Deferred in this release: there is no searchable TUI investigation picker
+(like `/sessions` for sessions) and no edit command — a saved definition is
+immutable through supported commands; save a new one under a new name
+instead.
 
 Exit codes follow the global scheme: `0` ok; `2` usage and domain errors
 (unknown id, id conflict, stale review, credential-shaped SQL, an unusable
@@ -277,8 +309,13 @@ Three TUI-only details:
   queries never become selectable, and fan-out (`bounded_sql_query_all`)
   never counts; pass `--sql <SQL>` (or `--file <PATH>`) to save different
   SQL, and `--connection <PROFILE>` to save against another profile.
-- `/investigation run <id>` runs in the foreground: the transcript waits for
-  the query to finish.
+- `/investigation run <id>` runs in the background: the status bar shows a
+  spinner naming the investigation while the replay runs on a worker, and
+  the transcript stays usable. Esc or Ctrl+C detaches it — the late result
+  is discarded (it never replaces the capture, never writes a report) and
+  the query is **not cancelled: it may still be running on the server**.
+  Detaching changes only what the UI waits for; the replay's audit row and
+  review binding are written exactly as a foreground run's.
 - `/investigation run` takes no `--report` flags in the TUI — write reports
   with `/report`.
 
@@ -290,26 +327,33 @@ Three TUI-only details:
   fresh result, not the displayed table (column filters, scroll, and folds
   do not apply). The legacy spelling stays a refresh and its success line
   says so.
-- `--snapshot` writes the result you already inspected: the latest direct
-  `/sql` capture, held for this session only, with **no query at all**. The
-  success line names the execution id and capture time (UTC) it came from.
+- `--snapshot` writes the result you already inspected: the latest capture,
+  held for this session only, with **no query at all**. The success line
+  names the execution id and capture time (UTC) it came from. Captures
+  cover three paths: a direct `/sql` result (full, up to the row cap), an
+  agent `bounded_sql_query` result (model-limited: exactly the at most 50
+  rows the agent saw — the success line says `model-limited: the full
+  result may be larger — use --refresh for a full read`), and a saved
+  replay run in the TUI (full).
 - An existing destination needs `--overwrite`; a refused or failed export
   leaves the destination unchanged. Writes are atomic (private temp +
   rename), symlink and directory destinations are refused, and encoded
   output is capped at 32 MiB.
-- Only direct `/sql` results are captured: agent-run query results are not
-  (their rows are model-limited and not in the event stream). For those, use
-  `/sql` or `/export --refresh`.
+- A refused or absent capture never falls back to an older result: the
+  snapshot says the rows were not captured and offers `/export --refresh`.
+  Fan-out agent queries (`bounded_sql_query_all`) are never captured.
 
 `/report [--rows N] [--overwrite] <path>` writes a shareable Markdown report
-of the captured `/sql` result — it never queries a database and never opens
-a browser or uploads anything. By default it carries the exact SQL and
+of the captured result — the latest capture, from a direct `/sql` query, an
+agent query, or a saved replay — never querying a database and never opening
+a browser or uploading anything. By default it carries the exact SQL and
 provenance only (connection label, submitted-SQL hash, execution id, times
 in UTC, row counts, truncation, scope) with the rows section labelled as
 omitted; `--rows N` (at most 100) adds a table of the first N captured
-rows. Cell values are neutralised — links, images, HTML, table-breaking
-characters, and control characters cannot be carried into the file — and a
-bare `https://…`
+rows, and a model-limited capture says so in the provenance (the agent saw
+only the first N rows). Cell values are neutralised — links, images, HTML,
+table-breaking characters, and control characters cannot be carried into
+the file — and a bare `https://…`
 text value may still be auto-linked by a Markdown renderer, so review the
 report before sharing. The report is capped at 2 MiB, written atomically,
 and an existing destination needs `--overwrite`. Use `/export` for data
