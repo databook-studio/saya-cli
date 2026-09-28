@@ -4,7 +4,7 @@
 //! with the rest of the extraction contract. See the spec linked from the
 //! parent module.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
 use sqlparser::ast::{Expr, ObjectName, Query, TableFactor, Visitor};
@@ -24,8 +24,12 @@ pub struct Extractor {
     pub columns: Vec<String>,
     /// `true` when an unmodelled construct was seen; lists may be incomplete.
     pub partial: bool,
-    /// CTE alias names collected from every `WITH` — never objects.
-    cte_names: HashSet<String>,
+    /// CTE alias names visible at the current point of the walk, keyed by
+    /// name with the number of enclosing queries that define it — an alias
+    /// may be defined at two nested scopes. A name is a CTE reference only
+    /// while one of its defining queries is being walked; CTEs are never
+    /// objects.
+    cte_scopes: HashMap<String, usize>,
     seen_objects: HashSet<Vec<String>>,
     seen_columns: HashSet<String>,
 }
@@ -63,12 +67,39 @@ impl Extractor {
 impl Visitor for Extractor {
     type Break = ();
 
-    /// Collect CTE aliases before any relation in the same query is visited:
-    /// `WITH` precedes `body`, and `pre_visit_query` fires before children.
+    /// Enter a query's CTE scope. `WITH` precedes `body` and `pre_visit_query`
+    /// fires before children, so the aliases are visible to the CTE bodies
+    /// themselves — a recursive CTE referencing itself inside its own
+    /// definition is a CTE reference.
     fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
         if let Some(with) = &query.with {
             for cte in &with.cte_tables {
-                self.cte_names.insert(cte.alias.name.value.clone());
+                *self
+                    .cte_scopes
+                    .entry(cte.alias.name.value.clone())
+                    .or_insert(0) += 1;
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    /// Leave a query's CTE scope, removing exactly the aliases its own `WITH`
+    /// pushed: a CTE declared inside a subquery never hides a same-named base
+    /// table outside that scope. `Query::visit` pairs every `pre_visit_query`
+    /// with this hook on the same node (only a `Break` in between would skip
+    /// it, and `sql_references` flags that as `partial`), so scope is known
+    /// for every construct this visitor models; constructs it does not model
+    /// already set `partial` and are never excluded on scope grounds.
+    fn post_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
+        if let Some(with) = &query.with {
+            for cte in &with.cte_tables {
+                let name = &cte.alias.name.value;
+                if let Some(count) = self.cte_scopes.get_mut(name) {
+                    *count -= 1;
+                    if *count == 0 {
+                        self.cte_scopes.remove(name);
+                    }
+                }
             }
         }
         ControlFlow::Continue(())
@@ -87,7 +118,7 @@ impl Visitor for Extractor {
                     self.partial = true;
                     return ControlFlow::Continue(());
                 }
-                if is_cte_reference(name, &self.cte_names) {
+                if is_cte_reference(name, &self.cte_scopes) {
                     return ControlFlow::Continue(());
                 }
                 self.record_object(parts_of(name));
@@ -122,9 +153,10 @@ impl Visitor for Extractor {
 }
 
 /// A relation is a CTE reference only when it is a single, unqualified name
-/// that matches a known CTE alias — CTEs are never schema-qualified.
-fn is_cte_reference(name: &ObjectName, cte_names: &HashSet<String>) -> bool {
-    name.0.len() == 1 && cte_names.contains(&name.0[0].value)
+/// that matches a CTE alias visible at the reference's scope — CTEs are never
+/// schema-qualified.
+fn is_cte_reference(name: &ObjectName, cte_scopes: &HashMap<String, usize>) -> bool {
+    name.0.len() == 1 && cte_scopes.contains_key(&name.0[0].value)
 }
 
 /// The parts of a relation name, exactly as written (case preserved).
