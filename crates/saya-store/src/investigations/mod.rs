@@ -21,6 +21,9 @@ mod stale;
 mod exclusivity_tests;
 
 #[cfg(test)]
+mod lock_protocol_tests;
+
+#[cfg(test)]
 mod tests;
 
 use crate::{StoreError, private_file};

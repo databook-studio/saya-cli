@@ -5,8 +5,12 @@
 //! pid and acquisition time. Contention retries for a bounded budget, then
 //! reports `Unavailable`; breaking a stale lock is `stale`'s concern.
 //! Release removes the file only when its contents still match what this
-//! guard wrote, so a guard whose lock was stale-broken cannot delete the
-//! next writer's fresh lock.
+//! guard wrote AND — on unix — the file at the path is still the very one
+//! this guard claimed (same device and inode), so a guard whose lock was
+//! stale-broken cannot delete the next writer's fresh claim even when the
+//! successor's contents are byte-identical (same pid, same millisecond).
+//! On platforms without file identity, release falls back to the contents
+//! check alone.
 
 use super::stale::{break_if_stale, now_unix_ms};
 use crate::StoreError;
@@ -17,6 +21,9 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 /// How long a contended acquisition retries before reporting `Unavailable`.
 pub(crate) const LOCK_WAIT: Duration = Duration::from_secs(2);
@@ -34,20 +41,62 @@ pub(super) struct LockContents {
     pub(super) acquired_unix_ms: i64,
 }
 
+/// The filesystem identity of the lock file this guard claimed: release
+/// removes the file only while the path still resolves to this device and
+/// inode, so a successor's fresh claim at the same path — even with
+/// byte-identical contents — is never deleted.
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+struct FileIdentity {
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(unix)]
+impl FileIdentity {
+    /// The identity of an open claim handle; `None` when it cannot be
+    /// read, in which case release falls back to the contents check alone.
+    fn of(file: &std::fs::File) -> Option<Self> {
+        let metadata = file.metadata().ok()?;
+        Some(Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        })
+    }
+
+    /// Whether the file now at `path` is still the one this identity was
+    /// taken from.
+    fn still_at(&self, path: &Path) -> bool {
+        std::fs::metadata(path)
+            .ok()
+            .is_some_and(|metadata| metadata.dev() == self.dev && metadata.ino() == self.ino)
+    }
+}
+
 /// An exclusively held repository lock. Dropping it releases the lock file
-/// if it is still exactly the one this guard wrote.
+/// if it is still exactly the one this guard wrote — same contents, and on
+/// unix the same file identity.
 pub(crate) struct RepositoryLock {
     path: PathBuf,
     contents: LockContents,
+    #[cfg(unix)]
+    identity: Option<FileIdentity>,
 }
 
 impl Drop for RepositoryLock {
     fn drop(&mut self) {
-        let owned = std::fs::read(&self.path)
+        let contents_match = std::fs::read(&self.path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<LockContents>(&bytes).ok())
             .is_some_and(|current| current == self.contents);
-        if owned {
+        #[cfg(unix)]
+        let identity_match = self
+            .identity
+            .as_ref()
+            .is_none_or(|identity| identity.still_at(&self.path));
+        #[cfg(not(unix))]
+        let identity_match = true;
+        if contents_match && identity_match {
             let _ = std::fs::remove_file(&self.path);
         }
     }
@@ -65,14 +114,23 @@ pub(crate) fn acquire(
     let deadline = Instant::now() + wait;
     let mut sleep = FIRST_SLEEP;
     let mut broke_stale = false;
+    let mut aside: Option<PathBuf> = None;
     loop {
         match claim(&path) {
-            Ok(contents) => return Ok(RepositoryLock { path, contents }),
+            Ok(lock) => {
+                // The stale break's aside file is dead weight once this
+                // acquisition re-claims; remove it best-effort (R4-5).
+                if let Some(aside) = aside.take() {
+                    let _ = std::fs::remove_file(&aside);
+                }
+                return Ok(lock);
+            }
             Err(ClaimError::Failed) => return Err(StoreError::unavailable()),
             Err(ClaimError::Exists) => {}
         }
-        if !broke_stale && break_if_stale(&path, stale_after) {
+        if !broke_stale && let Some(broken_aside) = break_if_stale(&path, stale_after) {
             broke_stale = true;
+            aside = Some(broken_aside);
             continue;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -89,11 +147,11 @@ enum ClaimError {
     Failed,
 }
 
-/// Writes our pid and acquisition time into a freshly created `.lock`.
-/// `create_new` makes the claim exclusive and the contents are fsynced
-/// before the claim is reported; a failed write removes the file we just
-/// created, never one another holder owns.
-fn claim(path: &Path) -> Result<LockContents, ClaimError> {
+/// Writes our pid and acquisition time into a freshly created `.lock` and
+/// returns the guard for it. `create_new` makes the claim exclusive and
+/// the contents are fsynced before the claim is reported; a failed write
+/// removes the file we just created, never one another holder owns.
+fn claim(path: &Path) -> Result<RepositoryLock, ClaimError> {
     let contents = LockContents {
         pid: std::process::id(),
         acquired_unix_ms: now_unix_ms(),
@@ -113,6 +171,8 @@ fn claim(path: &Path) -> Result<LockContents, ClaimError> {
         std::io::ErrorKind::AlreadyExists => ClaimError::Exists,
         _ => ClaimError::Failed,
     })?;
+    #[cfg(unix)]
+    let identity = FileIdentity::of(&file);
     if file
         .write_all(&payload)
         .and_then(|()| file.sync_all())
@@ -121,7 +181,12 @@ fn claim(path: &Path) -> Result<LockContents, ClaimError> {
         let _ = std::fs::remove_file(path);
         return Err(ClaimError::Failed);
     }
-    Ok(contents)
+    Ok(RepositoryLock {
+        path: path.to_path_buf(),
+        contents,
+        #[cfg(unix)]
+        identity,
+    })
 }
 
 impl super::InvestigationRepository {
