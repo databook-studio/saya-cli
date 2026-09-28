@@ -50,6 +50,26 @@ pub(crate) fn publish_staged(
     replacer.replace(temp, target)
 }
 
+/// Publishes staged bytes at `target` WITHOUT replacement, the exclusive
+/// publish create uses: the target becomes a hard link to `temp`, which
+/// fails with `AlreadyExists` when any file — including one a non-locking
+/// writer created after the caller's check — occupies the target, so a
+/// create can never overwrite. The temp link is always removed. When hard
+/// links are unsupported on the filesystem, this falls back to the caller's
+/// locked rename (exclusive among locking writers only, not against old
+/// non-locking binaries).
+pub(crate) fn publish_staged_no_replace(temp: &Path, target: &Path) -> Result<(), StoreError> {
+    let published = match std::fs::hard_link(temp, target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(StoreError::conflict())
+        }
+        Err(_) => std::fs::rename(temp, target).map_err(|_| StoreError::unavailable()),
+    };
+    let _ = std::fs::remove_file(temp);
+    published
+}
+
 #[cfg(test)]
 #[path = "filesystem_replace_tests.rs"]
 mod tests;

@@ -2,7 +2,9 @@
 //! get, and delete. Every write validates through
 //! [`InvestigationDefinitionV1::to_json_pretty`] first, then stages private
 //! bytes beside the target and publishes atomically; every read is bounded
-//! and reports — never repairs — a document it cannot parse.
+//! and reports — never repairs — a document it cannot parse. Every mutation
+//! runs entirely under the repository lock, so read/check/publish is one
+//! critical section across processes.
 
 use saya_types::investigation::{InvestigationDefinitionV1, InvestigationId, MAX_DEFINITION_BYTES};
 
@@ -12,20 +14,19 @@ use crate::{StoreError, private_file};
 use super::{InvestigationRepository, MAX_DOCUMENTS, store_error_of};
 
 impl InvestigationRepository {
-    /// Saves a new document. Refuses an existing id (`Conflict`), a full
-    /// collection (`LimitExceeded`), and a definition that fails its own
-    /// serialization validation (`Invalid`, or `LimitExceeded` when the
-    /// serialized document exceeds the byte cap).
+    /// Saves a new document under the repository lock. Refuses an existing
+    /// id (`Conflict`) — including one that appears after the checks, since
+    /// the exclusive publish never replaces — a full collection
+    /// (`LimitExceeded`), and a definition that fails its own serialization
+    /// validation (`Invalid`, or `LimitExceeded` when the serialized
+    /// document exceeds the byte cap).
     pub fn create(&self, definition: &InvestigationDefinitionV1) -> Result<(), StoreError> {
-        self.create_inner(definition, &AtomicReplace)
+        let _lock = self.lock_for_mutation()?;
+        self.create_locked(definition)
     }
 
-    pub(crate) fn create_inner(
-        &self,
-        definition: &InvestigationDefinitionV1,
-        replacer: &dyn Replacer,
-    ) -> Result<(), StoreError> {
-        self.ensure_root()?;
+    /// The create critical section; the caller holds the repository lock.
+    fn create_locked(&self, definition: &InvestigationDefinitionV1) -> Result<(), StoreError> {
         let path = self.document_path(definition.id.as_str())?;
         if std::fs::symlink_metadata(&path).is_ok() {
             return Err(StoreError::conflict());
@@ -34,19 +35,21 @@ impl InvestigationRepository {
             return Err(StoreError::limit_exceeded());
         }
         let data = definition.to_json_pretty().map_err(store_error_of)?;
-        private_file::stage_and_publish(&path, data.as_bytes(), replacer)
+        private_file::stage_and_publish_no_replace(&path, data.as_bytes())
     }
 
-    /// Replaces a document with its next revision. Refuses a missing
-    /// document (`NotFound`), a stale or non-advancing revision or a
-    /// document whose internal id disagrees with its filename (`Conflict`),
-    /// and a definition that fails validation (`Invalid`). On any error the
-    /// original file is byte-for-byte unchanged.
+    /// Replaces a document with its next revision, under the repository
+    /// lock. Refuses a missing document (`NotFound`), a stale or
+    /// non-advancing revision or a document whose internal id disagrees
+    /// with its filename (`Conflict`), and a definition that fails
+    /// validation (`Invalid`). On any error the original file is
+    /// byte-for-byte unchanged.
     pub fn update(
         &self,
         definition: &InvestigationDefinitionV1,
         expected_revision: u32,
     ) -> Result<(), StoreError> {
+        let _lock = self.lock_for_mutation()?;
         self.update_inner(definition, expected_revision, &AtomicReplace)
     }
 
@@ -96,18 +99,19 @@ impl InvestigationRepository {
         Ok(definition)
     }
 
-    /// Deletes one document after checking its revision, then removes the
-    /// local binding for that id if present. A document whose revision
-    /// cannot be verified (corrupt, unknown version, oversize) is refused,
-    /// never deleted.
+    /// Deletes one document under the repository lock — the revision check,
+    /// the removal, and the binding clear are one critical section — after
+    /// checking its revision. A document whose revision cannot be verified
+    /// (corrupt, unknown version, oversize) is refused, never deleted.
     pub fn delete(&self, id: &InvestigationId, expected_revision: u32) -> Result<(), StoreError> {
+        let _lock = self.lock_for_mutation()?;
         let current = self.read_document(id)?.ok_or_else(StoreError::not_found)?;
         if current.id != *id || current.revision != expected_revision {
             return Err(StoreError::conflict());
         }
         let path = self.document_path(id.as_str())?;
         std::fs::remove_file(&path).map_err(private_file::io_error)?;
-        self.clear_binding(id)
+        self.clear_binding_locked(id)
     }
 
     /// Bounded read plus strict parse of the document at `<id>.json`.

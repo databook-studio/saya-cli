@@ -8,7 +8,7 @@ use saya_types::investigation::InvestigationId;
 use serde::{Deserialize, Serialize};
 
 use crate::bounded::BoundedWriter;
-use crate::replace::{AtomicReplace, Replacer};
+use crate::replace::AtomicReplace;
 use crate::{StoreError, private_file};
 
 use super::InvestigationRepository;
@@ -67,29 +67,34 @@ impl InvestigationRepository {
     }
 
     /// Writes the local binding atomically (0600 file in a 0700 `local/`
-    /// dir), refusing a binding whose version this store does not write or
-    /// whose serialization exceeds [`MAX_BINDING_BYTES`].
+    /// dir), under the repository lock, refusing a binding whose version
+    /// this store does not write or whose serialization exceeds
+    /// [`MAX_BINDING_BYTES`].
     pub fn put_binding(&self, binding: &LocalBinding) -> Result<(), StoreError> {
-        self.put_binding_inner(binding, &AtomicReplace)
-    }
-
-    fn put_binding_inner(
-        &self,
-        binding: &LocalBinding,
-        replacer: &dyn Replacer,
-    ) -> Result<(), StoreError> {
         if binding.version != LocalBinding::VERSION {
             return Err(StoreError::VersionUnsupported);
         }
+        let _lock = self.lock_for_mutation()?;
+        self.put_binding_locked(binding)
+    }
+
+    /// The put critical section; the caller holds the repository lock.
+    fn put_binding_locked(&self, binding: &LocalBinding) -> Result<(), StoreError> {
         self.ensure_local_dir()?;
         let path = self.binding_path(&binding.id);
         let data = serialize_binding(binding)?;
-        private_file::stage_and_publish(&path, &data, replacer)
+        private_file::stage_and_publish(&path, &data, &AtomicReplace)
     }
 
-    /// Removes the local binding for `id` if present; an absent binding is
-    /// already the requested state.
+    /// Removes the local binding for `id`, under the repository lock; an
+    /// absent binding is already the requested state.
     pub fn clear_binding(&self, id: &InvestigationId) -> Result<(), StoreError> {
+        let _lock = self.lock_for_mutation()?;
+        self.clear_binding_locked(id)
+    }
+
+    /// The clear critical section; the caller holds the repository lock.
+    pub(crate) fn clear_binding_locked(&self, id: &InvestigationId) -> Result<(), StoreError> {
         let path = self.binding_path(id);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
