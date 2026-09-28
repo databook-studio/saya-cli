@@ -54,6 +54,16 @@ pub(crate) struct App {
     /// In-flight `/compact` running off-thread; polled each loop tick so the
     /// UI never blocks on the summariser. `None` until `/compact` runs.
     pub(crate) compact_task: Option<std::sync::mpsc::Receiver<CompactOutcome>>,
+    /// In-flight `/investigation run` replay (D13), running off-thread like
+    /// the direct-SQL task; polled each loop tick so the UI never blocks on
+    /// the replay. The `Instant` is when the replay was dispatched, for the
+    /// detach message's elapsed time; the task names the investigation for
+    /// the status bar and that message.
+    pub(crate) replay_task: Option<(
+        std::sync::mpsc::Receiver<super::super::replay_task::ReplayDone>,
+        super::super::replay_task::ReplayTask,
+        std::time::Instant,
+    )>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
     /// The latest direct-`/sql` result and its execution evidence, held in

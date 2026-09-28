@@ -13,6 +13,10 @@ pub(crate) enum Dispatch {
     /// A SQL-backed command runs on a worker thread; the caller stores the
     /// receiver and applies [`sql_task::complete`] when it finishes.
     SqlTask(super::super::sql_task::SqlTask),
+    /// `/investigation run` — the replay runs on a worker thread like a SQL
+    /// command; the caller stores the receiver and applies
+    /// [`replay_task::complete`] when it finishes (D13).
+    ReplayTask(super::super::replay_task::ReplayTask),
     /// `/columns` — set which columns wide result tables show. Handled by the
     /// caller, which owns the view state on `App`.
     SetColumns(Option<String>),

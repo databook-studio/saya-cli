@@ -1,23 +1,80 @@
-//! Second-SQL admission guard: refuse a direct-SQL command that arrives while
-//! one is already running, instead of silently replacing (and dropping) it.
+//! Second-query admission guard: refuse a direct-SQL command or an
+//! `/investigation run` replay that arrives while one is already running,
+//! instead of silently replacing (and dropping) the first.
 
+use super::super::replay_task::ReplayTask;
+use super::super::transcript::BlockKind;
 use super::super::types::App;
+use std::sync::Arc;
 
 impl App {
     /// Decides whether a direct-SQL command may start now. The primary defence
     /// against silent result loss is the queued-prompt gate: `is_busy()` now
-    /// covers SQL tasks, so a second command submitted while one runs is held
-    /// in `pending` and dispatches only after the first finishes (both results
-    /// report). This guard is the backstop: should a `SqlTask` ever reach the
-    /// dispatch handler while one is already running, it is refused with a
-    /// message instead of replacing the first receiver.
+    /// covers SQL tasks and replays, so a second command submitted while one
+    /// runs is held in `pending` and dispatches only after the first finishes
+    /// (both results report). This guard is the backstop: should a `SqlTask`
+    /// ever reach the dispatch handler while one is already running, it is
+    /// refused with a message instead of replacing the first receiver.
     pub(crate) fn admit_second_sql(&self) -> super::SecondSqlDecision {
-        if self.sql_task.is_some() {
-            super::SecondSqlDecision::Reject(
-                "A SQL command is already running — wait for it to finish before starting another.",
-            )
+        self.admit_second_command(
+            "A SQL command is already running — wait for it to finish before starting another.",
+        )
+    }
+
+    /// The same guard for a dispatched `/investigation run` replay: a replay
+    /// and a SQL task are the same one-query-at-a-time resource, so either
+    /// running refuses the other.
+    pub(crate) fn admit_second_replay(&self) -> super::SecondSqlDecision {
+        self.admit_second_command(
+            "An investigation replay is already running — wait for it to finish before \
+             starting another.",
+        )
+    }
+
+    fn admit_second_command(&self, message: &'static str) -> super::SecondSqlDecision {
+        if self.sql_task.is_some() || self.replay_task.is_some() {
+            super::SecondSqlDecision::Reject(message)
         } else {
             super::SecondSqlDecision::Start
+        }
+    }
+
+    /// Starts an admitted replay the way the queued-prompt tick applies it:
+    /// the worker spawns off-thread, the app tracks the receiver, and the
+    /// status fields the bar reuses name the investigation. A refused replay
+    /// is said, never silently dropped.
+    pub(crate) fn start_replay(&mut self, task: ReplayTask) {
+        match self.admit_second_replay() {
+            super::SecondSqlDecision::Start => {
+                let started = std::time::Instant::now();
+                self.request.started = Some(started);
+                self.request.activity = Some(format!("investigation {}", task.id));
+                self.replay_task = Some((
+                    super::super::replay_task::spawn(Arc::clone(&self.runtime), task.clone()),
+                    task,
+                    started,
+                ));
+            }
+            super::SecondSqlDecision::Reject(message) => {
+                self.transcript.push(BlockKind::System, message)
+            }
+        }
+    }
+
+    /// Detaches whichever off-thread query is in flight — a direct-SQL task or
+    /// a saved-investigation replay (never both: the busy gate prevents it) —
+    /// and reports whether it detached one. The Esc and Ctrl+C arms detach
+    /// through here so the two commands share the decision and the honest
+    /// message.
+    pub(crate) fn detach_in_flight_query(&mut self) -> bool {
+        if self.sql_task.is_some() {
+            self.detach_sql_task();
+            true
+        } else if self.replay_task.is_some() {
+            self.detach_replay_task();
+            true
+        } else {
+            false
         }
     }
 
@@ -32,7 +89,7 @@ impl App {
             self.request.started = None;
             self.request.activity = None;
             self.transcript.push(
-                super::super::transcript::BlockKind::System,
+                BlockKind::System,
                 format!(
                     "Detached the running query ({}s elapsed) — it may still be running on the \
                      server; its result will be discarded.",
@@ -41,11 +98,33 @@ impl App {
             );
         }
     }
+
+    /// Detaches the in-flight replay the same way: the receiver is dropped,
+    /// so a late completion is discarded — it never replaces the capture,
+    /// the selectable query, or the transcript. The message names the
+    /// investigation and says the query may still be running server-side;
+    /// nothing claims cancellation.
+    pub(crate) fn detach_replay_task(&mut self) {
+        if let Some((_, task, started)) = self.replay_task.take() {
+            self.request.started = None;
+            self.request.activity = None;
+            self.transcript.push(
+                BlockKind::System,
+                format!(
+                    "Detached the running investigation {} ({}s elapsed) — the query may still \
+                     be running on the server; its result will be discarded.",
+                    task.id,
+                    started.elapsed().as_secs()
+                ),
+            );
+        }
+    }
 }
 
-/// The dispatch decision when a second direct-SQL command arrives while one is
-/// already running. A pure function over [`App`] state so the result-loss
-/// behaviour is testable without a live database (see [`App::admit_second_sql`]).
+/// The dispatch decision when a second direct-SQL command (or replay) arrives
+/// while one is already running. A pure function over [`App`] state so the
+/// result-loss behaviour is testable without a live database (see
+/// [`App::admit_second_sql`]).
 pub(crate) enum SecondSqlDecision {
     /// No SQL command is in flight — start this one.
     Start,
