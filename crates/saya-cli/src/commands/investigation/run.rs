@@ -19,6 +19,7 @@ use crate::commands::{
 use crate::config::runtime::RuntimeConfig;
 use crate::profile_identity::profile_identity;
 use crate::render::{RenderFormat, TerminalEvent};
+use saya_connectors::{prepare_for_dialect, sql_references};
 use saya_store::{AuditOperation, AuditStatus, InvestigationRepository, SqliteStateStore};
 use saya_types::{
     ConnectionError, EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, QueryRequest,
@@ -129,13 +130,29 @@ pub(super) async fn run(
         .await;
         return failure(3, error, format);
     }
-    // The schema is fetched only for definitions that reference objects —
-    // without references there is no fingerprint to bind.
-    if !definition.objects.is_empty() {
+    // The run re-gates the SQL through the same read-only preparation the
+    // execution uses: a document tampered into write SQL is refused by the
+    // safety layer, before any review decision or query (invariant 1).
+    if let Err(error) = prepare_for_dialect(&definition.sql, 1, definition.dialect) {
+        audit(
+            state_db,
+            &review.identity,
+            AuditStatus::Failure,
+            &started,
+            None,
+            None,
+            format,
+        )
+        .await;
+        return failure(EXIT_SAFETY, error, format);
+    }
+    // Review authority is the SQL itself (A2): the referenced parts are
+    // recomputed on every run and the stored `objects` field stays
+    // informational, so imported metadata can never weaken the review.
+    let references = sql_references(&definition.sql, definition.dialect);
+    let analysis = if fingerprint::needs_schema(references.as_ref()) {
         match connector.schema().await {
-            Ok(tree) => {
-                review.fingerprint = fingerprint::combined_fingerprint(&tree, &definition.objects);
-            }
+            Ok(tree) => fingerprint::analyze(Some(&tree), references.as_ref()),
             Err(error) => {
                 audit(
                     state_db,
@@ -150,7 +167,25 @@ pub(super) async fn run(
                 return failure(3, error, format);
             }
         }
-    }
+    } else {
+        fingerprint::analyze(None, references.as_ref())
+    };
+    // An unverifiable review is refused before anything executes (A2);
+    // `--revalidate` runs it once and binds no fingerprint, so the next run
+    // is unverifiable again — never silently verified.
+    review.fingerprint = match analysis {
+        fingerprint::Analysis::Complete(combined) => combined,
+        fingerprint::Analysis::Unverifiable(reason) if !request.revalidate => {
+            return failure_message(
+                EXIT_INVESTIGATION_ERROR,
+                format!(
+                    "schema review unavailable: {reason}; pass --revalidate to run without a verified schema review"
+                ),
+                format,
+            );
+        }
+        fingerprint::Analysis::Unverifiable(_) => None,
+    };
     // A stale review is refused before anything executes (invariant 3).
     let reasons = staleness(
         binding.as_ref(),

@@ -14,6 +14,7 @@ mod export;
 mod fingerprint;
 mod import;
 mod list;
+mod objects;
 mod paths;
 mod run;
 mod run_binding;

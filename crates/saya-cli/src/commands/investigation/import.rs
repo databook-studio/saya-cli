@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
+use super::objects;
 use super::{EXIT_INVESTIGATION_ERROR, EXIT_SAFETY, store_failure};
 use crate::commands::output::{failure_message, result};
 use crate::render::RenderFormat;
@@ -44,6 +45,17 @@ pub(super) fn import(
             EXIT_INVESTIGATION_ERROR,
             "SQL contains credential-shaped text; saved SQL is kept exactly, so remove it"
                 .to_string(),
+            format,
+        );
+    }
+    // The stored objects field is informational only (A2): it must agree
+    // with what the SQL actually references, recomputed here, so a document
+    // can never lie about — or empty out — its own review dependencies.
+    let recomputed = objects::canonical_objects(&definition.sql, definition.dialect);
+    if definition.objects != recomputed {
+        return failure_message(
+            EXIT_INVESTIGATION_ERROR,
+            "objects do not match the SQL; re-export the investigation".to_string(),
             format,
         );
     }
