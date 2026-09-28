@@ -9,7 +9,7 @@ use crate::commands::{capture_output_start, capture_output_take};
 use crate::config::runtime::{RuntimeConfig, load_with_sources};
 use crate::profile_identity::profile_identity;
 use crate::render::RenderFormat;
-use saya_store::InvestigationRepository;
+use saya_store::{InvestigationRepository, SqliteStateStore};
 use saya_types::SqlDialect;
 use saya_types::investigation::InvestigationDefinitionV1;
 use std::{
@@ -53,13 +53,19 @@ fn single_profile_toml(root: &Path) -> String {
     )
 }
 
-fn run(
+async fn run(
     repo: &InvestigationRepository,
     command: InvestigationCommand,
     runtime: &RuntimeConfig,
 ) -> (i32, String, String) {
     capture_output_start();
-    let code = run_investigation_in(repo, command, runtime, RenderFormat::Text).unwrap();
+    // The dispatcher threads a state store for the async `run` arm only;
+    // these sync-arm tests never touch it, so a scratch path suffices.
+    let state_db =
+        SqliteStateStore::new(std::env::temp_dir().join("saya-investigation-unit-state"));
+    let code = run_investigation_in(repo, command, runtime, RenderFormat::Text, false, &state_db)
+        .await
+        .unwrap();
     let (out, err) = capture_output_take();
     (code, out, err)
 }
@@ -80,7 +86,7 @@ fn binding_path(root: &Path, id: &str) -> PathBuf {
 
 /// Saves one investigation and returns its id, for tests that start from a
 /// saved state.
-fn saved_id(repo: &InvestigationRepository, runtime: &RuntimeConfig) -> String {
+async fn saved_id(repo: &InvestigationRepository, runtime: &RuntimeConfig) -> String {
     let (code, out, err) = run(
         repo,
         InvestigationCommand::Save {
@@ -91,7 +97,8 @@ fn saved_id(repo: &InvestigationRepository, runtime: &RuntimeConfig) -> String {
             connection: None,
         },
         runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "save failed: {out}{err}");
     out.lines()
         .next()
@@ -108,8 +115,8 @@ fn expected_identity(runtime: &RuntimeConfig, name: &str) -> String {
 
 // -- save ------------------------------------------------------------------
 
-#[test]
-fn save_roundtrip_exact_sql_binding_list_and_show() {
+#[tokio::test]
+async fn save_roundtrip_exact_sql_binding_list_and_show() {
     let root = temp_root("roundtrip");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -125,7 +132,8 @@ fn save_roundtrip_exact_sql_binding_list_and_show() {
             connection: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "out: {out} err: {err}");
     assert!(out.contains(
         "Saved exactly as shown. Review the SQL before sharing: literals are stored verbatim."
@@ -155,7 +163,8 @@ fn save_roundtrip_exact_sql_binding_list_and_show() {
             offset: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "err: {err}");
     assert!(
         out.contains(&format!("{id}  1  sqlite  local  Order events")),
@@ -166,7 +175,8 @@ fn save_roundtrip_exact_sql_binding_list_and_show() {
         &repo,
         InvestigationCommand::Show { id: id.clone() },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "err: {err}");
     assert!(out.contains(sql), "show prints the exact SQL: {out}");
     assert!(
@@ -186,8 +196,8 @@ fn save_roundtrip_exact_sql_binding_list_and_show() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn save_refuses_write_sql_with_exit_4_and_writes_nothing() {
+#[tokio::test]
+async fn save_refuses_write_sql_with_exit_4_and_writes_nothing() {
     let root = temp_root("write-sql");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -201,7 +211,8 @@ fn save_refuses_write_sql_with_exit_4_and_writes_nothing() {
             connection: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 4, "out: {out} err: {err}");
     assert!(err.contains("read-only safety policy"), "err: {err}");
     assert!(
@@ -212,8 +223,8 @@ fn save_refuses_write_sql_with_exit_4_and_writes_nothing() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn save_refuses_credential_shaped_sql() {
+#[tokio::test]
+async fn save_refuses_credential_shaped_sql() {
     let root = temp_root("credential");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -227,7 +238,8 @@ fn save_refuses_credential_shaped_sql() {
             connection: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2, "out: {out} err: {err}");
     assert!(err.contains("credential-shaped text"), "err: {err}");
     assert!(
@@ -237,8 +249,8 @@ fn save_refuses_credential_shaped_sql() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn save_requires_a_connection_when_none_resolves() {
+#[tokio::test]
+async fn save_requires_a_connection_when_none_resolves() {
     let root = temp_root("no-connection");
     // An empty connections file resolves no profile at all.
     let runtime = runtime_at(&root, "");
@@ -253,7 +265,8 @@ fn save_requires_a_connection_when_none_resolves() {
             connection: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2, "out: {out} err: {err}");
     assert!(
         err.contains("no connection: pass --connection <profile>"),
@@ -263,8 +276,8 @@ fn save_requires_a_connection_when_none_resolves() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn save_refuses_sql_and_file_together() {
+#[tokio::test]
+async fn save_refuses_sql_and_file_together() {
     let root = temp_root("both");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -278,20 +291,26 @@ fn save_refuses_sql_and_file_together() {
             connection: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2, "out: {out} err: {err}");
     assert!(err.contains("not both"), "err: {err}");
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn save_refuses_invalid_names_and_oversize_sql_with_typed_messages() {
+#[tokio::test]
+async fn save_refuses_invalid_names_and_oversize_sql_with_typed_messages() {
     let root = temp_root("bounds");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
-    let save_with = |name: &str, sql: String| {
+    async fn save_with(
+        repo: &InvestigationRepository,
+        runtime: &RuntimeConfig,
+        name: &str,
+        sql: String,
+    ) -> (i32, String, String) {
         run(
-            &repo,
+            repo,
             InvestigationCommand::Save {
                 name: name.into(),
                 description: None,
@@ -299,17 +318,18 @@ fn save_refuses_invalid_names_and_oversize_sql_with_typed_messages() {
                 file: None,
                 connection: None,
             },
-            &runtime,
+            runtime,
         )
-    };
-    let (code, _, err) = save_with("   ", "SELECT 1".into());
+        .await
+    }
+    let (code, _, err) = save_with(&repo, &runtime, "   ", "SELECT 1".into()).await;
     assert_eq!(code, 2, "an empty name is a usage error");
     assert!(err.contains("name must be 1-80 characters"), "err: {err}");
     let over = format!(
         "SELECT '{}'",
         "x".repeat(saya_types::investigation::MAX_SQL_BYTES)
     );
-    let (code, _, err) = save_with("Big", over);
+    let (code, _, err) = save_with(&repo, &runtime, "Big", over).await;
     assert_eq!(code, 2);
     assert!(err.contains("at most 65536 bytes"), "err: {err}");
     let _ = fs::remove_dir_all(root);
@@ -317,8 +337,8 @@ fn save_refuses_invalid_names_and_oversize_sql_with_typed_messages() {
 
 // -- list ------------------------------------------------------------------
 
-#[test]
-fn list_empty_says_no_saved_investigations() {
+#[tokio::test]
+async fn list_empty_says_no_saved_investigations() {
     let root = temp_root("list-empty");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -329,14 +349,15 @@ fn list_empty_says_no_saved_investigations() {
             offset: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "err: {err}");
     assert_eq!(out, "No saved investigations.\n");
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn list_reports_unreadable_documents_as_warnings() {
+#[tokio::test]
+async fn list_reports_unreadable_documents_as_warnings() {
     let root = temp_root("list-warning");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -353,14 +374,15 @@ fn list_reports_unreadable_documents_as_warnings() {
             offset: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "a bad file warns, never fails the page: {err}");
     assert!(out.contains("warning: bad-doc-1"), "out: {out}");
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn list_clamps_limit_and_honours_offset() {
+#[tokio::test]
+async fn list_clamps_limit_and_honours_offset() {
     let root = temp_root("list-page");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -375,7 +397,8 @@ fn list_clamps_limit_and_honours_offset() {
                 connection: None,
             },
             &runtime,
-        );
+        )
+        .await;
         assert_eq!(code, 0, "out: {out} err: {err}");
     }
     // limit 0 and limit 500 both clamp into the repository's 1..=50 page.
@@ -386,15 +409,16 @@ fn list_clamps_limit_and_honours_offset() {
             offset: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "limit 0 clamps, never errors: {err}");
     assert!(
-        out.contains("(capped at 500)"),
-        "more exist beyond the page: {out}"
+        out.contains("more: --offset 1"),
+        "ordinary pagination names the next offset: {out}"
     );
     let summaries = out
         .lines()
-        .filter(|line| *line != "(capped at 500)")
+        .filter(|line| !line.starts_with("more:"))
         .count();
     assert_eq!(summaries, 1, "limit 0 clamps to one summary: {out}");
     let (_, out, _) = run(
@@ -404,10 +428,11 @@ fn list_clamps_limit_and_honours_offset() {
             offset: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(out.lines().count(), 2, "both fit inside the 50-page: {out}");
     assert!(
-        !out.contains("(capped at 500)"),
+        !out.contains("(capped at 500)") && !out.contains("more:"),
         "nothing beyond this page: {out}"
     );
     // offset skips past the first id in id order.
@@ -418,7 +443,8 @@ fn list_clamps_limit_and_honours_offset() {
             offset: None,
         },
         &runtime,
-    );
+    )
+    .await;
     let (_, shifted, _) = run(
         &repo,
         InvestigationCommand::List {
@@ -426,7 +452,8 @@ fn list_clamps_limit_and_honours_offset() {
             offset: Some(1),
         },
         &runtime,
-    );
+    )
+    .await;
     let first_of = |text: &str| text.lines().next().unwrap().to_string();
     assert_eq!(shifted.trim(), all.lines().nth(1).unwrap().trim());
     assert_ne!(first_of(&shifted), first_of(&all));
@@ -435,12 +462,12 @@ fn list_clamps_limit_and_honours_offset() {
 
 // -- show ------------------------------------------------------------------
 
-#[test]
-fn show_refuses_missing_malformed_newer_and_corrupt_ids() {
+#[tokio::test]
+async fn show_refuses_missing_malformed_newer_and_corrupt_ids() {
     let root = temp_root("show-refusals");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
-    let id = saved_id(&repo, &runtime);
+    let id = saved_id(&repo, &runtime).await;
 
     // Malformed id: same refusal shape as a missing one.
     let (code, _, err) = run(
@@ -449,7 +476,8 @@ fn show_refuses_missing_malformed_newer_and_corrupt_ids() {
             id: "NOT AN ID".into(),
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2);
     assert!(err.contains("no investigation"), "err: {err}");
 
@@ -464,7 +492,8 @@ fn show_refuses_missing_malformed_newer_and_corrupt_ids() {
         &repo,
         InvestigationCommand::Show { id: id.clone() },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2);
     assert!(err.contains("made by a newer saya"), "err: {err}");
 
@@ -474,25 +503,27 @@ fn show_refuses_missing_malformed_newer_and_corrupt_ids() {
         &repo,
         InvestigationCommand::Show { id: id.clone() },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2);
     assert!(err.contains("corrupt or invalid"), "err: {err}");
 
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn show_reports_a_missing_binding_honestly() {
+#[tokio::test]
+async fn show_reports_a_missing_binding_honestly() {
     let root = temp_root("show-binding");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
-    let id = saved_id(&repo, &runtime);
+    let id = saved_id(&repo, &runtime).await;
     fs::remove_file(binding_path(&root, &id)).unwrap();
     let (code, out, err) = run(
         &repo,
         InvestigationCommand::Show { id: id.clone() },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "err: {err}");
     assert!(out.contains("local binding: none"), "out: {out}");
     let _ = fs::remove_dir_all(root);
@@ -500,12 +531,12 @@ fn show_reports_a_missing_binding_honestly() {
 
 // -- delete ----------------------------------------------------------------
 
-#[test]
-fn delete_checks_revision_then_removes_document_and_binding() {
+#[tokio::test]
+async fn delete_checks_revision_then_removes_document_and_binding() {
     let root = temp_root("delete");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
-    let id = saved_id(&repo, &runtime);
+    let id = saved_id(&repo, &runtime).await;
 
     // A stale --revision is refused with the current revision named.
     let (code, _, err) = run(
@@ -515,7 +546,8 @@ fn delete_checks_revision_then_removes_document_and_binding() {
             revision: Some(5),
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2, "err: {err}");
     assert!(err.contains("at revision 1"), "err: {err}");
     assert!(
@@ -530,7 +562,8 @@ fn delete_checks_revision_then_removes_document_and_binding() {
             revision: Some(1),
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 0, "out: {out} err: {err}");
     assert!(!document_path(&root, &id).exists(), "document removed");
     assert!(!binding_path(&root, &id).exists(), "binding removed too");
@@ -539,7 +572,8 @@ fn delete_checks_revision_then_removes_document_and_binding() {
         &repo,
         InvestigationCommand::Show { id: id.clone() },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2);
     assert!(
         err.contains(&format!("no investigation {id}")),
@@ -552,17 +586,18 @@ fn delete_checks_revision_then_removes_document_and_binding() {
             offset: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(out, "No saved investigations.\n");
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn delete_refuses_a_document_it_cannot_verify() {
+#[tokio::test]
+async fn delete_refuses_a_document_it_cannot_verify() {
     let root = temp_root("delete-corrupt");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
-    let id = saved_id(&repo, &runtime);
+    let id = saved_id(&repo, &runtime).await;
     fs::write(document_path(&root, &id), "not json at all").unwrap();
     let (code, _, err) = run(
         &repo,
@@ -571,7 +606,8 @@ fn delete_refuses_a_document_it_cannot_verify() {
             revision: None,
         },
         &runtime,
-    );
+    )
+    .await;
     assert_eq!(code, 2, "a corrupt document is never deleted: {err}");
     assert!(err.contains("corrupt or invalid"), "err: {err}");
     assert!(document_path(&root, &id).exists(), "the file stays");
