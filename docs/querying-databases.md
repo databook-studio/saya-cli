@@ -180,6 +180,55 @@ saya --approval-mode read-only --profile snowflake_prod query --sql \
   'SELECT * FROM PROD.PUBLIC.ORDERS o JOIN CRM.PUBLIC.CUSTOMERS c USING (CUSTOMER_ID) LIMIT 100'
 ```
 
+## 6. Provenance: the evidence line, snapshot and refresh
+
+In an interactive session, a direct `/sql` result carries a provenance line
+beneath the table:
+
+```text
+direct sql: analytics · 20 rows (truncated at 20) · exec xm3zza1-2 · full result
+```
+
+It names the source (`direct sql`, or `saved investigation` after
+`/investigation run`), the connection profile the query ran on, how many
+rows returned (and whether the row cap truncated them), a short execution
+id, and the scope. The statement itself is identified by its SHA-256 hash in
+reports — the hash covers the SQL saya **submitted** to the connector, not
+any internal rewrite the safety layer may perform.
+
+The result is captured in memory for the session only: it is never written
+to the session file, and it does not survive a restart. A result above the
+32 MiB budget renders as usual but is not captured, with a message saying
+so. Only direct `/sql` results are captured — agent-run query results are
+not (their rows are model-limited and never in the event stream), so a
+snapshot is unavailable for them and a refresh is the offered path.
+
+### Snapshot vs refresh
+
+```text
+> /export --snapshot last-week.csv     # write the captured result; no query runs
+> /export --refresh last-week.csv      # re-run the last query, export the fresh read
+> /export last-week.csv                # legacy form: same as --refresh
+```
+
+- `--snapshot` exports the result you already inspected — the latest `/sql`
+  capture — with no query at all. The success line names the execution id
+  and capture time (UTC) so you know exactly which run the file is of.
+- The default form and `--refresh` re-run the query on its original
+  connection and export that fresh read; the file reflects the fresh
+  result, not the displayed table (column filters, scroll, and folds do not
+  apply).
+- Both refuse an existing destination unless `--overwrite` (legacy `/export`
+  used to overwrite silently), refuse directory and symlink destinations,
+  write atomically via a private temp file, and cap encoded output at
+  32 MiB.
+
+`/report [--rows N] [--overwrite] <path>` writes a Markdown report of the
+captured result — exact SQL and provenance by default, rows only with
+`--rows N` (at most 100), cells neutralised, capped at 2 MiB. It never
+queries a database and never opens a browser or uploads anything. See
+[commands](commands.md) for the full reference.
+
 ## Safety and troubleshooting
 
 - `saya config show` confirms precedence without secrets.

@@ -5,6 +5,132 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Added
+
+**`saya demo` — a read-only sample database in one command.** It builds a
+deterministic synthetic SQLite database (240 customers, 560 orders, and 123
+customer_contacts rows) under the platform data
+directory's `saya/demo/` and opens it read-only in the interactive session.
+No AI provider is needed for schema browsing and `/sql`. The fixture is
+designed to exercise tricky SQL: nulls in emails and
+amounts, a contact table that multiplies rows when joined, order dates
+straddling the 2025-12-31 → 2026-01-01 boundary, and an "active customer"
+with two defensible meanings — `customers.status = 'active'` and "ordered in
+the last 90 days of the data" disagree for some customers. `--reset` rebuilds
+the fixture; `SAYA_DEMO_DIR` moves
+it; without a terminal the command prints the paths, the launch command, and
+example SQL instead of launching. The first screen now leads with `saya demo`
+when no database is configured, and shows up to three schema-derived starter
+questions once a schema is cached.
+
+**`saya setup` — guided configuration with nothing written until you
+confirm.** The flow drafts a provider and a database profile, shows the exact
+TOML it will write, probes the database (and, only with your consent, the
+provider — one "ping" request, no schema, no rows), then writes on confirm.
+Probes run one at a time, 15 seconds each. The API key is requested only as
+an environment-variable *name*, never its value; setup writes only user-level
+config and never resolved secrets. An existing `connections.toml` is appended
+to with the existing bytes kept as an exact prefix; an existing `config.toml`
+is never modified — setup prints the `[ai]` snippet instead. Existing files
+are backed up privately before replacing, writes are atomic, and a failed
+reload restores the originals. An interruption mid-commit leaves a recovery
+marker: later startups warn on stderr, and the next `saya setup` offers
+restore or finish. Guided setup covers SQLite, DuckDB, PostgreSQL, and
+MySQL; Snowflake, ClickHouse, and BigQuery are configured in
+`connections.toml` as before. Without a terminal or with `--non-interactive`
+it prompts for nothing, writes nothing, and exits `2` with guidance to
+`saya config init` or `saya demo`.
+
+**`saya investigation` — save a bounded read-only query as a portable JSON
+document, then replay or share it.** `save|list|show|run|export|import|delete`
+manage one JSON file per investigation under the data directory's
+`investigations/` (`SAYA_INVESTIGATIONS_DIR` overrides; `0600` files in a
+`0700` directory, 500-document cap): the exact SQL plus its name, optional
+description, dialect, logical connection alias, and referenced objects — no
+credentials, rows, results, or machine-specific identity.
+
+- **Saving validates, never executes.** The SQL is checked by the same
+  read-only gate execution uses, for the target dialect; multi-statement or
+  write SQL is refused. Credential-shaped content is refused rather than
+  redacted, because the document keeps SQL semantics exactly — so review the
+  saved SQL before sharing: literals are stored verbatim, and the command
+  says so.
+- **Replay has no AI provider.** `investigation run <id>` resolves the target
+  only from `--connection` or the stored local binding — never the active or
+  default profile — and refuses a dialect mismatch. The SQL crosses the same
+  safety gate, row and time limits, and read-only policy as `saya query`.
+- **The review goes stale on purpose.** A run is bound to the definition's
+  revision, the target profile, and the schema fingerprint of the referenced
+  tables; when any changes, the run refuses until `--revalidate` is passed
+  (headless too), and a revalidated run rewrites the binding. The first run
+  after an import needs `--connection`, which creates the binding.
+- **Import validates everything and binds nothing.** `investigation import`
+  reads the file (≤128 KiB), validates the whole document, re-gates the SQL,
+  prints a preview, and stores it without a binding; never executes, never
+  connects. Identical id and content is an idempotent no-op; the same id
+  with different content is a conflict. `investigation export` writes only
+  the portable definition — the per-machine binding is never included.
+- **Replay can write a report:** `investigation run <id> --report <path>
+  [--rows N]` writes the Markdown report below from the replay's result.
+- The slash adapter `/investigation …` (and alias `/investigations`) runs the
+  same operation module, so the surfaces cannot disagree. In the TUI,
+  `/investigation save <name>` — the name is positional there, where the CLI
+  spells it `--name <NAME>` — without `--sql` saves the latest successful,
+  concrete query on the connection that actually ran it — failed or denied
+  agent queries and fan-out never count — and `/investigation run` runs in
+  the foreground.
+
+**Answer provenance and ephemeral capture.** After a direct `/sql`, the
+result table carries a provenance line — source, connection profile, rows,
+truncation, a short execution id, and scope — and the result is captured in
+memory for the session only (never written to the session file; results
+above the 32 MiB accounted budget render as usual but are not captured, with
+a message saying so). The evidence record names the statement by SHA-256 of
+the **submitted SQL** — what saya sent to the connector, not any internal
+rewrite the safety layer may perform.
+
+**`/export --snapshot|--refresh` and `/report`.** `/export --snapshot
+<path>` writes the captured `/sql` result with no query at all (the success
+line names the execution id and capture time, UTC); `/export --refresh
+<path>` — and the legacy `/export <path>` spelling, which stays a refresh
+and says so — re-runs the last query on its original connection and exports
+that fresh read. `/report [--rows N] [--overwrite] <path>` writes a
+shareable Markdown report of the captured result: exact SQL and provenance
+by default, rows only with `--rows N` (at most 100), cell values neutralised
+(links, images, HTML, table-breaking characters, and control characters
+cannot be carried into the file), capped at 2 MiB, never querying a database
+and never opening
+a browser or uploading. Exports and reports are written atomically via a
+private temp file, and only direct `/sql` results are captured — agent-run
+query results are not, so for those use `/sql` or `/export --refresh`.
+
+### Changed
+
+- **`/export` no longer overwrites an existing file silently.** It used to
+  clobber the destination on every call; it now refuses an existing
+  destination unless `--overwrite` is passed, refuses directory and symlink
+  destinations, and preserves the existing file unchanged on a refused or
+  failed export. Writes were also tightened to atomic private-temp + rename
+  with a 32 MiB encoded-output cap. The same overwrite discipline ships with
+  `investigation export`, `/report`, and `investigation run --report`.
+
+### Known limitations
+
+- Snapshot and report capture only direct `/sql` results; agent-run query
+  results are not captured (their rows are model-limited and not in the
+  event stream) — use `/sql` or `/export --refresh`.
+- Captures do not survive a restart. Capture times in messages are UTC.
+- TUI `/investigation run` runs in the foreground — the UI waits for the
+  query.
+- Parameterised investigations, context import, dbt, file sources, and MCP
+  are not in this release (planned).
+- The report neutralises links, images, HTML, table-breaking characters, and
+  control characters, but
+  a Markdown renderer may still auto-link a bare `https://…` text value in
+  an included row — review the report before sharing.
+- Guided setup covers four engines; Snowflake, ClickHouse, and BigQuery are
+  configured in `connections.toml` as before.
+
 ## 0.4.1 — 2026-09-25
 
 ### Added
