@@ -177,6 +177,19 @@ fn the_concept_line_fits_a_narrow_terminal() {
     );
 }
 
+/// The no-database state's first step is the one-command way forward: the
+/// synthetic demo database, opened read-only. Pinned by snapshot beside the
+/// explicit assertion, so the copy cannot drift silently.
+#[test]
+fn empty_state_has_next_action() {
+    let buffer = splash(80, 30, &[], false);
+    assert!(
+        buffer.contains("Try it now: `saya demo` — a synthetic, read-only sample database."),
+        "the first step offers `saya demo`:\n{buffer}"
+    );
+    insta::assert_snapshot!(buffer);
+}
+
 /// The whole composed frame — context line, splash pane, status bar, input
 /// box — keeps the hint when the terminal is short. This is the user-visible
 /// shape of the fix, pinned once through the real `ui::draw`.
