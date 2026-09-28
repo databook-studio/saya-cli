@@ -54,6 +54,12 @@ pub(crate) fn emit_action(
             },
             format,
         ),
+        SessionAction::Report(_) => emit(
+            TerminalEvent::Error {
+                message: "report is only available in the interactive TUI".into(),
+            },
+            format,
+        ),
         SessionAction::Chart(_) => emit(
             TerminalEvent::Error {
                 message: "chart is only available in the interactive TUI".into(),

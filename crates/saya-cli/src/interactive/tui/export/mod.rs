@@ -7,16 +7,44 @@
 //! refused export leaves any existing destination byte-for-byte unchanged
 //! and no temp file behind.
 
-use saya_types::QueryResult;
+use saya_types::{ExecutionEvidence, QueryResult};
 use std::path::Path;
 
 mod atomic;
 mod csv;
 mod json;
+mod markdown;
+mod markdown_text;
 mod shared;
 
 /// The hard ceiling on one encoded export, checked while encoding.
 pub(crate) const MAX_EXPORT_BYTES: usize = 32 * 1024 * 1024;
+
+/// Writes the Markdown report (S12) for the captured result and its
+/// execution evidence to `path`: the same two-phase write as the data
+/// exports — the document is rendered under the report ceiling first, then
+/// published atomically behind an explicit overwrite decision — so a failed
+/// or refused report leaves any existing destination byte-for-byte
+/// unchanged. Returns the rows the report's table includes, `None` when
+/// rows were omitted. Nothing here queries a database.
+pub(crate) fn write_report(
+    result: &QueryResult,
+    evidence: &ExecutionEvidence,
+    rows: Option<usize>,
+    path: &Path,
+    overwrite: bool,
+) -> Result<Option<usize>, String> {
+    // Fail fast on the destination before rendering anything.
+    atomic::guard(path, overwrite)?;
+    let document = markdown::render_report(&markdown::ReportInput {
+        result,
+        evidence,
+        rows,
+        generated_unix_ms: super::capture::unix_now_ms(),
+    })?;
+    atomic::publish(path, document.as_bytes(), overwrite)?;
+    Ok(markdown::clamped_rows(rows, result))
+}
 
 /// Writes `result` to `path`, refusing an existing destination unless
 /// `overwrite`. Format is chosen by extension: `.csv` or `.json`.
