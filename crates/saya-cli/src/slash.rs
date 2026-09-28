@@ -1,9 +1,10 @@
-use crate::cli::ContractsCommand;
+use crate::cli::{ContractsCommand, InvestigationCommand};
 use saya_agent::{AgentMode, ApprovalPolicy};
 use std::{fmt, str::FromStr};
 
 mod contracts;
 mod help;
+mod investigation;
 pub(crate) mod registry;
 
 // Re-exported so the session command layer's `crate::slash::help_for` path
@@ -66,6 +67,13 @@ pub enum SlashCommand {
     /// headless `saya contracts` parser produces. The adapter slice (2b-4)
     /// hands it to the shared `run_contracts` dispatcher — no second parsing.
     Contracts(ContractsCommand),
+    /// A saved-investigation slash command (`/investigation …`, and
+    /// `/investigations` as `list`), already translated to the same
+    /// `InvestigationCommand` the headless `saya investigation` parser
+    /// produces. Both the headless REPL and the TUI hand it to the shared
+    /// `run_investigation` operation — no second parsing, store, or
+    /// rendering; only the TUI's save-without-SQL fill is adapter-specific.
+    Investigation(InvestigationCommand),
     /// `/run <tail>` — start or operate a headless run from the session. The
     /// raw tail is handed to a nested `saya run` child process verbatim, whose
     /// output passes through the parent's stdout/stderr unmangled (the
@@ -338,6 +346,19 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // `confirm`/`reject` translate to `ContractsCommand::Decide`.
             return contracts::parse_contract_command(name, &arg)
                 .map(|maybe| maybe.map(SlashCommand::Contracts));
+        }
+        "investigation" | "investigations" => {
+            // The saved-investigation slash adapter: translate to the same
+            // `InvestigationCommand` the headless parser produces and hand it
+            // to the shared `run_investigation` operation. `/investigations`
+            // is `list`. The tail is verbatim — a flag value runs to the next
+            // known flag, so SQL keeps its interior whitespace.
+            let tail = trimmed
+                .strip_prefix(&format!("/{name}"))
+                .unwrap_or("")
+                .trim_start();
+            return investigation::parse_investigation_command(name, tail)
+                .map(|command| Some(SlashCommand::Investigation(command)));
         }
         "run" => {
             // `/run` and `/run cancel <id>`. The subcommand word is matched

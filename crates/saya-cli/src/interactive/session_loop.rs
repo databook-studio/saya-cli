@@ -681,6 +681,43 @@ fn handle_line_verbatim(
             TurnOutcome::Errored
         });
     }
+    if let SessionAction::Investigation(command) = action {
+        // The headless REPL has no last query to save from (invariant 3): a
+        // save with neither `--sql` nor `--file` would fall through to the
+        // shared operation's stdin read, and stdin here is the REPL's own
+        // input — so the save is refused before the operation runs. Every
+        // other subcommand goes to the same `run_investigation` dispatcher
+        // the clap path uses, captured output and all; `terminal` is the
+        // can-prompt answer the `/sql` arm passes.
+        if let crate::cli::InvestigationCommand::Save {
+            sql: None,
+            file: None,
+            ..
+        } = &command
+        {
+            super::session_emit::emit_action(
+                SessionAction::Error(
+                    "investigation save needs the SQL here: pass --sql <SQL> or \
+                     --file <PATH>"
+                        .into(),
+                ),
+                format,
+                state,
+                store,
+            )?;
+            block_on(store.save(state.redacted()))?;
+            return Ok(TurnOutcome::Errored);
+        }
+        let code = block_on(crate::commands::run_investigation(
+            command, runtime, format, terminal, state_db,
+        ))?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(if code == 0 {
+            TurnOutcome::Completed
+        } else {
+            TurnOutcome::Errored
+        });
+    }
     if let SessionAction::Runs(run_id) = action {
         // `/runs [id]` reaches the same `reads.rs` path the headless
         // `saya run list|show` commands use — the parity contract

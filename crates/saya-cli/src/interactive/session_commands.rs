@@ -38,6 +38,12 @@ pub enum SessionAction {
     /// headless `saya contracts` parser produces. The loops hand it to the
     /// shared `run_contracts` dispatcher — no second parsing or DTO mapping.
     Contracts(ContractsCommand),
+    /// A saved-investigation slash command, translated to the same
+    /// `InvestigationCommand` the headless `saya investigation` parser
+    /// produces. Both loops hand it to the shared `run_investigation`
+    /// operation; only the TUI adds the save-without-SQL fill from the last
+    /// selectable query (the headless REPL has no last query).
+    Investigation(crate::cli::InvestigationCommand),
     /// `/run <tail>` — spawn the nested `saya run` child with the raw tail
     /// verbatim (`interactive::session_run` owns the spawn and the
     /// stream-passthrough rule). Carrying the tail, not parsed parts, is the
@@ -225,6 +231,7 @@ impl SessionState {
                 SessionAction::Message(crate::slash::help_for(topic.as_deref()))
             }
             SlashCommand::Contracts(command) => SessionAction::Contracts(command),
+            SlashCommand::Investigation(command) => SessionAction::Investigation(command),
             SlashCommand::Run(args) => {
                 // Plan's escape hatch stays shut here: a run writes through
                 // its own declared capabilities rather than the session's
@@ -388,6 +395,21 @@ mod tests {
         };
         let action = state.apply(SlashCommand::Report(request.clone()), &[]);
         assert_eq!(action, SessionAction::Report(request));
+    }
+
+    /// `/investigation` carries the translated command through unchanged —
+    /// both loops hand it to the shared `run_investigation` operation; the
+    /// adapter owns nothing but the mapping.
+    #[test]
+    fn investigation_command_maps_to_the_same_action() {
+        use crate::cli::InvestigationCommand;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let command = InvestigationCommand::List {
+            limit: None,
+            offset: None,
+        };
+        let action = state.apply(SlashCommand::Investigation(command.clone()), &[]);
+        assert_eq!(action, SessionAction::Investigation(command));
     }
 
     /// `/history` and `/sessions` are one command under two names: both map to

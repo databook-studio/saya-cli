@@ -44,11 +44,17 @@ impl App {
                             if name == "bounded_sql_query"
                                 && let Some(sql) = arguments.get("sql").and_then(|v| v.as_str())
                             {
+                                // The connection that actually runs an unnamed
+                                // query is the session's one profile, read at
+                                // request time (a later /connect must not
+                                // retag it); when the model named one, that
+                                // name is the fact and stands as stated.
                                 let connection = arguments
                                     .get("connection")
                                     .and_then(|v| v.as_str())
                                     .filter(|s| !s.is_empty())
-                                    .map(str::to_string);
+                                    .map(str::to_string)
+                                    .or_else(|| session_connection(state, self));
                                 self.pending_queries.push_back(PendingQuery {
                                     sql: sql.to_string(),
                                     connection,
@@ -163,4 +169,16 @@ impl App {
         // automatically; when they've scrolled up to read, streaming leaves them.
         finished
     }
+}
+
+/// The connection an unnamed agent `bounded_sql_query` runs on: the session's
+/// active profile, or — when none is selected — the profile the session runs
+/// on (the runtime's resolved default). Both are readable here, on `App`, at
+/// request time; an unnamed query promoted into `LastQuery` must carry it so
+/// `/investigation save` can save "the connection that actually ran it".
+fn session_connection(state: &SessionState, app: &App) -> Option<String> {
+    state
+        .profile
+        .clone()
+        .or_else(|| app.runtime.resolved.profile_name.clone())
 }
