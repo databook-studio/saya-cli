@@ -27,6 +27,10 @@ pub(crate) fn emit_action(
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)
         | SessionAction::Contracts(_)
+        // The `/investigation` family is intercepted in the session loop (the
+        // shared `run_investigation` dispatcher, plus the headless
+        // save-without-SQL refusal); the arm keeps the match exhaustive.
+        | SessionAction::Investigation(_)
         | SessionAction::Resume(_)
         // The `/run` family is intercepted in the session loop (it needs the
         // runtime, and the nested run's output never passes through this

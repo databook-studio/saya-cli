@@ -198,10 +198,12 @@ fn batch_requests_pair_in_order() {
     );
 }
 
-/// The connection argument is carried through promotion, and an empty
-/// connection argument becomes `None` exactly as before.
+/// The connection argument is carried through promotion. An absent-or-empty
+/// argument means "no connection named" — the executor's own semantic — and
+/// resolves to the session's connection at request time (S9 invariant 4),
+/// which for a profile-less session is nothing at all.
 #[test]
-fn connection_argument_preserved_and_empty_becomes_none() {
+fn connection_argument_preserved_and_empty_resolves_to_the_session() {
     let (mut app, mut state) = app_and_state();
     app.request.stream = Some(stream_with(vec![
         sql_request("SELECT 1", Some("analytics")),
@@ -219,7 +221,85 @@ fn connection_argument_preserved_and_empty_becomes_none() {
     assert_eq!(
         selectable_connection(&app),
         None,
-        "an empty connection argument means None, as before"
+        "empty means no connection named, and this session has none to fill with"
+    );
+
+    // With a session profile, the same empty argument resolves to it.
+    state.profile = Some("analytics".into());
+    app.request.stream = Some(stream_with(vec![
+        sql_request("SELECT 3", Some("")),
+        completed("1 row"),
+    ]));
+    app.drain_stream(&mut state);
+    assert_eq!(
+        selectable_connection(&app),
+        Some("analytics"),
+        "empty means no connection named: the session's connection fills it"
+    );
+}
+
+/// S9 invariant 4: a `bounded_sql_query` with no `connection` argument runs
+/// on the session's active profile, so the promoted `LastQuery` carries it —
+/// `/investigation save` then saves the connection that actually ran it.
+#[test]
+fn unnamed_query_promotes_the_sessions_active_profile() {
+    let (mut app, mut state) = app_and_state();
+    state.profile = Some("analytics".into());
+    app.request.stream = Some(stream_with(vec![
+        sql_request("SELECT 1", None),
+        completed("1 row"),
+    ]));
+    app.drain_stream(&mut state);
+    assert_eq!(
+        selectable_connection(&app),
+        Some("analytics"),
+        "an unnamed query ran on the session's active profile"
+    );
+}
+
+/// With no active profile selected, the session runs on the runtime's
+/// resolved default — the connection an unnamed query actually used.
+#[test]
+fn unnamed_query_promotes_the_sessions_default_profile() {
+    let (mut app, mut state) = app_and_state();
+    let mut runtime = unused_runtime();
+    runtime.resolved.profile_name = Some("prod".into());
+    app.runtime = Arc::new(runtime);
+    app.request.stream = Some(stream_with(vec![
+        sql_request("SELECT 1", None),
+        completed("1 row"),
+    ]));
+    app.drain_stream(&mut state);
+    assert_eq!(
+        selectable_connection(&app),
+        Some("prod"),
+        "an unnamed query ran on the session's default profile"
+    );
+    // The active profile wins when one is selected.
+    state.profile = Some("analytics".into());
+    app.request.stream = Some(stream_with(vec![
+        sql_request("SELECT 2", None),
+        completed("2 rows"),
+    ]));
+    app.drain_stream(&mut state);
+    assert_eq!(selectable_connection(&app), Some("analytics"));
+}
+
+/// A named connection argument still stands as stated, even when the session
+/// has an active profile of its own.
+#[test]
+fn named_connection_argument_still_wins_over_the_session_profile() {
+    let (mut app, mut state) = app_and_state();
+    state.profile = Some("analytics".into());
+    app.request.stream = Some(stream_with(vec![
+        sql_request("SELECT 1", Some("prod")),
+        completed("1 row"),
+    ]));
+    app.drain_stream(&mut state);
+    assert_eq!(
+        selectable_connection(&app),
+        Some("prod"),
+        "the model's named connection is the fact"
     );
 }
 
