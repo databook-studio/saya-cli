@@ -13,6 +13,7 @@ mod atref;
 // pub(crate) so the agent layer's capture hook can reuse the same accounted
 // budget as the direct `/sql` path — one source of truth, never a copy.
 pub(crate) mod capture;
+mod capture_agent;
 #[cfg(test)]
 mod capture_tests;
 mod clipboard;

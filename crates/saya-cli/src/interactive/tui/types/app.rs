@@ -3,12 +3,12 @@
 use super::super::history::History;
 use super::super::input::InputBuffer;
 use super::super::transcript::Transcript;
-use super::CapturedResult;
 use super::overlays::OverlayState;
 use super::request::RequestState;
 use super::tasks::{
     ClipboardCopy, CompactOutcome, LastQuery, PendingQuery, SessionSave, WideTableView,
 };
+use super::{AgentCaptures, CapturedResult};
 use crate::config::runtime::RuntimeConfig;
 use saya_store::{RedactedSession, SqliteStateStore};
 use std::cell::Cell;
@@ -75,6 +75,12 @@ pub(crate) struct App {
     /// Resets with the FIFO when the turn ends; `last_query` keeps its
     /// previous value meanwhile.
     pub(crate) pending_queries_desync: bool,
+    /// The agent-capture pairing state (D12): the bounded queue of
+    /// unmatched capture outcomes for the current turn — cleared at turn end
+    /// and on FIFO desync — plus the gap reason the snapshot's refusal reads
+    /// when the latest promoted agent query's rows are not held. In memory
+    /// only, like [`CapturedResult`].
+    pub(crate) agent_captures: AgentCaptures,
     /// Horizontal-scroll / column-selection state for wide result tables.
     /// Lives on the view, never on the transcript data.
     pub(crate) wide_table: WideTableView,

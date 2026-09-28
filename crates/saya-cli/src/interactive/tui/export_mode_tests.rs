@@ -86,6 +86,7 @@ fn apply_export_action(
         state,
         last_query,
         captured,
+        None,
     )
 }
 

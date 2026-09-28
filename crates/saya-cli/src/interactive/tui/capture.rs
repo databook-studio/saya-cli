@@ -11,8 +11,11 @@
 //! size it.
 
 use super::transcript::{BlockKind, Transcript};
+use crate::agent::tools::AgentCapture;
 use crate::config::runtime::RuntimeConfig;
-use saya_types::{EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, QueryResult};
+use saya_types::{
+    EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, QueryResult, ResultScope,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -93,6 +96,30 @@ pub(crate) fn direct_sql_evidence(
     ))
 }
 
+/// Execution evidence for a promoted agent capture (D12): source `Agent`,
+/// scope `ModelLimited` at the row cap the connector applied, labelled with
+/// the connection that ran the query and its opaque profile identity, timed
+/// by the capture itself.
+pub(crate) fn agent_evidence(capture: &AgentCapture) -> ExecutionEvidence {
+    let mut evidence = ExecutionEvidence::for_result(
+        &capture.result,
+        ExecutionEvidenceArgs {
+            execution_id: next_execution_id(capture.started_unix_ms),
+            connection_label: capture.connection.clone(),
+            connection_identity: capture.profile_identity.clone(),
+            dialect: capture.dialect,
+            max_rows: capture.row_cap,
+            started_unix_ms: capture.started_unix_ms,
+            finished_unix_ms: capture.finished_unix_ms,
+            source: EvidenceSource::Agent,
+        },
+    );
+    evidence.scope = ResultScope::ModelLimited {
+        row_cap: capture.row_cap,
+    };
+    evidence
+}
+
 /// Accounted bytes of `result` against [`CAPTURE_BUDGET_BYTES`]; `None` when
 /// over.
 pub(crate) fn accounted_bytes(result: &QueryResult) -> Option<usize> {
@@ -160,8 +187,10 @@ pub(crate) fn capture_within(
 }
 
 /// The budget's own size for the refusal line, derived from
-/// [`CAPTURE_BUDGET_BYTES`] so message and limit cannot drift.
-fn human_bytes(bytes: usize) -> String {
+/// [`CAPTURE_BUDGET_BYTES`] so message and limit cannot drift. `pub(crate)`:
+/// the agent-capture side (`capture_agent`) derives its refusal wording from
+/// the same budget.
+pub(crate) fn human_bytes(bytes: usize) -> String {
     match (
         bytes.is_multiple_of(1024 * 1024),
         bytes.is_multiple_of(1024),

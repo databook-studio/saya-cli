@@ -2,7 +2,7 @@ use super::*;
 use crate::interactive::tui::history::History;
 use crate::interactive::tui::input::InputBuffer;
 use crate::interactive::tui::transcript::Transcript;
-use crate::interactive::tui::types::{App, OverlayState, RequestState};
+use crate::interactive::tui::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::interactive::tui::ui_snapshot_tests::{empty_app, unused_runtime, unused_store};
 use crate::interactive::tui::ui_snapshot_tests::{fixed_status, render_buffer};
 use std::path::PathBuf;
@@ -38,6 +38,7 @@ fn trust_app() -> App {
         captured: None,
         pending_queries: std::collections::VecDeque::new(),
         pending_queries_desync: false,
+        agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
         run_panel: None,
         runtime: unused_runtime(),
