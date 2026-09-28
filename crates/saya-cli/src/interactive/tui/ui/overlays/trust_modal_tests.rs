@@ -37,6 +37,7 @@ fn trust_app() -> App {
         last_query: None,
         captured: None,
         pending_queries: std::collections::VecDeque::new(),
+        pending_queries_desync: false,
         wide_table: Default::default(),
         run_panel: None,
         runtime: unused_runtime(),

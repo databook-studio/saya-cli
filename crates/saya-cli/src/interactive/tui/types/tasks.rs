@@ -52,9 +52,11 @@ pub(crate) struct PendingQuery {
 }
 
 /// The pending-candidates FIFO bound: at most this many `bounded_sql_query`
-/// requests await their completions; the oldest is dropped beyond it. A
-/// runaway agent cannot grow the app's state without limit even if it
-/// requests one query per line.
+/// requests await their completions, so a runaway agent cannot grow the
+/// app's state without limit even if it requests one query per line. The
+/// next request overflows the FIFO, which is then cleared and marked
+/// desynchronised for the rest of the turn — dropping the oldest candidate
+/// instead would pair every later completion one position late.
 pub(crate) const MAX_PENDING_QUERIES: usize = 32;
 
 /// Presentation state for wide result tables. This is view state: the

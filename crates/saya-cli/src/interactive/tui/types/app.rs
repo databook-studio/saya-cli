@@ -69,6 +69,12 @@ pub(crate) struct App {
     /// denial consumes it). Bounded by `MAX_PENDING_QUERIES`; cleared when
     /// the turn ends. Fan-out (`bounded_sql_query_all`) never enters it.
     pub(crate) pending_queries: VecDeque<PendingQuery>,
+    /// Set when [`App::pending_queries`] overflowed this turn: the pairing
+    /// between requests and completions is no longer trusted, so no
+    /// completion promotes anything and new candidates are not queued.
+    /// Resets with the FIFO when the turn ends; `last_query` keeps its
+    /// previous value meanwhile.
+    pub(crate) pending_queries_desync: bool,
     /// Horizontal-scroll / column-selection state for wide result tables.
     /// Lives on the view, never on the transcript data.
     pub(crate) wide_table: WideTableView,
