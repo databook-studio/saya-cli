@@ -223,8 +223,9 @@ fn stale_lock_is_broken_live_lock_is_respected() {
         Duration::from_secs(1),
     );
 
-    // A lock older than the staleness horizon is broken: renamed aside,
-    // never deleted, and the mutation proceeds.
+    // A lock older than the staleness horizon is broken — renamed aside,
+    // never deleted — and the mutation proceeds; the aside the break left
+    // is removed after the successful re-claim, so none accumulate.
     let stale_bytes = lock_bytes(now_unix_ms() - 60_000);
     std::fs::write(root.join(".lock"), &stale_bytes).unwrap();
     repo.put_binding(&binding("stale-me")).unwrap();
@@ -236,11 +237,12 @@ fn stale_lock_is_broken_live_lock_is_respected() {
         std::fs::read_dir(&root)
             .unwrap()
             .filter_map(Result::ok)
-            .any(|entry| entry
+            .all(|entry| !entry
                 .file_name()
                 .to_string_lossy()
                 .starts_with(".lock.stale-")),
-        "the stale lock must be renamed aside, not deleted"
+        "the aside left by the break must be removed after the successful \
+         re-claim, not left to accumulate"
     );
 
     // A fresh lock is respected: the mutation waits out its budget and

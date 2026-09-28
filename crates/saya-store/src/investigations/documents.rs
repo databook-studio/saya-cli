@@ -100,18 +100,21 @@ impl InvestigationRepository {
     }
 
     /// Deletes one document under the repository lock — the revision check,
-    /// the removal, and the binding clear are one critical section — after
-    /// checking its revision. A document whose revision cannot be verified
-    /// (corrupt, unknown version, oversize) is refused, never deleted.
+    /// the binding clear, and the removal are one critical section — after
+    /// checking its revision. The binding is cleared first, so a failure
+    /// leaves both the document and the binding in place, retryable, and
+    /// never reports failure for a document that is already gone. A
+    /// document whose revision cannot be verified (corrupt, unknown
+    /// version, oversize) is refused, never deleted.
     pub fn delete(&self, id: &InvestigationId, expected_revision: u32) -> Result<(), StoreError> {
         let _lock = self.lock_for_mutation()?;
         let current = self.read_document(id)?.ok_or_else(StoreError::not_found)?;
         if current.id != *id || current.revision != expected_revision {
             return Err(StoreError::conflict());
         }
+        self.clear_binding_locked(id)?;
         let path = self.document_path(id.as_str())?;
-        std::fs::remove_file(&path).map_err(private_file::io_error)?;
-        self.clear_binding_locked(id)
+        std::fs::remove_file(&path).map_err(private_file::io_error)
     }
 
     /// Bounded read plus strict parse of the document at `<id>.json`.
