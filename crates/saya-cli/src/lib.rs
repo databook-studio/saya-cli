@@ -45,7 +45,8 @@ pub use cli::{
     ThemeArg,
 };
 pub use commands::{
-    capture_output_start, capture_output_take, run_contracts, run_investigation, run_management,
+    Replay, RunOutcome, capture_output_start, capture_output_take, run_contracts,
+    run_investigation, run_investigation_outcome, run_management,
 };
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 
