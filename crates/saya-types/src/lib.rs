@@ -3,6 +3,7 @@
 mod contract;
 mod dialect;
 mod error;
+pub mod evidence;
 mod profile;
 mod query;
 mod redaction;
@@ -22,6 +23,10 @@ pub use contract::{
 };
 pub use dialect::SqlDialect;
 pub use error::ConnectionError;
+pub use evidence::{
+    EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, MAX_EVIDENCE_KNOWLEDGE_IDS,
+    ResultScope,
+};
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
 pub use query::{QueryRequest, QueryResult};
 pub use redaction::{CREDENTIAL_ENV_PREFIX, redact, redact_counted};
