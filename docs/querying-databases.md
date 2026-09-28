@@ -189,7 +189,8 @@ beneath the table:
 direct sql: analytics · 20 rows (truncated at 20) · exec xm3zza1-2 · full result
 ```
 
-It names the source (`direct sql`, or `saved investigation` after
+It names the source (`direct sql` for a `/sql` result, `agent` for a query
+the AI agent ran, or `saved investigation` after
 `/investigation run`), the connection profile the query ran on, how many
 rows returned (and whether the row cap truncated them), a short execution
 id, and the scope. The statement itself is identified by its SHA-256 hash in
@@ -199,9 +200,18 @@ any internal rewrite the safety layer may perform.
 The result is captured in memory for the session only: it is never written
 to the session file, and it does not survive a restart. A result above the
 32 MiB budget renders as usual but is not captured, with a message saying
-so. Only direct `/sql` results are captured — agent-run query results are
-not (their rows are model-limited and never in the event stream), so a
-snapshot is unavailable for them and a refresh is the offered path.
+so. Capture covers three paths:
+
+- a direct `/sql` result — full, up to the row cap;
+- an agent `bounded_sql_query` result — **model-limited**: exactly the at
+  most 50 rows the agent saw, labelled `model-limited (first N rows)` on the
+  provenance line, with the full result possibly larger (`/export --refresh`
+  re-runs it in full);
+- a saved replay run in the TUI — full.
+
+Fan-out agent queries (`bounded_sql_query_all`) are never captured. A
+refused or absent capture never falls back to an older result: the snapshot
+says the rows were not captured and offers `/export --refresh`.
 
 ### Snapshot vs refresh
 
@@ -211,9 +221,12 @@ snapshot is unavailable for them and a refresh is the offered path.
 > /export last-week.csv                # legacy form: same as --refresh
 ```
 
-- `--snapshot` exports the result you already inspected — the latest `/sql`
-  capture — with no query at all. The success line names the execution id
-  and capture time (UTC) so you know exactly which run the file is of.
+- `--snapshot` exports the result you already inspected — the latest
+  capture (a direct `/sql` result, the rows an agent query saw, or a saved
+  replay) — with no query at all. The success line names the execution id
+  and capture time (UTC) so you know exactly which run the file is of, and
+  a model-limited capture says the full result may be larger
+  (`--refresh` re-runs it in full).
 - The default form and `--refresh` re-run the query on its original
   connection and export that fresh read; the file reflects the fresh
   result, not the displayed table (column filters, scroll, and folds do not
@@ -225,7 +238,8 @@ snapshot is unavailable for them and a refresh is the offered path.
 
 `/report [--rows N] [--overwrite] <path>` writes a Markdown report of the
 captured result — exact SQL and provenance by default, rows only with
-`--rows N` (at most 100), cells neutralised, capped at 2 MiB. It never
+`--rows N` (at most 100), cells neutralised, capped at 2 MiB; a
+model-limited capture says so in its provenance. It never
 queries a database and never opens a browser or uploads anything. See
 [commands](commands.md) for the full reference.
 

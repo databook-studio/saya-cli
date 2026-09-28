@@ -72,6 +72,13 @@ checks the revision the same way. A corrupt or unsupported file is reported
 (`list` surfaces it as a warning line, `get` refuses), never overwritten and
 never deleted implicitly.
 
+Writes are exclusive across processes: every mutation — create, update,
+delete, and binding writes — runs under a repository lock at
+`<root>/.lock` (a `create_new` file, bounded retry under contention, a
+verified-stale lock broken once), and the create is non-replacing, so a
+conflicting concurrent writer is refused with a conflict/"try again" error
+instead of silently overwriting.
+
 The collection caps at 500 documents, and `list` is a bounded scan returning
 at most 50 per page with `--offset` paging past it.
 
@@ -119,6 +126,17 @@ current state` — until `--revalidate` is passed, headless included; a
 revalidated run rewrites the binding. The first run after an import requires
 `--connection`; that explicit mapping creates the binding, written on
 success, never before.
+
+The referenced objects are recomputed from the SQL itself on every run —
+the document's `objects` field is informational, and import refuses a
+document whose `objects` do not match its SQL, so imported metadata can
+never weaken the review. A table that cannot be resolved, an ambiguous
+name, or an incomplete dependency analysis makes the review
+**unverifiable**: the run is refused (`schema review unavailable: …`)
+unless `--revalidate` is passed, and such a run is never recorded as
+reviewed — a revalidated unverifiable run rewrites the binding without a
+schema fingerprint. Quoted names containing dots (`"orders.v1"`) are one
+object, never re-split.
 
 ### 5. Export and import move the definition only (D5)
 
@@ -175,21 +193,35 @@ names the statement by hash only. The field is labelled *submitted SQL* —
 `executed_sql` — because saya does not claim it is the safety layer's
 internally rewritten statement.
 
-The TUI keeps at most one `CapturedResult { result, evidence }` for the
-latest direct `/sql` success, in memory only, on `App` (which is never
-serialized — the type has no serde derives, so captured rows cannot reach a
-session file). Capture is refused visibly above the 32 MiB accounted budget,
-naming the way out (`/export --refresh`). Agent-path results are not
-captured: their rows are model-limited and never in the event stream, so
-snapshot is unavailable there and refresh is the offered path.
+The TUI keeps at most one `CapturedResult { result, evidence }`, in memory
+only, on `App` (which is never serialized — the type has no serde derives,
+so captured rows cannot reach a session file). Capture covers three paths
+(D12): the latest direct `/sql` success (full, up to the row cap), a
+successful agent `bounded_sql_query` result — **model-limited**, exactly
+the at most 50 rows the connector capped for the model, labelled
+`model-limited (first N rows)` — and a saved replay run in the TUI (full,
+its evidence source `saved investigation`). Capture is refused visibly
+above the 32 MiB accounted budget, naming the way out (`/export --refresh`).
+Fan-out (`bounded_sql_query_all`) is never captured.
 
-The evidence line shown with a direct result reads, e.g.,
+Agent captures pair by content, never position: the hook forwards the typed
+result the model saw (or a budget refusal) onto the turn's stream channel,
+where it queues unmatched until a successful completion promotes a pending
+query; the first queued outcome whose (SQL, connection) equals the promoted
+query's is taken. A refused or absent capture clears the slot — never a
+silent fallback to an older or foreign result — and the snapshot names the
+gap (the budget when refused) and offers `--refresh`.
+
+The evidence line shown with a result reads, e.g.,
 `direct sql: demo · 12 rows (truncated at 50) · exec x… · full result` —
-source, profile label, rows, truncation, short execution id, and scope.
+source (`direct sql`, `agent`, or `saved investigation`), profile label,
+rows, truncation, short execution id, and scope.
 
 ### 9. Export modes: snapshot writes what you have, refresh re-queries (D9)
 
-`/export --snapshot <path>` writes the captured result with no query at all;
+`/export --snapshot <path>` writes the captured result with no query at all
+— a model-limited capture is labelled as what it is: the rows the agent saw,
+with the full result possibly larger (`--refresh` re-runs it in full);
 `/export --refresh <path>` re-runs the latest selectable query on its original
 connection. The legacy form `/export <path>` stays a refresh and says so in
 its success line, pointing at `--snapshot`. Export writes via private temp +
@@ -233,7 +265,9 @@ is appended to with the existing bytes kept as an exact prefix; a config.toml
 that already exists is never modified — setup prints the `[ai]` snippet for
 the user to apply), backs up files privately before replacing them, and
 writes a commit marker so an interrupted two-file write is detected on later
-startup and offered restore/finish. Probes run one at a time, 15 s each; a
+startup and offered restore/finish. A restore step that fails says which
+file it could not restore, keeps the recovery marker, and exits 2 — the
+flow never reports success it did not achieve. Probes run one at a time, 15 s each; a
 provider probe states that a request will be sent and sends only the word
 "ping" — no schema, no rows.
 
@@ -283,21 +317,30 @@ provider probe states that a request will be sent and sends only the word
 
 ## Limitations (stated, not solved)
 
-- Snapshot and report capture only direct `/sql` results. Agent-run query
-  results are not captured — their rows are model-limited and not in the
-  event stream — so snapshot is unavailable after an agent turn; use `/sql`
-  or `/export --refresh`.
+- Agent `bounded_sql_query` captures are model-limited: exactly the at most
+  50 rows the agent saw, never the full result — the snapshot success line
+  says the full result may be larger and points at `/export --refresh`, and
+  the report says so in its provenance. Fan-out agent queries
+  (`bounded_sql_query_all`) are not captured.
 - Captures do not survive a restart. Capture times in messages are UTC.
-- TUI `/investigation run` runs in the foreground; the transcript waits for
-  the query.
+- TUI `/investigation run` runs in the background on a worker with a
+  status-bar spinner; Esc/Ctrl+C detach it and a late result is discarded.
+  Detach is not cancel: the query may still be running on the server —
+  saya does not cancel a query on the server in this release (PostgreSQL,
+  MySQL, and Snowflake support cancellation; SQLite and DuckDB run locally;
+  ClickHouse and BigQuery cannot).
 - Parameterised investigations, context import, dbt, file sources, and MCP
   are not in this release.
+- There is no searchable TUI investigation picker and no edit command; a
+  definition is immutable through supported commands — save a new one under
+  a new name.
 - The report neutralises links, images, HTML, table-breaking characters, and
   control characters, but
   a Markdown renderer may still auto-link a bare `https://…` text value in an
   included row. Review the report before sharing.
 - Guided setup covers four engines (SQLite, DuckDB, PostgreSQL, MySQL);
-  Snowflake, ClickHouse, and BigQuery are configured in connections.toml as
-  before.
+  Snowflake, ClickHouse, and BigQuery are configured by hand in
+  connections.toml — see the engine sections in
+  [connections.md](connections.md).
 - `executed_sql` / "submitted SQL" is the SQL saya submitted to the
   connector, not the safety layer's internal rewrite.
