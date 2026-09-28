@@ -168,6 +168,57 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
     );
 }
 
+/// R3 decision 3: when the promoted agent query's model view was truncated,
+/// the snapshot refusal names that reason — the exact sentence, with the
+/// refresh way out.
+#[test]
+fn snapshot_after_truncated_model_view_names_the_reason() {
+    let mut transcript = Transcript::new();
+    let mut state = SessionState::new("test", None, "model");
+    apply_query_actions(
+        &mut Some(SessionAction::Export(snapshot_request(
+            std::path::Path::new("/nonexistent-saya-r3/never.csv"),
+        ))),
+        &mut transcript,
+        &mut state,
+        &mut None,
+        &None,
+        Some(CaptureGap::ModelViewTruncated),
+    );
+    let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
+    assert_eq!(
+        msg,
+        "The agent received a truncated version of this result, so it was \
+         not captured. Use /export --refresh to re-run it.",
+        "the refusal names the truncated model view: {msg}"
+    );
+}
+
+/// R3 decision 3: the redacted model view gets the same refusal, naming
+/// redaction — the model never saw the raw values, so they are not evidence.
+#[test]
+fn snapshot_after_redacted_model_view_names_the_reason() {
+    let mut transcript = Transcript::new();
+    let mut state = SessionState::new("test", None, "model");
+    apply_query_actions(
+        &mut Some(SessionAction::Export(snapshot_request(
+            std::path::Path::new("/nonexistent-saya-r3/never.csv"),
+        ))),
+        &mut transcript,
+        &mut state,
+        &mut None,
+        &None,
+        Some(CaptureGap::ModelViewRedacted),
+    );
+    let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
+    assert_eq!(
+        msg,
+        "The agent received a redacted version of this result, so it was \
+         not captured. Use /export --refresh to re-run it.",
+        "the refusal names the redacted model view: {msg}"
+    );
+}
+
 /// The report of an agent capture names the scope twice: in the file's
 /// provenance and in the success message.
 #[test]

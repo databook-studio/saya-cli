@@ -2,7 +2,7 @@
 //! stream channel — the `StreamMsg` variants the drain will consume (C2).
 
 use super::*;
-use crate::agent::tools::{AgentCapture, CaptureEvent};
+use crate::agent::tools::{AgentCapture, CaptureEvent, CaptureRefusalReason};
 use saya_types::{QueryResult, SqlDialect};
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -13,6 +13,7 @@ fn capture_hook_forwards_onto_the_stream_channel() {
     hook(CaptureEvent::Refused {
         sql: "SELECT 1".into(),
         connection: "primary".into(),
+        reason: CaptureRefusalReason::OverBudget,
     });
     hook(CaptureEvent::Captured(AgentCapture {
         sql: "SELECT 1".into(),
@@ -26,8 +27,11 @@ fn capture_hook_forwards_onto_the_stream_channel() {
     }));
     assert!(matches!(
         rx.blocking_recv(),
-        Some(StreamMsg::QueryCaptureRefused { sql, connection })
-            if sql == "SELECT 1" && connection == "primary"
+        Some(StreamMsg::QueryCaptureRefused {
+            sql,
+            connection,
+            reason: CaptureRefusalReason::OverBudget,
+        }) if sql == "SELECT 1" && connection == "primary"
     ));
     assert!(matches!(
         rx.blocking_recv(),

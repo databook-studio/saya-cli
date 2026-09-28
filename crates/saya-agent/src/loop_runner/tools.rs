@@ -352,23 +352,57 @@ fn bound_failure_reason(reason: &str) -> String {
 /// gets no note and is byte-identical to before this change — the redaction
 /// itself is unchanged, only the announcement is new.
 pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (ChatMessage, bool) {
-    let cap = tool_message_cap(byte_budget);
-    let (content, truncated) = bounded_json(&result, cap);
-    let (content, redacted_count) = redact_counted(&content);
-    let content = if redacted_count > 0 {
-        format!("{}\n\n{content}", redaction_note(redacted_count))
-    } else {
-        content
-    };
+    let shaped = shape_tool_result(&result, byte_budget);
     (
         ChatMessage {
             role: "tool".into(),
-            content,
+            content: shaped.text,
             tool_calls: Vec::new(),
             tool_call_id: Some(id),
         },
-        truncated,
+        shaped.truncated,
     )
+}
+
+/// The shaped form of one tool result — the exact bytes [`tool_message`] puts
+/// in the model's context, extracted so a second consumer (the saya-cli
+/// capture hook) can compute the model's view with the same function the loop
+/// uses and refuse to hold a capture the model did not receive unchanged.
+///
+/// Pure: no I/O, no state. Applies the loop's whole shaping in order — cap
+/// derived from `byte_budget` via [`tool_message_cap`], serialization cut to
+/// the cap on a char boundary with the visible marker, then `redact_counted`
+/// (D8), then the fixed redaction note prepended when anything was replaced.
+/// What `truncated` and `redactions` report is therefore exactly what the
+/// model received: a capture that records the unshaped result while either is
+/// non-zero would be evidence of data the model never saw.
+pub struct ShapedToolResult {
+    /// The message content exactly as the model receives it, including the
+    /// redaction note when any secret was replaced.
+    pub text: String,
+    /// Whether the serialized result was cut to the cap.
+    pub truncated: bool,
+    /// How many secret-shaped values redaction replaced.
+    pub redactions: usize,
+}
+
+/// Shapes `value` the way [`tool_message`] does for a run budgeted at
+/// `byte_budget` (the run's `AgentLimits::context_byte_budget`; the per-message
+/// cap is derived inside, matching the loop). See [`ShapedToolResult`].
+pub fn shape_tool_result(value: &Value, byte_budget: usize) -> ShapedToolResult {
+    let cap = tool_message_cap(byte_budget);
+    let (content, truncated) = bounded_json(value, cap);
+    let (content, redactions) = redact_counted(&content);
+    let text = if redactions > 0 {
+        format!("{}\n\n{content}", redaction_note(redactions))
+    } else {
+        content
+    };
+    ShapedToolResult {
+        text,
+        truncated,
+        redactions,
+    }
 }
 
 /// The fixed note prepended to a tool result [`redact_counted`] changed:
