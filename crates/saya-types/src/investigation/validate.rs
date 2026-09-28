@@ -40,6 +40,16 @@ impl InvestigationDefinitionV1 {
         if self.sql.trim().is_empty() || self.sql.len() > MAX_SQL_BYTES {
             return Err(InvestigationError::InvalidSql);
         }
+        // Saved SQL is echoed by previews and reports; any control character
+        // beyond newline, carriage return, and tab could carry a terminal
+        // escape sequence, so it is refused, never redacted.
+        if self
+            .sql
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            return Err(InvestigationError::ControlCharacter);
+        }
         let connection_ok = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-');
         if !(1..=MAX_CONNECTION_CHARS).contains(&self.connection.len())
             || !self.connection.bytes().all(connection_ok)
