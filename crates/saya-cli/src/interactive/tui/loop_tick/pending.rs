@@ -37,6 +37,7 @@ pub(crate) fn tick_pending(
             &app.state_db,
             format,
             &mut app.last_query,
+            &app.captured,
             session,
         );
         match outcome {

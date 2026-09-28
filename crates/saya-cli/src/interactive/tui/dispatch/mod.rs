@@ -11,11 +11,15 @@ mod query;
 mod run;
 mod session_actions;
 
+#[cfg(test)]
+#[path = "../export_mode_tests.rs"]
+mod export_mode_tests;
+
 pub(crate) use outcome::Dispatch;
 
 use super::super::session_runtime::SessionRuntime;
 use super::transcript::{BlockKind, Transcript};
-use super::types::LastQuery;
+use super::types::{CapturedResult, LastQuery};
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_state::SessionState;
@@ -25,6 +29,8 @@ use saya_store::FsSessionStore;
 
 /// Dispatches one submitted line, mutating `state` and appending to `transcript`.
 /// A non-command line returns `Dispatch::Agent` for the caller to stream.
+/// `captured` is the session's ephemeral result capture, read by the export
+/// snapshot (a snapshot export is decided and written here, with no query).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch(
     line: &str,
@@ -36,6 +42,7 @@ pub(crate) fn dispatch(
     state_db: &saya_store::SqliteStateStore,
     format: RenderFormat,
     last_query: &mut Option<LastQuery>,
+    captured: &Option<CapturedResult>,
     session: &mut SessionRuntime,
 ) -> Dispatch {
     // In the TUI, /sessions opens an interactive picker rather than a text list.
@@ -89,6 +96,7 @@ pub(crate) fn dispatch(
                         transcript,
                         state,
                         last_query,
+                        captured,
                     ) {
                         result = outcome;
                     } else if let Some(outcome) = run::apply_run_action(

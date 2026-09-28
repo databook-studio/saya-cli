@@ -1,5 +1,7 @@
 //! Export tests, moved byte-identical: CSV/JSON round-trips, duplicate
 //! label disambiguation, formula neutralisation, and the format gate.
+//! (S11 only renamed the writer entry to `write_result_overwrite` and made
+//! the not-overwriting shape explicit; every assertion is unchanged.)
 
 use super::*;
 use serde_json::json;
@@ -17,7 +19,7 @@ fn test_write_result_csv_and_json() {
     // CSV test
     let mut csv_path = std::env::temp_dir();
     csv_path.push("saya_test_export_unique_123.csv");
-    let count = write_result(&result, &csv_path).unwrap();
+    let count = write_result_overwrite(&result, &csv_path, false).unwrap();
     assert_eq!(count, 2);
     let csv_content = std::fs::read_to_string(&csv_path).unwrap();
     let _ = std::fs::remove_file(&csv_path);
@@ -27,7 +29,7 @@ fn test_write_result_csv_and_json() {
     // JSON test
     let mut json_path = std::env::temp_dir();
     json_path.push("saya_test_export_unique_123.json");
-    let count = write_result(&result, &json_path).unwrap();
+    let count = write_result_overwrite(&result, &json_path, false).unwrap();
     assert_eq!(count, 2);
     let json_content = std::fs::read_to_string(&json_path).unwrap();
     let _ = std::fs::remove_file(&json_path);
@@ -41,7 +43,7 @@ fn test_write_result_csv_and_json() {
     // Unsupported extension test
     let mut txt_path = std::env::temp_dir();
     txt_path.push("saya_test_export_unique_123.txt");
-    let err = write_result(&result, &txt_path).unwrap_err();
+    let err = write_result_overwrite(&result, &txt_path, false).unwrap_err();
     assert_eq!(err, "unsupported export format; use a .csv or .json path");
 }
 
@@ -56,7 +58,7 @@ fn json_export_keeps_both_values_when_column_labels_repeat() {
     };
     let path = std::env::temp_dir().join("saya_test_export_duplicate_values.json");
 
-    write_result(&result, &path).unwrap();
+    write_result_overwrite(&result, &path, false).unwrap();
     let content = std::fs::read_to_string(&path).unwrap();
     let _ = std::fs::remove_file(&path);
 
@@ -83,7 +85,7 @@ fn json_export_never_shadows_a_column_the_query_itself_named() {
     };
     let path = std::env::temp_dir().join("saya_test_export_duplicate_shadow.json");
 
-    write_result(&result, &path).unwrap();
+    write_result_overwrite(&result, &path, false).unwrap();
     let content = std::fs::read_to_string(&path).unwrap();
     let _ = std::fs::remove_file(&path);
 
@@ -108,7 +110,7 @@ fn json_export_keeps_the_explicit_label_when_duplicates_come_first() {
     };
     let path = std::env::temp_dir().join("saya_test_export_duplicate_leading.json");
 
-    write_result(&result, &path).unwrap();
+    write_result_overwrite(&result, &path, false).unwrap();
     let content = std::fs::read_to_string(&path).unwrap();
     let _ = std::fs::remove_file(&path);
 
@@ -138,7 +140,7 @@ fn csv_export_neutralizes_and_quotes_formula_shaped_aliases() {
     };
     let path = std::env::temp_dir().join("saya_test_export_formula_alias.csv");
 
-    write_result(&result, &path).unwrap();
+    write_result_overwrite(&result, &path, false).unwrap();
     let content = std::fs::read_to_string(&path).unwrap();
     let _ = std::fs::remove_file(&path);
 
