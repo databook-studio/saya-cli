@@ -9,7 +9,7 @@
 use super::{
     EXIT_INVESTIGATION_ERROR, EXIT_SAFETY, fingerprint,
     run_binding::{Review, refresh_binding, stale_message, staleness},
-    store_failure,
+    run_report, store_failure,
 };
 use crate::commands::{
     connection,
@@ -25,11 +25,16 @@ use saya_types::{
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-/// What the dispatcher parsed for one replay.
+/// What the dispatcher parsed for one replay. The report fields (S12b)
+/// carry an optional `--report` destination with its `--rows` opt-in and
+/// `--overwrite` decision.
 pub(super) struct RunRequest<'a> {
     pub id: &'a str,
     pub connection: Option<&'a str>,
     pub revalidate: bool,
+    pub report: Option<&'a std::path::Path>,
+    pub rows: Option<usize>,
+    pub overwrite: bool,
 }
 
 pub(super) async fn run(
@@ -40,6 +45,11 @@ pub(super) async fn run(
     state_db: &SqliteStateStore,
     request: RunRequest<'_>,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    // Flag-usage refusals come first: they are command-line errors, checked
+    // before any store, connection, or query work (invariant 1).
+    if let Some(message) = run_report::usage_error(&request) {
+        return failure_message(EXIT_INVESTIGATION_ERROR, message, format);
+    }
     let id = match super::parse_investigation_id(request.id) {
         Ok(id) => id,
         Err((code, message)) => return failure_message(code, message, format),
@@ -188,7 +198,12 @@ pub(super) async fn run(
                     },
                 },
             );
-            emit(TerminalEvent::QueryResult { result }, format);
+            emit(
+                TerminalEvent::QueryResult {
+                    result: result.clone(),
+                },
+                format,
+            );
             let line = evidence.human_line();
             emit(TerminalEvent::Result { message: line }, format);
             refresh_binding(
@@ -199,7 +214,10 @@ pub(super) async fn run(
                 request.revalidate,
                 &review,
             );
-            Ok(0)
+            // The report (S12b) is written last, from this execution's
+            // result and evidence, after the output is out (invariants 2
+            // and 3); without `--report` this is the plain success exit.
+            run_report::write(&result, &evidence, &request, format)
         }
         Err(error) => {
             audit(
