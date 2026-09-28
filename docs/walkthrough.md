@@ -8,7 +8,7 @@ environment ("bob"), run it there, and watch a stale review get refused —
 with **no AI provider and no network** anywhere in the run.
 
 - Script: [`scripts/walkthrough.sh`](../scripts/walkthrough.sh) — the CLI journey, recorded below
-- Recording: [`walkthrough.gif`](walkthrough.gif) — the TUI half (`/sql` and a background `/investigation run`), rendered from [`walkthrough.tape`](walkthrough.tape)
+- Recording: [`walkthrough.gif`](walkthrough.gif) — the same journey as slash commands inside the TUI, rendered from [`walkthrough.tape`](walkthrough.tape)
 
 ## Reproduce it
 
@@ -255,48 +255,44 @@ way to re-review, which this walkthrough deliberately does not take).
 interactive session) the same operations exist as slash commands; the
 recording [`walkthrough.gif`](walkthrough.gif) was rendered from
 [`walkthrough.tape`](walkthrough.tape) driving the TUI on the demo database
-with the same sandbox environment, and shows `/sql` and a background
-`/investigation run`:
+with the same sandbox environment, and shows the full journey:
 
-- `/sql SELECT count(*) AS orders FROM orders` — run bounded read-only SQL
-  directly against the active profile; the result is captured for the
-  session (visible in the recording: 560, with its evidence line).
+- `/sql <SQL>` — run bounded read-only SQL directly against the active
+  profile; the result is captured for the session. The recording runs the
+  same duplicate-join trap the CLI journey asks: the table shows the
+  multiplied `joined_rows` beside `count(DISTINCT o.id)`'s distinct counts,
+  and the evidence line (`direct sql: demo · 4 rows · exec … · full
+  result`) names the connection, row count, and execution id.
 - `/investigation save <name>` — takes the name **positionally**, unlike
   the CLI's `--name <NAME>`. With neither `--sql` nor `--file` it saves the
   latest successful, concrete query — a `/sql` capture — on the connection
-  that actually ran it. Described from the command reference (`/help
-  investigation`); not in the recording, for the reason below.
+  that actually ran it. The recording saves the trap query; its transcript
+  block shows the derived, hash-suffixed id.
 - `/investigations` — alias for `/investigation list`; one line per saved
-  investigation. Described from the command reference; not in the
-  recording, for the reason below.
+  investigation. The recording's list shows two rows with the same name:
+  the just-saved one (`trap-query-…`, hash-suffixed) and `trap-query` — the
+  imported replay target the run below uses.
 - `/export --snapshot <path>` — export the result you already inspected:
   the latest `/sql` capture, held for this session only, with **no query at
-  all**. The plain `/export <path>` re-runs the last query for a fresh read
-  instead. Described from the command reference; not in the recording, for
-  the reason below.
+  all** (`Exported 4 row(s) to … from snapshot exec …`). The plain
+  `/export <path>` re-runs the last query for a fresh read instead.
 - `/report [--rows N] [--overwrite] <path>` — write a shareable Markdown
   report of the latest `/sql` capture: the exact SQL and its provenance by
   default, rows only with `--rows`. It never queries a database and never
-  uploads anything. Described from the command reference (`/help report`);
-  not in the recording, for the reason below.
+  uploads anything. The recording writes `trap-report.md` (rows omitted).
 - `/investigation run <id>` runs **in the background**, like a `/sql`
-  query: the transcript keeps working while it runs, the status bar names
-  the investigation, and Esc detaches it — detach, not cancel: the worker
-  keeps going and the detached result is simply discarded (the replay and
-  its `Esc to detach` status hint are visible in the recording; the Esc
-  detach itself is described from the command reference — the local demo
-  query finishes far too fast to detach from).
-
-**Recorded on this build (0.4.2 worktree):** the slash paths
-`/investigation save`, `/investigations`, `/report`, and `/export` currently
-panic the TUI in the slash-dispatch chain
-(`interactive/tui/dispatch/mod.rs` — "helper passes the action through"),
-so the recording covers only the two paths that work end to end, `/sql` and
-`/investigation run`. The same operations through the headless CLI — the
-journey recorded above — are unaffected. The saved investigation the
-recording replays was created by `investigation save` through the CLI in
-the tape's hidden phase, which is the same operation the slash command
-would call.
+  query: the status bar names the investigation and offers `Esc to detach`
+  while it runs, and the evidence line (`saved investigation: demo · 4 rows
+  · exec … · full result`) lands when it finishes. **Esc detaches a running
+  replay** — detach, not cancel: the worker keeps going and the detached
+  result is simply discarded. The replay in the recording targets
+  `trap-query`, an imported twin of the same trap SQL: the tape cannot type
+  the hash-suffixed id `save` generates at run time, so the tape's hidden
+  phase stages the definition under a fixed id through `investigation
+  import` — the same import the CLI journey performs — and the replay maps
+  it with an explicit `--connection demo`, exactly as the CLI journey's
+  second environment must. The detach itself is described, not shown: the
+  local demo query finishes far too fast to detach from.
 
 ## What the walkthrough proves
 

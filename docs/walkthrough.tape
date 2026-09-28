@@ -1,22 +1,30 @@
 # vhs script for the walkthrough GIF (the TUI part of docs/walkthrough.md).
-#   Record with:  vhs docs/walkthrough.tape   (run from the repo root)
-# It drives the interactive TUI on the synthetic demo database: `/sql`, then
-# a background `/investigation run` (the status bar names the replay and
-# offers Esc to detach), then quit.
+#   Record with:  cargo build -q -p saya-cli --release --locked
+#                 vhs docs/walkthrough.tape   (run from the repo root)
+# It drives the interactive TUI on the synthetic demo database through the
+# same journey the CLI half records: the duplicate-join trap query via /sql,
+# saving it with /investigation save (the name is positional; with no --sql
+# the save fills from the last query), listing /investigations, exporting the
+# captured rows with /export --snapshot, writing the Markdown report with
+# /report, and replaying a saved investigation in the background with
+# /investigation run — the status bar names it and offers Esc to detach while
+# it runs, and the transcript ends with the evidence line.
 #
-# Scope note, recorded on this build: `/investigation save`,
-# `/investigations`, `/report`, and `/export` currently panic the TUI in the
-# slash-dispatch chain, so they are described in docs/walkthrough.md but are
-# deliberately not recorded here. The saved investigation this replay runs
-# is created by the headless CLI below (the same `investigation save`
-# operation), which is why the TUI never has to.
+# The replay target is staged in the hidden phase below with a FIXED id
+# (`trap-query`) through `investigation import`: the ids `investigation
+# save` generates are hashed from the save time, so a recording cannot type
+# one — the imported twin carries the same SQL, and the TUI's own
+# `/investigation save` step shows the derived id in its block. Import
+# executes nothing; the replay maps it with an explicit `--connection`,
+# exactly like the CLI journey's second environment.
 #
 # The CLI half of the journey (demo → setup refusal → trap question → save →
 # export → import → rerun) is recorded in docs/walkthrough.md by
 # scripts/walkthrough.sh. Everything here is synthetic, local, and read-only
 # — no AI provider and no network. The sandbox lives in a temp dir so the
 # tree stays clean; the exported environment persists across the tape's
-# commands.
+# commands, and the snapshot/report destinations are a fixed scratch
+# directory under /tmp that the hidden phases create and remove.
 
 Output docs/walkthrough.gif
 
@@ -28,17 +36,24 @@ Set Padding 20
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
 
-# Build the demo database and save one investigation, in an isolated temp
-# sandbox; capture the printed id for the replay step.
+# Build the demo database and stage the fixed-id replay target, in an
+# isolated temp sandbox. SAYA_SESSION_DIR keeps session files in the sandbox
+# too.
 Hide
 Type "export W=$(mktemp -d)"
 Enter
-Type "export SAYA_CONFIG_HOME=$W/config SAYA_STATE_DB=$W/state.sqlite3 SAYA_DEMO_DIR=$W/demo SAYA_INVESTIGATIONS_DIR=$W/investigations"
+Type "export SAYA_CONFIG_HOME=$W/config SAYA_STATE_DB=$W/state.sqlite3 SAYA_DEMO_DIR=$W/demo SAYA_INVESTIGATIONS_DIR=$W/investigations SAYA_SESSION_DIR=$W/sessions"
 Enter
 Type "target/release/saya demo --non-interactive"
 Enter
 Sleep 2.5s
-Type "export INV=$(target/release/saya --connections $W/demo/connections.toml --profile demo --non-interactive investigation save --name 'Orders in the demo' --sql 'SELECT count(*) AS orders FROM orders' | sed -n 1p)"
+Type "rm -rf /tmp/saya-walkthrough-record && mkdir -p /tmp/saya-walkthrough-record"
+Enter
+Sleep 400ms
+Type@1ms `printf '%s' '{"format":"saya.investigation","version":1,"id":"trap-query","revision":1,"name":"Trap query","description":"Duplicate-join trap: order rows multiplied by customer_contacts","sql":"SELECT c.region, count(*) AS joined_rows, count(DISTINCT o.id) AS distinct_orders FROM orders o JOIN customers c ON c.id = o.customer_id JOIN customer_contacts cc ON cc.customer_id = c.id GROUP BY c.region ORDER BY joined_rows DESC","dialect":"sqlite","connection":"demo","objects":["orders","customers","customer_contacts"],"schema_fingerprint":null,"created_unix_ms":0,"updated_unix_ms":0}' > $W/trap-investigation.json`
+Enter
+Sleep 400ms
+Type "target/release/saya --connections $W/demo/connections.toml --non-interactive investigation import $W/trap-investigation.json"
 Enter
 Sleep 2s
 
@@ -49,24 +64,66 @@ Sleep 3s
 Show
 Sleep 800ms
 
-# 1) /sql runs bounded read-only SQL and shows the result with its evidence
-#    line (560 orders on the demo fixture).
-Type "/sql SELECT count(*) AS orders FROM orders"
-Sleep 1.5s
+# 1) /sql runs the duplicate-join trap: count(*) reports the multiplied rows
+#    the join through customer_contacts produces, count(DISTINCT o.id) the
+#    real orders. The evidence line names the connection and the scope.
+Type@10ms "/sql SELECT c.region, count(*) AS joined_rows, count(DISTINCT o.id) AS distinct_orders FROM orders o JOIN customers c ON c.id = o.customer_id JOIN customer_contacts cc ON cc.customer_id = c.id GROUP BY c.region ORDER BY joined_rows DESC"
 Enter
-Sleep 2.5s
+Wait+Screen /direct sql: demo · 4 rows/
+Sleep 1s
 
-# 2) /investigation run replays the saved query in the background — the
-#    status bar names the investigation while it runs.
-Type "/investigation run $INV"
-Sleep 1.5s
+# 2) /investigation save <name> takes the name positionally and, with no
+#    --sql, saves the last query — the trap above — on the connection that
+#    ran it. Its block shows the derived, hash-suffixed id.
+Type "/investigation save Trap query"
 Enter
-Sleep 2.5s
+Wait+Screen /Saved exactly as shown/
+Sleep 800ms
 
-# Quit (from a filled line Ctrl+C clears first, twice quits — as in demo.tape).
+# 3) /investigations lists what is saved: the imported replay target and the
+#    just-saved one. (Escape closes the command popup so Enter submits —
+#    same as demo.tape.)
+Type "/investigations"
+Escape
+Enter
+Wait+Screen /trap-query  1/
+Sleep 800ms
+
+# 4) /export --snapshot writes the result already inspected — the /sql
+#    capture, held for this session, with no query at all.
+Type "/export --snapshot /tmp/saya-walkthrough-record/trap-snapshot.csv"
+Enter
+Wait+Screen /Exported 4 row/
+Sleep 800ms
+
+# 5) /report writes the shareable Markdown report of the same capture: the
+#    exact SQL and its provenance, rows omitted by default.
+Type "/report /tmp/saya-walkthrough-record/trap-report.md"
+Enter
+Wait+Screen /Wrote report to/
+Sleep 800ms
+
+# 6) /investigation run replays the imported twin in the background — the
+#    status bar names it and offers Esc to detach while it runs; on the
+#    local demo it finishes almost instantly, and the evidence line lands.
+#    The import mapped no connection, so the replay maps one explicitly,
+#    exactly as the CLI journey's second environment does.
+Type "/investigation run trap-query --connection demo"
+Enter
+Wait+Screen /saved investigation: demo · 4 rows/
+Sleep 1.2s
+
+# Quit (from a filled line Ctrl+C clears first, twice quits — as in
+# demo.tape; from the empty line after the run the first Ctrl+C arms).
 Ctrl+U
 Sleep 400ms
 Ctrl+C
 Sleep 400ms
 Ctrl+C
-Sleep 1s
+Sleep 800ms
+
+# Cleanup: the scratch export directory and the sandbox.
+Hide
+Type "rm -rf /tmp/saya-walkthrough-record $W"
+Enter
+Sleep 500ms
