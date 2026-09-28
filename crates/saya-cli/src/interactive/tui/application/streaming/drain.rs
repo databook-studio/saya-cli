@@ -176,12 +176,21 @@ impl App {
                             .push(AgentCaptureOutcome::Captured(capture));
                     }
                 }
-                StreamMsg::QueryCaptureRefused { sql, connection } => {
-                    // The query ran but is over the capture budget: queued so
-                    // its completion pairs, clears the slot, names the gap.
+                StreamMsg::QueryCaptureRefused {
+                    sql,
+                    connection,
+                    reason,
+                } => {
+                    // The query ran but the capture was refused — the model's
+                    // view was truncated or redacted, or the result is over
+                    // the capture budget: queued so its completion pairs,
+                    // clears the slot, and names the reason (R3).
                     if !self.pending_queries_desync {
-                        self.agent_captures
-                            .push(AgentCaptureOutcome::Refused { sql, connection });
+                        self.agent_captures.push(AgentCaptureOutcome::Refused {
+                            sql,
+                            connection,
+                            reason,
+                        });
                     }
                 }
                 StreamMsg::Notice(message) => {

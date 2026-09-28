@@ -2,13 +2,18 @@
 //! TUI, and what it refuses.
 //!
 //! `DatabaseTools` carries an optional hook. When the TUI drives the turn, the
-//! hook forwards the typed result the model saw — or a budget refusal — onto
-//! the turn's stream channel, before the loop's `ToolCompleted` for the same
-//! call. Headless paths construct no hook, so nothing there changes.
+//! hook forwards the typed result the model saw — or a refusal with its reason
+//! — onto the turn's stream channel, before the loop's `ToolCompleted` for the
+//! same call. The refusal reasons (R3): the model's view was truncated or
+//! redacted ([`CaptureRefusalReason::ModelViewTruncated`] /
+//! [`CaptureRefusalReason::ModelViewRedacted`] — the capture may only hold a
+//! result the model received unchanged), or the result is over the accounted
+//! capture budget. Headless paths construct no hook, so nothing there changes.
 
 use std::fmt;
 use std::sync::Arc;
 
+use saya_agent::shape_tool_result;
 use saya_types::{QueryResult, SqlDialect};
 
 use super::DatabaseTools;
@@ -52,21 +57,45 @@ impl fmt::Debug for AgentCapture {
 }
 
 /// What the hook receives for one successful `bounded_sql_query`: the
-/// captured result, or the refusal when it is over the accounted budget —
-/// never a partial result.
+/// captured result, or the refusal with its reason — never a partial result.
 pub(crate) enum CaptureEvent {
     Captured(AgentCapture),
-    Refused { sql: String, connection: String },
+    Refused {
+        sql: String,
+        connection: String,
+        reason: CaptureRefusalReason,
+    },
+}
+
+/// Why the hook refused to hold one successful agent query's result — the
+/// reason the TUI's snapshot refusal names. The model-view reasons come from
+/// [`shape_tool_result`] computed with the loop's own budget: a capture may
+/// only hold a result the model received unchanged (R3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CaptureRefusalReason {
+    /// The model's message was cut to the conversation byte budget: it saw a
+    /// truncated prefix, so the full result is not its evidence.
+    ModelViewTruncated,
+    /// Redaction replaced secret-shaped material before the message reached
+    /// the model: it never saw those values.
+    ModelViewRedacted,
+    /// The result is over the accounted capture budget.
+    OverBudget,
 }
 
 impl fmt::Debug for CaptureEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CaptureEvent::Captured(capture) => f.debug_tuple("Captured").field(capture).finish(),
-            CaptureEvent::Refused { sql, connection } => f
+            CaptureEvent::Refused {
+                sql,
+                connection,
+                reason,
+            } => f
                 .debug_struct("Refused")
                 .field("sql", sql)
                 .field("connection", connection)
+                .field("reason", reason)
                 .finish(),
         }
     }
@@ -105,26 +134,44 @@ impl DatabaseTools {
             entry,
             executed,
             crate::interactive::tui::capture::CAPTURE_BUDGET_BYTES,
+            self.context_byte_budget,
         ));
     }
 }
 
-/// The event one successful query produces: captured when the result fits
-/// `budget` accounted bytes, refused otherwise — whole, never a partial.
-/// `budget` is a parameter so tests can exercise the refusal with a tiny one;
-/// production passes the shared capture budget.
+/// The event one successful query produces: captured when the model received
+/// the result unchanged and it fits `capture_budget` accounted bytes,
+/// refused with its reason otherwise — whole, never a partial.
+///
+/// The model-view gate (R3) comes first: `shape_tool_result` — the loop's
+/// own shaping, at `context_byte_budget`, the SAME budget the loop passes to
+/// `tool_message` for this turn — decides whether the model received the
+/// result at all. A truncated or redacted model view refuses the capture
+/// with that reason: the typed result would be evidence of data the model
+/// never saw. A lossless model view is then still bounded by the accounted
+/// capture budget, refused as over budget whole.
 pub(crate) fn capture_event(
     sql: &str,
     connection: &str,
     entry: &ConnectionEntry,
     executed: &ExecutedQuery,
-    budget: usize,
+    capture_budget: usize,
+    context_byte_budget: usize,
 ) -> CaptureEvent {
-    if accounted_bytes_within(&executed.result, budget).is_none() {
-        return CaptureEvent::Refused {
-            sql: sql.to_owned(),
-            connection: connection.to_owned(),
-        };
+    let refused = |reason| CaptureEvent::Refused {
+        sql: sql.to_owned(),
+        connection: connection.to_owned(),
+        reason,
+    };
+    let shaped = shape_tool_result(&executed.value, context_byte_budget);
+    if shaped.truncated {
+        return refused(CaptureRefusalReason::ModelViewTruncated);
+    }
+    if shaped.redactions > 0 {
+        return refused(CaptureRefusalReason::ModelViewRedacted);
+    }
+    if accounted_bytes_within(&executed.result, capture_budget).is_none() {
+        return refused(CaptureRefusalReason::OverBudget);
     }
     CaptureEvent::Captured(AgentCapture {
         sql: sql.to_owned(),

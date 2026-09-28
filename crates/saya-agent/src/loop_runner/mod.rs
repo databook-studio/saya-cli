@@ -17,7 +17,7 @@ use crate::{
 pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
-pub use tools::{MAX_TOOL_MESSAGE_BYTES, tool_message_cap};
+pub use tools::{MAX_TOOL_MESSAGE_BYTES, ShapedToolResult, shape_tool_result, tool_message_cap};
 
 /// Re-instruction pushed as a user-role message after the provider caps a
 /// response mid-answer. The incomplete response is discarded, never replayed:

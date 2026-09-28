@@ -8,7 +8,7 @@
 //! uses.
 
 use super::*;
-use crate::agent::tools::AgentCapture;
+use crate::agent::tools::{AgentCapture, CaptureRefusalReason};
 use crate::interactive::tui::capture::CapturedResult;
 use crate::interactive::tui::capture_agent::CaptureGap;
 use crate::interactive::tui::types::LastQuery;
@@ -195,6 +195,7 @@ fn refused_capture_clears_previous_capture() {
         StreamMsg::QueryCaptureRefused {
             sql: "SELECT 2".into(),
             connection: "analytics".into(),
+            reason: CaptureRefusalReason::OverBudget,
         },
         completed("1 row"),
     ]));
