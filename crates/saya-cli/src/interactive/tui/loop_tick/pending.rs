@@ -38,6 +38,7 @@ pub(crate) fn tick_pending(
             format,
             &mut app.last_query,
             &app.captured,
+            app.agent_captures.gap,
             session,
         );
         match outcome {
