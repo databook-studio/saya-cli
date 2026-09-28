@@ -45,6 +45,7 @@ impl App {
             last_query: None,
             captured: None,
             pending_queries: VecDeque::new(),
+            pending_queries_desync: false,
             wide_table: Default::default(),
             run_panel: None,
             runtime,
