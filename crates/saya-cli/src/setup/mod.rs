@@ -12,19 +12,39 @@ mod plan;
 mod recover;
 mod render;
 
+// S16 adapters: the interactive flow and its steps, the prompts and the
+// question sets, the probes, and the review renderer. The engine above stays
+// pure; everything terminal-shaped lives in these.
+pub(crate) mod flow;
+mod flow_commit;
+mod flow_options;
+mod flow_probe;
+mod flow_recover;
+mod probe;
+mod probe_database;
+mod probe_provider;
+mod prompt;
+mod prompt_database;
+mod prompt_provider;
+mod review;
+
 #[cfg(test)]
 #[path = "setup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "flow_tests.rs"]
+mod flow_tests;
 
 pub const CONFIG_FILE: &str = "config.toml";
 pub const CONNECTIONS_FILE: &str = "connections.toml";
 /// Existing files are read bounded; the same bound backs up and restores them.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
-pub use commit::{CommitReport, commit};
-pub use draft::{ProfileDraft, ProviderDraft, SetupDraft};
+pub use commit::commit;
+pub use draft::SetupDraft;
 pub use plan::{PlannedWrite, SetupPlan, plan};
-pub use recover::{MarkerEntry, PendingCommit, finish, pending, restore};
+pub use recover::pending;
 
 /// Everything the setup engine can fail with.
 #[derive(Debug, thiserror::Error)]

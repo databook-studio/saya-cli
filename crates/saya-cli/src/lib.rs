@@ -24,7 +24,7 @@ mod render;
 pub mod render_run;
 mod render_usage;
 mod runtime_profile;
-pub mod setup;
+mod setup;
 mod slash;
 mod stream_render;
 
