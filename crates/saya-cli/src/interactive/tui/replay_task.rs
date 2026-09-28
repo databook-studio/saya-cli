@@ -107,17 +107,28 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
     }
 }
 
-/// Applies a finished replay: the shared operation's output as a system
-/// block (exit 0) or an error block, skipped entirely when it is empty, and
-/// — only when the operation returned a replay — the latest selectable query
-/// plus the ephemeral capture. The
-/// capture honours the same accounted budget the direct-/sql path uses:
+/// Applies a finished replay. A success carrying the typed replay renders
+/// exactly like the direct-/sql path: one Table block — the box table, the
+/// scope line, the evidence line — and never the captured CLI text. The
+/// captured text is that same table tab-separated plus the evidence line,
+/// both re-derived here from the typed replay (the TUI's slash run passes no
+/// `--report`, so nothing else is on stdout), and a System block strips its
+/// tabs into concatenated words — the very defect this replaces — so the
+/// text is dropped entirely.
+///
+/// The capture honours the same accounted budget the direct-/sql path uses:
 /// `accounted` is the result's verdict against it — production passes
 /// [`super::capture::accounted_bytes`]; tests a small-budget walk via
 /// `accounted_bytes_within`, the seam [`super::capture::capture_within`]
 /// takes. Over budget the result is not captured and one visible system
 /// line names the way out; the query succeeded either way, so the replay
-/// is still selectable. A failed replay leaves both untouched.
+/// is still selectable.
+///
+/// A failure — a non-zero exit or no typed replay — keeps the text block:
+/// the operation's output as a system or error block, skipped entirely when
+/// it is empty. A typed replay riding a non-zero exit (a successful
+/// execution whose later step refused; unreachable from the TUI's slash
+/// run) still promotes and captures, as before.
 pub(crate) fn complete(
     done: ReplayDone,
     accounted: Option<usize>,
@@ -125,28 +136,54 @@ pub(crate) fn complete(
     last_query: &mut Option<LastQuery>,
     captured: &mut Option<CapturedResult>,
 ) {
-    // The output block — unless there is nothing to say: a replay whose
-    // captured output and stderr are both empty is no block at all, since
-    // an empty block is a transcript glitch, not a message.
-    if !done.text.is_empty() {
-        if done.code == 0 {
-            transcript.push(BlockKind::System, done.text);
-        } else {
-            transcript.push(BlockKind::Error, done.text);
+    match done.replay {
+        Some(replay) if done.code == 0 => {
+            let table = super::table::with_scope_line(
+                super::table::format_table(&replay.result),
+                Some(replay.connection.as_str()),
+                &replay.result.executed_sql,
+            );
+            *last_query = Some(LastQuery {
+                sql: replay.sql,
+                connection: Some(replay.connection),
+            });
+            transcript.push(
+                BlockKind::Table,
+                format!("{table}\n{}", replay.evidence.human_line()),
+            );
+            super::capture::capture_within(
+                captured,
+                replay.result,
+                replay.evidence,
+                accounted,
+                transcript,
+            );
         }
-    }
-    if let Some(replay) = done.replay {
-        *last_query = Some(LastQuery {
-            sql: replay.sql,
-            connection: Some(replay.connection),
-        });
-        super::capture::capture_within(
-            captured,
-            replay.result,
-            replay.evidence,
-            accounted,
-            transcript,
-        );
+        otherwise => {
+            // The output block — unless there is nothing to say: a replay
+            // whose captured output and stderr are both empty is no block at
+            // all, since an empty block is a transcript glitch, not a message.
+            if !done.text.is_empty() {
+                if done.code == 0 {
+                    transcript.push(BlockKind::System, done.text);
+                } else {
+                    transcript.push(BlockKind::Error, done.text);
+                }
+            }
+            if let Some(replay) = otherwise {
+                *last_query = Some(LastQuery {
+                    sql: replay.sql,
+                    connection: Some(replay.connection),
+                });
+                super::capture::capture_within(
+                    captured,
+                    replay.result,
+                    replay.evidence,
+                    accounted,
+                    transcript,
+                );
+            }
+        }
     }
 }
 
