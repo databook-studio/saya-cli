@@ -13,16 +13,27 @@ use crate::render::RenderFormat;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_run_action(
-    action: SessionAction,
+    action: &mut Option<SessionAction>,
     transcript: &mut Transcript,
     runtime: &RuntimeConfig,
     state_db: &saya_store::SqliteStateStore,
     format: RenderFormat,
     session: &mut SessionRuntime,
 ) -> Option<Dispatch> {
-    match action {
+    // The arm this helper owns. Anything else is left in `action`
+    // untouched for the next helper in the chain.
+    if !matches!(action, Some(SessionAction::Run(_))) {
+        return None;
+    }
+    let current = action.take()?;
+    match current {
         SessionAction::Run(tail) => apply_run(tail, transcript, runtime, state_db, format, session),
-        _ => None,
+        // The guard above decided ownership; if it ever drifts, put the
+        // action back and report "not mine" rather than dropping it.
+        other => {
+            *action = Some(other);
+            None
+        }
     }
 }
 
@@ -64,24 +75,30 @@ fn apply_run(
             if let Some(seed) = seed.as_ref() {
                 allow.extend(seed.forwarded.iter().cloned());
             }
-            return Some(Dispatch::RunPanel {
+            Some(Dispatch::RunPanel {
                 goal,
                 allow,
                 budget,
-            });
+            })
         }
         Ok(RunTail::Manage(command)) => {
             dispatch_runs::run_management_command(transcript, runtime, state_db, format, command);
+            Some(Dispatch::Handled)
         }
-        Ok(RunTail::Resume(run_id)) => transcript.push(
-            BlockKind::System,
-            format!(
-                "Resuming run {run_id} streams to the real terminal, which \
-                 the TUI does not own while the panel is up — resume it \
-                 from a shell: `saya run resume {run_id}`."
-            ),
-        ),
-        Err(message) => transcript.push(BlockKind::Error, message),
+        Ok(RunTail::Resume(run_id)) => {
+            transcript.push(
+                BlockKind::System,
+                format!(
+                    "Resuming run {run_id} streams to the real terminal, which \
+                     the TUI does not own while the panel is up — resume it \
+                     from a shell: `saya run resume {run_id}`."
+                ),
+            );
+            Some(Dispatch::Handled)
+        }
+        Err(message) => {
+            transcript.push(BlockKind::Error, message);
+            Some(Dispatch::Handled)
+        }
     }
-    None
 }

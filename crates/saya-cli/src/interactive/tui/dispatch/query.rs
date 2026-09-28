@@ -13,14 +13,28 @@ use crate::slash::{ExportMode, ExportRequest};
 use saya_types::{ExecutionEvidence, ResultScope};
 
 pub(super) fn apply_query_actions(
-    action: SessionAction,
+    action: &mut Option<SessionAction>,
     transcript: &mut Transcript,
     state: &mut SessionState,
     last_query: &mut Option<LastQuery>,
     captured: &Option<super::super::capture::CapturedResult>,
     capture_gap: Option<CaptureGap>,
 ) -> Option<Dispatch> {
-    match action {
+    // The arms this helper owns; anything else stays in `action` for the
+    // next helper in the chain.
+    if !matches!(
+        action,
+        Some(
+            SessionAction::Export(_)
+                | SessionAction::Report(_)
+                | SessionAction::Chart(_)
+                | SessionAction::Explain(_)
+        )
+    ) {
+        return None;
+    }
+    let current = action.take()?;
+    match current {
         SessionAction::Export(request) => apply_export(
             request,
             transcript,
@@ -31,11 +45,16 @@ pub(super) fn apply_query_actions(
         ),
         SessionAction::Report(request) => {
             apply_report(&request, transcript, captured);
-            None
+            Some(Dispatch::Handled)
         }
         SessionAction::Chart(args) => apply_chart(args, transcript, state, last_query),
         SessionAction::Explain(arg) => apply_explain(arg, transcript, state, last_query),
-        _ => None,
+        // The guard decided ownership; if it ever drifts, put the action
+        // back and report "not mine" rather than dropping it.
+        other => {
+            *action = Some(other);
+            None
+        }
     }
 }
 
@@ -108,7 +127,7 @@ fn apply_export(
     // from the capture, with no query dispatched at all.
     if request.mode == Some(ExportMode::Snapshot) {
         export_snapshot(&request, captured, capture_gap, transcript);
-        return None;
+        return Some(Dispatch::Handled);
     }
     match last_query.as_ref() {
         Some(lq) => {
@@ -124,7 +143,7 @@ fn apply_export(
             "Nothing to export yet — run a query first.",
         ),
     }
-    None
+    Some(Dispatch::Handled)
 }
 
 /// Writes the captured result to the destination, naming the execution and
@@ -204,7 +223,7 @@ fn apply_chart(
             "Nothing to chart yet — run a query first.",
         ),
     }
-    None
+    Some(Dispatch::Handled)
 }
 
 fn apply_explain(
@@ -222,7 +241,7 @@ fn apply_explain(
             BlockKind::System,
             "Nothing to explain — run a query first, or pass SQL: /explain SELECT ...",
         );
-        return None;
+        return Some(Dispatch::Handled);
     };
     let trimmed = sql.trim().trim_end_matches(';').trim();
     Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {

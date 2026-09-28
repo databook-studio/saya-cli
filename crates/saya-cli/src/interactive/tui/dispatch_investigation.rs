@@ -80,7 +80,9 @@ pub(super) fn fill_save_from_last_query(
 /// — the only subcommand that touches a database — returns a
 /// [`Dispatch::ReplayTask`] and runs on a worker thread (D13); every other
 /// subcommand is local file I/O and stays synchronous here, its rendered
-/// output pushed into the transcript as a system or error block.
+/// output pushed into the transcript as a system or error block and `None`
+/// returned — which the session-actions caller reports up the dispatch
+/// chain as handled.
 ///
 /// The TUI runs under the alternate screen, so the synchronous dispatcher's
 /// `emit` output is captured through the thread-local seam instead of going
