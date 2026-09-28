@@ -5,11 +5,11 @@
 //! terminal is needed.
 
 use super::draft::{ProfileDraft, ProviderDraft};
-use super::flow::{FlowOptions, run_with};
-use super::probe::{
-    DatabaseProbe, FlowProbes, ProbeResult, ProviderProbe, classify, database_with, ping_request,
-    provider_with,
-};
+use super::flow::run_with;
+use super::flow_options::FlowOptions;
+use super::probe::{DatabaseProbe, FlowProbes, ProbeResult, ProviderProbe};
+use super::probe_database::{classify, database_with};
+use super::probe_provider::{ping_request, provider_with};
 use super::review;
 use super::{SetupDraft, plan};
 use crate::cli::GlobalOptions;

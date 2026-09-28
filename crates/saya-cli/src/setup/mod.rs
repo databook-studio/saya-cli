@@ -12,12 +12,20 @@ mod plan;
 mod recover;
 mod render;
 
-// S16 adapters: the interactive flow, its prompts, the probes, and the
-// review renderer. The engine above stays pure; everything terminal-shaped
-// lives in these.
+// S16 adapters: the interactive flow and its steps, the prompts and the
+// question sets, the probes, and the review renderer. The engine above stays
+// pure; everything terminal-shaped lives in these.
 pub(crate) mod flow;
+mod flow_commit;
+mod flow_options;
+mod flow_probe;
+mod flow_recover;
 mod probe;
+mod probe_database;
+mod probe_provider;
 mod prompt;
+mod prompt_database;
+mod prompt_provider;
 mod review;
 
 #[cfg(test)]
