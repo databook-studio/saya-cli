@@ -40,9 +40,12 @@ use clap::Parser;
 pub use app::run;
 pub use cli::{
     ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
-    ForgetReasonArg, FormatArg, GlobalOptions, ReviewDecisionArg, RunCommand, ThemeArg,
+    ForgetReasonArg, FormatArg, GlobalOptions, InvestigationCommand, ReviewDecisionArg, RunCommand,
+    ThemeArg,
 };
-pub use commands::{capture_output_start, capture_output_take, run_contracts, run_management};
+pub use commands::{
+    capture_output_start, capture_output_take, run_contracts, run_investigation, run_management,
+};
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 
 #[cfg(test)]
