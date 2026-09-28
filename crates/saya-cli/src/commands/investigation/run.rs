@@ -4,11 +4,14 @@
 //! an explicit local target and a review binding that goes stale when the
 //! definition revision, target identity, or referenced schema changes. No
 //! AI provider is constructed anywhere on this path, and the binding is
-//! written only after a successful execution.
+//! written only after a successful execution. The operation returns a typed
+//! [`RunOutcome`] (C3/D12) so adapters capture the replay instead of
+//! re-parsing rendered output.
 
 use super::{
     EXIT_INVESTIGATION_ERROR, EXIT_SAFETY, fingerprint,
     run_binding::{Review, refresh_binding, stale_message, staleness},
+    run_outcome::{Replay, RunOutcome},
     run_report, store_failure,
 };
 use crate::commands::{
@@ -45,23 +48,23 @@ pub(super) async fn run(
     can_prompt: bool,
     state_db: &SqliteStateStore,
     request: RunRequest<'_>,
-) -> Result<i32, Box<dyn std::error::Error>> {
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
     // Flag-usage refusals come first: they are command-line errors, checked
     // before any store, connection, or query work (invariant 1).
     if let Some(message) = run_report::usage_error(&request) {
-        return failure_message(EXIT_INVESTIGATION_ERROR, message, format);
+        return no_replay(failure_message(EXIT_INVESTIGATION_ERROR, message, format));
     }
     let id = match super::parse_investigation_id(request.id) {
         Ok(id) => id,
-        Err((code, message)) => return failure_message(code, message, format),
+        Err((code, message)) => return no_replay(failure_message(code, message, format)),
     };
     let definition = match repo.get(&id) {
         Ok(definition) => definition,
-        Err(error) => return store_failure(error, id.as_str(), format),
+        Err(error) => return no_replay(store_failure(error, id.as_str(), format)),
     };
     let binding = match repo.get_binding(&id) {
         Ok(binding) => binding,
-        Err(error) => return store_failure(error, id.as_str(), format),
+        Err(error) => return no_replay(store_failure(error, id.as_str(), format)),
     };
     // Target = `--connection` else the binding's profile; never the
     // active or default profile (invariant 1).
@@ -69,20 +72,20 @@ pub(super) async fn run(
         .connection
         .or(binding.as_ref().map(|b| b.profile.as_str()))
     else {
-        return failure_message(
+        return no_replay(failure_message(
             EXIT_INVESTIGATION_ERROR,
             "no local connection mapped: pass --connection <profile>".to_string(),
             format,
-        );
+        ));
     };
     let profile = match runtime.named_profile(target) {
         Ok(profile) => profile,
         Err(error) => {
-            return failure(
+            return no_replay(failure(
                 3,
                 ConnectionError::invalid_configuration(error.to_string()),
                 format,
-            );
+            ));
         }
     };
     if profile.dialect() != definition.dialect {
@@ -91,7 +94,7 @@ pub(super) async fn run(
             definition.dialect.as_str(),
             profile.dialect().as_str(),
         );
-        return failure_message(EXIT_INVESTIGATION_ERROR, message, format);
+        return no_replay(failure_message(EXIT_INVESTIGATION_ERROR, message, format));
     }
     let mut review = Review {
         target: target.to_string(),
@@ -115,7 +118,7 @@ pub(super) async fn run(
             format,
         )
         .await;
-        return Ok(EXIT_SAFETY);
+        return Ok(RunOutcome::plain(EXIT_SAFETY));
     };
     if let Err(error) = connector.connect().await {
         audit(
@@ -128,7 +131,7 @@ pub(super) async fn run(
             format,
         )
         .await;
-        return failure(3, error, format);
+        return no_replay(failure(3, error, format));
     }
     // The run re-gates the SQL through the same read-only preparation the
     // execution uses: a document tampered into write SQL is refused by the
@@ -144,7 +147,7 @@ pub(super) async fn run(
             format,
         )
         .await;
-        return failure(EXIT_SAFETY, error, format);
+        return no_replay(failure(EXIT_SAFETY, error, format));
     }
     // Review authority is the SQL itself (A2): the referenced parts are
     // recomputed on every run and the stored `objects` field stays
@@ -164,7 +167,7 @@ pub(super) async fn run(
                     format,
                 )
                 .await;
-                return failure(3, error, format);
+                return no_replay(failure(3, error, format));
             }
         }
     } else {
@@ -176,13 +179,13 @@ pub(super) async fn run(
     review.fingerprint = match analysis {
         fingerprint::Analysis::Complete(combined) => combined,
         fingerprint::Analysis::Unverifiable(reason) if !request.revalidate => {
-            return failure_message(
+            return no_replay(failure_message(
                 EXIT_INVESTIGATION_ERROR,
                 format!(
                     "schema review unavailable: {reason}; pass --revalidate to run without a verified schema review"
                 ),
                 format,
-            );
+            ));
         }
         fingerprint::Analysis::Unverifiable(_) => None,
     };
@@ -195,7 +198,11 @@ pub(super) async fn run(
         review.fingerprint.as_deref(),
     );
     if !reasons.is_empty() && !request.revalidate {
-        return failure_message(EXIT_INVESTIGATION_ERROR, stale_message(&reasons), format);
+        return no_replay(failure_message(
+            EXIT_INVESTIGATION_ERROR,
+            stale_message(&reasons),
+            format,
+        ));
     }
 
     let started_unix_ms = unix_now_ms();
@@ -252,7 +259,18 @@ pub(super) async fn run(
             // The report (S12b) is written last, from this execution's
             // result and evidence, after the output is out (invariants 2
             // and 3); without `--report` this is the plain success exit.
-            run_report::write(&result, &evidence, &request, format)
+            // The execution itself succeeded either way, so the outcome
+            // carries the replay for the caller to capture (D12).
+            let code = run_report::write(&result, &evidence, &request, format)?;
+            Ok(RunOutcome {
+                code,
+                replay: Some(Replay {
+                    result,
+                    evidence,
+                    sql: definition.sql.clone(),
+                    connection: review.target.clone(),
+                }),
+            })
         }
         Err(error) => {
             audit(
@@ -265,9 +283,17 @@ pub(super) async fn run(
                 format,
             )
             .await;
-            failure(EXIT_SAFETY, error, format)
+            no_replay(failure(EXIT_SAFETY, error, format))
         }
     }
+}
+
+/// Wraps a code-only output result — a refusal or failure whose diagnostic
+/// is already emitted — as the no-replay outcome.
+fn no_replay(
+    result: Result<i32, Box<dyn std::error::Error>>,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    result.map(RunOutcome::plain)
 }
 
 /// Every audit on the replay path is a `Query` operation; only status, rows,
