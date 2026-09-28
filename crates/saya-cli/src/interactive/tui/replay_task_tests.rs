@@ -19,6 +19,7 @@ use crate::interactive::session_state::SessionState;
 use crate::interactive::tui::application::tests_support::{idle_app, unused_runtime};
 use crate::interactive::tui::capture::{CapturedResult, accounted_bytes, unix_now_ms};
 use crate::interactive::tui::loop_tick::tick_workers;
+use crate::interactive::tui::worker_permits::{WorkerPermit, test_permit_lock_async};
 use crate::render::{RenderFormat, TerminalEvent};
 use crate::slash::{ExportMode, ExportRequest};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
@@ -224,7 +225,11 @@ fn replay_runs_in_background_and_loop_keeps_ticking() {
     let mut state = SessionState::new("test", None, "model");
     let store = session_store(temp_dir("ticking").as_path());
     let (gate, body) = gated(done(0, "the replay result", Some(replay())));
-    put_running_replay(&mut app, spawn_with(body), "recent-orders");
+    put_running_replay(
+        &mut app,
+        spawn_with(WorkerPermit::for_tests(), body),
+        "recent-orders",
+    );
 
     // While the worker waits, polls apply nothing and keys keep working.
     tick_workers(&mut app, &store, &mut state);
@@ -270,7 +275,7 @@ fn replay_runs_in_background_and_loop_keeps_ticking() {
 fn detached_replay_late_completion_changes_nothing() {
     let mut app = idle_app();
     let (gate, body) = gated(done(0, "the replay result", Some(replay())));
-    let rx = spawn_with(body);
+    let rx = spawn_with(WorkerPermit::for_tests(), body);
     put_running_replay(&mut app, rx, "recent-orders");
 
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
@@ -674,7 +679,7 @@ fn failed_replay_with_no_output_pushes_no_block() {
 fn second_replay_while_running_is_refused_or_queued() {
     let mut app = idle_app();
     let (gate, body) = gated(done(0, "the replay result", None));
-    let rx = spawn_with(body);
+    let rx = spawn_with(WorkerPermit::for_tests(), body);
     put_running_replay(&mut app, rx, "recent-orders");
 
     // A second replay submitted while one runs is queued, not dispatched.
@@ -710,7 +715,11 @@ fn second_replay_while_running_is_refused_or_queued() {
 
     // Ctrl+C detaches too, before reaching the quit arming.
     let (gate2, body2) = gated(done(0, "the replay result", None));
-    put_running_replay(&mut app, spawn_with(body2), "recent-orders");
+    put_running_replay(
+        &mut app,
+        spawn_with(WorkerPermit::for_tests(), body2),
+        "recent-orders",
+    );
     handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
     assert!(
         app.replay_task.is_none(),
@@ -731,7 +740,11 @@ fn running_replay_is_visible_in_the_status_bar() {
     let mut app = idle_app();
     let started = Instant::now();
     let (gate, body) = gated(done(0, "the replay result", None));
-    app.replay_task = Some((spawn_with(body), replay_task("recent-orders"), started));
+    app.replay_task = Some((
+        spawn_with(WorkerPermit::for_tests(), body),
+        replay_task("recent-orders"),
+        started,
+    ));
     app.request.started = Some(started);
     app.request.activity = Some("investigation recent-orders".into());
     let status = StatusView {
@@ -858,6 +871,10 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
     // The async-aware lock the await points below are held across.
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _env = ENV_LOCK.lock().await;
+    // The real worker holds one process-wide permit for its whole lifetime,
+    // so this test holds the permit lock across that lifetime — the cap
+    // tests must never see this worker's slot mid-held-phase.
+    let _permits = test_permit_lock_async().await;
     let root = temp_dir("worker-end-to-end");
     for dir in ["investigations", "config-home", "home"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();

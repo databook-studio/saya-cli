@@ -15,11 +15,15 @@
 //! Detach, not cancel: Esc/Ctrl+C drop the receiver (`App::detach_replay_task`)
 //! and the UI moves on. The worker is never joined and no cancellation token
 //! is wired, so the query may keep running server-side; its [`ReplayDone`]
-//! lands on a dropped channel and is discarded.
+//! lands on a dropped channel and is discarded. Detached or not, the worker
+//! holds one process-wide worker permit (`super::worker_permits`) from just
+//! before its spawn until its thread function returns, so detached replays
+//! still count against the cap.
 
 use super::capture::CapturedResult;
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
+use super::worker_permits::WorkerPermit;
 use crate::cli::InvestigationCommand;
 use crate::commands::{Replay, run_investigation_outcome};
 use crate::config::runtime::RuntimeConfig;
@@ -46,22 +50,33 @@ pub(crate) struct ReplayDone {
 }
 
 /// Spawns the replay on a worker thread with its own tokio runtime and
-/// returns a non-blocking receiver for its [`ReplayDone`].
-pub(crate) fn spawn(runtime: Arc<RuntimeConfig>, task: ReplayTask) -> Receiver<ReplayDone> {
-    spawn_with(move |tx| {
+/// returns a non-blocking receiver for its [`ReplayDone`]. The permit
+/// acquired by admission is moved into the thread: it is released only when
+/// the thread function returns — normally, on error, or on panic — so a
+/// detached replay keeps its slot and the cap stays honest.
+pub(crate) fn spawn(
+    permit: WorkerPermit,
+    runtime: Arc<RuntimeConfig>,
+    task: ReplayTask,
+) -> Receiver<ReplayDone> {
+    spawn_with(permit, move |tx| {
         let _ = tx.send(run_replay(&runtime, task));
     })
 }
 
 /// The spawn seam tests gate: run a caller-supplied body on the worker
 /// thread; the body hands its own [`ReplayDone`] to the channel (or not —
-/// that is the detach behaviour being tested).
-pub(crate) fn spawn_with<F>(body: F) -> Receiver<ReplayDone>
+/// that is the detach behaviour being tested). The permit is released only
+/// when the thread function returns.
+pub(crate) fn spawn_with<F>(permit: WorkerPermit, body: F) -> Receiver<ReplayDone>
 where
     F: FnOnce(&std::sync::mpsc::Sender<ReplayDone>) + Send + 'static,
 {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || body(&tx));
+    std::thread::spawn(move || {
+        let _permit = permit;
+        body(&tx)
+    });
     rx
 }
 /// Runs one replay through the shared typed operation, capturing the `emit`
