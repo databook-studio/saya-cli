@@ -86,6 +86,8 @@ pub(crate) async fn run_with_candidates(
             last_sql,
             session,
             agent_mode,
+            // Headless: no stream channel, no capture hook (C1).
+            None,
         )
         .await;
     }
