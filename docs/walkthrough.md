@@ -282,8 +282,10 @@ with the same sandbox environment, and shows the full journey:
   uploads anything. The recording writes `trap-report.md` (rows omitted).
 - `/investigation run <id>` runs **in the background**, like a `/sql`
   query: the status bar names the investigation and offers `Esc to detach`
-  while it runs, and the evidence line (`saved investigation: demo · 4 rows
-  · exec … · full result`) lands when it finishes. **Esc detaches a running
+  while it runs, and when it finishes the replayed result renders as a
+  table — the same presentation a direct `/sql` result gets — with the
+  evidence line (`saved investigation: demo · 4 rows · exec … · full
+  result`) beneath it. **Esc detaches a running
   replay** — detach, not cancel: the worker keeps going and the detached
   result is simply discarded. The replay in the recording targets
   `trap-query`, an imported twin of the same trap SQL: the tape cannot type
