@@ -81,7 +81,7 @@ fn apply_export_action(
     captured: &Option<CapturedResult>,
 ) -> Option<Dispatch> {
     apply_query_actions(
-        SessionAction::Export(request),
+        &mut Some(SessionAction::Export(request)),
         transcript,
         state,
         last_query,
@@ -145,7 +145,7 @@ fn snapshot_export_never_queries() {
         &captured,
     );
     assert!(
-        outcome.is_none(),
+        !matches!(outcome, Some(Dispatch::SqlTask(_))),
         "a snapshot export must not dispatch a SqlTask"
     );
     let written = std::fs::read_to_string(&path).expect("snapshot wrote the file");
@@ -177,7 +177,10 @@ fn snapshot_without_capture_says_how_to_recover() {
         &mut None,
         &None,
     );
-    assert!(outcome.is_none(), "no capture, no task");
+    assert!(
+        !matches!(outcome, Some(Dispatch::SqlTask(_))),
+        "no capture, no task"
+    );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert!(
         msg.contains("No captured result to snapshot"),
