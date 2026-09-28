@@ -10,6 +10,9 @@
 pub(crate) mod agent;
 mod application;
 mod atref;
+mod capture;
+#[cfg(test)]
+mod capture_tests;
 mod clipboard;
 mod complete;
 mod dispatch;
