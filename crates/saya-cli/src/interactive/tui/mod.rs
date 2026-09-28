@@ -31,6 +31,7 @@ mod input;
 mod keys;
 pub(crate) mod loop_tick;
 pub(crate) mod replay;
+mod replay_task;
 mod run_panel;
 mod run_panel_apply;
 #[cfg(test)]

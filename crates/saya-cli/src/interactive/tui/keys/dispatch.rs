@@ -112,12 +112,10 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             _ => {}
         }
     }
-    // Esc on a running direct-SQL command detaches it. Checked before the agent
-    // cancel path because `is_busy()` is also true while a SQL task runs, and a
-    // SQL task has no cancellation token — Esc must not claim it was
-    // cancelled, only that the UI moved on (see `App::detach_sql_task`).
-    if code == KeyCode::Esc && app.sql_task.is_some() {
-        app.detach_sql_task();
+    // Esc on a running direct-SQL command or saved-investigation replay detaches it —
+    // checked before the agent cancel path: `is_busy()` is also true while either runs,
+    // and neither has a cancellation token, so Esc must not claim cancellation.
+    if code == KeyCode::Esc && app.detach_in_flight_query() {
         return;
     }
     // Esc cancels an in-flight agent request. An agent stream owns a real
@@ -177,13 +175,13 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     app.ctrl_c_armed = false;
     match code {
         KeyCode::Char('c') if ctrl => {
-            // A running direct-SQL command is detached (not cancelled); an
-            // agent stream is cancelled; otherwise Ctrl+C clears input or arms
-            // a second press to quit. The SQL check comes first because
-            // `is_busy()` is true while a SQL task runs.
-            if app.sql_task.is_some() {
-                app.detach_sql_task();
-            } else if app.request.stream.is_some() {
+            // A running direct-SQL command or replay is detached (not cancelled); an agent
+            // stream is cancelled; otherwise Ctrl+C clears input or arms a quit. The
+            // query check comes first because `is_busy()` is true while either runs.
+            if app.detach_in_flight_query() {
+                return;
+            }
+            if app.request.stream.is_some() {
                 if let Some(stream) = &app.request.stream {
                     stream.cancel.cancel();
                 }
@@ -191,19 +189,22 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                     super::super::transcript::BlockKind::System,
                     "Stop requested — waiting for the worker to confirm.",
                 );
-            } else if !app.input.is_empty() {
+                return;
+            }
+            if !app.input.is_empty() {
                 app.input.clear();
                 app.overlays.menu = None;
-            } else if was_armed && app.try_quit() {
-                app.should_quit = true;
-            } else {
-                app.ctrl_c_armed = true;
-                app.transcript.push(
-                    super::super::transcript::BlockKind::System,
-                    "Press Ctrl+C again to exit.",
-                );
+                return;
             }
-            return;
+            if was_armed && app.try_quit() {
+                app.should_quit = true;
+                return;
+            }
+            app.ctrl_c_armed = true;
+            app.transcript.push(
+                super::super::transcript::BlockKind::System,
+                "Press Ctrl+C again to exit.",
+            );
         }
         KeyCode::Char('d') if ctrl && app.input.is_empty() => {
             return app.should_quit = app.try_quit();

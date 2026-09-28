@@ -51,7 +51,8 @@ pub(super) fn apply_session_action(
             // The saved-investigation adapter: the shared `run_investigation`
             // dispatcher plus the TUI's save-without-SQL fill (the last
             // selectable query, read-only here — the fill never edits it).
-            run_investigation(transcript, runtime, state_db, format, &command, last_query)
+            // `run` returns a replay task for the caller; the rest ran inline.
+            return run_investigation(transcript, runtime, state_db, format, &command, last_query);
         }
         SessionAction::Runs(run_id) => {
             let command = match run_id {

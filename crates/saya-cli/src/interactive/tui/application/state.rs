@@ -41,6 +41,7 @@ impl App {
             session_save: None,
             sql_task: None,
             compact_task: None,
+            replay_task: None,
             pending_session_save: None,
             last_query: None,
             captured: None,
@@ -57,18 +58,23 @@ impl App {
         }
     }
 
-    /// Whether the UI is busy: an agent request is streaming **or** a direct-SQL
-    /// command is running off-thread. The status-bar spinner, the queued-prompt
-    /// gate, and the submit-time queue check all read this so a running query is
-    /// treated like a streaming agent — visible, and a second command is held
-    /// rather than dispatched over the first.
+    /// Whether the UI is busy: an agent request is streaming, a direct-SQL
+    /// command is running off-thread, or a saved-investigation replay is
+    /// running off-thread. The status-bar spinner, the queued-prompt gate,
+    /// and the submit-time queue check all read this so a running query or
+    /// replay is treated like a streaming agent — visible, and a second
+    /// command is held rather than dispatched over the first.
     ///
-    /// The cancel paths (Esc, Ctrl+C in `keys.rs`) detach a SQL task *before*
-    /// they reach the agent-cancel branch, so broadening this predicate to cover
-    /// SQL tasks never makes Esc claim a query was cancelled when it was only
-    /// detached. See [`App::detach_sql_task`].
+    /// The cancel paths (Esc, Ctrl+C in `keys.rs`) detach a SQL task or a
+    /// replay *before* they reach the agent-cancel branch, so broadening
+    /// this predicate to cover off-thread queries never makes Esc claim a
+    /// query was cancelled when it was only detached. See
+    /// [`App::detach_sql_task`] and [`App::detach_replay_task`].
     pub(crate) fn is_busy(&self) -> bool {
-        self.request.stream.is_some() || self.sql_task.is_some() || self.compact_task.is_some()
+        self.request.stream.is_some()
+            || self.sql_task.is_some()
+            || self.compact_task.is_some()
+            || self.replay_task.is_some()
     }
 
     /// Number of visible text rows the input box should show when wrapped to

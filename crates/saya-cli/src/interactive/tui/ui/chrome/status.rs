@@ -3,7 +3,7 @@
 use super::super::surface::SPINNER;
 use super::super::theme::{accent, on_accent, secondary};
 use super::action_line::{
-    CANCEL_HINT, SEPARATOR, action_text, bare_action_width, busy_row_plan, running_call,
+    SEPARATOR, action_text, bare_action_width, busy_hint, busy_row_plan, running_call,
 };
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::types::App;
@@ -103,7 +103,8 @@ fn unseen_span(count: usize, bg: Color) -> Option<Span<'static>> {
 }
 
 /// Renders the status bar as a filled accent-tinted strip, with a spinner and
-/// hint while an agent request is streaming.
+/// hint while a request is in flight — the hint naming what Esc actually does
+/// (detach for an off-thread query, cancel for an agent stream).
 pub(in crate::interactive::tui) fn draw_status(
     frame: &mut Frame<'_>,
     app: &App,
@@ -123,13 +124,14 @@ pub(in crate::interactive::tui) fn draw_status(
             .started
             .map(|start| start.elapsed().as_secs())
             .unwrap_or(0);
-        // The stop affordance is reserved first: the cancel hint and the
-        // fixed chrome it rides with come off the frame width before
-        // anything elastic is sized, and what is left is spent down the
-        // shedding hierarchy — the routine status detail sheds, then the
-        // action detail truncates, and the notice yields last — so the hint
-        // is never what the row drops (audit F06: it painted last and paid
-        // for every other span's overflow).
+        // The stop affordance is reserved first: the busy hint and the fixed
+        // chrome it rides with come off the frame width before anything
+        // elastic is sized, and what is left is spent down the shedding
+        // hierarchy — the routine status detail sheds, then the action
+        // detail truncates, and the notice yields last — so the hint is
+        // never what the row drops (audit F06: it painted last and paid for
+        // every other span's overflow).
+        let hint = busy_hint(app);
         let segments = bar_spans(&words, full_fit(&words), bg);
         let widths: Vec<usize> = segments.iter().map(|span| span.width()).collect();
         let unseen_width = unseen.as_ref().map(|span| span.width()).unwrap_or(0);
@@ -142,9 +144,12 @@ pub(in crate::interactive::tui) fn draw_status(
         );
         let plan = busy_row_plan(
             area.width as usize,
-            unseen_width,
-            frame_width,
-            elapsed_width,
+            super::action_line::BusyChrome {
+                lead: unseen_width,
+                spinner: frame_width,
+                elapsed: elapsed_width,
+                hint: cell_width(hint),
+            },
             &widths,
             cell_width(&full_action),
             bare_action_width(app.request.activity.as_deref()),
@@ -170,16 +175,16 @@ pub(in crate::interactive::tui) fn draw_status(
         ));
         spans.push(Span::styled(SEPARATOR, bar));
         spans.extend(segments.into_iter().take(plan.status_segments));
-        // The cancel hint rides at the row's end whatever room is left: when
+        // The stop hint rides at the row's end whatever room is left: when
         // there is spare width, a padding span pushes it to the last column;
         // when there is none, it paints immediately, exactly as before.
         let used = spans.iter().map(Span::width).sum::<usize>();
-        let hint_width = cell_width(CANCEL_HINT);
+        let hint_width = cell_width(hint);
         if used + hint_width < area.width as usize {
             let pad = area.width as usize - used - hint_width;
             spans.push(Span::styled(" ".repeat(pad), bar));
         }
-        spans.push(Span::styled(CANCEL_HINT, bar));
+        spans.push(Span::styled(hint, bar));
         Line::from(spans)
     } else if app.overlays.selection_mode {
         let mut spans = Vec::new();
