@@ -261,6 +261,11 @@ pub enum Command {
         #[arg(long, value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Set up saya interactively: choose an AI provider and a database
+    /// profile, review the exact file changes, probe the database (and, only
+    /// with your consent, the provider), then write. Needs a terminal — for
+    /// scripts use `saya config init` or `saya demo`.
+    Setup,
 }
 
 #[derive(Debug, Clone, Subcommand)]
