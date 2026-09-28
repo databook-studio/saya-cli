@@ -104,12 +104,14 @@ pub(super) fn run_investigation(
     };
     // `run` alone goes to the background: it is dispatched as a task and the
     // completion applies the output and the typed replay (see
-    // `replay_task::complete`).
+    // `replay_task::complete`). The task carries this session's state store —
+    // the worker runs against the composed roots, never a re-resolved default.
     if let InvestigationCommand::Run { id, .. } = &command {
         return Some(Dispatch::ReplayTask(ReplayTask {
             id: id.clone(),
             command,
             format,
+            state_db: state_db.clone(),
         }));
     }
     // The shared dispatcher returns Ok(code) for every typed outcome (a store

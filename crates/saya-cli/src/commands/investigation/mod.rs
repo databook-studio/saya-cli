@@ -15,7 +15,6 @@ mod fingerprint;
 mod import;
 mod list;
 mod objects;
-mod paths;
 mod run;
 mod run_binding;
 mod run_outcome;
@@ -43,7 +42,8 @@ pub(super) const EXIT_STORE_UNAVAILABLE: i32 = 3;
 pub(super) const EXIT_SAFETY: i32 = 4;
 
 /// Runs one investigation subcommand against the on-disk repository for this
-/// invocation (D2 root: `SAYA_INVESTIGATIONS_DIR`, else beside the state DB).
+/// invocation (D2 root: the composed runtime's `investigations_root` —
+/// resolved once at composition, never re-read from the environment here).
 pub async fn run_investigation(
     command: InvestigationCommand,
     runtime: &RuntimeConfig,
@@ -52,7 +52,7 @@ pub async fn run_investigation(
     state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     run_investigation_in(
-        &InvestigationRepository::new(paths::investigations_root()),
+        &InvestigationRepository::new(runtime.investigations_root.clone()),
         command,
         runtime,
         format,
@@ -74,7 +74,7 @@ pub async fn run_investigation_outcome(
     state_db: &SqliteStateStore,
 ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
     run_investigation_outcome_in(
-        &InvestigationRepository::new(paths::investigations_root()),
+        &InvestigationRepository::new(runtime.investigations_root.clone()),
         command,
         runtime,
         format,

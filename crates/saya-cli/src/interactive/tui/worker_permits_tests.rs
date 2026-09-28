@@ -31,6 +31,8 @@ fn replay_task(id: &str) -> ReplayTask {
             overwrite: false,
         },
         format: RenderFormat::Text,
+        // Never written: the cap tests gate the worker before any store use.
+        state_db: saya_store::SqliteStateStore::new(std::path::PathBuf::new()),
     }
 }
 

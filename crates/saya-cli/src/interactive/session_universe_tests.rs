@@ -99,6 +99,7 @@ fn session_runtime(
         config_path: None,
         connections_path: None,
         cache_scope: PathBuf::from("/tmp/saya-session-universe"),
+        investigations_root: crate::config::runtime::temp_investigations_root(),
         secret_values: Default::default(),
     }
 }

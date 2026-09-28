@@ -93,6 +93,10 @@ fn replay_task(id: &str) -> ReplayTask {
         id: id.to_string(),
         command: run_command(id),
         format: RenderFormat::Text,
+        // The gated bodies never run the operation, so a lazy empty-path
+        // store is the right fixture here; the end-to-end test composes the
+        // real one.
+        state_db: SqliteStateStore::new(PathBuf::new()),
     }
 }
 
@@ -865,12 +869,13 @@ fn detached_refresh_export_writes_no_file() {
 /// The production worker end to end: it runs the shared typed operation
 /// (`run_investigation_outcome`) on its own thread with the output captured
 /// there, and the loop's completion captures the typed replay — source
-/// saved investigation, scope full — against a real SQLite profile.
+/// saved investigation, scope full — against a real SQLite profile. Every
+/// root is composed: the investigations root rides the runtime (resolved
+/// from the process-env map `load_with_sources` takes, never the live
+/// environment) and the state store rides the dispatched task, so no
+/// environment variable is mutated anywhere.
 #[tokio::test]
 async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
-    // The async-aware lock the await points below are held across.
-    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _env = ENV_LOCK.lock().await;
     // The real worker holds one process-wide permit for its whole lifetime,
     // so this test holds the permit lock across that lifetime — the cap
     // tests must never see this worker's slot mid-held-phase.
@@ -890,13 +895,13 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
     )
     .unwrap();
 
-    let previous_state = std::env::var_os("SAYA_STATE_DB");
-    let previous_investigations = std::env::var_os("SAYA_INVESTIGATIONS_DIR");
-    // SAFETY: the lock above serializes every test that points the
-    // process-global roots at a private directory.
-    unsafe { std::env::set_var("SAYA_STATE_DB", root.join("state.sqlite3")) };
-    unsafe { std::env::set_var("SAYA_INVESTIGATIONS_DIR", root.join("investigations")) };
-
+    // The composed runtime: the investigations root is resolved at
+    // composition from the process-env map this loader takes — the test's
+    // private root — and the state store is composed beside it.
+    let process = std::collections::BTreeMap::from([(
+        "SAYA_INVESTIGATIONS_DIR".to_string(),
+        root.join("investigations").display().to_string(),
+    )]);
     let options = crate::cli::GlobalOptions {
         connections: Some(root.join("connections.toml")),
         ..Default::default()
@@ -906,7 +911,7 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
             &options,
             root.join("config-home").as_path(),
             root.join("config-home").as_path(),
-            std::collections::BTreeMap::new(),
+            process,
         )
         .expect("the test runtime loads"),
     );
@@ -939,8 +944,9 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
         .to_string();
 
     // The real background replay: dispatch through the loop path. The app's
-    // runtime is the test runtime — the worker replays against the profile
-    // it resolves, not a dummy.
+    // runtime is the test runtime and the task carries the session's state
+    // store — the worker replays against the roots the dispatch composed,
+    // not a dummy.
     let mut app = idle_app();
     app.runtime = std::sync::Arc::clone(&runtime);
     let mut state = SessionState::new("test", None, "model");
@@ -949,6 +955,7 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
         id: id.clone(),
         command: run_command(&id),
         format: RenderFormat::Text,
+        state_db: state_db.clone(),
     });
     assert!(app.is_busy(), "the replay is in flight");
     assert_eq!(
@@ -988,13 +995,5 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
         app.transcript.blocks()
     );
 
-    match previous_state {
-        Some(value) => unsafe { std::env::set_var("SAYA_STATE_DB", value) },
-        None => unsafe { std::env::remove_var("SAYA_STATE_DB") },
-    }
-    match previous_investigations {
-        Some(value) => unsafe { std::env::set_var("SAYA_INVESTIGATIONS_DIR", value) },
-        None => unsafe { std::env::remove_var("SAYA_INVESTIGATIONS_DIR") },
-    }
     let _ = std::fs::remove_dir_all(root);
 }
