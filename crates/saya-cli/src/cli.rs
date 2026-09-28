@@ -540,6 +540,21 @@ pub enum InvestigationCommand {
         /// and reviewed.
         #[arg(long)]
         revalidate: bool,
+        /// Write the Markdown report for this replay's result to a file:
+        /// the same report the TUI's `/report` writes — SQL and provenance
+        /// by default, no rows. Written only after a successful replay; a
+        /// refused or failed write reports on stderr and exits 2, never
+        /// touching an existing destination without `--overwrite`.
+        #[arg(long, value_name = "PATH")]
+        report: Option<std::path::PathBuf>,
+        /// Include up to this many result rows in the report's table (at
+        /// most 100); omit the flag to write SQL and provenance only.
+        #[arg(long, value_name = "N")]
+        rows: Option<usize>,
+        /// Replace an existing report destination. Without it an existing
+        /// destination is refused, never clobbered.
+        #[arg(long)]
+        overwrite: bool,
     },
 }
 
