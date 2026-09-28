@@ -73,8 +73,15 @@ pub(crate) fn tick_workers(app: &mut App, store: &FsSessionStore, state: &mut Se
                 // for it (no agent stream is concurrent, so they are ours).
                 app.request.started = None;
                 app.request.activity = None;
+                // The capture budget verdict, the same walk the direct-SQL
+                // completion computes for its own capture.
+                let accounted = done
+                    .replay
+                    .as_ref()
+                    .and_then(|replay| super::super::capture::accounted_bytes(&replay.result));
                 replay_task::complete(
                     done,
+                    accounted,
                     &mut app.transcript,
                     &mut app.last_query,
                     &mut app.captured,

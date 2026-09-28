@@ -11,7 +11,7 @@ use super::super::keys::handle_key;
 use super::super::sql_task::{Followup, SqlTask};
 use super::super::transcript::{BlockKind, Transcript};
 use super::super::types::{App, LastQuery};
-use super::{ReplayDone, ReplayTask, spawn_with};
+use super::{ReplayDone, ReplayTask, complete, spawn_with};
 use crate::cli::InvestigationCommand;
 use crate::commands::Replay;
 use crate::interactive::session_prompt::StatusView;
@@ -305,6 +305,68 @@ fn detached_replay_late_completion_changes_nothing() {
     );
     assert!(app.captured.is_none(), "a detached replay never captures");
     assert!(app.last_query.is_none(), "a detached replay never promotes");
+}
+
+/// An oversize replay honours the same capture budget the direct-/sql path
+/// uses, through the same test-sized walk: over budget the result is not
+/// captured (any previous capture is cleared), one visible system line names
+/// the way out, and — the query having succeeded — the replay is still the
+/// latest selectable query.
+#[test]
+fn oversize_replay_is_not_captured_and_says_so() {
+    let big = QueryResult {
+        columns: vec!["text".to_string()],
+        rows: vec![serde_json::json!(["x".repeat(200)])],
+        row_count: 1,
+        truncated: false,
+        executed_sql: "SELECT text FROM t".to_string(),
+    };
+    // The existing test-sized budget seam (`capture::accounted_bytes_within`,
+    // the walk `capture_within` takes): a small budget refuses the big result
+    // and admits the small one.
+    let accounted = super::super::capture::accounted_bytes_within(&big, 64);
+    assert!(
+        accounted.is_none(),
+        "precondition: the big result refuses the budget"
+    );
+    assert!(
+        super::super::capture::accounted_bytes_within(&sample_result(), 64).is_some(),
+        "precondition: the small result stays within it"
+    );
+    let replay = Replay {
+        result: big,
+        evidence: saved_evidence(),
+        sql: "SELECT text FROM t".to_string(),
+        connection: "local".to_string(),
+    };
+    let mut transcript = Transcript::new();
+    let mut last_query: Option<LastQuery> = None;
+    let mut captured = Some(CapturedResult {
+        result: sample_result(),
+        evidence: saved_evidence(),
+    });
+    complete(
+        done(0, "the replay output", Some(replay)),
+        accounted,
+        &mut transcript,
+        &mut last_query,
+        &mut captured,
+    );
+    // The query succeeded: the replay is still selectable.
+    let last_query = last_query
+        .as_ref()
+        .expect("the oversize replay is still selectable");
+    assert_eq!(last_query.sql, "SELECT text FROM t");
+    assert_eq!(last_query.connection.as_deref(), Some("local"));
+    // Over budget: not captured, the previous capture cleared, one visible line.
+    assert!(captured.is_none(), "an oversize replay is not captured");
+    let note = last_block(&transcript, BlockKind::System).expect("the refusal is visible");
+    assert!(note.contains("Result not captured"), "{note}");
+    assert!(note.contains("larger than 32 MiB"), "{note}");
+    assert!(
+        note.contains("/export --refresh will re-run it"),
+        "the refusal names the way out: {note}"
+    );
 }
 
 /// A successful completion pushes the shared operation's output as a system

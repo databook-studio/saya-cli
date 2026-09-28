@@ -143,3 +143,64 @@ fn a_short_action_at_a_wide_width_paints_details_and_hint_together() {
         "the cancel affordance paints beside the full tail:\n{buffer}"
     );
 }
+
+/// A running direct-SQL command or saved-investigation replay has no
+/// cancellation token: Esc detaches it and discards the result. The hint
+/// must not promise a cancellation Esc does not perform — for those the row
+/// reads `(Esc to detach)`. An agent stream (the tests above) keeps
+/// `(Esc to cancel)`: its token really cancels. Both words are six cells, so
+/// the width plan is unchanged.
+#[test]
+fn a_running_sql_task_or_replay_hints_detach_not_cancel() {
+    use crate::cli::InvestigationCommand;
+    use crate::interactive::tui::application::tests_support::in_flight_task;
+    use crate::interactive::tui::replay_task::ReplayTask;
+    use crate::render::RenderFormat;
+    use std::sync::mpsc;
+
+    // A running direct-SQL command.
+    let mut app = empty_app();
+    app.sql_task = Some(in_flight_task());
+    app.request.started = Some(std::time::Instant::now());
+    app.request.activity = Some("query".into());
+    let buffer = render_buffer(&app, &fixed_status(), 100, 10);
+    assert!(
+        buffer.contains("Esc to detach"),
+        "a running SQL task hints detach:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("Esc to cancel"),
+        "a running SQL task never hints cancel:\n{buffer}"
+    );
+
+    // A running saved-investigation replay.
+    let mut app = empty_app();
+    let (_tx, rx) = mpsc::channel();
+    app.replay_task = Some((
+        rx,
+        ReplayTask {
+            id: "recent-orders".into(),
+            command: InvestigationCommand::Run {
+                id: "recent-orders".into(),
+                connection: None,
+                revalidate: false,
+                report: None,
+                rows: None,
+                overwrite: false,
+            },
+            format: RenderFormat::Text,
+        },
+        std::time::Instant::now(),
+    ));
+    app.request.started = Some(std::time::Instant::now());
+    app.request.activity = Some("investigation recent-orders".into());
+    let buffer = render_buffer(&app, &fixed_status(), 100, 10);
+    assert!(
+        buffer.contains("Esc to detach"),
+        "a running replay hints detach:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("Esc to cancel"),
+        "a running replay never hints cancel:\n{buffer}"
+    );
+}

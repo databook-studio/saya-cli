@@ -7,17 +7,15 @@
 //!
 //! The worker runs the shared typed entry (`run_investigation_outcome`, C3)
 //! — the same operation the headless `saya investigation run` takes — with
-//! its `emit` output captured through the thread-local seam, because a
-//! thread's capture buffer is its own. The store it needs is constructed
-//! from the same state-DB path the session resolved, so the replay's audit
-//! row and review binding are written exactly as a foreground run writes
-//! them.
+//! its `emit` output captured through the thread-local seam (a thread's
+//! capture buffer is its own). Its store is constructed from the same
+//! state-DB path the session resolved, so the replay's audit row and review
+//! binding are written exactly as a foreground run writes them.
 //!
 //! Detach, not cancel: Esc/Ctrl+C drop the receiver (`App::detach_replay_task`)
 //! and the UI moves on. The worker is never joined and no cancellation token
 //! is wired, so the query may keep running server-side; its [`ReplayDone`]
-//! lands on a dropped channel and is discarded — it can never touch the
-//! transcript, the capture, the selectable query, or an export file.
+//! lands on a dropped channel and is discarded.
 
 use super::capture::CapturedResult;
 use super::transcript::{BlockKind, Transcript};
@@ -66,7 +64,6 @@ where
     std::thread::spawn(move || body(&tx));
     rx
 }
-
 /// Runs one replay through the shared typed operation, capturing the `emit`
 /// output on this worker thread. The shape mirrors the foreground adapter:
 /// captured stdout wins unless empty (then stderr); an operation Err is the
@@ -79,9 +76,6 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
         .build()
     {
         Ok(handle) => {
-            // The worker owns its store, resolved from the same paths the
-            // session used: the audit row and review binding are written as
-            // a foreground run writes them.
             let state_db = saya_store::SqliteStateStore::new(crate::state_path::state_db_path());
             handle.block_on(run_investigation_outcome(
                 task.command,
@@ -115,11 +109,17 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
 
 /// Applies a finished replay: the shared operation's output as a system
 /// block (exit 0) or an error block, and — only when the operation returned
-/// a replay — the ephemeral capture (source and scope come from the shared
-/// operation's evidence) and the latest selectable query. A failed replay
-/// leaves both untouched.
+/// a replay — the latest selectable query plus the ephemeral capture. The
+/// capture honours the same accounted budget the direct-/sql path uses:
+/// `accounted` is the result's verdict against it — production passes
+/// [`super::capture::accounted_bytes`]; tests a small-budget walk via
+/// `accounted_bytes_within`, the seam [`super::capture::capture_within`]
+/// takes. Over budget the result is not captured and one visible system
+/// line names the way out; the query succeeded either way, so the replay
+/// is still selectable. A failed replay leaves both untouched.
 pub(crate) fn complete(
     done: ReplayDone,
+    accounted: Option<usize>,
     transcript: &mut Transcript,
     last_query: &mut Option<LastQuery>,
     captured: &mut Option<CapturedResult>,
@@ -130,14 +130,17 @@ pub(crate) fn complete(
         transcript.push(BlockKind::Error, done.text);
     }
     if let Some(replay) = done.replay {
-        *captured = Some(CapturedResult {
-            result: replay.result,
-            evidence: replay.evidence,
-        });
         *last_query = Some(LastQuery {
             sql: replay.sql,
             connection: Some(replay.connection),
         });
+        super::capture::capture_within(
+            captured,
+            replay.result,
+            replay.evidence,
+            accounted,
+            transcript,
+        );
     }
 }
 
