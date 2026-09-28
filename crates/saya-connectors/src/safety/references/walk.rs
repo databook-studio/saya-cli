@@ -35,6 +35,9 @@ struct CteScope {
 pub struct Extractor {
     /// Table-ish names as written, each split into its parts (1, 2 or 3).
     pub objects: Vec<Vec<String>>,
+    /// Per object, whether each part was quoted in the SQL; same shape as
+    /// `objects` (the parent module's contract).
+    pub object_quoting: Vec<Vec<bool>>,
     /// Column identifiers as written; unqualified names appear bare.
     pub columns: Vec<String>,
     /// `true` when an unmodelled construct was seen; lists may be incomplete.
@@ -47,20 +50,27 @@ pub struct Extractor {
     cte_scopes: HashMap<String, usize>,
     /// The enclosing `WITH` scopes, innermost last; see [`CteScope`].
     cte_frames: Vec<CteScope>,
-    seen_objects: HashSet<Vec<String>>,
+    seen_objects: HashSet<(Vec<String>, Vec<bool>)>,
     seen_columns: HashSet<String>,
 }
 
 impl Extractor {
-    /// Record a base table's parts, deduplicated in first-seen order. The bound
-    /// truncates and flags `partial` rather than growing without limit.
-    fn record_object(&mut self, parts: Vec<String>) {
-        if self.seen_objects.contains(&parts) {
+    /// Record a base table's parts and their quoting, deduplicated in
+    /// first-seen order. The dedup key includes the quoting: in a folding
+    /// engine `Orders` and `"Orders"` are different tables, so equal
+    /// spellings must not collapse them. The bound truncates and flags
+    /// `partial` rather than growing without limit.
+    fn record_object(&mut self, parts: Vec<String>, quoting: Vec<bool>) {
+        if self
+            .seen_objects
+            .contains(&(parts.clone(), quoting.clone()))
+        {
             return;
         }
-        self.seen_objects.insert(parts.clone());
+        self.seen_objects.insert((parts.clone(), quoting.clone()));
         if self.objects.len() < MAX_OBJECTS {
             self.objects.push(parts);
+            self.object_quoting.push(quoting);
         } else {
             self.partial = true;
         }
@@ -184,7 +194,8 @@ impl Visitor for Extractor {
                 if is_cte_reference(name, &self.cte_scopes) {
                     return ControlFlow::Continue(());
                 }
-                self.record_object(parts_of(name));
+                let (parts, quoting) = parts_of(name);
+                self.record_object(parts, quoting);
             }
             TableFactor::Derived { .. } | TableFactor::NestedJoin { .. } => {
                 // A subquery or parenthesised join contributes its own factors
@@ -222,7 +233,15 @@ fn is_cte_reference(name: &ObjectName, cte_scopes: &HashMap<String, usize>) -> b
     name.0.len() == 1 && cte_scopes.contains_key(&name.0[0].value)
 }
 
-/// The parts of a relation name, exactly as written (case preserved).
-fn parts_of(name: &ObjectName) -> Vec<String> {
-    name.0.iter().map(|ident| ident.value.clone()).collect()
+/// The parts of a relation name, exactly as written (case preserved), with
+/// whether each part was quoted — any quote style counts, since every engine
+/// matches a quoted identifier exactly.
+fn parts_of(name: &ObjectName) -> (Vec<String>, Vec<bool>) {
+    (
+        name.0.iter().map(|ident| ident.value.clone()).collect(),
+        name.0
+            .iter()
+            .map(|ident| ident.quote_style.is_some())
+            .collect(),
+    )
 }
