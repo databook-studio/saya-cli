@@ -50,6 +50,9 @@ pub(crate) async fn run_prompt_with_sink(
     // The agent's task posture, threaded like `approval`: the session's
     // `/mode` state at the composition root.
     agent_mode: AgentMode,
+    // The TUI's capture hook, `Some` only where a stream channel exists; the
+    // headless paths pass `None` and the tools never capture (C1/C2).
+    capture: Option<tools::CaptureHook>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let inputs = prepare_turn(runtime, &overrides, can_prompt)
         .await
@@ -69,6 +72,7 @@ pub(crate) async fn run_prompt_with_sink(
         last_sql,
         session,
         agent_mode,
+        capture,
     )
     .await
 }
@@ -94,6 +98,8 @@ pub(crate) async fn run_prompt_with_inputs(
     session: Option<Arc<SessionUniverse>>,
     // The agent's task posture, threaded like `approval`.
     agent_mode: AgentMode,
+    // The TUI's capture hook (C1); `None` for every headless caller.
+    capture: Option<tools::CaptureHook>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let ai = inputs.ai;
     let provider = inputs.provider;
@@ -231,7 +237,9 @@ pub(crate) async fn run_prompt_with_inputs(
         // The session's bound workspace — the only file I/O the read tools
         // reach. `None` (the one-shot `ask` path) leaves them denying with
         // their typed error.
-        .with_workspace(session.as_ref().and_then(|session| session.workspace())),
+        .with_workspace(session.as_ref().and_then(|session| session.workspace()))
+        // The TUI's capture hook (C1); `None` headless.
+        .with_capture(capture),
     );
     let request = AgentRequest {
         prompt: prompt.into(),

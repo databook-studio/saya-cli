@@ -113,7 +113,7 @@ impl DatabaseTools {
                 // Best-effort: a missing receipt/log or a fail-closed detector
                 // records nothing; the turn is never failed by detection.
                 self.detect_and_record_overrides(sql, entry.dialect);
-                let result = crate::agent::state_tools::query(
+                let executed = crate::agent::state_tools::query_typed(
                     entry.connector.as_ref(),
                     sql,
                     self.max_rows,
@@ -127,10 +127,17 @@ impl DatabaseTools {
                         sql,
                         entry.dialect,
                         entry.profile_id.as_deref(),
-                        result.as_ref().ok(),
+                        executed.as_ref().ok().map(|ok| &ok.value),
                     );
                 }
-                result
+                // The capture hook fires before this returns, so the typed
+                // result the model saw reaches the TUI before the loop's
+                // ToolCompleted for the same call. Only here, only on Ok —
+                // never fan-out or the probe tools.
+                if let Ok(executed) = &executed {
+                    self.emit_query_capture(&arguments, sql, entry, executed);
+                }
+                executed.map(|executed| executed.value)
             }
             "result_shape" => {
                 let sql = arguments

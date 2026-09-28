@@ -3,9 +3,9 @@ use saya_connectors::DatabaseConnector;
 use saya_store::{
     AuditEntry, AuditOperation, AuditStatus, AuditStore, SchemaStore, SqliteStateStore,
 };
-use saya_types::{ForeignKey, QueryRequest, SchemaTree, SqlDialect};
+use saya_types::{ForeignKey, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Rows returned to the MODEL from a tool call are capped small: the model
 /// reasons over a sample and should use aggregate SQL for counts, so feeding it
@@ -266,7 +266,34 @@ pub(crate) async fn query(
     store: Option<&SqliteStateStore>,
     profile_id: Option<&str>,
 ) -> Result<serde_json::Value, ToolError> {
+    query_typed(connector, sql, max_rows, store, profile_id)
+        .await
+        .map(|executed| executed.value)
+}
+
+/// One executed agent query: the serialized value the model receives, the
+/// typed result it was serialized from, the row cap actually applied, and the
+/// execution window in unix milliseconds.
+pub(crate) struct ExecutedQuery {
+    pub(crate) value: serde_json::Value,
+    pub(crate) result: QueryResult,
+    pub(crate) row_cap: usize,
+    pub(crate) started_unix_ms: i64,
+    pub(crate) finished_unix_ms: i64,
+}
+
+/// The typed variant of [`query`]: the same path, audit, and value — plus the
+/// typed result, the applied row cap, and the execution window, so the
+/// capture hook can hand the TUI exactly what the model saw.
+pub(crate) async fn query_typed(
+    connector: &dyn DatabaseConnector,
+    sql: &str,
+    max_rows: usize,
+    store: Option<&SqliteStateStore>,
+    profile_id: Option<&str>,
+) -> Result<ExecutedQuery, ToolError> {
     let started = Instant::now();
+    let started_unix_ms = unix_now_ms();
     // Cap the rows the MODEL sees (not the /sql display path, which keeps max_rows).
     let model_rows = model_row_cap(max_rows);
     match connector.execute(QueryRequest::new(sql, model_rows)).await {
@@ -283,7 +310,16 @@ pub(crate) async fn query(
                 )
                 .await;
             }
-            serde_json::to_value(result).map_err(|_| ToolError::QueryResultUnavailable)
+            let value =
+                serde_json::to_value(&result).map_err(|_| ToolError::QueryResultUnavailable)?;
+            let finished_unix_ms = unix_now_ms();
+            Ok(ExecutedQuery {
+                value,
+                result,
+                row_cap: model_rows,
+                started_unix_ms,
+                finished_unix_ms,
+            })
         }
         Err(error) => {
             if let (Some(store), Some(profile_id)) = (store, profile_id) {
@@ -304,6 +340,13 @@ pub(crate) async fn query(
             Err(ToolError::QueryFailedDetail(error.to_string()))
         }
     }
+}
+
+/// Current wall clock in unix milliseconds (0 before the epoch).
+fn unix_now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 async fn audit(

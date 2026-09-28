@@ -7,6 +7,7 @@ use saya_store::SqliteStateStore;
 use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
 
+mod capture;
 mod chart_tool;
 mod column_health;
 mod definitions;
@@ -42,6 +43,10 @@ pub(crate) use observations::{
 // `OverrideLog` types the `override_log` field; re-exported so the runtime can
 // drain it to emit one `KnowledgeOverridden` event.
 pub(crate) use override_log::OverrideLog;
+// The capture hook types (C1): the TUI builds the hook from its stream
+// channel; the runtime attaches it to the tools; the drain consumes the
+// messages it produces.
+pub(crate) use capture::{AgentCapture, CaptureEvent, CaptureHook};
 // The workspace tool bounds type the workspace tools' harness arguments.
 // Re-exported for tests only, so the sibling tests build oversized files and
 // over-bound directories against the exact bounds rather than copies of them
@@ -102,6 +107,12 @@ pub(crate) struct DatabaseTools {
     /// typed error: no workspace, no read. An `Arc` so the engine's handle and
     /// the tools share one resolved root.
     pub(super) workspace: Option<Arc<Workspace>>,
+    /// The TUI's capture hook (C1): after one successful single-connection
+    /// `bounded_sql_query` it receives the typed result the model saw (or the
+    /// over-budget refusal), before the tool's result returns to the loop.
+    /// `None` — every headless path — leaves behaviour identical: no hook, no
+    /// capture, no message.
+    pub(super) capture_hook: Option<CaptureHook>,
 }
 
 impl DatabaseTools {
@@ -146,6 +157,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
+            capture_hook: None,
         }
     }
 
@@ -171,6 +183,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
+            capture_hook: None,
         }
     }
 
@@ -196,6 +209,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
+            capture_hook: None,
         }
     }
 
@@ -224,6 +238,14 @@ impl DatabaseTools {
         self
     }
 
+    /// Attaches the TUI's capture hook (C1). Only the `bounded_sql_query` arm
+    /// consults it, only on success; every headless path passes `None` and
+    /// nothing captures.
+    pub(crate) fn with_capture(mut self, capture_hook: Option<CaptureHook>) -> Self {
+        self.capture_hook = capture_hook;
+        self
+    }
+
     #[cfg(test)]
     pub(super) fn with_registry_and_fan_out_limits(
         registry: ConnectionRegistry,
@@ -244,6 +266,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
+            capture_hook: None,
         }
     }
 
@@ -268,6 +291,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
+            capture_hook: None,
         }
     }
 }
