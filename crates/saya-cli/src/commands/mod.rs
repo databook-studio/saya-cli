@@ -3,6 +3,7 @@ pub(crate) mod connection;
 pub(crate) mod connection_schema;
 mod connection_schema_cache;
 mod contracts;
+mod investigation;
 mod output;
 mod query;
 pub(crate) mod query_input;
@@ -14,6 +15,7 @@ use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 
 pub use contracts::run_contracts;
+pub use investigation::run_investigation;
 pub use output::{capture_output_start, capture_output_take, result};
 pub use run::run_management;
 // The TUI's run panel adapter surface: the panel drives the same fresh-run
@@ -73,6 +75,9 @@ pub async fn run(
         }
         Command::Contracts { command } => {
             contracts::run_contracts(command, runtime, format, &state).await
+        }
+        Command::Investigation { command } => {
+            investigation::run_investigation(command, runtime, format)
         }
         Command::Run {
             prompt,
