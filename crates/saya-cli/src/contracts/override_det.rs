@@ -405,6 +405,7 @@ mod tests {
         // is asserting the fixture reaches the branch under test.
         let refs = SqlReferences {
             objects: vec![vec!["rental".to_string()]],
+            object_quoting: vec![vec![false]],
             columns: vec!["rental_date".to_string()],
             partial: true,
         };
