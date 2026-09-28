@@ -1,0 +1,135 @@
+//! The headless `saya investigation` adapter (S6): save, list, show, and
+//! delete portable saved-investigation documents through
+//! `saya_store::investigations::InvestigationRepository`.
+//!
+//! One operation, multiple adapters: this is the single dispatcher the clap
+//! subcommand uses today and the slash/TUI adapters (S7/S9) will reuse;
+//! behavior lives in the per-operation modules and the repository. Saving
+//! validates and never executes — no AI provider is constructed anywhere in
+//! this module, and nothing here connects to a database.
+
+mod connection;
+mod delete;
+mod list;
+mod paths;
+mod save;
+mod save_input;
+mod show;
+#[cfg(test)]
+mod tests;
+
+use crate::cli::InvestigationCommand;
+use crate::config::runtime::RuntimeConfig;
+use crate::render::RenderFormat;
+use saya_store::{InvestigationRepository, StoreError};
+use saya_types::investigation::InvestigationId;
+
+/// Exit code for typed investigation-command failures (usage and domain
+/// errors); ad-hoc per command like the rest of the crate, matching
+/// `contracts`.
+pub(super) const EXIT_INVESTIGATION_ERROR: i32 = 2;
+/// Exit code when the investigations store cannot be read or opened.
+pub(super) const EXIT_STORE_UNAVAILABLE: i32 = 3;
+/// Exit code when the safety layer refuses the SQL — the code `query` uses.
+pub(super) const EXIT_SAFETY: i32 = 4;
+
+/// Runs one investigation subcommand against the on-disk repository for this
+/// invocation (D2 root: `SAYA_INVESTIGATIONS_DIR`, else beside the state DB).
+pub fn run_investigation(
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    run_investigation_in(
+        &InvestigationRepository::new(paths::investigations_root()),
+        command,
+        runtime,
+        format,
+    )
+}
+
+/// The repository-explicit seam: tests and later adapters pass the repository
+/// they own instead of relying on process env; the public entry is a
+/// one-liner over this.
+pub(crate) fn run_investigation_in(
+    repo: &InvestigationRepository,
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    match command {
+        InvestigationCommand::Save {
+            name,
+            description,
+            sql,
+            file,
+            connection,
+        } => save::save(
+            repo,
+            runtime,
+            format,
+            save_input::SaveRequest {
+                name: &name,
+                description: description.as_deref(),
+                sql,
+                file,
+                connection: connection.as_deref(),
+            },
+        ),
+        InvestigationCommand::List { limit, offset } => list::list(repo, format, limit, offset),
+        InvestigationCommand::Show { id } => show::show(repo, format, &id),
+        InvestigationCommand::Delete { id, revision } => {
+            delete::delete(repo, format, &id, revision)
+        }
+    }
+}
+
+/// Parses a user-supplied id. A malformed id cannot exist on disk, so it maps
+/// to the same "no investigation <id>" refusal the store's `NotFound` gets.
+pub(super) fn parse_investigation_id(raw: &str) -> Result<InvestigationId, (i32, String)> {
+    InvestigationId::parse(raw)
+        .map_err(|_| (EXIT_INVESTIGATION_ERROR, format!("no investigation {raw}")))
+}
+
+/// Emits a payload-free store error mapped onto its exit code, naming `id`
+/// for the not-found case.
+pub(super) fn store_failure(
+    error: StoreError,
+    id: &str,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let (code, message) = store_error_parts(&error, id);
+    super::output::failure_message(code, message, format)
+}
+
+/// The (exit code, message) mapping for a store error (invariant 5). Store
+/// errors are payload-free, so these words are all a store refusal gets.
+pub(super) fn store_error_parts(error: &StoreError, id: &str) -> (i32, String) {
+    match error {
+        StoreError::NotFound => (EXIT_INVESTIGATION_ERROR, format!("no investigation {id}")),
+        StoreError::Conflict => (
+            EXIT_INVESTIGATION_ERROR,
+            "the saved investigation changed underneath this command; retry".to_string(),
+        ),
+        StoreError::LimitExceeded => (
+            EXIT_INVESTIGATION_ERROR,
+            "the investigations collection is full (500); delete or export some investigations"
+                .to_string(),
+        ),
+        StoreError::VersionUnsupported => (
+            EXIT_INVESTIGATION_ERROR,
+            "this investigation was made by a newer saya".to_string(),
+        ),
+        StoreError::Invalid => (
+            EXIT_INVESTIGATION_ERROR,
+            "the investigation document is corrupt or invalid".to_string(),
+        ),
+        StoreError::Unavailable | StoreError::OpenFailed => {
+            (EXIT_STORE_UNAVAILABLE, error.to_string())
+        }
+        // `StoreError` is `#[non_exhaustive]`: a variant added later is a
+        // store-level failure the caller cannot classify, so it surfaces with
+        // the unavailable exit code and the store's own words — never silently.
+        _ => (EXIT_STORE_UNAVAILABLE, error.to_string()),
+    }
+}
