@@ -35,6 +35,7 @@ pub(crate) fn idle_app() -> App {
         session_save: None,
         pending_session_save: None,
         last_query: None,
+        captured: None,
         pending_queries: std::collections::VecDeque::new(),
         wide_table: Default::default(),
         run_panel: None,
@@ -159,6 +160,7 @@ pub(crate) fn in_flight_task_at(
         followup: Followup::Sql {
             connection: Some("analytics".into()),
         },
+        started_unix_ms: 1_790_000_000_000,
     };
     (rx, task, started)
 }

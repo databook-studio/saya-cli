@@ -57,6 +57,9 @@ pub(crate) struct SqlTask {
     pub profile: Option<String>,
     pub sql: String,
     pub followup: Followup,
+    /// Unix ms when the command was dispatched — the evidence's start time,
+    /// recorded at creation so the capture never guesses it later.
+    pub started_unix_ms: i64,
 }
 
 /// Spawns the query on a worker thread with its own tokio runtime and returns
@@ -81,11 +84,17 @@ pub(crate) fn spawn(runtime: Arc<RuntimeConfig>, task: SqlTask) -> Receiver<Term
 }
 
 /// Applies a finished result to the transcript according to its follow-up.
+/// The `Followup::Sql` success path also updates the app's ephemeral capture
+/// (`captured`) and stamps the execution evidence line onto the table block;
+/// every other path — errors, `/export`, `/chart`, `/explain` — leaves the
+/// capture exactly as it was.
 pub(crate) fn complete(
     task: &SqlTask,
     event: TerminalEvent,
     transcript: &mut Transcript,
     last_query: &mut Option<LastQuery>,
+    captured: &mut Option<super::capture::CapturedResult>,
+    runtime: &RuntimeConfig,
 ) {
     let TerminalEvent::QueryResult { result } = event else {
         let TerminalEvent::Error { message } = event else {
@@ -100,11 +109,34 @@ pub(crate) fn complete(
                 sql: task.sql.clone(),
                 connection: connection.clone(),
             });
-            let table = super::table::format_table(&result);
-            transcript.push(
-                BlockKind::Table,
-                super::table::with_scope_line(table, connection.as_deref(), &result.executed_sql),
+            let table = super::table::with_scope_line(
+                super::table::format_table(&result),
+                connection.as_deref(),
+                &result.executed_sql,
             );
+            match super::capture::direct_sql_evidence(
+                task.profile.as_deref(),
+                connection.as_deref(),
+                &result,
+                runtime,
+                task.started_unix_ms,
+            ) {
+                Some(evidence) => {
+                    // One final line under the scope line: the execution's
+                    // provenance, no SQL text in it.
+                    transcript.push(
+                        BlockKind::Table,
+                        format!("{table}\n{}", evidence.human_line()),
+                    );
+                    let accounted = super::capture::accounted_bytes(&result);
+                    super::capture::capture_within(
+                        captured, result, evidence, accounted, transcript,
+                    );
+                }
+                // No resolvable dialect, no evidence, no capture, nothing
+                // extra said: the table renders exactly as before.
+                None => transcript.push(BlockKind::Table, table),
+            }
         }
         Followup::Export { path } => {
             match super::export::write_result(&result, std::path::Path::new(path)) {
