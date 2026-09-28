@@ -76,8 +76,9 @@ description, dialect, connection alias, and referenced tables — no
 credentials, rows, results, or machine-specific identity. The SQL is stored
 verbatim (review it before sharing), replay never involves an AI provider,
 and a run refuses when the referenced tables' schema, the target connection,
-or the saved revision changed since the last reviewed run (until
-`--revalidate`). → [commands](docs/commands.md)
+or the saved revision changed since the last reviewed run — or when the
+review cannot be verified at all (a table that cannot be resolved, an
+ambiguous name) — until `--revalidate`. → [commands](docs/commands.md)
 
 ## Install
 

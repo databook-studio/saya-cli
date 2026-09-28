@@ -37,9 +37,14 @@ is never modified — setup prints the `[ai]` snippet instead. Existing files
 are backed up privately before replacing, writes are atomic, and a failed
 reload restores the originals. An interruption mid-commit leaves a recovery
 marker: later startups warn on stderr, and the next `saya setup` offers
-restore or finish. Guided setup covers SQLite, DuckDB, PostgreSQL, and
+restore or finish. A restore step that fails says which file it could not
+restore, keeps the recovery marker, and exits `2` — setup never reports
+success it did not achieve. Guided setup covers SQLite, DuckDB, PostgreSQL, and
 MySQL; Snowflake, ClickHouse, and BigQuery are configured in
-`connections.toml` as before. Without a terminal or with `--non-interactive`
+`connections.toml` by hand (see [Snowflake](docs/connections.md#snowflake-profiles),
+[ClickHouse](docs/connections.md#clickhouse-profiles), and
+[BigQuery](docs/connections.md#bigquery-profiles) in the connections guide).
+Without a terminal or with `--non-interactive`
 it prompts for nothing, writes nothing, and exits `2` with guidance to
 `saya config init` or `saya demo`.
 
@@ -49,7 +54,11 @@ manage one JSON file per investigation under the data directory's
 `investigations/` (`SAYA_INVESTIGATIONS_DIR` overrides; `0600` files in a
 `0700` directory, 500-document cap): the exact SQL plus its name, optional
 description, dialect, logical connection alias, and referenced objects — no
-credentials, rows, results, or machine-specific identity.
+credentials, rows, results, or machine-specific identity. Every write to
+the collection — save, import, delete, binding updates — is exclusive
+across processes: mutations run under a repository lock and a create never
+replaces an existing document, so a conflicting concurrent writer is
+refused with a conflict/"try again" error instead of silently overwriting.
 
 - **Saving validates, never executes.** The SQL is checked by the same
   read-only gate execution uses, for the target dialect; multi-statement or
@@ -65,7 +74,16 @@ credentials, rows, results, or machine-specific identity.
   revision, the target profile, and the schema fingerprint of the referenced
   tables; when any changes, the run refuses until `--revalidate` is passed
   (headless too), and a revalidated run rewrites the binding. The first run
-  after an import needs `--connection`, which creates the binding.
+  after an import needs `--connection`, which creates the binding. The
+  referenced tables are derived from the SQL itself at run time — the
+  document's `objects` list is informational, and `investigation import`
+  refuses a document whose `objects` do not match its SQL. A table that
+  cannot be resolved against the live schema, an ambiguous name, or an
+  incomplete dependency analysis makes the review **unverifiable**: the run
+  is refused unless `--revalidate` is passed, and such a run is never
+  recorded as reviewed (a revalidated unverifiable run rewrites the binding
+  without a schema fingerprint). Quoted names containing dots (`"orders.v1"`)
+  are kept as one object, never re-split.
 - **Import validates everything and binds nothing.** `investigation import`
   reads the file (≤128 KiB), validates the whole document, re-gates the SQL,
   prints a preview, and stores it without a binding; never executes, never
@@ -80,20 +98,34 @@ credentials, rows, results, or machine-specific identity.
   spells it `--name <NAME>` — without `--sql` saves the latest successful,
   concrete query on the connection that actually ran it — failed or denied
   agent queries and fan-out never count — and `/investigation run` runs in
-  the foreground.
+  the background: the status bar shows a spinner naming the investigation
+  while the replay runs on a worker, the transcript stays usable, and Esc or
+  Ctrl+C detaches it. Detaching discards the late result — it never replaces
+  the capture, never writes a report — and does not cancel the query: the
+  query may still be running on the server (see Known limitations). The
+  replay's audit row and review binding are written exactly as a foreground
+  run's, whatever the detach.
 
-**Answer provenance and ephemeral capture.** After a direct `/sql`, the
-result table carries a provenance line — source, connection profile, rows,
+**Answer provenance and ephemeral capture.** A successful query's result
+table carries a provenance line — source, connection profile, rows,
 truncation, a short execution id, and scope — and the result is captured in
 memory for the session only (never written to the session file; results
 above the 32 MiB accounted budget render as usual but are not captured, with
-a message saying so). The evidence record names the statement by SHA-256 of
+a message saying so). Capture covers three paths: a direct `/sql` result
+(full, up to the row cap), an agent `bounded_sql_query` result
+(**model-limited** — exactly the at most 50 rows the agent saw, labelled as
+such on the provenance line and on every export/report), and a saved replay
+run in the TUI (full). The evidence record names the statement by SHA-256 of
 the **submitted SQL** — what saya sent to the connector, not any internal
 rewrite the safety layer may perform.
 
 **`/export --snapshot|--refresh` and `/report`.** `/export --snapshot
-<path>` writes the captured `/sql` result with no query at all (the success
-line names the execution id and capture time, UTC); `/export --refresh
+<path>` writes the captured result — the direct `/sql` result (full), the
+rows an agent `bounded_sql_query` saw (model-limited, labelled), or a saved
+replay run in the TUI (full) — with no query at all (the success line names
+the execution id and capture time, UTC, and labels a model-limited capture:
+"the full result may be larger — use --refresh for a full read");
+`/export --refresh
 <path>` — and the legacy `/export <path>` spelling, which stays a refresh
 and says so — re-runs the last query on its original connection and exports
 that fresh read. `/report [--rows N] [--overwrite] <path>` writes a
@@ -103,8 +135,11 @@ by default, rows only with `--rows N` (at most 100), cell values neutralised
 cannot be carried into the file), capped at 2 MiB, never querying a database
 and never opening
 a browser or uploading. Exports and reports are written atomically via a
-private temp file, and only direct `/sql` results are captured — agent-run
-query results are not, so for those use `/sql` or `/export --refresh`.
+private temp file. A refused or absent capture never falls back to an older
+result: the snapshot says the rows were not captured and offers
+`/export --refresh`; the report refuses when nothing is captured. Fan-out
+agent queries (`bounded_sql_query_all`) are
+not captured.
 
 ### Changed
 
@@ -118,20 +153,30 @@ query results are not, so for those use `/sql` or `/export --refresh`.
 
 ### Known limitations
 
-- Snapshot and report capture only direct `/sql` results; agent-run query
-  results are not captured (their rows are model-limited and not in the
-  event stream) — use `/sql` or `/export --refresh`.
+- Agent `bounded_sql_query` captures are model-limited: exactly the at most
+  50 rows the agent saw, never the full result — the snapshot success line
+  says the full result may be larger and points at `/export --refresh`, and
+  the report says so in its provenance. Fan-out agent queries
+  (`bounded_sql_query_all`) are not captured.
 - Captures do not survive a restart. Capture times in messages are UTC.
-- TUI `/investigation run` runs in the foreground — the UI waits for the
-  query.
+- Detaching a TUI query or replay does not cancel it: **the query may still
+  be running on the server**. saya does not cancel a query on the server in
+  this release (PostgreSQL, MySQL, and Snowflake support cancellation;
+  SQLite and DuckDB run locally; ClickHouse and BigQuery cannot).
 - Parameterised investigations, context import, dbt, file sources, and MCP
   are not in this release (planned).
 - The report neutralises links, images, HTML, table-breaking characters, and
   control characters, but
   a Markdown renderer may still auto-link a bare `https://…` text value in
   an included row — review the report before sharing.
-- Guided setup covers four engines; Snowflake, ClickHouse, and BigQuery are
-  configured in `connections.toml` as before.
+- Guided setup covers four engines (SQLite, DuckDB, PostgreSQL, MySQL);
+  Snowflake, ClickHouse, and BigQuery are configured by hand in
+  `connections.toml` — see [Snowflake](docs/connections.md#snowflake-profiles),
+  [ClickHouse](docs/connections.md#clickhouse-profiles), and
+  [BigQuery](docs/connections.md#bigquery-profiles) in the connections guide.
+- There is no searchable TUI investigation picker and no edit command yet;
+  a saved definition is immutable through supported commands — save a new
+  one under a new name instead.
 
 ## 0.4.1 — 2026-09-25
 
