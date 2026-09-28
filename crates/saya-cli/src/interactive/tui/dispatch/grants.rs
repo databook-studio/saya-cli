@@ -1,18 +1,30 @@
 //! Grant actions: `/allow` seeds the session grant store through the shared
 //! behaviour; `/grants` lists it verbatim with the engine's own mode first.
+//! Owns its arms only: the action is taken exactly when this helper owns
+//! the arm, and an owned arm always reports handled.
 
 use super::super::transcript::{BlockKind, Transcript};
+use super::outcome::Dispatch;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_runtime::SessionRuntime;
 
 pub(super) fn apply_grant_action(
-    action: SessionAction,
+    action: &mut Option<SessionAction>,
     transcript: &mut Transcript,
     runtime: &RuntimeConfig,
     session: &mut SessionRuntime,
-) -> bool {
-    match action {
+) -> Option<Dispatch> {
+    // The arms this helper owns. Anything else is left in `action`
+    // untouched for the next helper in the chain.
+    if !matches!(
+        action,
+        Some(SessionAction::Allow(_) | SessionAction::Grants)
+    ) {
+        return None;
+    }
+    let current = action.take()?;
+    match current {
         SessionAction::Allow(tokens) => {
             // `/allow <scopes…>` seeds the session's one grant store
             // through the shared behaviour — the same parser, the
@@ -47,7 +59,12 @@ pub(super) fn apply_grant_action(
                 ),
             );
         }
-        _ => return false,
+        // The guard above decided ownership; if it ever drifts, put the
+        // action back and report "not mine" rather than dropping it.
+        other => {
+            *action = Some(other);
+            return None;
+        }
     }
-    true
+    Some(Dispatch::Handled)
 }

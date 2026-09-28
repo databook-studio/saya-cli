@@ -52,7 +52,7 @@
 //! lost.
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -244,36 +244,7 @@ fn paint_with_config(
         })
         .map_err(|e| format!("could not allocate pty: {e}"))?;
 
-    let mut cmd = CommandBuilder::new(saya_bin());
-    cmd.env("HOME", home);
-    // Keep the developer's real config/session/state out of this run.
-    cmd.env("SAYA_CONFIG_HOME", home.join("config-home"));
-    cmd.env("SAYA_SESSION_DIR", home.join("sessions"));
-    cmd.env("SAYA_STATE_DB", home.join("state.sqlite3"));
-    // The child must launch outside any git worktree: the harness's own cwd
-    // is inside saya's worktree (linked `.git` file), and the child inherits
-    // it — so the trust decision would find a bound root and never open its
-    // modal. A scratch dir under the test's HOME is outside every worktree,
-    // which is exactly the unbound shape the modal covers.
-    cmd.cwd(home.join("launch-dir"));
-    std::fs::create_dir_all(home.join("launch-dir")).expect("scratch launch dir builds");
-    // No XDG/APPDATA fallback can reach the real user dir now.
-    cmd.env_remove("XDG_CONFIG_HOME");
-    cmd.env_remove("XDG_DATA_HOME");
-    cmd.env_remove("APPDATA");
-    // No provider env can leak in (and we never want to log one).
-    cmd.env_remove("SAYA_API_KEY");
-    cmd.env_remove("SAYA_AI_API_KEY");
-    cmd.args([
-        "--config",
-        config.to_str().unwrap(),
-        "--connections",
-        connections.to_str().unwrap(),
-        // Read-only approval so nothing could prompt for a query (we send
-        // none, but this keeps the startup path fully offline and safe).
-        "--approval-mode",
-        "read-only",
-    ]);
+    let cmd = tui_command(home, config, connections);
 
     // Spawn the child on the pty's slave side. `spawn_command` lives on
     // `SlavePty`, not `PtySystem`, in portable-pty 0.9 — so we must spawn
@@ -300,28 +271,7 @@ fn paint_with_config(
     // main loop can wait with a timeout (pty `Read` is blocking with no
     // portable deadline). The thread owns the reader and ships `Ok(Vec<u8>)`
     // chunks; `Ok(empty)` signals EOF, `Err` a read failure.
-    let (tx, rx) = std::sync::mpsc::channel::<std::io::Result<Vec<u8>>>();
-    std::thread::spawn(move || {
-        let mut reader = reader;
-        let mut buf = vec![0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => {
-                    let _ = tx.send(Ok(Vec::new()));
-                    break;
-                }
-                Ok(n) => {
-                    if tx.send(Ok(buf[..n].to_vec())).is_err() {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(Err(e));
-                    break;
-                }
-            }
-        }
-    });
+    let rx = reader_channel(reader);
 
     let mut parser = vt100::Parser::new(ROWS, COLS, 0);
     let start = Instant::now();
@@ -380,6 +330,75 @@ fn paint_with_config(
             }
         }
     }
+}
+
+/// The child command every rung and the interactive harness share: a fresh
+/// `saya` on the scratch HOME, outside any git worktree (the cwd comment in
+/// `paint_with_config` explains why), offline and read-only.
+fn tui_command(home: &Path, config: &Path, connections: &Path) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(saya_bin());
+    cmd.env("HOME", home);
+    // Keep the developer's real config/session/state out of this run.
+    cmd.env("SAYA_CONFIG_HOME", home.join("config-home"));
+    cmd.env("SAYA_SESSION_DIR", home.join("sessions"));
+    cmd.env("SAYA_STATE_DB", home.join("state.sqlite3"));
+    // The child must launch outside any git worktree: the harness's own cwd
+    // is inside saya's worktree (linked `.git` file), and the child inherits
+    // it — so the trust decision would find a bound root and never open its
+    // modal. A scratch dir under the test's HOME is outside every worktree,
+    // which is exactly the unbound shape the modal covers.
+    cmd.cwd(home.join("launch-dir"));
+    std::fs::create_dir_all(home.join("launch-dir")).expect("scratch launch dir builds");
+    // No XDG/APPDATA fallback can reach the real user dir now.
+    cmd.env_remove("XDG_CONFIG_HOME");
+    cmd.env_remove("XDG_DATA_HOME");
+    cmd.env_remove("APPDATA");
+    // No provider env can leak in (and we never want to log one).
+    cmd.env_remove("SAYA_API_KEY");
+    cmd.env_remove("SAYA_AI_API_KEY");
+    cmd.args([
+        "--config",
+        config.to_str().unwrap(),
+        "--connections",
+        connections.to_str().unwrap(),
+        // Read-only approval so nothing could prompt for a query (we send
+        // none, but this keeps the startup path fully offline and safe).
+        "--approval-mode",
+        "read-only",
+    ]);
+    cmd
+}
+
+/// Pump the pty output onto a channel from a dedicated reader thread so the
+/// caller can wait with a timeout (pty `Read` is blocking with no portable
+/// deadline). The thread owns the reader and ships `Ok(Vec<u8>)` chunks;
+/// `Ok(empty)` signals EOF, `Err` a read failure.
+fn reader_channel(
+    reader: Box<dyn Read + Send>,
+) -> std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>> {
+    let (tx, rx) = std::sync::mpsc::channel::<std::io::Result<Vec<u8>>>();
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = vec![0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => {
+                    let _ = tx.send(Ok(Vec::new()));
+                    break;
+                }
+                Ok(n) => {
+                    if tx.send(Ok(buf[..n].to_vec())).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    break;
+                }
+            }
+        }
+    });
+    rx
 }
 
 /// Kills the child process on drop so the test never leaks a running `saya`,
@@ -739,4 +758,218 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
         &format!("raw line-prompt bytes leaked onto {label}"),
         &text,
     );
+}
+
+// ---------------------------------------------------------------------------
+// interactive command-path smoke: the dispatch chain on the real TUI (P0)
+// ---------------------------------------------------------------------------
+
+/// How long a single command's response may take to paint. Longer than any
+/// local sqlite round-trip; far under the test's own patience.
+const INTERACTIVE: Duration = Duration::from_secs(15);
+
+/// A live TUI session on a pty, kept across many interactions: the parser
+/// accumulates every chunk the reader thread ships, the writer feeds lines
+/// to the input buffer, and the child is killed on drop like every other
+/// rung.
+struct InteractiveTui {
+    writer: Box<dyn Write + Send>,
+    parser: vt100::Parser,
+    rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    child: ChildGuard,
+}
+
+impl InteractiveTui {
+    fn send(&mut self, text: &str) -> std::io::Result<()> {
+        self.writer.write_all(text.as_bytes())?;
+        self.writer.flush()
+    }
+
+    /// Types one line and presses Enter.
+    fn send_line(&mut self, line: &str) -> std::io::Result<()> {
+        self.send(&format!("{line}\r"))
+    }
+
+    fn screen(&self) -> String {
+        screen_text(self.parser.screen())
+    }
+
+    fn wait_for(&mut self, needle: &str, within: Duration) -> Result<(), String> {
+        let start = Instant::now();
+        loop {
+            if self.screen().contains(needle) {
+                return Ok(());
+            }
+            if start.elapsed() >= within {
+                return Err(format!(
+                    "'{needle}' never appeared within {within:?}; screen:\n{}",
+                    self.screen()
+                ));
+            }
+            self.pump()?;
+        }
+    }
+
+    fn wait_gone(&mut self, needle: &str, within: Duration) -> Result<(), String> {
+        let start = Instant::now();
+        loop {
+            if !self.screen().contains(needle) {
+                return Ok(());
+            }
+            if start.elapsed() >= within {
+                return Err(format!(
+                    "'{needle}' never left within {within:?}; screen:\n{}",
+                    self.screen()
+                ));
+            }
+            self.pump()?;
+        }
+    }
+
+    /// Drains the reader channel once (bounded by READ_TIMEOUT), feeding the
+    /// parser. An empty read is EOF — the child died, which is a failure
+    /// with the screen as the evidence.
+    fn pump(&mut self) -> Result<(), String> {
+        match self.rx.recv_timeout(READ_TIMEOUT) {
+            Ok(Ok(bytes)) if bytes.is_empty() => {
+                Err(format!("the TUI exited; screen:\n{}", self.screen()))
+            }
+            Ok(Ok(bytes)) => {
+                self.parser.process(&bytes);
+                Ok(())
+            }
+            Ok(Err(e)) => Err(format!("pty read failed: {e}")),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(()),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err("pty reader ended".to_string())
+            }
+        }
+    }
+
+    fn still_running(&mut self) -> bool {
+        matches!(self.child.child.try_wait(), Ok(None))
+    }
+}
+
+/// Spawns the TUI for the interactive cases: the offline smoke config with
+/// one writable sqlite `demo` profile (the query path must be able to
+/// create its file), the same scratch-HOME isolation every rung uses.
+fn interactive_tui(home: &Path) -> Result<InteractiveTui, String> {
+    let config = home.join("config.toml");
+    std::fs::write(&config, "[ai]\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n")
+        .expect("interactive config writes");
+    let connections = home.join("connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.demo]\ntype = 'sqlite'\npath = '{}'\nread_only = false\n",
+            home.join("demo.sqlite3").display()
+        ),
+    )
+    .expect("interactive connections write");
+    // The connector opens sqlite with `create_if_missing(false)`, so the
+    // database file must exist before the first query. A zero-byte file is
+    // a valid empty sqlite database — `SELECT 1` needs nothing more.
+    std::fs::write(home.join("demo.sqlite3"), b"").expect("the demo db file is created");
+
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("could not allocate pty: {e}"))?;
+    let child = pair
+        .slave
+        .spawn_command(tui_command(home, &config, &connections))
+        .map_err(|e| format!("could not spawn saya on pty: {e}"))?;
+    drop(pair.slave);
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("could not take pty writer: {e}"))?;
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("could not clone pty reader: {e}"))?;
+    let rx = reader_channel(reader);
+    Ok(InteractiveTui {
+        writer,
+        parser: vt100::Parser::new(ROWS, COLS, 0),
+        rx,
+        child: ChildGuard::new(child),
+    })
+}
+
+/// Answers the startup trust modal (`[t]rust once`) and waits until it is
+/// gone, so the keys after it go to the input buffer, not the modal.
+fn dismiss_trust_modal(tui: &mut InteractiveTui) {
+    tui.wait_for("trust this folder?", INTERACTIVE)
+        .expect("the startup trust modal is up");
+    tui.send("t").expect("the trust answer");
+    tui.wait_gone("trust this folder?", INTERACTIVE)
+        .expect("the trust modal closed");
+}
+
+/// `/sql` then `/export --snapshot` on the real TUI: the file lands and the
+/// TUI survives. The P0 dispatch panic killed the session on exactly this
+/// path (`helper passes the action through` at the chain's next step).
+#[test]
+fn tui_sql_then_export_snapshot_survives_and_writes_the_file() {
+    let home = scratch_home("sql-export");
+    let _cleanup = HomeGuard(home.clone());
+    let mut tui = match interactive_tui(&home) {
+        Ok(tui) => tui,
+        Err(reason) => {
+            eprintln!("skipping tui_sql_then_export_snapshot: {reason}");
+            return;
+        }
+    };
+    dismiss_trust_modal(&mut tui);
+
+    tui.send_line("/sql SELECT 1").expect("send /sql");
+    tui.wait_for("direct sql", INTERACTIVE)
+        .expect("the query result paints");
+
+    let snapshot = home.join("snapshot.csv");
+    tui.send_line(&format!("/export --snapshot {}", snapshot.display()))
+        .expect("send /export");
+    tui.wait_for("Exported", INTERACTIVE)
+        .expect("the export is said");
+    assert!(
+        snapshot.exists(),
+        "the snapshot file was written by the TUI"
+    );
+    assert!(
+        tui.still_running(),
+        "the TUI is still alive after the export"
+    );
+}
+
+/// `/sql` then `/investigation save <name>` on the real TUI: the save fills
+/// from the last query, stores the document, and the TUI survives.
+#[test]
+fn tui_sql_then_investigation_save_survives_and_saves() {
+    let home = scratch_home("sql-save");
+    let _cleanup = HomeGuard(home.clone());
+    let mut tui = match interactive_tui(&home) {
+        Ok(tui) => tui,
+        Err(reason) => {
+            eprintln!("skipping tui_sql_then_investigation_save: {reason}");
+            return;
+        }
+    };
+    dismiss_trust_modal(&mut tui);
+
+    tui.send_line("/sql SELECT 1").expect("send /sql");
+    tui.wait_for("direct sql", INTERACTIVE)
+        .expect("the query result paints");
+
+    tui.send_line("/investigation save pty-sentinel")
+        .expect("send /investigation save");
+    tui.wait_for("Saved exactly as shown", INTERACTIVE)
+        .expect("the save is said");
+    assert!(tui.still_running(), "the TUI is still alive after the save");
 }

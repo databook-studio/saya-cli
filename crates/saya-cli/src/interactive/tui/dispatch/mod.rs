@@ -15,6 +15,9 @@ mod session_actions;
 #[path = "../export_mode_tests.rs"]
 mod export_mode_tests;
 
+#[cfg(test)]
+mod chain_tests;
+
 pub(crate) use outcome::Dispatch;
 
 use super::super::session_runtime::SessionRuntime;
@@ -70,9 +73,11 @@ pub(crate) fn dispatch(
             command => match state.apply(command, profiles) {
                 SessionAction::Message(message) => transcript.push(BlockKind::System, message),
                 SessionAction::Error(message) => transcript.push(BlockKind::Error, message),
-                // One concern per helper: each takes the action by value and
-                // reports whether it owned the arm. Only the owner runs —
-                // the rest pass the action through untouched.
+                // One concern per helper: each takes `&mut Option<SessionAction>`
+                // and takes the action only when it owns the arm — an owned arm
+                // always reports handled (`Some`), an unowned one is left in
+                // place for the next helper. What no helper owns is decided
+                // below, never a panic.
                 action => {
                     let mut action = Some(action);
                     if let Some(outcome) = session_actions::apply_session_action(
@@ -87,14 +92,12 @@ pub(crate) fn dispatch(
                         last_query,
                     ) {
                         result = outcome;
-                    } else if grants::apply_grant_action(
-                        action.take().expect("helper passes the action through"),
-                        transcript,
-                        runtime,
-                        session,
-                    ) {
+                    } else if let Some(outcome) =
+                        grants::apply_grant_action(&mut action, transcript, runtime, session)
+                    {
+                        result = outcome;
                     } else if let Some(outcome) = query::apply_query_actions(
-                        action.take().expect("helper passes the action through"),
+                        &mut action,
                         transcript,
                         state,
                         last_query,
@@ -103,7 +106,7 @@ pub(crate) fn dispatch(
                     ) {
                         result = outcome;
                     } else if let Some(outcome) = run::apply_run_action(
-                        action.take().expect("helper passes the action through"),
+                        &mut action,
                         transcript,
                         runtime,
                         state_db,
@@ -111,8 +114,8 @@ pub(crate) fn dispatch(
                         session,
                     ) {
                         result = outcome;
-                    } else {
-                        match action.take().expect("helper passes the action through") {
+                    } else if let Some(action) = action.take() {
+                        match action {
                             SessionAction::Schema(_) => transcript.push(
                                 BlockKind::System,
                                 "Schema view is available in headless mode; TUI rendering is coming next.",
@@ -126,7 +129,10 @@ pub(crate) fn dispatch(
                                 format!("Not implemented: {feature}"),
                             ),
                             SessionAction::Exit => result = Dispatch::Quit,
-                            _ => {}
+                            other => transcript.push(
+                                BlockKind::System,
+                                format!("Not supported here: {other:?}"),
+                            ),
                         }
                     }
                 }

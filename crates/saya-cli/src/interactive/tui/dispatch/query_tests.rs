@@ -69,7 +69,7 @@ fn apply_report_action(
     captured: &Option<CapturedResult>,
 ) -> Option<Dispatch> {
     apply_query_actions(
-        SessionAction::Report(request),
+        &mut Some(SessionAction::Report(request)),
         transcript,
         state,
         last_query,
@@ -122,7 +122,10 @@ fn report_never_queries() {
         &mut last_query,
         &captured,
     );
-    assert!(outcome.is_none(), "/report must not dispatch a SqlTask");
+    assert!(
+        !matches!(outcome, Some(Dispatch::SqlTask(_))),
+        "/report must not dispatch a SqlTask"
+    );
     let written = std::fs::read_to_string(&path).expect("the report was written");
     assert!(
         written.contains("sentinel-alice"),
@@ -186,7 +189,10 @@ fn report_without_capture_says_how_to_recover() {
         &mut None,
         &None,
     );
-    assert!(outcome.is_none(), "no capture, no task");
+    assert!(
+        !matches!(outcome, Some(Dispatch::SqlTask(_))),
+        "no capture, no task"
+    );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert!(
         msg.contains("No captured result to report"),
