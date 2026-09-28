@@ -203,21 +203,24 @@ preserves the existing destination byte-for-byte. (Compatibility note: legacy
 `/report <path> [--rows N]` (N ≤ 100) writes a report from the captured
 evidence; `saya investigation run <id> --report <path>` writes the same shape
 from a replay. The default content is the SQL and provenance only — no rows,
-no conversation. The report is capped at 2 MiB; control characters and raw
-HTML/links in cells are neutralised; omitted or truncated content is
+no conversation. The report is capped at 2 MiB; links, images, HTML,
+table-breaking characters, and control characters in cells are neutralised;
+omitted or truncated content is
 labelled. It never opens a browser and never uploads anything.
 
 ### 11. The demo and guided setup (D11)
 
 `saya demo` creates a deterministic synthetic SQLite database — customers,
-orders, and customer_contacts, up to 560 rows per table, seeded by a fixed
+orders, and customer_contacts; 240 customers, 560 orders, and 123 contact
+rows, seeded by a fixed
 LCG — under `<data dir>/saya/demo/` (override `SAYA_DEMO_DIR`), written by a
 fixture initializer in saya-cli over sqlx, deliberately never through
 `DatabaseConnector`. The fixture plants the traps that make SQL hard: nulls
 in emails and amounts, a customer_contacts table that multiplies rows on
-join, order dates straddling the 2025-12-31 → 2026-01-01 boundary, and a
-customer status "active" that appears twice in the status generator, so
-"active customer" is genuinely ambiguous. It then opens the database
+join, order dates straddling the 2025-12-31 → 2026-01-01 boundary, and an
+ambiguous "active customer": `customers.status = 'active'` and "ordered in
+the last 90 days of the data" disagree for some customers, so the phrase has
+two defensible meanings. It then opens the database
 READ-ONLY in the TUI; no AI provider is needed for schema browsing or `/sql`.
 Without a terminal it prints the paths, the launch command, and example SQL.
 
@@ -289,7 +292,8 @@ provider probe states that a request will be sent and sends only the word
   the query.
 - Parameterised investigations, context import, dbt, file sources, and MCP
   are not in this release.
-- The report neutralises links, HTML, formulas, and control characters, but
+- The report neutralises links, images, HTML, table-breaking characters, and
+  control characters, but
   a Markdown renderer may still auto-link a bare `https://…` text value in an
   included row. Review the report before sharing.
 - Guided setup covers four engines (SQLite, DuckDB, PostgreSQL, MySQL);

@@ -122,17 +122,18 @@ errors and diagnostics remain on stderr.
 
 ## Try it: `saya demo`
 
-`saya demo` builds a deterministic synthetic SQLite database — customers,
-orders, and customer_contacts, a few hundred rows per table — and opens it
+`saya demo` builds a deterministic synthetic SQLite database — 240
+customers, 560 orders, and 123 customer_contacts rows — and opens it
 read-only in an interactive session. No AI provider is needed for schema
 browsing and `/sql`; asking questions in plain language needs a configured
 provider.
 
 The fixture is designed to exercise tricky SQL: nulls in emails and amounts,
 a `customer_contacts` table that multiplies rows when joined, order dates
-straddling the year boundary (2025-12-31 against 2026-01-01), and a customer
-status whose "active" value appears more than once in the data, so "active
-customer" is genuinely ambiguous.
+straddling the year boundary (2025-12-31 against 2026-01-01), and statuses
+(`active`, `inactive`, `churned`) that disagree with recent-order activity
+for some customers — so "active customer" has two defensible meanings:
+`customers.status = 'active'`, or ordered in the last 90 days of the data.
 
 ```bash
 saya demo            # build (or reuse) the fixture, then open the TUI
@@ -189,9 +190,10 @@ shows up to three starter questions derived from it.
 
 ## Saved investigations: `saya investigation`
 
-A saved investigation is one portable JSON document holding an exact,
-bounded, read-only SQL statement and nothing else — no credentials, rows,
-results, prompts, or machine-specific identity. Saving validates the SQL
+A saved investigation is one portable JSON document: an exact, bounded,
+read-only SQL statement plus its name, description, dialect, connection
+alias, and referenced tables — no credentials, rows, results, prompts, or
+machine-specific identity. Saving validates the SQL
 with the same read-only gate execution uses but never executes it, never
 connects, and never involves an AI provider. **Literals are stored verbatim:
 review the SQL before sharing**, and the command says so where you save.
@@ -265,9 +267,11 @@ provider.
 `/investigation save|list|show|run|export|import|delete` is the same
 operation module the `saya investigation` commands run, so the two surfaces
 cannot disagree. `/investigations` is an alias for `/investigation list`.
-Two TUI-only details:
+Three TUI-only details:
 
-- `/investigation save <name>` with neither `--sql` nor `--file` saves the
+- `/investigation save <name>` takes the name **positionally** — unlike the
+  CLI, which spells it `--name <NAME>`. With neither `--sql` nor `--file` it
+  saves the
   **latest successful, concrete query** — a `/sql` result or a direct agent
   SQL query — on the connection that actually ran it. Failed or denied agent
   queries never become selectable, and fan-out (`bounded_sql_query_all`)
@@ -275,6 +279,8 @@ Two TUI-only details:
   SQL, and `--connection <PROFILE>` to save against another profile.
 - `/investigation run <id>` runs in the foreground: the transcript waits for
   the query to finish.
+- `/investigation run` takes no `--report` flags in the TUI — write reports
+  with `/report`.
 
 `/export [--snapshot|--refresh] [--overwrite] <path>` writes rows to a
 `.csv` or `.json` file (chosen by extension):
@@ -301,8 +307,9 @@ a browser or uploads anything. By default it carries the exact SQL and
 provenance only (connection label, submitted-SQL hash, execution id, times
 in UTC, row counts, truncation, scope) with the rows section labelled as
 omitted; `--rows N` (at most 100) adds a table of the first N captured
-rows. Cell values are neutralised — spreadsheet formulas, links, HTML, and
-control characters cannot be carried into the file — and a bare `https://…`
+rows. Cell values are neutralised — links, images, HTML, table-breaking
+characters, and control characters cannot be carried into the file — and a
+bare `https://…`
 text value may still be auto-linked by a Markdown renderer, so review the
 report before sharing. The report is capped at 2 MiB, written atomically,
 and an existing destination needs `--overwrite`. Use `/export` for data

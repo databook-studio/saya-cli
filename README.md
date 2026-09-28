@@ -65,17 +65,19 @@ touching the file.
 When a question is answered well, save the SQL behind it:
 
 ```bash
-saya investigation save "orders last week" --sql "SELECT ..." --connection analytics
+saya investigation save --name "orders last week" --sql "SELECT ..." --connection analytics
 saya investigation list                                  # prints the ids
 saya investigation run orders-last-week-3f9a1c2b         # replays it, read-only
 saya investigation export orders-last-week-3f9a1c2b out.json  # share it
 ```
 
-An investigation is one portable JSON file — the exact SQL, its dialect, and
-nothing else: no credentials, rows, or machine state. The SQL is stored
+An investigation is one portable JSON file: the exact SQL plus its name,
+description, dialect, connection alias, and referenced tables — no
+credentials, rows, results, or machine-specific identity. The SQL is stored
 verbatim (review it before sharing), replay never involves an AI provider,
-and a run refuses when the target database's schema no longer matches what
-was reviewed. → [commands](docs/commands.md)
+and a run refuses when the referenced tables' schema, the target connection,
+or the saved revision changed since the last reviewed run (until
+`--revalidate`). → [commands](docs/commands.md)
 
 ## Install
 

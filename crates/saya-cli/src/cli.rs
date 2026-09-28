@@ -442,7 +442,8 @@ pub enum ContractsCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum InvestigationCommand {
     /// Save a bounded read-only SQL query as a portable investigation
-    /// document: one JSON file with the exact SQL and nothing else — no
+    /// document: one JSON file holding the exact SQL plus its name,
+    /// description, dialect, connection alias, and referenced tables — no
     /// credentials, rows, results, or machine-specific identity. The SQL is
     /// validated by the same read-only gate execution uses but is never
     /// executed here, and the saving profile is recorded locally as the
