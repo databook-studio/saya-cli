@@ -3,6 +3,8 @@
 mod empty_state;
 mod markdown;
 mod splash;
+#[cfg(test)]
+mod starter;
 mod transcript;
 
 #[cfg(test)]
