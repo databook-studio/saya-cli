@@ -13,7 +13,7 @@ expression: buffer
 "                      Ask your databases in plain language.                     "
 "                                                                                "
 "                         No database is configured yet.                         "
-"        Try it now: `saya demo` — a synthetic, read-only sample database.       "
+"             Try it now: `saya demo` — a read-only sample database.             "
 "          Run `saya config init` — it prints where it wrote the files.          "
 "          Add your database there, then `saya connection test <name>`.          "
 "                           Restart saya to pick it up.                          "

@@ -31,6 +31,11 @@ pub(crate) struct App {
     pub(crate) ctrl_c_armed: bool,
     /// `@table` / `@table.column` references from the active profiles' cached schema.
     pub(crate) at_refs: Vec<String>,
+    /// Starter questions derived from the active profile's cached schema,
+    /// computed where the schema tree was already in hand (`reload_at_refs`);
+    /// empty when nothing is cached. The empty state's examples section shows
+    /// these instead of the static prompts — paint only reads them.
+    pub(crate) starter_questions: Vec<String>,
     /// Text queued for the system clipboard, fulfilled by the run loop via the OS
     /// clipboard tool (pbcopy/wl-copy/xclip/clip) plus an OSC 52 escape for SSH.
     pub(crate) pending_clipboard: Option<String>,
