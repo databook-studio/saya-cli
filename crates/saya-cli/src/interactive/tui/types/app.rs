@@ -5,10 +5,13 @@ use super::super::input::InputBuffer;
 use super::super::transcript::Transcript;
 use super::overlays::OverlayState;
 use super::request::RequestState;
-use super::tasks::{ClipboardCopy, CompactOutcome, LastQuery, SessionSave, WideTableView};
+use super::tasks::{
+    ClipboardCopy, CompactOutcome, LastQuery, PendingQuery, SessionSave, WideTableView,
+};
 use crate::config::runtime::RuntimeConfig;
 use saya_store::{RedactedSession, SqliteStateStore};
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// Interactive application state.
@@ -47,6 +50,12 @@ pub(crate) struct App {
     pub(crate) compact_task: Option<std::sync::mpsc::Receiver<CompactOutcome>>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
+    /// Pending `bounded_sql_query` candidates awaiting their completion
+    /// events: a request alone never becomes the selectable query, only a
+    /// successful completion promotes the front candidate (and a failure or
+    /// denial consumes it). Bounded by `MAX_PENDING_QUERIES`; cleared when
+    /// the turn ends. Fan-out (`bounded_sql_query_all`) never enters it.
+    pub(crate) pending_queries: VecDeque<PendingQuery>,
     /// Horizontal-scroll / column-selection state for wide result tables.
     /// Lives on the view, never on the transcript data.
     pub(crate) wide_table: WideTableView,
