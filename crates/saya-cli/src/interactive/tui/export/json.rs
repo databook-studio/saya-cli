@@ -1,11 +1,15 @@
 //! JSON export: duplicate column labels are disambiguated so every value
 //! stays addressable, then rows serialise as pretty objects.
+//!
+//! The whole array serialises through the bounded sink
+//! ([`serde_json::to_writer_pretty`]), so the bytes are the serializer's own
+//! and the ceiling is checked while it writes — an oversize export aborts
+//! mid-stream instead of materialising in full.
 
 use saya_types::QueryResult;
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use std::path::Path;
 
-use super::shared::normalize_row;
+use super::shared::{BoundedWriter, EXPORT_TOO_LARGE, normalize_row};
 
 struct JsonRow<'a> {
     columns: &'a [String],
@@ -61,7 +65,9 @@ impl Serialize for JsonRow<'_> {
     }
 }
 
-pub(super) fn export_json(result: &QueryResult, path: &Path) -> Result<usize, String> {
+/// Encodes the result as pretty JSON bytes under the ceiling, stopping
+/// mid-stream when the sink refuses a write.
+pub(super) fn encode_json(result: &QueryResult, ceiling: usize) -> Result<Vec<u8>, String> {
     let col_count = result.columns.len();
     let rows = result
         .rows
@@ -75,8 +81,11 @@ pub(super) fn export_json(result: &QueryResult, path: &Path) -> Result<usize, St
             cells,
         })
         .collect::<Vec<_>>();
-    let json_str = serde_json::to_string_pretty(&objects)
-        .map_err(|e| format!("failed to serialize JSON: {e}"))?;
-    std::fs::write(path, json_str).map_err(|e| format!("failed to write JSON file: {e}"))?;
-    Ok(result.rows.len())
+    let mut out = BoundedWriter::new(ceiling);
+    let serialized = serde_json::to_writer_pretty(&mut out, &objects);
+    if out.exceeded() {
+        return Err(EXPORT_TOO_LARGE.into());
+    }
+    serialized.map_err(|e| format!("failed to serialize JSON: {e}"))?;
+    Ok(out.into_inner())
 }
