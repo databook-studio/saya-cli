@@ -33,6 +33,7 @@ use super::transcript::{BlockKind, Transcript};
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::tui::types::LastQuery;
 use crate::render::TerminalEvent;
+use crate::slash::ExportRequest;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
@@ -41,8 +42,11 @@ use std::sync::mpsc::Receiver;
 pub(crate) enum Followup {
     /// Render the table and remember the query for /export & friends.
     Sql { connection: Option<String> },
-    /// Write the result to a CSV/JSON path.
-    Export { path: String },
+    /// Write the result to a CSV/JSON path. Only the refresh forms of
+    /// `/export` reach here (legacy and `--refresh`); `--snapshot` never
+    /// dispatches a query. `mode: None` is the legacy form, whose success
+    /// message may point at `--snapshot`.
+    Export { request: ExportRequest },
     /// Build an HTML chart (optionally forced kind + output path).
     Chart {
         kind: Option<crate::chart::ChartKind>,
@@ -138,12 +142,25 @@ pub(crate) fn complete(
                 None => transcript.push(BlockKind::Table, table),
             }
         }
-        Followup::Export { path } => {
-            match super::export::write_result(&result, std::path::Path::new(path)) {
+        Followup::Export { request } => {
+            match super::export::write_result_overwrite(
+                &result,
+                std::path::Path::new(&request.path),
+                request.overwrite,
+            ) {
                 Ok(n) => {
-                    let mut msg = format!("Exported {n} row(s) to {path}");
+                    let mut msg = format!(
+                        "Exported {n} row(s) to {} — refreshed: re-ran the query just now",
+                        request.path
+                    );
                     if result.truncated {
                         msg.push_str(" (result was truncated)");
+                    }
+                    // Only the legacy form points at --snapshot, and only
+                    // when there is a capture to point at: the result the
+                    // user inspected is exactly what --snapshot would write.
+                    if request.mode.is_none() && captured.is_some() {
+                        msg.push_str(" (use --snapshot to export the result you already have)");
                     }
                     transcript.push(BlockKind::System, msg);
                 }

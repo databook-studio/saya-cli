@@ -24,11 +24,9 @@ pub(crate) const CAPTURE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
 /// derives: this type must never enter a session file, a snapshot, or any
 /// persisted record.
 ///
-/// Written here, first read by `/export --snapshot` (S11) and the report
-/// (S12); until then the struct is write-only in the lib build (tests read
-/// it), so this expectation stands in their place and fails the gate the
-/// moment a reader arrives, forcing removal.
-#[cfg_attr(not(test), expect(dead_code))]
+/// Written here on every successful `/sql`; read by `/export --snapshot`
+/// (S11), which exports the result the user already inspected, and by the
+/// report (S12) later.
 pub(crate) struct CapturedResult {
     pub(crate) result: QueryResult,
     pub(crate) evidence: ExecutionEvidence,
@@ -42,6 +40,19 @@ pub(crate) fn unix_now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// The time-of-day of a unix-millisecond timestamp, `HH:MM:SS`, UTC —
+/// deterministic and dependency-free. The snapshot export message labels it
+/// UTC so it never reads as local wall time.
+pub(crate) fn clock_hh_mm_ss(unix_ms: i64) -> String {
+    let seconds = (unix_ms / 1000).rem_euclid(86_400);
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3600,
+        (seconds % 3600) / 60,
+        seconds % 60
+    )
 }
 
 /// The next execution id: process-wide counter + the task's dispatch time.
