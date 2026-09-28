@@ -8,15 +8,16 @@ All notable changes to SAYA CLI are recorded here. This project follows
 ### Added
 
 **`saya demo` — a read-only sample database in one command.** It builds a
-deterministic synthetic SQLite database (customers, orders, and
-customer_contacts, a few hundred rows per table) under the platform data
+deterministic synthetic SQLite database (240 customers, 560 orders, and 123
+customer_contacts rows) under the platform data
 directory's `saya/demo/` and opens it read-only in the interactive session.
 No AI provider is needed for schema browsing and `/sql`. The fixture is
 designed to exercise tricky SQL: nulls in emails and
 amounts, a contact table that multiplies rows when joined, order dates
-straddling the 2025-12-31 → 2026-01-01 boundary, and a customer status whose
-"active" value appears more than once in the data, so "active customer" is
-genuinely ambiguous. `--reset` rebuilds the fixture; `SAYA_DEMO_DIR` moves
+straddling the 2025-12-31 → 2026-01-01 boundary, and an "active customer"
+with two defensible meanings — `customers.status = 'active'` and "ordered in
+the last 90 days of the data" disagree for some customers. `--reset` rebuilds
+the fixture; `SAYA_DEMO_DIR` moves
 it; without a terminal the command prints the paths, the launch command, and
 example SQL instead of launching. The first screen now leads with `saya demo`
 when no database is configured, and shows up to three schema-derived starter
@@ -44,9 +45,9 @@ it prompts for nothing, writes nothing, and exits `2` with guidance to
 document, then replay or share it.** `save|list|show|run|export|import|delete`
 manage one JSON file per investigation under the data directory's
 `investigations/` (`SAYA_INVESTIGATIONS_DIR` overrides; `0600` files in a
-`0700` directory, 500-document cap): the exact SQL, its dialect, the logical
-connection alias, and the referenced objects — no credentials, rows,
-results, or machine-specific identity.
+`0700` directory, 500-document cap): the exact SQL plus its name, optional
+description, dialect, logical connection alias, and referenced objects — no
+credentials, rows, results, or machine-specific identity.
 
 - **Saving validates, never executes.** The SQL is checked by the same
   read-only gate execution uses, for the target dialect; multi-statement or
@@ -73,7 +74,8 @@ results, or machine-specific identity.
   [--rows N]` writes the Markdown report below from the replay's result.
 - The slash adapter `/investigation …` (and alias `/investigations`) runs the
   same operation module, so the surfaces cannot disagree. In the TUI,
-  `/investigation save <name>` without `--sql` saves the latest successful,
+  `/investigation save <name>` — the name is positional there, where the CLI
+  spells it `--name <NAME>` — without `--sql` saves the latest successful,
   concrete query on the connection that actually ran it — failed or denied
   agent queries and fan-out never count — and `/investigation run` runs in
   the foreground.
@@ -95,8 +97,9 @@ and says so — re-runs the last query on its original connection and exports
 that fresh read. `/report [--rows N] [--overwrite] <path>` writes a
 shareable Markdown report of the captured result: exact SQL and provenance
 by default, rows only with `--rows N` (at most 100), cell values neutralised
-(spreadsheet formulas, links, HTML, and control characters cannot be carried
-into the file), capped at 2 MiB, never querying a database and never opening
+(links, images, HTML, table-breaking characters, and control characters
+cannot be carried into the file), capped at 2 MiB, never querying a database
+and never opening
 a browser or uploading. Exports and reports are written atomically via a
 private temp file, and only direct `/sql` results are captured — agent-run
 query results are not, so for those use `/sql` or `/export --refresh`.
@@ -121,7 +124,8 @@ query results are not, so for those use `/sql` or `/export --refresh`.
   query.
 - Parameterised investigations, context import, dbt, file sources, and MCP
   are not in this release (planned).
-- The report neutralises links, HTML, formulas, and control characters, but
+- The report neutralises links, images, HTML, table-breaking characters, and
+  control characters, but
   a Markdown renderer may still auto-link a bare `https://…` text value in
   an included row — review the report before sharing.
 - Guided setup covers four engines; Snowflake, ClickHouse, and BigQuery are
