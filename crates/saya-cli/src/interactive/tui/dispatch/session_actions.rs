@@ -38,6 +38,7 @@ pub(super) fn apply_session_action(
                 followup: super::super::sql_task::Followup::Sql {
                     connection: state.profile.clone(),
                 },
+                started_unix_ms: super::super::capture::unix_now_ms(),
             }));
         }
         SessionAction::Contracts(command) => {

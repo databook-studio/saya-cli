@@ -108,6 +108,7 @@ fn a_completed_result_names_its_connection_and_query() {
         followup: Followup::Sql {
             connection: Some("analytics".into()),
         },
+        started_unix_ms: 1_790_000_000_000,
     };
     complete(
         &task,
@@ -116,6 +117,8 @@ fn a_completed_result_names_its_connection_and_query() {
         },
         &mut app.transcript,
         &mut app.last_query,
+        &mut app.captured,
+        &app.runtime,
     );
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
     assert!(
