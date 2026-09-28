@@ -379,3 +379,116 @@ fn an_unredacted_tool_result_is_unchanged() {
         message.content
     );
 }
+
+// -- the shaping extraction (R3): the capture hook must shape the model's --
+// -- view with the exact function the loop uses, so both see the same ------
+// -- bytes. The pin: the extracted function reproduces the pre-extraction --
+// -- `tool_message` body byte for byte. ------------------------------------
+
+/// The pre-extraction `tool_message` shaping, embedded as the reference:
+/// serialize, cut to the cap on a char boundary with the visible marker, then
+/// redact what remains and prepend the note when anything was replaced. Only
+/// `redact_counted` and `tool_message_cap` — unchanged external contracts,
+/// pinned by their own tests — are called from production; everything else
+/// here is the literal old code, so the comparison cannot drift with it.
+fn old_tool_message_shaping(result: &Value, byte_budget: usize) -> (String, bool) {
+    let cap = tool_message_cap(byte_budget);
+    let text = serde_json::to_string(result)
+        .unwrap_or_else(|_| "{\"error\":\"tool result unavailable\"}".into());
+    let (content, truncated) = if text.len() <= cap {
+        (text, false)
+    } else {
+        let marker = "…[truncated: tool result exceeded the conversation byte budget]";
+        let head = cap.saturating_sub(marker.len());
+        let mut idx = head;
+        if idx >= text.len() {
+            idx = text.len();
+        }
+        while idx > 0 && !text.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        let mut truncated = String::from(&text[..idx]);
+        truncated.push_str(marker);
+        (truncated, true)
+    };
+    let (content, redacted_count) = redact_counted(&content);
+    let content = if redacted_count > 0 {
+        format!(
+            "[saya: {redacted_count} secret-shaped value(s) in this result were replaced with \
+             [redacted]; the source is unchanged — do not write [redacted] back]\n\n{content}"
+        )
+    } else {
+        content
+    };
+    (content, truncated)
+}
+
+/// The extraction pin (R3): `shape_tool_result` returns exactly the bytes the
+/// loop's `tool_message` has always put in the model's context — across a
+/// clean result, a redacted one (note prepended, count named), whole-at-the-
+/// cap, one-byte-over, a tight budget cutting on a multi-byte boundary, and a
+/// secret that survives into the truncated head (redaction after the cut).
+/// `tool_message` must shape through the same function — no second
+/// implementation to drift.
+#[test]
+fn shaping_is_byte_identical_to_the_old_tool_message() {
+    let cap = tool_message_cap(usize::MAX);
+    let cases: Vec<(Value, usize, usize)> = vec![
+        // A clean, small result — the common case: whole, no redactions.
+        (
+            serde_json::json!({"columns": ["id"], "rows": [[1], [2]], "row_count": 2}),
+            usize::MAX,
+            0,
+        ),
+        // Two secret-shaped values: note prepended, count 2.
+        (
+            serde_json::json!({"value": "token=abc123 password=xyz"}),
+            usize::MAX,
+            2,
+        ),
+        // Exactly at the cap: whole.
+        (Value::String("x".repeat(cap - 2)), usize::MAX, 0),
+        // One byte over the cap: cut with the loop's own marker.
+        (Value::String("x".repeat(cap - 1)), usize::MAX, 0),
+        // A tight budget cuts inside a multi-byte sequence: the boundary is
+        // floored, never split.
+        (serde_json::json!({"text": "é".repeat(64)}), 64, 0),
+        // A tight budget whose truncated head still carries a secret: the
+        // redaction runs on the CUT text and the note prepends — order pinned.
+        (
+            serde_json::json!({"text": format!("token=abc123 {}", "y".repeat(200))}),
+            120,
+            1,
+        ),
+        // Trivial shapes stay trivial.
+        (serde_json::json!({}), usize::MAX, 0),
+        (Value::Null, usize::MAX, 0),
+    ];
+    for (value, budget, redactions) in cases {
+        let shaped = shape_tool_result(&value, budget);
+        let (old_content, old_truncated) = old_tool_message_shaping(&value, budget);
+        assert_eq!(
+            shaped.text.as_bytes(),
+            old_content.as_bytes(),
+            "shaping must be byte-identical to the old tool_message body \
+             (budget {budget}): {:?}",
+            String::from_utf8_lossy(shaped.text.as_bytes())
+        );
+        assert_eq!(
+            shaped.truncated, old_truncated,
+            "the truncation verdict must match the old body (budget {budget})"
+        );
+        assert_eq!(
+            shaped.redactions, redactions,
+            "the redaction count must match the old body (budget {budget})"
+        );
+        // `tool_message` has no second implementation: its content is exactly
+        // the extracted shaping's text.
+        let (message, truncated) = tool_message("c1".into(), value.clone(), budget);
+        assert_eq!(
+            message.content, shaped.text,
+            "tool_message must shape through the one function (budget {budget})"
+        );
+        assert_eq!(truncated, shaped.truncated);
+    }
+}

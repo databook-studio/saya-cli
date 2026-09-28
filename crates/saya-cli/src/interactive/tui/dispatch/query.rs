@@ -150,8 +150,8 @@ fn apply_export(
 /// the capture time so the user can tell exactly which run a snapshot is
 /// of. Nothing here queries a database. When the latest promoted query was
 /// an agent query whose rows were not captured, the refusal names the gap —
-/// the capture budget when the capture was refused, nothing when no capture
-/// arrived — instead of the /sql-only wording.
+/// the capture budget, the model-view reason (truncated or redacted, R3),
+/// or nothing when no capture arrived — instead of the /sql-only wording.
 fn export_snapshot(
     request: &ExportRequest,
     captured: &Option<super::super::capture::CapturedResult>,
@@ -160,11 +160,7 @@ fn export_snapshot(
 ) {
     let Some(capture) = captured else {
         let message = match capture_gap {
-            Some(gap) => format!(
-                "The latest query's rows were not captured{}. \
-                 Use /export --refresh to re-run it.",
-                gap.reason()
-            ),
+            Some(gap) => gap.message(),
             None => "No captured result to snapshot. Captures last only for this session and \
                  only for /sql results — run /sql again, or use /export --refresh."
                 .to_string(),

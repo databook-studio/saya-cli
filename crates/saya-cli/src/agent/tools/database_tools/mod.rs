@@ -46,7 +46,7 @@ pub(crate) use override_log::OverrideLog;
 // The capture hook types (C1): the TUI builds the hook from its stream
 // channel; the runtime attaches it to the tools; the drain consumes the
 // messages it produces.
-pub(crate) use capture::{AgentCapture, CaptureEvent, CaptureHook};
+pub(crate) use capture::{AgentCapture, CaptureEvent, CaptureHook, CaptureRefusalReason};
 // The workspace tool bounds type the workspace tools' harness arguments.
 // Re-exported for tests only, so the sibling tests build oversized files and
 // over-bound directories against the exact bounds rather than copies of them
@@ -113,6 +113,12 @@ pub(crate) struct DatabaseTools {
     /// `None` — every headless path — leaves behaviour identical: no hook, no
     /// capture, no message.
     pub(super) capture_hook: Option<CaptureHook>,
+    /// The turn's context byte budget — the SAME number the loop passes to
+    /// `tool_message` (`AgentLimits::context_byte_budget`), so the capture
+    /// hook shapes the model's view with the exact budget the loop shapes it
+    /// with (R3). Set together with the hook by [`Self::with_capture`];
+    /// meaningless while the hook is `None`.
+    pub(super) context_byte_budget: usize,
 }
 
 impl DatabaseTools {
@@ -158,6 +164,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
 
@@ -184,6 +191,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
 
@@ -210,6 +218,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
 
@@ -238,11 +247,18 @@ impl DatabaseTools {
         self
     }
 
-    /// Attaches the TUI's capture hook (C1). Only the `bounded_sql_query` arm
-    /// consults it, only on success; every headless path passes `None` and
-    /// nothing captures.
-    pub(crate) fn with_capture(mut self, capture_hook: Option<CaptureHook>) -> Self {
+    /// Attaches the TUI's capture hook (C1) together with the turn's context
+    /// byte budget — the same value the loop's `AgentLimits` will carry, so
+    /// the hook's model-view shaping uses the budget the loop shapes with
+    /// (R3). Only the `bounded_sql_query` arm consults it, only on success;
+    /// every headless path passes `None` and nothing captures.
+    pub(crate) fn with_capture(
+        mut self,
+        capture_hook: Option<CaptureHook>,
+        context_byte_budget: usize,
+    ) -> Self {
         self.capture_hook = capture_hook;
+        self.context_byte_budget = context_byte_budget;
         self
     }
 
@@ -267,6 +283,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
 
@@ -292,6 +309,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
 }
