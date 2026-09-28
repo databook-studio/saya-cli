@@ -6,12 +6,19 @@
 //! TUI never reads stdin, so the adapter passes `can_prompt = false` — the
 //! same stdin answer every other TUI door gives.
 //!
+//! `run` is the one subcommand that touches a database, so it does not run
+//! here at all: it is handed back as a [`Dispatch::ReplayTask`] and the
+//! worker (`replay_task.rs`) runs the same shared operation off-thread. The
+//! other subcommands are local file I/O and stay synchronous.
+//!
 //! The TUI-only behaviour is the save-without-SQL fill: `/investigation save
 //! <name>` with neither `--sql` nor `--file` saves the latest successful,
 //! concrete query on the connection that actually ran it. An explicit `--sql`
 //! or `--file` always wins; the current profile is never substituted
 //! silently.
 
+use super::dispatch::Dispatch;
+use super::replay_task::ReplayTask;
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
 use crate::cli::InvestigationCommand;
@@ -69,11 +76,15 @@ pub(super) fn fill_save_from_last_query(
     })
 }
 
-/// Runs one investigation command through the shared `run_investigation`
-/// dispatcher and pushes its rendered output into the transcript. The TUI
-/// runs under the alternate screen, so the dispatcher's `emit` output is
-/// captured through the thread-local seam instead of going to the process
-/// stdout; a non-zero exit surfaces as an error block.
+/// Runs one investigation command and hands the caller the follow-up: `run`
+/// — the only subcommand that touches a database — returns a
+/// [`Dispatch::ReplayTask`] and runs on a worker thread (D13); every other
+/// subcommand is local file I/O and stays synchronous here, its rendered
+/// output pushed into the transcript as a system or error block.
+///
+/// The TUI runs under the alternate screen, so the synchronous dispatcher's
+/// `emit` output is captured through the thread-local seam instead of going
+/// to the process stdout.
 pub(super) fn run_investigation(
     transcript: &mut Transcript,
     runtime: &RuntimeConfig,
@@ -81,18 +92,28 @@ pub(super) fn run_investigation(
     format: RenderFormat,
     command: &InvestigationCommand,
     last_query: &Option<LastQuery>,
-) {
+) -> Option<Dispatch> {
     let command = match fill_save_from_last_query(command.clone(), last_query) {
         Ok(command) => command,
         Err(message) => {
             transcript.push(BlockKind::Error, message);
-            return;
+            return None;
         }
     };
-    capture_output_start();
+    // `run` alone goes to the background: it is dispatched as a task and the
+    // completion applies the output and the typed replay (see
+    // `replay_task::complete`).
+    if let InvestigationCommand::Run { id, .. } = &command {
+        return Some(Dispatch::ReplayTask(ReplayTask {
+            id: id.clone(),
+            command,
+            format,
+        }));
+    }
     // The shared dispatcher returns Ok(code) for every typed outcome (a store
     // error is emitted as a diagnostic and returned non-zero); the outer Err
     // is a render/IO failure, surfaced here as an error block.
+    capture_output_start();
     let code = match block_on(run_investigation_command(
         command, runtime, format,
         // The TUI's stdin answer: it never reads stdin, so a missing secret
@@ -103,7 +124,7 @@ pub(super) fn run_investigation(
         Err(error) => {
             capture_output_take();
             transcript.push(BlockKind::Error, error.to_string());
-            return;
+            return None;
         }
     };
     let (out, err) = capture_output_take();
@@ -113,6 +134,7 @@ pub(super) fn run_investigation(
     } else {
         transcript.push(BlockKind::Error, body.trim_end().to_string());
     }
+    None
 }
 
 #[cfg(test)]

@@ -298,8 +298,10 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              profile. Saving validates the SQL with the same read-only gate \
              execution uses but never runs it; the exact SQL is stored verbatim, \
              so review it before sharing. `run <id>` replays one on its explicit \
-             connection — it runs in the foreground, so the transcript waits for \
-             the query. `list`, `show`, `delete`, `export <id> <path>`, and \
+             connection — it runs in the background like a /sql query, so the \
+             transcript keeps working while it runs; Esc detaches it (the query \
+             may still be running on the server). `list`, `show`, `delete`, \
+             `export <id> <path>`, and \
              `import <path>` are the same operations the `saya investigation` \
              commands provide. Example: /investigation save recent orders   or   \
              /investigation list",

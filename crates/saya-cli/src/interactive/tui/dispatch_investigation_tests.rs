@@ -120,3 +120,67 @@ fn non_save_commands_pass_through_untouched() {
         list
     );
 }
+
+/// Only `run` goes to the background: the adapter returns the replay task
+/// and pushes nothing — the shared operation runs on the worker thread, not
+/// here. Every other subcommand stays synchronous local I/O: it runs inline
+/// and returns no task.
+#[test]
+fn run_dispatches_a_replay_task_and_everything_else_stays_synchronous() {
+    use crate::interactive::tui::application::tests_support::unused_runtime;
+    use crate::interactive::tui::dispatch::Dispatch;
+    use crate::interactive::tui::transcript::Transcript;
+    use crate::render::RenderFormat;
+    use saya_store::SqliteStateStore;
+    use std::path::PathBuf;
+
+    let runtime = unused_runtime();
+    let store = SqliteStateStore::new(PathBuf::new());
+
+    let mut transcript = Transcript::new();
+    let outcome = super::run_investigation(
+        &mut transcript,
+        &runtime,
+        &store,
+        RenderFormat::Text,
+        &InvestigationCommand::Run {
+            id: "recent-orders-abcdef01".into(),
+            connection: None,
+            revalidate: false,
+            report: None,
+            rows: None,
+            overwrite: false,
+        },
+        &None,
+    );
+    let Some(Dispatch::ReplayTask(task)) = outcome else {
+        panic!("a run dispatches a replay task");
+    };
+    assert_eq!(task.id, "recent-orders-abcdef01");
+    assert!(
+        transcript.blocks().is_empty(),
+        "dispatch runs nothing inline: {:?}",
+        transcript.blocks()
+    );
+
+    // A non-run subcommand stays synchronous: a malformed id refuses inline
+    // (no store access, deterministic) and no task is returned.
+    let mut transcript = Transcript::new();
+    let outcome = super::run_investigation(
+        &mut transcript,
+        &runtime,
+        &store,
+        RenderFormat::Text,
+        &InvestigationCommand::Show {
+            id: "Not_A_Valid_Id".into(),
+        },
+        &None,
+    );
+    assert!(outcome.is_none(), "non-run commands stay synchronous");
+    let block = transcript.blocks().last().expect("the refusal is inline");
+    assert!(
+        block.text.contains("no investigation Not_A_Valid_Id"),
+        "the sync refusal is pushed: {}",
+        block.text
+    );
+}

@@ -97,6 +97,11 @@ pub(crate) fn tick_pending(
                     }
                 }
             }
+            // The saved-investigation replay takes the same one-query-at-a-
+            // time resource: admit (spawn off-thread, name the
+            // investigation in the bar) or refuse — never a silent
+            // replacement of the running query or replay.
+            Dispatch::ReplayTask(task) => app.start_replay(task),
         }
         // A `/resume` swapped the session: the engine side too, so the
         // app's universe is the resumed session's, not the old one's.
