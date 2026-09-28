@@ -13,7 +13,7 @@ use saya_store::SqliteStateStore;
 use super::super::history::History;
 use super::super::input::InputBuffer;
 use super::super::transcript::Transcript;
-use super::super::types::{App, OverlayState, RequestState};
+use super::super::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::interactive::session_prompt::StatusView;
 /// `bounded_sql_query`'s declared effect, carried on the fabricated request
 /// events so they match what the loop emits.
@@ -120,6 +120,7 @@ pub(crate) fn empty_app() -> App {
         captured: None,
         pending_queries: std::collections::VecDeque::new(),
         pending_queries_desync: false,
+        agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
         run_panel: None,
         runtime: unused_runtime(),

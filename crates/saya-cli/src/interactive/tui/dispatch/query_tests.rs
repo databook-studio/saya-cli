@@ -74,6 +74,7 @@ fn apply_report_action(
         state,
         last_query,
         captured,
+        None,
     )
 }
 
