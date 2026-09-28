@@ -9,16 +9,22 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 /// The TUI's capture hook, built from the turn's channel sender: it forwards
-/// one successful agent query's typed result — or its over-budget refusal —
-/// onto the same channel the turn's events ride, so the message precedes the
-/// loop's `ToolCompleted` for the same call.
+/// one successful agent query's typed result — or its refusal with the reason
+/// the snapshot names (R3) — onto the same channel the turn's events ride, so
+/// the message precedes the loop's `ToolCompleted` for the same call.
 pub(crate) fn capture_hook(tx: UnboundedSender<StreamMsg>) -> CaptureHook {
     Arc::new(move |event| {
         let message = match event {
             CaptureEvent::Captured(capture) => StreamMsg::QueryCaptured(capture),
-            CaptureEvent::Refused { sql, connection } => {
-                StreamMsg::QueryCaptureRefused { sql, connection }
-            }
+            CaptureEvent::Refused {
+                sql,
+                connection,
+                reason,
+            } => StreamMsg::QueryCaptureRefused {
+                sql,
+                connection,
+                reason,
+            },
         };
         let _ = tx.send(message);
     })

@@ -15,17 +15,22 @@ use std::collections::VecDeque;
 
 use super::capture::{CAPTURE_BUDGET_BYTES, CapturedResult, agent_evidence, human_bytes};
 use super::types::PendingQuery;
-use crate::agent::tools::AgentCapture;
+use crate::agent::tools::{AgentCapture, CaptureRefusalReason};
 use saya_types::ExecutionEvidence;
 
 /// The bound on capture outcomes queued unmatched for one turn.
 pub(crate) const MAX_UNMATCHED_CAPTURES: usize = 8;
 
 /// One unmatched capture outcome queued for the current turn: the typed
-/// result of a successful query, or the budget refusal (nothing held).
+/// result of a successful query, or the refusal with its reason (nothing
+/// held).
 pub(crate) enum AgentCaptureOutcome {
     Captured(AgentCapture),
-    Refused { sql: String, connection: String },
+    Refused {
+        sql: String,
+        connection: String,
+        reason: CaptureRefusalReason,
+    },
 }
 
 impl AgentCaptureOutcome {
@@ -36,6 +41,7 @@ impl AgentCaptureOutcome {
             Self::Refused {
                 sql: r_sql,
                 connection: r_conn,
+                ..
             } => r_sql == sql && r_conn == connection,
         }
     }
@@ -47,16 +53,42 @@ impl AgentCaptureOutcome {
 pub(crate) enum CaptureGap {
     /// The result was over the accounted capture budget: refused.
     OverBudget,
+    /// The model's message was truncated to the conversation byte budget: it
+    /// saw a prefix, so the full result is not its evidence (R3).
+    ModelViewTruncated,
+    /// Redaction replaced secret-shaped material before the message reached
+    /// the model: it never saw those values (R3).
+    ModelViewRedacted,
     /// No capture arrived for the promoted query.
     Missing,
 }
 
 impl CaptureGap {
-    /// The parenthetical the snapshot's refusal carries, when there is one.
-    pub(crate) fn reason(self) -> String {
+    /// The refusal message the snapshot shows when this gap is why the latest
+    /// promoted agent query's rows are not held: the budget size for an
+    /// over-budget refusal, the model-view reason for a truncated or redacted
+    /// model view (R3 decision 3), and no invented reason for a missing
+    /// capture.
+    pub(crate) fn message(self) -> String {
         match self {
-            Self::OverBudget => format!(" (larger than {})", human_bytes(CAPTURE_BUDGET_BYTES)),
-            Self::Missing => String::new(),
+            Self::OverBudget => format!(
+                "The latest query's rows were not captured (larger than {}). \
+                 Use /export --refresh to re-run it.",
+                human_bytes(CAPTURE_BUDGET_BYTES)
+            ),
+            Self::ModelViewTruncated => {
+                "The agent received a truncated version of this result, so it was \
+                 not captured. Use /export --refresh to re-run it."
+                    .to_owned()
+            }
+            Self::ModelViewRedacted => {
+                "The agent received a redacted version of this result, so it was \
+                 not captured. Use /export --refresh to re-run it."
+                    .to_owned()
+            }
+            Self::Missing => "The latest query's rows were not captured. \
+                 Use /export --refresh to re-run it."
+                .to_owned(),
         }
     }
 }
@@ -137,8 +169,12 @@ pub(crate) fn promote_agent_capture(
             });
             Some(evidence)
         }
-        Some(AgentCaptureOutcome::Refused { .. }) => {
-            captures.gap = Some(CaptureGap::OverBudget);
+        Some(AgentCaptureOutcome::Refused { reason, .. }) => {
+            captures.gap = Some(match reason {
+                CaptureRefusalReason::OverBudget => CaptureGap::OverBudget,
+                CaptureRefusalReason::ModelViewTruncated => CaptureGap::ModelViewTruncated,
+                CaptureRefusalReason::ModelViewRedacted => CaptureGap::ModelViewRedacted,
+            });
             *captured = None;
             None
         }

@@ -32,7 +32,7 @@ pub(crate) use database_tools::{
 // The capture hook types (C1): the TUI builds the hook from its stream
 // channel; the runtime attaches it to the tools; the messages and their drain
 // consume what it produces.
-pub(crate) use database_tools::{AgentCapture, CaptureEvent, CaptureHook};
+pub(crate) use database_tools::{AgentCapture, CaptureEvent, CaptureHook, CaptureRefusalReason};
 #[allow(unused_imports)]
 pub(crate) use sql_format::{collapse_whitespace, format_sql};
 #[allow(unused_imports)]

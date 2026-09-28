@@ -238,8 +238,11 @@ pub(crate) async fn run_prompt_with_inputs(
         // reach. `None` (the one-shot `ask` path) leaves them denying with
         // their typed error.
         .with_workspace(session.as_ref().and_then(|session| session.workspace()))
-        // The TUI's capture hook (C1); `None` headless.
-        .with_capture(capture),
+        // The TUI's capture hook (C1) together with the turn's context byte budget
+        // — the SAME value `AgentLimits::context_byte_budget` below carries,
+        // so the capture hook shapes the model's view with the budget the
+        // loop shapes it with (R3). `None` headless.
+        .with_capture(capture, runtime.resolved.ai.context_byte_budget),
     );
     let request = AgentRequest {
         prompt: prompt.into(),
