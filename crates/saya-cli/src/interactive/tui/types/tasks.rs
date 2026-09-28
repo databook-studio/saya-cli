@@ -41,6 +41,22 @@ pub(crate) struct LastQuery {
     pub(crate) connection: Option<String>,
 }
 
+/// A pending `bounded_sql_query` request awaiting its completion event. The
+/// FIFO between these and [`LastQuery`] is what makes a request a *candidate*
+/// rather than a selectable query: only a successful completion promotes its
+/// candidate into the [`LastQuery`], verbatim — sql and connection alike.
+#[derive(Clone)]
+pub(crate) struct PendingQuery {
+    pub(crate) sql: String,
+    pub(crate) connection: Option<String>,
+}
+
+/// The pending-candidates FIFO bound: at most this many `bounded_sql_query`
+/// requests await their completions; the oldest is dropped beyond it. A
+/// runaway agent cannot grow the app's state without limit even if it
+/// requests one query per line.
+pub(crate) const MAX_PENDING_QUERIES: usize = 32;
+
 /// Presentation state for wide result tables. This is view state: the
 /// transcript block text stays the full, untruncated table (what copy and
 /// persistence see), and these fields only change how a table is painted.

@@ -35,6 +35,7 @@ pub(crate) fn idle_app() -> App {
         session_save: None,
         pending_session_save: None,
         last_query: None,
+        pending_queries: std::collections::VecDeque::new(),
         wide_table: Default::default(),
         run_panel: None,
         runtime: Arc::new(unused_runtime()),
