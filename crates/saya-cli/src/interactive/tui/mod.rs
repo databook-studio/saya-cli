@@ -20,7 +20,7 @@ mod dispatch_actions;
 mod dispatch_contracts;
 mod dispatch_runs;
 mod exec;
-mod export;
+pub(crate) mod export;
 mod fuzzy;
 mod history;
 mod input;
