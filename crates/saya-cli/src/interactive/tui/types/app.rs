@@ -3,6 +3,7 @@
 use super::super::history::History;
 use super::super::input::InputBuffer;
 use super::super::transcript::Transcript;
+use super::CapturedResult;
 use super::overlays::OverlayState;
 use super::request::RequestState;
 use super::tasks::{
@@ -50,6 +51,13 @@ pub(crate) struct App {
     pub(crate) compact_task: Option<std::sync::mpsc::Receiver<CompactOutcome>>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
+    /// The latest direct-`/sql` result and its execution evidence, held in
+    /// memory only: [`CapturedResult`] carries no serde derives and lives on
+    /// `App` (which nothing serializes), so the session save payload —
+    /// `SessionState::redacted()` — never carries captured rows. Only the
+    /// `Followup::Sql` success path sets or clears it (errors, `/chart`,
+    /// `/explain`, `/export`, and agent tool results leave it alone).
+    pub(crate) captured: Option<CapturedResult>,
     /// Pending `bounded_sql_query` candidates awaiting their completion
     /// events: a request alone never becomes the selectable query, only a
     /// successful completion promotes the front candidate (and a failure or

@@ -34,6 +34,7 @@ fn apply_export(
                 profile: lq.connection.clone().or(state.profile.clone()),
                 sql: lq.sql.clone(),
                 followup: super::super::sql_task::Followup::Export { path },
+                started_unix_ms: super::super::capture::unix_now_ms(),
             }));
         }
         None => transcript.push(
@@ -57,6 +58,7 @@ fn apply_chart(
                 profile: lq.connection.clone().or(state.profile.clone()),
                 sql: lq.sql.clone(),
                 followup: super::super::sql_task::Followup::Chart { kind, path },
+                started_unix_ms: super::super::capture::unix_now_ms(),
             }));
         }
         None => transcript.push(
@@ -89,5 +91,6 @@ fn apply_explain(
         profile: connection.or_else(|| state.profile.clone()),
         sql: format!("EXPLAIN {trimmed}"),
         followup: super::super::sql_task::Followup::Explain,
+        started_unix_ms: super::super::capture::unix_now_ms(),
     }))
 }

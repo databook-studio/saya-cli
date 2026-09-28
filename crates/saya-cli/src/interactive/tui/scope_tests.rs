@@ -29,6 +29,7 @@ fn sql_task_with_connection(connection: Option<&str>, sql: &str) -> SqlTask {
         followup: Followup::Sql {
             connection: connection.map(str::to_string),
         },
+        started_unix_ms: 1_790_000_000_000,
     }
 }
 
@@ -41,6 +42,8 @@ fn completed_table(task: &SqlTask, result: saya_types::QueryResult) -> Block {
         crate::render::TerminalEvent::QueryResult { result },
         &mut transcript,
         &mut None,
+        &mut None,
+        &super::ui_snapshot_tests::unused_runtime(),
     );
     transcript
         .blocks()

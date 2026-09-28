@@ -124,6 +124,7 @@ fn in_flight_task_shape_matches_app_state() {
         followup: Followup::Sql {
             connection: Some("analytics".into()),
         },
+        started_unix_ms: 1_790_000_000_000,
     };
     let _: (
         std::sync::mpsc::Receiver<TerminalEvent>,
