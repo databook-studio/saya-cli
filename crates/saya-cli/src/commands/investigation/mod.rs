@@ -18,6 +18,7 @@ mod objects;
 mod paths;
 mod run;
 mod run_binding;
+mod run_outcome;
 mod run_report;
 mod save;
 mod save_input;
@@ -28,6 +29,7 @@ mod tests;
 use crate::cli::InvestigationCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+pub use run_outcome::{Replay, RunOutcome};
 use saya_store::{InvestigationRepository, SqliteStateStore, StoreError};
 use saya_types::investigation::InvestigationId;
 
@@ -60,6 +62,28 @@ pub async fn run_investigation(
     .await
 }
 
+/// The typed-outcome seam for the replay adapter (D12/C3): the same path as
+/// [`run_investigation`], returning the exit code plus the replay (result
+/// and evidence) after a successful execution, so a caller captures the run
+/// instead of re-parsing rendered output.
+pub async fn run_investigation_outcome(
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    run_investigation_outcome_in(
+        &InvestigationRepository::new(paths::investigations_root()),
+        command,
+        runtime,
+        format,
+        can_prompt,
+        state_db,
+    )
+    .await
+}
+
 /// The repository-explicit seam: tests and later adapters pass the repository
 /// they own instead of relying on process env; the public entry is a
 /// one-liner over this.
@@ -71,6 +95,21 @@ pub(crate) async fn run_investigation_in(
     can_prompt: bool,
     state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    run_investigation_outcome_in(repo, command, runtime, format, can_prompt, state_db)
+        .await
+        .map(|outcome| outcome.code)
+}
+
+/// The one dispatcher: every adapter maps what it needs from the outcome —
+/// the exit code (headless CLI) or the whole outcome (TUI replay capture).
+async fn run_investigation_outcome_in(
+    repo: &InvestigationRepository,
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
     match command {
         InvestigationCommand::Save {
             name,
@@ -89,18 +128,23 @@ pub(crate) async fn run_investigation_in(
                 file,
                 connection: connection.as_deref(),
             },
-        ),
-        InvestigationCommand::List { limit, offset } => list::list(repo, format, limit, offset),
-        InvestigationCommand::Show { id } => show::show(repo, format, &id),
+        )
+        .map(RunOutcome::plain),
+        InvestigationCommand::List { limit, offset } => {
+            list::list(repo, format, limit, offset).map(RunOutcome::plain)
+        }
+        InvestigationCommand::Show { id } => show::show(repo, format, &id).map(RunOutcome::plain),
         InvestigationCommand::Delete { id, revision } => {
-            delete::delete(repo, format, &id, revision)
+            delete::delete(repo, format, &id, revision).map(RunOutcome::plain)
         }
         InvestigationCommand::Export {
             id,
             path,
             overwrite,
-        } => export::export(repo, format, &id, &path, overwrite),
-        InvestigationCommand::Import { path } => import::import(repo, format, &path),
+        } => export::export(repo, format, &id, &path, overwrite).map(RunOutcome::plain),
+        InvestigationCommand::Import { path } => {
+            import::import(repo, format, &path).map(RunOutcome::plain)
+        }
         InvestigationCommand::Run {
             id,
             connection,
