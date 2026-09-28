@@ -58,7 +58,10 @@ saya demo
 To point saya at your own database, `saya setup` walks you through choosing
 an AI provider and a database profile, probing the connection, and
 confirming the exact file changes (secrets are requested only as
-environment-variable names). If you prefer to write the files yourself, the
+environment-variable names). Guided setup covers SQLite, DuckDB,
+PostgreSQL, and MySQL; Snowflake, ClickHouse, and BigQuery are configured
+by hand in `connections.toml` — see [connections](connections.md). If you
+prefer to write the files yourself, the
 manual path is unchanged:
 
 ```bash
