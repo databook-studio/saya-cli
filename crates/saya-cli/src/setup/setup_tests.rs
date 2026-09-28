@@ -2,9 +2,9 @@
 //! backups and a recoverable interruption marker. The engine is pure; every
 //! test drives it against a real temp directory and the real config parsers.
 
-use super::{
-    ProfileDraft, ProviderDraft, SetupDraft, SetupError, commit, finish, pending, plan, restore,
-};
+use super::draft::{ProfileDraft, ProviderDraft};
+use super::recover::{finish, restore};
+use super::{SetupDraft, SetupError, commit, pending, plan};
 use saya_config::{AiProvider, ConfigFile, ConnectionsFile};
 use saya_types::{DatabaseProfile, SecretRef};
 use std::fs;

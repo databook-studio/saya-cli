@@ -16,8 +16,28 @@ pub fn run(cli: Cli) -> i32 {
 
 use clap::CommandFactory as _;
 
+/// Startup warning (S16): if an earlier `saya setup` was interrupted mid-commit,
+/// every command except `setup` (which offers the recovery interactively) and
+/// `completions` (which must keep its stdout contract clean) says so once, to
+/// stderr. Never auto-restores; a marker read error is a warning, never a crash.
+fn warn_interrupted_setup() {
+    let dir = config::sources::user_config_dir();
+    match crate::setup::pending(&dir) {
+        Ok(Some(_)) => eprintln!(
+            "An interrupted `saya setup` left a recovery marker in {}. \
+             Run `saya setup` to restore or finish it.",
+            dir.display()
+        ),
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("warning: could not check for an interrupted `saya setup`: {error}")
+        }
+    }
+}
+
 fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let Some(command) = cli.command.clone() else {
+        warn_interrupted_setup();
         if cli.options.non_interactive {
             return Err("non-interactive mode requires a subcommand".into());
         }
@@ -29,6 +49,12 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         generate(shell, &mut cmd, "saya", &mut std::io::stdout());
         return Ok(0);
     }
+    // Setup runs the guided flow before any runtime load: it writes the
+    // config it then loads, and refuses to prompt when there is no terminal.
+    if let Command::Setup = command {
+        return crate::setup::flow::run(&cli);
+    }
+    warn_interrupted_setup();
     if let Command::Config {
         command: ConfigCommand::Init { project },
     } = &command

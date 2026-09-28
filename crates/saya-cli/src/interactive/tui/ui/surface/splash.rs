@@ -23,8 +23,9 @@ pub(crate) const NO_DATABASE_HEADLINE: &str = "No database is configured yet.";
 /// The previous copy hardcoded `.saya/connections.toml` and kept saying it
 /// after the default moved, sending first-run users to a file that is not
 /// created any more.
-pub(in crate::interactive::tui) const NO_DATABASE_STEPS: [&str; 4] = [
+pub(in crate::interactive::tui) const NO_DATABASE_STEPS: [&str; 5] = [
     "Try it now: `saya demo` — a read-only sample database.",
+    "Or run `saya setup` for a guided connection.",
     "Run `saya config init` — it prints where it wrote the files.",
     "Add your database there, then `saya connection test <name>`.",
     "Restart saya to pick it up.",

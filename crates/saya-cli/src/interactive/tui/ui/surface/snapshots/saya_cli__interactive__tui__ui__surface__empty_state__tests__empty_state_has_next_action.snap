@@ -2,7 +2,6 @@
 source: crates/saya-cli/src/interactive/tui/ui/surface/empty_state_tests.rs
 expression: buffer
 ---
-"                                                                                "
 "                                     ▄     ▄                                    "
 "                                     ███████                                    "
 "                                    ██ ▐ ▌ ██                                   "
@@ -14,6 +13,7 @@ expression: buffer
 "                                                                                "
 "                         No database is configured yet.                         "
 "             Try it now: `saya demo` — a read-only sample database.             "
+"                  Or run `saya setup` for a guided connection.                  "
 "          Run `saya config init` — it prints where it wrote the files.          "
 "          Add your database there, then `saya connection test <name>`.          "
 "                           Restart saya to pick it up.                          "

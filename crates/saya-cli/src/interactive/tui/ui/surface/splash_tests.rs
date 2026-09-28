@@ -49,6 +49,7 @@ fn first_run_guidance_names_no_config_path() {
 fn first_run_guidance_names_real_commands() {
     let all = NO_DATABASE_STEPS.join(" ") + NO_DATABASE_FOOTER;
     for command in [
+        "saya setup",
         "saya demo",
         "saya config init",
         "saya connection test",
@@ -56,6 +57,16 @@ fn first_run_guidance_names_real_commands() {
     ] {
         assert!(all.contains(command), "guidance should offer `{command}`");
     }
+}
+
+/// The guided-setup step is the second no-database step (S16): the one-command
+/// demo first, then the guided flow, then the manual template route.
+#[test]
+fn the_second_step_offers_guided_setup() {
+    assert_eq!(
+        NO_DATABASE_STEPS[1],
+        "Or run `saya setup` for a guided connection."
+    );
 }
 
 /// The unbound-workspace line states the fact and the same two remedies

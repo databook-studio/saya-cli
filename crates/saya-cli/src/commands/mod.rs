@@ -14,7 +14,7 @@ use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 
 pub use contracts::run_contracts;
-pub use output::{capture_output_start, capture_output_take, result};
+pub use output::{capture_output_start, capture_output_take, failure_message, result};
 pub use run::run_management;
 // The TUI's run panel adapter surface: the panel drives the same fresh-run
 // path the headless `saya run` takes (`commands/run/host.rs` holds the
@@ -100,6 +100,10 @@ pub async fn run(
         Command::Completions { .. } => unreachable!("handled in dispatch"),
         // Demo is likewise handled in app::dispatch before the runtime loads.
         Command::Demo { .. } => unreachable!("handled in dispatch"),
+        // Setup is likewise handled in app::dispatch before the runtime loads:
+        // the guided flow runs without a resolved runtime and refuses before
+        // reading stdin when there is no terminal.
+        Command::Setup => unreachable!("handled in dispatch"),
     }
 }
 
