@@ -38,6 +38,7 @@ saya-store = { path = "../saya-store", version = "0.4.1" }
 saya-types = { path = "../saya-types", version = "0.4.1" }
 serde.workspace = true
 serde_json.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 tokio.workspace = true
@@ -57,7 +58,6 @@ duckdb.workspace = true
 libc = "0.2"
 insta.workspace = true
 proptest.workspace = true
-sqlx.workspace = true
 # Pty + screen parser for the TUI paint smoke test (tests/tui_pty_smoke.rs).
 # Dev-only: nothing here is a runtime dependency. portable-pty allocates a
 # pseudo-terminal so the real `saya` binary drives its crossterm/ratatui TUI
