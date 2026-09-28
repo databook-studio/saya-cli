@@ -3,7 +3,7 @@
 SAYA CLI ships prebuilt binaries for macOS (Apple Silicon + Intel), Linux
 (x86_64), and Windows (x86_64) on every
 [release](https://github.com/databook-studio/saya-cli/releases), and is
-published on crates.io. Building from source requires Rust 1.88.0 or newer.
+published on crates.io. Building from source requires Rust 1.89.0 or newer.
 
 ## Install a release build
 
