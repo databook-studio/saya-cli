@@ -3,15 +3,15 @@
 //! touches process env; the binary-level surface is covered in
 //! `tests/investigation_cli.rs`.
 
-use super::run_investigation_in;
+use super::{RunOutcome, run_investigation_in, run_investigation_outcome_in};
 use crate::cli::InvestigationCommand;
 use crate::commands::{capture_output_start, capture_output_take};
 use crate::config::runtime::{RuntimeConfig, load_with_sources};
 use crate::profile_identity::profile_identity;
 use crate::render::RenderFormat;
 use saya_store::{InvestigationRepository, SqliteStateStore};
-use saya_types::SqlDialect;
 use saya_types::investigation::InvestigationDefinitionV1;
+use saya_types::{EvidenceSource, ResultScope, SqlDialect};
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
@@ -611,6 +611,141 @@ async fn delete_refuses_a_document_it_cannot_verify() {
     assert_eq!(code, 2, "a corrupt document is never deleted: {err}");
     assert!(err.contains("corrupt or invalid"), "err: {err}");
     assert!(document_path(&root, &id).exists(), "the file stays");
+    let _ = fs::remove_dir_all(root);
+}
+
+// -- run outcome (C3/D12) --------------------------------------------------
+
+/// Seeds the events table straight into the profile's sqlite file, so a
+/// replay has something bounded to read.
+async fn seed_events(database: &Path) {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(database)
+        .create_if_missing(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    sqlx::query("CREATE TABLE events (id INTEGER PRIMARY KEY, label TEXT NOT NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO events (id, label) VALUES (1, 'first'), (2, 'second')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+/// Drives the dispatcher's typed-outcome seam with output captured, the way
+/// the TUI replay adapter consumes a run (D12): the outcome, not just the
+/// exit code.
+async fn run_outcome(
+    repo: &InvestigationRepository,
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    state_db: &SqliteStateStore,
+) -> (RunOutcome, String, String) {
+    capture_output_start();
+    let outcome =
+        run_investigation_outcome_in(repo, command, runtime, RenderFormat::Text, false, state_db)
+            .await
+            .unwrap();
+    let (out, err) = capture_output_take();
+    (outcome, out, err)
+}
+
+fn run_command(id: &str) -> InvestigationCommand {
+    InvestigationCommand::Run {
+        id: id.to_string(),
+        connection: None,
+        revalidate: false,
+        report: None,
+        rows: None,
+        overwrite: false,
+    }
+}
+
+#[tokio::test]
+async fn run_outcome_carries_result_and_evidence_on_success() {
+    let root = temp_root("outcome-success");
+    let runtime = runtime_at(&root, &single_profile_toml(&root));
+    let repo = repo_at(&root);
+    seed_events(&root.join("data.sqlite3")).await;
+    let id = saved_id(&repo, &runtime).await;
+    let state_db = SqliteStateStore::new(root.join("state.sqlite3"));
+
+    let (outcome, out, err) = run_outcome(&repo, run_command(&id), &runtime, &state_db).await;
+    assert_eq!(outcome.code, 0, "out: {out} err: {err}");
+    let replay = outcome
+        .replay
+        .expect("a successful replay carries its result and evidence");
+    assert_eq!(replay.sql, "SELECT id, label FROM events ORDER BY id");
+    assert_eq!(replay.connection, "local");
+    assert_eq!(replay.result.columns, ["id", "label"]);
+    assert_eq!(replay.result.row_count, 2);
+    assert_eq!(replay.evidence.returned_rows, 2);
+    assert_eq!(replay.evidence.connection_label, "local");
+    assert_eq!(replay.evidence.dialect, SqlDialect::Sqlite);
+    assert!(matches!(replay.evidence.scope, ResultScope::Full));
+    assert_eq!(
+        replay.evidence.source,
+        EvidenceSource::SavedInvestigation {
+            id: id.clone(),
+            revision: 1,
+        }
+    );
+    // The same events are still emitted in the same order (invariant 2):
+    // the rendered evidence line names the saved source and the profile.
+    assert!(out.contains("saved investigation"), "out: {out}");
+    assert!(out.contains("2 rows"), "out: {out}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn run_outcome_has_no_replay_on_stale_or_failure() {
+    let root = temp_root("outcome-none");
+    let runtime = runtime_at(&root, &single_profile_toml(&root));
+    let repo = repo_at(&root);
+    seed_events(&root.join("data.sqlite3")).await;
+    let id = saved_id(&repo, &runtime).await;
+    let state_db = SqliteStateStore::new(root.join("state.sqlite3"));
+
+    // Stale: the document's revision moved on disk under the binding, so the
+    // run is refused before anything executes and no replay exists.
+    let document = fs::read_to_string(document_path(&root, &id)).unwrap();
+    fs::write(
+        document_path(&root, &id),
+        document.replace("\"revision\": 1", "\"revision\": 2"),
+    )
+    .unwrap();
+    let (stale, out, err) = run_outcome(&repo, run_command(&id), &runtime, &state_db).await;
+    assert_eq!(stale.code, 2, "out: {out} err: {err}");
+    assert!(stale.replay.is_none(), "a stale refusal carries no replay");
+    assert!(err.contains("revision changed"), "err: {err}");
+
+    // Execution failure: the SQL passed save's read-only shape gate but the
+    // column does not exist, so the connector refuses it — the safety exit
+    // carries no replay either.
+    let (code, out, err) = run(
+        &repo,
+        InvestigationCommand::Save {
+            name: "Broken".into(),
+            description: None,
+            sql: Some("SELECT nosuchcol FROM events".into()),
+            file: None,
+            connection: None,
+        },
+        &runtime,
+    )
+    .await;
+    assert_eq!(code, 0, "save passed the shape gate: {out} err: {err}");
+    let broken = out.lines().next().unwrap().to_string();
+    let (failed, out, err) = run_outcome(&repo, run_command(&broken), &runtime, &state_db).await;
+    assert_eq!(failed.code, 4, "out: {out} err: {err}");
+    assert!(
+        failed.replay.is_none(),
+        "a failed execution carries no replay"
+    );
+    assert!(err.contains("nosuchcol"), "err: {err}");
+
     let _ = fs::remove_dir_all(root);
 }
 
