@@ -367,6 +367,29 @@ fn delete_removes_binding() {
 }
 
 #[test]
+fn delete_clears_binding_before_document() {
+    let root = temp_root("delete-order");
+    let _ = std::fs::remove_dir_all(&root);
+    let repo = InvestigationRepository::new(root.clone());
+    repo.create(&definition("ordered", 1)).unwrap();
+
+    // The binding clear is forced to fail: the binding path is a
+    // directory, which remove_file cannot delete.
+    std::fs::create_dir_all(root.join("local/ordered.json")).unwrap();
+    assert_eq!(
+        repo.delete(&id("ordered"), 1),
+        Err(StoreError::Unavailable),
+        "a failed binding clear must fail the delete"
+    );
+    assert!(
+        root.join("ordered.json").exists(),
+        "the binding is cleared before the document is removed, so a \
+         failed clear must leave both in place, retryable"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn delete_refuses_wrong_revision_and_missing_document() {
     let root = temp_root("delete-refuse");
     let _ = std::fs::remove_dir_all(&root);

@@ -4,33 +4,55 @@
 //! A lock older than the staleness horizon is treated as abandoned and is
 //! broken by atomically renaming it aside — never deleted — so the break
 //! never destroys evidence. The moved file's age is re-verified after the
-//! rename and a file that turns out fresh is renamed back untouched: a
-//! lock released and re-claimed inside the break window keeps its claim.
+//! rename and a file that turns out fresh is restored without
+//! replacement: a lock released and re-claimed inside the break window
+//! keeps its claim, and a third writer's claim that appeared meanwhile is
+//! never overwritten. When the restore is refused, the displaced fresh
+//! lock stays aside; its holder's release is identity-guarded in `lock`
+//! and cannot delete the newer claim, and the aside is best-effort removed
+//! after a successful re-claim, so aside files do not accumulate.
 //! A lock whose age cannot be determined at all is live: fail closed,
 //! never break what was not verified stale.
 
 use super::lock::LockContents;
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 /// Breaks the lock at `path` when it is verified stale: renamed aside, the
 /// moved file's age is checked again, and a file that turned out fresh is
-/// renamed back untouched. Reports whether the break succeeded.
-pub(super) fn break_if_stale(path: &Path, stale_after: Duration) -> bool {
+/// restored without replacement. Returns the aside file to best-effort
+/// remove after a successful re-claim — the verified-stale one, or a
+/// displaced fresh lock the restore could not complete — and `None` when
+/// nothing was moved aside.
+pub(super) fn break_if_stale(path: &Path, stale_after: Duration) -> Option<PathBuf> {
     if !is_stale(path, stale_after) {
-        return false;
+        return None;
     }
     let aside = path.with_file_name(format!(".lock.stale-{}", now_unix_ms()));
     if std::fs::rename(path, &aside).is_err() {
-        return false;
+        return None;
     }
     if is_stale(&aside, stale_after) {
+        return Some(aside);
+    }
+    if restore_displaced(&aside, path) {
+        return Some(aside);
+    }
+    None
+}
+
+/// Restores a fresh lock the break displaced: hard-links it back to the
+/// lock path — failing, never replacing, when another writer claimed the
+/// path meanwhile — then removes the aside name. Returns whether an aside
+/// file remains for later cleanup. `pub(super)` so the protocol tests can
+/// drive the restore boundary directly.
+pub(super) fn restore_displaced(aside: &Path, lock: &Path) -> bool {
+    if std::fs::hard_link(aside, lock).is_err() {
         return true;
     }
-    let _ = std::fs::rename(&aside, path);
-    false
+    std::fs::remove_file(aside).is_err()
 }
 
 /// Whether the lock file's age has reached `stale_after`: from its recorded
