@@ -417,6 +417,33 @@ fn overflow_flag_resets_next_turn() {
     );
 }
 
+/// R4-9: a TurnReset also clears a desynchronised mark the discarded attempt
+/// left (its FIFO overflowed): the retry queues and pairs again from a
+/// trusted, empty FIFO instead of staying muted for the rest of the turn.
+#[test]
+fn a_turn_reset_clears_a_desynchronised_mark_so_the_retry_pairs_again() {
+    let (mut app, mut state) = app_and_state();
+    let mut messages: Vec<StreamMsg> = (1..=33)
+        .map(|n| sql_request(&format!("SELECT {n}"), Some("analytics")))
+        .collect();
+    // The overflow desynchronised the discarded attempt...
+    // ...and the turn resets to retry it.
+    messages.push(StreamMsg::Event(AgentEvent::turn_reset()));
+    messages.push(sql_request("SELECT 40", Some("analytics")));
+    messages.push(completed("1 row"));
+    app.request.stream = Some(stream_with(messages));
+    app.drain_stream(&mut state);
+    assert!(
+        !app.pending_queries_desync,
+        "the reset cleared the discarded attempt's desynchronised mark"
+    );
+    assert_eq!(
+        selectable_sql(&app),
+        Some("SELECT 40"),
+        "the retry's request queued and its completion promoted it"
+    );
+}
+
 /// When the turn finishes, the FIFO is cleared: no candidate survives into
 /// the next turn.
 #[test]

@@ -3,8 +3,10 @@
 //! immediately or the flow cancels. A restore that does not complete prints
 //! every failure plus the marker-kept guidance — never the success text — and
 //! fails, so the flow cannot continue configuring a half-restored state. A
-//! marker read error is a single warning, never a crash, never an automatic
-//! restore.
+//! marker read error stops the flow there, naming the marker path and the
+//! manual way out: `commit` would refuse the pending state only at the very
+//! end, after the whole flow has been answered. Never a crash, never an
+//! automatic restore, never an automatic delete.
 
 use super::SetupError;
 use super::flow_options::FlowOptions;
@@ -74,8 +76,19 @@ pub(crate) fn check_interrupted(
         },
         Ok(None) => RecoveryOutcome::NoPending,
         Err(error) => {
-            eprintln!("warning: could not check for an interrupted `saya setup`: {error}");
-            RecoveryOutcome::NoPending
+            // A marker that cannot be read is not "no marker": an
+            // interrupted commit may be pending, and `commit` refuses it
+            // only at the very end — after the whole flow has been
+            // answered. Stop here instead, name the marker, and leave the
+            // decision to the user: never delete it automatically.
+            let path = options.user_dir.join(recover::MARKER_FILE);
+            return Err(format!(
+                "could not read the recovery marker {}: {error}; \
+                 inspect or remove {}, then run `saya setup` again",
+                path.display(),
+                path.display(),
+            )
+            .into());
         }
     })
 }
