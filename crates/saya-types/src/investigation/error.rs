@@ -6,6 +6,7 @@ use super::{
     MAX_CONNECTION_CHARS, MAX_DEFINITION_BYTES, MAX_FINGERPRINT_BYTES, MAX_NAME_CHARS,
     MAX_OBJECT_BYTES, MAX_SQL_BYTES,
 };
+use crate::params::ParamError;
 
 /// Why a saved investigation was rejected: messages name the field and the
 /// bound at fault; they never echo SQL or description content.
@@ -44,4 +45,6 @@ pub enum InvestigationError {
     InvalidFingerprint,
     #[error("updated timestamp is before created timestamp")]
     UpdatedBeforeCreated,
+    #[error("invalid parameter specification: {0}")]
+    InvalidParameterSpec(#[from] ParamError),
 }

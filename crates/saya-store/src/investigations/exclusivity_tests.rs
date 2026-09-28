@@ -42,6 +42,7 @@ fn definition(name_id: &str, revision: u32, tag: &str) -> InvestigationDefinitio
         name: "Demo investigation".to_owned(),
         description: Some(tag.to_owned()),
         sql: format!("select {revision}"),
+        parameters: Vec::new(),
         dialect: SqlDialect::Sqlite,
         connection: "warehouse".to_owned(),
         objects: Vec::new(),

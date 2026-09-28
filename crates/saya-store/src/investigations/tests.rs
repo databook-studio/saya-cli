@@ -35,6 +35,7 @@ fn definition(name_id: &str, revision: u32) -> InvestigationDefinitionV1 {
         name: "Demo investigation".to_owned(),
         description: None,
         sql: format!("select {revision}"),
+        parameters: Vec::new(),
         dialect: SqlDialect::Sqlite,
         connection: "warehouse".to_owned(),
         objects: Vec::new(),

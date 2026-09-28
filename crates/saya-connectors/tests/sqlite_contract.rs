@@ -135,6 +135,7 @@ async fn test_sqlite_contract_full() {
     let req = QueryRequest {
         sql: "SELECT id, amount, label, blob_col, maybe FROM t ORDER BY id".to_string(),
         max_rows: 1,
+        params: Vec::new(),
     };
     let res = connector
         .execute(req)
@@ -168,6 +169,7 @@ async fn test_sqlite_contract_full() {
     let mut_req = QueryRequest {
         sql: "UPDATE t SET amount = 0.0 WHERE id = 1".to_string(),
         max_rows: 10,
+        params: Vec::new(),
     };
     assert!(
         connector.execute(mut_req).await.is_err(),
@@ -226,6 +228,7 @@ async fn test_sqlite_query_timeout_interrupts_and_cleans_up_connection() {
     let infinite_req = QueryRequest {
         sql: "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt) SELECT count(*) FROM cnt;".to_string(),
         max_rows: 10,
+        params: Vec::new(),
     };
 
     let res = connector.execute(infinite_req).await;
@@ -256,6 +259,7 @@ async fn test_sqlite_query_timeout_interrupts_and_cleans_up_connection() {
     let reuse_req = QueryRequest {
         sql: "SELECT 1".to_string(),
         max_rows: 10,
+        params: Vec::new(),
     };
     let reuse_res = connector.execute(reuse_req).await;
     assert!(
@@ -281,6 +285,7 @@ async fn test_sqlite_finite_query_succeeds_under_normal_timeout() {
     let req = QueryRequest {
         sql: "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 5000) SELECT count(*) AS n FROM c".to_string(),
         max_rows: 10,
+        params: Vec::new(),
     };
 
     let res = connector
@@ -544,6 +549,7 @@ async fn test_sqlite_byte_budget_truncates_large_cell() {
     let req = QueryRequest {
         sql: "SELECT id, content FROM big_data".to_string(),
         max_rows: 10,
+        params: Vec::new(),
     };
     let res = connector
         .execute(req)
@@ -627,6 +633,7 @@ async fn test_sqlite_result_level_byte_budget_end_to_end() {
     let req = QueryRequest {
         sql: "SELECT id, payload FROM big_result ORDER BY id".to_string(),
         max_rows: 100,
+        params: Vec::new(),
     };
     let res = connector
         .execute(req)
@@ -712,6 +719,7 @@ async fn sqlite_has_the_standard_maths_functions() {
         let req = QueryRequest {
             sql: format!("SELECT {expression} AS value"),
             max_rows: 1,
+            params: Vec::new(),
         };
         let result = connector.execute(req).await;
         assert!(
@@ -750,6 +758,7 @@ async fn a_failing_query_says_what_the_sql_got_wrong() {
         let req = QueryRequest {
             sql: sql.to_string(),
             max_rows: 1,
+            params: Vec::new(),
         };
         let err = connector
             .execute(req)
@@ -782,6 +791,7 @@ async fn an_unrecognised_failure_stays_redacted() {
     let req = QueryRequest {
         sql: "INSERT INTO t (id) VALUES (99)".to_string(),
         max_rows: 1,
+        params: Vec::new(),
     };
     let err = connector
         .execute(req)
