@@ -217,7 +217,8 @@ pub enum Command {
     },
     /// Manage saved investigations: save a bounded read-only SQL query as a
     /// portable JSON document (no credentials, rows, or machine state), list
-    /// or show the saved definitions, or delete one. Saving validates the SQL
+    /// or show the saved definitions, export or import one as a portable
+    /// JSON file, or delete one. Saving validates the SQL
     /// with the same read-only gate execution uses but never runs it, and no
     /// connection is made. Replay (`investigation run`) is coming soon.
     Investigation {
@@ -487,6 +488,35 @@ pub enum InvestigationCommand {
         /// the revision currently on disk.
         #[arg(long, value_name = "N")]
         revision: Option<u32>,
+    },
+    /// Write one saved investigation's portable definition to a file for
+    /// sharing. Only the definition travels: the per-machine local review
+    /// binding is never included. The destination must not exist unless
+    /// `--overwrite` is passed, and the write is atomic — a refused or
+    /// failed export leaves any existing destination unchanged. The exact
+    /// SQL is stored verbatim; review it before sharing.
+    Export {
+        /// The id of the investigation to export (`investigation list`
+        /// prints the ids).
+        id: String,
+        /// Destination file path. An existing file needs `--overwrite`; a
+        /// directory or symlink destination is refused.
+        #[arg(value_name = "PATH")]
+        path: std::path::PathBuf,
+        /// Replace an existing destination file. Without it an existing
+        /// destination is refused, never clobbered.
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// Read a portable investigation definition file written by `investigation
+    /// export`, validate the whole document, print a preview, and store it
+    /// with no local connection binding. Nothing is executed and no
+    /// connection is made: running it requires an explicit
+    /// `investigation run --connection <profile>` later.
+    Import {
+        /// Path to the definition file to import.
+        #[arg(value_name = "PATH")]
+        path: std::path::PathBuf,
     },
 }
 

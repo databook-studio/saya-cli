@@ -1,15 +1,17 @@
-//! The headless `saya investigation` adapter (S6): save, list, show, and
-//! delete portable saved-investigation documents through
+//! The headless `saya investigation` adapter (S6/S8): save, list, show,
+//! delete, export, and import portable saved-investigation documents through
 //! `saya_store::investigations::InvestigationRepository`.
 //!
 //! One operation, multiple adapters: this is the single dispatcher the clap
 //! subcommand uses today and the slash/TUI adapters (S7/S9) will reuse;
 //! behavior lives in the per-operation modules and the repository. Saving
-//! validates and never executes — no AI provider is constructed anywhere in
-//! this module, and nothing here connects to a database.
+//! and importing validate and never execute — no AI provider is constructed
+//! anywhere in this module, and nothing here connects to a database.
 
 mod connection;
 mod delete;
+mod export;
+mod import;
 mod list;
 mod paths;
 mod save;
@@ -81,6 +83,12 @@ pub(crate) fn run_investigation_in(
         InvestigationCommand::Delete { id, revision } => {
             delete::delete(repo, format, &id, revision)
         }
+        InvestigationCommand::Export {
+            id,
+            path,
+            overwrite,
+        } => export::export(repo, format, &id, &path, overwrite),
+        InvestigationCommand::Import { path } => import::import(repo, format, &path),
     }
 }
 
