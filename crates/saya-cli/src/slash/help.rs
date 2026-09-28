@@ -51,6 +51,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "Export the last query's fresh result, or the captured /sql result with --snapshot",
     ),
     (
+        "report",
+        "Write a Markdown report (SQL + provenance) of the captured /sql result",
+    ),
+    (
         "chart",
         "Re-run the last query and render the fresh result as an HTML chart",
     ),
@@ -165,6 +169,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "export",
                 "/export [--snapshot|--refresh] [--overwrite] <path>",
             ),
+            ("report", "/report [--rows N] [--overwrite] <path>"),
             ("chart", "/chart [type] [path]"),
             ("explain", "/explain [sql]"),
             ("columns", "/columns [name,name,… | all]"),
@@ -260,6 +265,19 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              --snapshot exports the result you already have: the latest /sql capture, held for this session \
              only, with no query at all. An existing destination needs --overwrite. \
              Example: /export results.csv or /export --snapshot results.csv",
+        ),
+        "report" => Some(
+            "report [--rows N] [--overwrite] <path> — write a shareable Markdown report of the \
+             result you already inspected: the latest /sql capture, held for this session only. \
+             The report never queries a database and never opens a browser or uploads; it is \
+             written atomically and an existing destination needs --overwrite. By default the \
+             report carries the exact SQL and provenance only — connection label, submitted-SQL \
+             hash, execution id, times, row counts, truncation, scope — with the rows section \
+             reading that rows are omitted; pass --rows N (at most 100) to add a table of the \
+             first N captured rows. Cell values are neutralised, so spreadsheet formulas, \
+             links, HTML, and control characters cannot be carried into the file — the report \
+             must still be reviewed before sharing. Use /export for data files (.csv/.json). \
+             Example: /report notes.md   or   /report --rows 20 notes.md",
         ),
         "chart" => Some(
             "chart [type] [path] — re-run the last query and render the fresh result as an interactive HTML chart, then open it. The chart reflects that fresh read, not the displayed table. type: bar|line|area|pie|doughnut|scatter (default auto)",
@@ -528,6 +546,41 @@ mod tests {
         assert!(
             description_for("columns").is_some(),
             "columns has a popup description"
+        );
+    }
+
+    /// `/report` is wired at every hand-maintained touchpoint the
+    /// cli-application standard names: the registry, the description table
+    /// (the popup's single source), the `/help` listing, and the per-command
+    /// help. The entry states the report's guarantees: built from the
+    /// captured result only, SQL + provenance by default, rows on request,
+    /// never queries, never browses or uploads, and data files belong to
+    /// `/export`.
+    #[test]
+    fn report_is_registered_listed_and_described() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"report"),
+            "report is registered"
+        );
+        assert!(
+            description_for("report").is_some(),
+            "report has a popup description"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/report [--rows N] [--overwrite] <path>"),
+            "the listing shows the /report usage: {listing}"
+        );
+        let help = command_help("report").expect("report has per-command help");
+        for stated in ["Markdown", "provenance", "--rows", "--overwrite", "/export"] {
+            assert!(
+                help.contains(stated),
+                "the /report help states {stated:?}: {help}"
+            );
+        }
+        assert!(
+            help.contains("never"),
+            "the /report help states what it never does: {help}"
         );
     }
 

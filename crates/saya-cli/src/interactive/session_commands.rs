@@ -28,6 +28,10 @@ pub enum SessionAction {
     /// export dispatch acts on. Headless sessions never receive it: they
     /// refuse export as TUI-only.
     Export(crate::slash::ExportRequest),
+    /// `/report` — the parsed request (path, rows, overwrite) the TUI's
+    /// report dispatch acts on. Headless sessions never receive it: they
+    /// refuse report as TUI-only, exactly like export.
+    Report(crate::slash::ReportRequest),
     Chart(String),
     Explain(String),
     /// A contract slash command, translated to the same `ContractsCommand` the
@@ -157,6 +161,7 @@ impl SessionState {
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
             SlashCommand::Export(request) => SessionAction::Export(request),
+            SlashCommand::Report(request) => SessionAction::Report(request),
             SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Explain(sql) => SessionAction::Explain(sql),
             SlashCommand::Compact => SessionAction::Compact,
@@ -367,6 +372,22 @@ mod tests {
         };
         let action = state.apply(SlashCommand::Export(request.clone()), &[]);
         assert_eq!(action, SessionAction::Export(request));
+    }
+
+    /// `/report` carries the parsed request through unchanged — the TUI's
+    /// report dispatch owns the behaviour; the adapter owns nothing but the
+    /// mapping.
+    #[test]
+    fn report_request_maps_to_the_same_action() {
+        use crate::slash::ReportRequest;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let request = ReportRequest {
+            path: "out.md".into(),
+            rows: Some(20),
+            overwrite: true,
+        };
+        let action = state.apply(SlashCommand::Report(request.clone()), &[]);
+        assert_eq!(action, SessionAction::Report(request));
     }
 
     /// `/history` and `/sessions` are one command under two names: both map to

@@ -21,9 +21,49 @@ pub(super) fn apply_query_actions(
         SessionAction::Export(request) => {
             apply_export(request, transcript, state, last_query, captured)
         }
+        SessionAction::Report(request) => {
+            apply_report(&request, transcript, captured);
+            None
+        }
         SessionAction::Chart(args) => apply_chart(args, transcript, state, last_query),
         SessionAction::Explain(arg) => apply_explain(arg, transcript, state, last_query),
         _ => None,
+    }
+}
+
+/// Writes the Markdown report from the captured result: no query, no task —
+/// the report is the capture, plus provenance from its evidence. Nothing
+/// here queries a database.
+fn apply_report(
+    request: &crate::slash::ReportRequest,
+    transcript: &mut Transcript,
+    captured: &Option<super::super::capture::CapturedResult>,
+) {
+    let Some(capture) = captured else {
+        transcript.push(
+            BlockKind::Error,
+            "No captured result to report. Run the query with /sql first; captures \
+             last only for this session.",
+        );
+        return;
+    };
+    let path = std::path::Path::new(&request.path);
+    match super::super::export::write_report(
+        &capture.result,
+        &capture.evidence,
+        request.rows,
+        path,
+        request.overwrite,
+    ) {
+        Ok(Some(n)) => transcript.push(
+            BlockKind::System,
+            format!("Wrote report to {} ({n} rows included)", request.path),
+        ),
+        Ok(None) => transcript.push(
+            BlockKind::System,
+            format!("Wrote report to {} (rows omitted)", request.path),
+        ),
+        Err(msg) => transcript.push(BlockKind::Error, msg),
     }
 }
 
@@ -140,3 +180,7 @@ fn apply_explain(
         started_unix_ms: super::super::capture::unix_now_ms(),
     }))
 }
+
+#[cfg(test)]
+#[path = "query_tests.rs"]
+mod tests;
