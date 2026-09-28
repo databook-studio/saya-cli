@@ -23,10 +23,16 @@ const ART_GLYPH: char = '\u{2588}';
 fn splash(width: u16, height: u16, profiles: &[&str], workspace_bound: bool) -> String {
     let mut app = empty_app();
     app.profiles = profiles.iter().map(|name| (*name).to_string()).collect();
+    paint(&app, width, height, workspace_bound)
+}
+
+/// Renders a prepared `App` at an exact pane size, the way the splash helper
+/// does, for tests that need state beyond the profile list.
+fn paint(app: &App, width: u16, height: u16, workspace_bound: bool) -> String {
     let backend = ratatui::backend::TestBackend::new(width, height);
     let mut terminal = ratatui::Terminal::new(backend).expect("test backend builds");
     terminal
-        .draw(|frame| super::draw_empty_state(frame, &app, frame.area(), Some(workspace_bound)))
+        .draw(|frame| super::draw_empty_state(frame, app, frame.area(), Some(workspace_bound)))
         .expect("draw completes");
     format!("{}", terminal.backend())
 }
@@ -175,6 +181,53 @@ fn the_concept_line_fits_a_narrow_terminal() {
         buffer.contains(CONCEPT),
         "the concept line fits a 64-column terminal:\n{buffer}"
     );
+}
+
+/// The no-database state's first step is the one-command way forward: the
+/// synthetic demo database, opened read-only. Pinned by snapshot beside the
+/// explicit assertion, so the copy cannot drift silently.
+#[test]
+fn empty_state_has_next_action() {
+    let buffer = splash(80, 30, &[], false);
+    assert!(
+        buffer.contains("Try it now: `saya demo` — a read-only sample database."),
+        "the first step offers `saya demo`:\n{buffer}"
+    );
+    insta::assert_snapshot!(buffer);
+}
+
+/// When the session holds starter questions derived from the active
+/// profile's cached schema, the examples section shows them instead of the
+/// static prompts — the user's own tables beat generic copy. Paint reads
+/// the questions from `App` state only; no fetch happens here.
+#[test]
+fn the_first_screen_asks_about_the_users_own_tables() {
+    let mut app = empty_app();
+    app.profiles = vec!["demo".into()];
+    app.starter_questions = vec![
+        "What are the most common channel values in customer_contacts?".to_string(),
+        "How does amount_cents change by order_date in orders?".to_string(),
+    ];
+    let buffer = paint(&app, 80, 30, true);
+    assert!(
+        buffer.contains("try asking"),
+        "the examples header stays:\n{buffer}"
+    );
+    for question in &app.starter_questions {
+        assert!(
+            buffer.contains(question.as_str()),
+            "the starter question paints ({question:?}):\n{buffer}"
+        );
+    }
+    assert!(
+        !buffer.contains("which tables track billing?"),
+        "the static prompts yield to the schema-derived ones:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("top 5 customers by revenue"),
+        "the static prompts yield to the schema-derived ones:\n{buffer}"
+    );
+    insta::assert_snapshot!(buffer);
 }
 
 /// The whole composed frame — context line, splash pane, status bar, input

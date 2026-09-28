@@ -135,9 +135,12 @@ fn concept() -> Section<'static> {
     (Tier::Concept, vec![Line::from(""), plain(CHAPTER_CONCEPT)])
 }
 
-/// The `try asking` prompts: what a first request might look like.
-fn examples() -> Section<'static> {
-    let prompt = |text: &'static str| {
+/// The `try asking` prompts: what a first request might look like. When the
+/// session holds starter questions derived from the active profile's cached
+/// schema — computed where the schema tree was already in hand, never here —
+/// they replace the static prompts: the user's own tables beat generic copy.
+fn examples(app: &App) -> Section<'static> {
+    let prompt = |text: String| -> Line<'static> {
         line(
             text,
             Style::default()
@@ -145,16 +148,21 @@ fn examples() -> Section<'static> {
                 .add_modifier(Modifier::ITALIC),
         )
     };
-    (
-        Tier::Examples,
-        vec![
-            Line::from(""),
-            plain("try asking"),
-            prompt("  which tables track billing?"),
-            prompt("  top 5 customers by revenue"),
-            prompt("  compare row counts across the connected databases"),
-        ],
-    )
+    let mut lines: Vec<Line<'static>> = vec![Line::from(""), plain("try asking")];
+    if app.starter_questions.is_empty() {
+        for text in [
+            "  which tables track billing?",
+            "  top 5 customers by revenue",
+            "  compare row counts across the connected databases",
+        ] {
+            lines.push(prompt(text.to_string()));
+        }
+    } else {
+        for question in &app.starter_questions {
+            lines.push(prompt(format!("  {question}")));
+        }
+    }
+    (Tier::Examples, lines)
 }
 
 /// The keyboard hint — [`Tier::Always`], the last thing to go.
@@ -201,7 +209,7 @@ pub(in crate::interactive::tui) fn draw_empty_state(
         state(app),
         workspace(workspace_bound),
         concept(),
-        examples(),
+        examples(app),
         hint(),
     ];
     // The art yields first: it is admitted only when the *full* splash fits
