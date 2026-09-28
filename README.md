@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="#try-it-in-one-minute">Try it</a> ·
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#safety">Safety</a> ·
@@ -29,6 +30,52 @@ saya is a database-aware AI agent for the terminal. Ask questions in plain
 language or run SQL directly. For agent queries, saya discovers the schema,
 shows you the SQL, then runs it read-only with bounded results against
 PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
+
+## Try it in one minute
+
+No configuration needed — `saya demo` builds a small synthetic SQLite
+database (customers and orders, planted with nulls, duplicate-join traps,
+and date boundaries) and opens it read-only in the interactive UI:
+
+```bash
+saya demo
+```
+
+Schema browsing and `/sql` need no AI provider; to ask questions in plain
+language, configure one (see below). With `--reset` it rebuilds the
+fixture from scratch.
+
+## Connect your own database
+
+`saya setup` is a guided flow: pick an AI provider (the API key is asked for
+only as an environment-variable *name*, never its value), pick a database,
+probe the connection, review the exact file changes, then confirm. It needs
+a terminal; for scripts use `saya config init` as before.
+
+```bash
+saya setup
+```
+
+Existing config is preserved — setup appends to `connections.toml` and, if
+your `config.toml` already exists, prints the `[ai]` snippet instead of
+touching the file.
+
+## Saved investigations
+
+When a question is answered well, save the SQL behind it:
+
+```bash
+saya investigation save "orders last week" --sql "SELECT ..." --connection analytics
+saya investigation list                                  # prints the ids
+saya investigation run orders-last-week-3f9a1c2b         # replays it, read-only
+saya investigation export orders-last-week-3f9a1c2b out.json  # share it
+```
+
+An investigation is one portable JSON file — the exact SQL, its dialect, and
+nothing else: no credentials, rows, or machine state. The SQL is stored
+verbatim (review it before sharing), replay never involves an AI provider,
+and a run refuses when the target database's schema no longer matches what
+was reviewed. → [commands](docs/commands.md)
 
 ## Install
 
