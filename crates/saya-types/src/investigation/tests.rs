@@ -169,6 +169,41 @@ fn sql_bounds_and_trimmed_emptiness() {
 }
 
 #[test]
+fn sql_rejects_terminal_control_characters() {
+    let mut definition = valid_definition();
+    for sql in [
+        // ESC opening an OSC sequence inside a comment.
+        "-- \u{1b}]0;pwned\u{7}\nselect 1",
+        // ESC opening a CSI sequence.
+        "-- \u{1b}[31mred\nselect 1",
+        // BEL on its own.
+        "select 1 -- \u{7}",
+        // NUL.
+        "select\u{0}1",
+        // U+009B, the single-character C1 CSI.
+        "select 1 -- \u{9b}31m",
+        // DEL.
+        "select 1 -- \u{7f}",
+    ] {
+        definition.sql = sql.to_string();
+        assert_eq!(
+            definition.validate(),
+            Err(InvestigationError::ControlCharacter),
+            "{sql:?} must be refused"
+        );
+    }
+}
+
+#[test]
+fn sql_keeps_newlines_tabs_and_crlf() {
+    let mut definition = valid_definition();
+    definition.sql = "select 1,\r\n\t2\r\nfrom t\n".to_string();
+    definition
+        .validate()
+        .expect("newlines, tabs, and CRLF are still allowed");
+}
+
+#[test]
 fn connection_bounds_and_charset() {
     let mut definition = valid_definition();
     definition.connection = "a".repeat(MAX_CONNECTION_CHARS);
