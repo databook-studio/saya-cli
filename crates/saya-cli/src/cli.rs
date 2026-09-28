@@ -215,6 +215,15 @@ pub enum Command {
         #[command(subcommand)]
         command: ContractsCommand,
     },
+    /// Manage saved investigations: save a bounded read-only SQL query as a
+    /// portable JSON document (no credentials, rows, or machine state), list
+    /// or show the saved definitions, or delete one. Saving validates the SQL
+    /// with the same read-only gate execution uses but never runs it, and no
+    /// connection is made. Replay (`investigation run`) is coming soon.
+    Investigation {
+        #[command(subcommand)]
+        command: InvestigationCommand,
+    },
     /// Run a long-running, resumable job against the configured database:
     /// `saya run "<goal>"` plans and executes it step by step, pausing (never
     /// silently stopping) when a budget trips; `saya run resume|cancel|list|
@@ -418,6 +427,66 @@ pub enum ContractsCommand {
         /// Why the claim is being forgotten.
         #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
         reason: ForgetReasonArg,
+    },
+}
+
+/// Saved-investigation subcommands. The same enum the slash adapter (S9)
+/// will translate into, so the clap surface and the TUI cannot drift apart.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum InvestigationCommand {
+    /// Save a bounded read-only SQL query as a portable investigation
+    /// document: one JSON file with the exact SQL and nothing else — no
+    /// credentials, rows, results, or machine-specific identity. The SQL is
+    /// validated by the same read-only gate execution uses but is never
+    /// executed here, and the saving profile is recorded locally as the
+    /// review binding. Review the saved SQL before sharing: literals are
+    /// stored verbatim.
+    Save {
+        /// Name of the investigation, shown in `investigation list`.
+        #[arg(long)]
+        name: String,
+        /// Optional description of what the investigation answers.
+        #[arg(long)]
+        description: Option<String>,
+        /// The exact SQL to save. Omit it to read the statement from
+        /// `--file`, or from stdin when input is piped in.
+        #[arg(long)]
+        sql: Option<String>,
+        /// Read the SQL from this file instead of `--sql`.
+        #[arg(long = "file", value_name = "PATH")]
+        file: Option<std::path::PathBuf>,
+        /// Connection profile to save against; defaults to the active profile.
+        #[arg(long, value_name = "PROFILE")]
+        connection: Option<String>,
+    },
+    /// List saved investigations, one line each, at most 50 per page.
+    List {
+        /// Maximum entries to list, 1-50 (default 50).
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        /// Skip this many entries before listing.
+        #[arg(long, value_name = "N")]
+        offset: Option<usize>,
+    },
+    /// Print one saved investigation's exact definition as JSON, plus the
+    /// local review binding for this machine. The opaque profile identity is
+    /// never printed.
+    Show {
+        /// The id of the investigation to show (`investigation list` prints
+        /// the ids).
+        id: String,
+    },
+    /// Delete one saved investigation and its local binding. The current
+    /// revision is checked first, so a document changed underneath this
+    /// command is refused rather than deleted unseen.
+    Delete {
+        /// The id of the investigation to delete (`investigation list`
+        /// prints the ids).
+        id: String,
+        /// Require the document to be at this revision; omit it to delete
+        /// the revision currently on disk.
+        #[arg(long, value_name = "N")]
+        revision: Option<u32>,
     },
 }
 
