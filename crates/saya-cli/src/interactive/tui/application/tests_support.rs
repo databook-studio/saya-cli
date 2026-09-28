@@ -133,6 +133,9 @@ pub(crate) fn unused_runtime() -> RuntimeConfig {
         config_path: None,
         connections_path: None,
         cache_scope: PathBuf::new(),
+        // A temp-rooted investigations root: a hand-built test runtime must
+        // never resolve into the machine's real data directory.
+        investigations_root: crate::config::runtime::temp_investigations_root(),
         secret_values: BTreeMap::new(),
     }
 }

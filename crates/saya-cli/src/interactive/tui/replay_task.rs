@@ -8,9 +8,10 @@
 //! The worker runs the shared typed entry (`run_investigation_outcome`, C3)
 //! — the same operation the headless `saya investigation run` takes — with
 //! its `emit` output captured through the thread-local seam (a thread's
-//! capture buffer is its own). Its store is constructed from the same
-//! state-DB path the session resolved, so the replay's audit row and review
-//! binding are written exactly as a foreground run writes them.
+//! capture buffer is its own). Its store is the one the dispatch composed on
+//! the task (the session's state store), and its investigations root is the
+//! composed runtime's, so the replay's audit row and review binding are
+//! written exactly as a foreground run writes them.
 //!
 //! Detach, not cancel: Esc/Ctrl+C drop the receiver (`App::detach_replay_task`)
 //! and the UI moves on. The worker is never joined and no cancellation token
@@ -28,12 +29,27 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 /// A dispatched replay: the investigation it runs (naming it for the status
-/// bar and the detach message) and the exact command the worker executes.
-#[derive(Debug, Clone)]
+/// bar and the detach message), the exact command the worker executes, and
+/// the state store the dispatch composed from the session — the worker never
+/// re-resolves a state-DB path of its own.
+#[derive(Clone)]
 pub(crate) struct ReplayTask {
     pub(crate) id: String,
     pub(crate) command: InvestigationCommand,
     pub(crate) format: RenderFormat,
+    pub(crate) state_db: saya_store::SqliteStateStore,
+}
+
+impl std::fmt::Debug for ReplayTask {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReplayTask")
+            .field("id", &self.id)
+            .field("command", &self.command)
+            .field("format", &self.format)
+            .field("state_db", &"SqliteStateStore")
+            .finish()
+    }
 }
 
 /// The worker's one message: the shared operation's exit code, its captured
@@ -68,7 +84,9 @@ where
 /// output on this worker thread. The shape mirrors the foreground adapter:
 /// captured stdout wins unless empty (then stderr); an operation Err is the
 /// render/IO failure the adapter would push as an error block, its captured
-/// output discarded.
+/// output discarded. The store is the one the dispatch composed on the task —
+/// the session's state store — so the replay's roots are exactly the
+/// session's, never a re-resolved default.
 fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
     crate::commands::capture_output_start();
     let outcome = match tokio::runtime::Builder::new_current_thread()
@@ -76,7 +94,6 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
         .build()
     {
         Ok(handle) => {
-            let state_db = saya_store::SqliteStateStore::new(crate::state_path::state_db_path());
             handle.block_on(run_investigation_outcome(
                 task.command,
                 runtime,
@@ -84,7 +101,7 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
                 // The TUI's stdin answer: it never reads stdin, so a missing
                 // secret surfaces as an error rather than a stdin prompt.
                 false,
-                &state_db,
+                &task.state_db,
             ))
         }
         Err(error) => Err(Box::new(error) as Box<dyn std::error::Error>),

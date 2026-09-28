@@ -31,40 +31,9 @@ use std::{
 
 // ---------------------------------------------------------------------------
 // harness — mirrors tests/contracts_slash_parity.rs; the investigations root
-// comes from `SAYA_INVESTIGATIONS_DIR`, so the env lock is mandatory (recipe:
-// tests/run_slash_parity.rs).
+// is composed on the runtime (`RuntimeConfig::investigations_root`), so no
+// test mutates process env and no lock is needed.
 // ---------------------------------------------------------------------------
-
-static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
-    ENV_LOCK.lock().await
-}
-
-/// Points `SAYA_INVESTIGATIONS_DIR` at the test's private root, returning the
-/// previous value for restore. SAFETY: the caller holds `ENV_LOCK` for the
-/// whole test body, so no other test in this binary observes a torn or
-/// foreign investigations root.
-unsafe fn set_investigations_dir(path: &Path) -> Option<std::ffi::OsString> {
-    let previous = std::env::var_os("SAYA_INVESTIGATIONS_DIR");
-    // SAFETY: see above; the lock is held across the whole test body.
-    unsafe { std::env::set_var("SAYA_INVESTIGATIONS_DIR", path) };
-    previous
-}
-
-/// SAFETY: see [`set_investigations_dir`]; the caller still holds `ENV_LOCK`.
-unsafe fn restore_investigations_dir(previous: Option<std::ffi::OsString>) {
-    match previous {
-        Some(value) => {
-            // SAFETY: same lock discipline as `set_investigations_dir`.
-            unsafe { std::env::set_var("SAYA_INVESTIGATIONS_DIR", value) }
-        }
-        None => {
-            // SAFETY: same lock discipline as `set_investigations_dir`.
-            unsafe { std::env::remove_var("SAYA_INVESTIGATIONS_DIR") }
-        }
-    }
-}
 
 fn temp_root(label: &str) -> PathBuf {
     let stamp = SystemTime::now()
@@ -81,7 +50,8 @@ fn temp_root(label: &str) -> PathBuf {
 
 /// A runtime with one sqlite profile (`local`), auto-selected as the default.
 /// The profile's database is an empty file: saving validates and never
-/// connects, and these tests never `run` anything.
+/// connects, and these tests never `run` anything. The investigations root is
+/// composed on the runtime itself — no environment variable is touched.
 fn runtime_at(root: &Path) -> RuntimeConfig {
     let database = root.join("data.sqlite3");
     fs::write(&database, b"").unwrap();
@@ -98,7 +68,9 @@ fn runtime_at(root: &Path) -> RuntimeConfig {
         connections: Some(connections),
         ..Default::default()
     };
-    load_with_sources(&options, root, root, BTreeMap::new()).unwrap()
+    let mut runtime = load_with_sources(&options, root, root, BTreeMap::new()).unwrap();
+    runtime.investigations_root = root.join("investigations");
+    runtime
 }
 
 async fn store_at(root: &Path) -> SqliteStateStore {
@@ -236,9 +208,7 @@ async fn save_document(
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn save_slash_and_clap_agree_on_the_command_and_the_bytes() {
-    let _env = lock_env().await;
     let root = temp_root("save_parity");
-    unsafe { set_investigations_dir(&root.join("investigations")) };
     let runtime = runtime_at(&root);
     let store = store_at(&root).await;
 
@@ -266,7 +236,6 @@ async fn save_slash_and_clap_agree_on_the_command_and_the_bytes() {
     .await;
     assert!(list.1.contains("Total orders"), "list out: {}", list.1);
 
-    unsafe { restore_investigations_dir(None) };
     let _ = fs::remove_dir_all(root);
 }
 
@@ -275,9 +244,7 @@ async fn save_slash_and_clap_agree_on_the_command_and_the_bytes() {
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn list_and_show_slash_and_clap_agree_byte_for_byte() {
-    let _env = lock_env().await;
     let root = temp_root("list_show_parity");
-    unsafe { set_investigations_dir(&root.join("investigations")) };
     let runtime = runtime_at(&root);
     let store = store_at(&root).await;
 
@@ -308,7 +275,6 @@ async fn list_and_show_slash_and_clap_agree_byte_for_byte() {
     );
     assert_eq!(slash_show.2, clap_show.2);
 
-    unsafe { restore_investigations_dir(None) };
     let _ = fs::remove_dir_all(root);
 }
 
@@ -317,9 +283,7 @@ async fn list_and_show_slash_and_clap_agree_byte_for_byte() {
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn delete_slash_and_clap_agree_byte_for_byte() {
-    let _env = lock_env().await;
     let root = temp_root("delete_parity");
-    unsafe { set_investigations_dir(&root.join("investigations")) };
     let runtime = runtime_at(&root);
     let store = store_at(&root).await;
 
@@ -367,7 +331,6 @@ async fn delete_slash_and_clap_agree_byte_for_byte() {
         list.1
     );
 
-    unsafe { restore_investigations_dir(None) };
     let _ = fs::remove_dir_all(root);
 }
 
@@ -376,9 +339,7 @@ async fn delete_slash_and_clap_agree_byte_for_byte() {
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn investigations_alias_output_equals_investigation_list() {
-    let _env = lock_env().await;
     let root = temp_root("alias_parity");
-    unsafe { set_investigations_dir(&root.join("investigations")) };
     let runtime = runtime_at(&root);
     let store = store_at(&root).await;
 
@@ -399,7 +360,6 @@ async fn investigations_alias_output_equals_investigation_list() {
         alias.1
     );
 
-    unsafe { restore_investigations_dir(None) };
     let _ = fs::remove_dir_all(root);
 }
 
