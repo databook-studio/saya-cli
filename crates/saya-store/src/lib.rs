@@ -9,8 +9,10 @@ mod contracts;
 mod error;
 mod filesystem;
 mod history;
+mod investigations;
 mod knowledge_items;
 mod migration;
+mod private_file;
 mod redaction;
 mod replace;
 mod runs;
@@ -25,6 +27,10 @@ pub use error::StoreError;
 pub use filesystem::{FsSessionStore, MAX_SESSION_BYTES};
 pub use history::{
     MAX_SESSION_HISTORY_PAGE_SIZE, SessionHistoryCursor, SessionHistoryLimit, SessionHistoryPage,
+};
+pub use investigations::{
+    InvestigationListIssue, InvestigationPage, InvestigationRepository, InvestigationSummary,
+    LocalBinding, MAX_BINDING_BYTES, MAX_DOCUMENTS, MAX_LIST_PAGE,
 };
 pub use knowledge_items::{
     CleanupState, ForgetOutcome, KnowledgeCursor, KnowledgeItem, KnowledgeItemRequest,
