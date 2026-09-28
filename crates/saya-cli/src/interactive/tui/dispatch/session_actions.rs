@@ -1,6 +1,7 @@
 //! Plain session actions: history list, doctor summary, resume, direct SQL,
-//! contracts, and run management. Returns a worker task for the caller when
-//! the action needs one; anything else renders inline and returns `None`.
+//! contracts, investigations, and run management. Owns its arms only: the
+//! action is taken exactly when this helper owns the arm, and an owned arm
+//! with no task to hand back still reports handled.
 
 use super::super::dispatch_actions::{list_sessions, resume};
 use super::super::dispatch_contracts::run_contracts;
@@ -28,7 +29,25 @@ pub(super) fn apply_session_action(
     session: &mut SessionRuntime,
     last_query: &Option<LastQuery>,
 ) -> Option<Dispatch> {
-    match action.take().expect("dispatch passes the action through") {
+    // The arms this helper owns. Anything else is left in `action`
+    // untouched for the next helper in the chain.
+    if !matches!(
+        action,
+        Some(
+            SessionAction::History
+                | SessionAction::Doctor
+                | SessionAction::Resume(_)
+                | SessionAction::Sql(_)
+                | SessionAction::Contracts(_)
+                | SessionAction::Investigation(_)
+                | SessionAction::Runs(_)
+                | SessionAction::RunCancel(_)
+        )
+    ) {
+        return None;
+    }
+    let current = action.take()?;
+    match current {
         SessionAction::History => list_sessions(transcript, store),
         SessionAction::Doctor => {
             transcript.push(BlockKind::System, crate::config::doctor::summary(runtime))
@@ -51,8 +70,13 @@ pub(super) fn apply_session_action(
             // The saved-investigation adapter: the shared `run_investigation`
             // dispatcher plus the TUI's save-without-SQL fill (the last
             // selectable query, read-only here — the fill never edits it).
-            // `run` returns a replay task for the caller; the rest ran inline.
-            return run_investigation(transcript, runtime, state_db, format, &command, last_query);
+            // `run` returns a replay task for the caller; every other
+            // subcommand ran inline (its block is already pushed), so the
+            // chain hears "handled", never "not mine".
+            return Some(
+                run_investigation(transcript, runtime, state_db, format, &command, last_query)
+                    .unwrap_or(Dispatch::Handled),
+            );
         }
         SessionAction::Runs(run_id) => {
             let command = match run_id {
@@ -68,10 +92,12 @@ pub(super) fn apply_session_action(
             format,
             crate::cli::RunCommand::Cancel { run_id },
         ),
+        // The guard above decided ownership; if it ever drifts, put the
+        // action back and report "not mine" rather than dropping or panicking.
         other => {
             *action = Some(other);
             return None;
         }
     }
-    None
+    Some(Dispatch::Handled)
 }

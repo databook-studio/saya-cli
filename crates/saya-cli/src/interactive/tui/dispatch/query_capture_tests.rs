@@ -3,6 +3,7 @@
 //! latest promoted agent query's rows are not held (never the /sql-only
 //! wording when the gap says an agent query was promoted).
 
+use super::super::outcome::Dispatch;
 use super::apply_query_actions;
 use crate::agent::tools::AgentCapture;
 use crate::interactive::session_commands::SessionAction;
@@ -88,14 +89,17 @@ fn snapshot_of_agent_capture_is_labelled_model_limited() {
     let mut transcript = Transcript::new();
     let mut state = SessionState::new("test", None, "model");
     let outcome = apply_query_actions(
-        SessionAction::Export(snapshot_request(&path)),
+        &mut Some(SessionAction::Export(snapshot_request(&path))),
         &mut transcript,
         &mut state,
         &mut None,
         &agent_captured(2, 100),
         None,
     );
-    assert!(outcome.is_none(), "a snapshot never dispatches a query");
+    assert!(
+        !matches!(outcome, Some(Dispatch::SqlTask(_))),
+        "a snapshot never dispatches a query"
+    );
     let msg = last_block(&transcript, BlockKind::System).expect("success is said");
     assert!(
         msg.contains("Exported 2 row(s) the agent saw to"),
@@ -122,7 +126,7 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
         "/nonexistent-saya-c2/never.csv",
     )));
     apply_query_actions(
-        request.clone(),
+        &mut Some(request.clone()),
         &mut transcript,
         &mut state,
         &mut None,
@@ -137,7 +141,7 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
         "the refusal names the budget: {msg}"
     );
     apply_query_actions(
-        request.clone(),
+        &mut Some(request.clone()),
         &mut transcript,
         &mut state,
         &mut None,
@@ -149,7 +153,14 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
         msg, "The latest query's rows were not captured. Use /export --refresh to re-run it.",
         "no reason is invented for a missing capture: {msg}"
     );
-    apply_query_actions(request, &mut transcript, &mut state, &mut None, &None, None);
+    apply_query_actions(
+        &mut Some(request),
+        &mut transcript,
+        &mut state,
+        &mut None,
+        &None,
+        None,
+    );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert!(
         msg.contains("No captured result to snapshot"),
@@ -166,7 +177,7 @@ fn report_of_agent_capture_names_scope() {
     let mut transcript = Transcript::new();
     let mut state = SessionState::new("test", None, "model");
     apply_query_actions(
-        SessionAction::Report(report_request(&path)),
+        &mut Some(SessionAction::Report(report_request(&path))),
         &mut transcript,
         &mut state,
         &mut None,
