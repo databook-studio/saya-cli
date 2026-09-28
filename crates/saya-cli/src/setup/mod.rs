@@ -72,6 +72,11 @@ pub enum SetupError {
     UnsupportedEngine(String),
     #[error("setup could not be applied ({0}); the original files were restored")]
     ReloadFailed(String),
+    #[error(
+        "setup could not be applied ({message}); the automatic restore did NOT complete \
+             ({restore}); `saya setup` will offer to restore the original files on the next run"
+    )]
+    ReloadRestoreFailed { message: String, restore: String },
     #[error("setup marker unusable: {0}")]
     Marker(String),
     #[error("an interrupted setup commit is pending in {path}; restore or finish it first")]

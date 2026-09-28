@@ -2,12 +2,9 @@
 //! deterministic prompts built from table and column metadata alone — never
 //! row data, never a model call, never I/O.
 //!
-//! Wiring note: the empty state cannot call this yet — `App` carries no
-//! schema handle at paint time (the cached schema lives behind the async
-//! state store). Until the packet that threads a schema handle into paint
-//! un-gates this module, it compiles only under `cfg(test)`: the function
-//! is real and tested, and unreachable from production, rather than marked
-//! to silently accept being dead.
+//! Wiring: `application::picker::reload_at_refs` builds these from the active
+//! profile's schema cached in the state store (at startup, on resume, and
+//! when a newly loaded schema lands), and the empty state paints them.
 //!
 //! How the questions are picked, so the output can be reasoned about
 //! without running it: tables in name order across the tree, one question

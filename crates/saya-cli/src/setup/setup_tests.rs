@@ -279,6 +279,112 @@ fn reload_failure_restores_originals() {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// F6: a backup copy that fails before any target is published must not leave
+/// the marker behind — the next startup would otherwise warn about an
+/// "interrupted setup" that never modified anything. The failure is injected
+/// by taking the backup directory's name with a regular file, so the first
+/// backup copy cannot be written.
+#[test]
+fn backup_failure_before_any_publish_removes_the_marker() {
+    let dir = temp_dir("backup-fail");
+    fs::write(dir.join("connections.toml"), EXISTING_CONNECTIONS).unwrap();
+    fs::write(dir.join(BACKUP_DIR), b"not a directory\n").unwrap();
+
+    let draft = SetupDraft {
+        provider: Some(provider_draft()),
+        profile: Some(profile_draft("c")),
+    };
+    let planned = plan(&dir, &draft).unwrap();
+    let error = commit(&dir, &planned, || {
+        panic!("reload must not run when the backups failed")
+    })
+    .unwrap_err();
+    assert!(
+        matches!(error, SetupError::Io { .. }),
+        "the injected backup failure surfaces: {error:?}"
+    );
+    assert!(
+        !dir.join(MARKER_FILE).exists(),
+        "no marker is left: no target was ever published"
+    );
+    assert_eq!(
+        fs::read(dir.join("connections.toml")).unwrap(),
+        EXISTING_CONNECTIONS.as_bytes(),
+        "the existing target is unchanged"
+    );
+    assert!(
+        !dir.join("config.toml").exists(),
+        "no target was created either"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// F7: when the reload fails and the automatic restore ALSO fails, the error
+/// must not claim the originals were restored. It says the restore did not
+/// complete and that `saya setup` will offer a restore on the next run — which
+/// only works if the marker stays.
+#[cfg(unix)]
+#[test]
+fn reload_failure_with_failed_restore_keeps_the_marker() {
+    let dir = temp_dir("reload-restore-fail");
+    fs::write(dir.join("connections.toml"), EXISTING_CONNECTIONS).unwrap();
+    let outside = temp_dir("reload-restore-fail-outside");
+    fs::write(outside.join("sentinel.toml"), "sentinel = 1\n").unwrap();
+
+    let draft = SetupDraft {
+        provider: Some(provider_draft()),
+        profile: Some(profile_draft("c")),
+    };
+    let planned = plan(&dir, &draft).unwrap();
+    let backup = dir.join(BACKUP_DIR).join("connections.toml");
+    let error = commit(&dir, &planned, || {
+        // Sabotage the restore that would follow the reload failure: the
+        // backup becomes a symlink, which restore refuses — and never follows.
+        fs::remove_file(&backup).unwrap();
+        symlink(outside.join("sentinel.toml"), &backup).unwrap();
+        Err("probe failed".into())
+    })
+    .unwrap_err();
+    let text = error.to_string();
+    assert!(
+        matches!(&error, SetupError::ReloadRestoreFailed { message, restore }
+            if message.contains("probe failed") && !restore.is_empty()),
+        "a distinct error reports the failed restore: {error:?}"
+    );
+    assert!(
+        !text.contains("were restored"),
+        "the error never claims the originals were restored: {text}"
+    );
+    assert!(
+        text.contains("did NOT complete"),
+        "the message says the restore did not complete: {text}"
+    );
+    assert!(
+        text.contains("saya setup"),
+        "the message names the next-run restore offer: {text}"
+    );
+    assert!(
+        pending(&dir).unwrap().is_some(),
+        "the marker remains so the next run really offers the restore"
+    );
+    assert_eq!(
+        fs::read(dir.join("connections.toml")).unwrap(),
+        planned.writes[0].content.as_bytes(),
+        "the restore did not run: the target keeps the new bytes"
+    );
+    assert!(
+        dir.join("config.toml").exists(),
+        "the created file was not removed either"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("sentinel.toml")).unwrap(),
+        "sentinel = 1\n",
+        "the sabotaged backup symlink was never followed"
+    );
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::remove_dir_all(outside);
+}
+
 #[test]
 fn api_key_is_only_an_env_reference() {
     let dir = temp_dir("env-ref");
