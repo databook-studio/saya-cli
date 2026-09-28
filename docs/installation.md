@@ -47,6 +47,20 @@ attached to the GitHub release alongside a `SHA256SUMS` manifest.
 
 ## First five minutes
 
+The fastest first run needs no configuration at all: `saya demo` builds a
+small synthetic SQLite database and opens it read-only in the interactive
+session, where schema browsing and `/sql` work without any AI provider.
+
+```bash
+saya demo
+```
+
+To point saya at your own database, `saya setup` walks you through choosing
+an AI provider and a database profile, probing the connection, and
+confirming the exact file changes (secrets are requested only as
+environment-variable names). If you prefer to write the files yourself, the
+manual path is unchanged:
+
 ```bash
 saya config init
 ${EDITOR:-vi} ~/.config/saya/config.toml
