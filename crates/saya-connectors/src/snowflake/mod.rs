@@ -1,4 +1,5 @@
 mod auth;
+mod bindings;
 mod browser;
 mod cancellation;
 mod client;

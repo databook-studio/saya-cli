@@ -145,6 +145,11 @@ impl DatabaseConnector for BigQueryConnector {
     fn dialect(&self) -> SqlDialect {
         SqlDialect::BigQuery
     }
+    /// BigQuery binds parameters natively: positional `queryParameters` on
+    /// `jobs.query`, carried identically by the dry run.
+    fn supports_parameters(&self) -> bool {
+        true
+    }
 
     async fn connect(&self) -> Result<(), ConnectionError> {
         execute::ping(self).await
@@ -228,6 +233,12 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error, ConnectionError::InvalidConfiguration(_)));
+    }
+
+    /// BigQuery binds parameters natively through its `queryParameters`.
+    #[test]
+    fn bigquery_supports_parameters() {
+        assert!(connector().supports_parameters());
     }
 
     #[test]
