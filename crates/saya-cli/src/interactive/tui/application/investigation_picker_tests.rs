@@ -147,6 +147,7 @@ fn r_refuses_when_a_replay_is_already_running() {
                 report: None,
                 rows: None,
                 overwrite: false,
+                params: Vec::new(),
             },
             format: RenderFormat::Text,
             state_db: SqliteStateStore::new(PathBuf::new()),
