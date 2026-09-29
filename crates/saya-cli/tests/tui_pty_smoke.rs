@@ -1422,6 +1422,21 @@ fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
         "the trailing value text must not echo on screen",
         &screen,
     );
+    // The refusal itself must not carry the value either: the echoed token
+    // is truncated to `--param=…` (the full message, hint included, is
+    // pinned at unit level in `flags_tests.rs`).
+    assert_in(
+        &screen,
+        "--param=…",
+        "the refusal echoes the token without its value",
+        &screen,
+    );
+    assert_not_in(
+        &screen,
+        "label=two",
+        "the refused token's value head must not echo on screen",
+        &screen,
+    );
 
     let history = std::fs::read_to_string(home.join("input_history"))
         .expect("the TUI wrote its input history");
@@ -1433,6 +1448,10 @@ fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
         !history.contains("confidential words"),
         "the trailing value text must not persist: {history:?}"
     );
+    assert!(
+        !history.contains("label=two"),
+        "the refused token's value head must not persist: {history:?}"
+    );
 
     let sessions = home.join("sessions");
     wait_for_session_file(&sessions, INTERACTIVE);
@@ -1441,6 +1460,11 @@ fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
         assert!(
             !content.contains("confidential words"),
             "the trailing value text leaked into {}: {content:?}",
+            path.display()
+        );
+        assert!(
+            !content.contains("label=two"),
+            "the refused token's value head leaked into {}: {content:?}",
             path.display()
         );
     }
