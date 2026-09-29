@@ -82,6 +82,7 @@ fn round_trips_each_source_variant() {
             revision: 3,
         },
         EvidenceSource::Agent,
+        EvidenceSource::Mcp,
     ];
     for source in sources {
         let mut e = evidence();
@@ -248,6 +249,16 @@ fn human_line_describes_each_source() {
     assert!(e.human_line().contains("saved investigation"));
     e.source = EvidenceSource::Agent;
     assert!(e.human_line().contains("agent"));
+    e.source = EvidenceSource::Mcp;
+    assert!(e.human_line().contains("mcp server"));
+}
+
+#[test]
+fn mcp_source_serializes_snake_case_tag() {
+    let mut e = evidence();
+    e.source = EvidenceSource::Mcp;
+    let json = serde_json::to_string(&e).unwrap();
+    assert!(json.contains("\"kind\":\"mcp\""), "{json}");
 }
 
 #[test]

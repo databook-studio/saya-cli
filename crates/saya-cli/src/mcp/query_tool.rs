@@ -112,7 +112,7 @@ fn payload(
             max_rows,
             started_unix_ms,
             finished_unix_ms: unix_now_ms(),
-            source: EvidenceSource::DirectSql,
+            source: EvidenceSource::Mcp,
         },
     );
     let mut rows = result.rows.clone();
@@ -124,7 +124,6 @@ fn payload(
             "rows": rows,
             "row_count": rows.len(),
             "truncated": truncated,
-            "source": "mcp",
             "evidence": evidence,
         });
         let size = serde_json::to_vec(&payload).map_or(usize::MAX, |bytes| bytes.len());
