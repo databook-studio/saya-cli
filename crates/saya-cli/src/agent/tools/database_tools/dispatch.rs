@@ -32,6 +32,19 @@ impl DatabaseTools {
             return self.execute_contract_tool(name, arguments).await;
         }
         validate_arguments(name, &arguments)?;
+        // The clarification ask (B3c) resolves after argument validation and
+        // before connection resolution: it touches no connection, no
+        // database, and records nothing — the loop validates the bounds and
+        // ends the turn on the call, and this arm answers a directly-reached
+        // call with the short result the model receives. Like the contract
+        // tools it records NOTHING: an ask is not evidence about a database
+        // object.
+        if name == "request_clarification" {
+            return Ok(serde_json::json!({
+                "asked": true,
+                "next": "stop your turn here; the user will answer in their next message"
+            }));
+        }
         // The workspace tools are dispatched before connection resolution:
         // they read or write the run's workspace directory, not a database,
         // and a workspace-only run has no selected profile for

@@ -4,7 +4,7 @@ use crate::{
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
-use saya_agent::{AgentMode, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentEvent, AgentMode, AgentOutput, ApprovalPolicy, CancellationToken};
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::{ConnectionError, QueryRequest};
 use std::{path::PathBuf, time::Instant};
@@ -14,6 +14,10 @@ use super::{
     output::{emit, failure, failure_message},
     state,
 };
+
+#[cfg(test)]
+#[path = "query_tests.rs"]
+mod tests;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn ask(
@@ -62,9 +66,26 @@ pub(super) async fn ask(
         result = &mut work => result,
         _ = tokio::signal::ctrl_c() => { cancellation.cancel(); return Ok(130); }
     } {
-        Ok(_) => Ok(0),
+        Ok(output) => Ok(ask_exit_code(&output)),
         Err(error) => failure_message(5, error.to_string(), format),
     }
+}
+
+/// The exit code a finished `ask` run returns: 6 — the paused class — when
+/// the turn ended on a clarification ("paused, needs input"), 0 when the
+/// model answered. The run never fails here: an ask that asked IS a finished
+/// outcome, just not an answered one.
+pub(super) fn ask_exit_code(output: &AgentOutput) -> i32 {
+    if ended_on_clarification(output) { 6 } else { 0 }
+}
+
+/// Whether the run ended on a clarification: the event the loop emitted when
+/// the model stopped to ask instead of assuming.
+fn ended_on_clarification(output: &AgentOutput) -> bool {
+    output
+        .events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. }))
 }
 
 pub(super) async fn run(

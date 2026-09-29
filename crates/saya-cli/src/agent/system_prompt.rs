@@ -100,7 +100,9 @@ fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
 /// the database case of that rule.
 const WORKING_GUIDANCE: &str = "Multi-step work is expected. Do not repeat an attempt that already \
     failed — change your approach instead. When working with a database, discover the schema before \
-    you query it. When the question cannot be answered from what is available in this session, stop \
+    you query it. If a material definition (grain, time column, metric, filter) is ambiguous and no \
+    confirmed context resolves it, call request_clarification instead of assuming. When the question \
+    cannot be answered from what is available in this session, stop \
     and say so, explaining what you tried and what is missing: a missing table or column, data that \
     is not present, or a question the schema cannot express. Giving up with a reason is a correct \
     outcome; looping is not.";

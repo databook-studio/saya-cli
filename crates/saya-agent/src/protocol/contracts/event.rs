@@ -161,6 +161,20 @@ pub enum AgentEvent {
         model: String,
         misses: u32,
     },
+    /// The model stopped to ask the user one focused question instead of
+    /// assuming a material definition — a grain, a time column, a metric, a
+    /// filter — that nothing confirmed in the session resolved. Emitted by the
+    /// loop when a `request_clarification` call lands: the turn ends here, the
+    /// caller feeds the model a short tool result, and no further provider
+    /// call happens until the user answers (their next message is ordinary
+    /// input). `question` is the sanitised, bounded ask; `options` carries up
+    /// to six candidate answers, each sanitised and bounded, and is empty when
+    /// the model offered none. The question was never answered — nothing here
+    /// is a result, and no session may mistake the ask for one.
+    ClarificationNeeded {
+        question: String,
+        options: Vec<String>,
+    },
     Complete,
     /// The token counts one provider call reported — one event per call that
     /// reported any, named by `call` (every answering round is its own event;

@@ -6,6 +6,9 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 #[cfg(test)]
 #[path = "tools/chart_save_tests.rs"]
 mod chart_save_tests;
+#[cfg(test)]
+#[path = "tools/clarification_tool_tests.rs"]
+mod clarification_tool_tests;
 mod contract_tools;
 mod database_tools;
 mod executor;

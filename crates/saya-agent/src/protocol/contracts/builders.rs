@@ -108,6 +108,17 @@ impl AgentEvent {
         Self::Complete
     }
 
+    /// Builds the turn-ending [`AgentEvent::ClarificationNeeded`] event. The
+    /// caller is the loop's clarification arm, when a `request_clarification`
+    /// call lands with a valid question; `question` and `options` arrive
+    /// already sanitised and bounded by the arm's parser.
+    pub fn clarification_needed(question: impl Into<String>, options: Vec<String>) -> Self {
+        Self::ClarificationNeeded {
+            question: question.into(),
+            options,
+        }
+    }
+
     /// Builds the per-call [`AgentEvent::Usage`] event for one provider call's
     /// reported token counts. The caller is `receive` (answering rounds) or the
     /// CLI runtime (the extraction call), and each passes the call kind so a
