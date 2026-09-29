@@ -1,6 +1,6 @@
 //! The headless `saya investigation` adapter (S6/S8): save, list, show,
-//! delete, export, and import portable saved-investigation documents through
-//! `saya_store::investigations::InvestigationRepository`.
+//! edit, delete, export, and import portable saved-investigation documents
+//! through `saya_store::investigations::InvestigationRepository`.
 //!
 //! One operation, multiple adapters: this is the single dispatcher the clap
 //! subcommand uses today and the slash/TUI adapters (S7/S9) will reuse;
@@ -10,6 +10,7 @@
 
 mod connection;
 mod delete;
+mod edit;
 mod export;
 mod fingerprint;
 mod import;
@@ -127,6 +128,24 @@ async fn run_investigation_outcome_in(
                 sql,
                 file,
                 connection: connection.as_deref(),
+            },
+        )
+        .map(RunOutcome::plain),
+        InvestigationCommand::Edit {
+            id,
+            name,
+            description,
+            sql,
+            file,
+        } => edit::edit(
+            repo,
+            format,
+            edit::EditRequest {
+                id: &id,
+                name: name.as_deref(),
+                description: description.as_deref(),
+                sql,
+                file,
             },
         )
         .map(RunOutcome::plain),
