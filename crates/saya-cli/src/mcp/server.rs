@@ -1,11 +1,11 @@
-//! The stdio MCP server: rmcp glue for `saya mcp serve` (task Da, ADR 0008).
-//!
-//! A hand-written [`ServerHandler`] — no macros feature. The tool catalog and
-//! bodies live in [`super::tools`]; this file is the bounded plumbing around
-//! them: in-flight cap, request and response bounds, call timeout. Nothing
-//! but JSON-RPC ever reaches stdout — the transport writes protocol frames
-//! only, and every diagnostic goes to stderr.
+//! The stdio MCP server: rmcp glue for `saya mcp serve` (ADR 0008). The
+//! tool catalog and bodies live in [`super::tools`]; this file is the
+//! bounded plumbing around them: in-flight cap, request and response bounds,
+//! call timeout, and cancellation. Nothing but JSON-RPC ever reaches stdout —
+//! the transport writes protocol frames only, and every diagnostic goes to
+//! stderr.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rmcp::{
@@ -15,16 +15,19 @@ use rmcp::{
         Implementation, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
     },
     service::{QuitReason, RequestContext},
-    transport::stdio,
 };
 
 use super::{
+    catalog,
+    context::McpContext,
     policy::{MAX_REQUEST_BYTES, ServePolicy},
     tools,
+    transport::BridgeTransport,
 };
 
 pub(crate) struct SayaServer {
     policy: ServePolicy,
+    context: Arc<McpContext>,
     in_flight: AtomicUsize,
 }
 
@@ -44,34 +47,52 @@ impl ServerHandler for SayaServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(tools::advertised()))
+        Ok(ListToolsResult::with_all_items(catalog::advertised(
+            &self.policy,
+        )))
     }
 
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        self.run_tool(request).await
+        // A cancellation notification stops the wait and drops the call's
+        // future; any late response is discarded by the service itself. The
+        // body also races the same token around its own connector calls so a
+        // supporting connector is cancelled server-side.
+        tokio::select! {
+            _ = context.ct.cancelled() => Err(cancelled()),
+            response = self.run_tool(request, &context) => response,
+        }
     }
 }
 
+fn cancelled() -> ErrorData {
+    ErrorData::new(ErrorCode::INTERNAL_ERROR, "the call was cancelled", None)
+}
+
 impl SayaServer {
-    pub(crate) fn new(policy: ServePolicy) -> Self {
+    pub(crate) fn new(policy: ServePolicy, context: Arc<McpContext>) -> Self {
         Self {
             policy,
+            context,
             in_flight: AtomicUsize::new(0),
         }
     }
 
-    /// One bounded tool call: acquire an in-flight slot, refuse an oversized
-    /// request, run the body under the call timeout. Every hook is the one
-    /// the data tools (task Db) inherit.
+    /// One bounded tool call: acquire an in-flight slot (refused as busy, as a
+    /// tool result, past the cap), refuse an oversized request, run the body
+    /// under the call timeout.
     async fn run_tool(
         &self,
         request: CallToolRequestParams,
+        request_context: &RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let _slot = self.acquire_in_flight()?;
+        let _slot = match self.acquire_in_flight() {
+            Ok(slot) => slot,
+            Err(error) => return Ok(tools::error_result(error.message)),
+        };
         if let Some(arguments) = request.arguments.as_ref()
             && !arguments.is_empty()
         {
@@ -88,7 +109,7 @@ impl SayaServer {
         }
         match tokio::time::timeout(
             self.policy.call_timeout(),
-            tools::run(&self.policy, &request),
+            tools::run(&self.policy, &self.context, &request, request_context),
         )
         .await
         {
@@ -106,7 +127,7 @@ impl SayaServer {
             self.in_flight.fetch_sub(1, Ordering::Relaxed);
             return Err(ErrorData::new(
                 ErrorCode::INTERNAL_ERROR,
-                "too many in-flight tool calls; retry once one completes",
+                "busy: too many in-flight tool calls; retry once one completes",
                 None,
             ));
         }
@@ -136,8 +157,16 @@ fn unserializable_arguments(_: serde_json::Error) -> ErrorData {
 /// client that hangs up before completing the handshake is a failed
 /// connection (exit 2); a completed session ends cleanly on EOF (exit 0),
 /// as does an explicit cancel.
-pub(crate) async fn run(policy: ServePolicy) -> Result<i32, Box<dyn std::error::Error>> {
-    let running = SayaServer::new(policy).serve(stdio()).await?;
+pub(crate) async fn run(
+    policy: ServePolicy,
+    context: McpContext,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let running = SayaServer::new(policy, Arc::new(context))
+        .serve(BridgeTransport::new(
+            tokio::io::stdin(),
+            tokio::io::stdout(),
+        ))
+        .await?;
     match running.waiting().await? {
         QuitReason::Closed | QuitReason::Cancelled => Ok(0),
         other => Err(format!("mcp server task failed: {other:?}").into()),

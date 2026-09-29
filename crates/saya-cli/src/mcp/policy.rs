@@ -1,9 +1,9 @@
-//! Bounds and the startup allowlist for `saya mcp serve` (ADR 0008, task Da).
+//! Bounds and the startup allowlist for `saya mcp serve` (ADR 0008).
 //!
 //! The server speaks newline-delimited JSON-RPC over stdio; everything a
-//! client can make it touch is bounded here. The data tools of the follow-on
-//! database wiring (task Db) plug into the same hooks; the skeleton exercises
-//! them on the meta tool.
+//! client can make it touch is bounded here. The tool dispatch (task Db)
+//! plugs into the same hooks: the allowlist and the data-sharing gate decide
+//! listing and reach, and the bounds cap every call.
 
 use std::time::Duration;
 
@@ -97,6 +97,14 @@ impl ServePolicy {
     /// the flag/config fold is resolve's, not a second one).
     pub(crate) const fn allow_data_sharing(&self) -> bool {
         self.allow_data_sharing
+    }
+
+    /// Overrides the resolved gate (tests only): the gate's value in
+    /// production always comes from `resolve`, never from a client.
+    #[cfg(test)]
+    pub(crate) fn with_data_sharing(mut self, allowed: bool) -> Self {
+        self.allow_data_sharing = allowed;
+        self
     }
 
     pub(crate) const fn call_timeout(&self) -> Duration {
