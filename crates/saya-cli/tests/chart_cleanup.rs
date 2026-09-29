@@ -5,11 +5,19 @@
 //! file the session wrote: the test drives a chart render through the real
 //! binary on the piped-REPL path (the session-loop funnel), ends the session,
 //! and asserts no `saya-chart-*.html` remains.
+//!
+//! The run is isolated (TA-02): the child gets its own temp directory via
+//! `TMPDIR` (plus the Windows equivalents `TMP`/`TEMP`), and every scan and
+//! clean below is scoped to that private directory — the test never deletes
+//! or counts chart files in the shared temp directory another process may be
+//! using. To pin that, a foreign `saya-chart-*.html` is planted in the
+//! process's real temp directory (what `std::env::temp_dir()` returns here)
+//! before the run and must still exist afterwards.
 
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
@@ -28,10 +36,9 @@ impl Drop for ChildGuard {
     }
 }
 
-fn chart_temp_files() -> Vec<PathBuf> {
-    let temp = std::env::temp_dir();
+fn chart_temp_files_in(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&temp) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -43,10 +50,40 @@ fn chart_temp_files() -> Vec<PathBuf> {
     found
 }
 
-fn clear_chart_temp_files() {
-    for path in chart_temp_files() {
+fn clear_chart_temp_files_in(dir: &Path) {
+    for path in chart_temp_files_in(dir) {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// A foreign `saya-chart-*.html` planted in the process's real temp directory
+/// — the shared directory where another live saya session would legitimately
+/// write its own charts. Dropping the guard removes the plant, including when
+/// the test panics, so the plant never leaks into the shared directory.
+struct ForeignChartGuard {
+    path: PathBuf,
+}
+
+impl Drop for ForeignChartGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn plant_foreign_chart() -> ForeignChartGuard {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.subsec_nanos())
+        .unwrap_or(0);
+    // "foreign" cannot appear in a production-reserved name
+    // (`saya-chart-{16-hex}.html`), so the plant can never collide with a
+    // live session's recorded chart.
+    let path = std::env::temp_dir().join(format!(
+        "saya-chart-foreign-{}-{nonce}.html",
+        std::process::id()
+    ));
+    std::fs::write(&path, "planted by chart_cleanup.rs; must survive the run").unwrap();
+    ForeignChartGuard { path }
 }
 
 /// Waits for the run to finish (the `complete` event) and then asserts the
@@ -154,6 +191,11 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
     let root = std::env::temp_dir().join(format!("saya-cli-chart-cleanup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
+    // The child's own temp directory, handed to it via TMPDIR: every chart
+    // file the session could write lands here, so all scans and cleans below
+    // stay inside this test's private directory (TA-02).
+    let child_temp = root.join("tmp");
+    std::fs::create_dir_all(&child_temp).unwrap();
     let database = root.join("chart.duckdb");
     duckdb::Connection::open(&database)
         .unwrap()
@@ -169,8 +211,15 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
     )
     .unwrap();
 
-    // Stale leftovers from any earlier crashed run must not mask the verdict.
-    clear_chart_temp_files();
+    // A foreign chart planted in the shared temp directory — where another
+    // live saya session would write its own charts — must survive the whole
+    // run: this test cleans only its private directory.
+    let foreign = plant_foreign_chart();
+
+    // Stale leftovers from any earlier crashed run must not mask the verdict;
+    // the sweep is scoped to the private directory and never touches the
+    // shared temp directory (the planted foreign file above proves it).
+    clear_chart_temp_files_in(&child_temp);
 
     // Piped stdin/stdout makes this the headless (non-TTY) session path, which
     // funnels through the interactive session loop and ends at session teardown.
@@ -195,6 +244,11 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
         .env("SAYA_MODEL", "mock-model")
         .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
         .env("SAYA_API_KEY", "mock-secret")
+        // The child's temp directory is private to this run: `TMPDIR` on
+        // Unix, `TMP`/`TEMP` as the Windows equivalents.
+        .env("TMPDIR", &child_temp)
+        .env("TMP", &child_temp)
+        .env("TEMP", &child_temp)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -255,10 +309,10 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
     // chart temp file. Cleanup itself is covered directly by the unit tests
     // in `chart/cleanup.rs`.
     wait_for_chart_validation_failure(&accumulated, &stderr_accum, Duration::from_secs(30));
-    let written = chart_temp_files();
+    let written = chart_temp_files_in(&child_temp);
     assert!(
         written.is_empty(),
-        "a denied render_chart must not have written anything; stdout:\n{}",
+        "a hidden render_chart must not have written anything; stdout:\n{}",
         accumulated.lock().unwrap()
     );
 
@@ -284,11 +338,17 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
         "session should exit cleanly, stderr: {stderr_text}"
     );
 
-    let remaining = chart_temp_files();
+    let remaining = chart_temp_files_in(&child_temp);
     assert!(
         remaining.is_empty(),
         "chart temp files remain after session teardown: {remaining:?}"
     );
+    assert!(
+        foreign.path.is_file(),
+        "the foreign chart planted in the shared temp directory must survive the run: {:?}",
+        foreign.path
+    );
 
     let _ = std::fs::remove_dir_all(&root);
+    drop(foreign);
 }
