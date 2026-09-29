@@ -102,14 +102,45 @@ fn acquire_on(counter: &Arc<AtomicUsize>) -> Option<WorkerPermit> {
 /// permits never race another's held phase. Sync tests take it with
 /// [`test_permit_lock`]; an async test takes the same lock with
 /// [`test_permit_lock_async`] and may hold the guard across its awaits.
+///
+/// Acquiring the lock also hands the caller a **drained** pool: a permit
+/// acquired under the lock can outlive its holder's guard — a worker thread
+/// finishes after the test observed its completion, or after the gated
+/// releases drop — so the acquirer waits (bounded) until the pool is empty
+/// before its own held phase. No test may hold a real permit without this
+/// lock; that discipline plus the drain is what keeps the cap tests from
+/// counting each other's workers.
 #[cfg(test)]
 pub(crate) fn test_permit_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    permit_lock().blocking_lock()
+    let guard = permit_lock().blocking_lock();
+    wait_for_drained_pool("a previous lock holder left a permit held");
+    guard
 }
 
 #[cfg(test)]
 pub(crate) async fn test_permit_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
-    permit_lock().lock().await
+    let guard = permit_lock().lock().await;
+    wait_for_drained_pool("a previous lock holder left a permit held");
+    guard
+}
+
+/// Waits, bounded, until no permit is held — the lock hands the next test an
+/// empty pool instead of one still draining a previous holder's workers.
+/// The permit release itself needs no lock (a plain atomic decrement on the
+/// worker thread), so this cannot deadlock; the deadline only turns a
+/// never-exiting worker into a named failure in the acquiring test.
+#[cfg(test)]
+fn wait_for_drained_pool(why: &str) {
+    use std::time::{Duration, Instant};
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while shared_counter().load(Ordering::Acquire) != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the test permit lock never drained the pool: {why}"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 #[cfg(test)]

@@ -80,6 +80,47 @@ fn wait_for_running(count: usize, why: &str) {
     }
 }
 
+// -- the lock hands over a drained pool --------------------------------------
+
+/// The seam invariant that deflakes the cap tests: acquiring the test permit
+/// lock must hand the caller a pool with **no stale permits**. A permit
+/// acquired under the lock can outlive its holder's guard — a worker thread
+/// finishes after the test observed its completion (the end-to-end replay
+/// test's window) or after gated releases drop — so the acquirer must not
+/// take the lock until that permit is gone; otherwise the cap tests count a
+/// foreign worker's permit ("left 2, right 1").
+#[test]
+fn the_permit_lock_hands_over_a_drained_pool() {
+    let (handoff_tx, handoff_rx) = mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        // The stale shape: a real permit acquired under the lock that
+        // outlives the lock handoff, like a worker thread still finishing.
+        let permit = {
+            let _guard = test_permit_lock();
+            try_acquire_worker_permit().expect("the pool admits under the lock")
+        };
+        handoff_tx
+            .send(())
+            .expect("the test waits for the handoff signal");
+        // Hold the permit well past the handoff — long enough that a lock
+        // handed over without a drain observes it, short enough that the
+        // acquirer's bounded drain wait covers the release.
+        std::thread::sleep(Duration::from_millis(100));
+        drop(permit);
+    });
+    handoff_rx
+        .recv()
+        .expect("the holder signals: lock free, permit still held");
+
+    let _serialized = test_permit_lock();
+    assert_eq!(
+        running_workers(),
+        0,
+        "the lock must hand over a drained pool: a previous holder's permit outlived the handoff"
+    );
+    holder.join().expect("the holder thread exits");
+}
+
 // -- the pool ---------------------------------------------------------------
 
 /// The cap admits up to four holders, refuses the fifth, and a released
