@@ -1,3 +1,6 @@
+mod clarification;
+mod clarification_args;
+mod clarification_feed;
 mod compaction;
 mod designation;
 mod failed_statements;
@@ -8,6 +11,11 @@ mod salvage;
 mod tool_record;
 mod tools;
 mod turn_tools;
+
+pub use clarification_args::{
+    MAX_CLARIFICATION_OPTION_CHARS, MAX_CLARIFICATION_OPTIONS, MAX_CLARIFICATION_QUESTION_CHARS,
+    REQUEST_CLARIFICATION_TOOL,
+};
 
 use crate::{
     AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatMessage,
@@ -174,6 +182,31 @@ pub async fn run_agent_with_sink(
             designation::Outcome::Done(output) => return Ok(*output),
             designation::Outcome::Recovering => continue,
             designation::Outcome::NotDesignated => {}
+        }
+        // The clarification arm (B3c): a `request_clarification` call ends the
+        // turn — the question is surfaced, the tool result is fed, and no
+        // further provider call happens until the user answers. A malformed
+        // ask is fed back as a tool error and the turn continues.
+        match clarification::handle(
+            &assistant,
+            &definitions,
+            &limits,
+            approval,
+            tools,
+            &designation,
+            (&mut events, sink, &cancellation),
+            &mut messages,
+            (usage, used_bounded_sql_query, &mut tool_metadata),
+        )
+        .await?
+        {
+            clarification::Outcome::Done(output) => return Ok(*output),
+            // The arm answered this message's calls (errors for malformed
+            // asks, refusals for the siblings): its results are already on
+            // the conversation, and the next turn retries — the ordinary
+            // path must not run the same calls again.
+            clarification::Outcome::Continue => continue,
+            clarification::Outcome::NotCalled => {}
         }
         if assistant.tool_calls.is_empty() {
             check_cancelled(&cancellation)?;

@@ -4,6 +4,7 @@ use super::Transcript;
 use super::answer::apply_answer_event;
 use super::group::apply_tool_edge;
 use super::knowledge::apply_knowledge_event;
+use super::question::push_question;
 use super::thinking::push_reasoning_text;
 use saya_agent::AgentEvent;
 
@@ -15,6 +16,13 @@ pub(crate) fn apply_boundary_event(
     match event {
         AgentEvent::AssistantText { .. } | AgentEvent::TurnReset | AgentEvent::Complete => {
             let _ = apply_answer_event(transcript, event);
+        }
+        // The model stopped to ask instead of assuming (B3c): the question
+        // lands as its own block after the flushed tool group. The user's
+        // next message is ordinary input — nothing here opens a modal or a
+        // special answer mode.
+        AgentEvent::ClarificationNeeded { question, options } => {
+            push_question(transcript, &question, &options);
         }
         AgentEvent::ToolRequested { .. }
         | AgentEvent::ToolCompleted { .. }
