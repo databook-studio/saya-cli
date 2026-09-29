@@ -1,5 +1,5 @@
 use crate::{
-    cli::{Cli, Command, ConfigCommand, ConnectionCommand},
+    cli::{Cli, Command, ConfigCommand, ConnectionCommand, McpCommand},
     commands, config, demo, interactive,
 };
 use std::{io::IsTerminal, path::Path};
@@ -53,6 +53,21 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // config it then loads, and refuses to prompt when there is no terminal.
     if let Command::Setup = command {
         return crate::setup::flow::run(&cli);
+    }
+    // The MCP server (ADR 0008) also dispatches before the interrupted-setup
+    // warning: its stderr belongs to the client's log stream and its stdout
+    // must stay protocol-only, so `mcp serve` never emits the startup
+    // warnings the interactive surfaces do. The session-launch guards still
+    // apply — a stated intent is never silently ignored — but the setup
+    // recovery offer is a one-line stderr note, not a surface contract.
+    if let Command::Mcp {
+        command: McpCommand::Serve { profile },
+    } = &command
+    {
+        refuse_workspace_on_subcommand(Some(&command), cli.options.workspace.as_deref())?;
+        refuse_turn_file_on_subcommand(cli.options.turn_file.as_deref())?;
+        refuse_session_launch_flags_on_subcommand(&command, &cli.options)?;
+        return crate::mcp::serve(&cli.options, profile.clone());
     }
     warn_interrupted_setup();
     if let Command::Config {

@@ -277,6 +277,35 @@ pub enum Command {
     /// with your consent, the provider), then write. Needs a terminal — for
     /// scripts use `saya config init` or `saya demo`.
     Setup,
+    /// Serve the Model Context Protocol over stdio (ADR 0008): a client
+    /// (Claude Code, the MCP Inspector, any MCP host) speaks newline-delimited
+    /// JSON-RPC on this process's stdin/stdout — protocol frames only, logs on
+    /// stderr, exit on stdin EOF. The toolset is bounded to the startup
+    /// allowlist: the `--profile` values, else the configured default profile;
+    /// `list_profiles` reports names and dialects only, and no client can
+    /// widen the set. Row-returning tools additionally need data sharing to
+    /// be allowed (`--allow-data-sharing` or config).
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum McpCommand {
+    /// Start the stdio MCP server and serve until stdin closes: `initialize`
+    /// and `ping` are answered, `tools/list` names the allowed tools, and
+    /// `tools/call` runs them under the same read-only gates the CLI uses.
+    /// Exits 0 on stdin EOF. Nothing but protocol frames is ever written to
+    /// stdout, so a client's transcript stays clean.
+    Serve {
+        /// Connection profile allowed to this server; repeatable to serve
+        /// several. The allowlist is fixed at startup — without any value,
+        /// the configured default profile forms it, and with none configured
+        /// the server starts empty.
+        #[arg(long = "profile", value_name = "P")]
+        profile: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
