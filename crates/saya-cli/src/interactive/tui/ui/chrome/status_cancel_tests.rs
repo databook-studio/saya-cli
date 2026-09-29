@@ -187,6 +187,7 @@ fn a_running_sql_task_or_replay_hints_detach_not_cancel() {
                 report: None,
                 rows: None,
                 overwrite: false,
+                params: Vec::new(),
             },
             format: RenderFormat::Text,
             // The status bar never runs the worker; the lazy empty-path

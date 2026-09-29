@@ -10,7 +10,7 @@ use std::path::Path;
 
 use chrono::{FixedOffset, NaiveDate, TimeZone, Utc};
 use duckdb::types::{Decimal as DuckDecimal, TimeUnit, Value};
-use saya_types::{BoundParam, ConnectionError, ParamValue, QueryRequest};
+use saya_types::{BoundParam, ConnectionError, ParamType, ParamValue, QueryRequest};
 use serde_json::Value as Json;
 use tempfile::TempDir;
 
@@ -62,7 +62,7 @@ async fn open_fixture() -> (DuckDbConnector, TempDir) {
 #[test]
 fn native_values_encode_each_parameter_type() {
     let parsed = crate::binds::parse_bind_values(&[
-        ParamValue::Null,
+        ParamValue::Null(ParamType::String),
         ParamValue::String("paris".to_owned()),
         ParamValue::Integer(-5),
         ParamValue::Boolean(true),
@@ -211,7 +211,7 @@ async fn repeated_names_bind_each_occurrence() {
 #[tokio::test]
 async fn null_binds_compare_against_nulls() {
     let (connector, _dir) = open_fixture().await;
-    let null = vec![bound("label", ParamValue::Null)];
+    let null = vec![bound("label", ParamValue::Null(ParamType::String))];
     let distinct = connector
         .execute(QueryRequest::with_params(
             "SELECT count(*) FROM params_t WHERE label IS NOT DISTINCT FROM :label".to_owned(),

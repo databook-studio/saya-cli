@@ -9,7 +9,7 @@ use std::fmt;
 
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use saya_types::{ConnectionError, ParamValue};
+use saya_types::{ConnectionError, ParamType, ParamValue};
 
 #[cfg(test)]
 #[path = "binds_tests.rs"]
@@ -24,7 +24,10 @@ mod tests;
 /// the variant only, never a value.
 #[derive(Clone, PartialEq)]
 pub(crate) enum BindValue {
-    Null,
+    /// A null carrying the parameter's declared type: engines that need one
+    /// (PostgreSQL's `Option<T>`, BigQuery's declared `parameterType`) map
+    /// it per type; the dynamically typed engines ignore it.
+    Null(ParamType),
     Str(String),
     Int(i64),
     Bool(bool),
@@ -42,7 +45,7 @@ pub(crate) enum BindValue {
 impl fmt::Debug for BindValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Null => "Null",
+            Self::Null(_) => "Null(_)",
             Self::Str(_) => "Str(_)",
             Self::Int(_) => "Int(_)",
             Self::Bool(_) => "Bool(_)",
@@ -60,7 +63,7 @@ pub(crate) fn parse_bind_values(values: &[ParamValue]) -> Result<Vec<BindValue>,
 
 fn parse_bind_value(value: &ParamValue) -> Result<BindValue, ConnectionError> {
     Ok(match value {
-        ParamValue::Null => BindValue::Null,
+        ParamValue::Null(param_type) => BindValue::Null(*param_type),
         ParamValue::String(text) => BindValue::Str(text.clone()),
         ParamValue::Integer(int) => BindValue::Int(*int),
         ParamValue::Boolean(flag) => BindValue::Bool(*flag),

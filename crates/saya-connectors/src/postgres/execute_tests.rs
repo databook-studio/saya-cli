@@ -5,7 +5,7 @@
 
 use std::str::FromStr;
 
-use saya_types::{BoundParam, ParamValue};
+use saya_types::{BoundParam, ParamType, ParamValue};
 use sqlx::postgres::PgConnectOptions;
 
 use super::*;
@@ -140,7 +140,7 @@ async fn live_postgres_binds_typed_parameters_natively() {
         (
             "SELECT :v IS NULL AS is_null",
             "v",
-            ParamValue::Null,
+            ParamValue::Null(ParamType::Integer),
             serde_json::json!([true]),
         ),
     ] {

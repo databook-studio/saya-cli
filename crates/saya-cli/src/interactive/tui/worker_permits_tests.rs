@@ -29,6 +29,7 @@ fn replay_task(id: &str) -> ReplayTask {
             report: None,
             rows: None,
             overwrite: false,
+            params: Vec::new(),
         },
         format: RenderFormat::Text,
         // Never written: the cap tests gate the worker before any store use.

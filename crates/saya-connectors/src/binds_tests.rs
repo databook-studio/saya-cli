@@ -4,20 +4,20 @@
 
 use bigdecimal::BigDecimal;
 use chrono::{FixedOffset, NaiveDate, TimeZone};
-use saya_types::{ConnectionError, ParamValue};
+use saya_types::{ConnectionError, ParamType, ParamValue};
 
 use crate::binds::{BindValue, parse_bind_values};
 
 #[test]
 fn primitive_values_map_without_loss() {
     let values = parse_bind_values(&[
-        ParamValue::Null,
+        ParamValue::Null(ParamType::String),
         ParamValue::String("paris".to_owned()),
         ParamValue::Integer(-5),
         ParamValue::Boolean(true),
     ])
     .unwrap();
-    assert!(matches!(values[0], BindValue::Null));
+    assert!(matches!(values[0], BindValue::Null(_)));
     assert!(matches!(&values[1], BindValue::Str(text) if text == "paris"));
     assert!(matches!(values[2], BindValue::Int(-5)));
     assert!(matches!(values[3], BindValue::Bool(true)));

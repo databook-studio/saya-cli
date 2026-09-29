@@ -9,6 +9,7 @@ use std::io::Read;
 use std::path::Path;
 
 use super::objects;
+use super::params;
 use super::{EXIT_INVESTIGATION_ERROR, EXIT_SAFETY, store_failure};
 use crate::commands::output::{failure_message, result};
 use crate::render::RenderFormat;
@@ -74,6 +75,14 @@ fn import_with_racer(
             "objects do not match the SQL; re-export the investigation".to_string(),
             format,
         );
+    }
+    // The placeholder/declaration contract (invariant 1): a hand-written or
+    // tampered file gets the same gate save runs — the SQL's `:name`
+    // placeholders must equal the declared parameters exactly.
+    if let Err((code, message)) =
+        params::check_contract(&definition.sql, definition.dialect, &definition.parameters)
+    {
+        return failure_message(code, message, format);
     }
     match repo.get(&definition.id) {
         Ok(existing) => return stored_outcome(existing, &definition, format),

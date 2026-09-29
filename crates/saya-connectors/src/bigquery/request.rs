@@ -1,6 +1,6 @@
 use bigdecimal::BigDecimal;
 use chrono::{SecondsFormat, Utc};
-use saya_types::{ConnectionError, QueryResult};
+use saya_types::{ConnectionError, ParamType, QueryResult};
 use serde_json::Value;
 
 use crate::binds::BindValue;
@@ -75,19 +75,16 @@ pub(crate) fn dry_run_body(
 /// Encodes validated values as BigQuery's positional `queryParameters`: one
 /// entry per `?` marker with a concrete `parameterType` and a string
 /// `parameterValue` — values travel in the body only, never into the SQL
-/// text, and no error message names one.
+/// text, and no error message names one. A null binds as its declared
+/// parameter type with a null value (B1f): the service requires a concrete
+/// type, and the declaration provides it.
 pub(crate) fn query_parameters(values: &[BindValue]) -> Result<Vec<Value>, ConnectionError> {
     values.iter().map(query_parameter).collect()
 }
 
 fn query_parameter(value: &BindValue) -> Result<Value, ConnectionError> {
     let kind = match value {
-        BindValue::Null => {
-            return Err(ConnectionError::query_failed(
-                "a null parameter cannot be bound on BigQuery: the service requires a \
-                 concrete parameter type for null values",
-            ));
-        }
+        BindValue::Null(param_type) => null_parameter_type(*param_type)?,
         BindValue::Str(_) => "STRING",
         BindValue::Int(_) => "INT64",
         BindValue::Bool(_) => "BOOL",
@@ -95,10 +92,37 @@ fn query_parameter(value: &BindValue) -> Result<Value, ConnectionError> {
         BindValue::Date(_) => "DATE",
         BindValue::Timestamp { .. } => "TIMESTAMP",
     };
+    let parameter_value = if matches!(value, BindValue::Null(_)) {
+        serde_json::json!({ "value": Value::Null })
+    } else {
+        serde_json::json!({ "value": value_text(value) })
+    };
     Ok(serde_json::json!({
         "parameterType": {"type": kind},
-        "parameterValue": {"value": value_text(value)},
+        "parameterValue": parameter_value,
     }))
+}
+
+/// The BigQuery parameter type a declared null binds as. A null decimal has
+/// no magnitude to size, so it binds as `NUMERIC` — a null compares null
+/// under either numeric width. An unrecognized future declared type refuses:
+/// the service requires a concrete type, and none is invented here.
+fn null_parameter_type(param_type: ParamType) -> Result<&'static str, ConnectionError> {
+    let kind = match param_type {
+        ParamType::String => "STRING",
+        ParamType::Integer => "INT64",
+        ParamType::Boolean => "BOOL",
+        ParamType::Decimal => "NUMERIC",
+        ParamType::Date => "DATE",
+        ParamType::Timestamp => "TIMESTAMP",
+        _ => {
+            return Err(ConnectionError::query_failed(
+                "a null parameter of an unrecognized declared type cannot be bound on \
+                 BigQuery: the service requires a concrete parameter type",
+            ));
+        }
+    };
+    Ok(kind)
 }
 
 /// Picks NUMERIC for a value inside its 38-digit/9-scale bound and
@@ -129,7 +153,7 @@ fn numeric_kind(value: &BigDecimal) -> Result<&'static str, ConnectionError> {
 /// timestamp as the instant's canonical UTC RFC 3339 form.
 fn value_text(value: &BindValue) -> String {
     match value {
-        BindValue::Null => String::new(),
+        BindValue::Null(_) => String::new(),
         BindValue::Str(text) => text.clone(),
         BindValue::Int(int) => int.to_string(),
         BindValue::Bool(flag) => flag.to_string(),
