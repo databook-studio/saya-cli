@@ -1,12 +1,13 @@
 //! The stage-or-reuse engine behind `saya open <FILE>`: the source file is
-//! read and hashed exactly once by `saya-harness`'s `stage_csv` into a
-//! private staging directory under the files root; the snapshot directory is
-//! chosen from the digest; an existing snapshot of the same content is
-//! reused (its file untouched), otherwise the fresh staging is placed there.
+//! read and hashed exactly once by `saya-harness`'s staging (format detected
+//! from that one read) into a private staging directory under the files root;
+//! the snapshot directory is chosen from the digest; an existing snapshot of
+//! the same content is reused (its file untouched), otherwise the fresh
+//! staging is placed there.
 
 use std::{fs, path::Path, path::PathBuf};
 
-use saya_harness::file_source::{self, CsvStageOptions, Preview, STAGED_DB_FILE};
+use saya_harness::file_source::{self, CsvStageOptions, Preview, STAGED_DB_FILE, SourceFormat};
 
 use super::root::{TempDirGuard, ensure_root, fresh_temp_dir};
 use super::snapshot::{SnapshotMeta, dir_name, valid_snapshot};
@@ -24,6 +25,7 @@ pub(super) struct StagedSession {
     pub file_name: String,
     pub staged_unix_ms: u64,
     pub preview: Preview,
+    pub format: SourceFormat,
     pub reused: bool,
 }
 
@@ -38,7 +40,7 @@ pub(super) fn stage_or_reuse(
     let temp = fresh_temp_dir(root)?;
     let guard = TempDirGuard::new(temp.clone());
     let receipt =
-        file_source::stage_csv(source, &temp, options).map_err(|error| error.to_string())?;
+        file_source::stage_source(source, &temp, options).map_err(|error| error.to_string())?;
     let name = dir_name(&receipt.sha256)
         .ok_or_else(|| "staging produced an unexpected digest".to_owned())?;
     let target = root.join(name);
@@ -92,6 +94,7 @@ fn session(
         file_name: meta.file_name.clone(),
         staged_unix_ms: meta.staged_unix_ms,
         preview: receipt.preview.clone(),
+        format: receipt.format,
         reused,
     }
 }

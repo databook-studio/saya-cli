@@ -15,12 +15,18 @@
 
 mod csv_stage;
 mod infer;
+mod parquet_decode;
+mod parquet_preview;
+mod parquet_stage;
+#[cfg(test)]
+mod parquet_tests;
 mod preview;
 mod read;
 #[cfg(test)]
 mod tests;
 
 pub use infer::InferredType;
+pub use parquet_stage::{ParquetCaps, stage_parquet};
 pub use preview::{Preview, PreviewColumn};
 
 use std::{
@@ -44,6 +50,14 @@ pub const RESERVED_METADATA_TABLE: &str = "saya_file_source";
 /// The whole-staging wall-clock ceiling: read, parse, and write together.
 pub const STAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The detected source format: routed by the `.parquet` extension or the
+/// file's PAR1 magic, with every other byte stream parsed as CSV.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceFormat {
+    Csv,
+    Parquet,
+}
+
 /// Staging options: an explicit delimiter byte (`None` sniffs one from the
 /// source's first line) and whether the first row is a header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +66,9 @@ pub struct CsvStageOptions {
     pub header: bool,
 }
 
-/// The result of staging one CSV file: the private DuckDB database file, the
-/// single VARCHAR data table (named from the file stem), and a preview.
+/// The result of staging one file: the private DuckDB database file, the
+/// single data table (named from the file stem), and a preview. CSV data is
+/// stored as VARCHAR; Parquet keeps its native column types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedSource {
     pub db_path: PathBuf,
@@ -63,9 +78,10 @@ pub struct StagedSource {
     pub sha256: String,
     pub bytes: u64,
     pub preview: Preview,
+    pub format: SourceFormat,
 }
 
-/// Staging refusals. None carry CSV field values.
+/// Staging refusals. None carry source field values.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum StageError {
@@ -87,11 +103,9 @@ pub enum StageError {
     #[error("CSV file has no rows")]
     Empty,
     /// The file stem sanitises to the reserved metadata table's name.
-    #[error(
-        "CSV file stem sanitises to the reserved metadata table name {name:?}; staging is refused"
-    )]
+    #[error("file stem sanitises to the reserved metadata table name {name:?}; staging is refused")]
     ReservedTableName { name: String },
-    #[error("CSV staging destination unusable: {0}")]
+    #[error("staging destination unusable: {0}")]
     Destination(String),
     /// The staged file's mode could not be restricted to 0600.
     #[error("staged file could not be restricted to 0600: {path}")]
@@ -100,10 +114,45 @@ pub enum StageError {
         #[source]
         source: io::Error,
     },
-    #[error("CSV staging timed out")]
+    #[error("staging timed out")]
     Timeout,
-    #[error("CSV staging failed at the database layer")]
+    #[error("staging failed at the database layer")]
     Database,
+    /// The Parquet decode hit a DuckDB error outside the typed refusals —
+    /// a corrupt or non-Parquet file, an interrupted decode, an I/O failure.
+    #[error("Parquet staging failed: {0}")]
+    ParquetFailed(String),
+    /// Parquet metadata reports more rows than the decode cap, before any
+    /// row is decoded.
+    #[error("Parquet file has {rows} rows; at most {max} can be staged")]
+    ParquetTooManyRows { rows: u64, max: u64 },
+    /// Parquet metadata reports more columns than the cap.
+    #[error("Parquet file has {columns} columns; at most {max} can be staged")]
+    ParquetTooManyColumns { columns: usize, max: usize },
+    /// A Parquet column's type is nested (STRUCT/LIST/MAP/UNION/ARRAY).
+    #[error("Parquet column {column:?} has nested type {kind}; only flat columns can be staged")]
+    ParquetNestedColumn { column: String, kind: String },
+    #[error("Parquet file has no columns")]
+    ParquetNoColumns,
+}
+
+/// Stages one local file into a private DuckDB database file at
+/// `<dest_dir>/source.duckdb` (dir 0700, file 0600), routing by the
+/// `.parquet` extension or PAR1 magic: Parquet through the bounded staging
+/// decode, everything else through the bounded CSV parser. The source file
+/// is read exactly once; the write is transactional; any failure leaves no
+/// staged file behind.
+pub fn stage_source(
+    source: &Path,
+    dest_dir: &Path,
+    options: CsvStageOptions,
+) -> Result<StagedSource, StageError> {
+    let read = read_source(source)?;
+    if parquet_stage::looks_like_parquet(&read) {
+        parquet_stage::stage_read(read, dest_dir, ParquetCaps::default())
+    } else {
+        stage_csv_read(read, dest_dir, options)
+    }
 }
 
 /// Stages one local CSV file into a private DuckDB database file at
@@ -115,8 +164,18 @@ pub fn stage_csv(
     dest_dir: &Path,
     options: CsvStageOptions,
 ) -> Result<StagedSource, StageError> {
-    let deadline = Instant::now() + STAGE_TIMEOUT;
     let read = read_source(source)?;
+    stage_csv_read(read, dest_dir, options)
+}
+
+/// The CSV pipeline from an already-contained read, shared by `stage_csv`
+/// and the CSV arm of `stage_source`.
+fn stage_csv_read(
+    read: read::SourceRead,
+    dest_dir: &Path,
+    options: CsvStageOptions,
+) -> Result<StagedSource, StageError> {
+    let deadline = Instant::now() + STAGE_TIMEOUT;
     let delimiter = preview::resolve_delimiter(options.delimiter, &read.bytes);
     let parsed = parse_csv(&read.bytes, delimiter)?;
     if parsed.is_empty() {
@@ -158,6 +217,7 @@ pub fn stage_csv(
         sha256: read.sha256,
         bytes: read.size,
         preview,
+        format: SourceFormat::Csv,
     })
 }
 

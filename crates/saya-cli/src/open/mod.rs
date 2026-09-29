@@ -61,11 +61,20 @@ pub(crate) fn run(cli: &Cli, inv: OpenInvocation<'_>) -> Result<i32, Box<dyn std
         return manage::cleanup(&root, target, format);
     }
     let source = file.expect("the open path has a FILE checked above");
+    let csv_only_flags = delimiter.is_some() || no_header || typed;
+    if is_parquet_path(source) && csv_only_flags {
+        return Err(parquet_flag_conflict(typed).into());
+    }
     let options = CsvStageOptions {
         delimiter: delimiter_byte(delimiter)?,
         header: !no_header,
     };
     let session = stage::stage_or_reuse(source, &root, options, reset)?;
+    if session.format == saya_harness::file_source::SourceFormat::Parquet && csv_only_flags {
+        // PAR1 magic detected a Parquet file whose name says otherwise; the
+        // same conflict applies, only visible after the contained read.
+        return Err(parquet_flag_conflict(typed).into());
+    }
     let profile = format!("file_{}", session.table);
     let typed_report = if typed {
         Some(typed::build(
@@ -95,6 +104,21 @@ fn delimiter_byte(arg: Option<&str>) -> Result<Option<u8>, String> {
         _ => Err(format!(
             "--delimiter takes exactly one ASCII character, got {arg:?}"
         )),
+    }
+}
+
+/// Whether the path's extension names Parquet (a read of the path name only —
+/// the content itself is only classified inside the harness's single read).
+fn is_parquet_path(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("parquet"))
+}
+
+fn parquet_flag_conflict(typed: bool) -> String {
+    if typed {
+        "--typed applies to CSV sources; Parquet keeps its native column types".to_owned()
+    } else {
+        "this file is Parquet; --delimiter/--no-header apply to CSV sources".to_owned()
     }
 }
 
