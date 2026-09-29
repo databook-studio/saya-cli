@@ -20,6 +20,7 @@ mod host_h4_tests;
 #[cfg(test)]
 mod host_red_tests;
 mod interactive;
+mod mcp;
 mod render;
 pub mod render_run;
 mod render_usage;
