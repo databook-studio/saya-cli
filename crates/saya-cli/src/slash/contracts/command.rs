@@ -65,6 +65,64 @@ fn parse_decide(
     }))
 }
 
+/// Payload-free usage for the portable context operations (B2c). The path is
+/// one token; the flags are fixed forms. Never echoes the untrusted tail on an
+/// error.
+fn usage_portable(operation: &str) -> String {
+    match operation {
+        "export" => "/contracts export <path> [--overwrite]".into(),
+        "import" => "/contracts import <path> [--preview]".into(),
+        _ => "/contracts import-dbt <manifest> [--select <glob>]… [--preview]".into(),
+    }
+}
+
+/// Parses `/contracts export|import|import-dbt …` into the same
+/// `ContractsCommand` the headless parser produces (B2c invariant 5): the
+/// path is one token, and the known flags — `--overwrite`, `--preview`, and
+/// repeatable `--select <glob>` — are the only ones. The slash path always
+/// uses the active profile, matching the other `/contracts` arms.
+fn parse_portable(operation: &str, arg: &str) -> Result<ContractsCommand, SlashParseError> {
+    let usage = || SlashParseError(usage_portable(operation));
+    let mut tokens = arg.split_whitespace();
+    let path = tokens.next().ok_or_else(usage)?.to_string();
+    // A path that starts with `--` is a missing path followed by a flag, the
+    // same refusal the headless parser gives; it is never a filename.
+    if path.starts_with("--") {
+        return Err(usage());
+    }
+    let mut overwrite = false;
+    let mut preview = false;
+    let mut select = Vec::new();
+    while let Some(token) = tokens.next() {
+        match token {
+            "--overwrite" if operation == "export" && !overwrite => overwrite = true,
+            "--preview" if operation != "export" && !preview => preview = true,
+            "--select" if operation == "import-dbt" => {
+                select.push(tokens.next().ok_or_else(usage)?.to_string());
+            }
+            _ => return Err(usage()),
+        }
+    }
+    Ok(match operation {
+        "export" => ContractsCommand::Export {
+            path: path.into(),
+            profile: None,
+            overwrite,
+        },
+        "import" => ContractsCommand::Import {
+            path: path.into(),
+            profile: None,
+            preview,
+        },
+        _ => ContractsCommand::ImportDbt {
+            manifest: path.into(),
+            profile: None,
+            select,
+            preview,
+        },
+    })
+}
+
 /// Translates a slash command name + its argument tail into the matching
 /// `ContractsCommand`, or a usage error. The argument is the raw text after the
 /// command word (already trimmed of the leading `/name`).
@@ -85,7 +143,16 @@ pub(crate) fn parse_contract_command(
         // pass `profile: None`: the TUI stamps the active profile, the
         // headless path resolves the default, exactly as before.
         "contracts" | "contract" => {
+            // The portable operations ride the merged command's first token,
+            // exactly as the headless CLI's subcommand word does. A bare
+            // `/contracts export` is a usage error (the path is required), not
+            // a Show of a table literally named "export" — the operation word
+            // wins, as `saya contracts export` does headlessly.
             let tokens: Vec<&str> = arg.split_whitespace().collect();
+            if let Some(&word @ ("export" | "import" | "import-dbt")) = tokens.first() {
+                let tail = tokens[1..].join(" ");
+                return parse_portable(word, &tail).map(Some);
+            }
             match tokens.len() {
                 0 => Ok(Some(ContractsCommand::List { profile: None })),
                 1 => Ok(Some(ContractsCommand::Show {

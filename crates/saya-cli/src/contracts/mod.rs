@@ -15,6 +15,7 @@ mod decide;
 mod knowledge_validity;
 mod name_match;
 mod op_error;
+pub(crate) mod portable;
 mod queue;
 mod recall;
 mod receipt;

@@ -499,6 +499,56 @@ pub enum ContractsCommand {
         #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
         reason: ForgetReasonArg,
     },
+    /// Export the profile's Active claims as a portable `saya.context` file:
+    /// the reviewed business context — descriptions, aliases, grains, time
+    /// columns, roles, join rules, metrics, notes — without profile identity,
+    /// review state, evidence, or credentials. Existing file refused without
+    /// `--overwrite`. Review the file before sharing.
+    Export {
+        /// The path to write the context file to.
+        #[arg(value_name = "PATH")]
+        path: std::path::PathBuf,
+        /// Profile whose claims to export; defaults to the active profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Replace the file when it already exists.
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// Import a portable `saya.context` file: every item is validated, mapped
+    /// onto this profile's schema, and queued as a Pending candidate for your
+    /// review — an imported claim is never active just because the file said
+    /// so. Objects that do not resolve against this profile's schema, and
+    /// slots held by a different local claim, are reported and not written.
+    Import {
+        /// The context file to import.
+        #[arg(value_name = "PATH")]
+        path: std::path::PathBuf,
+        /// Profile to import against; defaults to the active profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Show what the import would do without writing anything.
+        #[arg(long)]
+        preview: bool,
+    },
+    /// Import reviewed context from a dbt manifest: model and source
+    /// descriptions and `relationships` tests become Pending claims on this
+    /// profile, the same path `contracts import` takes. Nothing is executed
+    /// and nothing outside the manifest is read.
+    ImportDbt {
+        /// The dbt `manifest.json` to import (schema v10, v11, or v12).
+        #[arg(value_name = "MANIFEST")]
+        manifest: std::path::PathBuf,
+        /// Profile to import against; defaults to the active profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Only nodes whose name matches one of these globs (`*`, `?`).
+        #[arg(long, value_name = "GLOB")]
+        select: Vec<String>,
+        /// Show what the import would do without writing anything.
+        #[arg(long)]
+        preview: bool,
+    },
 }
 
 /// Saved-investigation subcommands. The same enum the slash adapter (S9)

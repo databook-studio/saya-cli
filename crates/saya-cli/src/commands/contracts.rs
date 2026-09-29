@@ -14,6 +14,8 @@
 mod contracts_approve;
 mod contracts_decide;
 mod contracts_map;
+mod contracts_portable;
+mod contracts_portable_report;
 mod contracts_profile;
 mod contracts_read;
 mod contracts_remember_schema;
@@ -109,6 +111,39 @@ pub async fn run_contracts(
             }
             Err((code, message)) => failure_message(code, message, format),
         },
+        ContractsCommand::Export {
+            path,
+            profile,
+            overwrite,
+        } => {
+            contracts_portable::export(store, runtime, format, &path, profile.as_deref(), overwrite)
+                .await
+        }
+        ContractsCommand::Import {
+            path,
+            profile,
+            preview,
+        } => {
+            contracts_portable::import(store, runtime, format, &path, profile.as_deref(), preview)
+                .await
+        }
+        ContractsCommand::ImportDbt {
+            manifest,
+            profile,
+            select,
+            preview,
+        } => {
+            contracts_portable::import_dbt(
+                store,
+                runtime,
+                format,
+                &manifest,
+                profile.as_deref(),
+                &select,
+                preview,
+            )
+            .await
+        }
     }
 }
 
