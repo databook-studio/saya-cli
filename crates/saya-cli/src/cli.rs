@@ -553,7 +553,9 @@ pub enum ContractsCommand {
 
 /// Saved-investigation subcommands. The same enum the slash adapter (S9)
 /// will translate into, so the clap surface and the TUI cannot drift apart.
-#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+/// Debug is manual (F-5): the run command's `--param` values must never ride
+/// diagnostics.
+#[derive(Clone, PartialEq, Eq, Subcommand)]
 pub enum InvestigationCommand {
     /// Save a bounded read-only SQL query as a portable investigation
     /// document: one JSON file holding the exact SQL plus its name,
@@ -723,6 +725,11 @@ pub enum InvestigationCommand {
     },
 }
 
+/// The manual Debug impl (F-5): the run command's `--param` values never
+/// ride diagnostics.
+#[path = "cli_debug.rs"]
+mod debug;
+
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum RunCommand {
     /// Continue a paused (or crashed) run at its first incomplete step. The
@@ -795,3 +802,7 @@ pub enum ReviewDecisionArg {
     Reject,
     UseOnce,
 }
+
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod tests;
