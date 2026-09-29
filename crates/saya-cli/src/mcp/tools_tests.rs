@@ -3,8 +3,9 @@
 //! `CallToolResult::structured` duplicates the payload into a text content
 //! block, so the wire carries roughly twice the payload — plus the JSON-RPC
 //! envelope with the ACTUAL request id, measured from rmcp's own
-//! serialization. The wire behavior is pinned in `tests/mcp_bound.rs`
-//! against the real binary.
+//! serialization, plus the writer's trailing newline, with the `resultType`
+//! discriminator budgeted as always present. The wire behavior is pinned in
+//! `tests/mcp_bound.rs` against the real binary.
 
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -16,8 +17,9 @@ use rmcp::{
 use serde_json::json;
 
 use super::{
-    RESPONSE_ENVELOPE_HEADROOM_BYTES, bounded_built_result, bounded_result,
-    response_envelope_bytes, response_wire_bytes, result_wire_bytes,
+    RESPONSE_ENVELOPE_HEADROOM_BYTES, RESPONSE_FRAME_NEWLINE_BYTES,
+    RESULT_TYPE_DISCRIMINATOR_BYTES, bounded_built_result, bounded_result, response_envelope_bytes,
+    response_wire_bytes, result_wire_bytes,
 };
 use crate::config::runtime::RuntimeConfig;
 use crate::mcp::policy::{MAX_RESPONSE_BYTES, ServePolicy};
@@ -119,31 +121,64 @@ fn id_cases() -> Vec<(&'static str, RequestId)> {
     ]
 }
 
-/// The envelope measure is rmcp's own wrapper, serialized with the actual id
-/// exactly as the writer writes the reply line — escapes, non-ASCII, and the
-/// trailing newline included — and it composes additively with the result
-/// measure (D9).
+/// The measure is the exact reply line the writer frames (D9): rmcp's own
+/// wrapper serialized with the actual id — escapes and non-ASCII included —
+/// then the writer's trailing newline, with the `resultType` discriminator
+/// counted as always present (rmcp stripping it for a legacy peer after the
+/// measure can only shrink the line). It composes additively with the result
+/// measure.
 #[test]
 fn the_envelope_measure_is_the_exact_wrapper_rmcp_writes() {
     let built = CallToolResult::structured(json!({ "rows": ["x".repeat(64)] }));
     let built_bytes = serde_json::to_vec(&built).unwrap().len();
     for (label, id) in id_cases() {
-        let line = serde_json::to_vec(&TxJsonRpcMessage::<RoleServer>::response(
+        let mut line = serde_json::to_vec(&TxJsonRpcMessage::<RoleServer>::response(
             ServerResult::CallToolResult(built.clone()),
             id.clone(),
         ))
         .unwrap();
+        // The writer's framing byte: the transport appends `\n` to every
+        // frame it writes.
+        line.push(b'\n');
         assert_eq!(
             line.len(),
             response_wire_bytes(&built, &id),
-            "the measure is the exact reply line for the {label} id"
+            "the measure is the exact framed reply line for the {label} id"
         );
         assert_eq!(
             line.len(),
-            built_bytes + response_envelope_bytes(&id),
-            "envelope and result compose additively for the {label} id"
+            built_bytes + response_envelope_bytes(&id) + RESPONSE_FRAME_NEWLINE_BYTES,
+            "envelope, result, and newline compose additively for the {label} id"
         );
     }
+}
+
+/// The `resultType` discriminator is budgeted as always present (D9): rmcp
+/// writes `"resultType":"complete"` into the result for peers that negotiate
+/// 2026-07-28+ and strips it for legacy peers after the measure, so the
+/// budget counts the exact serialized cost even when a result carries no
+/// discriminator. The cost is pinned against rmcp's own serializer — never a
+/// literal guess.
+#[test]
+fn an_absent_result_type_discriminator_is_budgeted_as_present() {
+    let with = CallToolResult::structured(json!({ "rows": ["x".repeat(64)] }));
+    let mut without = with.clone();
+    without.result_type = None;
+    let with_bytes = serde_json::to_vec(&with).unwrap().len();
+    let without_bytes = serde_json::to_vec(&without).unwrap().len();
+    assert_eq!(
+        with_bytes,
+        without_bytes + RESULT_TYPE_DISCRIMINATOR_BYTES,
+        "the discriminator's serialized cost is exactly \
+         {RESULT_TYPE_DISCRIMINATOR_BYTES} bytes"
+    );
+    let id = RequestId::Number(7);
+    assert_eq!(
+        response_wire_bytes(&without, &id),
+        response_wire_bytes(&with, &id),
+        "an absent discriminator is budgeted as present: rmcp removing it can \
+         only shrink the line"
+    );
 }
 
 /// The envelope reserves room for the ACTUAL request id: it grows with the

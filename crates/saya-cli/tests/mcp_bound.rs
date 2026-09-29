@@ -217,14 +217,25 @@ impl TestServer {
     /// string; the server echoes it in the reply envelope. Returns the raw
     /// reply LINE with its trailing newline.
     fn call_query(&mut self, id: Value, sql: &str) -> String {
+        self.call_query_with_meta(id, None, sql)
+    }
+
+    /// The same, with `meta` riding the call params as `_meta` (None keeps
+    /// the legacy wire shape): rmcp only keeps the `resultType` discriminator
+    /// on the reply when the request itself declares a 2026-07-28+ protocol.
+    fn call_query_with_meta(&mut self, id: Value, meta: Option<Value>, sql: &str) -> String {
+        let mut params = json!({
+            "name": "query",
+            "arguments": {"profile": "local", "sql": sql},
+        });
+        if let Some(meta) = meta {
+            params["_meta"] = meta;
+        }
         self.send_json(json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "tools/call",
-            "params": {
-                "name": "query",
-                "arguments": {"profile": "local", "sql": sql},
-            },
+            "params": params,
         }));
         let line = self.next_line(120);
         let reply: Value = serde_json::from_str(&line).expect("the reply line is JSON");
@@ -328,6 +339,18 @@ fn mcp_query_reply_line_stays_within_the_wire_bound() {
 /// the true reply line for any large request id.
 const AUDIT_SQL: &str = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n \
                          WHERE x<8) SELECT printf('%1040000s','x') AS cell FROM n";
+
+/// The audit's reproduction `_meta` (R29-1): a `tools/call` that declares the
+/// 2026-07-28 protocol inline, so rmcp 3.5.0 keeps the `resultType`
+/// discriminator on the reply and the measured budget matches the wire with
+/// no legacy slack. The client-capabilities key is required by the same
+/// protocol draft for a request that declares its version inline.
+fn audit_meta() -> Value {
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
+}
 
 /// Every admitted request id must get a reply line within the bound (D9).
 /// The three id shapes below exercise the envelope's real serialization:
@@ -506,6 +529,157 @@ fn mcp_query_byte_cut_note_appears_when_the_engine_already_truncated() {
     assert_eq!(
         payload["evidence"]["truncated"], true,
         "the evidence reports the narrowing"
+    );
+
+    server.close_and_expect_exit(0);
+}
+
+/// The audit's exact case (R29-1): an id of 135,977 ASCII characters with the
+/// inline `_meta` that keeps the `resultType` discriminator on the wire. The
+/// budget counts the newline and the discriminator, so the full 8-row answer
+/// does not fit by exactly one byte: the reply is narrowed — never refused,
+/// never sent fat — and stays internally consistent.
+#[test]
+fn mcp_query_reply_line_holds_with_the_audit_meta_and_boundary_id() {
+    let fixture = fixture("id-meta");
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    server.handshake();
+    let reply_line =
+        server.call_query_with_meta(json!("i".repeat(135_977)), Some(audit_meta()), AUDIT_SQL);
+    assert_reply_line_fits_and_stays_consistent(&reply_line);
+    server.close_and_expect_exit(0);
+}
+
+/// The same call on the legacy wire shape (no `_meta`): rmcp strips the
+/// `resultType` discriminator after the measure, so the reply line is 24
+/// bytes SHORTER than the budget — whatever fits the with-form budget fits
+/// here with slack to spare.
+#[test]
+fn mcp_query_reply_line_holds_with_the_audit_id_on_the_legacy_shape() {
+    let fixture = fixture("id-legacy");
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    server.handshake();
+    let reply_line = server.call_query(json!("i".repeat(135_977)), AUDIT_SQL);
+    assert_reply_line_fits_and_stays_consistent(&reply_line);
+    server.close_and_expect_exit(0);
+}
+
+/// One probe of the boundary scan: send the audit SQL with an id of `length`
+/// ASCII characters and the inline `_meta`, and return the reply line with
+/// whether it was narrowed. Every reply must fit the bound and be sent, not
+/// refused; a narrowed reply is marked truncated with consistent counts; a
+/// full reply carries all 8 rows untruncated.
+fn probe(server: &mut TestServer, length: usize) -> (String, bool) {
+    let line =
+        server.call_query_with_meta(json!("i".repeat(length)), Some(audit_meta()), AUDIT_SQL);
+    assert!(
+        line.len() <= MAX_RESPONSE_BYTES,
+        "the reply LINE must stay within the {}-byte wire bound, was {} bytes \
+         (id length {length})",
+        MAX_RESPONSE_BYTES,
+        line.len()
+    );
+    let reply: Value = serde_json::from_str(&line).expect("the reply line is JSON");
+    assert_eq!(
+        reply["result"]["isError"], false,
+        "every scanned reply is sent, not refused"
+    );
+    let payload = &reply["result"]["structuredContent"];
+    let sent = payload["row_count"]
+        .as_u64()
+        .expect("row_count is a number");
+    assert_eq!(
+        payload["rows"].as_array().expect("rows array").len() as u64,
+        sent,
+        "row_count matches the rows actually sent (id length {length})"
+    );
+    let narrowed = sent < 8;
+    if narrowed {
+        assert_eq!(
+            payload["truncated"], true,
+            "a narrowed reply is marked truncated (id length {length})"
+        );
+    } else {
+        assert_eq!(
+            payload["truncated"], false,
+            "a full reply carries all 8 rows untruncated (id length {length})"
+        );
+    }
+    (line, narrowed)
+}
+
+/// The exact boundary (R29-1): the reply line is linear in the id length —
+/// one byte per ASCII id character rides the envelope — so two full-answer
+/// probes below the flip determine the line's constant, and the flip is the
+/// smallest id length whose measure tips over the bound. The scan samples id
+/// lengths ±64 around that flip: every reply fits the bound, at least one
+/// lands within 64 bytes of it — the boundary reply is expected to be
+/// EXACTLY the bound — and both sides of the flip appear. One server process
+/// carries the whole scan, and the probe count is kept small on purpose:
+/// replies are megabytes and the unoptimized test profile makes each
+/// round-trip take seconds.
+#[test]
+fn mcp_query_reply_line_boundary_scan_stays_under_the_cap() {
+    let fixture = fixture("boundary-scan");
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    server.handshake();
+
+    // Two full-answer probes derive the line's id-length constant; agreeing
+    // values confirm the reply line is linear in the id length below the
+    // flip. The audit pinned the flip for this SQL and _meta at an id of
+    // 135,977, so 100,000 and 101,000 are safely below it.
+    let (line_a, narrowed_a) = probe(&mut server, 100_000);
+    let (line_b, narrowed_b) = probe(&mut server, 101_000);
+    assert!(
+        !narrowed_a && !narrowed_b,
+        "setup: both derivation probes get the full 8-row answer"
+    );
+    let constant_a = line_a.len() - 100_000;
+    let constant_b = line_b.len() - 101_000;
+    assert_eq!(
+        constant_a, constant_b,
+        "the reply line must be linear in the id length below the flip"
+    );
+    let flip = MAX_RESPONSE_BYTES - constant_a + 1;
+
+    let mut saw_full = false;
+    let mut saw_narrowed = false;
+    let mut closest_to_bound = usize::MAX;
+    for length in [
+        flip.saturating_sub(64),
+        flip.saturating_sub(32),
+        flip - 1,
+        flip,
+        flip + 1,
+        flip + 64,
+    ] {
+        let (line, narrowed) = probe(&mut server, length);
+        saw_full |= !narrowed;
+        saw_narrowed |= narrowed;
+        if !narrowed {
+            closest_to_bound = closest_to_bound.min(MAX_RESPONSE_BYTES - line.len());
+        }
+    }
+    assert!(
+        saw_full && saw_narrowed,
+        "the scan must cross the narrowing flip (full: {saw_full}, narrowed: {saw_narrowed})"
+    );
+    assert!(
+        closest_to_bound <= 64,
+        "at least one reply must land within 64 bytes of the bound; the \
+         closest full reply was {closest_to_bound} bytes below it"
     );
 
     server.close_and_expect_exit(0);
