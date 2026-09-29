@@ -158,18 +158,12 @@ fn completions_stay_silent_when_a_marker_exists() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// The full guided flow through a real pty: skip the provider, add a sqlite
-/// profile, watch the probe pass, confirm — files written, exit 0, no marker.
-/// Unix-only: pty allocation; the headless paths above cover the rest.
-#[test]
+/// Drives `saya setup` on a real pty with scripted answer lines, asserts the
+/// flow exits 0, and returns the captured output. Unix-only: pty allocation;
+/// the headless paths above cover the rest.
 #[cfg(not(windows))]
-fn setup_full_sqlite_flow_through_a_pty() {
+fn drive_setup_pty(root: &Path, lines: &[&str]) -> String {
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-
-    let root = isolated_root("pty");
-    // An empty file is a valid empty SQLite database, so the probe succeeds.
-    let db_file = root.join("team.db");
-    fs::File::create(&db_file).unwrap();
 
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -184,11 +178,11 @@ fn setup_full_sqlite_flow_through_a_pty() {
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_saya"));
     cmd.env("SAYA_CONFIG_HOME", root.join("config-home"));
     cmd.env("SAYA_STATE_DB", root.join("state.sqlite3"));
-    cmd.env("HOME", &root);
+    cmd.env("HOME", root);
     cmd.env_remove("XDG_CONFIG_HOME");
     cmd.env_remove("XDG_DATA_HOME");
     cmd.env_remove("APPDATA");
-    cmd.cwd(&root);
+    cmd.cwd(root);
     cmd.arg("setup");
     let mut child = pair
         .slave
@@ -197,10 +191,9 @@ fn setup_full_sqlite_flow_through_a_pty() {
     drop(pair.slave);
 
     // Feed the whole script up front: the flow reads line by line and the pty
-    // buffers input, so no answer timing is needed. 6 = skip provider,
-    // 1 = sqlite, path, profile name, y = confirm the write.
+    // buffers input, so no answer timing is needed.
     let mut writer = pair.master.take_writer().unwrap();
-    for line in ["6", "1", db_file.to_str().unwrap(), "team", "y"] {
+    for line in lines {
         writer.write_all(line.as_bytes()).unwrap();
         writer.write_all(b"\n").unwrap();
         writer.flush().unwrap();
@@ -253,6 +246,21 @@ fn setup_full_sqlite_flow_through_a_pty() {
     let status = child.wait().unwrap();
     let text = String::from_utf8_lossy(&output).into_owned();
     assert_eq!(status.exit_code(), 0, "the flow succeeds: {text}");
+    text
+}
+
+/// The full guided flow through a real pty: skip the provider, add a sqlite
+/// profile, watch the probe pass, confirm — files written, exit 0, no marker.
+/// 6 = skip provider, 1 = sqlite, path, profile name, y = confirm the write.
+#[test]
+#[cfg(not(windows))]
+fn setup_full_sqlite_flow_through_a_pty() {
+    let root = isolated_root("pty");
+    // An empty file is a valid empty SQLite database, so the probe succeeds.
+    let db_file = root.join("team.db");
+    fs::File::create(&db_file).unwrap();
+
+    let text = drive_setup_pty(&root, &["6", "1", db_file.to_str().unwrap(), "team", "y"]);
     assert!(
         text.contains("database reachable"),
         "the probe label: {text}"
@@ -275,6 +283,65 @@ fn setup_full_sqlite_flow_through_a_pty() {
     assert!(
         written.contains(db_file.to_str().unwrap()),
         "the path is kept: {written}"
+    );
+    assert!(
+        !root.join("config-home/saya/.setup-commit.json").exists(),
+        "no marker is left"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The ClickHouse guided flow through a real pty: TLS yes, defaults for the
+/// port, database and user skipped, the password only as an env-var name.
+/// 6 = skip provider, 6 = clickhouse. The password env is unset in the child,
+/// so the probe fails fast at secret resolution — a failed probe does not
+/// block writing.
+#[test]
+#[cfg(not(windows))]
+fn setup_full_clickhouse_flow_through_a_pty() {
+    let root = isolated_root("pty-clickhouse");
+
+    let text = drive_setup_pty(
+        &root,
+        &[
+            "6",
+            "6",
+            "localhost",
+            "y",
+            "",
+            "",
+            "",
+            "SAYA_CH_PASSWORD",
+            "ch",
+            "y",
+        ],
+    );
+    assert!(
+        text.contains("Probing the database"),
+        "the probe line: {text}"
+    );
+
+    let connections = root.join("config-home/saya/connections.toml");
+    let written = fs::read_to_string(&connections).unwrap();
+    assert!(
+        written.contains("[profiles.ch]"),
+        "the profile is written: {written}"
+    );
+    let parsed = saya_config::ConnectionsFile::from_toml(&written)
+        .unwrap_or_else(|error| panic!("the written file parses: {error}"));
+    assert_eq!(
+        parsed.profiles.get("ch"),
+        Some(&saya_types::DatabaseProfile::ClickHouse {
+            host: "localhost".into(),
+            port: None,
+            database: None,
+            user: None,
+            password: Some(saya_types::SecretRef::Env {
+                env: "SAYA_CH_PASSWORD".into()
+            }),
+            secure: Some(true),
+        }),
+        "the guided flow wrote the expected typed profile: {written}"
     );
     assert!(
         !root.join("config-home/saya/.setup-commit.json").exists(),
