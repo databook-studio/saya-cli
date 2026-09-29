@@ -4,7 +4,7 @@
 //! overrides, exactly as `saya demo` launches.
 
 use crate::cli::{Cli, GlobalOptions};
-use saya_harness::file_source::InferredType;
+use saya_harness::file_source::{InferredType, SourceFormat};
 use std::path::Path;
 
 use super::{stage::StagedSession, typed::TypedReport};
@@ -49,13 +49,16 @@ pub(super) fn render_preview(
             session.rows,
             session.preview.columns.len()
         ),
-        format!(
+    ];
+    match session.format {
+        SourceFormat::Parquet => lines.push("Format: parquet".to_owned()),
+        SourceFormat::Csv => lines.push(format!(
             "Delimiter: {} · Header row: {}",
             delimiter_label(session.preview.delimiter),
             if session.preview.header { "yes" } else { "no" }
-        ),
-        "Columns:".to_owned(),
-    ];
+        )),
+    }
+    lines.push("Columns:".to_owned());
     for column in &session.preview.columns {
         lines.push(format!(
             "  {}: {} ({} nulls)",
@@ -69,7 +72,14 @@ pub(super) fn render_preview(
         session.db_path.display(),
         super::format_time(session.staged_unix_ms)
     ));
-    lines.push("Stored as text columns; use --typed for a typed copy.".to_owned());
+    match session.format {
+        SourceFormat::Parquet => {
+            lines.push("Columns keep their native Parquet types.".to_owned());
+        }
+        SourceFormat::Csv => {
+            lines.push("Stored as text columns; use --typed for a typed copy.".to_owned());
+        }
+    }
     if let Some(typed) = typed {
         lines.push(format!(
             "Typed copy: {} created{}",

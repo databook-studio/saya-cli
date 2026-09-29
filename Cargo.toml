@@ -34,7 +34,10 @@ bytes = "1"
 ratatui = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
 rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-io"] }
-duckdb = { version = "=1.10505.0", features = ["bundled", "chrono", "serde_json", "uuid"] }
+# `parquet` (maintainer-approved for C2a): statically links Parquet support so
+# the private file-source staging connection can read staged Parquet copies
+# without any extension INSTALL/LOAD or autoload.
+duckdb = { version = "=1.10505.0", features = ["bundled", "chrono", "parquet", "serde_json", "uuid"] }
 base64 = "0.23"
 rsa = { version = "0.9", features = ["pem", "pkcs5"] }
 sha2 = { version = "0.10", features = ["oid"] }
