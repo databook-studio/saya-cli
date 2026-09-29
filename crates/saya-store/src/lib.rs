@@ -33,10 +33,10 @@ pub use investigations::{
     LocalBinding, MAX_BINDING_BYTES, MAX_DOCUMENTS, MAX_LIST_PAGE,
 };
 pub use knowledge_items::{
-    CleanupState, ForgetOutcome, KnowledgeCursor, KnowledgeItem, KnowledgeItemRequest,
-    KnowledgeItemStore, KnowledgeItemsQuery, KnowledgeObjectsQuery, KnowledgePage,
-    KnowledgeStoreError, MAX_KNOWLEDGE_ITEM_BYTES, MAX_KNOWLEDGE_PAGE_SIZE,
-    MAX_SCHEMA_BINDING_BYTES, knowledge_item_id_for,
+    BatchItemOutcome, BatchOutcome, CleanupState, ForgetOutcome, KnowledgeCursor, KnowledgeItem,
+    KnowledgeItemRequest, KnowledgeItemStore, KnowledgeItemsQuery, KnowledgeObjectsQuery,
+    KnowledgePage, KnowledgeStoreError, MAX_KNOWLEDGE_ITEM_BYTES, MAX_KNOWLEDGE_PAGE_SIZE,
+    MAX_PENDING_BATCH_ITEMS, MAX_SCHEMA_BINDING_BYTES, NewKnowledgeItem, knowledge_item_id_for,
 };
 pub use redaction::redact;
 pub use runs::{
