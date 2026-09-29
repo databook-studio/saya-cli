@@ -8,7 +8,9 @@ use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 use super::policy::{MAX_IN_FLIGHT, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, ServePolicy};
 use super::server::SayaServer;
+use crate::commands::{capture_output_start, capture_output_take};
 use crate::config::runtime::RuntimeConfig;
+use crate::render::RenderFormat;
 use saya_config::{CliOverrides, ConfigFile, ConnectionsFile, ResolutionInput, resolve};
 use saya_store::{InvestigationRepository, LocalBinding};
 use saya_types::InvestigationId;
@@ -240,15 +242,18 @@ fn the_params_argument_reads_as_a_name_value_list() {
     );
 }
 
-/// The replay's allowlist gate (F-1): the effective target — the `profile`
-/// argument, else the saved binding's profile, the run command's own
-/// resolution — must sit inside the startup allowlist before anything runs.
-/// A binding saved against a profile the server does not serve is refused
-/// with its name never echoed; a client-supplied name is refused with the
-/// name it asked for; and with neither an argument nor a readable binding
-/// the gate passes, leaving the run command's own refusals in charge.
+/// The replay's target resolution (F-1, D1): the effective target — the
+/// `profile` argument, else the saved binding's profile — is resolved once,
+/// inside the serialized replay section, and returned as the concrete
+/// target the command will carry. A target outside the allowlist is refused
+/// with a binding's name never echoed; a client-supplied name is refused
+/// with the name it asked for; and with neither an argument nor a binding —
+/// or a binding that cannot be read — the replay refuses `profile not
+/// available`: there is no pass-through that lets the run command resolve
+/// its own target at execution time (A922-1 — a binding read after a queued
+/// wait can be remapped underneath the call).
 #[test]
-fn the_replay_gate_holds_the_run_inside_the_allowlist() {
+fn the_replay_resolution_binds_one_authorized_target() {
     fn binding(id: &InvestigationId, profile: &str) -> LocalBinding {
         LocalBinding {
             version: LocalBinding::VERSION,
@@ -277,10 +282,22 @@ fn the_replay_gate_holds_the_run_inside_the_allowlist() {
         replay_slot: tokio::sync::Mutex::new(()),
     };
     let policy = ServePolicy::resolve(&runtime, &["first".to_owned()], None).unwrap();
-    use super::replay_tools::allowlist_gate;
+    use super::replay_tools::resolve_target;
+
+    // A binding inside the allowlist resolves to the concrete target the
+    // command will carry — not a pass-through verdict.
+    let target = resolve_target(&policy, &context, local_bound.as_str(), None)
+        .expect("a binding inside the allowlist resolves");
+    assert_eq!(
+        target, "first",
+        "the resolution is the binding's profile, returned concretely"
+    );
+    let target = resolve_target(&policy, &context, local_bound.as_str(), Some("first"))
+        .expect("an allowlisted argument resolves");
+    assert_eq!(target, "first", "the argument is the target");
 
     // A binding pointing outside the allowlist: refused, the name not echoed.
-    let refused = allowlist_gate(&policy, &context, other_bound.as_str(), None)
+    let refused = resolve_target(&policy, &context, other_bound.as_str(), None)
         .expect_err("a binding outside the allowlist is refused");
     assert!(
         refused.contains("profile not available"),
@@ -292,45 +309,40 @@ fn the_replay_gate_holds_the_run_inside_the_allowlist() {
     );
 
     // An argument naming the same profile: refused with the requested name.
-    let refused = allowlist_gate(&policy, &context, other_bound.as_str(), Some("second"))
+    let refused = resolve_target(&policy, &context, other_bound.as_str(), Some("second"))
         .expect_err("a non-allowlisted argument is refused");
     assert!(
         refused.contains("profile not available") && refused.contains("second"),
         "the requested name is echoed: {refused}"
     );
 
-    // Allowlisted on both shapes: the run may proceed.
+    // Neither an argument nor a binding — and a malformed id: the replay
+    // refuses at the MCP layer. There is no pass-through (D1): a target the
+    // MCP layer could not name is not something the run may resolve on its
+    // own at execution time.
+    let refused = resolve_target(&policy, &context, "no-such-id", None)
+        .expect_err("a missing binding refuses");
     assert!(
-        allowlist_gate(&policy, &context, local_bound.as_str(), None).is_ok(),
-        "a binding inside the allowlist runs"
+        refused.contains("profile not available"),
+        "the refusal names the gate: {refused}"
     );
+    let refused = resolve_target(&policy, &context, "REFUSED-ID", None)
+        .expect_err("a malformed id has no resolvable target");
     assert!(
-        allowlist_gate(&policy, &context, local_bound.as_str(), Some("first")).is_ok(),
-        "an allowlisted argument runs"
-    );
-
-    // Neither an argument nor a binding — and a malformed id: the gate
-    // passes, leaving the run command's own refusals in charge (the same
-    // words the CLI prints, in the CLI's own order).
-    assert!(
-        allowlist_gate(&policy, &context, "no-such-id", None).is_ok(),
-        "an absent binding leaves the refusal to the run command"
-    );
-    assert!(
-        allowlist_gate(&policy, &context, "REFUSED-ID", None).is_ok(),
-        "a malformed id leaves the refusal to the run command"
+        refused.contains("profile not available"),
+        "the refusal names the gate: {refused}"
     );
 
-    // A binding that exists but cannot be read fails the gate CLOSED: the
-    // run does not start, and neither the store error's own text nor the
-    // bound profile name is echoed.
+    // A binding that exists but cannot be read fails the resolution CLOSED:
+    // the replay does not start, and neither the store error's own text nor
+    // the bound profile name is echoed.
     let corrupt = InvestigationId::parse("corrupt-binding-1").unwrap();
     let corrupt_path = runtime
         .investigations_root
         .join("local")
         .join(format!("{}.json", corrupt.as_str()));
     std::fs::write(&corrupt_path, b"not json at all").unwrap();
-    let refused = allowlist_gate(&policy, &context, corrupt.as_str(), None)
+    let refused = resolve_target(&policy, &context, corrupt.as_str(), None)
         .expect_err("an unreadable binding is refused");
     assert!(
         refused.contains("profile not available"),
@@ -340,4 +352,187 @@ fn the_replay_gate_holds_the_run_inside_the_allowlist() {
         !refused.contains("not valid for storage") && !refused.contains("second"),
         "neither the store error nor a profile name is echoed: {refused}"
     );
+}
+
+/// The deterministic remap regression (A922-1, D1): the target resolved at
+/// admission is the one the command carries — so when the ordinary CLI
+/// remaps the investigation's binding to a non-allowlisted profile between
+/// resolution and execution (the queued-call window), the run refuses as
+/// stale and the other database's row never appears; and a resolution taken
+/// after the remap refuses outright. The rebind is the same operation the
+/// CLI drives (`--connection other --revalidate`), run in-process.
+#[tokio::test]
+async fn a_binding_remapped_under_a_queued_replay_never_runs() {
+    const SENTINEL: &str = "OTHER-SYNTHETIC-SENTINEL-4";
+    let root = std::env::temp_dir().join(format!("saya-mcp-remap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let local_db = root.join("data.sqlite3");
+    let other_db = root.join("other.sqlite3");
+    let mut runtime = fixture_runtime(
+        &format!(
+            "[profiles.local]\ntype = 'sqlite'\npath = '{}'\n\n\
+             [profiles.other]\ntype = 'sqlite'\npath = '{}'\n",
+            local_db.display(),
+            other_db.display(),
+        ),
+        "default_profile = 'local'\n",
+    );
+    runtime.investigations_root = root.join("investigations");
+    std::fs::create_dir_all(&runtime.investigations_root).unwrap();
+    // Both databases carry an `events` table with the same schema; the
+    // non-allowlisted one holds a row the allowlisted one does not, so a
+    // wrongly-targeted replay is visible in the payload.
+    seed_events(&local_db, "benign").await;
+    seed_events(&other_db, SENTINEL).await;
+    let repo = InvestigationRepository::new(runtime.investigations_root.clone());
+    let state_db = saya_store::SqliteStateStore::new(root.join("state.sqlite3"));
+    let id = saved_id(&runtime, &state_db).await;
+    let parsed = InvestigationId::parse(&id).unwrap();
+
+    let context = super::context::McpContext {
+        runtime: runtime.clone(),
+        store: saya_store::SqliteStateStore::new(root.join("state.sqlite3")),
+        replay_slot: tokio::sync::Mutex::new(()),
+    };
+    let policy = ServePolicy::resolve(&runtime, &["local".to_owned()], None).unwrap();
+    use super::replay_tools::resolve_target;
+
+    // Admission: the binding names `local`, the only allowlisted profile —
+    // the target resolves to the concrete name the command will carry.
+    let target = resolve_target(&policy, &context, &id, None).expect("the binding is allowlisted");
+    assert_eq!(target, "local");
+
+    // The ordinary CLI remap: the same run operation the CLI drives,
+    // `--connection other --revalidate`, succeeds and rewrites the binding
+    // to the profile this server does not serve.
+    capture_output_start();
+    let rebind = crate::commands::run_investigation_outcome(
+        crate::cli::InvestigationCommand::Run {
+            id: id.clone(),
+            connection: Some("other".to_owned()),
+            revalidate: true,
+            report: None,
+            rows: None,
+            overwrite: false,
+            params: Vec::new(),
+        },
+        &runtime,
+        RenderFormat::Text,
+        false,
+        &state_db,
+    )
+    .await
+    .unwrap();
+    let (out, err) = capture_output_take();
+    assert_eq!(rebind.code, 0, "the CLI rebind succeeds: {out}{err}");
+    let moved = repo.get_binding(&parsed).unwrap().expect("binding exists");
+    assert_eq!(
+        moved.profile, "other",
+        "the rebind moved the binding off the allowlist"
+    );
+
+    // The queued call's resolution now happens (as the flow does, after the
+    // wait): the binding names a profile outside the allowlist — refused
+    // before anything runs, the name never echoed.
+    let refused = resolve_target(&policy, &context, &id, None)
+        .expect_err("the remapped binding refuses at resolution");
+    assert!(
+        refused.contains("profile not available"),
+        "the refusal names the gate: {refused}"
+    );
+    assert!(
+        !refused.contains("other") && !refused.contains(SENTINEL),
+        "neither the profile nor the other database's data is echoed: {refused}"
+    );
+
+    // And when the resolution raced ahead of the remap, the command the
+    // adapter builds carries the resolved target explicitly, so the re-read
+    // binding is stale against it — refused, never executed.
+    capture_output_start();
+    let outcome = crate::commands::run_investigation_outcome(
+        crate::cli::InvestigationCommand::Run {
+            id: id.clone(),
+            connection: Some(target),
+            revalidate: false,
+            report: None,
+            rows: None,
+            overwrite: false,
+            params: Vec::new(),
+        },
+        &runtime,
+        RenderFormat::Text,
+        false,
+        &state_db,
+    )
+    .await
+    .unwrap();
+    let (out, err) = capture_output_take();
+    assert_ne!(
+        outcome.code, 0,
+        "the remapped binding never runs against the resolved target: {out}{err}"
+    );
+    assert!(outcome.replay.is_none(), "a refusal carries no replay");
+    assert!(
+        out.contains("target changed") || err.contains("target changed"),
+        "the refusal is the target staleness: {out}{err}"
+    );
+    assert!(
+        !out.contains(SENTINEL) && !err.contains(SENTINEL),
+        "the other database's row never leaves its database: {out}{err}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Seeds an `events` table with one labelled row into a sqlite file, the
+/// way the binary-level fixtures do; only the test writes.
+async fn seed_events(database: &std::path::Path, label: &str) {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(database)
+        .create_if_missing(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    sqlx::query("CREATE TABLE events (id INTEGER PRIMARY KEY, label TEXT NOT NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO events (id, label) VALUES (1, ?)")
+        .bind(label)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+/// Saves one investigation through the dispatcher (save never connects) and
+/// returns its id, with the save's own rendering captured. The dispatcher
+/// derives its repository from `runtime.investigations_root`, the same root
+/// the test's own `repo` reads.
+async fn saved_id(
+    runtime: &crate::config::runtime::RuntimeConfig,
+    state_db: &saya_store::SqliteStateStore,
+) -> String {
+    capture_output_start();
+    let outcome = crate::commands::run_investigation_outcome(
+        crate::cli::InvestigationCommand::Save {
+            name: "remap probe".into(),
+            description: None,
+            sql: Some("SELECT label FROM events".into()),
+            file: None,
+            connection: Some("local".into()),
+            param_specs: Vec::new(),
+        },
+        runtime,
+        RenderFormat::Text,
+        false,
+        state_db,
+    )
+    .await
+    .unwrap();
+    let (out, err) = capture_output_take();
+    assert_eq!(outcome.code, 0, "save failed: {out}{err}");
+    out.lines()
+        .next()
+        .expect("save prints the id first")
+        .trim()
+        .to_string()
 }
