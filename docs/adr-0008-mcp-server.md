@@ -2,14 +2,15 @@
 
 - Status: accepted 2026-09-29. Records what shipped for release 0.4.2's MCP
   milestone (D), verified against the code; where the plan and the code
-  differ, the code is recorded. Validation against independent real clients
-  (MCP Inspector CLI, Claude Code) is pending and marked below.
+  differ, the code is recorded. Independent-client validation is recorded in
+  §8 (opencode and codex-cli validated 2026-09-29; Claude Code not
+  validated).
 - Date: 2026-09-29
 - Supersedes: nothing. Complements [ADR 0003](adr-0003-scratch-database.md)
   (the read-only gate every query crosses — MCP is one more client of it),
   [ADR 0004](adr-0004-saved-investigations-and-evidence.md) (the replay it
   exposes), and [ADR 0005](adr-0005-typed-query-parameters.md) (parameters —
-  not yet exposed here).
+  `investigation_run` binds them).
 - Records why an MCP host can ask saya questions, why the profile allowlist
   and the data-sharing gate are decided at startup and never widened by a
   client, and why no approval or grant machinery exists on this surface.
@@ -63,9 +64,20 @@ reaches a profile only through
 [`McpContext::allowed_profile`](../crates/saya-cli/src/mcp/context.rs) — a
 membership check first, then the ordinary profile resolution — so a client
 naming a configured-but-unlisted profile gets `profile not available: …`
-from every tool, and `list_profiles` never shows it. The policy doc states
-the invariant plainly: decided once at startup, and no entry in the server
-grants anything later.
+from `schema`, `query`, and `contracts`, and `list_profiles` never shows an
+unlisted profile. The policy doc states the invariant plainly: decided once
+at startup, and no entry in the server grants anything later.
+
+One exception is recorded because the code has it: `investigation_run` does
+not route its optional `profile` argument through `allowed_profile` — the
+replay resolves its target by its own rules (`--connection` argument, else
+the stored review binding, never the active or default profile). The replay's
+own gates still apply — `revalidate` is hardcoded false, so a target the
+local user has not reviewed and bound is refused by the staleness rules —
+but a binding that names a profile outside the allowlist runs. Closing this
+gap (routing the replay's target through the allowlist) is the follow-up the
+test `mcp_client_cannot_expand_profile_allowlist` does not yet cover for
+`investigation_run`.
 
 ### 3. Tools, and the data-sharing gate on rows
 
@@ -78,7 +90,7 @@ Five tools, all annotated read-only
 | `schema` | `profile` | live discovery with the state-store cache fallback | always |
 | `contracts` | `profile`, `table?` (`catalog.schema.object`, exactly three parts) | **Active claims only**, through the identity-dropping contract view; absent contract → an empty `claims` list with a note | always |
 | `query` | `profile`, `sql` | bounded rows (`max_rows` from config), `columns`/`rows`/`truncated`, evidence with no connection identity | **data sharing on** |
-| `investigation_run` | `id`, `profile?` | the replay's `{result, evidence, connection}` | **data sharing on** |
+| `investigation_run` | `id`, `profile?`, `params?` (`{"name": "value"}` strings) | the replay's `{result, evidence, connection}` | **data sharing on** |
 
 The data-sharing gate is the config's `[ai] allow_data_sharing` (default
 **false**), folded with the global `--allow-data-sharing` flag (`--no-data-sharing`
@@ -90,9 +102,13 @@ the dispatch refuses them too, so a stale tool list cannot be exploited.
 `revalidate` hardcoded `false`: a stale review is an `isError` result
 carrying the CLI's own message (`review is stale (…); pass --revalidate …`
 — words the MCP client reads, a flag it cannot pass), and a successful MCP
-replay never rewrites the review binding. Parameter binding is not exposed
-on this tool (id and optional profile only); carrying [ADR 0005](adr-0005-typed-query-parameters.md)'s
-`params` over MCP is pending.
+replay never rewrites the review binding. Declared parameters bind through
+an optional `params` map of `{"name": "value"}` strings — the same
+`name=value` grammar the CLI's `--param` parses (the literal `null` binds a
+typed null, values are parsed as their declared types, and a missing
+required parameter is refused before any connection) — read by the same
+string-map helper the other tools share, so [ADR 0005](adr-0005-typed-query-parameters.md)'s
+value-never-stored property holds here too.
 
 ### 4. No approvals, no grants, no prompts
 
@@ -161,10 +177,22 @@ config-on / `--no-data-sharing`), cancellation and concurrency bounds, and
 the replay happy path and stale-review refusal. Unit tests pin the policy
 constants, the allowlist resolution, the catalog's data-sharing gating, and
 the line gate's state machine. The plan's "in-process rmcp client" test did
-not ship — the binary-driven suite is what exists. Validation against two
-independent real clients — the MCP Inspector CLI and Claude Code
-(`claude mcp add … -- saya mcp serve`) — **to be recorded** once performed;
-the maintainer fills this in after validation.
+not ship — the binary-driven suite is what exists.
+
+**Validated against real clients, 2026-09-29.** The maintainer drove the
+server with two independent MCP clients:
+
+- **opencode 1.18.31** — configured via the `opencode.json` `mcp` block
+  (`type: "local"`). list / schema / query all worked; a `DELETE` was
+  refused by the read-only gate; with data sharing off the `query` tool was
+  hidden from `tools/list`.
+- **codex-cli 0.155.1** — configured via `mcp_servers.saya.*` (config.toml
+  or `-c` overrides). Same results: list / schema / query ok, `DELETE` and
+  `DROP` refused, data-sharing-off hides query.
+- **Claude Code was not validated** — the validation session was not signed
+  in, so no run was performed with it. The `claude mcp add saya -- saya mcp
+  serve …` setup shape is documented in [commands](commands.md) but
+  unverified by a real client session.
 
 ## Consequences
 
@@ -208,9 +236,11 @@ the maintainer fills this in after validation.
 ## Limitations (stated, not solved)
 
 - stdio only — no HTTP/SSE transport; one host per server process.
-- Parameter binding for `investigation_run` over MCP is pending.
-- Independent-client validation (MCP Inspector CLI, Claude Code) is not yet
-  recorded; see §8.
+- `investigation_run`'s optional target profile is not checked against the
+  startup allowlist (§2); the replay's own review-staleness rules are the
+  gate that applies.
+- Claude Code is documented (`claude mcp add saya -- saya mcp serve …`) but
+  was not validated by a real client session; see §8.
 - `contracts` returns Active claims only — reviewing a Pending claim still
   happens in the TUI.
 - The 30 s call bound is the ceiling for every tool; long-running queries
