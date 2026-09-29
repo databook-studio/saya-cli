@@ -120,6 +120,32 @@ fn with_profile(command: &ContractsCommand, profile: Option<&str>) -> ContractsC
             claim_id: claim_id.clone(),
             reason: *reason,
         },
+        // The portable context operations (B2c) are profiled like the reads
+        // above: the session's active profile is stamped so the export reads
+        // and the import writes the database the user /connect-ed to.
+        ContractsCommand::Export {
+            path, overwrite, ..
+        } => ContractsCommand::Export {
+            path: path.clone(),
+            profile,
+            overwrite: *overwrite,
+        },
+        ContractsCommand::Import { path, preview, .. } => ContractsCommand::Import {
+            path: path.clone(),
+            profile,
+            preview: *preview,
+        },
+        ContractsCommand::ImportDbt {
+            manifest,
+            select,
+            preview,
+            ..
+        } => ContractsCommand::ImportDbt {
+            manifest: manifest.clone(),
+            profile,
+            select: select.clone(),
+            preview: *preview,
+        },
     }
 }
 
