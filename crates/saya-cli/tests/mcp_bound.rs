@@ -1,11 +1,14 @@
-//! The response bound holds on the wire (A922-5, D5). `saya mcp serve`'s
-//! `query` answer is narrowed by dropping whole rows until the FINAL built
-//! reply fits the 16 MiB bound — rmcp 3.5.0's `CallToolResult::structured`
-//! duplicates the payload into a text content block, so the wire carries
-//! roughly twice the payload — with `rows`, `truncated`, and the evidence
-//! row counts consistent. The real binary is driven over stdio pipes, like a
-//! real MCP client; stdin is held open until the reply has arrived, because
-//! requests still pending at EOF are dropped.
+//! The response bound holds on the wire (A922-5, D5; D9). `saya mcp serve`'s
+//! `query` answer is narrowed by dropping whole rows until the FINAL reply
+//! LINE — the JSON-RPC envelope with the client's ACTUAL request id wrapped
+//! around the built result, plus the writer's newline — fits the 16 MiB
+//! bound; rmcp 3.5.0's `CallToolResult::structured` duplicates the payload
+//! into a text content block, so the wire carries roughly twice the payload,
+//! and a large client-controlled id rides the envelope on top. `rows`,
+//! `truncated`, and the evidence row counts stay consistent. The real binary
+//! is driven over stdio pipes, like a real MCP client; stdin is held open
+//! until the reply has arrived, because requests still pending at EOF are
+//! dropped.
 //!
 //! Config isolation mirrors the sibling MCP tests: `--config`/`--connections`
 //! point at a temp fixture and `SAYA_STATE_DB`/`SAYA_INVESTIGATIONS_DIR` at
@@ -75,6 +78,12 @@ impl Fixture {
     /// Seeds the `blobs` table through sqlx, directly (the connector is
     /// read-only; only the test writes).
     fn seed_blobs(&self) {
+        self.seed_blobs_count(ROWS);
+    }
+
+    /// The same, with an explicit row count: the engine-truncation case needs
+    /// more rows than the connector's own 16 MiB result cap will return.
+    fn seed_blobs_count(&self, rows: u64) {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -88,7 +97,7 @@ impl Fixture {
                     .execute(&pool)
                     .await
                     .unwrap();
-                for id in 1..=ROWS {
+                for id in 1..=rows {
                     sqlx::query("INSERT INTO blobs (id, payload) VALUES (?, ?)")
                         .bind(id as i64)
                         .bind("x".repeat(CELL))
@@ -134,10 +143,16 @@ impl TestServer {
         let stdout = child.stdout.take().expect("piped stdout");
         let (sender, responses) = mpsc::channel();
         std::thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                match line {
-                    Ok(line) => {
+            let mut reader = BufReader::new(stdout);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                // read_until keeps the terminating newline: the wire bound is
+                // asserted on the reply line's exact bytes, newline included.
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let line = String::from_utf8_lossy(&buf).into_owned();
                         if sender.send(line).is_err() {
                             break;
                         }
@@ -198,8 +213,10 @@ impl TestServer {
     }
 
     /// One `query` round-trip; stdin stays open across it (a request pending
-    /// at EOF is dropped). Returns the raw reply LINE.
-    fn call_query(&mut self, id: i64, sql: &str) -> String {
+    /// at EOF is dropped). The id may be any JSON-RPC id shape — number or
+    /// string; the server echoes it in the reply envelope. Returns the raw
+    /// reply LINE with its trailing newline.
+    fn call_query(&mut self, id: Value, sql: &str) -> String {
         self.send_json(json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -253,7 +270,7 @@ fn mcp_query_reply_line_stays_within_the_wire_bound() {
 
     server.handshake();
 
-    let reply_line = server.call_query(2, "SELECT id, payload FROM blobs ORDER BY id");
+    let reply_line = server.call_query(json!(2), "SELECT id, payload FROM blobs ORDER BY id");
 
     assert!(
         reply_line.len() <= MAX_RESPONSE_BYTES,
@@ -299,6 +316,196 @@ fn mcp_query_reply_line_stays_within_the_wire_bound() {
             .contains("cut to"),
         "the narrowing is named: {}",
         payload["note"]
+    );
+
+    server.close_and_expect_exit(0);
+}
+
+/// The audit's reproduction SQL (R061-3): eight rows of a 1,040,000-char
+/// cell — each cell rides just under the connector's 1 MiB cap, and the
+/// duplicated text content block carries the built result to ~16.64 MB:
+/// inside the old fixed-reserve measure (which admitted it whole) but over
+/// the true reply line for any large request id.
+const AUDIT_SQL: &str = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n \
+                         WHERE x<8) SELECT printf('%1040000s','x') AS cell FROM n";
+
+/// Every admitted request id must get a reply line within the bound (D9).
+/// The three id shapes below exercise the envelope's real serialization:
+/// plain ASCII (the audit's case), a quote/backslash id whose JSON escaping
+/// doubles its wire size, and a non-ASCII id carried as UTF-8 bytes.
+/// Assertions: the reply LINE (newline included) fits the bound, the answer
+/// is narrowed — never refused — and `rows`/`row_count`/`truncated`/the
+/// evidence counts all agree.
+fn assert_reply_line_fits_and_stays_consistent(reply_line: &str) {
+    assert!(
+        reply_line.len() <= MAX_RESPONSE_BYTES,
+        "the reply LINE must stay within the {}-byte wire bound, was {} bytes",
+        MAX_RESPONSE_BYTES,
+        reply_line.len()
+    );
+    let reply: Value = serde_json::from_str(reply_line).expect("the reply line is JSON");
+    assert_eq!(
+        reply["result"]["isError"], false,
+        "the oversized answer is narrowed and sent, not refused"
+    );
+    let payload = &reply["result"]["structuredContent"];
+    assert_eq!(
+        payload["truncated"], true,
+        "the answer is marked truncated: {}",
+        payload["note"]
+    );
+    let sent = payload["row_count"]
+        .as_u64()
+        .expect("row_count is a number");
+    assert!(
+        sent < 8,
+        "rows were dropped to fit the wire: {sent} of the 8 the SQL returns"
+    );
+    assert_eq!(
+        payload["rows"].as_array().expect("rows array").len() as u64,
+        sent,
+        "row_count matches the rows actually sent"
+    );
+    assert_eq!(
+        payload["evidence"]["returned_rows"], sent,
+        "the evidence reports the rows actually sent"
+    );
+    assert_eq!(
+        payload["evidence"]["truncated"], true,
+        "the evidence reports the narrowing"
+    );
+    assert!(
+        payload["note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("cut to"),
+        "the narrowing is named: {}",
+        payload["note"]
+    );
+}
+
+/// The audit's exact case (R061-3, D9): a 200,000-character ASCII request id
+/// rides the reply envelope, so the built result the old fixed-reserve
+/// measure admitted whole produced a 16,841,216-byte reply line — 64,000
+/// bytes over the bound. The budget must come from the actual envelope.
+#[test]
+fn mcp_query_reply_line_holds_with_the_audit_large_ascii_request_id() {
+    let fixture = fixture("id-ascii");
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    server.handshake();
+    let reply_line = server.call_query(json!("i".repeat(200_000)), AUDIT_SQL);
+    assert_reply_line_fits_and_stays_consistent(&reply_line);
+    server.close_and_expect_exit(0);
+}
+
+/// A request id full of `"` and `\`: the inbound line already carries it
+/// escaped (two bytes per character), and rmcp re-serializes the same
+/// escaping into the reply envelope — the id's wire size is doubled. The
+/// reply line must still fit.
+#[test]
+fn mcp_query_reply_line_holds_with_an_escaping_request_id() {
+    let fixture = fixture("id-escaping");
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    server.handshake();
+    let id = format!("{}{}", "\"".repeat(100_000), "\\".repeat(100_000));
+    let reply_line = server.call_query(json!(id), AUDIT_SQL);
+    assert_reply_line_fits_and_stays_consistent(&reply_line);
+    server.close_and_expect_exit(0);
+}
+
+/// A non-ASCII request id (100,000 `é`, two UTF-8 bytes each): serde_json
+/// carries it through the envelope as raw UTF-8, no `\u` escaping, so the
+/// id contributes the same wire bytes as the ASCII case — and the reply
+/// line must still fit.
+#[test]
+fn mcp_query_reply_line_holds_with_a_non_ascii_request_id() {
+    let fixture = fixture("id-nonascii");
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    server.handshake();
+    let reply_line = server.call_query(json!("é".repeat(100_000)), AUDIT_SQL);
+    assert_reply_line_fits_and_stays_consistent(&reply_line);
+    server.close_and_expect_exit(0);
+}
+
+/// The engine already marked the result truncated (the connector's 16 MiB
+/// result cap stopped it mid-scan), and the reply STILL needed a byte cut:
+/// the narrowing note must name the cut — the old note condition compared
+/// the truncation flags, which were already equal, and the note went
+/// missing. `row_count`, the note's numbers, and the evidence must agree.
+#[test]
+fn mcp_query_byte_cut_note_appears_when_the_engine_already_truncated() {
+    let fixture = fixture("note");
+    fixture.seed_blobs_count(20);
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    server.handshake();
+    let reply_line = server.call_query(json!(3), "SELECT id, payload FROM blobs ORDER BY id");
+
+    assert!(
+        reply_line.len() <= MAX_RESPONSE_BYTES,
+        "the reply LINE must stay within the {}-byte wire bound, was {} bytes",
+        MAX_RESPONSE_BYTES,
+        reply_line.len()
+    );
+    let reply: Value = serde_json::from_str(&reply_line).expect("the reply line is JSON");
+    assert_eq!(reply["result"]["isError"], false);
+    let payload = &reply["result"]["structuredContent"];
+    assert_eq!(
+        payload["truncated"], true,
+        "the engine already truncated; the byte cut keeps it truncated"
+    );
+    let note = payload["note"]
+        .as_str()
+        .expect("the byte cut must be named even when the engine had already truncated");
+    // "the response exceeded the byte bound and was cut to {sent}/{total} rows"
+    let cut = note
+        .split("cut to ")
+        .nth(1)
+        .expect("the note quantifies the cut: {note}");
+    let (sent, total) = cut
+        .split_once('/')
+        .expect("the note names sent/total rows: {note}");
+    let sent: u64 = sent.trim().parse().expect("sent row count in the note");
+    let total: u64 = total
+        .trim()
+        .trim_end_matches(" rows")
+        .parse()
+        .expect("total row count in the note");
+    assert_eq!(
+        payload["row_count"]
+            .as_u64()
+            .expect("row_count is a number"),
+        sent,
+        "the note's sent count is the payload's row_count: {note}"
+    );
+    assert!(total > sent, "rows were dropped for the byte bound: {note}");
+    assert_eq!(
+        payload["rows"].as_array().expect("rows array").len() as u64,
+        sent,
+        "row_count matches the rows actually sent"
+    );
+    assert_eq!(
+        payload["evidence"]["returned_rows"], sent,
+        "the evidence reports the rows actually sent"
+    );
+    assert_eq!(
+        payload["evidence"]["truncated"], true,
+        "the evidence reports the narrowing"
     );
 
     server.close_and_expect_exit(0);
