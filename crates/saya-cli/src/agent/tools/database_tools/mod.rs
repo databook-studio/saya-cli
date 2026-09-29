@@ -366,6 +366,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn render_chart_creates_0600_permissions_file() {
+        let _guard = crate::chart::test_support::lock_session_charts_for_test();
         use async_trait::async_trait;
         use saya_connectors::DatabaseConnector;
         use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
@@ -425,6 +426,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn render_chart_saves_contained_html_without_returning_rows() {
+        let _guard = crate::chart::test_support::lock_session_charts_for_test();
         use async_trait::async_trait;
         use saya_connectors::DatabaseConnector;
         use saya_harness::workspace::Workspace;
