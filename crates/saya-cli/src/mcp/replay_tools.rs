@@ -15,7 +15,7 @@
 //! client sees.
 
 use rmcp::model::{CallToolRequestParams, CallToolResponse};
-use saya_store::InvestigationRepository;
+use saya_store::{InvestigationRepository, StoreError};
 use saya_types::InvestigationId;
 use serde_json::json;
 
@@ -92,8 +92,8 @@ fn replay_payload(replay: Replay) -> serde_json::Value {
 /// resolution — must sit inside the startup allowlist before anything runs.
 /// A binding saved against a profile this server does not serve is not a
 /// licence to reach it. `Err` is the isError text. With neither an argument
-/// nor a readable binding the gate passes: the run command refuses those
-/// with the CLI's own words, in the CLI's own order, before any connection.
+/// nor a binding the gate passes: the run command refuses that with the
+/// CLI's own words, in the CLI's own order, before any connection.
 pub(super) fn allowlist_gate(
     policy: &ServePolicy,
     context: &McpContext,
@@ -105,33 +105,50 @@ pub(super) fn allowlist_gate(
         Some(name) => context
             .allowed_profile(policy.allowlist(), name)
             .map(|_| ()),
-        None => match binding_target(context, id) {
-            Some(target)
-                if !policy
-                    .allowlist()
-                    .iter()
-                    .any(|summary| summary.name == target) =>
-            {
-                // The binding's profile name is never echoed: the allowlist
-                // is also the client's information boundary — `list_profiles`
-                // never names a profile outside it either.
-                Err("profile not available".to_owned())
+        None => {
+            let Ok(parsed) = InvestigationId::parse(id) else {
+                // A malformed id cannot have a binding; the run command
+                // refuses it with its own words before anything runs.
+                return Ok(());
+            };
+            // A binding that cannot be read cannot be checked, so the read
+            // error is the refusal: the gate fails closed (F-1 follow-up),
+            // and neither the store error's own text nor the bound profile
+            // name is echoed.
+            let bound =
+                binding_target(context, &parsed).map_err(|_| "profile not available".to_owned())?;
+            match bound {
+                Some(target)
+                    if !policy
+                        .allowlist()
+                        .iter()
+                        .any(|summary| summary.name == target) =>
+                {
+                    // The binding's profile name is never echoed: the
+                    // allowlist is also the client's information boundary —
+                    // `list_profiles` never names a profile outside it.
+                    Err("profile not available".to_owned())
+                }
+                _ => Ok(()),
             }
-            _ => Ok(()),
-        },
+        }
     }
 }
 
-/// The saved binding's profile, when the id parses and a binding reads
-/// cleanly. A malformed id, an absent binding, and a store failure return
-/// `None`: the run command refuses each with the CLI's own words before any
-/// connection is made.
-fn binding_target(context: &McpContext, id: &str) -> Option<String> {
-    let parsed = InvestigationId::parse(id).ok()?;
+/// The saved binding's profile: `Ok(Some)` when a binding reads cleanly,
+/// `Ok(None)` when no binding exists — the run command's own refusal
+/// applies — and `Err` when the binding cannot be read, which the gate
+/// fails closed on.
+fn binding_target(
+    context: &McpContext,
+    parsed: &InvestigationId,
+) -> Result<Option<String>, StoreError> {
     let repo = InvestigationRepository::new(context.runtime.investigations_root.clone());
-    repo.get_binding(&parsed)
-        .ok()?
-        .map(|binding| binding.profile)
+    match repo.get_binding(parsed) {
+        Ok(Some(binding)) => Ok(Some(binding.profile)),
+        Ok(None) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Takes the captured output back if the future holding it is dropped — a
