@@ -7,14 +7,16 @@
 use super::capture::{self, CapturedResult};
 use super::sql_task::{Followup, SqlTask, complete};
 use super::transcript::{BlockKind, Transcript};
-use super::ui_snapshot_tests::{empty_app, unused_runtime};
+use super::ui_snapshot_tests::unused_runtime;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_state::SessionState;
 use crate::render::TerminalEvent;
 use saya_types::{DatabaseProfile, EvidenceSource, ResultScope, SqlDialect};
 
+#[cfg(test)]
+#[path = "capture_save_tests.rs"]
+mod save_roundtrip;
+
 const STARTED_UNIX_MS: i64 = 1_700_000_000_000;
-const SENTINEL: &str = "capture-sentinel-cell-7f3a9c";
 
 /// The snapshot test runtime, plus a resolvable `analytics` profile (SQLite,
 /// so `dialect()` needs no connection — matching how `exec::run_sql` resolves
@@ -291,38 +293,6 @@ fn accounting_stops_at_the_budget_boundary() {
     assert!(
         capture::accounted_bytes(&one).is_some(),
         "the production budget admits a small result"
-    );
-}
-
-#[test]
-fn session_roundtrip_excludes_result_capture() {
-    let mut app = empty_app();
-    let captured_result = saya_types::QueryResult {
-        columns: vec!["value".to_string()],
-        rows: vec![serde_json::json!([SENTINEL])],
-        row_count: 1,
-        truncated: false,
-        executed_sql: format!("SELECT '{SENTINEL}'"),
-    };
-    app.captured = Some(CapturedResult {
-        evidence: capture::direct_sql_evidence(
-            Some("analytics"),
-            Some("analytics"),
-            &captured_result,
-            &runtime(),
-            STARTED_UNIX_MS,
-        )
-        .expect("resolvable"),
-        result: captured_result,
-    });
-    // The payload the TUI writes is `SessionState::redacted()` (what
-    // `queue_session_save` hands the store); serialize exactly that.
-    let state = SessionState::new("sess-1", Some("analytics".to_string()), "qwen");
-    let payload = state.redacted();
-    let json = serde_json::to_string(&payload).expect("the session payload serializes");
-    assert!(
-        !json.contains(SENTINEL),
-        "the session save must not carry captured rows or SQL:\n{json}"
     );
 }
 
