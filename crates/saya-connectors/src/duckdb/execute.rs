@@ -17,6 +17,7 @@ pub(crate) async fn query(
     connector: &DuckDbConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
+    crate::binds::refuse_params("DuckDB", &request.params)?;
     let sql = crate::prepare_duckdb_sql(&request.sql, request.max_rows)?;
     let original_sql = request.sql;
     let max_rows = request.max_rows;
