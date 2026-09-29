@@ -1,13 +1,30 @@
-use saya_types::QueryResult;
+use bigdecimal::BigDecimal;
+use chrono::{SecondsFormat, Utc};
+use saya_types::{ConnectionError, QueryResult};
 use serde_json::Value;
 
+use crate::binds::BindValue;
 use crate::common::{MAX_RESULT_BYTES, cap_cell, value_bytes};
+
+/// BigQuery's NUMERIC is precision ≤ 38 and scale ≤ 9; BIGNUMERIC widens both.
+const NUMERIC_MAX_PRECISION: usize = 38;
+const NUMERIC_MAX_SCALE: usize = 9;
+const BIGNUMERIC_MAX_PRECISION: usize = 77;
+const BIGNUMERIC_MAX_SCALE: usize = 38;
 
 /// The `jobs.query` request body. `maxResults` is set one above the row cap so
 /// a result that fills the cap but has more rows reports `pageToken` and is
 /// marked truncated, while `maximumBytesBilled` is the server-side cost bound
 /// that fails the job if the query scans more than the configured allowance.
-pub(crate) fn query_body(sql: &str, max_rows: usize, cap: u64, location: Option<&str>) -> Value {
+/// `parameters` carries the positional `queryParameters` — `None` for a
+/// parameter-free query, which keeps this body byte-for-byte as before.
+pub(crate) fn query_body(
+    sql: &str,
+    max_rows: usize,
+    cap: u64,
+    location: Option<&str>,
+    parameters: Option<&[Value]>,
+) -> Value {
     let mut body = serde_json::json!({
         "query": sql,
         "useLegacySql": false,
@@ -17,13 +34,24 @@ pub(crate) fn query_body(sql: &str, max_rows: usize, cap: u64, location: Option<
     if let Some(location) = location {
         body["location"] = Value::String(location.into());
     }
+    if let Some(parameters) = parameters {
+        body["parameterMode"] = Value::String("POSITIONAL".into());
+        body["queryParameters"] = Value::Array(parameters.to_vec());
+    }
     body
 }
 
 /// The `jobs.insert` body for a dry-run. BigQuery estimates the bytes the
 /// query would scan without running it, which lets the connector refuse an
-/// over-budget query before it executes.
-pub(crate) fn dry_run_body(sql: &str, cap: u64, location: Option<&str>) -> Value {
+/// over-budget query before it executes. `parameters` must carry the same
+/// positional parameters the query itself sends, or the estimate is computed
+/// against a different statement than the one that will run.
+pub(crate) fn dry_run_body(
+    sql: &str,
+    cap: u64,
+    location: Option<&str>,
+    parameters: Option<&[Value]>,
+) -> Value {
     let mut query = serde_json::json!({
         "query": sql,
         "useLegacySql": false,
@@ -32,12 +60,85 @@ pub(crate) fn dry_run_body(sql: &str, cap: u64, location: Option<&str>) -> Value
     if let Some(location) = location {
         query["location"] = Value::String(location.into());
     }
+    if let Some(parameters) = parameters {
+        query["parameterMode"] = Value::String("POSITIONAL".into());
+        query["queryParameters"] = Value::Array(parameters.to_vec());
+    }
     serde_json::json!({
         "configuration": {
             "dryRun": true,
             "query": query,
         }
     })
+}
+
+/// Encodes validated values as BigQuery's positional `queryParameters`: one
+/// entry per `?` marker with a concrete `parameterType` and a string
+/// `parameterValue` — values travel in the body only, never into the SQL
+/// text, and no error message names one.
+pub(crate) fn query_parameters(values: &[BindValue]) -> Result<Vec<Value>, ConnectionError> {
+    values.iter().map(query_parameter).collect()
+}
+
+fn query_parameter(value: &BindValue) -> Result<Value, ConnectionError> {
+    let kind = match value {
+        BindValue::Null => {
+            return Err(ConnectionError::query_failed(
+                "a null parameter cannot be bound on BigQuery: the service requires a \
+                 concrete parameter type for null values",
+            ));
+        }
+        BindValue::Str(_) => "STRING",
+        BindValue::Int(_) => "INT64",
+        BindValue::Bool(_) => "BOOL",
+        BindValue::Decimal { value, .. } => numeric_kind(value)?,
+        BindValue::Date(_) => "DATE",
+        BindValue::Timestamp { .. } => "TIMESTAMP",
+    };
+    Ok(serde_json::json!({
+        "parameterType": {"type": kind},
+        "parameterValue": {"value": value_text(value)},
+    }))
+}
+
+/// Picks NUMERIC for a value inside its 38-digit/9-scale bound and
+/// BIGNUMERIC otherwise, refusing what even BIGNUMERIC cannot carry so an
+/// oversized value fails here instead of echoing from the server.
+fn numeric_kind(value: &BigDecimal) -> Result<&'static str, ConnectionError> {
+    let scale = value.fractional_digit_count().max(0) as usize;
+    let (digits, _) = value.with_scale(scale as i64).into_bigint_and_exponent();
+    // The magnitude carries the precision (77 digits outgrows i128), so it is
+    // counted as text rather than converted.
+    let precision = digits.magnitude().to_string().len().max(scale).max(1);
+    let refusal = || {
+        ConnectionError::query_failed(
+            "a bound decimal parameter does not fit BigQuery's BIGNUMERIC precision",
+        )
+    };
+    if precision <= NUMERIC_MAX_PRECISION && scale <= NUMERIC_MAX_SCALE {
+        return Ok("NUMERIC");
+    }
+    if precision <= BIGNUMERIC_MAX_PRECISION && scale <= BIGNUMERIC_MAX_SCALE {
+        return Ok("BIGNUMERIC");
+    }
+    Err(refusal())
+}
+
+/// The string a BigQuery `parameterValue` carries for each validated type:
+/// text and decimals exactly as given, a date in canonical YYYY-MM-DD, and a
+/// timestamp as the instant's canonical UTC RFC 3339 form.
+fn value_text(value: &BindValue) -> String {
+    match value {
+        BindValue::Null => String::new(),
+        BindValue::Str(text) => text.clone(),
+        BindValue::Int(int) => int.to_string(),
+        BindValue::Bool(flag) => flag.to_string(),
+        BindValue::Decimal { text, .. } => text.clone(),
+        BindValue::Date(date) => date.format("%Y-%m-%d").to_string(),
+        BindValue::Timestamp { value, .. } => value
+            .with_timezone(&Utc)
+            .to_rfc3339_opts(SecondsFormat::AutoSi, true),
+    }
 }
 
 /// Turns a `jobs.query` response into a bounded `QueryResult`. `schema.fields`
@@ -112,101 +213,5 @@ pub(crate) fn parse_result(value: Value, max_rows: usize, original_sql: String) 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn query_body_carries_byte_cap_and_row_cap_as_strings() {
-        let body = query_body("SELECT 1", 10, 1024, None);
-        assert_eq!(body["query"], "SELECT 1");
-        assert_eq!(body["useLegacySql"], false);
-        // maxResults is one above the row cap so truncation is detectable.
-        assert_eq!(body["maxResults"], 11);
-        // BigQuery's int64 fields are formatted as strings.
-        assert_eq!(body["maximumBytesBilled"], "1024");
-        assert!(body.get("location").is_none());
-    }
-
-    #[test]
-    fn query_body_includes_location_when_set() {
-        let body = query_body("SELECT 1", 5, 1024, Some("EU"));
-        assert_eq!(body["location"], "EU");
-    }
-
-    #[test]
-    fn dry_run_body_marks_dry_run_and_carries_byte_cap() {
-        let body = dry_run_body("SELECT 1", 2048, None);
-        assert_eq!(body["configuration"]["dryRun"], true);
-        assert_eq!(body["configuration"]["query"]["query"], "SELECT 1");
-        assert_eq!(body["configuration"]["query"]["maximumBytesBilled"], "2048");
-    }
-
-    #[test]
-    fn parse_result_reads_columns_and_rows() {
-        let body = json!({
-            "schema": {"fields": [{"name": "id", "type": "INTEGER"}, {"name": "name", "type": "STRING"}]},
-            "rows": [{"f": [{"v": "1"}, {"v": "a"}]}, {"f": [{"v": "2"}, {"v": "b"}]}]
-        });
-        let result = parse_result(body, 10, "SELECT id, name FROM t".into());
-        assert_eq!(result.columns, vec!["id", "name"]);
-        assert_eq!(result.row_count, 2);
-        assert!(!result.truncated);
-        assert_eq!(result.rows[0], json!(["1", "a"]));
-        assert_eq!(result.rows[1], json!(["2", "b"]));
-    }
-
-    #[test]
-    fn parse_result_keeps_columns_when_there_are_no_rows() {
-        let body = json!({"schema": {"fields": [{"name": "id"}]}, "rows": []});
-        let result = parse_result(body, 10, "SELECT id FROM empty".into());
-        assert_eq!(result.columns, vec!["id"]);
-        assert_eq!(result.row_count, 0);
-        assert!(!result.truncated);
-    }
-
-    #[test]
-    fn parse_result_caps_rows_and_marks_truncated() {
-        let rows: Vec<Value> = (0..5)
-            .map(|i| json!({"f": [{"v": i.to_string()}]}))
-            .collect();
-        let body = json!({"schema": {"fields": [{"name": "id"}]}, "rows": rows});
-        let result = parse_result(body, 3, "SELECT id FROM t".into());
-        assert_eq!(result.row_count, 3);
-        assert!(result.truncated);
-    }
-
-    #[test]
-    fn parse_result_marks_truncated_on_page_token() {
-        let body = json!({
-            "schema": {"fields": [{"name": "id"}]},
-            "rows": [{"f": [{"v": "1"}]}],
-            "pageToken": "next"
-        });
-        let result = parse_result(body, 10, "SELECT id FROM t".into());
-        assert_eq!(result.row_count, 1);
-        assert!(result.truncated);
-    }
-
-    #[test]
-    fn parse_result_missing_cell_becomes_null() {
-        let body = json!({
-            "schema": {"fields": [{"name": "a"}, {"name": "b"}]},
-            "rows": [{"f": [{"v": "1"}]}]
-        });
-        let result = parse_result(body, 10, "SELECT a, b FROM t".into());
-        assert_eq!(result.rows[0], json!(["1", null]));
-    }
-
-    #[test]
-    fn parse_result_marks_truncated_on_byte_budget() {
-        let cell = "x".repeat(512 * 1024);
-        let rows: Vec<Value> = (0..40)
-            .map(|_| json!({"f": [{"v": cell.clone()}]}))
-            .collect();
-        let body = json!({"schema": {"fields": [{"name": "payload"}]}, "rows": rows});
-        let result = parse_result(body, 100, "SELECT payload FROM t".into());
-        assert!(result.truncated);
-        assert!(result.row_count < 40);
-    }
-}
+#[path = "request_tests.rs"]
+mod tests;

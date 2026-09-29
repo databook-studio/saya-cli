@@ -140,3 +140,33 @@ async fn a_server_fault_is_not_read_as_a_sql_fault_end_to_end() {
         "server fault diagnosed: {error}"
     );
 }
+
+/// ClickHouse has no native binding and never gains one through the portable
+/// `:name` pipeline, so the refusal says so plainly — no "yet" — and fires
+/// before any network activity: nothing listens on the mock port, and the
+/// failure is `unsupported`, not a connection error.
+#[tokio::test]
+async fn parameters_refuse_without_a_network_call_and_without_pretending_yet() {
+    let connector = connector(1);
+    let request = QueryRequest::with_params(
+        "SELECT 1 WHERE 1 = :v".to_owned(),
+        1,
+        vec![saya_types::BoundParam {
+            name: "v".to_owned(),
+            value: saya_types::ParamValue::Integer(1),
+        }],
+    );
+    let error = super::execute::query(&connector, request)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, saya_types::ConnectionError::Unsupported(_)),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "unsupported operation: parameters are not supported for ClickHouse"
+    );
+    assert!(!error.to_string().contains("yet"));
+    assert!(!error.to_string().contains('1'), "a value leaked: {error}");
+}

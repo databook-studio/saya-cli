@@ -1,4 +1,4 @@
-use saya_types::{ConnectionError, QueryRequest, QueryResult};
+use saya_types::{BoundParam, ConnectionError, QueryRequest, QueryResult};
 use serde_json::Value;
 
 use super::{ClickHouseConnector, diagnose, errors};
@@ -8,7 +8,7 @@ pub(crate) async fn query(
     connector: &ClickHouseConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
-    crate::binds::refuse_params("ClickHouse", &request.params)?;
+    refuse_params(&request.params)?;
     let sql = crate::prepare_clickhouse_sql(&request.sql, request.max_rows)?;
     let response = connector.post(&sql, request.max_rows).await?;
     if !response.status().is_success() {
@@ -23,6 +23,18 @@ pub(crate) async fn query(
         .await
         .map_err(|_| errors::body_decode())?;
     Ok(parse_result(value, request.max_rows, request.sql))
+}
+
+/// ClickHouse's HTTP interface has no binding the portable `:name` pipeline
+/// can target, so a non-empty parameter list refuses here — before any
+/// network activity — as unsupported, with no "yet": fixed SQL still works.
+fn refuse_params(params: &[BoundParam]) -> Result<(), ConnectionError> {
+    if params.is_empty() {
+        return Ok(());
+    }
+    Err(ConnectionError::unsupported(
+        "parameters are not supported for ClickHouse",
+    ))
 }
 
 /// Turns a ClickHouse `FORMAT JSON` body into a bounded `QueryResult`.
