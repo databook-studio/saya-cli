@@ -1,3 +1,4 @@
+mod bind;
 mod client;
 mod decode;
 mod errors;
