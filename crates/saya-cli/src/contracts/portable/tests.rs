@@ -176,6 +176,34 @@ fn a_relationship_files_as_its_keyed_join_rule() {
     assert!(planned.item.schema_binding_json.contains("customer_id"));
 }
 
+/// The mapping's credential pre-check mirrors the store's batch admission: an
+/// item whose serialised payload the redactor would rewrite is refused in the
+/// mapping — reported, never offered to the batch — while the clean items
+/// beside it stay planned.
+#[test]
+fn a_credential_shaped_claim_is_unavailable_not_planned() {
+    let schema = tree(&[
+        ("analytics.public", "orders", &[("id", "bigint")]),
+        ("analytics.public", "customers", &[("id", "bigint")]),
+    ]);
+    let items = vec![
+        item(
+            "orders",
+            &ClaimPayload::table_description("One row per confirmed order.").unwrap(),
+        ),
+        item("orders", &ClaimPayload::table_alias("customers").unwrap()),
+        item(
+            "customers",
+            &ClaimPayload::table_description("The ingest box runs with password=hunter2.").unwrap(),
+        ),
+    ];
+    let mapped = map_items(&items, &schema, &identity());
+    assert_eq!(mapped.planned.len(), 2, "{:?}", mapped.unavailable);
+    assert_eq!(mapped.unavailable.len(), 1, "{:?}", mapped.unavailable);
+    assert_eq!(mapped.unavailable[0].label, "analytics.public.customers");
+    assert_eq!(mapped.unavailable[0].reason, "credential-shaped text");
+}
+
 #[tokio::test]
 async fn export_and_import_round_trip_through_the_file() {
     let root = std::env::temp_dir().join(format!(

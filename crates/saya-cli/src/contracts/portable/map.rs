@@ -17,7 +17,7 @@ use super::resolve::{Resolution, object_label, resolve_object, resolve_ref};
 use saya_store::NewKnowledgeItem;
 use saya_types::{
     ClaimOrigin, ClaimPayload, ContextError, ContextItem, DatabaseObjectRef, ProfileIdentity,
-    SchemaBinding, SchemaFingerprint, SchemaTree,
+    SchemaBinding, SchemaFingerprint, SchemaTree, redact,
 };
 
 /// One mapped item ready for the pending batch: the resolved object name for
@@ -98,6 +98,16 @@ fn map_one(
         .ok_or_else(|| "this claim's slot and payload disagree".to_string())?;
     let binding_json = serde_json::to_string(&binding)
         .map_err(|_| "the claim could not be serialised".to_string())?;
+    // The store's batch admission refuses any item whose serialised payload or
+    // schema binding is credential-shaped, and that refusal aborts the whole
+    // batch — so the mapping applies the same predicate here (the store's
+    // `admission::check` shapes stay behind it as the backstop) and reports the
+    // item instead of offering it: per-item validation, the rest still imports.
+    let serialized = serde_json::to_string(&claim)
+        .map_err(|_| "the claim could not be serialised".to_string())?;
+    if redact(&serialized) != serialized || redact(&binding_json) != binding_json {
+        return Err("credential-shaped text".to_string());
+    }
     Ok(PlannedItem {
         label: object.qualified_name(),
         slot: slot.as_str(),
