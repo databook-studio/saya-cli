@@ -92,6 +92,32 @@ impl Fixture {
             });
     }
 
+    /// Seeds a sentinel table into `other.sqlite3`: if a replay ever reached
+    /// this non-allowlisted database, an investigation reading it would
+    /// succeed instead of being refused.
+    fn seed_sentinel(&self, label: &str) {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let options = sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(self.root.join("other.sqlite3"))
+                    .create_if_missing(true);
+                let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+                sqlx::query("CREATE TABLE sentinel (label TEXT NOT NULL)")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                sqlx::query("INSERT INTO sentinel (label) VALUES (?)")
+                    .bind(label)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                pool.close().await;
+            });
+    }
+
     /// Runs a CLI subcommand against this fixture with the same isolated
     /// environment the server gets, for the seeding steps the MCP surface
     /// itself never offers.
@@ -119,6 +145,26 @@ impl Fixture {
             String::from_utf8_lossy(&output.stdout).into_owned(),
             String::from_utf8_lossy(&output.stderr).into_owned(),
         )
+    }
+
+    /// Saves one investigation through the CLI and returns its id.
+    fn save_investigation(&self, name: &str, sql: &str, connection: &str) -> String {
+        let (code, out, err) = self.cli(&[
+            "investigation",
+            "save",
+            "--name",
+            name,
+            "--sql",
+            sql,
+            "--connection",
+            connection,
+        ]);
+        assert_eq!(code, 0, "save failed: {out}{err}");
+        out.lines()
+            .next()
+            .expect("the id is the first line")
+            .trim()
+            .to_string()
     }
 }
 
@@ -995,6 +1041,107 @@ fn mcp_investigation_run_binds_parameters() {
     let ping = server.next_json(5);
     assert_eq!(ping["id"], 7);
     assert!(ping["result"].is_object());
+
+    server.close_and_expect_exit(0);
+}
+
+/// The state DB's audited profile identities, read through the store's own
+/// API (the pool opens and migrates lazily, so a call before any audit is
+/// empty, not a missing table). Every replay execution writes one audit row
+/// — success or failure — before the answer returns, so an empty list after
+/// a call means nothing executed against any profile.
+fn audit_profiles(state: &std::path::Path) -> Vec<String> {
+    use saya_store::{AuditStore, SqliteStateStore};
+    let store = SqliteStateStore::new(state.to_path_buf());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async { store.recent_audit(100).await.unwrap() })
+        .into_iter()
+        .map(|record| record.event.profile_id)
+        .collect()
+}
+
+/// `investigation_run` never reaches a profile outside the startup
+/// allowlist (F-1) — neither through the `profile` argument nor through a
+/// saved binding's profile. The refusal happens before anything runs: the
+/// non-allowlisted database keeps its sentinel to itself and no audit row
+/// exists anywhere. A binding inside the allowlist still runs.
+#[test]
+fn mcp_investigation_run_stays_inside_the_profile_allowlist() {
+    const SENTINEL: &str = "OTHER-ONLY-SENTINEL-7";
+    let fixture = crate_fixture("replay-allowlist");
+    fixture.seed_events();
+    fixture.seed_sentinel(SENTINEL);
+    let local_id =
+        fixture.save_investigation("local count", "SELECT count(*) AS n FROM events", "local");
+    let other_id = fixture.save_investigation("other count", "SELECT label FROM sentinel", "other");
+
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+    server.handshake();
+    assert!(
+        audit_profiles(&fixture.state).is_empty(),
+        "nothing has audited yet"
+    );
+
+    // (a) The binding points at `other`, which the server does not serve:
+    // refused before anything runs — no audit row exists anywhere, and
+    // neither the binding's profile name nor the sentinel value is echoed.
+    let text = server.call_error_text(2, "investigation_run", &format!(r#"{{"id":"{other_id}"}}"#));
+    assert!(
+        text.contains("profile not available"),
+        "the non-allowlisted binding is refused: {text}"
+    );
+    assert!(
+        !text.contains("other"),
+        "the binding's profile name is not echoed: {text}"
+    );
+    assert!(
+        !text.contains(SENTINEL),
+        "the non-allowlisted database is never read: {text}"
+    );
+    assert!(
+        audit_profiles(&fixture.state).is_empty(),
+        "a refusal writes no audit row: {:?}",
+        audit_profiles(&fixture.state)
+    );
+
+    // (b) An explicit `profile` argument naming the non-allowlisted profile
+    // is refused the same way — even though this investigation's binding is
+    // allowlisted.
+    let text = server.call_error_text(
+        3,
+        "investigation_run",
+        &format!(r#"{{"id":"{local_id}","profile":"other"}}"#),
+    );
+    assert!(
+        text.contains("profile not available") && text.contains("other"),
+        "the requested name is echoed: {text}"
+    );
+    assert!(
+        audit_profiles(&fixture.state).is_empty(),
+        "a refusal writes no audit row: {:?}",
+        audit_profiles(&fixture.state)
+    );
+
+    // (c) A binding inside the allowlist runs.
+    let run = server.call(4, "investigation_run", &format!(r#"{{"id":"{local_id}"}}"#));
+    assert_eq!(
+        run["result"]["isError"],
+        false,
+        "{}",
+        serde_json::to_string(&run).unwrap()
+    );
+    assert_eq!(run["result"]["structuredContent"]["connection"], "local");
+    let audited = audit_profiles(&fixture.state);
+    assert!(
+        !audited.is_empty(),
+        "the allowed replay audited: {audited:?}"
+    );
 
     server.close_and_expect_exit(0);
 }
