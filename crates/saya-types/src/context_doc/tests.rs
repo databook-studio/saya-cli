@@ -16,10 +16,22 @@ const WRONG_FORMAT_JSON: &[u8] = br#"{"format":"saya.query","version":1}"#;
 const MISSING_VERSION_JSON: &[u8] = br#"{"format":"saya.context","exported_unix_ms":0,"items":[]}"#;
 const MISSING_ITEMS_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0}"#;
 const MISSING_FORMAT_JSON: &[u8] = br#"{"version":1,"exported_unix_ms":0,"items":[]}"#;
-const UNKNOWN_ITEM_FIELD_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"table_alias","alias":"o"},"note":"x"}]}"#;
-const UNKNOWN_OBJECT_FIELD_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table","profile":"p-x"},"payload":{"kind":"table_alias","alias":"o"}}]}"#;
+const UNKNOWN_ITEM_FIELD_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"claim","claim":{"kind":"table_alias","alias":"o"}},"note":"x"}]}"#;
+const UNKNOWN_OBJECT_FIELD_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table","profile":"p-x"},"payload":{"kind":"claim","claim":{"kind":"table_alias","alias":"o"}}}]}"#;
 const BAD_PAYLOAD_KIND_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"nonsense","text":"x"}}]}"#;
-const CONTROL_CHAR_TEXT_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"table_description","text":"bad\u0007char"}}]}"#;
+const BAD_CLAIM_KIND_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"claim","claim":{"kind":"nonsense"}}}]}"#;
+const CONTROL_CHAR_TEXT_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"claim","claim":{"kind":"table_description","text":"bad\u0007char"}}}]}"#;
+const CLAIM_WRAPPED_JOIN_RULE_JSON: &[u8] = br#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"claim","claim":{"kind":"join_rule","target":"analytics.core.customers","local_columns":["customer_id"],"target_columns":["id"],"condition":"orders.customer_id = customers.id"}}}]}"#;
+const CLAIM_WRAPPED_RELATIONSHIP_JSON: &[u8] = concat!(
+    r#"{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{"object":{"name":"orders","kind":"table"},"payload":{"kind":"claim","claim":{"kind":"relationship","target":{"profile":""#,
+    "p-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    r#"","catalog":"analytics","schema":"core","object":"customers","kind":"table"},"local_columns":["customer_id"],"target_columns":["id"],"cardinality":"many_to_one"}}}]}"#,
+)
+.as_bytes();
+
+fn profile() -> ProfileIdentity {
+    ProfileIdentity::parse(&format!("p-{}", "a".repeat(64))).unwrap()
+}
 
 fn object(name: &str) -> PortableObject {
     PortableObject {
@@ -30,10 +42,11 @@ fn object(name: &str) -> PortableObject {
     }
 }
 
-fn item(name: &str, payload: ClaimPayload) -> ContextItem {
+fn item(name: &str, payload: &ClaimPayload) -> ContextItem {
     ContextItem {
         object: object(name),
-        payload,
+        payload: PortablePayload::from_claim(payload)
+            .expect("every claim kind has a portable form"),
         origin_note: None,
     }
 }
@@ -51,27 +64,66 @@ fn validate_item(item: ContextItem) -> Result<(), ContextError> {
     document(vec![item]).validate()
 }
 
+/// Resolves a logical object to a ref in the same shape it arrived: absent
+/// parts fall back to the fixture's catalog and schema.
+fn resolve_with(profile: ProfileIdentity) -> impl Fn(&PortableObject) -> Option<DatabaseObjectRef> {
+    move |target: &PortableObject| {
+        DatabaseObjectRef::new(
+            profile.clone(),
+            target
+                .catalog
+                .clone()
+                .unwrap_or_else(|| "analytics".to_string()),
+            target.schema.clone().unwrap_or_else(|| "core".to_string()),
+            target.name.clone(),
+            target.kind,
+        )
+        .ok()
+    }
+}
+
+/// A relationship claim whose target carries a (fixture) profile identity:
+/// the portable form must strip it.
+fn relationship_item() -> ContextItem {
+    let target = DatabaseObjectRef::new(
+        profile(),
+        "analytics",
+        "core",
+        "customers",
+        DatabaseObjectKind::Table,
+    )
+    .unwrap();
+    let payload = ClaimPayload::relationship(
+        target,
+        vec!["customer_id".to_string()],
+        vec!["id".to_string()],
+        Cardinality::ManyToOne,
+    )
+    .unwrap();
+    item("orders", &payload)
+}
+
 /// One item of every payload kind the document carries.
 fn representative_document() -> ContextDocumentV1 {
     document(vec![
         item(
             "orders",
-            ClaimPayload::table_description("One row per confirmed order.").unwrap(),
+            &ClaimPayload::table_description("One row per confirmed order.").unwrap(),
         ),
         item(
             "orders",
-            ClaimPayload::table_grain("one row per order", Some("shipments split a row per line"))
+            &ClaimPayload::table_grain("one row per order", Some("shipments split a row per line"))
                 .unwrap(),
         ),
-        item("orders", ClaimPayload::table_alias("o").unwrap()),
+        item("orders", &ClaimPayload::table_alias("o").unwrap()),
         item(
             "orders",
-            ClaimPayload::table_user_note("Refunds stay outside revenue.").unwrap(),
+            &ClaimPayload::table_user_note("Refunds stay outside revenue.").unwrap(),
         ),
         item(
             "orders",
-            ClaimPayload::join_rule(
-                "customers",
+            &ClaimPayload::join_rule(
+                "analytics.core.customers",
                 vec!["customer_id".to_string()],
                 vec!["id".to_string()],
                 "orders.customer_id = customers.id",
@@ -81,7 +133,7 @@ fn representative_document() -> ContextDocumentV1 {
         ),
         item(
             "orders",
-            ClaimPayload::metric_definition(
+            &ClaimPayload::metric_definition(
                 "net_revenue",
                 "sum(amount) where status = 'paid'",
                 vec!["amount".to_string()],
@@ -91,16 +143,18 @@ fn representative_document() -> ContextDocumentV1 {
         ),
         item(
             "amount",
-            ClaimPayload::column_role("amount", ColumnRole::Measure, Some("tax excluded")).unwrap(),
+            &ClaimPayload::column_role("amount", ColumnRole::Measure, Some("tax excluded"))
+                .unwrap(),
         ),
         item(
             "orders",
-            ClaimPayload::default_time_column("created_at", None).unwrap(),
+            &ClaimPayload::default_time_column("created_at", None).unwrap(),
         ),
         item(
             "created_at",
-            ClaimPayload::column_description("created_at", "when the order was placed").unwrap(),
+            &ClaimPayload::column_description("created_at", "when the order was placed").unwrap(),
         ),
+        relationship_item(),
     ])
 }
 
@@ -129,7 +183,7 @@ fn optional_fields_round_trip() {
             name: "v_orders".to_string(),
             kind: DatabaseObjectKind::View,
         },
-        payload: ClaimPayload::table_alias("vo").unwrap(),
+        payload: PortablePayload::from_claim(&ClaimPayload::table_alias("vo").unwrap()).unwrap(),
         origin_note: Some("from the analytics team".to_string()),
     });
     let json = doc.to_json_pretty().expect("serializes");
@@ -178,10 +232,16 @@ fn oversize_item_is_refused() {
     // A payload's own validator caps its text at MAX_TEXT_CHARS, so an item
     // over the 4 KiB gate can only be assembled in code, inside this crate —
     // and validate must still catch it, however it arrived.
-    let payload = ClaimPayload::TableDescription {
-        text: "x".repeat(MAX_ITEM_BYTES),
+    let payload = PortablePayload::Claim {
+        claim: ClaimPayload::TableDescription {
+            text: "x".repeat(MAX_ITEM_BYTES),
+        },
     };
-    let doc = document(vec![item("orders", payload)]);
+    let doc = document(vec![ContextItem {
+        object: object("orders"),
+        payload,
+        origin_note: None,
+    }]);
     assert!(matches!(
         doc.validate(),
         Err(ContextError::ItemOversize(size)) if size > MAX_ITEM_BYTES
@@ -198,7 +258,7 @@ fn too_many_items_are_refused() {
         .map(|i| {
             item(
                 &format!("t{i}"),
-                ClaimPayload::table_alias(format!("a{i}")).unwrap(),
+                &ClaimPayload::table_alias(format!("a{i}")).unwrap(),
             )
         })
         .collect();
@@ -210,7 +270,7 @@ fn too_many_items_are_refused() {
         .map(|i| {
             item(
                 &format!("t{i}"),
-                ClaimPayload::table_alias(format!("a{i}")).unwrap(),
+                &ClaimPayload::table_alias(format!("a{i}")).unwrap(),
             )
         })
         .collect();
@@ -278,7 +338,7 @@ fn unknown_fields_are_refused_at_every_level() {
 fn payloads_that_fail_their_validator_are_rejected() {
     let long = "x".repeat(MAX_TEXT_CHARS + 1);
     let oversize_text = format!(
-        r#"{{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{{"object":{{"name":"orders","kind":"table"}},"payload":{{"kind":"table_description","text":"{long}"}}}}]}}"#
+        r#"{{"format":"saya.context","version":1,"exported_unix_ms":0,"items":[{{"object":{{"name":"orders","kind":"table"}},"payload":{{"kind":"claim","claim":{{"kind":"table_description","text":"{long}"}}}}}}]}}"#
     );
     assert_eq!(
         ContextDocumentV1::from_json_bytes(oversize_text.as_bytes()),
@@ -288,40 +348,287 @@ fn payloads_that_fail_their_validator_are_rejected() {
         ContextDocumentV1::from_json_bytes(CONTROL_CHAR_TEXT_JSON),
         Err(ContextError::Malformed)
     );
-    assert_eq!(
-        ContextDocumentV1::from_json_bytes(BAD_PAYLOAD_KIND_JSON),
-        Err(ContextError::Malformed)
-    );
+    for json in [BAD_PAYLOAD_KIND_JSON, BAD_CLAIM_KIND_JSON] {
+        assert_eq!(
+            ContextDocumentV1::from_json_bytes(json),
+            Err(ContextError::Malformed),
+            "{json:?} must be refused"
+        );
+    }
 }
 
 #[test]
-fn relationship_payloads_are_refused() {
-    let profile = ProfileIdentity::parse(&format!("p-{}", "a".repeat(64))).unwrap();
-    let target = DatabaseObjectRef::new(
-        profile,
-        "analytics",
-        "core",
-        "customers",
-        DatabaseObjectKind::Table,
-    )
-    .unwrap();
-    let payload = ClaimPayload::relationship(
-        target,
+fn relationship_items_travel_without_identity() {
+    let doc = document(vec![relationship_item()]);
+    doc.validate().expect("a portable relationship validates");
+    let json = serde_json::to_string(&doc).expect("serializes");
+    for forbidden in ["\"profile\"", "p-"] {
+        assert!(
+            !json.contains(forbidden),
+            "a portable relationship must not contain {forbidden:?}"
+        );
+    }
+    let reparsed =
+        ContextDocumentV1::from_json_bytes(json.as_bytes()).expect("portable output reparses");
+    assert_eq!(reparsed, doc);
+
+    // The rebuilt claim is the original, resolved against the profile.
+    let rebuilt = reparsed.items[0]
+        .payload
+        .clone()
+        .into_claim(resolve_with(profile()))
+        .expect("the target resolves");
+    let expected = ClaimPayload::relationship(
+        DatabaseObjectRef::new(
+            profile(),
+            "analytics",
+            "core",
+            "customers",
+            DatabaseObjectKind::Table,
+        )
+        .unwrap(),
         vec!["customer_id".to_string()],
         vec!["id".to_string()],
         Cardinality::ManyToOne,
     )
     .unwrap();
-    let doc = document(vec![item("orders", payload)]);
-    assert_eq!(doc.validate(), Err(ContextError::PayloadNotPortable));
+    assert_eq!(rebuilt, expected);
+}
+
+#[test]
+fn join_rule_items_requalify_their_target() {
+    let payload = ClaimPayload::join_rule(
+        "analytics.core.customers",
+        vec!["customer_id".to_string()],
+        vec!["id".to_string()],
+        "orders.customer_id = customers.id",
+        None,
+    )
+    .unwrap();
+    let portable = PortablePayload::from_claim(&payload).unwrap();
+    match &portable {
+        PortablePayload::JoinRule { target, .. } => {
+            assert_eq!(target.catalog.as_deref(), Some("analytics"));
+            assert_eq!(target.schema.as_deref(), Some("core"));
+            assert_eq!(target.name, "customers");
+        }
+        _ => panic!("a join rule becomes the portable variant"),
+    }
+    let doc = document(vec![ContextItem {
+        object: object("orders"),
+        payload: portable,
+        origin_note: None,
+    }]);
     let json = serde_json::to_string(&doc).expect("serializes");
     assert!(
-        json.contains("\"profile\""),
-        "a relationship serializes its target's profile identity, which is why it is refused"
+        !json.contains("p-"),
+        "a portable join rule carries no identity"
+    );
+    let reparsed =
+        ContextDocumentV1::from_json_bytes(json.as_bytes()).expect("portable output reparses");
+    let rebuilt = reparsed.items[0]
+        .payload
+        .clone()
+        .into_claim(resolve_with(profile()))
+        .expect("the target resolves");
+    assert_eq!(
+        rebuilt, payload,
+        "the resolved ref's qualified name restores the original target"
+    );
+}
+
+#[test]
+fn join_rule_targets_without_three_parts_travel_as_a_bare_name() {
+    let payload = ClaimPayload::join_rule(
+        "public.customers",
+        vec!["customer_id".to_string()],
+        vec!["id".to_string()],
+        "orders.customer_id = customers.id",
+        None,
+    )
+    .unwrap();
+    let portable = PortablePayload::from_claim(&payload).unwrap();
+    match &portable {
+        PortablePayload::JoinRule { target, .. } => {
+            assert_eq!(target.catalog, None);
+            assert_eq!(target.schema, None);
+            assert_eq!(target.name, "public.customers");
+        }
+        _ => panic!("a join rule becomes the portable variant"),
+    }
+    // The resolver remaps the bare name: the rebuilt target is the resolved
+    // ref's qualified name in the destination's naming, never the source's.
+    let rebuilt = portable.into_claim(resolve_with(profile())).unwrap();
+    match rebuilt {
+        ClaimPayload::JoinRule { target, .. } => {
+            assert_eq!(target, "analytics.core.public.customers");
+        }
+        _ => panic!("the join rule rebuilds"),
+    }
+}
+
+#[test]
+fn claim_wrapper_refuses_target_bearing_payloads() {
+    let relationship = ClaimPayload::relationship(
+        DatabaseObjectRef::new(
+            profile(),
+            "analytics",
+            "core",
+            "customers",
+            DatabaseObjectKind::Table,
+        )
+        .unwrap(),
+        vec!["customer_id".to_string()],
+        vec!["id".to_string()],
+        Cardinality::ManyToOne,
+    )
+    .unwrap();
+    let wrapped = PortablePayload::Claim {
+        claim: relationship.clone(),
+    };
+    let doc = document(vec![ContextItem {
+        object: object("orders"),
+        payload: wrapped,
+        origin_note: None,
+    }]);
+    assert_eq!(doc.validate(), Err(ContextError::PayloadNotPortable));
+    assert!(matches!(
+        doc.to_json_pretty(),
+        Err(ContextError::PayloadNotPortable)
+    ));
+    assert_eq!(
+        ContextDocumentV1::from_json_bytes(CLAIM_WRAPPED_RELATIONSHIP_JSON),
+        Err(ContextError::PayloadNotPortable)
     );
     assert_eq!(
-        ContextDocumentV1::from_json_bytes(json.as_bytes()),
+        ContextDocumentV1::from_json_bytes(CLAIM_WRAPPED_JOIN_RULE_JSON),
         Err(ContextError::PayloadNotPortable)
+    );
+    // into_claim refuses too, and never consults a resolver for it.
+    let rebuilt = PortablePayload::Claim {
+        claim: relationship,
+    }
+    .into_claim(|_| None);
+    assert_eq!(rebuilt, Err(ContextError::PayloadNotPortable));
+}
+
+#[test]
+fn unresolved_targets_are_refused() {
+    let rebuilt = document(vec![relationship_item()]).items[0]
+        .payload
+        .clone()
+        .into_claim(|_| None);
+    assert_eq!(rebuilt, Err(ContextError::UnresolvedTarget));
+    let payload = ClaimPayload::join_rule(
+        "analytics.core.customers",
+        vec!["customer_id".to_string()],
+        vec!["id".to_string()],
+        "a = b",
+        None,
+    )
+    .unwrap();
+    let rebuilt = PortablePayload::from_claim(&payload)
+        .unwrap()
+        .into_claim(|_| None);
+    assert_eq!(rebuilt, Err(ContextError::UnresolvedTarget));
+}
+
+#[test]
+fn portable_relationship_validates_its_columns() {
+    let target = PortableObject {
+        catalog: Some("analytics".to_string()),
+        schema: Some("core".to_string()),
+        name: "customers".to_string(),
+        kind: DatabaseObjectKind::Table,
+    };
+    let payload = |local: Vec<String>, target_columns: Vec<String>| PortablePayload::Relationship {
+        target: target.clone(),
+        local_columns: local,
+        target_columns,
+        cardinality: Cardinality::ManyToOne,
+    };
+    assert_eq!(
+        payload(vec!["a".to_string()], vec![]).validate(),
+        Err(ContextError::InvalidColumns)
+    );
+    assert_eq!(
+        payload(vec![], vec![]).validate(),
+        Err(ContextError::InvalidColumns),
+        "relationship columns must be non-empty"
+    );
+    let many: Vec<String> = (0..33).map(|i| format!("c{i}")).collect();
+    assert_eq!(
+        payload(many.clone(), many).validate(),
+        Err(ContextError::InvalidColumns)
+    );
+    assert_eq!(
+        payload(vec!["a\nb".to_string()], vec!["a".to_string()]).validate(),
+        Err(ContextError::ControlCharacter)
+    );
+    let pair = payload(vec!["customer_id".to_string()], vec!["id".to_string()]);
+    pair.validate().expect("a valid column pair passes");
+}
+
+#[test]
+fn portable_join_rule_validates_its_columns_and_text() {
+    let target = PortableObject {
+        catalog: None,
+        schema: None,
+        name: "customers".to_string(),
+        kind: DatabaseObjectKind::Table,
+    };
+    let rule = |condition: &str, reason: Option<&str>| PortablePayload::JoinRule {
+        target: target.clone(),
+        local_columns: vec![],
+        target_columns: vec![],
+        condition: condition.to_string(),
+        reason: reason.map(str::to_string),
+    };
+    rule("a = b", None)
+        .validate()
+        .expect("a join rule may carry no columns at all");
+    assert_eq!(
+        PortablePayload::JoinRule {
+            target: target.clone(),
+            local_columns: vec!["a".to_string()],
+            target_columns: vec![],
+            condition: "a = b".to_string(),
+            reason: None,
+        }
+        .validate(),
+        Err(ContextError::InvalidColumns),
+        "a half-empty column pair does not pair"
+    );
+    assert_eq!(rule("", None).validate(), Err(ContextError::InvalidText));
+    assert_eq!(
+        rule("a\u{7}b", None).validate(),
+        Err(ContextError::ControlCharacter)
+    );
+    assert_eq!(
+        rule(&"x".repeat(MAX_TEXT_CHARS + 1), None).validate(),
+        Err(ContextError::InvalidText)
+    );
+    rule(&"x".repeat(MAX_TEXT_CHARS), None)
+        .validate()
+        .expect("1024 characters fit");
+    assert_eq!(
+        rule("a = b", Some("r\n")).validate(),
+        Err(ContextError::ControlCharacter)
+    );
+    assert_eq!(
+        rule("a = b", Some(&"x".repeat(MAX_TEXT_CHARS + 1))).validate(),
+        Err(ContextError::InvalidText)
+    );
+    // A whitespace-only reason survives the gate; the rebuild trims it away.
+    rule("a = b", Some("   "))
+        .validate()
+        .expect("whitespace-only reason is text-shaped");
+    let rebuilt = rule("a = b", Some("   "))
+        .into_claim(resolve_with(profile()))
+        .expect("the rebuild resolves");
+    assert!(
+        matches!(rebuilt, ClaimPayload::JoinRule { reason: None, .. }),
+        "a whitespace-only reason collapses to None on rebuild"
     );
 }
 
@@ -348,7 +655,7 @@ fn serialization_leaks_no_identity_state_or_secrets() {
 
 #[test]
 fn origin_note_bounds_and_control_characters() {
-    let mut note = item("orders", ClaimPayload::table_description("ok").unwrap());
+    let mut note = item("orders", &ClaimPayload::table_description("ok").unwrap());
     note.origin_note = Some("x".repeat(MAX_ORIGIN_NOTE_BYTES));
     validate_item(note.clone()).expect("a 256-byte note fits");
     note.origin_note = Some("x".repeat(MAX_ORIGIN_NOTE_BYTES + 1));
@@ -367,8 +674,8 @@ fn origin_note_bounds_and_control_characters() {
 
 #[test]
 fn object_names_are_bounded_like_object_refs() {
-    let payload = || ClaimPayload::table_alias("o").unwrap();
-    let mut it = item("orders", payload());
+    let payload = ClaimPayload::table_alias("o").unwrap();
+    let mut it = item("orders", &payload);
 
     it.object.name = String::new();
     assert_eq!(
@@ -428,7 +735,7 @@ fn to_json_pretty_enforces_the_document_cap_on_output() {
     let payload = ClaimPayload::table_grain(description, Some(reason.as_str())).unwrap();
     let items: Vec<ContextItem> = (0..MAX_ITEMS)
         .map(|i| {
-            let mut it = item(&format!("t{i:03}"), payload.clone());
+            let mut it = item(&format!("t{i:03}"), &payload);
             it.origin_note = Some("n".repeat(MAX_ORIGIN_NOTE_BYTES));
             it
         })
@@ -440,4 +747,15 @@ fn to_json_pretty_enforces_the_document_cap_on_output() {
         doc.to_json_pretty(),
         Err(ContextError::Oversize(size)) if size > MAX_DOCUMENT_BYTES
     ));
+}
+
+#[test]
+fn probe3() {
+    match serde_json::from_slice::<ContextDocumentV1>(CLAIM_WRAPPED_RELATIONSHIP_JSON) {
+        Ok(d) => {
+            eprintln!("PARSE_OK items={}", d.items.len());
+            eprintln!("VALIDATE: {:?}", d.validate());
+        }
+        Err(e) => eprintln!("PARSE_ERR: {e}"),
+    }
 }
