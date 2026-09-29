@@ -77,11 +77,27 @@ pub(super) fn cleanup(
     if target != "all" && chosen.len() > 1 {
         let matches = chosen
             .iter()
-            .map(|(_, meta)| meta.sha256.as_str())
+            .map(|(dir, meta)| {
+                format!(
+                    "{} ({})",
+                    dir.file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("?"),
+                    meta.file_name
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
+        let same_content = chosen
+            .iter()
+            .all(|(_, meta)| meta.sha256 == chosen[0].1.sha256);
+        let advice = if same_content {
+            "these share one content hash and differ only in parse options; `all` removes them all"
+        } else {
+            "use a longer prefix"
+        };
         return Err(format!(
-            "the prefix {target:?} matches {} staged sources ({matches}); use a longer prefix",
+            "the prefix {target:?} matches {} staged sources: {matches}; {advice}",
             chosen.len()
         )
         .into());
