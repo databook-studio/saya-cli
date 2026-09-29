@@ -105,32 +105,55 @@ fn prepare(
     dialect: &dyn Dialect,
     policy: &BackendPolicy,
 ) -> Result<String, ConnectionError> {
-    if max_rows == 0 {
-        return Err(rejected(Rejection::RowCap));
-    }
+    Ok(parse_guarded(sql, max_rows, dialect, policy)?.to_string())
+}
+
+/// Parses one statement under `dialect` — the shared front half of every
+/// safety entry.
+pub(super) fn parse_single_statement(
+    sql: &str,
+    dialect: &dyn Dialect,
+) -> Result<Statement, ConnectionError> {
     let mut statements = Parser::parse_sql(dialect, sql).map_err(|_| rejected(Rejection::Parse))?;
     if statements.len() != 1 {
         return Err(rejected(Rejection::MultipleStatements));
     }
+    Ok(statements.remove(0))
+}
+
+/// The shared read-only pipeline: one statement, the guard visitor, the
+/// allow-list, the FORMAT check, and the row cap. `prepare` and the
+/// parameter-aware preparation in [`super::params`] both run this, so
+/// parameters can never fork the policy.
+pub(super) fn parse_guarded(
+    sql: &str,
+    max_rows: usize,
+    dialect: &dyn Dialect,
+    policy: &BackendPolicy,
+) -> Result<Statement, ConnectionError> {
+    if max_rows == 0 {
+        return Err(rejected(Rejection::RowCap));
+    }
+    let mut statement = parse_single_statement(sql, dialect)?;
     let mut guard = Guard {
         policy,
         denied: None,
     };
-    if statements.visit(&mut guard).is_break() {
+    if statement.visit(&mut guard).is_break() {
         return Err(rejected(
             guard
                 .denied
                 .unwrap_or(Rejection::Denied("this construct".to_string())),
         ));
     }
-    allowed(&statements[0]).map_err(rejected)?;
-    if let Some(query) = statement_query(&mut statements[0]) {
+    allowed(&statement).map_err(rejected)?;
+    if let Some(query) = statement_query(&mut statement) {
         if policy.deny_format_clause && query.format_clause.is_some() {
             return Err(rejected(Rejection::FormatClause));
         }
         cap(query, max_rows);
     }
-    Ok(statements.remove(0).to_string())
+    Ok(statement)
 }
 
 /// The query a statement executes, for row-cap injection. `allowed()` has
