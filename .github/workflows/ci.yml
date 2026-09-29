@@ -33,6 +33,15 @@ jobs:
             scripts/check-internal-paths.sh HEAD
           fi
 
+  # Pure file inspection: no network, no secrets, no compile. Runs on every PR
+  # so the release-workflow contract cannot drift between releases.
+  release-workflow:
+    name: Release workflow contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: bash scripts/check-release-workflow.sh
+
   msrv:
     name: Rust 1.89 MSRV
     runs-on: ubuntu-latest
