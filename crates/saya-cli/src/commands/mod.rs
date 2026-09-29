@@ -112,6 +112,10 @@ pub async fn run(
         // the guided flow runs without a resolved runtime and refuses before
         // reading stdin when there is no terminal.
         Command::Setup => unreachable!("handled in dispatch"),
+        // MCP serve is likewise handled in app::dispatch before the runtime
+        // loads: the server runs its own stdio loop with its own policy, and
+        // the state store is not part of its surface.
+        Command::Mcp { .. } => unreachable!("handled in dispatch"),
     }
 }
 
