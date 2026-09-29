@@ -531,6 +531,30 @@ pub enum InvestigationCommand {
         #[arg(long, value_name = "PROFILE")]
         connection: Option<String>,
     },
+    /// Edit a saved investigation as a new revision: the fields you pass
+    /// replace the stored ones and everything else is kept — the id,
+    /// dialect, and connection alias never change. The replacement SQL goes
+    /// through the same read-only gate saving uses, and the edit leaves the
+    /// local review binding on the old revision, so the next run needs
+    /// `--revalidate`. At least one field is required.
+    Edit {
+        /// The id of the investigation to edit (`investigation list` prints
+        /// the ids).
+        id: String,
+        /// A new name for the investigation.
+        #[arg(long)]
+        name: Option<String>,
+        /// A new description, replacing the stored one.
+        #[arg(long)]
+        description: Option<String>,
+        /// The replacement SQL, stored exactly and verbatim. Omit it to read
+        /// the statement from `--file`.
+        #[arg(long)]
+        sql: Option<String>,
+        /// Read the replacement SQL from this file instead of `--sql`.
+        #[arg(long = "file", value_name = "PATH")]
+        file: Option<std::path::PathBuf>,
+    },
     /// List saved investigations, one line each, at most 50 per page.
     List {
         /// Maximum entries to list, 1-50 (default 50).
