@@ -291,6 +291,22 @@ impl TestServer {
             init["result"]["protocolVersion"], PROTOCOL_VERSION,
             "the requested protocol revision is echoed"
         );
+        assert_eq!(
+            init["result"]["serverInfo"]["name"],
+            "saya",
+            "initialize names the server: {}",
+            serde_json::to_string(&init).unwrap()
+        );
+        assert_eq!(
+            init["result"]["serverInfo"]["version"],
+            env!("CARGO_PKG_VERSION"),
+            "initialize reports the crate version"
+        );
+        assert!(
+            init["result"]["capabilities"]["tools"].is_object(),
+            "initialize advertises the tools capability: {}",
+            serde_json::to_string(&init).unwrap()
+        );
         self.send(initialized_notification());
     }
 
@@ -399,6 +415,19 @@ fn mcp_stdout_contains_only_protocol_frames() {
         );
         assert!(tool["inputSchema"].is_object(), "every tool has a schema");
     }
+    let replay_tool = list
+        .iter()
+        .find(|tool| tool["name"] == "investigation_run")
+        .expect("the replay tool is advertised");
+    assert_eq!(
+        replay_tool["inputSchema"]["properties"]["params"]["type"], "object",
+        "the replay tool advertises its params map: {replay_tool}"
+    );
+    assert_eq!(
+        replay_tool["inputSchema"]["properties"]["params"]["additionalProperties"]["type"],
+        "string",
+        "params values are strings, parsed by the typed parser: {replay_tool}"
+    );
 
     // list_profiles → names and dialects only.
     let profiles = server.call(3, "list_profiles", "{}");
@@ -434,7 +463,14 @@ fn mcp_stdout_contains_only_protocol_frames() {
     assert_eq!(payload["columns"], serde_json::json!(["id", "label"]));
     assert_eq!(payload["row_count"], 2);
     assert_eq!(payload["truncated"], false);
-    assert_eq!(payload["source"], "mcp");
+    assert!(
+        payload["source"].is_null(),
+        "the source is named by the typed evidence, not an ad-hoc marker: {payload}"
+    );
+    assert_eq!(
+        payload["evidence"]["source"]["kind"], "mcp",
+        "the query evidence names this server as its source: {payload}"
+    );
     assert!(
         payload["evidence"]["execution_id"].is_string(),
         "the result carries execution evidence: {payload}"
@@ -833,6 +869,132 @@ fn mcp_investigation_run_happy_and_stale() {
     // --revalidate.
     let (code, out, err) = fixture.cli(&["investigation", "run", &id]);
     assert_ne!(code, 0, "MCP must not have revalidated: {out}{err}");
+
+    server.close_and_expect_exit(0);
+}
+
+/// `investigation_run` binds declared parameters: `params` maps names to
+/// string values, parsed by the same typed parser the CLI uses; a missing
+/// required parameter is an isError listing the names and types, and no
+/// error ever echoes a supplied value.
+#[test]
+fn mcp_investigation_run_binds_parameters() {
+    const SENTINEL: &str = "HVNS3NT1NEL42";
+    let fixture = crate_fixture("replay-params");
+    fixture.seed_events();
+    let mut server = TestServer::spawn(
+        &fixture,
+        &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
+    );
+
+    // Save through the CLI with a required integer parameter.
+    let (code, out, err) = fixture.cli(&[
+        "investigation",
+        "save",
+        "--name",
+        "events up to",
+        "--sql",
+        "SELECT id, label FROM events WHERE id <= :max_id ORDER BY id",
+        "--param-spec",
+        "max_id:integer:required",
+        "--connection",
+        "local",
+    ]);
+    assert_eq!(code, 0, "save failed: {out}{err}");
+    let id = out
+        .lines()
+        .next()
+        .expect("the id is the first line")
+        .trim()
+        .to_string();
+
+    server.handshake();
+
+    // Happy path: params bind as typed values and the result is filtered;
+    // the replay keeps its saved-investigation evidence source and records
+    // the bound parameters' names.
+    let run = server.call(
+        2,
+        "investigation_run",
+        &format!(r#"{{"id":"{id}","profile":"local","params":{{"max_id":"1"}}}}"#),
+    );
+    assert_eq!(
+        run["result"]["isError"],
+        false,
+        "{}",
+        serde_json::to_string(&run).unwrap()
+    );
+    let payload = &run["result"]["structuredContent"];
+    assert_eq!(
+        payload["result"]["rows"],
+        serde_json::json!([[1, "first"]]),
+        "the bound parameter filtered the replay: {}",
+        serde_json::to_string(payload).unwrap()
+    );
+    assert_eq!(payload["evidence"]["source"]["kind"], "saved_investigation");
+    assert_eq!(
+        payload["evidence"]["param_names"],
+        serde_json::json!(["max_id"])
+    );
+
+    // Missing required parameter: isError with the names and types.
+    let text = server.call_error_text(
+        3,
+        "investigation_run",
+        &format!(r#"{{"id":"{id}","profile":"local"}}"#),
+    );
+    assert!(
+        text.contains("missing required parameter(s)")
+            && text.contains("max_id")
+            && text.contains("integer"),
+        "the refusal lists the required names with types: {text}"
+    );
+
+    // A malformed value is the typed parser's refusal, and the value itself
+    // is never echoed — not in this refusal, and not for an unknown name.
+    let text = server.call_error_text(
+        4,
+        "investigation_run",
+        &format!(r#"{{"id":"{id}","profile":"local","params":{{"max_id":"{SENTINEL}"}}}}"#),
+    );
+    assert!(
+        text.contains("max_id") && text.contains("not a valid integer"),
+        "the refusal is the typed parser's: {text}"
+    );
+    assert!(
+        !text.contains(SENTINEL),
+        "the value is never echoed: {text}"
+    );
+
+    let text = server.call_error_text(
+        5,
+        "investigation_run",
+        &format!(r#"{{"id":"{id}","profile":"local","params":{{"nope":"{SENTINEL}"}}}}"#),
+    );
+    assert!(
+        text.contains("no parameter named"),
+        "the refusal names the undeclared parameter: {text}"
+    );
+    assert!(
+        !text.contains(SENTINEL),
+        "the value is never echoed: {text}"
+    );
+
+    // A non-string value in the params map is a JSON-RPC parameter error,
+    // and the server keeps serving.
+    server.send(&format!(
+        r#"{{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{{"name":"investigation_run","arguments":{{"id":"{id}","profile":"local","params":{{"max_id":1}}}}}}}}"#
+    ));
+    let refused = server.next_json(10);
+    assert_eq!(refused["id"], 6);
+    assert_eq!(
+        refused["error"]["code"], -32602,
+        "a non-string param value is a parameter error: {refused}"
+    );
+    server.send(r#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#);
+    let ping = server.next_json(5);
+    assert_eq!(ping["id"], 7);
+    assert!(ping["result"].is_object());
 
     server.close_and_expect_exit(0);
 }

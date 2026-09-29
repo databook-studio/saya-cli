@@ -1,5 +1,9 @@
 //! The `investigation_run` tool (task Db): saved-investigation replay over
-//! MCP through the same typed operation `saya investigation run` uses. The
+//! MCP through the same typed operation `saya investigation run` uses,
+//! including the run command's `--param` bindings (Dc-1: the client's
+//! `params` map reads as the same `name=value` strings, parsed by the same
+//! typed parser; a refusal — a missing required parameter among them — is an
+//! isError carrying the CLI's own words, and no error echoes a value). The
 //! review is never revalidated from here (invariant 2): a stale review is an
 //! isError carrying the CLI's own message. The run path renders through the
 //! process-output seam, so the call is wrapped in the capture the TUI replay
@@ -22,6 +26,7 @@ pub(crate) async fn investigation_run(
 ) -> Result<CallToolResponse, rmcp::ErrorData> {
     let id = tools::required_string(request, "id")?;
     let profile = tools::optional_string(request, "profile")?;
+    let params = tools::optional_string_map(request, "params")?;
     let command = crate::cli::InvestigationCommand::Run {
         id: id.to_owned(),
         connection: profile.map(str::to_owned),
@@ -29,6 +34,7 @@ pub(crate) async fn investigation_run(
         report: None,
         rows: None,
         overwrite: false,
+        params,
     };
     // One capture window at a time (the capture is thread-local); the run
     // renders to the capture, never to the process stdout.

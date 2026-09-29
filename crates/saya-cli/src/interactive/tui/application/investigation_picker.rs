@@ -153,6 +153,7 @@ impl App {
                 report: None,
                 rows: None,
                 overwrite: false,
+                params: Vec::new(),
             };
             if let Some(Dispatch::ReplayTask(task)) = self.dispatch_investigation_command(command) {
                 self.start_replay(task);

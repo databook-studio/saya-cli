@@ -183,3 +183,57 @@ fn the_catalog_gates_row_tools_on_data_sharing() {
     assert!(!super::catalog::is_row_returning("schema"));
     assert!(!super::catalog::is_row_returning("list_profiles"));
 }
+
+/// The replay tool's `params` argument reads as an ordered `name=value`
+/// list for the run command: absent and empty collapse to none, every value
+/// must be a string, and a non-object map is a parameter error.
+#[test]
+fn the_params_argument_reads_as_a_name_value_list() {
+    fn args(arguments: serde_json::Value) -> rmcp::model::CallToolRequestParams {
+        serde_json::from_value(
+            serde_json::json!({"name": "investigation_run", "arguments": arguments}),
+        )
+        .unwrap()
+    }
+    let none = super::tools::optional_string_map(&args(serde_json::json!({})), "params").unwrap();
+    assert!(
+        none.is_empty(),
+        "no params argument binds nothing: {none:?}"
+    );
+
+    let empty =
+        super::tools::optional_string_map(&args(serde_json::json!({"params": {}})), "params")
+            .unwrap();
+    assert!(empty.is_empty(), "an empty map binds nothing: {empty:?}");
+
+    let bound = super::tools::optional_string_map(
+        &args(serde_json::json!({"params": {"since": "2024-01-01", "label": "a=b", "count": "3"}})),
+        "params",
+    )
+    .unwrap();
+    let mut sorted = bound.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        ["count=3", "label=a=b", "since=2024-01-01"],
+        "each entry is one canonical name=value string: {bound:?}"
+    );
+
+    let not_object =
+        super::tools::optional_string_map(&args(serde_json::json!({"params": ["x"]})), "params");
+    assert!(
+        not_object.is_err() && not_object.err().unwrap().message.contains("object"),
+        "a non-object params is a parameter error"
+    );
+
+    let not_string = super::tools::optional_string_map(
+        &args(serde_json::json!({"params": {"count": 3}})),
+        "params",
+    )
+    .expect_err("a non-string value is refused");
+    assert!(
+        not_string.message.contains("count") && not_string.message.contains("string"),
+        "a non-string value is a parameter error naming the key: {}",
+        not_string.message
+    );
+}
