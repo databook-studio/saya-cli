@@ -10,6 +10,7 @@ pub(crate) mod args;
 mod assemble;
 mod availability;
 mod conflict;
+pub(crate) mod dbt;
 mod decide;
 mod knowledge_validity;
 mod name_match;
