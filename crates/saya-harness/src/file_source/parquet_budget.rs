@@ -1,12 +1,13 @@
 //! The Parquet decoded-byte budget: what one staging may decode is bounded
 //! not just by rows and columns but by accounted decoded bytes — the sum
-//! over every staged cell of its decoded size, text and blob columns by
-//! octet length, every other flat type at its fixed physical width. The
-//! accounting runs inside the staging transaction over the staged table,
-//! before any commit; exceeding the budget refuses the whole staging, and
-//! the rollback leaves no visible snapshot.
+//! over every source cell of its decoded size, text columns by bit length,
+//! blob columns by octet length, every other flat type at its fixed
+//! physical width. The accounting is a streaming aggregate straight over
+//! the source copy — it materializes nothing — and runs BEFORE the decode's
+//! CREATE TABLE: exceeding the budget refuses the whole staging with the
+//! limit named, and no partial snapshot is ever visible.
 
-use duckdb::Transaction;
+use duckdb::params;
 
 use super::{
     StageError,
@@ -17,36 +18,22 @@ use super::{
 /// The enforced decoded-byte budget for one Parquet staging.
 pub(super) const MAX_DECODED_BYTES: u64 = 64 * 1024 * 1024;
 
-/// The staged table's accounted decoded size in bytes.
-pub(super) fn decoded_cell_bytes(
+/// The source's accounted decoded size in bytes, measured by a streaming
+/// aggregate over `read_parquet(?)` — before any table is created.
+pub(super) fn source_decoded_bytes(
     stage: &Staging<'_>,
-    tx: &Transaction<'_>,
     columns: &[(String, String)],
 ) -> Result<u64, StageError> {
     check_deadline(stage.deadline)?;
     let projections: Vec<String> = columns
         .iter()
-        .map(|(name, kind)| {
-            let identifier = quote_identifier(name);
-            if has_decoded_length(kind) {
-                format!(
-                    "CAST(COALESCE(sum(octet_length(CAST({identifier} AS BLOB))), 0) AS BIGINT)"
-                )
-            } else {
-                format!(
-                    "CAST(count({identifier}) AS BIGINT) * {}",
-                    fixed_width(kind)
-                )
-            }
-        })
+        .map(|(name, kind)| cell_bytes_projection(name, kind))
         .collect();
-    let sql = format!(
-        "SELECT {} FROM out.{}",
-        projections.join(", "),
-        quote_identifier(stage.table)
-    );
-    let total: u128 = tx
-        .query_row(&sql, [], |row| {
+    let sql = format!("SELECT {} FROM read_parquet(?)", projections.join(", "));
+    let copy_path = stage.copy.to_string_lossy().into_owned();
+    let total: u128 = stage
+        .connection
+        .query_row(&sql, params![copy_path], |row| {
             let mut total: u128 = 0;
             for index in 0..columns.len() {
                 let cell: i64 = row.get(index).unwrap_or(0);
@@ -58,11 +45,24 @@ pub(super) fn decoded_cell_bytes(
     Ok(u64::try_from(total).unwrap_or(u64::MAX))
 }
 
-/// Whether a column type's cells carry their own decoded length; every
-/// other type occupies a fixed width per non-NULL cell.
-fn has_decoded_length(kind: &str) -> bool {
+/// One column's accounted-bytes projection: blob by octet length; text by
+/// bit length (8 × the UTF-8 byte count — each cell's bit length is a
+/// multiple of 8, so the integer division is exact); every other type at
+/// its fixed physical width. All forms are streaming aggregates over the
+/// scan — no cell payload is copied or materialized.
+fn cell_bytes_projection(name: &str, kind: &str) -> String {
+    let identifier = quote_identifier(name);
     let upper = kind.to_ascii_uppercase();
-    upper.starts_with("VARCHAR") || upper.starts_with("BLOB")
+    if upper.starts_with("BLOB") {
+        format!("CAST(COALESCE(sum(octet_length({identifier})), 0) AS BIGINT)")
+    } else if upper.starts_with("VARCHAR") {
+        format!("CAST(COALESCE(sum(bit_length({identifier})), 0) AS BIGINT) // 8")
+    } else {
+        format!(
+            "CAST(count({identifier}) AS BIGINT) * {}",
+            fixed_width(kind)
+        )
+    }
 }
 
 /// A flat column type's physical width in bytes, matching DuckDB's storage;

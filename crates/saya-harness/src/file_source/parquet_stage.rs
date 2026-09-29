@@ -17,15 +17,14 @@ use std::{
     io,
     path::{Path, PathBuf},
     process,
-    sync::{Arc, mpsc},
-    thread,
+    sync::atomic::AtomicUsize,
     time::{Duration, Instant},
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-use duckdb::{AccessMode, Config, Connection, InterruptHandle};
+use duckdb::{AccessMode, Config, Connection};
 
 use crate::workspace::contain::nanos;
 
@@ -77,6 +76,18 @@ pub(super) fn stage_read(
     dest_dir: &Path,
     caps: ParquetCaps,
 ) -> Result<StagedSource, StageError> {
+    stage_inner(read, dest_dir, caps, None)
+}
+
+/// The staging pipeline with the test-only create probe: an optional counter
+/// incremented immediately before the decode's CREATE TABLE, proving the
+/// budget refusal precedes materialization.
+pub(super) fn stage_inner(
+    read: read::SourceRead,
+    dest_dir: &Path,
+    caps: ParquetCaps,
+    create_probe: Option<&AtomicUsize>,
+) -> Result<StagedSource, StageError> {
     let deadline = Instant::now() + caps.timeout;
     let table = table_name(&read.stem);
     if table == RESERVED_METADATA_TABLE {
@@ -98,6 +109,7 @@ pub(super) fn stage_read(
         table: &table,
         caps,
         deadline,
+        create_probe,
     };
     let staged = parquet_decode::decode_and_write(&staging)?;
     drop(connection);
@@ -142,39 +154,6 @@ fn staging_config() -> Result<Config, StageError> {
         .and_then(|item| item.with("threads", "2"))
         .and_then(|item| item.with("lock_configuration", "true"))
         .map_err(|_| StageError::Database)
-}
-
-/// Interrupts a statement still running at the deadline, from another thread.
-/// Dropping cancels and joins the thread, so the interrupt handle never
-/// outlives the connection — on every path, including panics.
-pub(super) struct Watchdog {
-    cancel: mpsc::Sender<()>,
-    handle: Option<thread::JoinHandle<()>>,
-}
-
-impl Watchdog {
-    pub(super) fn arm(interrupt: Arc<InterruptHandle>, deadline: Instant) -> Self {
-        let (cancel, gate) = mpsc::channel::<()>();
-        let handle = thread::spawn(move || {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if gate.recv_timeout(remaining).is_err() {
-                interrupt.interrupt();
-            }
-        });
-        Self {
-            cancel,
-            handle: Some(handle),
-        }
-    }
-}
-
-impl Drop for Watchdog {
-    fn drop(&mut self) {
-        let _ = self.cancel.send(());
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
 }
 
 /// Removes every temp artifact (the private Parquet copy, the destination

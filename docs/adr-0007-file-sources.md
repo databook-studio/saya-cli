@@ -153,19 +153,21 @@ total comes from `parquet_file_metadata(?)` (at most 500,000 rows) and the
 column set from a `DESCRIBE SELECT * FROM read_parquet(?)` footer scan (at
 most 512 columns) — which also refuses nested types explicitly (`STRUCT`,
 `MAP`, `UNION`, list) — only flat columns can be staged. The source's 32 MiB
-cap was already enforced at the contained read. Then `CREATE TABLE … AS
-SELECT * FROM read_parquet(?) LIMIT <cap+1>` runs inside a transaction on
-the attached destination; a count check catches overflow, and a watchdog
-thread interrupts any statement still running at the **30-second** wall.
-The decode also carries an enforced **64 MiB accounted decoded-byte
-budget**: once the rows have landed, the sum of decoded cell bytes — text
-and blob columns by octet length, every other flat type at its fixed
-physical width — is measured over the staged table inside the same
-transaction, and exceeding the budget rolls the staging back with a
-refusal naming the limit. A timeout, cancel, or failure rolls back and
-deletes the temp database — no partial table exists. The published file is
-checkpointed, detached, chmodded 0600, and renamed into place; on success
-only `source.duckdb` remains.
+cap was already enforced at the contained read. Before anything is
+materialized, the decode also enforces a **64 MiB accounted decoded-byte
+budget**: a streaming aggregate straight over the source copy — text
+columns by bit length, blob columns by octet length, every other flat type
+at its fixed physical width — accounts the decoded cell bytes without
+materializing any of them, and exceeding the budget refuses the staging
+with the limit named, before the `CREATE TABLE` runs. Then `CREATE TABLE …
+AS SELECT * FROM read_parquet(?) LIMIT <cap+1>` runs inside a transaction
+on the attached destination; a count check catches overflow, and a
+watchdog thread interrupts any statement still running at the
+**30-second** wall — a bomb that is merely slow to scan hits it too. A
+timeout, cancel, or failure rolls back and deletes the temp database — no
+partial table exists. The published file is checkpointed, detached,
+chmodded 0600, and renamed into place; on success only `source.duckdb`
+remains.
 
 ### 6. Snapshot lifecycle: content-addressed, saya-owned only
 

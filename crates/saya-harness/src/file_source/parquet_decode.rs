@@ -4,17 +4,55 @@
 //! statement is fixed; the file path arrives as a bound parameter and the
 //! only literal interpolations are saya-generated identifiers and caps.
 
-use std::{path::Path, time::Instant};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicUsize, mpsc},
+    thread,
+    time::Instant,
+};
 
-use duckdb::{Connection, Transaction, params};
+use duckdb::{Connection, InterruptHandle, Transaction, params};
 
 use super::{
     ParquetCaps, RESERVED_METADATA_TABLE, STAGED_DB_FILE, SourceFormat, StageError, StagedSource,
     parquet_budget,
     parquet_preview::{build_preview, describe_columns},
-    parquet_stage::{Watchdog, check_deadline, deadline_or_database, quote_identifier, sql_string},
+    parquet_stage::{check_deadline, deadline_or_database, quote_identifier, sql_string},
     read,
 };
+
+/// Interrupts a statement still running at the deadline, from another thread.
+/// Dropping cancels and joins the thread, so the interrupt handle never
+/// outlives the connection — on every path, including panics.
+pub(super) struct Watchdog {
+    cancel: mpsc::Sender<()>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl Watchdog {
+    pub(super) fn arm(interrupt: Arc<InterruptHandle>, deadline: Instant) -> Self {
+        let (cancel, gate) = mpsc::channel::<()>();
+        let handle = thread::spawn(move || {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if gate.recv_timeout(remaining).is_err() {
+                interrupt.interrupt();
+            }
+        });
+        Self {
+            cancel,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
 
 /// The fixed inputs of one staging run, threaded through the pipeline as a
 /// unit: the locked staging connection, the destination, the private copy,
@@ -28,6 +66,9 @@ pub(super) struct Staging<'a> {
     pub table: &'a str,
     pub caps: ParquetCaps,
     pub deadline: Instant,
+    /// Test-only counter incremented immediately before the decode's
+    /// CREATE TABLE — proves the budget refusal precedes materialization.
+    pub create_probe: Option<&'a AtomicUsize>,
 }
 
 /// Runs the staging decode: metadata refusals first, then the transactional
@@ -61,6 +102,13 @@ pub(super) fn decode_and_write(stage: &Staging<'_>) -> Result<StagedSource, Stag
         stage.caps.max_columns,
         stage.deadline,
     )?;
+    let decoded_bytes = parquet_budget::source_decoded_bytes(stage, &columns)?;
+    if decoded_bytes > stage.caps.max_decoded_bytes {
+        return Err(StageError::ParquetTooManyDecodedBytes {
+            bytes: decoded_bytes,
+            max: stage.caps.max_decoded_bytes,
+        });
+    }
     stage
         .connection
         .execute_batch(&format!(
@@ -103,6 +151,9 @@ fn write_table(
     copy_path: &str,
     columns: &[(String, String)],
 ) -> Result<u64, StageError> {
+    if let Some(probe) = stage.create_probe {
+        probe.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     tx.execute(
         &format!(
             "CREATE TABLE out.{} AS SELECT * FROM read_parquet(?) LIMIT {}",
@@ -123,13 +174,6 @@ fn write_table(
         return Err(StageError::ParquetTooManyRows {
             rows: staged_rows,
             max: stage.caps.max_rows,
-        });
-    }
-    let decoded_bytes = parquet_budget::decoded_cell_bytes(stage, tx, columns)?;
-    if decoded_bytes > stage.caps.max_decoded_bytes {
-        return Err(StageError::ParquetTooManyDecodedBytes {
-            bytes: decoded_bytes,
-            max: stage.caps.max_decoded_bytes,
         });
     }
     write_metadata(tx, stage.read, columns.len(), staged_rows)?;
