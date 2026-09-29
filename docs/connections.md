@@ -107,7 +107,10 @@ read_only = true
 Snowflake profiles require `account`, `user`, and `auth_type`. Account values
 are identifiers such as `xy12345` or `org-account.us-east-1.aws`, not URLs.
 The auth-specific secret is required for `keypair` and `userpass`; browser SSO
-requires no secret:
+requires no secret. `saya setup` offers all three paths — keypair (a private
+key file path plus an optional passphrase env name, recommended), browser
+SSO, or a password taken only as an environment-variable name — and its
+browser-SSO probe opens the browser only after explicit consent:
 
 ```toml
 [profiles.snowflake_keypair]
@@ -198,7 +201,9 @@ narrow the database/schema, instead of returning a partial schema.
 
 ### ClickHouse profiles
 
-ClickHouse profiles are configured by hand (not in guided setup). `host` is
+ClickHouse profiles can be configured by `saya setup` (it asks for host,
+TLS, port, database, user, and a password as an environment-variable name)
+or by hand in `connections.toml`. `host` is
 required; `port` defaults to 8123 over plain HTTP or 8443 over TLS, and
 `secure = true` selects TLS:
 
@@ -219,7 +224,10 @@ every other engine; grant ClickHouse a read-only user.
 
 ### BigQuery profiles
 
-BigQuery profiles are configured by hand (not in guided setup). `project`
+BigQuery profiles can be configured by `saya setup` (it asks for the GCP
+project, optional dataset/location/max-bytes-billed, and the service-account
+JSON key as a **file path** — never its value) or by hand in
+`connections.toml`. `project`
 (the GCP project whose datasets the connector reads) and
 `service_account_key` — a secret reference to the service-account JSON,
 never a literal — are required:
@@ -249,7 +257,7 @@ optional `connection` argument to its schema and query tools; the primary is the
 default. Fully offline agent use is unavailable even when the database connector
 is local.
 
-All five live engines use the same command surface. `query` permits one parsed
+All seven engines use the same command surface. `query` permits one parsed
 read-only statement, caps returned rows, and reports truncation. Read-only is
 enforced in two layers: the AST safety parser, and — governed by `[run].read_only`
 / `SAYA_READ_ONLY` — the database session itself (PostgreSQL

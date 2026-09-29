@@ -1,9 +1,11 @@
 # Querying databases with SAYA CLI
 
-SAYA CLI connects to PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake and runs bounded,
+SAYA CLI connects to PostgreSQL, MySQL, SQLite, DuckDB, Snowflake,
+ClickHouse, and BigQuery and runs bounded,
 read-only queries. Each command has one primary execution profile, with support
 for connecting additional read-only databases using `--include-profile` or
-interactive slash commands.
+interactive slash commands. A local CSV or Parquet file works the same way
+via `saya open` (see §7).
 ## 1. Initialise a project
 
 ```bash
@@ -193,7 +195,9 @@ It names the source (`direct sql` for a `/sql` result, `agent` for a query
 the AI agent ran, or `saved investigation` after
 `/investigation run`), the connection profile the query ran on, how many
 rows returned (and whether the row cap truncated them), a short execution
-id, and the scope. The statement itself is identified by its SHA-256 hash in
+id, and the scope. A parameterised replay's line lists the bound parameters'
+**names** (`params: region, min_date`) — never a value. The statement itself
+is identified by its SHA-256 hash in
 reports — the hash covers the SQL saya **submitted** to the connector, not
 any internal rewrite the safety layer may perform.
 
@@ -242,6 +246,29 @@ captured result — exact SQL and provenance by default, rows only with
 model-limited capture says so in its provenance. It never
 queries a database and never opens a browser or uploads anything. See
 [commands](commands.md) for the full reference.
+
+## 7. Ask about a local file
+
+A CSV or Parquet file is a session of its own:
+
+```bash
+saya open sales.csv                    # stage, preview, open a read-only session
+saya open events.parquet               # Parquet keeps its native column types
+saya open sales.csv --delimiter ';' --no-header --typed
+saya open --list                       # staged sources, newest first
+saya open --cleanup all                # or a SHA-256 prefix naming exactly one
+```
+
+The file is read once (≤ 32 MiB) and staged into a private DuckDB snapshot
+keyed by its content hash; the preview shows columns, per-column null
+counts, and inferred types (strict: leading zeros stay text), and the TUI
+opens over the snapshot with the same bounded, read-only query, evidence,
+export, and investigation machinery as any database. The session can see
+only the staged snapshot — every file-reading SQL function is refused.
+Saved investigations run against file profiles like any other: a replay
+binds its declared parameters with `--param name=value` (engines bind
+natively — see [commands](commands.md#parameters-for-saved-investigations);
+Snowflake keypair-only, ClickHouse not at all).
 
 ## Safety and troubleshooting
 

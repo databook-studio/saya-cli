@@ -29,7 +29,9 @@ questions once a schema is cached.
 confirm.** The flow drafts a provider and a database profile, shows the exact
 TOML it will write, probes the database (and, only with your consent, the
 provider — one "ping" request, no schema, no rows), then writes on confirm.
-Probes run one at a time, 15 seconds each. The API key is requested only as
+Probes run one at a time, 15 seconds each — Snowflake's browser-SSO probe
+gets the browser flow's 120-second window and opens the browser only after
+explicit consent. The API key is requested only as
 an environment-variable *name*, never its value; setup writes only user-level
 config and never resolved secrets. An existing `connections.toml` is appended
 to with the existing bytes kept as an exact prefix; an existing `config.toml`
@@ -39,17 +41,19 @@ reload restores the originals. An interruption mid-commit leaves a recovery
 marker: later startups warn on stderr, and the next `saya setup` offers
 restore or finish. A restore step that fails says which file it could not
 restore, keeps the recovery marker, and exits `2` — setup never reports
-success it did not achieve. Guided setup covers SQLite, DuckDB, PostgreSQL, and
-MySQL; Snowflake, ClickHouse, and BigQuery are configured in
-`connections.toml` by hand (see [Snowflake](docs/connections.md#snowflake-profiles),
+success it did not achieve. Guided setup covers all seven engines —
+SQLite, DuckDB, PostgreSQL, MySQL, Snowflake (keypair, browser SSO, or
+password-env), ClickHouse, and BigQuery (see
+[Snowflake](docs/connections.md#snowflake-profiles),
 [ClickHouse](docs/connections.md#clickhouse-profiles), and
-[BigQuery](docs/connections.md#bigquery-profiles) in the connections guide).
+[BigQuery](docs/connections.md#bigquery-profiles) in the connections guide
+for the hand-written profiles).
 Without a terminal or with `--non-interactive`
 it prompts for nothing, writes nothing, and exits `2` with guidance to
 `saya config init` or `saya demo`.
 
 **`saya investigation` — save a bounded read-only query as a portable JSON
-document, then replay or share it.** `save|list|show|run|export|import|delete`
+document, then replay or share it.** `save|list|show|edit|run|export|import|delete`
 manage one JSON file per investigation under the data directory's
 `investigations/` (`SAYA_INVESTIGATIONS_DIR` overrides; `0600` files in a
 `0700` directory, 500-document cap): the exact SQL plus its name, optional
@@ -141,8 +145,115 @@ result: the snapshot says the rows were not captured and offers
 agent queries (`bounded_sql_query_all`) are
 not captured.
 
+**Typed parameters for saved investigations.** Saved SQL binds values by
+name instead of baked-in literals: `investigation save … --param-spec
+name:type[:required]` (repeatable) declares what the SQL's `:name`
+placeholders bind — types `string`, `integer`, `boolean`, `decimal`, `date`,
+`timestamp`, the third part marking the parameter required — and
+`investigation run <id> --param name=value` (repeatable) binds them, with the
+literal `null` spelling a typed null. Only the `:name` placeholder form is
+accepted, and declaration and SQL must agree in both directions. Binding
+errors — an unknown name, a bad value, a missing required parameter — exit `2`
+before any connection is made. Values are bound natively by each engine at
+execute time and are **never stored**: evidence records parameter names and a
+SHA-256 digest of the value set, never a value. Capability by engine:
+PostgreSQL, MySQL, SQLite, DuckDB, and BigQuery bind natively; Snowflake binds
+with keypair auth only; ClickHouse refuses parameterised SQL (fixed SQL still
+works). `investigation edit --param-spec` replaces the declaration list (a new
+revision, so the next run needs `--revalidate`), and `/investigation run <id>
+--param …` works in the TUI. → [ADR 0005](docs/adr-0005-typed-query-parameters.md)
+
+**Portable context: export, import, and dbt.** Confirmed context now travels:
+
+```bash
+saya contracts export context.json [--profile P] [--overwrite]
+saya contracts import context.json [--profile P] [--preview]
+saya contracts import-dbt manifest.json [--profile P] [--select GLOB]… [--preview]
+```
+
+`--profile` is optional on all three and defaults to the active profile.
+
+Export writes the profile's **Active** claims as one `saya.context` document
+(descriptions, aliases, grains, time columns, roles, join rules, metrics) with
+no profile identity, review state, evidence, or credentials. Import validates
+the whole document, maps each item onto the target profile's schema, and
+files it **Pending** (`saya contracts queue` to review) — a file's approval
+claims are never authority. Conflicts with local values are reported, not
+written; an identical re-import is a no-op; credential-shaped items are
+skipped and counted. The dbt importer reads `manifest.json` schema versions
+v10–v12 (≤ 32 MiB, ≤ 5,000 selected nodes) and maps exactly three things —
+node descriptions, column descriptions, and the `relationships` generic test
+(stored as join rules) — with nothing executed. The slash forms
+(`/contracts export|import|import-dbt`) run the same operations against the
+active profile. → [ADR 0006](docs/adr-0006-portable-context-and-dbt.md)
+
+**Clarification instead of assuming.** When a question's material definition
+is ambiguous and confirmed context does not resolve it, the agent may ask one
+focused question rather than guess: the TUI renders it as a Question block
+that ends the turn, and `saya ask` exits `6` (the paused class) with a
+`clarification_needed` event, so a script can tell "needs input" from
+"answered".
+
+**`saya open` — ask questions about a local CSV or Parquet file.** The file
+is read once (contained, ≤ 32 MiB) and staged into a private DuckDB snapshot
+keyed by its content hash, then opened as a read-only session — the same
+bounded query, evidence, export, and investigation machinery as any database,
+with no server and no config editing:
+
+```bash
+saya open <file.csv|file.parquet> [--delimiter C] [--no-header] [--reset] [--typed]
+saya open --list                      # staged sources, newest first
+saya open --cleanup <sha-prefix>|all  # remove staged snapshots (saya's own only)
+```
+
+The preview names the file, its SHA-256 prefix, and shows the sniffed
+delimiter, columns, per-column null counts, and an **inferred** type per
+column (data is stored as text; `--typed` builds a `<table>_typed` copy by
+explicit casts). Leading zeros stay text; Parquet nested types are refused;
+caps are hard refusals (32 MiB source, 500,000 rows, 512 columns).
+
+**`saya mcp serve` — saya's tools for MCP hosts.** A stdio MCP server
+(`rmcp` 3.5.0, pinned) exposing `list_profiles`, `schema`, and `contracts`
+always, and `query` / `investigation_run` only when data sharing is allowed
+(`--allow-data-sharing` or `[ai] allow_data_sharing`): rows leave the machine
+only by an explicit operator choice. The profile allowlist is fixed at
+startup from the `serve` subcommand's `--profile` values (else the configured
+default profile) and can never be widened by a client; every tool that takes
+a profile is held inside it, including `investigation_run`'s effective
+target (its `profile` argument, else the saved binding's profile — a binding
+saved against an unlisted profile refuses without naming it). Bounds: requests
+≤ 1 MiB, ≤ 4 calls in flight, 30 s per call, responses ≤ 16 MiB; write SQL is
+refused by the same read-only gate, and a stale review is reported, never
+revalidated, from the wire. Client setup snippets for opencode, codex, and
+Claude Code are in
+[commands](docs/commands.md#mcp-saya-mcp-serve).
+→ [ADR 0008](docs/adr-0008-mcp-server.md)
+
+**Reopened work: the investigation picker and `edit`.** `/investigations` in
+the TUI opens a searchable picker over the saved investigations (filter as
+you type; Enter shows the selected one, `r` runs it, Esc closes), with
+`/investigations --list` keeping the plain text listing. The new
+`investigation edit <ID>` (and `/investigation edit`) changes a saved
+definition as a **new revision** — name, description, SQL, or the parameter
+list — leaving the review binding on the old revision, so the next run needs
+`--revalidate`.
+
 ### Changed
 
+- **The minimum supported Rust version is now 1.89.**
+- **Guided setup covers all seven engines.** `saya setup` now offers
+  Snowflake (keypair, browser SSO, or a password as an environment-variable
+  name — the browser-SSO probe opens the browser only after explicit
+  consent), ClickHouse, and BigQuery alongside SQLite, DuckDB, PostgreSQL,
+  and MySQL. Secrets are still taken only as environment-variable names or
+  file paths, never values.
+- **The DuckDB read-only gate refuses every file-reading function** —
+  `parquet_scan`, `parquet_metadata`, `parquet_schema`, `glob`,
+  `sqlite_scan`, `postgres_scan`, `mysql_scan`, the `read_` and `http_`
+  families, and the rest — not just `read_*`. Matched per identifier part,
+  so schema-qualified or re-quoted spellings cannot bypass. This is what
+  lets a staged file snapshot promise it is the only data the session can
+  see ([ADR 0007](docs/adr-0007-file-sources.md)).
 - **`/export` no longer overwrites an existing file silently.** It used to
   clobber the destination on every call; it now refuses an existing
   destination unless `--overwrite` is passed, refuses directory and symlink
@@ -157,26 +268,36 @@ not captured.
   50 rows the agent saw, never the full result — the snapshot success line
   says the full result may be larger and points at `/export --refresh`, and
   the report says so in its provenance. Fan-out agent queries
-  (`bounded_sql_query_all`) are not captured.
+  (`bounded_sql_query_all`) are not captured. An agent capture is also
+  **refused** when the model saw a truncated or redacted payload, so a
+  snapshot or report never pretends to hold rows nobody fully saw.
 - Captures do not survive a restart. Capture times in messages are UTC.
 - Detaching a TUI query or replay does not cancel it: **the query may still
   be running on the server**. saya does not cancel a query on the server in
   this release (PostgreSQL, MySQL, and Snowflake support cancellation;
-  SQLite and DuckDB run locally; ClickHouse and BigQuery cannot).
-- Parameterised investigations, context import, dbt, file sources, and MCP
-  are not in this release (planned).
+  SQLite and DuckDB run locally; ClickHouse and BigQuery cannot). The same
+  holds for MCP: a cancelled call drops the wait, not the server-side work.
 - The report neutralises links, images, HTML, table-breaking characters, and
   control characters, but
   a Markdown renderer may still auto-link a bare `https://…` text value in
   an included row — review the report before sharing.
-- Guided setup covers four engines (SQLite, DuckDB, PostgreSQL, MySQL);
-  Snowflake, ClickHouse, and BigQuery are configured by hand in
-  `connections.toml` — see [Snowflake](docs/connections.md#snowflake-profiles),
-  [ClickHouse](docs/connections.md#clickhouse-profiles), and
-  [BigQuery](docs/connections.md#bigquery-profiles) in the connections guide.
-- There is no searchable TUI investigation picker and no edit command yet;
-  a saved definition is immutable through supported commands — save a new
-  one under a new name instead.
+- Imported relationships are stored as keyed join rules — the cardinality
+  the document carries is dropped at filing, and nothing in the store keeps
+  it. Context objects map **case-insensitively**, and two objects differing
+  only by case are reported as ambiguous rather than resolved; other
+  store-admission refusals abort an import (only credential-shaped items are
+  skipped per item).
+- Parameters bind on Snowflake with keypair auth only; every other Snowflake
+  auth path refuses parameterised SQL. ClickHouse has no parameters at all.
+- MCP requests still pending when stdin reaches EOF are dropped, not
+  answered: the server exits `0` on EOF without waiting for in-flight work,
+  so a one-shot pipeline that writes its JSON-RPC frames and closes stdin
+  gets no reply to the frames still in flight; a host keeps stdin open for
+  the session's life.
+- Live engines beyond SQLite are not verified in this release's evidence:
+  the parameter, context, and file-source paths are exercised end to end
+  against SQLite (and DuckDB for file sources), not against live
+  PostgreSQL/MySQL/Snowflake/ClickHouse/BigQuery servers.
 
 ## 0.4.1 — 2026-09-25
 
