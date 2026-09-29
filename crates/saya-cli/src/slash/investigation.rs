@@ -7,7 +7,7 @@
 
 use crate::cli::InvestigationCommand;
 use crate::slash::SlashParseError;
-use flags::{id_from, scan, take_number, take_value, take_values};
+use flags::{id_from, scan, take_number, take_value, take_values, unknown_flag_error};
 use std::path::PathBuf;
 
 mod flags;
@@ -47,9 +47,7 @@ pub(crate) fn parse_investigation_command(
         "export" => parse_export(rest),
         "import" => parse_import(rest),
         "run" => parse_run(rest),
-        other => Err(SlashParseError(format!(
-            "unknown investigation subcommand: {other}{USAGE}"
-        ))),
+        other => Err(unknown_flag_error("investigation subcommand", other, USAGE)),
     }
 }
 
@@ -149,9 +147,7 @@ fn parse_export(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
         if token == "--overwrite" {
             overwrite = true;
         } else if token.starts_with("--") {
-            return Err(SlashParseError(format!(
-                "unknown investigation flag: {token}{USAGE}"
-            )));
+            return Err(unknown_flag_error("investigation flag", token, USAGE));
         } else {
             return Ok(InvestigationCommand::Export {
                 id,
