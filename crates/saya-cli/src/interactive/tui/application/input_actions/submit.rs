@@ -1,5 +1,6 @@
 use super::super::super::transcript::BlockKind;
 use super::super::super::types::App;
+use crate::slash::param_redact::redact_param_values;
 
 impl App {
     /// One-line preview of a queued prompt for the queue notice. Newlines
@@ -44,7 +45,12 @@ impl App {
         if line.is_empty() {
             return;
         }
-        self.history.push(&line);
+        // D2: every persisted or displayed copy of the submitted line — the
+        // history (ring + file), the transcript's `User` block, and a queued
+        // prompt's preview — shows `--param name=…`; `pending` below keeps
+        // the original line, so execution still receives the real values.
+        let displayed = redact_param_values(&line);
+        self.history.push(&displayed);
         if self.is_busy() {
             // Queue instead of dropping: the prompt runs when the current
             // request finishes. One slot — resubmitting replaces it. The
@@ -54,7 +60,7 @@ impl App {
             // (the stream token is cancelled but the worker has not settled),
             // the notice says the run waits for the stop confirmation.
             let replaced = self.pending.is_some();
-            let preview = Self::queued_preview(&line);
+            let preview = Self::queued_preview(&displayed);
             let stop_pending = self
                 .request
                 .stream
@@ -86,8 +92,12 @@ impl App {
         if self.request.pending_approval.is_none() {
             self.transcript.auto_fold_finished_chapter();
         }
-        self.transcript.push(BlockKind::User, line.clone());
+        self.transcript.push(BlockKind::User, displayed);
         self.transcript.scroll_to_bottom();
         self.pending = Some(line);
     }
 }
+
+#[cfg(test)]
+#[path = "submit_redact_tests.rs"]
+mod redact_tests;

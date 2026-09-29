@@ -1,6 +1,7 @@
 //! Bounded input-history ring: push with dedup and safety bounds, Up/Down navigation.
 
 use super::{History, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, total_bytes};
+use crate::slash::param_redact::redact_param_values;
 
 #[allow(dead_code)]
 impl History {
@@ -12,8 +13,12 @@ impl History {
         if self.disabled {
             return false;
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() || self.entries.last().map(String::as_str) == Some(trimmed) {
+        // D2: the ring is a persisted copy of a submitted line — an
+        // investigation `--param` value enters only as `name=…`, so the file
+        // this ring saves and what recall shows are both already redacted
+        // (the user retypes values).
+        let trimmed = redact_param_values(line.trim());
+        if trimmed.is_empty() || self.entries.last().map(String::as_str) == Some(trimmed.as_str()) {
             return false;
         }
         if trimmed.len() > MAX_ENTRY_BYTES {
@@ -87,3 +92,7 @@ impl History {
         self.stash.take()
     }
 }
+
+#[cfg(test)]
+#[path = "ring_redact_tests.rs"]
+mod redact_tests;
