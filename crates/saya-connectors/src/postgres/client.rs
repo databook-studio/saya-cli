@@ -62,6 +62,10 @@ impl DatabaseConnector for PostgresConnector {
         super::execute::query(self, request).await
     }
 
+    fn supports_parameters(&self) -> bool {
+        true
+    }
+
     async fn cancel(&self) -> Result<(), ConnectionError> {
         super::cancellation::cancel(self).await
     }

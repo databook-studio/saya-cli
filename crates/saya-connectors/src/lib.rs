@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 
 mod bigquery;
+mod binds;
 mod clickhouse;
 mod common;
 mod duckdb;
@@ -37,6 +38,13 @@ pub trait DatabaseConnector: Send + Sync {
     async fn connect(&self) -> Result<(), ConnectionError>;
     async fn schema(&self) -> Result<SchemaTree, ConnectionError>;
     async fn execute(&self, request: QueryRequest) -> Result<QueryResult, ConnectionError>;
+    /// Whether this connector binds [`QueryRequest::params`] natively. An
+    /// engine without native binding refuses a non-empty parameter list with
+    /// an unsupported error before any connection attempt; parameter-free
+    /// queries work everywhere.
+    fn supports_parameters(&self) -> bool {
+        false
+    }
     async fn cancel(&self) -> Result<(), ConnectionError> {
         Err(ConnectionError::unsupported("query cancellation"))
     }

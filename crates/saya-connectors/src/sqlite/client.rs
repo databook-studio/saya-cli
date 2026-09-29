@@ -88,6 +88,10 @@ impl DatabaseConnector for SqliteConnector {
         super::execute::query(self, request).await
     }
 
+    fn supports_parameters(&self) -> bool {
+        true
+    }
+
     async fn cancel(&self) -> Result<(), ConnectionError> {
         self.cancelled
             .store(true, std::sync::atomic::Ordering::Release);
