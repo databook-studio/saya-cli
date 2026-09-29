@@ -1,18 +1,12 @@
-//! Proves the real runtime wires every budget ceiling onto the agent limits.
+//! Proves the real runtime wires the config context budget onto the loop.
 //!
-//! `budgets_from_env` parsing has its own tests in `saya-agent`; what they
-//! cannot see is the composition [`super::run_prompt_with_inputs`] performs:
-//! which parsed value lands on which `AgentLimits` field. These tests plant
-//! DISTINCT ceiling values and run a scripted provider through the real turn
-//! path, observing the limits at the loop/request boundary — where the loop
-//! stops (turn and tool-call ceilings), how many truncation retries it spends
-//! (continuation ceiling), and how much history the loop sends (the config
-//! `context_byte_budget`). A dropped or swapped assignment moves one of those
-//! observables.
-//!
-//! The runtime reads the ceiling variables through `std::env::var`, so the
-//! tests plant real process-global variables under [`ENV_LOCK`] — the
-//! discipline `tests/run_slash_parity.rs` uses — and restore them afterwards.
+//! The env-driven ceilings (turns, tool calls, continuations) are proven at
+//! the real binary boundary instead — `crates/saya-cli/tests/agent_budgets.rs`
+//! spawns `saya ask` with the ceiling variables planted on the child
+//! `Command` only, so no test in this process ever mutates the process-global
+//! environment the runtime reads at `runtime.rs:270`. What stays here needs
+//! no env mutation: the config `context_byte_budget` is threaded through the
+//! real turn path and observed in the history the loop sends the provider.
 
 use super::super::turn_inputs::TurnInputs;
 use super::{AgentRuntimeError, run_prompt_with_inputs};
@@ -21,7 +15,7 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{
     AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage, ChatProvider,
-    ChatRequest, ChatResponse, NoopEventSink, ProviderError, ToolCall,
+    ChatRequest, ChatResponse, NoopEventSink,
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
@@ -34,67 +28,9 @@ use saya_types::{
 };
 use std::{
     collections::BTreeMap,
-    ffi::OsString,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-
-/// The ceiling variables the runtime composes onto `AgentLimits` (the names
-/// `budgets_from_env` reads; kept here as the test's env protocol).
-const BUDGET_VARS: [&str; 3] = [
-    "SAYA_AGENT_MAX_TURNS",
-    "SAYA_AGENT_MAX_TOOL_CALLS",
-    "SAYA_AGENT_MAX_CONTINUATIONS",
-];
-
-/// The env lock: ceiling variables are process-global and the tests in this
-/// binary run concurrently. Every test here takes this lock for its whole
-/// body — across awaits, deliberately — so no other test observes a torn or
-/// foreign value. Tokio's `Mutex` because a std guard held across an await is
-/// exactly the deadlock clippy names.
-static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-/// Plants (or clears) the ceiling variables, saving every variable's previous
-/// state for [`restore_budgets`]. Callers list all three variables explicitly
-/// so each test's regime is stated in full.
-///
-/// SAFETY: `set_var`/`remove_var` mutate process-global state; the caller
-/// holds [`ENV_LOCK`] for the whole test body, so no other test in this binary
-/// observes a torn or foreign value.
-fn plant_budgets(values: &[(&str, Option<&str>)]) -> Vec<(&'static str, Option<OsString>)> {
-    let saved = BUDGET_VARS.map(|name| (name, std::env::var_os(name)));
-    for (name, value) in values {
-        match value {
-            Some(value) => {
-                // SAFETY: the caller holds ENV_LOCK for the whole test body.
-                unsafe { std::env::set_var(name, value) };
-            }
-            None => {
-                // SAFETY: the caller holds ENV_LOCK for the whole test body.
-                unsafe { std::env::remove_var(name) };
-            }
-        }
-    }
-    saved.to_vec()
-}
-
-/// Restores the state [`plant_budgets`] saved.
-///
-/// SAFETY: same lock discipline as [`plant_budgets`].
-fn restore_budgets(saved: Vec<(&'static str, Option<OsString>)>) {
-    for (name, value) in saved {
-        match value {
-            Some(value) => {
-                // SAFETY: the caller holds ENV_LOCK for the whole test body.
-                unsafe { std::env::set_var(name, value) };
-            }
-            None => {
-                // SAFETY: the caller holds ENV_LOCK for the whole test body.
-                unsafe { std::env::remove_var(name) };
-            }
-        }
-    }
-}
 
 /// A connector that never touches a live database: the probe tool calls run
 /// against it, and no test here reads the store.
@@ -231,118 +167,54 @@ fn test_runtime(context_byte_budget: usize) -> RuntimeConfig {
     }
 }
 
-/// What the scripted provider answers, and the counters it keeps — the
-/// observation point for what the loop did with the limits it was handed.
+/// The messages of the first provider call: the history the loop assembled
+/// under the config `context_byte_budget`.
 #[derive(Default)]
 struct Counters {
-    /// Provider calls that carried tool definitions — the loop's answering
-    /// turns (and the turn whose batch the tool-call ceiling refuses).
-    answering: Mutex<usize>,
-    /// Provider calls that carried no tool definitions — the ceiling salvage
-    /// call (the loop strips the definitions there).
-    salvage: Mutex<usize>,
-    /// The messages of the first answering call: the history the loop
-    /// assembled under the config `context_byte_budget`.
     first_answering_messages: Mutex<Option<Vec<ChatMessage>>>,
 }
 
 impl Counters {
-    fn answering(&self) -> usize {
-        *self.answering.lock().unwrap()
-    }
-    fn salvage(&self) -> usize {
-        *self.salvage.lock().unwrap()
-    }
     fn first_messages(&self) -> Option<Vec<ChatMessage>> {
         self.first_answering_messages.lock().unwrap().clone()
     }
 }
 
-/// The provider's script.
-enum ProbeScript {
-    /// Each answering call up to `calls` (counted from one) returns one
-    /// `bounded_sql_query` tool call; later calls return a plain text answer.
-    /// Self-terminating: a dropped turn or tool-call ceiling degrades to a
-    /// completed run instead of hanging the test.
-    ToolCalls { calls: usize },
-    /// Every call answers with plain text.
-    Answer,
-    /// Every call fails with the provider's output-token truncation signal —
-    /// the deterministic cap the continuation ceiling bounds.
-    AlwaysTruncated,
-}
-
-struct BudgetProbe {
-    script: ProbeScript,
+/// A provider that answers every call with plain text, recording the first
+/// request's messages.
+struct AnswerProbe {
     counters: Arc<Counters>,
 }
 
 #[async_trait]
-impl ChatProvider for BudgetProbe {
+impl ChatProvider for AnswerProbe {
     fn name(&self) -> &str {
         "budget-probe"
     }
-    async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-        // The salvage call is the one request that carries no tool
-        // definitions: the loop strips them there. Counting on the request
-        // shape keeps the oracle structural, not tied to a product string.
-        if request.tools.is_empty() {
-            *self.counters.salvage.lock().unwrap() += 1;
-            return Ok(ChatResponse::new(ChatMessage::text(
-                "assistant",
-                "salvaged answer",
-            )));
-        }
-        let call = {
-            let mut answering = self.counters.answering.lock().unwrap();
-            *answering += 1;
-            *answering
-        };
+    async fn complete(
+        &self,
+        request: ChatRequest,
+    ) -> Result<ChatResponse, saya_agent::ProviderError> {
         {
             let mut first = self.counters.first_answering_messages.lock().unwrap();
             if first.is_none() {
                 *first = Some(request.messages.clone());
             }
         }
-        match self.script {
-            ProbeScript::AlwaysTruncated => Err(ProviderError::output_truncated(
-                "partial answer cut off".into(),
-                Vec::new(),
-            )),
-            ProbeScript::ToolCalls { calls } if call <= calls => {
-                Ok(ChatResponse::new(ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
-                        id: format!("call-{call}"),
-                        name: "bounded_sql_query".into(),
-                        arguments: serde_json::json!({
-                            "connection": "analytics",
-                            "sql": "SELECT id FROM orders",
-                        }),
-                    }],
-                    tool_call_id: None,
-                }))
-            }
-            ProbeScript::ToolCalls { .. } | ProbeScript::Answer => {
-                Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
-            }
-        }
+        Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
     }
 }
 
-/// Runs one turn through the real runtime path with the planted ceilings,
-/// returning the result and the probe counters.
+/// Runs one turn through the real runtime path, returning the result and the
+/// probe counters.
 async fn run_turn(
     context_byte_budget: usize,
-    script: ProbeScript,
     history: Vec<ChatMessage>,
 ) -> (Result<AgentOutput, AgentRuntimeError>, Arc<Counters>) {
     let counters = Arc::new(Counters::default());
     let inputs = TurnInputs {
         ai: test_ai(context_byte_budget),
-        provider: Box::new(BudgetProbe {
-            script,
+        provider: Box::new(AnswerProbe {
             counters: Arc::clone(&counters),
         }),
         registry: registry_for("analytics"),
@@ -371,114 +243,6 @@ async fn run_turn(
 }
 
 // ===========================================================================
-// The turn ceiling: SAYA_AGENT_MAX_TURNS=3 must stop the loop after exactly
-// three provider turns with tools, via the ceiling salvage — proving the
-// env-parsed value is what the loop actually received.
-// ===========================================================================
-
-#[tokio::test]
-async fn env_turn_ceiling_stops_the_loop_at_the_planted_turn_count() {
-    let _env = ENV_LOCK.lock().await;
-    let saved = plant_budgets(&[
-        ("SAYA_AGENT_MAX_TURNS", Some("3")),
-        ("SAYA_AGENT_MAX_TOOL_CALLS", None),
-        ("SAYA_AGENT_MAX_CONTINUATIONS", None),
-    ]);
-    // Twelve scripted tool-call responses: the planted ceiling binds first.
-    // A dropped assignment runs to the script's end and completes untruncated,
-    // so the test goes red without hanging.
-    let (result, counters) =
-        run_turn(256 * 1024, ProbeScript::ToolCalls { calls: 12 }, Vec::new()).await;
-    restore_budgets(saved);
-    let output = result.expect("a ceiling stop salvages a best answer");
-    assert!(
-        output.truncated,
-        "the stop is the ceiling, not a natural completion: truncated={}, answer={:?}",
-        output.truncated, output.answer
-    );
-    assert_eq!(
-        counters.answering(),
-        3,
-        "exactly the planted turn ceiling of provider calls with tools \
-         (answering={}, salvage={})",
-        counters.answering(),
-        counters.salvage()
-    );
-    assert_eq!(
-        counters.salvage(),
-        1,
-        "the ceiling salvage made one final call without tools"
-    );
-}
-
-// ===========================================================================
-// The tool-call ceiling: SAYA_AGENT_MAX_TOOL_CALLS=2 must stop the loop when
-// a turn's batch would cross it — after two executed calls and one refused
-// batch, with the salvage call.
-// ===========================================================================
-
-#[tokio::test]
-async fn env_tool_call_ceiling_stops_the_loop_at_the_planted_call_count() {
-    let _env = ENV_LOCK.lock().await;
-    let saved = plant_budgets(&[
-        ("SAYA_AGENT_MAX_TURNS", None),
-        ("SAYA_AGENT_MAX_TOOL_CALLS", Some("2")),
-        ("SAYA_AGENT_MAX_CONTINUATIONS", None),
-    ]);
-    let (result, counters) =
-        run_turn(256 * 1024, ProbeScript::ToolCalls { calls: 12 }, Vec::new()).await;
-    restore_budgets(saved);
-    let output = result.expect("a ceiling stop salvages a best answer");
-    assert!(
-        output.truncated,
-        "the stop is the ceiling, not a natural completion: truncated={}, answer={:?}",
-        output.truncated, output.answer
-    );
-    assert_eq!(
-        counters.answering(),
-        3,
-        "two calls executed, the third turn's call was refused by the batch check \
-         (answering={}, salvage={})",
-        counters.answering(),
-        counters.salvage()
-    );
-    assert_eq!(
-        counters.salvage(),
-        1,
-        "the ceiling salvage made one final call without tools"
-    );
-}
-
-// ===========================================================================
-// The continuation ceiling: SAYA_AGENT_MAX_CONTINUATIONS=2 must re-instruct
-// the model exactly twice on a deterministic truncation, then surface the
-// truncation error.
-// ===========================================================================
-
-#[tokio::test]
-async fn env_continuation_ceiling_bounds_the_truncation_retries() {
-    let _env = ENV_LOCK.lock().await;
-    let saved = plant_budgets(&[
-        ("SAYA_AGENT_MAX_TURNS", None),
-        ("SAYA_AGENT_MAX_TOOL_CALLS", None),
-        ("SAYA_AGENT_MAX_CONTINUATIONS", Some("2")),
-    ]);
-    let (result, counters) = run_turn(256 * 1024, ProbeScript::AlwaysTruncated, Vec::new()).await;
-    restore_budgets(saved);
-    let error = result.expect_err("the final truncation must surface after the ceiling");
-    assert!(
-        error.to_string().contains("truncated"),
-        "the truncation error surfaced, not something else: {error}"
-    );
-    assert_eq!(
-        counters.answering(),
-        3,
-        "one initial call plus exactly the planted two continuations"
-    );
-    assert_eq!(counters.salvage(), 0, "a provider error salvages nothing");
-}
-
-// ===========================================================================
 // The config context budget: `ai.context_byte_budget` is distinct from the
 // built-in default (256 KiB, which would replay the oversized oldest pair)
 // and from the harness's `max_rows` (100, which would replay nothing at all),
@@ -488,12 +252,6 @@ async fn env_continuation_ceiling_bounds_the_truncation_retries() {
 
 #[tokio::test]
 async fn config_context_byte_budget_bounds_the_history_the_loop_sends() {
-    let _env = ENV_LOCK.lock().await;
-    let saved = plant_budgets(&[
-        ("SAYA_AGENT_MAX_TURNS", None),
-        ("SAYA_AGENT_MAX_TOOL_CALLS", None),
-        ("SAYA_AGENT_MAX_CONTINUATIONS", None),
-    ]);
     let history = vec![
         ChatMessage::text(
             "user",
@@ -503,10 +261,8 @@ async fn config_context_byte_budget_bounds_the_history_the_loop_sends() {
         ChatMessage::text("user", "NEW-PAIR-SENTINEL"),
         ChatMessage::text("assistant", "new answer"),
     ];
-    let (result, counters) = run_turn(16 * 1024, ProbeScript::Answer, history).await;
-    restore_budgets(saved);
+    let (result, counters) = run_turn(16 * 1024, history).await;
     result.expect("the turn completes");
-    assert_eq!(counters.answering(), 1, "one answering call");
     let messages = counters
         .first_messages()
         .expect("the first request was recorded");
