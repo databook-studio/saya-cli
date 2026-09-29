@@ -16,6 +16,7 @@ mod session_tasks;
 pub use context_doc::{
     CONTEXT_FORMAT, CONTEXT_FORMAT_VERSION, ContextDocumentV1, ContextError, ContextItem,
     MAX_DOCUMENT_BYTES, MAX_ITEM_BYTES, MAX_ITEMS, MAX_ORIGIN_NOTE_BYTES, PortableObject,
+    PortablePayload,
 };
 pub use contract::{
     BindingValidity, CLAIM_PAYLOAD_VERSION, Cardinality, ClaimId, ClaimOrigin, ClaimPayload,

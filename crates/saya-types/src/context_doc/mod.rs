@@ -1,19 +1,23 @@
 //! The portable reviewed-business-context contract: `saya.context` v1.
 //!
 //! One versioned, bounded document carrying confirmed business context —
-//! descriptions, aliases, grains, roles, metrics, join rules, notes — between
-//! profiles as a file. It carries what a claim *is*, never who reviewed it or
-//! which machine it came from: no profile identity, no review state, no
-//! evidence, no credentials, and no timestamp beyond `exported_unix_ms`.
+//! descriptions, aliases, grains, roles, metrics, relationships, join rules,
+//! notes — between profiles as a file. It carries what a claim *is*, never
+//! who reviewed it or which machine it came from: no profile identity, no
+//! review state, no evidence, no credentials, and no timestamp beyond
+//! `exported_unix_ms`.
 
+mod convert;
+mod error;
+mod payload;
 mod validate;
 
 use serde::{Deserialize, Serialize};
 
 use crate::contract::DatabaseObjectKind;
-use crate::contract::claim_payload::ClaimPayload;
 
-pub use validate::ContextError;
+pub use error::ContextError;
+pub use payload::PortablePayload;
 
 /// The `format` tag every context document carries, and the only version this
 /// contract reads: anything else is refused, never downgraded.
@@ -40,16 +44,13 @@ pub struct ContextDocumentV1 {
     pub items: Vec<ContextItem>,
 }
 
-/// One carried claim: the logical object it is about, the validated payload,
-/// and an optional provenance note. The payload is `ClaimPayload`'s validated
-/// serde, so a payload that would not survive a claim survives nothing here —
-/// except `Relationship`, whose serialized target embeds a profile identity
-/// and is refused in `validate`.
+/// One carried claim: the logical object it is about, the payload in portable
+/// form (see [`PortablePayload`]), and an optional provenance note.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextItem {
     pub object: PortableObject,
-    pub payload: ClaimPayload,
+    pub payload: PortablePayload,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_note: Option<String>,
 }
