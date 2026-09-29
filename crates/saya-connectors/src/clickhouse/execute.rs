@@ -8,6 +8,7 @@ pub(crate) async fn query(
     connector: &ClickHouseConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
+    crate::binds::refuse_params("ClickHouse", &request.params)?;
     let sql = crate::prepare_clickhouse_sql(&request.sql, request.max_rows)?;
     let response = connector.post(&sql, request.max_rows).await?;
     if !response.status().is_success() {

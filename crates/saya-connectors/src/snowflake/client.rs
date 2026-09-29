@@ -105,6 +105,8 @@ impl DatabaseConnector for SnowflakeConnector {
         metadata::schema(self).await
     }
     async fn execute(&self, request: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        // One guard ahead of both auth paths, before any network activity.
+        crate::binds::refuse_params("Snowflake", &request.params)?;
         match &self.auth {
             Auth::Keypair(_) => protocol_v2::execute(self, request).await,
             Auth::Userpass(_) => legacy::execute(self, request).await,
