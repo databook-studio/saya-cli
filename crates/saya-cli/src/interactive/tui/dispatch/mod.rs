@@ -53,6 +53,12 @@ pub(crate) fn dispatch(
     if line.trim() == "/sessions" {
         return Dispatch::OpenSessionPicker;
     }
+    // Bare /investigations opens the searchable investigation picker rather
+    // than the text list; `/investigation list` and any flagged
+    // /investigations tail (`--list`, `--limit`, `--offset`) keep it.
+    if super::dispatch_investigation::bare_investigations(line) {
+        return Dispatch::OpenInvestigationPicker;
+    }
     let mut result = Dispatch::Handled;
     // A mode change through `/approvals` carries the activation line with
     // it: under bypass the no-euphemism wording, the staged interpreter

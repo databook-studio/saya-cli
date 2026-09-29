@@ -10,7 +10,8 @@ pub(crate) use super::capture::CapturedResult;
 pub(crate) use super::capture_agent::AgentCaptures;
 pub(crate) use app::App;
 pub(crate) use overlays::{
-    Menu, OverlayState, Picker, PickerEntry, SearchKind, SearchOverlay, TrustPrompt,
+    InvestigationEntry, InvestigationPicker, Menu, OverlayState, Picker, PickerEntry, SearchKind,
+    SearchOverlay, TrustPrompt,
 };
 pub(crate) use request::{MAX_INPUT_ROWS, PendingApproval, RequestState};
 pub(crate) use tasks::{

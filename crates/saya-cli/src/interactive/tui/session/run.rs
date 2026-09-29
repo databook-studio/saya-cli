@@ -66,6 +66,7 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
 
     while !app.should_quit {
         app.poll_session_picker();
+        app.poll_investigation_picker();
         session_save::poll_session_save(&mut app, store);
         let status = session_prompt::status_segments(state);
         guard

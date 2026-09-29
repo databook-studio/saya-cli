@@ -63,6 +63,26 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         }
         return;
     }
+    // The investigation picker captures navigation and filter typing until
+    // the choice is shown, run, or cancelled. `r` runs the selected one (a
+    // filter containing a bare `r` is not typeable here — the trade every
+    // single-key action on this surface makes); Ctrl/Alt chords are never
+    // the run key.
+    if app.overlays.investigations.is_some() {
+        match code {
+            KeyCode::Up => app.investigations_move(-1),
+            KeyCode::Down => app.investigations_move(1),
+            KeyCode::Enter => app.investigations_confirm(),
+            KeyCode::Esc => app.overlays.investigations = None,
+            KeyCode::Backspace => app.investigations_backspace(),
+            KeyCode::Char('r') if !mods.contains(KeyModifiers::CONTROL) => {
+                app.investigations_run();
+            }
+            KeyCode::Char(c) => app.investigations_char(c),
+            _ => {}
+        }
+        return;
+    }
     // A tool-approval modal captures input until answered. One decision
     // function sorts scroll from answer: the keys that reach the withheld
     // facts can never be the keys that answer, and the modal's offered
