@@ -105,7 +105,28 @@ jobs:
         with:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test --locked -p saya-connectors --test postgres_live
+      # The native parameter-binding tests are lib tests
+      # (postgres::execute::tests::…), not part of the postgres_live binary, so
+      # the step above never executes them. Run them here against the same
+      # service and refuse a silent skip: fail when SAYA_TEST_POSTGRES_URL is
+      # unset (the test returns early and passes) or when the filter does not
+      # run exactly one test.
+      - name: Native parameter binding (lib)
+        run: |
+          set -euo pipefail
+          if [ -z "${SAYA_TEST_POSTGRES_URL:-}" ]; then
+            echo "SAYA_TEST_POSTGRES_URL is unset: the binding test would return early and pass" >&2
+            exit 1
+          fi
+          output=$(cargo test --locked -p saya-connectors --lib \
+            live_postgres_binds_typed_parameters_natively 2>&1) \
+            || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          passed=$(printf '%s\n' "$output" | sed -nE 's/^test result: [A-Za-z]+\. ([0-9]+) passed;.*/\1/p' | tail -n1)
+          if [ "${passed:-0}" -ne 1 ]; then
+            echo "expected exactly 1 binding test to run, got ${passed:-0}" >&2
+            exit 1
+          fi
 
   mysql-live:
     name: MySQL live contract
@@ -135,3 +156,25 @@ jobs:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --locked -p saya-connectors --test mysql_live
+      # The native parameter-binding tests are lib tests
+      # (mysql::execute::tests::…), not part of the mysql_live binary, so the
+      # step above never executes them. Run them here against the same service
+      # and refuse a silent skip: fail when SAYA_TEST_MYSQL_URL is unset (the
+      # test returns early and passes) or when the filter does not run exactly
+      # one test.
+      - name: Native parameter binding (lib)
+        run: |
+          set -euo pipefail
+          if [ -z "${SAYA_TEST_MYSQL_URL:-}" ]; then
+            echo "SAYA_TEST_MYSQL_URL is unset: the binding test would return early and pass" >&2
+            exit 1
+          fi
+          output=$(cargo test --locked -p saya-connectors --lib \
+            live_mysql_binds_typed_parameters_natively 2>&1) \
+            || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          passed=$(printf '%s\n' "$output" | sed -nE 's/^test result: [A-Za-z]+\. ([0-9]+) passed;.*/\1/p' | tail -n1)
+          if [ "${passed:-0}" -ne 1 ]; then
+            echo "expected exactly 1 binding test to run, got ${passed:-0}" >&2
+            exit 1
+          fi
