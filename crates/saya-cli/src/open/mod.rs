@@ -1,17 +1,20 @@
 //! `saya open` (ADR 0007, C1): one command from a local CSV file to a
 //! read-only session over it. The file is staged once into a private DuckDB
-//! snapshot keyed by its content hash, reused when the same content opens
-//! again, previewed, and opened through a generated read-only profile — the
-//! same bounded, read-only query, evidence, export, and investigation
-//! machinery as any database, with no database server and no config editing.
-//! `--list` and `--cleanup` manage staged snapshots.
+//! snapshot keyed by its content hash and parse contract, reused when the
+//! same content opens again under the same parse options, previewed, and
+//! opened through a generated read-only profile — the same bounded, read-only
+//! query, evidence, export, and investigation machinery as any database, with
+//! no database server and no config editing. `--list` and `--cleanup` manage
+//! staged snapshots.
 
 mod connections;
+mod contract;
 mod launch;
 mod manage;
 mod root;
 mod snapshot;
 mod stage;
+mod stored;
 mod typed;
 
 use crate::{cli::Cli, commands, render::RenderFormat};
@@ -69,7 +72,7 @@ pub(crate) fn run(cli: &Cli, inv: OpenInvocation<'_>) -> Result<i32, Box<dyn std
         delimiter: delimiter_byte(delimiter)?,
         header: !no_header,
     };
-    let session = stage::stage_or_reuse(source, &root, options, reset)?;
+    let session = stage::stage_or_reuse(source, &root, options, typed, reset)?;
     if session.format == saya_harness::file_source::SourceFormat::Parquet && csv_only_flags {
         // PAR1 magic detected a Parquet file whose name says otherwise; the
         // same conflict applies, only visible after the contained read.

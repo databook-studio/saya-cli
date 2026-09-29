@@ -9,9 +9,9 @@
   connector) and [ADR 0002](adr-0002-memory-and-contract-trust-model.md)
   (nothing about the file's contents reaches a provider).
 - Records why a local CSV or Parquet file is staged once into a private
-  DuckDB snapshot keyed by its content hash, why the session over that
-  snapshot can never open another file, and what this deliberately does not
-  do.
+  DuckDB snapshot keyed by its content hash and parse contract, why the
+  session over that snapshot can never open another file, and what this
+  deliberately does not do.
 
 ## Context
 
@@ -161,14 +161,22 @@ timeout, cancel, or failure rolls back and deletes the temp database — no
 partial table exists. The published file is checkpointed, detached, chmodded
 0600, and renamed into place; on success only `source.duckdb` remains.
 
-### 6. Snapshot lifecycle: content-addressed, saya-owned only
+### 6. Snapshot lifecycle: content-and-contract-addressed, saya-owned only
 
-The same file content (same full sha256) **reuses** the existing snapshot
-untouched; different content at the same path is a new snapshot; `--reset`
-restages, refusing to replace a symlink or a directory that is not a valid
-saya snapshot. A snapshot is validated by its metadata (16-lowercase-hex
-name matching its recorded full sha256, regular non-symlink database file)
-and anything failing validation is invisible. `saya open --list` shows
+A snapshot's identity is its content hash **and** its parse contract: the
+same file content (same full sha256) **reuses** the existing snapshot
+untouched only when the effective delimiter, header flag, table name, and
+`--typed` flag also match what the open asks for; otherwise the same content
+stages a second snapshot, under a directory name that appends a short digest
+of the contract to the content-hash prefix. The snapshot records its
+contract and preview in its metadata, and a reused session is built from
+that stored metadata alone — never from the freshly staged receipt.
+`--reset` restages, refusing to replace a symlink, a directory that is not a
+valid saya snapshot, or a valid snapshot whose stored contract differs. A
+snapshot is validated by its metadata (a `<sha16>-<contract digest>` name —
+or the legacy bare 16-hex content prefix, never reused — matching its
+recorded full sha256, regular non-symlink database file) and anything
+failing validation is invisible. `saya open --list` shows
 newest-first; `saya open --cleanup [<sha-prefix>|all]` removes only
 validated snapshot dirs — an ambiguous prefix is refused naming the
 matches, and foreign directories or files under the root survive cleanup.

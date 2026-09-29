@@ -4,21 +4,10 @@
 //! overrides, exactly as `saya demo` launches.
 
 use crate::cli::{Cli, GlobalOptions};
-use saya_harness::file_source::{InferredType, SourceFormat};
+use saya_harness::file_source::SourceFormat;
 use std::path::Path;
 
-use super::{stage::StagedSession, typed::TypedReport};
-
-fn type_name(inferred: InferredType) -> &'static str {
-    match inferred {
-        InferredType::Integer => "integer",
-        InferredType::Decimal => "decimal",
-        InferredType::Boolean => "boolean",
-        InferredType::Date => "date",
-        InferredType::Timestamp => "timestamp",
-        InferredType::Text => "text",
-    }
-}
+use super::{contract::inferred_label, stage::StagedSession, typed::TypedReport};
 
 fn delimiter_label(byte: u8) -> String {
     match byte {
@@ -63,7 +52,7 @@ pub(super) fn render_preview(
         lines.push(format!(
             "  {}: {} ({} nulls)",
             column.name,
-            type_name(column.inferred),
+            inferred_label(column.inferred),
             column.null_count
         ));
     }

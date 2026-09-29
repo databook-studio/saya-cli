@@ -386,8 +386,8 @@ command: the fields you pass replace the stored ones and the next run needs
 `saya open` turns a local CSV or Parquet file into a read-only session: the
 file is read exactly once (through the workspace containment primitives, no
 symlink following, ≤ 32 MiB), hashed, and staged into a private DuckDB
-snapshot keyed by its content hash under the platform data directory's
-`saya/files/` (`SAYA_FILES_DIR` overrides; `0600` files in `0700`
+snapshot keyed by its content hash and parse options under the platform data
+directory's `saya/files/` (`SAYA_FILES_DIR` overrides; `0600` files in `0700`
 directories). A preview prints — the source file name, its SHA-256 prefix,
 the size, row and column counts, the delimiter (sniffed when not given),
 whether a header row was used, per-column null counts, and an **inferred**
@@ -428,11 +428,17 @@ saya open --cleanup all               # or a SHA-256 prefix naming exactly one
   every file-reading function (`read_csv`, `read_parquet`, `parquet_scan`,
   `parquet_metadata`, `glob`, `sqlite_scan`, and the rest), so the staged
   copy is the only data the session can query.
-- **The same content reuses its snapshot**; changed content stages a new
-  one; `--reset` restages. `--list` shows the staged sources newest-first;
-  `--cleanup <sha-prefix>|all` removes only validated saya snapshots (an
-  ambiguous prefix is refused naming the matches; foreign files survive).
-  Cleanup is manual — nothing expires automatically.
+- **Reuse requires the content and the parse options to match.** A snapshot
+  is reused only when the file's SHA-256 **and** the effective parse
+  contract — delimiter, header flag, table name, and `--typed` — all match
+  this open; changed options (or a renamed copy of the same bytes, whose
+  table name differs) stage a separate snapshot of the same content, and the
+  preview is always read back from the snapshot's own stored metadata.
+  `--reset` restages the matching snapshot. `--list` shows the staged sources
+  newest-first; `--cleanup <sha-prefix>|all` removes only validated saya
+  snapshots (a prefix naming several snapshots of one content is refused as
+  ambiguous; foreign files survive). Cleanup is manual — nothing expires
+  automatically.
 
 → [ADR 0007](adr-0007-file-sources.md)
 
