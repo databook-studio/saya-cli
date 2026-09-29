@@ -19,7 +19,7 @@ pub(crate) fn parse_investigation_command(
     name: &str,
     tail: &str,
 ) -> Result<InvestigationCommand, SlashParseError> {
-    const USAGE: &str = " (usage: /investigation <save|list|show|delete|export|import|run> …)";
+    const USAGE: &str = " (usage: /investigation <save|list|show|edit|delete|export|import|run> …)";
     if name == "investigations" {
         return parse_list(tail);
     }
@@ -33,6 +33,7 @@ pub(crate) fn parse_investigation_command(
         "save" => parse_save(rest),
         "list" => parse_list(rest),
         "show" => parse_show(rest),
+        "edit" => parse_edit(rest),
         "delete" => parse_delete(rest),
         "export" => parse_export(rest),
         "import" => parse_import(rest),
@@ -83,6 +84,28 @@ fn parse_show(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     let scan = scan(tail, &[], &[], USAGE)?;
     Ok(InvestigationCommand::Show {
         id: id_from(&scan.positional, USAGE)?,
+    })
+}
+
+/// `/investigation edit <id> [--name <words>] [--description <words>]
+/// [--sql <SQL>] [--file <PATH>]`: the same `Edit` command the clap parser
+/// builds, with the id positional and at least one edit flag required by the
+/// operation itself.
+fn parse_edit(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
+    const USAGE: &str = " (usage: /investigation edit <id> [--name <words>] \
+                         [--description <words>] [--sql <SQL>] [--file <PATH>])";
+    let mut scan = scan(
+        tail,
+        &["--name", "--description", "--sql", "--file"],
+        &[],
+        USAGE,
+    )?;
+    Ok(InvestigationCommand::Edit {
+        id: id_from(&scan.positional, USAGE)?,
+        name: take_value(&mut scan.values, "--name"),
+        description: take_value(&mut scan.values, "--description"),
+        sql: take_value(&mut scan.values, "--sql"),
+        file: take_value(&mut scan.values, "--file").map(PathBuf::from),
     })
 }
 
