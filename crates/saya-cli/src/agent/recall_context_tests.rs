@@ -1,8 +1,11 @@
 //! Tests for the prompt-recall context block assembly — slice 2b-3b §5.
 //!
 //! These assert on the `Vec<ContextBlock>` this layer produces (its length,
-//! labels, `truncated` flag, and body content) and on `system_prompt` not
-//! carrying claim text — this layer's actual responsibility. The wrapping,
+//! labels, `truncated` flag, and body content). That a recalled claim never
+//! reaches a system message is owned at the runtime boundary — the
+//! composition test `recalled_claim_rides_the_user_block_and_never_any_system_message`
+//! in `runtime_tests.rs` asserts it against the requests the provider actually
+//! receives. The wrapping,
 //! escaping, and placement in the user turn are `saya-agent`'s Phase 2a,
 //! asserted there; this layer must not pre-escape the body (test 10).
 //!
@@ -369,11 +372,12 @@ async fn acceptance_remembered_time_column_reaches_one_block_not_system_prompt()
         block.body.contains("catalog.public.orders"),
         "body names the qualified object"
     );
-    // The non-negotiable: a remembered claim never reaches the system prompt.
-    // This layer owns system_prompt construction for the block; the claim text
-    // lives only in the block body.
-    let system_prompt = String::new(); // see runtime test for the real field
-    assert!(!system_prompt.contains("created_at"));
+    // The non-negotiable — a remembered claim never reaches a system message —
+    // is owned at the runtime boundary: `recalled_claim_rides_the_user_block_
+    // and_never_any_system_message` in runtime_tests.rs plants a sentinel
+    // claim, records the requests the provider receives, and asserts the
+    // sentinel absent from every system-role message. This adapter-level test
+    // keeps the block-side half: the claim text lives only in the block body.
     assert!(!block.body.contains(identity.as_str()));
 
     let _ = fs::remove_dir_all(root);

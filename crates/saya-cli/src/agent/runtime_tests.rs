@@ -311,10 +311,14 @@ impl AgentEventSink for RecordingSink {
 
 /// A provider that returns one text answer, recording `"provider"` into the
 /// shared log at call time so the ordering test can prove the emit came first.
+/// Every request it receives is recorded into `seen_requests`, shared with the
+/// test, so assertions read the exact messages the composition sent — the
+/// TA-04 test below asserts on them: a recalled claim is user-side data,
+/// never a system message.
 struct AnswerProvider {
     answer: &'static str,
     log: Arc<Mutex<Vec<&'static str>>>,
-    seen_system_prompt: Mutex<Option<Option<String>>>,
+    seen_requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
 #[async_trait]
@@ -324,13 +328,7 @@ impl ChatProvider for AnswerProvider {
     }
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         self.log.lock().unwrap().push("provider");
-        *self.seen_system_prompt.lock().unwrap() = Some(
-            request
-                .messages
-                .iter()
-                .find(|m| m.role == "system")
-                .map(|m| m.content.clone()),
-        );
+        self.seen_requests.lock().unwrap().push(request);
         Ok(ChatResponse::new(ChatMessage::text(
             "assistant",
             self.answer,
@@ -376,7 +374,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
-        seen_system_prompt: Mutex::new(None),
+        seen_requests: Arc::new(Mutex::new(Vec::new())),
     };
     let inputs = TurnInputs {
         ai: ResolvedAi {
@@ -486,7 +484,7 @@ async fn knowledge_supplied_precedes_the_provider_request() {
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
-        seen_system_prompt: Mutex::new(None),
+        seen_requests: Arc::new(Mutex::new(Vec::new())),
     };
     let inputs = TurnInputs {
         ai: ResolvedAi {
@@ -716,7 +714,7 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
     let provider = AnswerProvider {
         answer: "done anyway",
         log: log.clone(),
-        seen_system_prompt: Mutex::new(None),
+        seen_requests: Arc::new(Mutex::new(Vec::new())),
     };
     let inputs = TurnInputs {
         ai: ResolvedAi {
@@ -877,6 +875,176 @@ fn knowledge_supplied_round_trips_through_serde_with_type_tag() {
         let back: KnowledgeOutcome = serde_json::from_str(&text).expect("deserializes back");
         assert_eq!(back, outcome, "outcome {outcome:?} round-trips");
     }
+}
+
+// ===========================================================================
+// TA-04: a recalled claim is untrusted data for the user turn — never a
+// system message. The adapter-level tests (recall_context_tests.rs) assert
+// the block this layer produces; this test runs the real composition and
+// asserts on the requests the provider actually received: the planted claim
+// sentinel rides the user-side recall block, and no system-role message —
+// the turn's assembled prompt or the post-turn extractor's — carries it. The
+// long answer admits the post-turn extraction (the gate's object-activity
+// trigger registers the supplied contract), so both system-message lanes the
+// composition opens are in the recording.
+// ===========================================================================
+
+#[tokio::test]
+async fn recalled_claim_rides_the_user_block_and_never_any_system_message() {
+    let root = temp_root("ta04_sentinel");
+    let db = root.join("state.sqlite3");
+    let identity = identity_for("analytics");
+    let store = store_at(&db, &identity).await;
+    // The planted claim: a column name unique to this process, so the
+    // assertions cannot pass on text the harness or the prompts coincidentally
+    // carry.
+    let sentinel = format!("zz_sentinel_col_{}", std::process::id());
+    // The claim's binding (Column { sentinel, Time }) is satisfied only by a
+    // cached schema that names the column, so the tree carries it as temporal
+    // and the item classifies `current`.
+    let obj = object(&identity, "orders");
+    let tree = SchemaTree {
+        databases: vec![Database {
+            name: "catalog".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: vec![Table {
+                    name: "orders".into(),
+                    primary_key: vec![],
+                    foreign_keys: vec![],
+                    columns: vec![
+                        Column {
+                            name: "id".into(),
+                            data_type: "bigint".into(),
+                            nullable: false,
+                        },
+                        Column {
+                            name: "created_at".into(),
+                            data_type: "timestamp".into(),
+                            nullable: false,
+                        },
+                        Column {
+                            name: sentinel.clone(),
+                            data_type: "timestamp".into(),
+                            nullable: false,
+                        },
+                    ],
+                }],
+            }],
+        }],
+    };
+    store.upsert_schema(identity.as_str(), &tree).await.unwrap();
+    let fp = live_fingerprint(&orders_table());
+    remember_default_time_column(
+        &store,
+        &obj,
+        &fp,
+        &sentinel,
+        ClaimStatus::Confirmed,
+        ClaimOrigin::UserExplicit,
+    )
+    .await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let seen_requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = AnswerProvider {
+        answer: "The orders table was inspected for you.",
+        log: Arc::new(Mutex::new(Vec::new())),
+        seen_requests: Arc::clone(&seen_requests),
+    };
+    let inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Ollama,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: true,
+            temperature: 0.0,
+            timeout_seconds: 60,
+            idle_timeout_seconds: 90,
+            max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
+            context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
+            show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
+            retry_delays_ms: vec![250, 500, 1000],
+        },
+        provider: Box::new(provider),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    let runtime = test_runtime(assisted_memory());
+    run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(store),
+        None,
+        None,
+        None,
+        saya_agent::AgentMode::Build,
+        // No capture hook in these headless turn tests (C1).
+        None,
+    )
+    .await
+    .unwrap();
+
+    let seen = seen_requests.lock().unwrap().clone();
+    // An empty or missing recording must fail here: every assertion below is
+    // vacuous if the provider never received a request.
+    assert!(
+        !seen.is_empty(),
+        "the provider recorded the requests it received"
+    );
+    for request in &seen {
+        assert!(
+            request.messages.iter().any(|m| m.role == "system"),
+            "every recorded request carries a system message: {request:?}"
+        );
+    }
+    // Both system-message lanes ran: the turn's request and the post-turn
+    // extraction request (the gate's object-activity trigger registers the
+    // supplied contract, and the answer is non-trivial).
+    assert!(
+        seen.len() >= 2,
+        "the turn request and the extraction request were both sent: {} requests",
+        seen.len()
+    );
+    // The claim IS in the intended untrusted lane: the turn request's user
+    // message, inside the labelled recall block.
+    let turn = &seen[0];
+    assert!(
+        turn.messages.iter().any(|m| {
+            m.role == "user"
+                && m.content.contains(&sentinel)
+                && m.content
+                    .contains(super::super::recall_context::BLOCK_LABEL)
+        }),
+        "the planted claim reached the user-side recall block: {turn:?}"
+    );
+    // The non-negotiable: no system-role message of ANY request carries the
+    // claim — neither the turn's assembled prompt nor the extractor's.
+    for request in &seen {
+        for message in &request.messages {
+            assert!(
+                !(message.role == "system" && message.content.contains(&sentinel)),
+                "a system message carried the recalled claim: {}",
+                message.content
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(root);
 }
 
 // ===========================================================================
@@ -1627,7 +1795,7 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
-        seen_system_prompt: Mutex::new(None),
+        seen_requests: Arc::new(Mutex::new(Vec::new())),
     };
     let identity = identity_for("analytics");
     let inputs = TurnInputs {
@@ -1822,7 +1990,7 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
     let provider = AnswerProvider {
         answer: "done",
         log: log.clone(),
-        seen_system_prompt: Mutex::new(None),
+        seen_requests: Arc::new(Mutex::new(Vec::new())),
     };
     let identity = identity_for("analytics");
     let inputs = TurnInputs {
