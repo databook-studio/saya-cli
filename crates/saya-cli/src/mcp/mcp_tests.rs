@@ -320,4 +320,24 @@ fn the_replay_gate_holds_the_run_inside_the_allowlist() {
         allowlist_gate(&policy, &context, "REFUSED-ID", None).is_ok(),
         "a malformed id leaves the refusal to the run command"
     );
+
+    // A binding that exists but cannot be read fails the gate CLOSED: the
+    // run does not start, and neither the store error's own text nor the
+    // bound profile name is echoed.
+    let corrupt = InvestigationId::parse("corrupt-binding-1").unwrap();
+    let corrupt_path = runtime
+        .investigations_root
+        .join("local")
+        .join(format!("{}.json", corrupt.as_str()));
+    std::fs::write(&corrupt_path, b"not json at all").unwrap();
+    let refused = allowlist_gate(&policy, &context, corrupt.as_str(), None)
+        .expect_err("an unreadable binding is refused");
+    assert!(
+        refused.contains("profile not available"),
+        "the refusal names the gate: {refused}"
+    );
+    assert!(
+        !refused.contains("not valid for storage") && !refused.contains("second"),
+        "neither the store error nor a profile name is echoed: {refused}"
+    );
 }
