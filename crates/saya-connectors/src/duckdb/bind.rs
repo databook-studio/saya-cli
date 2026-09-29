@@ -30,7 +30,7 @@ pub(crate) fn native_values(values: &[BindValue]) -> Result<Vec<Value>, Connecti
 
 fn native_value(value: &BindValue) -> Result<Value, ConnectionError> {
     Ok(match value {
-        BindValue::Null => Value::Null,
+        BindValue::Null(_) => Value::Null,
         BindValue::Str(text) => Value::Text(text.clone()),
         BindValue::Int(int) => Value::BigInt(*int),
         BindValue::Bool(flag) => Value::Boolean(*flag),

@@ -91,7 +91,7 @@ fn bind_query<'q>(
     let mut query = query;
     for value in values {
         query = match value {
-            BindValue::Null => query.bind(Option::<String>::None),
+            BindValue::Null(_) => query.bind(Option::<String>::None),
             BindValue::Str(text) => query.bind(text.as_str()),
             BindValue::Int(int) => query.bind(*int),
             BindValue::Bool(flag) => query.bind(*flag),

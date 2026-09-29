@@ -21,6 +21,7 @@ fn save(
         sql: sql.map(Into::into),
         file: file.map(PathBuf::from),
         connection: connection.map(Into::into),
+        param_specs: Vec::new(),
     }
 }
 
@@ -216,7 +217,8 @@ fn delete_parses_the_id_and_optional_revision() {
 // --- edit ------------------------------------------------------------------
 
 /// `/investigation edit <id> …` carries the positional id and the same
-/// `--name`/`--description`/`--sql`/`--file` flags the clap parser takes.
+/// `--name`/`--description`/`--sql`/`--file`/`--param-spec` flags the clap
+/// parser takes.
 #[test]
 fn edit_parses_the_id_and_the_edit_flags() {
     assert_eq!(
@@ -226,7 +228,8 @@ fn edit_parses_the_id_and_the_edit_flags() {
             name: None,
             description: None,
             sql: None,
-            file: None
+            file: None,
+            param_specs: Vec::new()
         }
     );
     assert_eq!(
@@ -240,7 +243,8 @@ fn edit_parses_the_id_and_the_edit_flags() {
             name: Some("Renamed".into()),
             description: Some("new words".into()),
             sql: Some("SELECT 1 AS one".into()),
-            file: None
+            file: None,
+            param_specs: Vec::new()
         }
     );
     assert_eq!(
@@ -250,7 +254,8 @@ fn edit_parses_the_id_and_the_edit_flags() {
             name: None,
             description: None,
             sql: None,
-            file: Some(PathBuf::from("replacement.sql"))
+            file: Some(PathBuf::from("replacement.sql")),
+            param_specs: Vec::new()
         }
     );
     // SQL keeps its interior whitespace verbatim.
@@ -261,7 +266,8 @@ fn edit_parses_the_id_and_the_edit_flags() {
             name: None,
             description: None,
             sql: Some("SELECT 'a  b' FROM t".into()),
-            file: None
+            file: None,
+            param_specs: Vec::new()
         }
     );
 }
@@ -360,7 +366,8 @@ fn run_parses_the_id_connection_and_revalidate() {
             revalidate: false,
             report: None,
             rows: None,
-            overwrite: false
+            overwrite: false,
+            params: Vec::new()
         }
     );
     assert_eq!(
@@ -371,7 +378,8 @@ fn run_parses_the_id_connection_and_revalidate() {
             revalidate: true,
             report: None,
             rows: None,
-            overwrite: false
+            overwrite: false,
+            params: Vec::new()
         }
     );
     assert_eq!(
@@ -382,11 +390,88 @@ fn run_parses_the_id_connection_and_revalidate() {
             revalidate: true,
             report: None,
             rows: None,
-            overwrite: false
+            overwrite: false,
+            params: Vec::new()
         }
     );
     assert!(parsed("investigation", "run").is_err());
     assert!(parsed("investigation", "run abc extra").is_err());
+}
+
+/// `--param` is repeatable and each binding rides through verbatim — the
+/// same `Run` command the clap parser builds.
+#[test]
+fn run_parses_repeatable_param_bindings() {
+    assert_eq!(
+        parsed(
+            "investigation",
+            "run abc --param region=east --param day=2024-01-02"
+        )
+        .unwrap(),
+        InvestigationCommand::Run {
+            id: "abc".into(),
+            connection: None,
+            revalidate: false,
+            report: None,
+            rows: None,
+            overwrite: false,
+            params: vec!["region=east".into(), "day=2024-01-02".into()]
+        }
+    );
+    // A binding with no `=` rides through too; the operation parses it and
+    // refuses, so the slash adapter does not pre-empt its message.
+    assert_eq!(
+        parsed("investigation", "run abc --param bogus").unwrap(),
+        InvestigationCommand::Run {
+            id: "abc".into(),
+            connection: None,
+            revalidate: false,
+            report: None,
+            rows: None,
+            overwrite: false,
+            params: vec!["bogus".into()]
+        }
+    );
+    let valueless = parsed("investigation", "run abc --param").unwrap_err();
+    assert!(
+        valueless.0.contains("--param needs a value"),
+        "a valueless --param is a usage error: {valueless}"
+    );
+}
+
+/// `--param-spec` parses on save and edit as a repeatable flag.
+#[test]
+fn save_and_edit_parse_repeatable_param_specs() {
+    assert_eq!(
+        parsed(
+            "investigation",
+            "save By region --sql SELECT 1 WHERE r = :region --param-spec region:string:required"
+        )
+        .unwrap(),
+        InvestigationCommand::Save {
+            name: "By region".into(),
+            description: None,
+            sql: Some("SELECT 1 WHERE r = :region".into()),
+            file: None,
+            connection: None,
+            param_specs: vec!["region:string:required".into()]
+        }
+    );
+    assert_eq!(
+        parsed(
+            "investigation",
+            "edit abc-123 --param-spec region:string --param-spec day:date"
+        )
+        .unwrap(),
+        InvestigationCommand::Edit {
+            id: "abc-123".into(),
+            name: None,
+            description: None,
+            sql: None,
+            file: None,
+            param_specs: vec!["region:string".into(), "day:date".into()]
+        }
+    );
 }
 
 // --- dispatch surface ------------------------------------------------------
@@ -461,7 +546,8 @@ fn every_subcommand_parses_through_the_slash_parser() {
             name: Some("Renamed".into()),
             description: None,
             sql: None,
-            file: None
+            file: None,
+            param_specs: Vec::new()
         }))
     );
     assert_eq!(
@@ -472,7 +558,8 @@ fn every_subcommand_parses_through_the_slash_parser() {
             revalidate: false,
             report: None,
             rows: None,
-            overwrite: false
+            overwrite: false,
+            params: Vec::new()
         }))
     );
 }

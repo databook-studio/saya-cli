@@ -59,6 +59,15 @@ pub struct ExecutionEvidence {
     pub source: EvidenceSource,
     #[serde(default)]
     pub knowledge_ids: Vec<String>,
+    /// The bound parameters' NAMES, in declaration order — never a value.
+    /// Absent from serialization when empty (a parameter-free run).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_names: Vec<String>,
+    /// SHA-256 over the canonical `name=value` lines of the bound
+    /// parameters, in declaration order — a digest of the value set, never
+    /// the values themselves. Absent when no parameters were bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params_sha256: Option<String>,
 }
 
 impl ExecutionEvidence {
@@ -79,6 +88,8 @@ impl ExecutionEvidence {
             scope: ResultScope::Full,
             source: args.source,
             knowledge_ids: Vec::new(),
+            param_names: Vec::new(),
+            params_sha256: None,
         }
     }
 
@@ -86,6 +97,15 @@ impl ExecutionEvidence {
     pub fn with_knowledge_ids(mut self, mut ids: Vec<String>) -> Self {
         ids.truncate(MAX_EVIDENCE_KNOWLEDGE_IDS);
         self.knowledge_ids = ids;
+        self
+    }
+
+    /// Attaches the bound parameters' names and the digest over their
+    /// canonical `name=value` lines (B1): names and a hash only — the values
+    /// themselves never reach evidence, transcripts, or reports.
+    pub fn with_param_bindings(mut self, names: Vec<String>, digest: Option<String>) -> Self {
+        self.param_names = names;
+        self.params_sha256 = digest;
         self
     }
 
@@ -107,7 +127,8 @@ impl ExecutionEvidence {
     }
 
     /// One transcript line: source, profile label, rows, truncation, short id,
-    /// scope — never SQL text.
+    /// scope, and the bound parameters' names — never SQL text, never a
+    /// value.
     pub fn human_line(&self) -> String {
         let rows = if self.truncated {
             format!(
@@ -128,13 +149,19 @@ impl ExecutionEvidence {
                 format!("model-limited (first {row_cap} rows)")
             }
         };
+        let params = if self.param_names.is_empty() {
+            String::new()
+        } else {
+            format!(" · params: {}", self.param_names.join(", "))
+        };
         format!(
-            "{}: {} · {} · exec {} · {}",
+            "{}: {} · {} · exec {} · {}{}",
             source,
             self.connection_label,
             rows,
             self.short_id(),
-            scope
+            scope,
+            params
         )
     }
 }

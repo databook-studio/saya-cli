@@ -94,6 +94,7 @@ async fn saved_id(repo: &InvestigationRepository, runtime: &RuntimeConfig) -> St
             sql: Some("SELECT id, label FROM events ORDER BY id".into()),
             file: None,
             connection: None,
+            param_specs: Vec::new(),
         },
         runtime,
     )
@@ -129,6 +130,7 @@ async fn save_roundtrip_exact_sql_binding_list_and_show() {
             sql: Some(sql.into()),
             file: None,
             connection: None,
+            param_specs: Vec::new(),
         },
         &runtime,
     )
@@ -208,6 +210,7 @@ async fn save_refuses_write_sql_with_exit_4_and_writes_nothing() {
             sql: Some("DELETE FROM events".into()),
             file: None,
             connection: None,
+            param_specs: Vec::new(),
         },
         &runtime,
     )
@@ -235,6 +238,7 @@ async fn save_refuses_credential_shaped_sql() {
             sql: Some("SELECT 'password=hunter2'".into()),
             file: None,
             connection: None,
+            param_specs: Vec::new(),
         },
         &runtime,
     )
@@ -262,6 +266,7 @@ async fn save_requires_a_connection_when_none_resolves() {
             sql: Some("SELECT 1".into()),
             file: None,
             connection: None,
+            param_specs: Vec::new(),
         },
         &runtime,
     )
@@ -288,6 +293,7 @@ async fn save_refuses_sql_and_file_together() {
             sql: Some("SELECT 1".into()),
             file: Some(root.join("unused.sql")),
             connection: None,
+            param_specs: Vec::new(),
         },
         &runtime,
     )
@@ -316,6 +322,7 @@ async fn save_refuses_invalid_names_and_oversize_sql_with_typed_messages() {
                 sql: Some(sql),
                 file: None,
                 connection: None,
+                param_specs: Vec::new(),
             },
             runtime,
         )
@@ -394,6 +401,7 @@ async fn list_clamps_limit_and_honours_offset() {
                 sql: Some(second.into()),
                 file: None,
                 connection: None,
+                param_specs: Vec::new(),
             },
             &runtime,
         )
@@ -659,6 +667,7 @@ fn run_command(id: &str) -> InvestigationCommand {
         report: None,
         rows: None,
         overwrite: false,
+        params: Vec::new(),
     }
 }
 
@@ -731,6 +740,7 @@ async fn run_outcome_has_no_replay_on_stale_or_failure() {
             sql: Some("SELECT nosuchcol FROM events".into()),
             file: None,
             connection: None,
+            param_specs: Vec::new(),
         },
         &runtime,
     )

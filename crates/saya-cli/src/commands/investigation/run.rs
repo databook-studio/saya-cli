@@ -9,7 +9,7 @@
 //! re-parsing rendered output.
 
 use super::{
-    EXIT_INVESTIGATION_ERROR, EXIT_SAFETY, fingerprint,
+    EXIT_INVESTIGATION_ERROR, EXIT_SAFETY, bindings, fingerprint, params,
     run_binding::{Review, refresh_binding, stale_message, staleness},
     run_outcome::{Replay, RunOutcome},
     run_report, store_failure,
@@ -31,7 +31,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// What the dispatcher parsed for one replay. The report fields (S12b)
 /// carry an optional `--report` destination with its `--rows` opt-in and
-/// `--overwrite` decision.
+/// `--overwrite` decision; `params` carries the raw `--param name=value`
+/// bindings (B1f).
 pub(super) struct RunRequest<'a> {
     pub id: &'a str,
     pub connection: Option<&'a str>,
@@ -39,6 +40,7 @@ pub(super) struct RunRequest<'a> {
     pub report: Option<&'a std::path::Path>,
     pub rows: Option<usize>,
     pub overwrite: bool,
+    pub params: Vec<String>,
 }
 
 pub(super) async fn run(
@@ -61,6 +63,13 @@ pub(super) async fn run(
     let definition = match repo.get(&id) {
         Ok(definition) => definition,
         Err(error) => return no_replay(store_failure(error, id.as_str(), format)),
+    };
+    // The parameter bindings parse against the declared specs before any
+    // store, profile, or connection work (invariant 2): unknown names, a
+    // malformed value, and a missing required parameter are usage refusals.
+    let bound = match bindings::bind_values(&definition.parameters, &request.params) {
+        Ok(bound) => bound,
+        Err((code, message)) => return no_replay(failure_message(code, message, format)),
     };
     let binding = match repo.get_binding(&id) {
         Ok(binding) => binding,
@@ -120,6 +129,19 @@ pub(super) async fn run(
         .await;
         return Ok(RunOutcome::plain(EXIT_SAFETY));
     };
+    // Capability honesty (invariant 2): an engine without native binding
+    // refuses with any parameters before it connects or executes — the
+    // same refusal the safety layer would raise, one step earlier.
+    if !bound.is_empty() && !connector.supports_parameters() {
+        return no_replay(failure_message(
+            EXIT_INVESTIGATION_ERROR,
+            format!(
+                "parameters are not supported for {}; run a fixed SQL investigation instead",
+                params::parameters_engine_name(definition.dialect)
+            ),
+            format,
+        ));
+    }
     if let Err(error) = connector.connect().await {
         audit(
             state_db,
@@ -206,13 +228,16 @@ pub(super) async fn run(
     }
 
     let started_unix_ms = unix_now_ms();
-    match connector
-        .execute(QueryRequest::new(
+    let request_query = if bound.is_empty() {
+        QueryRequest::new(definition.sql.clone(), runtime.resolved.max_rows)
+    } else {
+        QueryRequest::with_params(
             definition.sql.clone(),
             runtime.resolved.max_rows,
-        ))
-        .await
-    {
+            bound.clone(),
+        )
+    };
+    match connector.execute(request_query).await {
         Ok(result) => {
             audit(
                 state_db,
@@ -224,6 +249,7 @@ pub(super) async fn run(
                 format,
             )
             .await;
+            let (param_names, params_sha256) = bindings::evidence_fields(&bound);
             let evidence = ExecutionEvidence::for_result(
                 &result,
                 ExecutionEvidenceArgs {
@@ -239,7 +265,8 @@ pub(super) async fn run(
                         revision: definition.revision,
                     },
                 },
-            );
+            )
+            .with_param_bindings(param_names, params_sha256);
             emit(
                 TerminalEvent::QueryResult {
                     result: result.clone(),

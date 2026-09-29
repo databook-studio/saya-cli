@@ -1,7 +1,8 @@
 use saya_config::MapSecretResolver;
 use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector, build_connector};
 use saya_types::{
-    BoundParam, ConnectionError, DatabaseProfile, ForeignKey, ParamValue, QueryRequest, QueryResult,
+    BoundParam, ConnectionError, DatabaseProfile, ForeignKey, ParamType, ParamValue, QueryRequest,
+    QueryResult,
 };
 use serde_json::Value;
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
@@ -1123,8 +1124,11 @@ async fn null_binds_as_sql_null() {
         ("SELECT :v IS NULL AS is_null", Value::from(1)),
         ("SELECT COALESCE(:v, 'absent') AS v", Value::from("absent")),
     ] {
-        let request =
-            QueryRequest::with_params(sql.to_string(), 10, vec![bound("v", ParamValue::Null)]);
+        let request = QueryRequest::with_params(
+            sql.to_string(),
+            10,
+            vec![bound("v", ParamValue::Null(ParamType::String))],
+        );
         let result = connector.execute(request).await.unwrap();
         assert_eq!(only_row(&result)[0], expected, "{sql}");
     }

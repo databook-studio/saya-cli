@@ -12,6 +12,7 @@ fn save(name: &str, sql: Option<&str>, connection: Option<&str>) -> Investigatio
         sql: sql.map(Into::into),
         file: None,
         connection: connection.map(Into::into),
+        param_specs: Vec::new(),
     }
 }
 
@@ -94,6 +95,7 @@ fn explicit_file_wins_over_last_query() {
         sql: None,
         file: Some(std::path::PathBuf::from("q.sql")),
         connection: None,
+        param_specs: Vec::new(),
     };
     let last = last_query("SELECT 1", Some("staging"));
     assert_eq!(
@@ -150,6 +152,7 @@ fn run_dispatches_a_replay_task_and_everything_else_stays_synchronous() {
             report: None,
             rows: None,
             overwrite: false,
+            params: Vec::new(),
         },
         &None,
     );
