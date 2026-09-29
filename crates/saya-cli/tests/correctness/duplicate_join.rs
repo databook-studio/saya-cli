@@ -1,9 +1,14 @@
 //! Trap 1: revenue joined through `customer_contacts` fan-out.
 //!
 //! The scripted model runs the naive join; the harness proves the trap is
-//! real by showing the joined sum differs from the true sum. The assertion
-//! is on the rows saya returned to the model, compared to a second
-//! `saya query` that computes the truth without the join.
+//! real by showing the joined sum strictly exceeds the truth over the SAME
+//! population without the fan-out (an inner join also drops the orders of
+//! contactless customers, so a bare differ-from-everything check could pass
+//! on pure loss with no inflation at all). The assertion is on the rows
+//! saya returned to the model, compared to a second `saya query`.
+//!
+//! Deterministic values (fixed demo seed): joined 33606342, same-population
+//! truth 25204693, all-orders truth 65893054.
 
 use super::common;
 
@@ -38,7 +43,18 @@ fn duplicate_join_trap_is_visible() {
     let expected = truth[0][0].as_i64().unwrap();
     assert_ne!(
         inflated, expected,
-        "the join must inflate revenue: joined {inflated} vs true {expected}",
+        "the join must change the total: joined {inflated} vs true {expected}",
+    );
+    let same_population = common::run_query(
+        &fixture,
+        "SELECT COALESCE(SUM(amount_cents), 0) FROM orders \
+        WHERE customer_id IN (SELECT customer_id FROM customer_contacts)",
+    );
+    let same_expected = same_population[0][0].as_i64().unwrap();
+    assert!(
+        inflated > same_expected,
+        "the fan-out must inflate, not merely drop: joined {inflated} \
+        vs same-population truth {same_expected}",
     );
     let _ = std::fs::remove_dir_all(&fixture.root);
 }

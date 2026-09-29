@@ -39,7 +39,8 @@ fn confirmed_time_column_changes_expected_result() {
         .and_then(|c| c.as_str())
         .unwrap();
     assert!(
-        user_turn.contains("database-contracts") && user_turn.contains("order_date"),
+        user_turn.contains("database-contracts")
+            && user_turn.contains("[confirmed] default_time_column  order_date"),
         "the confirmed claim reaches the provider request: {user_turn}",
     );
     let seen = common::tool_result_rows(&bodies[1]);

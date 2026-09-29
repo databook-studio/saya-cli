@@ -31,13 +31,40 @@ fn active_customer_ambiguity_requires_input() {
         stdout.contains(r#""event":"clarification_needed""#),
         "the ndjson stream carries the event: {stdout}",
     );
-    assert!(
-        stdout.contains("What defines an active customer?"),
+    let event = stdout
+        .lines()
+        .find_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            (value.get("event")?.as_str() == Some("clarification_needed")).then_some(value)
+        })
+        .unwrap_or_else(|| panic!("no clarification_needed line in: {stdout}"));
+    assert_eq!(
+        event.pointer("/question").and_then(|q| q.as_str()),
+        Some("What defines an active customer?"),
         "the question rides the stream: {stdout}",
     );
+    assert_eq!(
+        event
+            .pointer("/options")
+            .and_then(|o| o.as_array())
+            .map(Vec::len),
+        Some(2),
+        "both candidate definitions ride the stream: {stdout}",
+    );
+    let options: Vec<&str> = event
+        .pointer("/options")
+        .and_then(|o| o.as_array())
+        .unwrap()
+        .iter()
+        .filter_map(|o| o.as_str())
+        .collect();
     assert!(
-        stdout.contains("ordered in the last 90 days"),
-        "both candidates ride the stream: {stdout}",
+        options.contains(&"status = 'active'"),
+        "the status definition rides the stream: {stdout}",
+    );
+    assert!(
+        options.contains(&"ordered in the last 90 days"),
+        "the recency definition rides the stream: {stdout}",
     );
     let _ = std::fs::remove_dir_all(&fixture.root);
 }
