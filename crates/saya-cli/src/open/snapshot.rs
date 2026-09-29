@@ -2,14 +2,21 @@
 //! configuration every open of a staged file uses (external access off,
 //! autoload off, configuration locked), the metadata read-back, and the
 //! "is this directory a saya-staged snapshot" predicate shared by reuse,
-//! replacement, and cleanup.
+//! replacement, and cleanup. A snapshot's directory name carries the
+//! content-hash prefix and a short digest of its stored parse contract
+//! (`<sha16>-<digest8>`); legacy snapshots under the bare 16-hex content
+//! prefix remain valid — listed and cleaned, but never reused.
 
 use std::{collections::HashMap, fs, path::Path};
 
 use duckdb::{AccessMode, Config, Connection};
 use saya_harness::file_source::{RESERVED_METADATA_TABLE, STAGED_DB_FILE};
 
+use super::contract;
+
 /// What a staged snapshot says about itself, read back from its metadata.
+/// `contract`/`preview` are absent on legacy snapshots staged before
+/// contracts existed; such snapshots are never reused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SnapshotMeta {
     pub file_name: String,
@@ -19,6 +26,8 @@ pub(super) struct SnapshotMeta {
     pub columns: u64,
     pub staged_unix_ms: u64,
     pub format: String,
+    pub contract: Option<String>,
+    pub preview: Option<String>,
 }
 
 /// The staging configuration, pinned the same way `saya-harness` pins the
@@ -39,13 +48,18 @@ pub(super) fn staged_config(read_only: bool) -> Result<Config, String> {
         .map_err(|_| "duckdb snapshot configuration is invalid".to_owned())
 }
 
-/// The 16-hex-character directory name a snapshot of `sha256` lives under.
-pub(super) fn dir_name(sha256: &str) -> Option<&str> {
-    (sha256.len() == 64
+/// Whether `sha256` is a 64-character lowercase-hex content digest.
+fn is_content_sha(sha256: &str) -> bool {
+    sha256.len() == 64
         && sha256
             .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| &sha256[..16])
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+/// The snapshot directory name for content `sha256` under `contract`: the
+/// 16-hex content prefix, a dash, and the contract's 8-hex digest.
+pub(super) fn dir_name(sha256: &str, contract: &str) -> Option<String> {
+    is_content_sha(sha256).then(|| format!("{}-{}", &sha256[..16], contract::digest(contract)))
 }
 
 fn is_sha16(name: &str) -> bool {
@@ -53,6 +67,19 @@ fn is_sha16(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_digest8(name: &str) -> bool {
+    name.len() == 8
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether the name is the contract-suffixed layout `<sha16>-<digest8>`.
+fn is_contract_name(name: &str) -> bool {
+    name.split_once('-')
+        .is_some_and(|(sha16, digest)| is_sha16(sha16) && is_digest8(digest))
 }
 
 /// Reads the metadata table from a staged snapshot file. Any failure —
@@ -87,24 +114,35 @@ pub(super) fn snapshot_meta(db_path: &Path) -> Option<SnapshotMeta> {
         columns: number("columns")?,
         staged_unix_ms: number("staged_unix_ms")?,
         format: text("format")?,
+        contract: text("contract"),
+        preview: text("preview"),
     })
     // Both staged formats (C1 CSV, C2 Parquet) carry the same metadata keys.
     .filter(|meta| {
-        dir_name(&meta.sha256).is_some() && matches!(meta.format.as_str(), "csv" | "parquet")
+        is_content_sha(&meta.sha256) && matches!(meta.format.as_str(), "csv" | "parquet")
     })
 }
 
 /// Whether `dir` is a saya-staged snapshot: a real directory (not a symlink)
-/// whose name is the 16-hex prefix of the sha256 its valid metadata carries.
+/// whose name — the contract-suffixed `<sha16>-<digest8>` or the legacy bare
+/// 16-hex content prefix — matches the sha256 its valid metadata carries.
+/// A contract-suffixed name must also re-derive its digest from the stored
+/// contract, so name and stored contract cannot disagree.
 pub(super) fn valid_snapshot(dir: &Path) -> Option<SnapshotMeta> {
     let meta = fs::symlink_metadata(dir).ok()?;
     if meta.is_symlink() || !meta.is_dir() {
         return None;
     }
     let name = dir.file_name()?.to_str()?;
-    if !is_sha16(name) {
+    if !(is_sha16(name) || is_contract_name(name)) {
         return None;
     }
     let snapshot = snapshot_meta(&dir.join(STAGED_DB_FILE))?;
-    (snapshot.sha256.get(..16) == Some(name)).then_some(snapshot)
+    if is_sha16(name) {
+        return (snapshot.sha256.get(..16) == Some(name)).then_some(snapshot);
+    }
+    let (sha16, digest) = name.split_once('-')?;
+    let contract = snapshot.contract.as_deref()?;
+    (snapshot.sha256.get(..16) == Some(sha16) && contract::digest(contract) == digest)
+        .then_some(snapshot)
 }

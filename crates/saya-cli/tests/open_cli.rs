@@ -33,15 +33,48 @@ fn open_command(root: &Path) -> Command {
     cmd
 }
 
-fn query_command(root: &Path, sha16: &str, profile: &str, sql: &str) -> Command {
+fn query_command(root: &Path, connections: &Path, profile: &str, sql: &str) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_saya"));
     cmd.args(["--non-interactive", "--format", "json", "--connections"])
-        .arg(root.join("files").join(sha16).join("connections.toml"))
+        .arg(connections)
         .args(["--profile", profile, "query", "--sql", sql])
         .env("SAYA_CONFIG_HOME", root.join("user-config"))
         .env("SAYA_STATE_DB", root.join("state.sqlite3"))
         .env("HOME", root);
     cmd
+}
+
+/// The snapshot directories for `sha`: every entry under the files root whose
+/// name carries the content-hash prefix (`<sha16>-<contract digest>`).
+fn snapshot_dirs(root: &Path, sha: &str) -> Vec<PathBuf> {
+    let prefix = &sha[..16];
+    let Ok(entries) = fs::read_dir(root.join("files")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(prefix))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// The single snapshot directory for `sha` (panics when zero or several —
+/// several means the content was opened under different parse options).
+fn snapshot_dir(root: &Path, sha: &str) -> PathBuf {
+    let dirs = snapshot_dirs(root, sha);
+    assert_eq!(
+        dirs.len(),
+        1,
+        "exactly one snapshot for content {}: {dirs:?}",
+        &sha[..16]
+    );
+    dirs[0].clone()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -159,11 +192,11 @@ fn file_session_needs_no_database_profile() {
         "names the profile: {stdout}"
     );
 
-    let dir = root.join("files").join(&sha[..16]);
+    let dir = snapshot_dir(&root, &sha);
     let db = dir.join("source.duckdb");
     assert!(
         db.exists(),
-        "the staged db lands at <root>/<sha16>/source.duckdb"
+        "the staged db lands at <root>/<sha16>-<digest>/source.duckdb"
     );
     let mode = fs::metadata(&db).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600, "the staged db file is 0600");
@@ -174,7 +207,7 @@ fn file_session_needs_no_database_profile() {
 
     let select = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_sales",
         "SELECT count(*) FROM sales",
     )
@@ -214,7 +247,7 @@ fn open_one_file_does_not_grant_parent_access() {
 
     let tables = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_sales",
         "SELECT table_name FROM information_schema.tables \
          WHERE table_schema NOT IN ('information_schema', 'pg_catalog') ORDER BY table_name",
@@ -238,7 +271,7 @@ fn open_one_file_does_not_grant_parent_access() {
 
     let probe = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_sales",
         &format!(
             "SELECT * FROM read_csv('{}')",
@@ -289,7 +322,7 @@ fn leading_zero_ids_stay_text() {
 
     let first = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_batch",
         "SELECT id FROM batch_typed ORDER BY id",
     )
@@ -341,10 +374,9 @@ fn source_change_invalidates_previous_evidence() {
         "the changed content is a new snapshot: {stdout}"
     );
     assert!(
-        root.join("files")
-            .join(&sha_a[..16])
-            .join("source.duckdb")
-            .exists(),
+        snapshot_dirs(&root, &sha_a)
+            .first()
+            .is_some_and(|dir| dir.join("source.duckdb").exists()),
         "the old snapshot remains until cleanup"
     );
     let _ = fs::remove_dir_all(&root);
@@ -379,7 +411,7 @@ fn file_session_cleanup_removes_only_owned_state() {
     );
     assert!(stdout.contains(&sha[..12]), "{stdout}");
     assert!(
-        !root.join("files").join(&sha[..16]).exists(),
+        snapshot_dirs(&root, &sha).is_empty(),
         "the staged source is removed"
     );
     assert!(
@@ -423,7 +455,7 @@ fn typed_table_reports_cast_failures() {
 
     let count = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_metrics",
         "SELECT count(*) FROM metrics_typed",
     )
@@ -451,9 +483,14 @@ fn write_sql_on_the_file_profile_is_refused() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
 
-    let delete = query_command(&root, &sha[..16], "file_sales", "DELETE FROM sales")
-        .output()
-        .unwrap();
+    let delete = query_command(
+        &root,
+        &snapshot_dir(&root, &sha).join("connections.toml"),
+        "file_sales",
+        "DELETE FROM sales",
+    )
+    .output()
+    .unwrap();
     assert_eq!(
         delete.status.code(),
         Some(4),
@@ -467,7 +504,7 @@ fn write_sql_on_the_file_profile_is_refused() {
     );
     let create = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_sales",
         "CREATE TABLE hack (a INTEGER)",
     )
@@ -489,13 +526,13 @@ fn same_content_reuses_the_staged_snapshot() {
     let csv = root.join("sales.csv");
     fs::write(&csv, content).unwrap();
     let sha = sha256_hex(content.as_bytes());
-    let db = root.join("files").join(&sha[..16]).join("source.duckdb");
 
     let first = open_command(&root)
         .args(["open", csv.to_str().unwrap(), "--non-interactive"])
         .output()
         .unwrap();
     assert_eq!(first.status.code(), Some(0), "{}", stderr_of(&first));
+    let db = snapshot_dir(&root, &sha).join("source.duckdb");
     let before = fs::metadata(&db).unwrap().modified().unwrap();
     std::thread::sleep(Duration::from_millis(50));
 
@@ -551,10 +588,9 @@ fn files_root_defaults_beside_the_state_db() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
     assert!(
-        root.join("files")
-            .join(&sha[..16])
-            .join("source.duckdb")
-            .exists(),
+        snapshot_dirs(&root, &sha)
+            .first()
+            .is_some_and(|dir| dir.join("source.duckdb").exists()),
         "without SAYA_FILES_DIR the root is <state parent>/files"
     );
     let _ = fs::remove_dir_all(&root);
@@ -645,11 +681,11 @@ fn open_stages_a_parquet_file_and_refuses_file_functions() {
         "names the profile: {stdout}"
     );
 
-    let dir = root.join("files").join(&sha[..16]);
+    let dir = snapshot_dir(&root, &sha);
     let db = dir.join("source.duckdb");
     assert!(
         db.exists(),
-        "the staged db lands at <root>/<sha16>/source.duckdb"
+        "the staged db lands at <root>/<sha16>-<digest>/source.duckdb"
     );
     let mode = fs::metadata(&db).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600, "the staged db file is 0600");
@@ -662,7 +698,7 @@ fn open_stages_a_parquet_file_and_refuses_file_functions() {
 
     let select = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_sales_2024",
         "SELECT count(*) FROM sales_2024",
     )
@@ -677,7 +713,7 @@ fn open_stages_a_parquet_file_and_refuses_file_functions() {
 
     let refused = query_command(
         &root,
-        &sha[..16],
+        &snapshot_dir(&root, &sha).join("connections.toml"),
         "file_sales_2024",
         "SELECT * FROM read_parquet('/etc/passwd')",
     )
@@ -746,10 +782,9 @@ fn open_parquet_refuses_csv_only_flags() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
     assert!(
-        root.join("files")
-            .join(&sha[..16])
-            .join("source.duckdb")
-            .exists(),
+        snapshot_dirs(&root, &sha)
+            .first()
+            .is_some_and(|dir| dir.join("source.duckdb").exists()),
         "the snapshot is staged"
     );
     let _ = fs::remove_dir_all(&root);
