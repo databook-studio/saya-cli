@@ -21,6 +21,15 @@ pub(crate) fn parse_investigation_command(
 ) -> Result<InvestigationCommand, SlashParseError> {
     const USAGE: &str = " (usage: /investigation <save|list|show|edit|delete|export|import|run> …)";
     if name == "investigations" {
+        // Bare /investigations opens the TUI's picker before this parser
+        // runs (the TUI dispatch intercepts it); `--list` is the explicit
+        // escape hatch back to the text listing.
+        if tail.trim() == "--list" {
+            return Ok(InvestigationCommand::List {
+                limit: None,
+                offset: None,
+            });
+        }
         return parse_list(tail);
     }
     let Some(&(start, end)) = flags::token_spans(tail).first() else {

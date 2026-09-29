@@ -29,6 +29,31 @@ pub(crate) struct PickerEntry {
 
 type PickerLoad = Result<(Vec<PickerEntry>, bool), String>;
 
+/// A selectable list of saved investigations to show or run, filterable as
+/// you type. Opened by bare `/investigations`: the summaries load once on a
+/// worker thread (at most 500 — the collection cap, ten pages of fifty) and
+/// the picker itself never writes to the store.
+pub(crate) struct InvestigationPicker {
+    pub(crate) entries: Vec<InvestigationEntry>,
+    pub(crate) selected: usize,
+    /// True when the bounded load saw more than it kept.
+    pub(crate) capped: bool,
+    /// Case-insensitive substring filter over id + name.
+    pub(crate) query: String,
+}
+
+/// One row in the investigation picker. `label` is built once at load (age,
+/// name, dialect, connection) and sanitized/truncated only at render; the
+/// filter matches over `id` and `name`.
+#[derive(Clone)]
+pub(crate) struct InvestigationEntry {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) label: String,
+}
+
+type InvestigationLoad = Result<(Vec<InvestigationEntry>, bool), String>;
+
 /// UI overlays and modal interaction state.
 /// A Ctrl+R (input history) or Ctrl+F (transcript) search overlay.
 pub(crate) struct SearchOverlay {
@@ -54,6 +79,8 @@ pub(crate) struct OverlayState {
     pub(crate) menu: Option<Menu>,
     pub(crate) picker_loading: Option<Receiver<PickerLoad>>,
     pub(crate) picker: Option<Picker>,
+    pub(crate) investigations_loading: Option<Receiver<InvestigationLoad>>,
+    pub(crate) investigations: Option<InvestigationPicker>,
     pub(crate) pending_resume: Option<String>,
     pub(crate) show_help: bool,
     pub(crate) selection_mode: bool,

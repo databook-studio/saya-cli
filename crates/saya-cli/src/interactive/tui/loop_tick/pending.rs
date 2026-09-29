@@ -55,6 +55,7 @@ pub(crate) fn tick_pending(
                 app.start_agent(prompt, state, session);
             }
             Dispatch::OpenSessionPicker => app.open_session_picker(store),
+            Dispatch::OpenInvestigationPicker => app.open_investigation_picker(),
             Dispatch::Compact => {
                 compact_task::start(&mut *app, state);
             }
