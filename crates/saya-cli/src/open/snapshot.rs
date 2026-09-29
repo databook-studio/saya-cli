@@ -88,7 +88,10 @@ pub(super) fn snapshot_meta(db_path: &Path) -> Option<SnapshotMeta> {
         staged_unix_ms: number("staged_unix_ms")?,
         format: text("format")?,
     })
-    .filter(|meta| dir_name(&meta.sha256).is_some() && meta.format == "csv")
+    // Both staged formats (C1 CSV, C2 Parquet) carry the same metadata keys.
+    .filter(|meta| {
+        dir_name(&meta.sha256).is_some() && matches!(meta.format.as_str(), "csv" | "parquet")
+    })
 }
 
 /// Whether `dir` is a saya-staged snapshot: a real directory (not a symlink)

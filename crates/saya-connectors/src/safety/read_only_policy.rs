@@ -32,16 +32,30 @@ pub(super) struct BackendPolicy {
 
 const COMMON_DENIED_FUNCTIONS: &[&str] = &["nextval", "setval"];
 
-const DUCKDB_DENIED_FUNCTIONS: &[&str] = &[
-    "read_csv",
-    "read_csv_auto",
-    "read_json",
-    "read_json_auto",
-    "read_parquet",
-    "read_text",
-    "sqlite_scan",
+/// Every DuckDB reader of data outside the connected database — local files,
+/// remote URLs, other engines' files — mirrors the scratch validator's list
+/// (`saya-harness`'s `scratch/validate.rs`): the `read_`/`http_` prefix
+/// families plus the prefixless readers. Matched per identifier part, so
+/// schema-qualified (`parquet_tool.parquet_scan`) or upper-cased spellings
+/// cannot hide a name; the prefix rules also fail-closed on a plain relation
+/// named like a reader (`FROM read_something`).
+const DUCKDB_FILE_READ_PREFIXES: &[&str] = &["read_", "http_"];
+
+const DUCKDB_FILE_READ_FUNCTIONS: &[&str] = &[
     "glob",
     "metadata",
+    "parquet_scan",
+    "parquet_metadata",
+    "parquet_schema",
+    "parquet_file_metadata",
+    "parquet_kv_metadata",
+    "sqlite_scan",
+    "postgres_scan",
+    "mysql_scan",
+    "arrow",
+    "arrow_scan",
+    "iceberg_scan",
+    "delta_scan",
 ];
 
 const SQLITE_DENIED_FUNCTIONS: &[&str] = &["load_extension", "readfile", "writefile"];
@@ -122,8 +136,8 @@ pub(super) const MYSQL_POLICY: BackendPolicy = BackendPolicy {
 };
 
 pub(super) const DUCKDB_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: DUCKDB_DENIED_FUNCTIONS,
-    denied_prefixes: &[],
+    denied_functions: DUCKDB_FILE_READ_FUNCTIONS,
+    denied_prefixes: DUCKDB_FILE_READ_PREFIXES,
     deny_format_clause: false,
 };
 
