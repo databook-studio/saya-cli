@@ -8,6 +8,7 @@ pub(crate) mod answer;
 mod boundary;
 mod group;
 mod knowledge;
+mod question;
 mod thinking;
 
 pub(crate) use super::transcript::{BlockKind, Transcript};
@@ -88,6 +89,9 @@ mod answer_tests;
 #[cfg(test)]
 #[path = "attempt_tests.rs"]
 mod attempt_tests;
+#[cfg(test)]
+#[path = "clarification_tests.rs"]
+mod clarification_tests;
 #[cfg(test)]
 #[path = "group_collapse_tests.rs"]
 mod group_collapse_tests;

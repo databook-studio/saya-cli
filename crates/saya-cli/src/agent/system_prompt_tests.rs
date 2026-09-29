@@ -985,3 +985,25 @@ fn session_aware_prompt_adds_facts() {
         "the facts name the connection and the root: {with_session}"
     );
 }
+
+/// The working guidance carries the clarification sentence (B3c): a material
+/// definition nothing confirmed resolves must be asked about, not assumed.
+/// The sentence names the tool the model calls, so prompt and toolset cannot
+/// drift apart.
+#[test]
+fn the_working_guidance_tells_the_model_to_ask_instead_of_assume() {
+    let reg = single_registry("main");
+    let prompt = assemble_system_prompt(&reg, MemoryMode::Off, false).expect("a prompt");
+    assert!(
+        prompt.contains("request_clarification"),
+        "the guidance names the tool: {prompt}"
+    );
+    assert!(
+        prompt.contains("grain") && prompt.contains("time column") && prompt.contains("metric"),
+        "the material definitions are named: {prompt}"
+    );
+    assert!(
+        prompt.contains("ambiguous") && prompt.contains("instead of assuming"),
+        "the rule is ask-not-assume: {prompt}"
+    );
+}

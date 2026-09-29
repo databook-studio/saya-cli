@@ -37,11 +37,13 @@ fn cancellation() -> CancellationToken {
 /// The names each step's definitions must carry, in order, for a read-only
 /// run with the privacy gate open: the database and workspace-read set, no
 /// write tool, no chart (a step that approved no egress approves no chart),
-/// and no contract tools (a run passes no state store). `workspace_write`
-/// sits between `grep` and the sql tools when approved; the scope-asking
-/// tails append after it.
+/// and no contract tools (a run passes no state store). The clarification
+/// ask (B3c) rides the always-available set, right after `schema_discovery`.
+/// `workspace_write` sits between `grep` and the sql tools when approved; the
+/// scope-asking tails append after it.
 const OPEN_GATE: &[&str] = &[
     "schema_discovery",
+    "request_clarification",
     "workspace_read",
     "workspace_list",
     "glob",
@@ -58,6 +60,7 @@ const OPEN_GATE: &[&str] = &[
 /// and `designate_answer`.
 const OPEN_GATE_WITH_CHART: &[&str] = &[
     "schema_discovery",
+    "request_clarification",
     "workspace_read",
     "workspace_list",
     "glob",
@@ -82,6 +85,7 @@ const RUNNER_TAIL: &[&str] = &["run_program"];
 /// database data is hidden.
 const CLOSED_GATE: &[&str] = &[
     "schema_discovery",
+    "request_clarification",
     "workspace_read",
     "workspace_list",
     "glob",
@@ -271,6 +275,7 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
         names(&built, 0),
         [
             "schema_discovery",
+            "request_clarification",
             "workspace_read",
             "workspace_list",
             "glob",
