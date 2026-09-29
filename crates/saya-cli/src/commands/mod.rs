@@ -108,6 +108,10 @@ pub async fn run(
         Command::Completions { .. } => unreachable!("handled in dispatch"),
         // Demo is likewise handled in app::dispatch before the runtime loads.
         Command::Demo { .. } => unreachable!("handled in dispatch"),
+        // Open is likewise handled in app::dispatch before the runtime loads:
+        // it stages the file, writes its own connections file, and needs no
+        // resolved runtime.
+        Command::Open { .. } => unreachable!("handled in dispatch"),
         // Setup is likewise handled in app::dispatch before the runtime loads:
         // the guided flow runs without a resolved runtime and refuses before
         // reading stdin when there is no terminal.
