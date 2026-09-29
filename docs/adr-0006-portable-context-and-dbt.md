@@ -3,8 +3,8 @@
 - Status: accepted 2026-09-29. Records what shipped for release 0.4.2's
   context-portability and dbt milestones (B2, B3a), verified against the
   code; where the plan and the code differ, the code is recorded. The
-  clarification milestone (B3c) had not merged when this was written and is
-  marked pending below.
+  clarification milestone (B3c) also merged on 2026-09-29; §6 records what
+  shipped.
 - Date: 2026-09-29
 - Supersedes: nothing. Complements [ADR 0002](adr-0002-memory-and-contract-trust-model.md)
   (claims are confirmed facts, never authority to execute) and
@@ -65,7 +65,8 @@ serialized JSON contains none of the identity or review markers.
 
 ### 2. Export moves that profile's Active claims only
 
-`saya contracts export <path> [--profile P] [--overwrite]` writes one
+`saya contracts export <path> [--profile P] [--overwrite]` (`--profile`
+optional, defaulting to the active profile) writes one
 document containing the **Active** knowledge items of that profile — nothing
 Pending, nothing dismissed, nothing from another profile. Claims that cannot
 be made portable are counted as `skipped`, never silently dropped. The write
@@ -76,8 +77,9 @@ notes are produced by the dbt path, not by export.
 
 ### 3. Import maps, quarantines, and commits atomically
 
-`saya contracts import <path> --profile P [--preview]` runs in one order,
-and the order is the safety property:
+`saya contracts import <path> [--profile P] [--preview]` runs in one order,
+and the order is the safety property (`--profile` is optional and defaults
+to the active profile):
 
 1. **Validate the whole document first**, before any store access — bounds,
    schema, every payload through its validating constructors. A malformed
@@ -93,7 +95,14 @@ and the order is the safety property:
    regardless of any approval the document claims. The store's batch helper
    has no way to write an Active row; the document's approvals carry no
    authority (ADR 0002's trust model, applied to a file).
-4. **Conflicts are reported, not written.** A mapped item whose single-valued
+4. **Credential-shaped items are skipped, not fatal.** The store's batch
+   admission refuses any credential-shaped payload, and that refusal would
+   abort the whole batch — so the mapping applies the same credential-shape
+   predicate per item and reports the item (`credential-shaped text`) as
+   unavailable while the rest of the import proceeds. The store's admission
+   check stays behind it as the backstop; any *other* store-admission
+   refusal still aborts the import (all-or-nothing holds there).
+5. **Conflicts are reported, not written.** A mapped item whose single-valued
    slot already holds a *different* value locally (Pending or Active) is a
    conflict; a **dismissed** row is likewise a conflict and is never
    resurrected — the user explicitly forgot that fact, and an arriving file
@@ -101,7 +110,7 @@ and the order is the safety property:
    value stands and the import reports the conflict for the user to decide.
    An item identical to the local value is **skipped**, which makes
    re-import idempotent.
-5. **Commit all-or-nothing.** All writes go through one store transaction
+6. **Commit all-or-nothing.** All writes go through one store transaction
    ([`apply_pending_batch`](../crates/saya-store/src/knowledge_items/batch.rs));
    a storage failure mid-batch rolls back everything, leaving the store
    byte-identical.
@@ -117,8 +126,9 @@ the slash surface has no `--profile` — it always targets the active profile.
 
 ### 4. dbt metadata feeds the same import path
 
-`saya contracts import-dbt <manifest.json> --profile P [--select <glob>…]
-[--preview]` reads the manifest with the same bounded-read discipline: at
+`saya contracts import-dbt <manifest.json> [--profile P] [--select <glob>…]
+[--preview]` (`--profile` optional, defaulting to the active profile) reads
+the manifest with the same bounded-read discipline: at
 most 32 MiB (declared size checked, then a capped read, so a file that grows
 mid-read cannot exceed), manifest schema version **v10, v11, or v12** only
 (probed from `metadata.dbt_schema_version` before full parse — anything else
@@ -160,16 +170,22 @@ only thing a `relationships` test asserts), and the cardinality is **dropped
 at filing time** — nothing in the store consumes it, so the ADR records that
 rather than implying it survived.
 
-### 6. Clarification — pending
+### 6. Clarification — shipped (B3c)
 
-The plan's clarification milestone — an agent tool
-`request_clarification { question, options[≤6]? }` with no effect, a
-structured `AgentEvent::ClarificationNeeded`, turn-ending TUI rendering,
-headless exit 6, and system-prompt guidance to ask rather than assume when a
-material definition is ambiguous — **had not merged as of 2026-09-29**. No
-clarification tool, event, or prompt guidance exists in the tree; exit 6
-remains the run-paused code. This section records the intent as pending;
-when B3c lands, the ADR will be amended to describe what shipped.
+When a question's material definition is ambiguous and the confirmed context
+does not resolve it, the agent may ask one focused question instead of
+assuming. The model reaches the question through the `request_clarification`
+tool — `{ question, options[≤6]? }`, deliberately **effect-none**: it ends
+the turn rather than returning data. The turn ends with a structured
+`AgentEvent::ClarificationNeeded`; the TUI renders it as a Question block
+(and flushes any buffered tool-call group first, so the block reads in
+order), and headless `saya ask` exits `6` — the paused class, "needs input" —
+with the `clarification_needed` event on the JSON/NDJSON surface, so a script
+can tell "needs input" from "answered". The system prompt carries the
+guidance: ask rather than assume when a material definition is ambiguous.
+The tool is always advertised (it needs no data sharing, since it returns
+nothing) and its answers are never fed back automatically — the human
+answers the question in their own words next turn.
 
 ## Consequences
 
@@ -220,8 +236,8 @@ when B3c lands, the ADR will be amended to describe what shipped.
 - Import maps against cached-or-live schema per profile; it never merges
   across profiles, and `/contracts import` (slash) always uses the active
   profile.
-- Clarification is pending (§6): as shipped, the agent has stop-and-explain
-  guidance, not a structured ask-the-user tool.
+- Only credential-shaped items are skipped per item; every other
+  store-admission refusal aborts the whole import.
 - The deterministic correctness scenarios (duplicate-join trap, time-column
   choice, the "active" ambiguity) exist as fixture data and a manual
   walkthrough, not as scripted-provider tests.

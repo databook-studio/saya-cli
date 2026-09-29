@@ -29,7 +29,8 @@
 saya is a database-aware AI agent for the terminal. Ask questions in plain
 language or run SQL directly. For agent queries, saya discovers the schema,
 shows you the SQL, then runs it read-only with bounded results against
-PostgreSQL, MySQL, SQLite, DuckDB, or Snowflake.
+PostgreSQL, MySQL, SQLite, DuckDB, Snowflake, ClickHouse, or BigQuery — or
+against a local CSV or Parquet file, no server needed.
 
 ## Try it in one minute
 
@@ -51,9 +52,10 @@ scripted end to end with its recorded output, see
 ## Connect your own database
 
 `saya setup` is a guided flow: pick an AI provider (the API key is asked for
-only as an environment-variable *name*, never its value), pick a database,
-probe the connection, review the exact file changes, then confirm. It needs
-a terminal; for scripts use `saya config init` as before.
+only as an environment-variable *name*, never its value), pick a database —
+all seven engines are guided, including Snowflake (keypair, browser SSO, or
+password-env) — probe the connection, review the exact file changes, then
+confirm. It needs a terminal; for scripts use `saya config init` as before.
 
 ```bash
 saya setup
@@ -76,12 +78,29 @@ saya investigation export orders-last-week-3f9a1c2b out.json  # share it
 
 An investigation is one portable JSON file: the exact SQL plus its name,
 description, dialect, connection alias, and referenced tables — no
-credentials, rows, results, or machine-specific identity. The SQL is stored
-verbatim (review it before sharing), replay never involves an AI provider,
-and a run refuses when the referenced tables' schema, the target connection,
-or the saved revision changed since the last reviewed run — or when the
-review cannot be verified at all (a table that cannot be resolved, an
-ambiguous name) — until `--revalidate`. → [commands](docs/commands.md)
+credentials, rows, results, or machine-specific identity. The SQL can bind
+values by name (`WHERE region = :region`), declared at save with
+`--param-spec name:type[:required]` and bound at run with `--param
+name=value` — values are never stored, only names and a digest. The SQL is
+stored verbatim (review it before sharing), replay never involves an AI
+provider, and a run refuses when the referenced tables' schema, the target
+connection, or the saved revision changed since the last reviewed run — or
+when the review cannot be verified at all (a table that cannot be resolved,
+an ambiguous name) — until `--revalidate`. → [commands](docs/commands.md)
+
+## Ask about a file
+
+```bash
+saya open sales.csv                    # stage, preview, open a read-only session
+saya open events.parquet               # Parquet keeps its native column types
+saya open --list                       # staged file sources
+```
+
+`saya open` reads the file once and stages it into a private DuckDB snapshot
+keyed by its content hash, then opens the same bounded, read-only session as
+any database — no database server, no config editing. The preview shows
+columns, null counts, and inferred types; the session can only see the
+snapshot. → [commands](docs/commands.md#files-saya-open)
 
 ## Install
 
@@ -136,22 +155,33 @@ saya query --sql "SELECT count(*) FROM orders"
 - **Ask in plain language.** saya inspects your schema, proposes SQL, and
   shows the statement in the transcript. Choose `ask`, `read-only`, or `never`
   with `--approval-mode` to control approval prompts; `bypass` is an explicit
-  session-wide option.
+  session-wide option. When a question's definition is genuinely ambiguous,
+  the agent asks one focused question instead of assuming (`saya ask` exits
+  `6` with a `clarification_needed` event so scripts can tell).
 - **Run SQL directly.** Use `saya query` for a single read-only statement, or
   use `saya` to open the interactive terminal UI. The UI streams answers,
   offers `/` command search and `@table` schema completion, and supports
   exporting results. ([TUI demo](docs/demo.gif), [export demo](docs/features/feat-export.gif))
 - **Connect more than one database.** Work with PostgreSQL, MySQL, SQLite,
-  DuckDB, and Snowflake; add profiles to a session so saya can inspect and
-  query each connection. ([cross-database demo](docs/demo-cross.gif))
+  DuckDB, Snowflake, ClickHouse, and BigQuery; add profiles to a session so
+  saya can inspect and query each connection. ([cross-database demo](docs/demo-cross.gif))
 - **Keep useful context.** Optional memory carries typed facts about tables,
   columns, relationships, and metrics into later questions. Facts are bound to
-  the schema, and inferred facts wait for your confirmation. Off by default.
-  → [Memory](docs/memory.md)
+  the schema, and inferred facts wait for your confirmation. Off by default —
+  and portable: `saya contracts export` writes confirmed context to a file a
+  colleague can import (it lands pending their review), and
+  `contracts import-dbt` reads the descriptions and relationships already in
+  a dbt manifest. → [Memory](docs/memory.md)
 - **Use local or hosted models.** Supported providers include Ollama, OpenAI,
   OpenAI-compatible endpoints, Anthropic, and Gemini.
 - **Automate from scripts.** Piped input and non-interactive commands support
   text, JSON, or NDJSON output with documented exit codes.
+- **Serve saya to other tools.** `saya mcp serve` speaks the Model Context
+  Protocol over stdio, so an MCP host (opencode, codex, Claude Code, the
+  Inspector) can discover schemas, read confirmed contracts, and — only when
+  you explicitly allow data sharing — run bounded read-only queries. The
+  profile allowlist is fixed at startup; rows leave the machine only by
+  your choice. → [commands](docs/commands.md#mcp-saya-mcp-serve)
 - 🏃 **Long-running runs** — `saya run "<goal>"` asks the model for a plan,
   shows it to you once with its scopes and budgets, and executes it step by
   step, pausing (never silently stopping) when a declared budget trips so a

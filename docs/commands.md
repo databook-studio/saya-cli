@@ -4,7 +4,7 @@ Running `saya` without a subcommand starts the scrollback-preserving terminal
 session. It accepts `/help`, `/connect`, `/connections`, `/include`,
 `/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/allow`,
 `/grants`, `/schema`,
-`/sql`, `/export`, `/report`, `/investigation`,
+`/sql`, `/export`, `/report`, `/investigation`, `/investigations`,
 `/clear`, `/history`, and `/exit`.
 
 Examples:
@@ -38,7 +38,8 @@ of bare program names, evaluated before every grant, every approval prompt,
 and bypass. Under bypass, a hostile workspace file is effectively arbitrary
 code execution as the user.
 
-Automation never prompts. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake `connection
+Automation never prompts. PostgreSQL, MySQL, SQLite, DuckDB, Snowflake,
+ClickHouse, and BigQuery `connection
 test`, `connection schema`, and `query` commands are live; Snowflake
 `externalbrowser` is rejected in automation because it requires an interactive
 TTY. Query execution allows one parsed read-only statement and
@@ -61,6 +62,11 @@ before), so piped-text consumers that grepped `Using tool:` one line per
 call must match the `▸` summary or switch to NDJSON, the supported machine
 surface — NDJSON is unchanged, one `tool_requested` / `tool_completed`
 envelope per call.
+When the question's material definition is ambiguous and the confirmed
+context does not resolve it, the agent may ask one focused question instead
+of assuming: the turn ends with a `clarification_needed` event (the TUI
+renders it as a Question block), and `saya ask` exits `6` — the paused
+class, "needs input", not an error — so a script can tell the two apart.
 Two live limits worth knowing: only the newest collapsed TUI group can be
 expanded (the transcript has no per-block cursor, so older groups cannot be
 reached), and groups are sparse in practice (assistant text between calls
@@ -158,21 +164,16 @@ presence (never its value) is reported.
 - **AI provider** — five choices: ollama (local, default base URL,
   no key), openai, openai_compatible (asks for its base URL), anthropic, and
   gemini; plus skip.
-- **Database** — four engines: sqlite, duckdb, postgresql, and mysql (duckdb
-  asks about its read-only flag); plus skip. Snowflake, ClickHouse, and
-  BigQuery are not in the guided flow: they are configured in
-  `connections.toml` by hand, per the engine's section in
-  [connections](connections.md):
-
-  | Engine | In guided setup? | Configure by hand — see |
-  | --- | --- | --- |
-  | SQLite | yes | (not needed — guided) |
-  | DuckDB | yes | (not needed — guided) |
-  | PostgreSQL | yes | (not needed — guided) |
-  | MySQL | yes | (not needed — guided) |
-  | Snowflake | no | [Snowflake profiles](connections.md#snowflake-profiles) |
-  | ClickHouse | no | [ClickHouse profiles](connections.md#clickhouse-profiles) |
-  | BigQuery | no | [BigQuery profiles](connections.md#bigquery-profiles) |
+- **Database** — all seven engines: sqlite, duckdb, postgresql, mysql,
+  snowflake, clickhouse, and bigquery; plus skip. DuckDB asks about its
+  read-only flag. Snowflake offers its three auth paths — keypair (a private
+  key file path plus an optional passphrase env name, recommended), browser
+  SSO (no secret), or a password taken only as an environment-variable name
+  — and the browser-SSO probe opens the browser **only after explicit
+  consent** ("This opens your browser to sign in to Snowflake. Continue?");
+  declining skips that probe entirely. Warehouse fields not needed by the
+  chosen auth (warehouse, database, schema, role) are asked with blank
+  skipping each.
 - **Review** — the exact TOML that will be written, before anything is
   written. An existing `connections.toml` is appended to: the existing bytes
   are kept as an exact prefix and a new profile block is added (a profile
@@ -225,7 +226,7 @@ this command; retry`) instead of silently overwriting.
 
 Subcommands:
 
-- `saya investigation save --name <NAME> [--description <TEXT>] [--sql <SQL> | --file <PATH>] [--connection <PROFILE>]`
+- `saya investigation save --name <NAME> [--description <TEXT>] [--sql <SQL> | --file <PATH>] [--connection <PROFILE>] [--param-spec <SPEC>]…`
   — store the exact SQL as a new document (revision 1); with neither `--sql`
   nor `--file`, and stdin piped in, the statement is read from stdin. The
   SQL is checked by the read-only safety gate for the target dialect;
@@ -240,6 +241,13 @@ Subcommands:
 - `saya investigation show <ID>` — print the exact definition as JSON plus
   this machine's local review binding (the opaque profile identity is never
   printed).
+- `saya investigation edit <ID> [--name <TEXT>] [--description <TEXT>] [--sql <SQL> | --file <PATH>] [--param-spec <SPEC>]…`
+  — change the stored fields you pass (everything else is kept; the id,
+  dialect, and connection alias never change) and store the result as a
+  **new revision**. The replacement SQL crosses the same read-only gate and
+  credential-shape refusal, and the edit leaves the local review binding on
+  the old revision, so the next run needs `--revalidate` — exactly like any
+  other edit. At least one field is required.
 - `saya investigation delete <ID> [--revision <N>]` — delete the document
   and its local binding; the current revision is checked first, so a
   document changed underneath the command is refused rather than deleted
@@ -254,12 +262,48 @@ Subcommands:
   Nothing is executed and no connection is made. Identical id and content is
   an idempotent no-op; the same id with different content is a conflict
   (exit `2`). The first run afterwards needs `--connection`.
-- `saya investigation run <ID> [--connection <PROFILE>] [--revalidate] [--report <PATH> [--rows <N>] [--overwrite]]`
+- `saya investigation run <ID> [--connection <PROFILE>] [--revalidate] [--report <PATH> [--rows <N>] [--overwrite]] [--param <NAME=VALUE>]…`
   — replay the saved SQL against an explicit local connection: the same
   bounded, read-only query path as `saya query`, with no AI provider
   involved. The target comes only from `--connection` or the stored local
   binding — never the active or default profile. A dialect mismatch is
   refused (exit `2`).
+
+### Parameters for saved investigations
+
+A saved investigation's SQL may bind values by name with `:name`
+placeholders — `WHERE region = :region`. Declare them at `save` with
+`--param-spec name:type[:required]` (repeatable), where type is `string`,
+`integer`, `boolean`, `decimal`, `date`, or `timestamp` and the third part
+marks the parameter required (the default is optional):
+
+```bash
+saya investigation save --name "orders since" \
+  --sql "SELECT count(*) FROM orders WHERE status = :status AND order_date >= :min_date" \
+  --param-spec status:string:required \
+  --param-spec min_date:date
+saya investigation run orders-since-3f9a1c2b \
+  --param status=active --param min_date=2026-01-01
+```
+
+Only the `:name` placeholder form is accepted (positional `$1`, `?`, and the
+rest are refused), and every declaration must appear in the SQL and every
+placeholder must be declared. Bind values with `run --param name=value`
+(repeatable); the literal `null` binds a typed null, and an omitted optional
+parameter binds a typed null too. Values are parsed strictly as their
+declared types and bound natively by the engine at execute time — never
+spliced into the SQL text — and are **never stored anywhere**: the evidence
+record carries the parameter names and a SHA-256 digest of the value set,
+never a value. Binding errors — an unknown name, a bad value, a missing
+required parameter (the error lists every required name with its type) —
+exit `2` before any store, profile, or connection work. Engines that bind
+natively: PostgreSQL, MySQL, SQLite, DuckDB, and BigQuery; Snowflake with
+keypair auth only (other auth paths refuse parameterised SQL before any
+network activity); ClickHouse refuses parameterised SQL — fixed
+(parameter-free) SQL works unchanged. `investigation edit --param-spec`
+replaces the whole declaration list (a new revision, so the next run needs
+`--revalidate`), and `/investigation run <id> --param name=value` works in
+the TUI. → [ADR 0005](adr-0005-typed-query-parameters.md)
 
 The review is bound to the definition's revision, the target profile's
 identity, and the schema fingerprint of the referenced tables. When any of
@@ -283,22 +327,18 @@ TUI's `/report` writes — exact SQL and provenance by default, result rows
 only with `--rows <N>` (at most 100). The report is written only after a
 successful replay, and an existing destination needs `--overwrite`.
 
-Deferred in this release: there is no searchable TUI investigation picker
-(like `/sessions` for sessions) and no edit command — a saved definition is
-immutable through supported commands; save a new one under a new name
-instead.
-
 Exit codes follow the global scheme: `0` ok; `2` usage and domain errors
 (unknown id, id conflict, stale review, credential-shaped SQL, an unusable
-document); `3` store unavailable or connection/config failure; `4` a
-safety/query refusal. Exit `5` (agent) never occurs here — replay builds no
-provider.
+document, a parameter binding error); `3` store unavailable or
+connection/config failure; `4` a safety/query refusal. Exit `5` (agent)
+never occurs here — replay builds no provider.
 
 ## Session commands: `/investigation`, `/export`, `/report`
 
-`/investigation save|list|show|run|export|import|delete` is the same
+`/investigation save|list|show|edit|delete|export|import|run` is the same
 operation module the `saya investigation` commands run, so the two surfaces
-cannot disagree. `/investigations` is an alias for `/investigation list`.
+cannot disagree. Bare `/investigations` opens the TUI's searchable picker;
+`/investigations --list` prints the text listing instead.
 Three TUI-only details:
 
 - `/investigation save <name>` takes the name **positionally** — unlike the
@@ -308,7 +348,8 @@ Three TUI-only details:
   SQL query — on the connection that actually ran it. Failed or denied agent
   queries never become selectable, and fan-out (`bounded_sql_query_all`)
   never counts; pass `--sql <SQL>` (or `--file <PATH>`) to save different
-  SQL, and `--connection <PROFILE>` to save against another profile.
+  SQL, `--param-spec <SPEC>` to declare parameters, and
+  `--connection <PROFILE>` to save against another profile.
 - `/investigation run <id>` runs in the background: the status bar shows a
   spinner naming the investigation while the replay runs on a worker, and
   the transcript stays usable. Esc or Ctrl+C detaches it — the late result
@@ -318,6 +359,183 @@ Three TUI-only details:
   review binding are written exactly as a foreground run's.
 - `/investigation run` takes no `--report` flags in the TUI — write reports
   with `/report`.
+
+### The `/investigations` picker
+
+Bare `/investigations` opens a searchable picker over the saved
+investigations instead of printing the text listing (which
+`/investigations --list` keeps). The picker loads the collection (up to 500
+summaries, in list order, each labelled with its age, name, dialect, and
+connection) on a worker, filters as you type over id and display name, and
+captures navigation and filter typing until you choose: **Enter** shows the
+selected investigation through the same adapter `/investigation show <id>`
+uses, **`r`** starts the same background replay `/investigation run <id>`
+dispatches (the same worker-permit cap and busy refusal — a replay that
+still needs `--connection` fails in the worker with the command's refusal),
+and **Esc** closes. While the picker is open a bare `r` is the run key, not
+filter text — the trade every single-key action on this surface makes. The
+picker never writes to the store.
+
+`/investigation edit <id>` edits as a new revision, exactly like the CLI
+command: the fields you pass replace the stored ones and the next run needs
+`--revalidate`.
+
+## Files: `saya open`
+
+`saya open` turns a local CSV or Parquet file into a read-only session: the
+file is read exactly once (through the workspace containment primitives, no
+symlink following, ≤ 32 MiB), hashed, and staged into a private DuckDB
+snapshot keyed by its content hash under the platform data directory's
+`saya/files/` (`SAYA_FILES_DIR` overrides; `0600` files in `0700`
+directories). A preview prints — the source file name, its SHA-256 prefix,
+the size, row and column counts, the delimiter (sniffed when not given),
+whether a header row was used, per-column null counts, and an **inferred**
+type per column — and the TUI opens over the snapshot exactly as `saya demo`
+does: the same bounded, read-only query, evidence, export, and investigation
+machinery as any database, with no database server and no config editing.
+Without a terminal (or with `--non-interactive`) the command prints the
+preview and the launch command and exits.
+
+```bash
+saya open file.csv                    # stage (or reuse), preview, open the TUI
+saya open file.parquet                # Parquet keeps its native column types
+saya open file.csv --delimiter ';' --no-header --reset --typed
+saya open --list                      # staged sources, newest first
+saya open --cleanup all               # or a SHA-256 prefix naming exactly one
+```
+
+- **CSV is stored as text.** Every column lands as VARCHAR — no type is
+  guessed at staging time. The preview's type labels (integer, decimal,
+  boolean, date, timestamp, or text) come from at most the first 1,000
+  sampled rows and are deliberately strict: numerics with leading zeros stay
+  text, dates must be exactly `YYYY-MM-DD`, booleans exactly `true`/`false`,
+  timestamps RFC 3339 or naive ISO. `--typed` builds a second
+  `<table>_typed` table by explicit `TRY_CAST` per inferred non-text column,
+  leaving the text table untouched; cast failures are counted and reported
+  per column (the value lands NULL), never refused. An empty field stages as
+  NULL, and a ragged data row refuses the whole staging.
+- **Parquet is metadata-capped before decode.** Row totals (≤ 500,000) and
+  columns (≤ 512) are checked against the file's metadata, and nested types
+  (`STRUCT`, `MAP`, `UNION`, lists) are **refused** — only flat schemas
+  stage. CSV-only flags (`--delimiter`, `--no-header`, `--typed`) are
+  refused on Parquet, and a file whose bytes are Parquet but whose name says
+  otherwise is refused, never parsed as CSV.
+- **Caps are hard refusals**: 32 MiB source, 500,000 rows, 512 columns,
+  64 KiB fields, UTF-8 required, and a 30-second staging wall clock. Nothing
+  partial is ever left behind.
+- **The session sees only the snapshot.** The DuckDB read-only gate refuses
+  every file-reading function (`read_csv`, `read_parquet`, `parquet_scan`,
+  `parquet_metadata`, `glob`, `sqlite_scan`, and the rest), so the staged
+  copy is the only data the session can query.
+- **The same content reuses its snapshot**; changed content stages a new
+  one; `--reset` restages. `--list` shows the staged sources newest-first;
+  `--cleanup <sha-prefix>|all` removes only validated saya snapshots (an
+  ambiguous prefix is refused naming the matches; foreign files survive).
+  Cleanup is manual — nothing expires automatically.
+
+→ [ADR 0007](adr-0007-file-sources.md)
+
+## MCP: `saya mcp serve`
+
+`saya mcp serve` exposes saya's read-only capabilities to MCP hosts over
+stdio: newline-delimited JSON-RPC on stdin/stdout (protocol frames only —
+diagnostics go to stderr), exit `0` on stdin EOF. The same read-only safety
+gate every other client crosses sits behind every tool, and the surface has
+no approval or grant machinery at all: a missing secret refuses, it never
+prompts, so MCP profiles need complete, resolvable credentials.
+
+```bash
+saya mcp serve --profile analytics --profile staging
+saya mcp serve --allow-data-sharing   # rows may leave the machine
+```
+
+- **Tools.** `list_profiles` (allowlist names + SQL dialects only), `schema`
+  (live discovery with the state-store cache fallback), and `contracts`
+  (Active claims only) are always available. `query` (one bounded read-only
+  statement → `columns`/`rows`/`truncated` plus evidence) and
+  `investigation_run` (replay a saved investigation → result, evidence,
+  connection; `params` binds its declared parameters as `{"name": "value"}`
+  strings) return rows, so they exist **only when data sharing is allowed** —
+  absent from `tools/list` entirely when it is off, and refused at dispatch
+  too. The data-sharing gate is the config's `[ai] allow_data_sharing`
+  folded with the global `--allow-data-sharing` / `--no-data-sharing` flags.
+- **The profile allowlist is decided at startup and never widened.** The
+  `serve` subcommand's `--profile` values (repeatable) fix it; with none
+  given, the configured default profile is it (and with none configured the
+  server starts empty). Every tool that takes a profile is held inside it:
+  `schema`, `query`, and `contracts` resolve their profile argument through
+  it — a client naming a configured-but-unlisted profile gets `profile not
+  available: …` — and `investigation_run` is checked too, before anything
+  runs: its effective target (the `profile` argument, else the saved
+  binding's profile) must be allowlisted, and a binding saved against an
+  unlisted profile refuses with a bare `profile not available`, never
+  naming the profile. `list_profiles` reports the allowlist, never a
+  configured-but-unlisted profile.
+- **Bounds.** Requests ≤ 1 MiB (an oversized line is answered with a
+  JSON-RPC error and discarded unread), ≤ 4 tool calls in flight (beyond it,
+  a tool-level `busy` error invites a retry), 30 s per call, responses
+  ≤ 16 MiB (a `query` payload first narrows by halving rows, refusing only
+  when even the rowless payload exceeds the bound).
+- **Every failure is a sanitized `isError` result**: credential-shaped
+  content is redacted, control characters stripped, and no filesystem path
+  appears. Write SQL (`DELETE`, `DROP`, …) is refused by the read-only gate,
+  and a stale review on `investigation_run` is an error naming
+  `--revalidate` — words the client reads, a flag it cannot pass; a replay
+  never revalidates from the wire.
+- **Cancellation drops the call**: a `notifications/cancelled` stops the
+  wait and discards the late response; only `query` on the engines that
+  support it stops the actual server-side work.
+- **Stdin EOF drops pending work.** The server exits `0` the moment stdin
+  closes, without waiting for requests still in flight: a one-shot pipeline
+  that writes its JSON-RPC frames and then closes stdin — for example
+  `printf '%s\n' "$INIT" "$INITIALIZED" "$LIST" | saya mcp serve --profile
+  demo` (the `initialize`, `initialized`, and `tools/list` frames) — gets no
+  reply to the frames still in flight at EOF. Hold stdin open until the
+  replies arrive (`{ printf …; sleep 2; } | saya mcp serve …`); a host keeps
+  stdin open for the session's life and every call is answered.
+
+### Connecting a client
+
+Add saya to the host's MCP configuration, with `--profile` values to fix the
+allowlist (and `--allow-data-sharing` only when rows may leave the machine):
+
+**opencode** — an `mcp` block in `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "saya": {
+      "type": "local",
+      "command": ["saya", "mcp", "serve", "--profile", "analytics"]
+    }
+  }
+}
+```
+
+**codex** — in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.saya]
+command = "saya"
+args = ["mcp", "serve", "--profile", "analytics"]
+```
+
+or as one-off CLI overrides:
+
+```bash
+codex -c mcp_servers.saya.command='"saya"' \
+      -c 'mcp_servers.saya.args=["mcp","serve","--profile","analytics"]'
+```
+
+**Claude Code**:
+
+```bash
+claude mcp add saya -- saya mcp serve --profile analytics
+```
+
+→ [ADR 0008](adr-0008-mcp-server.md) records the design and the client
+validation.
 
 `/export [--snapshot|--refresh] [--overwrite] <path>` writes rows to a
 `.csv` or `.json` file (chosen by extension):
