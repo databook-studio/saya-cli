@@ -65,7 +65,7 @@ PAT.
 ## Cutting a release
 
 1. Ensure `main` is green. The branch ruleset requires it: `fmt`, Clippy
-   `-D warnings`, and tests on Linux/macOS/Windows, plus the Rust 1.88 MSRV check.
+   `-D warnings`, and tests on Linux/macOS/Windows, plus the Rust 1.89 MSRV check.
 2. Move `CHANGELOG.md` `## Unreleased` to `## X.Y.Z — YYYY-MM-DD` and start a
    fresh `## Unreleased`.
 3. Bump the version to `X.Y.Z` in every crate's `Cargo.toml` **and** in the
