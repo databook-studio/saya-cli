@@ -450,3 +450,7 @@ fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
 #[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime_budget_tests.rs"]
+mod budget_tests;
