@@ -1,19 +1,24 @@
 use std::time::Instant;
 
 use futures_util::TryStreamExt;
-use saya_types::{ConnectionError, QueryRequest, QueryResult};
+use saya_types::{BoundParam, ConnectionError, QueryRequest, QueryResult, SqlDialect};
 use serde_json::Value;
-use sqlx::{Column as _, Row};
+use sqlx::{Column as _, Row, Sqlite, query::Query, sqlite::SqliteArguments};
 use std::sync::atomic::Ordering;
 use tokio::time::timeout;
 
 use super::{SqliteConnector, decode, errors};
+use crate::binds::BindValue;
+
+#[cfg(test)]
+#[path = "execute_tests.rs"]
+mod tests;
 
 pub(crate) async fn query(
     c: &SqliteConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
-    let sql = crate::prepare_sqlite_sql(&request.sql, request.max_rows)?;
+    let (sql, binds) = prepare(&request.sql, request.max_rows, &request.params)?;
 
     let mut conn = timeout(c.query_timeout, c.pool.acquire())
         .await
@@ -36,7 +41,7 @@ pub(crate) async fn query(
         });
     }
 
-    let stream_res = fetch_rows(&mut conn, &sql, request.max_rows).await;
+    let stream_res = fetch_rows(&mut conn, &sql, request.max_rows, &binds).await;
 
     if let Ok(mut handle) = conn.lock_handle().await {
         handle.remove_progress_handler();
@@ -64,12 +69,53 @@ pub(crate) async fn query(
     })
 }
 
+/// Prepares the statement for execution. Parameter-free SQL keeps today's
+/// prepare path byte-for-byte; parameterized SQL is rewritten to `?` markers
+/// with an ordered bind list — values never touch the text.
+fn prepare(
+    sql: &str,
+    max_rows: usize,
+    params: &[BoundParam],
+) -> Result<(String, Vec<BindValue>), ConnectionError> {
+    if params.is_empty() {
+        return Ok((crate::prepare_sqlite_sql(sql, max_rows)?, Vec::new()));
+    }
+    let prepared = crate::prepare_with_params(sql, max_rows, SqlDialect::Sqlite, params)?;
+    let binds = crate::binds::parse_bind_values(&prepared.values)?;
+    Ok((prepared.sql, binds))
+}
+
+/// Attaches the ordered bind list to the statement through sqlx's encode
+/// path. SQLite is dynamically typed: decimals and timestamps bind as the
+/// exact validated text (so stored forms like `007` or a lowercase `t`
+/// compare as written), dates as `NaiveDate` (`%F` text), a null as
+/// `Option::<String>::None`.
+fn bind_query<'q>(
+    query: Query<'q, Sqlite, SqliteArguments<'q>>,
+    values: &'q [BindValue],
+) -> Query<'q, Sqlite, SqliteArguments<'q>> {
+    let mut query = query;
+    for value in values {
+        query = match value {
+            BindValue::Null => query.bind(Option::<String>::None),
+            BindValue::Str(text) => query.bind(text.as_str()),
+            BindValue::Int(int) => query.bind(*int),
+            BindValue::Bool(flag) => query.bind(*flag),
+            BindValue::Decimal { text, .. } => query.bind(text.as_str()),
+            BindValue::Date(date) => query.bind(*date),
+            BindValue::Timestamp { text, .. } => query.bind(text.as_str()),
+        };
+    }
+    query
+}
+
 async fn fetch_rows(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
     sql: &str,
     max_rows: usize,
+    binds: &[BindValue],
 ) -> Result<(Vec<String>, Vec<Value>, bool), sqlx::Error> {
-    let mut stream = sqlx::query(sql).fetch(&mut **conn);
+    let mut stream = bind_query(sqlx::query(sql), binds).fetch(&mut **conn);
     let mut columns = Vec::new();
     let mut rows = Vec::new();
     let mut result_bytes = 0;
@@ -120,150 +166,4 @@ fn is_interrupt_error(err: &sqlx::Error) -> bool {
         }
     }
     false
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use saya_types::{ConnectionError, QueryRequest};
-    use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
-
-    use crate::{ConnectorOptions, DatabaseConnector, SqliteConnector};
-
-    /// A query that keeps the SQLite VM busy long enough to be interrupted. The
-    /// recursive CTE produces far more rows than the timeout or a cancellation
-    /// will let it finish.
-    const SLOW_QUERY: &str = "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x < 500000000) \
-         SELECT count(*) FROM cnt";
-
-    /// Opens a read-only connector against a fresh temp file. The temp dir is
-    /// returned so the caller keeps the file path alive for the pool, which
-    /// opens further connections by path on demand. The file is seeded first:
-    /// SQLite refuses a read-only open of a path that does not exist.
-    async fn open(timeout_seconds: u64) -> (Arc<SqliteConnector>, tempfile::TempDir) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let db = dir.path().join("cancel.db");
-        let seed = SqlitePool::connect_with(
-            SqliteConnectOptions::new()
-                .filename(&db)
-                .create_if_missing(true),
-        )
-        .await
-        .unwrap();
-        seed.close().await;
-        let connector = Arc::new(
-            SqliteConnector::open(
-                &db,
-                true,
-                ConnectorOptions {
-                    query_timeout_seconds: timeout_seconds,
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap(),
-        );
-        (connector, dir)
-    }
-
-    #[tokio::test]
-    async fn cancelled_query_reports_cancellation_not_timeout() {
-        let (connector, _dir) = open(30).await;
-        let runner = connector.clone();
-        let task = tokio::spawn(async move {
-            runner
-                .execute(QueryRequest::new(SLOW_QUERY.to_string(), 1))
-                .await
-        });
-        // Let the statement start before cancelling it.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        connector.cancel().await.unwrap();
-        let result = tokio::time::timeout(Duration::from_secs(5), task)
-            .await
-            .expect("cancelled query stops within seconds")
-            .unwrap();
-        assert!(
-            matches!(result, Err(ConnectionError::Cancelled)),
-            "a cancelled query reports cancellation, not a timeout: {result:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn deadline_path_still_reports_timeout() {
-        let (connector, _dir) = open(1).await;
-        let result = connector
-            .execute(QueryRequest::new(SLOW_QUERY.to_string(), 1))
-            .await;
-        let err = result.expect_err("the deadline fires before the query finishes");
-        let message = err.to_string().to_lowercase();
-        assert!(
-            message.contains("timed out"),
-            "the deadline path reports a timeout: {message}"
-        );
-        assert!(
-            !message.contains("cancel"),
-            "a timed-out query is not reported as cancelled: {message}"
-        );
-    }
-
-    #[tokio::test]
-    async fn connection_works_for_the_next_query_after_cancellation() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let db = dir.path().join("reuse.db");
-        let seed = SqlitePool::connect_with(
-            SqliteConnectOptions::new()
-                .filename(&db)
-                .create_if_missing(true),
-        )
-        .await
-        .unwrap();
-        sqlx::query("CREATE TABLE t (id INTEGER)")
-            .execute(&seed)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO t VALUES (1), (2), (3)")
-            .execute(&seed)
-            .await
-            .unwrap();
-        seed.close().await;
-
-        let connector = Arc::new(
-            SqliteConnector::open(
-                &db,
-                true,
-                ConnectorOptions {
-                    query_timeout_seconds: 30,
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap(),
-        );
-
-        let runner = connector.clone();
-        let task = tokio::spawn(async move {
-            runner
-                .execute(QueryRequest::new(SLOW_QUERY.to_string(), 1))
-                .await
-        });
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        connector.cancel().await.unwrap();
-        let cancelled = tokio::time::timeout(Duration::from_secs(5), task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(matches!(cancelled, Err(ConnectionError::Cancelled)));
-
-        // The same connector must serve the next query — no poisoned pool entry.
-        let result = connector
-            .execute(QueryRequest::new(
-                "SELECT id FROM t ORDER BY id".to_string(),
-                10,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(result.row_count, 3);
-    }
 }

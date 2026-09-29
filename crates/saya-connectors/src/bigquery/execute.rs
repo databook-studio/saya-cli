@@ -13,6 +13,7 @@ pub(crate) async fn query(
     connector: &BigQueryConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
+    crate::binds::refuse_params("BigQuery", &request.params)?;
     let sql = crate::prepare_bigquery_sql(&request.sql, request.max_rows)?;
     let token = connector.token().await?;
     refuse_if_over_budget(connector, &sql, &token).await?;
