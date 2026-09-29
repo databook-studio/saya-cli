@@ -1,18 +1,20 @@
 use std::time::Duration;
 
 use reqwest::{StatusCode, header};
-use saya_types::{ConnectionError, QueryRequest, QueryResult};
+use saya_types::{BoundParam, ConnectionError, QueryRequest, QueryResult, SqlDialect};
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout};
 
-use super::{auth, client::SnowflakeConnector, diagnose, errors, result, status_url};
+use super::{auth, bindings, client::SnowflakeConnector, diagnose, errors, result, status_url};
 
 pub(crate) async fn execute(
     connector: &SnowflakeConnector,
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
     let _in_flight = connector.in_flight.lock().await;
-    let sql = crate::prepare_snowflake_sql(&request.sql, request.max_rows)?;
+    let (sql, bound) = prepare(&request.sql, request.max_rows, &request.params)?;
+    let original_sql = request.sql;
+    let max_rows = request.max_rows;
     let token = auth::jwt(
         &connector.account,
         &connector.user,
@@ -23,7 +25,13 @@ pub(crate) async fn execute(
     )
     .map_err(|_| errors::auth())?;
     let url = format!("{}/api/v2/statements", connector.origin);
-    let body = json!({"statement": sql, "timeout": connector.timeout.as_secs(), "database": connector.context.database, "schema": connector.context.schema, "warehouse": connector.context.warehouse, "role": connector.context.role});
+    let mut body = json!({"statement": sql, "timeout": connector.timeout.as_secs(), "database": connector.context.database, "schema": connector.context.schema, "warehouse": connector.context.warehouse, "role": connector.context.role});
+    // Snowflake replaces the `?` markers with these values server-side;
+    // bindings are documented as unsupported for multi-statement requests,
+    // and the safety layer only ever submits one statement.
+    if let Some(bound) = bound {
+        body["bindings"] = bound;
+    }
     let response = send(
         connector.client.post(url),
         &token,
@@ -35,11 +43,27 @@ pub(crate) async fn execute(
     let output = async {
         let value = poll(connector, &token, response).await?;
         *connector.active.lock().await = status_url::handle(&value);
-        collect(connector, &token, value, request.max_rows, request.sql).await
+        collect(connector, &token, value, max_rows, original_sql).await
     }
     .await;
     *connector.active.lock().await = None;
     output
+}
+
+/// Prepares the statement for execution. Parameter-free SQL keeps today's
+/// prepare path byte-for-byte; parameterized SQL is rewritten to `?` markers
+/// with the 1-based bindings object — values never touch the text.
+fn prepare(
+    sql: &str,
+    max_rows: usize,
+    params: &[BoundParam],
+) -> Result<(String, Option<Value>), ConnectionError> {
+    if params.is_empty() {
+        return Ok((crate::prepare_snowflake_sql(sql, max_rows)?, None));
+    }
+    let prepared = crate::prepare_with_params(sql, max_rows, SqlDialect::Snowflake, params)?;
+    let parsed = crate::binds::parse_bind_values(&prepared.values)?;
+    Ok((prepared.sql, Some(bindings::bindings(&parsed)?)))
 }
 
 async fn send(

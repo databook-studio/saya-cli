@@ -9,7 +9,7 @@ use std::fmt;
 
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use saya_types::{BoundParam, ConnectionError, ParamValue};
+use saya_types::{ConnectionError, ParamValue};
 
 #[cfg(test)]
 #[path = "binds_tests.rs"]
@@ -50,18 +50,6 @@ impl fmt::Debug for BindValue {
             Self::Date(_) => "Date(_)",
             Self::Timestamp { .. } => "Timestamp { .. }",
         })
-    }
-}
-
-/// Refuses a non-empty parameter list on an engine whose native binding has
-/// not landed, before that engine touches the network.
-pub(crate) fn refuse_params(engine: &str, params: &[BoundParam]) -> Result<(), ConnectionError> {
-    if params.is_empty() {
-        Ok(())
-    } else {
-        Err(ConnectionError::unsupported(format!(
-            "parameters are not supported for {engine} yet"
-        )))
     }
 }
 

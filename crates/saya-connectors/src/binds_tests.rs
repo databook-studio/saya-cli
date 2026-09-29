@@ -1,19 +1,12 @@
 //! Tests for the shared `ParamValue` → engine-native bind mapping: the
-//! concrete types each sqlx engine encodes, the text engines must keep
-//! verbatim, and the refusal that guards unwired engines.
+//! concrete types each sqlx engine encodes and the text engines must keep
+//! verbatim.
 
 use bigdecimal::BigDecimal;
 use chrono::{FixedOffset, NaiveDate, TimeZone};
-use saya_types::{BoundParam, ConnectionError, ParamValue};
+use saya_types::{ConnectionError, ParamValue};
 
-use crate::binds::{BindValue, parse_bind_values, refuse_params};
-
-fn bound(name: &str, value: ParamValue) -> BoundParam {
-    BoundParam {
-        name: name.to_owned(),
-        value,
-    }
-}
+use crate::binds::{BindValue, parse_bind_values};
 
 #[test]
 fn primitive_values_map_without_loss() {
@@ -121,19 +114,4 @@ fn invalid_text_refuses_without_echoing_the_value() {
         BindValue::Decimal { value, .. } => assert_eq!(*value, BigDecimal::from(100_000)),
         other => panic!("expected a decimal bind, got {other:?}"),
     }
-}
-
-#[test]
-fn refuse_params_guards_unwired_engines() {
-    assert!(refuse_params("DuckDB", &[]).is_ok());
-    let params = vec![bound("v", ParamValue::Integer(1))];
-    let error = refuse_params("DuckDB", &params).unwrap_err();
-    assert!(
-        matches!(error, ConnectionError::Unsupported(_)),
-        "{error:?}"
-    );
-    assert_eq!(
-        error.to_string(),
-        "unsupported operation: parameters are not supported for DuckDB yet"
-    );
 }
