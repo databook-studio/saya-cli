@@ -290,10 +290,10 @@ list — leaving the review binding on the old revision, so the next run needs
 - Parameters bind on Snowflake with keypair auth only; every other Snowflake
   auth path refuses parameterised SQL. ClickHouse has no parameters at all.
 - MCP requests still pending when stdin reaches EOF are dropped, not
-  answered — the server exits `0` on EOF without waiting for in-flight work,
-  so a one-shot `printf 'initialize\ninitialized\ntools/list\n' | saya mcp
-  serve --profile demo` can leave the last request unanswered; a host keeps
-  stdin open for the session's life.
+  answered: the server exits `0` on EOF without waiting for in-flight work,
+  so a one-shot pipeline that writes its JSON-RPC frames and closes stdin
+  gets no reply to the frames still in flight; a host keeps stdin open for
+  the session's life.
 - Live engines beyond SQLite are not verified in this release's evidence:
   the parameter, context, and file-source paths are exercised end to end
   against SQLite (and DuckDB for file sources), not against live

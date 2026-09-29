@@ -486,12 +486,13 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
   wait and discards the late response; only `query` on the engines that
   support it stops the actual server-side work.
 - **Stdin EOF drops pending work.** The server exits `0` the moment stdin
-  closes, without waiting for requests still in flight — so a one-shot
-  `printf 'initialize\ninitialized\ntools/list\n' | saya mcp serve --profile
-  demo` can leave the last request unanswered (verified: no reply to the
-  `tools/list`). A host keeps stdin open for the session's life and every
-  call is answered; one-shot pipelines must wait (hold stdin open) for the
-  replies they asked for.
+  closes, without waiting for requests still in flight: a one-shot pipeline
+  that writes its JSON-RPC frames and then closes stdin — for example
+  `printf '%s\n' "$INIT" "$INITIALIZED" "$LIST" | saya mcp serve --profile
+  demo` (the `initialize`, `initialized`, and `tools/list` frames) — gets no
+  reply to the frames still in flight at EOF. Hold stdin open until the
+  replies arrive (`{ printf …; sleep 2; } | saya mcp serve …`); a host keeps
+  stdin open for the session's life and every call is answered.
 
 ### Connecting a client
 
