@@ -10,6 +10,8 @@ use super::policy::{MAX_IN_FLIGHT, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, ServeP
 use super::server::SayaServer;
 use crate::config::runtime::RuntimeConfig;
 use saya_config::{CliOverrides, ConfigFile, ConnectionsFile, ResolutionInput, resolve};
+use saya_store::{InvestigationRepository, LocalBinding};
+use saya_types::InvestigationId;
 
 fn fixture_runtime(connections_toml: &str, config_toml: &str) -> RuntimeConfig {
     let connections = ConnectionsFile::from_toml(connections_toml).unwrap();
@@ -235,5 +237,87 @@ fn the_params_argument_reads_as_a_name_value_list() {
         not_string.message.contains("count") && not_string.message.contains("string"),
         "a non-string value is a parameter error naming the key: {}",
         not_string.message
+    );
+}
+
+/// The replay's allowlist gate (F-1): the effective target — the `profile`
+/// argument, else the saved binding's profile, the run command's own
+/// resolution — must sit inside the startup allowlist before anything runs.
+/// A binding saved against a profile the server does not serve is refused
+/// with its name never echoed; a client-supplied name is refused with the
+/// name it asked for; and with neither an argument nor a readable binding
+/// the gate passes, leaving the run command's own refusals in charge.
+#[test]
+fn the_replay_gate_holds_the_run_inside_the_allowlist() {
+    fn binding(id: &InvestigationId, profile: &str) -> LocalBinding {
+        LocalBinding {
+            version: LocalBinding::VERSION,
+            id: id.clone(),
+            profile: profile.to_owned(),
+            profile_identity: "identity".to_owned(),
+            reviewed_revision: 1,
+            reviewed_schema_fingerprint: None,
+            reviewed_unix_ms: 0,
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!("saya-mcp-gate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let mut runtime = fixture_runtime(TWO_PROFILES, "default_profile = 'first'\n");
+    runtime.investigations_root = root.clone();
+    let repo = InvestigationRepository::new(root);
+    let other_bound = InvestigationId::parse("bound-second-1").unwrap();
+    let local_bound = InvestigationId::parse("bound-first-1").unwrap();
+    repo.put_binding(&binding(&other_bound, "second")).unwrap();
+    repo.put_binding(&binding(&local_bound, "first")).unwrap();
+
+    let context = super::context::McpContext {
+        runtime: runtime.clone(),
+        store: saya_store::SqliteStateStore::new(std::env::temp_dir().join("saya-mcp-test-state")),
+        replay_slot: tokio::sync::Mutex::new(()),
+    };
+    let policy = ServePolicy::resolve(&runtime, &["first".to_owned()], None).unwrap();
+    use super::replay_tools::allowlist_gate;
+
+    // A binding pointing outside the allowlist: refused, the name not echoed.
+    let refused = allowlist_gate(&policy, &context, other_bound.as_str(), None)
+        .expect_err("a binding outside the allowlist is refused");
+    assert!(
+        refused.contains("profile not available"),
+        "the refusal names the gate: {refused}"
+    );
+    assert!(
+        !refused.contains("second"),
+        "the binding's profile is never echoed: {refused}"
+    );
+
+    // An argument naming the same profile: refused with the requested name.
+    let refused = allowlist_gate(&policy, &context, other_bound.as_str(), Some("second"))
+        .expect_err("a non-allowlisted argument is refused");
+    assert!(
+        refused.contains("profile not available") && refused.contains("second"),
+        "the requested name is echoed: {refused}"
+    );
+
+    // Allowlisted on both shapes: the run may proceed.
+    assert!(
+        allowlist_gate(&policy, &context, local_bound.as_str(), None).is_ok(),
+        "a binding inside the allowlist runs"
+    );
+    assert!(
+        allowlist_gate(&policy, &context, local_bound.as_str(), Some("first")).is_ok(),
+        "an allowlisted argument runs"
+    );
+
+    // Neither an argument nor a binding — and a malformed id: the gate
+    // passes, leaving the run command's own refusals in charge (the same
+    // words the CLI prints, in the CLI's own order).
+    assert!(
+        allowlist_gate(&policy, &context, "no-such-id", None).is_ok(),
+        "an absent binding leaves the refusal to the run command"
+    );
+    assert!(
+        allowlist_gate(&policy, &context, "REFUSED-ID", None).is_ok(),
+        "a malformed id leaves the refusal to the run command"
     );
 }
