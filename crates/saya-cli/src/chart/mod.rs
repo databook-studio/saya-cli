@@ -5,6 +5,8 @@ mod kind;
 mod render;
 mod spec;
 mod temp_chart;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 #[cfg(test)]
 use saya_types::QueryResult;

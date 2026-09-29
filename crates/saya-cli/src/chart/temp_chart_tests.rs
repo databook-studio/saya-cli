@@ -3,7 +3,8 @@
 //! redirect the chart HTML write.
 
 use super::super::cleanup::{cleanup_session_charts, record_temp_chart};
-use super::{OpenOptions, PathBuf, TempChart, lock_charts_for_test, reserve_temp_chart};
+use super::super::test_support::lock_session_charts_for_test;
+use super::{OpenOptions, PathBuf, TempChart, reserve_temp_chart};
 
 fn scratch_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("saya-temp-chart-{label}-{}", std::process::id()));
@@ -24,7 +25,7 @@ fn reserve_scratch_chart(dir: &std::path::Path) -> TempChart {
 
 #[test]
 fn write_goes_to_the_reserved_file_not_the_reopened_path() {
-    let _guard = lock_charts_for_test();
+    let _guard = lock_session_charts_for_test();
     let dir = scratch_dir("descriptor");
     let mut chart = reserve_scratch_chart(&dir);
     chart.write_html("chart-body").unwrap();
@@ -37,7 +38,7 @@ fn write_goes_to_the_reserved_file_not_the_reopened_path() {
 fn write_ignores_a_symlink_swapped_in_after_reservation() {
     use std::os::unix::fs::symlink;
 
-    let _guard = lock_charts_for_test();
+    let _guard = lock_session_charts_for_test();
     let dir = scratch_dir("symlink-window");
     let target = dir.join("outside.html");
     std::fs::write(&target, "sentinel").unwrap();
@@ -61,7 +62,7 @@ fn write_ignores_a_symlink_swapped_in_after_reservation() {
 
 #[test]
 fn reserved_charts_are_unique_private_and_recorded_for_teardown() {
-    let _guard = lock_charts_for_test();
+    let _guard = lock_session_charts_for_test();
     // Drain charts reserved by other tests so teardown counts below are exact.
     cleanup_session_charts();
     let first = reserve_temp_chart().expect("first automatic chart");
