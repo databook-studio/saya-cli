@@ -42,7 +42,7 @@ pub(crate) fn cleanup_session_charts() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::super::temp_chart::lock_charts_for_test;
+    use super::super::test_support::lock_session_charts_for_test;
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn cleanup_removes_exactly_the_named_paths() {
-        let _guard = lock_charts_for_test();
+        let _guard = lock_session_charts_for_test();
         let dir = scratch_dir("paths");
         let a = dir.join("a.html");
         let b = dir.join("b.html");
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn session_cleanup_removes_every_recorded_file_and_drains() {
-        let _guard = lock_charts_for_test();
+        let _guard = lock_session_charts_for_test();
         let dir = scratch_dir("session");
         let a = dir.join("a.html");
         let b = dir.join("b.html");
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn unrecorded_files_are_left_alone() {
-        let _guard = lock_charts_for_test();
+        let _guard = lock_session_charts_for_test();
         let dir = scratch_dir("unrecorded");
         let tracked = dir.join("tracked.html");
         let untracked = dir.join("untracked.html");
@@ -114,7 +114,7 @@ mod tests {
     fn automatic_chart_files_are_unique_and_cleanup_does_not_touch_explicit_files() {
         use super::super::temp_chart::reserve_temp_chart;
 
-        let _guard = lock_charts_for_test();
+        let _guard = lock_session_charts_for_test();
         // Drain charts reserved by other tests so teardown counts below are exact.
         cleanup_session_charts();
         let first = reserve_temp_chart().expect("first automatic chart");
@@ -152,7 +152,7 @@ mod tests {
 
         use super::super::temp_chart::reserve_temp_chart;
 
-        let _guard = lock_charts_for_test();
+        let _guard = lock_session_charts_for_test();
         let dir = scratch_dir("reservation-window");
         let target = dir.join("outside.html");
         std::fs::write(&target, "sentinel").unwrap();
@@ -179,7 +179,7 @@ mod tests {
     fn automatic_chart_does_not_follow_the_old_predictable_symlink() {
         use super::super::temp_chart::reserve_temp_chart;
 
-        let _guard = lock_charts_for_test();
+        let _guard = lock_session_charts_for_test();
         use std::os::unix::fs::symlink;
 
         let temp = std::env::temp_dir();
