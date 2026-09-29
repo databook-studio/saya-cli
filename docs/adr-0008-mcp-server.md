@@ -164,7 +164,9 @@ Tool failures return `isError` tool results whose text passes through
 redaction then terminal sanitization — credential-shaped content
 (`password=`, `token=`, `secret=`, authorization headers, PEM private-key
 blocks, URL userinfo) becomes `[redacted]`, and control characters are
-stripped. No filesystem path appears in a rendered failure (pinned). The
+stripped. Saya's own errors carry no filesystem paths; a database engine's
+own error text may name the database file it failed on (for example
+DuckDB's `IO Error: Cannot open file "…"` for a missing file). The
 protocol-level errors (`-32600`, `-32601` unknown tool, `-32602`) are static
 text by construction.
 
@@ -254,5 +256,10 @@ server with two independent MCP clients:
   raised.
 - Responses to cancelled requests are dropped; the client sees the
   cancellation, not a result.
+- Tool-error sanitization is credential-shaped redaction plus
+  control-character stripping; it does not strip filesystem paths. A
+  database engine's own error text may name the database file (for example
+  DuckDB's `IO Error: Cannot open file "…"`) when an allowlisted profile's
+  database file is missing; saya's own errors and the store's are path-free.
 - Protocol versions are rmcp's defaults, not narrowed by saya; the newest
   rmcp-known era is advertised even for handshake clients.
