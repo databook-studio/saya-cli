@@ -15,6 +15,7 @@
 
 mod csv_stage;
 mod infer;
+mod parquet_budget;
 mod parquet_decode;
 mod parquet_preview;
 mod parquet_stage;
@@ -129,6 +130,12 @@ pub enum StageError {
     /// Parquet metadata reports more columns than the cap.
     #[error("Parquet file has {columns} columns; at most {max} can be staged")]
     ParquetTooManyColumns { columns: usize, max: usize },
+    /// The staged decode produced more accounted cell bytes than the
+    /// decoded-byte budget allows.
+    #[error(
+        "Parquet file decodes to {bytes} bytes of cell data; at most {max} bytes can be staged"
+    )]
+    ParquetTooManyDecodedBytes { bytes: u64, max: u64 },
     /// A Parquet column's type is nested (STRUCT/LIST/MAP/UNION/ARRAY).
     #[error("Parquet column {column:?} has nested type {kind}; only flat columns can be staged")]
     ParquetNestedColumn { column: String, kind: String },
