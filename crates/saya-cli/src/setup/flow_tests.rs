@@ -8,13 +8,15 @@ use super::draft::{ProfileDraft, ProviderDraft};
 use super::flow::run_with;
 use super::flow_options::FlowOptions;
 use super::probe::{DatabaseProbe, FlowProbes, ProbeResult, ProviderProbe};
-use super::probe_database::{classify, database_with};
+use super::probe_database::{
+    SSO_PROBE_TIMEOUT, classify, database, database_with, needs_sso_consent, probe_timeout_for,
+};
 use super::probe_provider::{ping_request, provider_with};
 use super::review;
 use super::{SetupDraft, plan};
 use crate::cli::GlobalOptions;
 use saya_config::{AiProvider, ConnectionsFile};
-use saya_types::DatabaseProfile;
+use saya_types::{DatabaseProfile, SecretRef, SnowflakeAuth};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Cursor;
@@ -237,10 +239,10 @@ fn interrupted_marker_restore_path_restores_originals() {
     fs::write(dir.join("connections.toml"), original).unwrap();
     stage_interrupted(&dir, original, &rewritten);
 
-    // r = restore, then skip the provider (6) and the database (5).
+    // r = restore, then skip the provider (6) and the database (8).
     let (code, out) = run_flow(
         &dir,
-        "r\n6\n5\n",
+        "r\n6\n8\n",
         instant_probes(&Arc::new(Mutex::new(Vec::new())), true, true),
     );
     assert_eq!(code, 0, "{out}");
@@ -270,7 +272,7 @@ fn interrupted_marker_finish_keeps_new_bytes() {
 
     let (code, out) = run_flow(
         &dir,
-        "f\n6\n5\n",
+        "f\n6\n8\n",
         instant_probes(&Arc::new(Mutex::new(Vec::new())), true, true),
     );
     assert_eq!(code, 0, "{out}");
@@ -487,13 +489,139 @@ fn skipping_everything_changes_nothing() {
     let dir = temp_dir("skip-all");
     let (code, out) = run_flow(
         &dir,
-        "6\n5\n",
+        "6\n8\n",
         instant_probes(&Arc::new(Mutex::new(Vec::new())), true, true),
     );
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("Nothing to configure"), "{out}");
     assert!(!dir.join("connections.toml").exists());
     assert!(!dir.join("config.toml").exists());
+}
+
+// ------------------------------------------------------------ warehouses ----
+
+/// A ClickHouse flow end to end: TLS yes, defaults taken for port, database
+/// and user skipped, the password only as an environment-variable name.
+#[test]
+fn clickhouse_flow_writes_the_expected_profile() {
+    let dir = temp_dir("flow-clickhouse");
+    let script = "6\n6\nlocalhost\ny\n\n\n\nSAYA_CH_PASSWORD\nch\ny\n";
+    let (code, out) = run_flow(
+        &dir,
+        script,
+        instant_probes(&Arc::new(Mutex::new(Vec::new())), true, true),
+    );
+    assert_eq!(code, 0, "{out}");
+    let parsed =
+        ConnectionsFile::from_toml(&fs::read_to_string(dir.join("connections.toml")).unwrap())
+            .unwrap_or_else(|error| panic!("the written file parses: {error}"));
+    assert_eq!(
+        parsed.profiles.get("ch"),
+        Some(&DatabaseProfile::ClickHouse {
+            host: "localhost".into(),
+            port: None,
+            database: None,
+            user: None,
+            password: Some(SecretRef::Env {
+                env: "SAYA_CH_PASSWORD".into()
+            }),
+            secure: Some(true),
+        }),
+        "the scripted flow wrote the expected profile"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// A BigQuery flow end to end: required project and key path, optionals
+/// skipped. The key is stored as a file reference only.
+#[test]
+fn bigquery_flow_writes_the_expected_profile() {
+    let dir = temp_dir("flow-bigquery");
+    let script = "6\n7\nmy-project\n\n\n\n/keys/sa.json\nbq\ny\n";
+    let (code, out) = run_flow(
+        &dir,
+        script,
+        instant_probes(&Arc::new(Mutex::new(Vec::new())), true, true),
+    );
+    assert_eq!(code, 0, "{out}");
+    let parsed =
+        ConnectionsFile::from_toml(&fs::read_to_string(dir.join("connections.toml")).unwrap())
+            .unwrap_or_else(|error| panic!("the written file parses: {error}"));
+    assert_eq!(
+        parsed.profiles.get("bq"),
+        Some(&DatabaseProfile::BigQuery {
+            project: "my-project".into(),
+            dataset: None,
+            location: None,
+            max_bytes_billed: None,
+            service_account_key: SecretRef::File {
+                file: "/keys/sa.json".into()
+            },
+        }),
+        "the scripted flow wrote the expected profile"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Declining the browser-SSO consent skips the probe entirely (no probe call,
+/// no probing line) and labels it "not probed"; the flow still completes.
+#[test]
+fn snowflake_sso_probe_declined_skips_and_labels_not_probed() {
+    let dir = temp_dir("sso-declined");
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let script = "6\n5\nacct\njane\n2\n\n\n\n\n\nn\ny\n";
+    let (code, out) = run_flow(&dir, script, instant_probes(&calls, true, true));
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("not probed"), "the skip is labelled: {out}");
+    let recorded = calls.lock().unwrap().clone();
+    assert!(
+        !recorded.iter().any(|call| call == "database:snowflake"),
+        "declining skips the probe: {recorded:?}"
+    );
+    assert!(
+        !out.contains("Probing the database"),
+        "no probing line when skipped: {out}"
+    );
+    let parsed =
+        ConnectionsFile::from_toml(&fs::read_to_string(dir.join("connections.toml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        parsed.profiles.get("snowflake"),
+        Some(&DatabaseProfile::Snowflake {
+            account: "acct".into(),
+            user: "jane".into(),
+            auth_type: SnowflakeAuth::Externalbrowser,
+            private_key: None,
+            password: None,
+            passphrase: None,
+            warehouse: None,
+            database: None,
+            schema: None,
+            role: None,
+        })
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Consenting runs the probe with the 120-second SSO window named up front.
+#[test]
+fn snowflake_sso_probe_consented_runs_with_the_120s_window() {
+    let dir = temp_dir("sso-consented");
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let script = "6\n5\nacct\njane\n2\n\n\n\n\n\ny\ny\n";
+    let (code, out) = run_flow(&dir, script, instant_probes(&calls, true, true));
+    assert_eq!(code, 0, "{out}");
+    let recorded = calls.lock().unwrap().clone();
+    assert!(
+        recorded.iter().any(|call| call == "database:snowflake"),
+        "consent runs the probe: {recorded:?}"
+    );
+    assert!(
+        out.contains("Probing the database (up to 120 seconds)"),
+        "the SSO window is announced: {out}"
+    );
+    assert!(out.contains("database reachable"), "{out}");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // ---------------------------------------------------------------- probes ----
@@ -541,6 +669,79 @@ async fn probe_failure_keeps_the_underlying_message() {
     assert!(
         result.message.contains("auth failed: bad password"),
         "the error message is always included: {}",
+        result.message
+    );
+}
+
+/// Only Snowflake browser-SSO needs the consent gate and the 120-second
+/// window; keypair, userpass, and every other engine keep the 15-second one.
+#[test]
+fn sso_window_and_consent_apply_only_to_browser_auth() {
+    let browser = DatabaseProfile::Snowflake {
+        account: "a".into(),
+        user: "u".into(),
+        auth_type: SnowflakeAuth::Externalbrowser,
+        private_key: None,
+        password: None,
+        passphrase: None,
+        warehouse: None,
+        database: None,
+        schema: None,
+        role: None,
+    };
+    let keypair = DatabaseProfile::Snowflake {
+        account: "a".into(),
+        user: "u".into(),
+        auth_type: SnowflakeAuth::Keypair,
+        private_key: None,
+        password: None,
+        passphrase: None,
+        warehouse: None,
+        database: None,
+        schema: None,
+        role: None,
+    };
+    let clickhouse = DatabaseProfile::ClickHouse {
+        host: "h".into(),
+        port: None,
+        database: None,
+        user: None,
+        password: None,
+        secure: None,
+    };
+    assert!(needs_sso_consent(&browser));
+    assert!(!needs_sso_consent(&keypair));
+    assert!(!needs_sso_consent(&clickhouse));
+    assert_eq!(probe_timeout_for(&browser), SSO_PROBE_TIMEOUT);
+    assert_eq!(probe_timeout_for(&keypair), super::probe::PROBE_TIMEOUT);
+    assert_eq!(probe_timeout_for(&clickhouse), super::probe::PROBE_TIMEOUT);
+    assert_eq!(SSO_PROBE_TIMEOUT, std::time::Duration::from_secs(120));
+}
+
+/// The real probe path with a secret that cannot be resolved: the factory
+/// refuses at build time, offline, and the failure names the cause.
+#[tokio::test]
+async fn database_probe_reports_an_unresolvable_secret() {
+    let profile = DatabaseProfile::Snowflake {
+        account: "org-account".into(),
+        user: "jane".into(),
+        auth_type: SnowflakeAuth::Keypair,
+        private_key: Some(SecretRef::Env {
+            env: "SAYA_SETUP_TEST_MISSING_KEY".into(),
+        }),
+        password: None,
+        passphrase: None,
+        warehouse: None,
+        database: None,
+        schema: None,
+        role: None,
+    };
+    let resolver = saya_config::MapSecretResolver::new(BTreeMap::new());
+    let result = database(&profile, &resolver).await;
+    assert!(!result.ok, "an unresolvable secret fails the probe");
+    assert!(
+        result.message.contains("could not be resolved"),
+        "the cause is named: {}",
         result.message
     );
 }

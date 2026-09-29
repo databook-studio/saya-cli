@@ -1,16 +1,28 @@
 //! The database questions (S16 invariant 2c): engine, its required fields (a
 //! password only ever as an environment-variable name), and the profile name.
 //! DuckDB's read-only flag is asked because the connector refuses to guess it.
+//! The warehouse engines (Snowflake, ClickHouse, BigQuery) live in
+//! `prompt_warehouse`.
 
 use saya_types::{DatabaseProfile, SecretRef};
 
 use super::draft::{ProfileDraft, validate_env_name, validate_profile_name};
 use super::prompt::{Cancel, Prompter, checked, text_field};
+use super::prompt_warehouse;
 
-const DATABASE_CHOICES: [&str; 5] = ["sqlite", "duckdb", "postgresql", "mysql", "skip"];
+const DATABASE_CHOICES: [&str; 8] = [
+    "sqlite",
+    "duckdb",
+    "postgresql",
+    "mysql",
+    "snowflake",
+    "clickhouse",
+    "bigquery",
+    "skip",
+];
 
 /// A password env reference (blank skips; the value is never asked for).
-fn env_ref(line: &str) -> Result<Option<SecretRef>, String> {
+pub(crate) fn env_ref(line: &str) -> Result<Option<SecretRef>, String> {
     match line.trim() {
         "" => Ok(None),
         trimmed => checked(trimmed, validate_env_name).map(|env| Some(SecretRef::Env { env })),
@@ -81,7 +93,7 @@ pub(crate) fn collect_database(
                 }
             }
         }
-        _ => unreachable!("the menu only offers the four engines and skip"),
+        warehouse => prompt_warehouse::collect(prompter, warehouse)?,
     };
     let name = prompter.ask(&format!("Profile name [{engine}]: "), |line| {
         let trimmed = line.trim();

@@ -27,6 +27,8 @@ mod probe_provider;
 mod prompt;
 mod prompt_database;
 mod prompt_provider;
+mod prompt_snowflake;
+mod prompt_warehouse;
 mod review;
 
 #[cfg(test)]
@@ -36,6 +38,10 @@ mod tests;
 #[cfg(test)]
 #[path = "flow_tests.rs"]
 mod flow_tests;
+
+#[cfg(test)]
+#[path = "prompt_warehouse_tests.rs"]
+mod prompt_warehouse_tests;
 
 pub const CONFIG_FILE: &str = "config.toml";
 pub const CONNECTIONS_FILE: &str = "connections.toml";
@@ -69,8 +75,6 @@ pub enum SetupError {
     InvalidResult(String),
     #[error("could not render setup content: {0}")]
     Render(String),
-    #[error("{0}")]
-    UnsupportedEngine(String),
     #[error("setup could not be applied ({0}); the original files were restored")]
     ReloadFailed(String),
     #[error(
