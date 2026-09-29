@@ -29,6 +29,13 @@ use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_resume::block_on;
 use crate::render::RenderFormat;
 
+/// Bare `/investigations` — no subcommand, no flags — opens the TUI's
+/// searchable picker instead of the text listing. Any tail (`--list`,
+/// `--limit N`, `--offset N`) keeps today's text listing.
+pub(super) fn bare_investigations(line: &str) -> bool {
+    line.trim() == "/investigations"
+}
+
 /// Fills a save that carries neither `--sql` nor `--file` from the session's
 /// last selectable query: the SQL it ran and the connection that ran it.
 /// Everything else passes through unchanged.

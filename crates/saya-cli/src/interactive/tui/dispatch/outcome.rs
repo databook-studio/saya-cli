@@ -10,6 +10,8 @@ pub(crate) enum Dispatch {
     Agent(String),
     /// Open the interactive session picker.
     OpenSessionPicker,
+    /// Open the interactive saved-investigation picker (bare `/investigations`).
+    OpenInvestigationPicker,
     /// A SQL-backed command runs on a worker thread; the caller stores the
     /// receiver and applies [`sql_task::complete`] when it finishes.
     SqlTask(super::super::sql_task::SqlTask),
