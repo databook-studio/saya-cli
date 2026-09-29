@@ -59,25 +59,28 @@ the allowlist) exits 2 with no protocol bytes written.
 ### 2. The profile allowlist is decided at startup and never widened
 
 `--profile P` (repeatable, on the `serve` subcommand) fixes the allowlist;
-with none given, the configured default profile is it. A tool argument
-reaches a profile only through
+with none given, the configured default profile is it. Every tool that takes
+a profile is held inside it:
 [`McpContext::allowed_profile`](../crates/saya-cli/src/mcp/context.rs) — a
 membership check first, then the ordinary profile resolution — so a client
-naming a configured-but-unlisted profile gets `profile not available: …`
-from `schema`, `query`, and `contracts`, and `list_profiles` never shows an
-unlisted profile. The policy doc states the invariant plainly: decided once
-at startup, and no entry in the server grants anything later.
+naming a configured-but-unlisted profile gets `profile not available: …` from
+`schema`, `query`, `contracts`, and `investigation_run`'s `profile` argument,
+and `list_profiles` never shows an unlisted profile.
 
-One exception is recorded because the code has it: `investigation_run` does
-not route its optional `profile` argument through `allowed_profile` — the
-replay resolves its target by its own rules (`--connection` argument, else
-the stored review binding, never the active or default profile). The replay's
-own gates still apply — `revalidate` is hardcoded false, so a target the
-local user has not reviewed and bound is refused by the staleness rules —
-but a binding that names a profile outside the allowlist runs. Closing this
-gap (routing the replay's target through the allowlist) is the follow-up the
-test `mcp_client_cannot_expand_profile_allowlist` does not yet cover for
-`investigation_run`.
+`investigation_run` has no argument to hide behind: its effective target —
+the `profile` argument, else the saved binding's profile, exactly the run
+command's own resolution — is checked against the allowlist by
+[`allowlist_gate`](../crates/saya-cli/src/mcp/replay_tools.rs) **before
+anything runs**. A client-supplied name outside the allowlist is refused with
+the same `profile not available: <name>` the other tools use; a binding
+saved against a profile this server does not serve, or a binding that cannot
+be read, refuses with a bare `profile not available` — no profile name
+echoed, because the allowlist is also the client's information boundary
+(`list_profiles` never names a profile outside it) and the gate fails closed.
+With neither an argument nor a binding the gate passes and the run command
+refuses with its own words, in its own order, before any connection. The
+policy doc states the invariant plainly: decided once at startup, and no
+entry in the server grants anything later.
 
 ### 3. Tools, and the data-sharing gate on rows
 
@@ -236,9 +239,12 @@ server with two independent MCP clients:
 ## Limitations (stated, not solved)
 
 - stdio only — no HTTP/SSE transport; one host per server process.
-- `investigation_run`'s optional target profile is not checked against the
-  startup allowlist (§2); the replay's own review-staleness rules are the
-  gate that applies.
+- Requests still pending when stdin reaches EOF are **dropped, not
+  answered**: the server exits 0 on EOF without waiting for in-flight work,
+  so a one-shot `printf 'initialize\ninitialized\ntools/list\n' | saya mcp
+  serve --profile demo` can leave the last request unanswered — a host keeps
+  stdin open for the session's life and gets every reply; §8 records the
+  verified shapes.
 - Claude Code is documented (`claude mcp add saya -- saya mcp serve …`) but
   was not validated by a real client session; see §8.
 - `contracts` returns Active claims only — reviewing a Pending claim still

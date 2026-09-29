@@ -155,9 +155,12 @@ Confirmed context travels as a file, so a colleague starts from what you already
 
 ```bash
 saya contracts export context.json            # this profile's Active claims
-saya contracts import context.json --profile mine   # their side: lands Pending
-saya contracts import-dbt manifest.json --profile mine --select 'stg_orders*'
+saya contracts import context.json            # lands Pending for review
+saya contracts import-dbt manifest.json --select 'stg_orders*'
 ```
+
+`--profile` is optional on all three (and on `export`'s `--profile` too): it
+defaults to the active profile; pass it to target another one.
 
 - **Export** writes the profile's Active claims as one portable `saya.context`
   document — descriptions, aliases, grains, time columns, roles, join rules,

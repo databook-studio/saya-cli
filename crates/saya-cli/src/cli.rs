@@ -175,14 +175,15 @@ pub enum Command {
         #[arg(long)]
         reset: bool,
     },
-    /// Open a local CSV file as a read-only session: the file is staged once
-    /// into a private DuckDB snapshot keyed by its content hash, a preview
-    /// prints, and the TUI opens over it — the same bounded, read-only query,
-    /// evidence, export, and investigation machinery as any database, with no
-    /// database server and no config editing. The same content reuses its
-    /// snapshot; changed content stages a new one. `--list` shows staged
-    /// sources; `--cleanup <SHA-PREFIX>|all` removes them (only saya's own).
-    /// Non-TTY runs print the preview and the launch command and exit.
+    /// Open a local CSV or Parquet file as a read-only session: the file is
+    /// staged once into a private DuckDB snapshot keyed by its content hash,
+    /// a preview prints, and the TUI opens over it — the same bounded,
+    /// read-only query, evidence, export, and investigation machinery as any
+    /// database, with no database server and no config editing. The same
+    /// content reuses its snapshot; changed content stages a new one.
+    /// `--list` shows staged sources; `--cleanup <SHA-PREFIX>|all` removes
+    /// them (only saya's own). Non-TTY runs print the preview and the launch
+    /// command and exit.
     Open {
         /// The CSV file to open. Omit it when using `--list` or `--cleanup`.
         file: Option<std::path::PathBuf>,
