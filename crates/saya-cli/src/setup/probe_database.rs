@@ -1,16 +1,53 @@
 //! The database probe (S16 invariant 2f): one connection attempt via the real
-//! connector factory, bounded to 15 seconds, never executing SQL. Failures
-//! are classified best-effort from the error text; the raw message always
-//! survives so the user sees the real cause.
+//! connector factory, bounded to 15 seconds — 120 for Snowflake browser-SSO,
+//! whose browser flow has the same window in the connector — never executing
+//! SQL. Failures are classified best-effort from the error text; the raw
+//! message always survives so the user sees the real cause.
 
 use std::future::Future;
 use std::time::Duration;
 
 use saya_config::SecretResolver;
-use saya_connectors::{ConnectorOptions, build_connector};
-use saya_types::DatabaseProfile;
+use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
+use saya_types::{DatabaseProfile, SnowflakeAuth};
 
 use super::probe::{PROBE_TIMEOUT, ProbeResult};
+
+/// The browser-SSO probe window; the connector's own browser flow allows 120 s.
+pub(crate) const SSO_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Asked before a browser-SSO probe opens a browser; declining skips it.
+pub(crate) const SSO_CONSENT_PROMPT: &str =
+    "This opens your browser to sign in to Snowflake. Continue? [y/N] ";
+
+/// Only Snowflake browser-SSO opens a browser during the probe.
+pub(crate) fn needs_sso_consent(profile: &DatabaseProfile) -> bool {
+    matches!(
+        profile,
+        DatabaseProfile::Snowflake {
+            auth_type: SnowflakeAuth::Externalbrowser,
+            ..
+        }
+    )
+}
+
+/// The window the probe of this profile gets: 120 s for browser-SSO, else 15 s.
+pub(crate) fn probe_timeout_for(profile: &DatabaseProfile) -> Duration {
+    if needs_sso_consent(profile) {
+        SSO_PROBE_TIMEOUT
+    } else {
+        PROBE_TIMEOUT
+    }
+}
+
+/// The line the flow prints before probing, naming the window actually used.
+pub(crate) fn probe_window_label(profile: &DatabaseProfile) -> &'static str {
+    if needs_sso_consent(profile) {
+        "120 seconds"
+    } else {
+        "15 seconds"
+    }
+}
 
 /// Connects to the profile once. A build or connect failure is classified
 /// best-effort; the original message is always included.
@@ -18,12 +55,15 @@ pub(crate) async fn database(
     profile: &DatabaseProfile,
     resolver: &dyn SecretResolver,
 ) -> ProbeResult {
+    let timeout = probe_timeout_for(profile);
     let connect = || async {
         let options = ConnectorOptions {
             read_only: true,
             ..Default::default()
         };
-        match build_connector(profile, resolver, options).await {
+        // Interactive setup may drive interactive auth (browser SSO), so the
+        // factory is allowed to prompt; non-interactive engines ignore this.
+        match build_connector_with_prompt(profile, resolver, options, true).await {
             Ok(connector) => connector
                 .connect()
                 .await
@@ -31,7 +71,7 @@ pub(crate) async fn database(
             Err(error) => Err(classify(&error.to_string())),
         }
     };
-    database_with(PROBE_TIMEOUT, connect).await
+    database_with(timeout, connect).await
 }
 
 /// The database probe with an injectable connect step.
