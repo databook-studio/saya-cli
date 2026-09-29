@@ -462,10 +462,15 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
 - **The profile allowlist is decided at startup and never widened.** The
   `serve` subcommand's `--profile` values (repeatable) fix it; with none
   given, the configured default profile is it (and with none configured the
-  server starts empty). `schema`, `query`, and `contracts` resolve their
-  profile argument through it — a client naming a configured-but-unlisted
-  profile gets `profile not available: …` — and `list_profiles` reports the
-  allowlist, never a configured-but-unlisted profile.
+  server starts empty). Every tool that takes a profile is held inside it:
+  `schema`, `query`, and `contracts` resolve their profile argument through
+  it — a client naming a configured-but-unlisted profile gets `profile not
+  available: …` — and `investigation_run` is checked too, before anything
+  runs: its effective target (the `profile` argument, else the saved
+  binding's profile) must be allowlisted, and a binding saved against an
+  unlisted profile refuses with a bare `profile not available`, never
+  naming the profile. `list_profiles` reports the allowlist, never a
+  configured-but-unlisted profile.
 - **Bounds.** Requests ≤ 1 MiB (an oversized line is answered with a
   JSON-RPC error and discarded unread), ≤ 4 tool calls in flight (beyond it,
   a tool-level `busy` error invites a retry), 30 s per call, responses
@@ -480,6 +485,13 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
 - **Cancellation drops the call**: a `notifications/cancelled` stops the
   wait and discards the late response; only `query` on the engines that
   support it stops the actual server-side work.
+- **Stdin EOF drops pending work.** The server exits `0` the moment stdin
+  closes, without waiting for requests still in flight — so a one-shot
+  `printf 'initialize\ninitialized\ntools/list\n' | saya mcp serve --profile
+  demo` can leave the last request unanswered (verified: no reply to the
+  `tools/list`). A host keeps stdin open for the session's life and every
+  call is answered; one-shot pipelines must wait (hold stdin open) for the
+  replies they asked for.
 
 ### Connecting a client
 

@@ -167,9 +167,11 @@ revision, so the next run needs `--revalidate`), and `/investigation run <id>
 
 ```bash
 saya contracts export context.json [--profile P] [--overwrite]
-saya contracts import context.json --profile P [--preview]
-saya contracts import-dbt manifest.json --profile P [--select GLOB]… [--preview]
+saya contracts import context.json [--profile P] [--preview]
+saya contracts import-dbt manifest.json [--profile P] [--select GLOB]… [--preview]
 ```
+
+`--profile` is optional on all three and defaults to the active profile.
 
 Export writes the profile's **Active** claims as one `saya.context` document
 (descriptions, aliases, grains, time columns, roles, join rules, metrics) with
@@ -216,8 +218,10 @@ always, and `query` / `investigation_run` only when data sharing is allowed
 (`--allow-data-sharing` or `[ai] allow_data_sharing`): rows leave the machine
 only by an explicit operator choice. The profile allowlist is fixed at
 startup from the `serve` subcommand's `--profile` values (else the configured
-default profile) and can never be widened by a client; `schema`, `query`, and
-`contracts` resolve their profile argument through it. Bounds: requests
+default profile) and can never be widened by a client; every tool that takes
+a profile is held inside it, including `investigation_run`'s effective
+target (its `profile` argument, else the saved binding's profile — a binding
+saved against an unlisted profile refuses without naming it). Bounds: requests
 ≤ 1 MiB, ≤ 4 calls in flight, 30 s per call, responses ≤ 16 MiB; write SQL is
 refused by the same read-only gate, and a stale review is reported, never
 revalidated, from the wire. Client setup snippets for opencode, codex, and
@@ -285,12 +289,11 @@ list — leaving the review binding on the old revision, so the next run needs
   skipped per item).
 - Parameters bind on Snowflake with keypair auth only; every other Snowflake
   auth path refuses parameterised SQL. ClickHouse has no parameters at all.
-- On the MCP surface, `schema`, `query`, and `contracts` check their profile
-  argument against the startup allowlist, but `investigation_run` resolves
-  its optional target profile through the replay's own rules (`--connection`
-  argument, else the stored review binding) without an allowlist check — a
-  target the local user has not reviewed and bound is refused by the
-  staleness rules, but a bound target outside the allowlist runs.
+- MCP requests still pending when stdin reaches EOF are dropped, not
+  answered — the server exits `0` on EOF without waiting for in-flight work,
+  so a one-shot `printf 'initialize\ninitialized\ntools/list\n' | saya mcp
+  serve --profile demo` can leave the last request unanswered; a host keeps
+  stdin open for the session's life.
 - Live engines beyond SQLite are not verified in this release's evidence:
   the parameter, context, and file-source paths are exercised end to end
   against SQLite (and DuckDB for file sources), not against live
