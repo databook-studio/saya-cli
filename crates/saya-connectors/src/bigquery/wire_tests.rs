@@ -198,3 +198,53 @@ async fn error_messages_never_carry_the_token_or_server_body() {
     assert!(!error.to_string().contains("test-access-token"));
     assert!(!error.to_string().contains("Bearer"));
 }
+
+/// A parameterized query rewrites `:name` to `?`, and the dry-run — whose byte
+/// estimate must not diverge from the execution — carries byte-for-byte the
+/// same positional parameters as the query itself.
+#[tokio::test]
+async fn parameterized_query_sends_identical_parameters_to_dry_run_and_query() {
+    let dry_run = serde_json::json!({"statistics":{"query":{"totalBytesProcessed":"0"}},"status":{"state":"DONE"}});
+    let query = serde_json::json!({
+        "schema": {"fields": [{"name": "id", "type": "INTEGER"}]},
+        "rows": [{"f": [{"v": "1"}]}]
+    });
+    let (origin, seen) = server(dry_run, query).await;
+    let connector = connector(&origin, &format!("{origin}/token"), Some(1024));
+    let request = saya_types::QueryRequest::with_params(
+        "SELECT id FROM `p.d.t` WHERE id > :floor".to_owned(),
+        10,
+        vec![saya_types::BoundParam {
+            name: "floor".to_owned(),
+            value: saya_types::ParamValue::Integer(3),
+        }],
+    );
+    let result = connector.execute(request).await.unwrap();
+    assert_eq!(result.rows, vec![serde_json::json!(["1"])]);
+    let requests = seen.lock().await;
+    assert_eq!(requests.len(), 3);
+    let dry: Value = serde_json::from_str(request_body(&requests[1])).unwrap();
+    let sent: Value = serde_json::from_str(request_body(&requests[2])).unwrap();
+    let sql = sent["query"].as_str().unwrap();
+    assert!(sql.contains("?"), "markers must be rewritten: {sql}");
+    assert!(!sql.contains(":floor"), "a :name leaked: {sql}");
+    assert!(sql.contains("LIMIT 11"), "row cap missing: {sql}");
+    assert_eq!(sent["parameterMode"], "POSITIONAL");
+    assert_eq!(dry["configuration"]["query"]["parameterMode"], "POSITIONAL");
+    assert_eq!(
+        sent["queryParameters"], dry["configuration"]["query"]["queryParameters"],
+        "the dry run must carry the same parameters as the query"
+    );
+    assert_eq!(
+        sent["queryParameters"][0],
+        serde_json::json!({
+            "parameterType": {"type": "INT64"},
+            "parameterValue": {"value": "3"},
+        })
+    );
+    // The executed SQL stays the original portable statement.
+    assert_eq!(
+        result.executed_sql,
+        "SELECT id FROM `p.d.t` WHERE id > :floor"
+    );
+}
