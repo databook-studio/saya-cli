@@ -65,7 +65,8 @@ serialized JSON contains none of the identity or review markers.
 
 ### 2. Export moves that profile's Active claims only
 
-`saya contracts export <path> [--profile P] [--overwrite]` writes one
+`saya contracts export <path> [--profile P] [--overwrite]` (`--profile`
+optional, defaulting to the active profile) writes one
 document containing the **Active** knowledge items of that profile — nothing
 Pending, nothing dismissed, nothing from another profile. Claims that cannot
 be made portable are counted as `skipped`, never silently dropped. The write
@@ -76,8 +77,9 @@ notes are produced by the dbt path, not by export.
 
 ### 3. Import maps, quarantines, and commits atomically
 
-`saya contracts import <path> --profile P [--preview]` runs in one order,
-and the order is the safety property:
+`saya contracts import <path> [--profile P] [--preview]` runs in one order,
+and the order is the safety property (`--profile` is optional and defaults
+to the active profile):
 
 1. **Validate the whole document first**, before any store access — bounds,
    schema, every payload through its validating constructors. A malformed
@@ -124,8 +126,9 @@ the slash surface has no `--profile` — it always targets the active profile.
 
 ### 4. dbt metadata feeds the same import path
 
-`saya contracts import-dbt <manifest.json> --profile P [--select <glob>…]
-[--preview]` reads the manifest with the same bounded-read discipline: at
+`saya contracts import-dbt <manifest.json> [--profile P] [--select <glob>…]
+[--preview]` (`--profile` optional, defaulting to the active profile) reads
+the manifest with the same bounded-read discipline: at
 most 32 MiB (declared size checked, then a capped read, so a file that grows
 mid-read cannot exceed), manifest schema version **v10, v11, or v12** only
 (probed from `metadata.dbt_schema_version` before full parse — anything else

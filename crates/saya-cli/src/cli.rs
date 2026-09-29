@@ -185,7 +185,7 @@ pub enum Command {
     /// them (only saya's own). Non-TTY runs print the preview and the launch
     /// command and exit.
     Open {
-        /// The CSV file to open. Omit it when using `--list` or `--cleanup`.
+        /// The CSV or Parquet file to open. Omit it when using `--list` or `--cleanup`.
         file: Option<std::path::PathBuf>,
         /// Field delimiter as a single ASCII character (default: sniffed from
         /// the file's first line).
