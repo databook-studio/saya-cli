@@ -1,6 +1,6 @@
 use crate::{
     cli::{Cli, Command, ConfigCommand, ConnectionCommand},
-    commands, config, demo, interactive,
+    commands, config, demo, interactive, open,
 };
 use std::{io::IsTerminal, path::Path};
 
@@ -63,6 +63,32 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     }
     if let Command::Demo { reset } = command {
         return demo::run(&cli, reset);
+    }
+    // `saya open` stages a local file before any runtime load: it needs no
+    // resolved config, generates its own connections file, and launches the
+    // session through the same overrides `saya demo` uses.
+    if let Command::Open {
+        file,
+        delimiter,
+        no_header,
+        reset,
+        typed,
+        list,
+        cleanup,
+    } = command
+    {
+        return open::run(
+            &cli,
+            open::OpenInvocation {
+                file: file.as_deref(),
+                delimiter: delimiter.as_deref(),
+                no_header,
+                reset,
+                typed,
+                list,
+                cleanup: cleanup.as_deref(),
+            },
+        );
     }
     // `--verbose` seeds the extraction-boundary trace before any turn runs.
     // Until now the flag was declared and read nowhere, so passing it did
