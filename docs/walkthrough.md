@@ -5,7 +5,12 @@ setup` refuse to run from a script, ask the demo database a question that
 trips one of its planted SQL traps, save that exact SQL as a portable
 investigation, run it, export it, import it into a **second** isolated
 environment ("bob"), run it there, and watch a stale review get refused —
-with **no AI provider and no network** anywhere in the run.
+then four 0.4.2 journeys on top: a **parameterised** investigation (saved,
+run with values, and refused when the required parameter is missing),
+**remembered context** exported to bob and queued there pending review, a
+CSV staged by `saya open` as a read-only, text-typed snapshot, and the same
+bounded surface spoken to over **MCP stdio JSON-RPC** — with **no AI
+provider and no network** anywhere in the run.
 
 - Script: [`scripts/walkthrough.sh`](../scripts/walkthrough.sh) — the CLI journey, recorded below
 - Recording: [`walkthrough.gif`](walkthrough.gif) — the same journey as slash commands inside the TUI, rendered from [`walkthrough.tape`](walkthrough.tape)
@@ -29,6 +34,9 @@ isolated roots, `alice/` and `bob/`, each get their own `HOME`,
 `SAYA_INVESTIGATIONS_DIR`, so the export/import leg really crosses between
 two environments — nothing but the exported JSON file travels between
 them, and the sandbox is deleted at the end unless `WALKTHROUGH_KEEP=1`.
+The journeys from step 14 on run saya from **inside** the sandbox (the
+`(cd …)` prefix), so a project config layer (`.saya/` in a checkout) can
+never leak into them.
 
 One step of the journey is a *refusal by design*: `saya setup` is a guided,
 interactive flow that needs a terminal. From a script it refuses and points
@@ -199,6 +207,222 @@ All commands behaved as recorded; exit 0.
 
 The recorded run exited `0`.
 
+## Journey: parameterised investigations (step 14)
+
+The trap query is fixed SQL; a parameterised investigation binds values at
+run time instead. The declaration (`--param-spec name:type[:required]`,
+repeatable) must cover every `:name` placeholder in the SQL and nothing
+else; the evidence line names the bound parameters and never their values.
+The recorded output of step 14, from the same script run:
+
+```text
+== 14 · Parameters: declare them, run with values, refuse a missing one ==
+
+The demo orders carry three statuses; the parameterised query counts one
+status since a date. The distinct values first, so the bound value is real:
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive query --sql 'SELECT DISTINCT status FROM orders ORDER BY status'
+
+status
+completed
+pending
+refunded
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive investigation save --name 'orders since' --sql 'SELECT count(*) AS n FROM orders WHERE status = :status AND order_date >= :min_date' --param-spec status:string:required --param-spec min_date:date
+
+orders-since-…
+{
+  "format": "saya.investigation",
+  "version": 1,
+  "id": "orders-since-…",
+  "revision": 1,
+  "name": "orders since",
+  "sql": "SELECT count(*) AS n FROM orders WHERE status = :status AND order_date >= :min_date",
+  "parameters": [
+    {
+      "name": "status",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "min_date",
+      "type": "date",
+      "required": false
+    }
+  ],
+  "dialect": "sqlite",
+  "connection": "demo",
+  "objects": [
+    "orders"
+  ],
+  "schema_fingerprint": null,
+  "created_unix_ms": …,
+  "updated_unix_ms": …
+}
+Saved exactly as shown. Review the SQL before sharing: literals are stored verbatim.
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive investigation run orders-since-… --param 'status=completed' --param 'min_date=2025-08-01'
+
+n
+246
+saved investigation: demo · 1 rows · exec … · full result · params: status, min_date
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive investigation run orders-since-… --param 'min_date=2025-08-01'
+
+missing required parameter(s): status (string) — pass each as --param <name>=<value>
+```
+
+`status` is bound to `completed` — one of the three values the demo data
+really carries, so the count (246) is non-zero. Omit the required one and
+the run exits `2` before any connection work, naming the parameter and its
+type; the evidence line ends `params: status, min_date` — names only.
+
+## Journey: context that travels (steps 15–16)
+
+Investigations travel as definitions; *context* (remembered claims about
+the schema) travels too. Alice refreshes the schema cache, remembers a
+confirmed table description, and exports it; bob imports the same file and
+finds every item **pending review** in his queue. Recorded output:
+
+```text
+== 15 · Context: alice records a confirmed claim and exports the portable file ==
+
+The claim binds against the cached schema: refresh first, then remember —
+a claim recorded before any refresh reads stale, not current.
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive connection schema demo --refresh
+
+demo.main.customer_contacts
+demo.main.customers
+demo.main.orders
+demo.main.saya_demo_meta
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive contracts remember demo.main.orders --kind description --value 'Orders by synthetic customers; region joins through customers'
+
+remembered description Orders by synthetic customers; region joins through customers for demo.main.orders (confirmed)
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive contracts list
+
+demo.main.orders  [current]  (profile: demo)
+  ki-…  table_description  confirmed  user_explicit  Orders by synthetic customers; region joins through customers
+$ (cd …) cargo run -q -p saya-cli -- --connections …/alice/demo/connections.toml --profile demo --non-interactive contracts export …/shared/context.json
+
+exported 1 claims to …/shared/context.json
+  table_description 1
+Review the file before sharing.
+== 16 · Bob imports the context — every item lands pending review ==
+
+$ (cd …) cargo run -q -p saya-cli -- --connections …/bob/demo/connections.toml --profile demo --non-interactive connection schema demo --refresh
+
+demo.main.customer_contacts
+demo.main.customers
+demo.main.orders
+demo.main.saya_demo_meta
+$ (cd …) cargo run -q -p saya-cli -- --connections …/bob/demo/connections.toml --profile demo --non-interactive contracts import …/shared/context.json
+
+imported 1, skipped 0, conflicts 0, unavailable 0  (profile: demo, schema: cached)
+  inserted  demo.main.orders  table.description
+Imported items are pending review: saya contracts queue
+Memory is off, so these claims are not used until you enable it.
+$ (cd …) cargo run -q -p saya-cli -- --connections …/bob/demo/connections.toml --profile demo --non-interactive contracts queue
+
+ki-…  candidate  table_description  Orders by synthetic customers; region joins through customers  demo.main.orders  [current]  (profile: demo)
+```
+
+The exported file is the same shape as an exported investigation — a
+portable document with no credentials and no binding. Alice's claim reads
+`[current]` against her refreshed schema; on bob's side the import lands it
+as a `candidate` (pending), and his queue is where he confirms or rejects
+it — an import never writes a confirmed claim.
+
+## Journey: a CSV, opened read-only (step 17)
+
+`saya open` stages any CSV/TSV/parquet file as a DuckDB snapshot behind a
+generated read-only profile. The walkthrough's synthetic CSV has a `zip`
+column that leads with zeros — exactly the column a numeric cast would
+corrupt — so the preview showing `zip: text` is the point. Recorded output:
+
+```text
+== 17 · `saya open` stages a CSV as a read-only, text-typed snapshot ==
+
+zip leads with a zero: a numeric cast would eat it. The snapshot keeps
+every column text — the preview says so, and one query proves it travels.
+$ (cd …) cargo run -q -p saya-cli -- open deliveries.csv --non-interactive
+
+File: deliveries.csv (staged now)
+SHA-256: 98262980cbee
+Size: 86 B
+Rows: 3 · Columns: 4
+Delimiter: , · Header row: yes
+Columns:
+  zip: text (0 nulls)
+  city: text (0 nulls)
+  amount: decimal (1 nulls)
+  note: text (2 nulls)
+Staged: …/bob/files/98262980cbeeba94/source.duckdb (… UTC)
+Stored as text columns; use --typed for a typed copy.
+Open it read-only:
+  saya --connections …/bob/files/98262980cbeeba94/connections.toml --profile file_deliveries
+$ (cd …) cargo run -q -p saya-cli -- open --list
+
+Staged file sources (newest first):
+  98262980cbee  deliveries.csv  3 rows  86 B  … UTC
+    …/bob/files/98262980cbeeba94/source.duckdb
+$ (cd …) cargo run -q -p saya-cli -- --connections …/bob/files/98262980cbeeba94/connections.toml --profile file_deliveries --non-interactive query --sql 'SELECT zip, city FROM deliveries ORDER BY city LIMIT 1'
+
+zip	city
+02134	Boston
+$ (cd …) cargo run -q -p saya-cli -- open --cleanup all
+
+Removed: 98262980cbee deliveries.csv (…/bob/files/98262980cbeeba94)
+$ (cd …) cargo run -q -p saya-cli -- open --list
+
+No staged file sources.
+```
+
+The preview shows the detected per-column types (`decimal` for `amount`)
+and their null counts, but the staged snapshot stores every column as text
+until `--typed` is asked for a typed copy — which is why `02134` survives
+the round trip and comes back from the query with its zero intact. The
+staged profile (`file_deliveries`) is read-only, and `--cleanup all` removes
+the snapshot again (`--list` confirms).
+
+## Journey: MCP over stdio (step 18)
+
+`saya mcp serve` speaks newline-delimited JSON-RPC on stdio: the same
+bounded, read-only surface, for an MCP client instead of a terminal. The
+probe pipes four frames in — `initialize` (protocol version `2025-06-18`),
+`notifications/initialized`, `tools/list`, and a `tools/call` of `query` —
+and holds stdin open for a moment, because requests still pending when
+stdin hits EOF are dropped. Recorded output:
+
+```text
+== 18 · MCP: the same bounded surface over stdio JSON-RPC ==
+
+Frames are newline-delimited JSON-RPC on stdin; responses stream on stdout.
+Requests still pending when stdin hits EOF are dropped, so the frames are
+followed by a short sleep that keeps stdin open until they are answered.
+$ (cd …) cargo run -q -p saya-cli -- mcp serve --connections …/alice/demo/connections.toml --profile demo
+  stdin frames: initialize, notifications/initialized, tools/list — held open 3s past the last frame
+
+initialize → protocolVersion 2025-06-18
+tools: contracts, list_profiles, schema
+server exit: 0
+stderr: saya mcp: profiles: demo (sqlite); data sharing: off
+$ (cd …) cargo run -q -p saya-cli -- mcp serve --connections …/alice/demo/connections.toml --profile demo --allow-data-sharing
+  stdin frames: initialize, notifications/initialized, tools/list, tools/call query, tools/call query as another profile — held open 3s past the last frame
+
+initialize → protocolVersion 2025-06-18
+tools: contracts, investigation_run, list_profiles, query, schema
+off-allowlist profile → isError: profile not available: other
+query → 240
+server exit: 0
+stderr: saya mcp: profiles: demo (sqlite); data sharing: allowed
+```
+
+Without `--allow-data-sharing` the server advertises only the
+row-free tools (`contracts`, `list_profiles`, `schema`); with it, `query`
+and `investigation_run` appear, and the count comes back as the first row —
+240 customers, exactly what `saya query` prints in step 3. A `query`
+naming a profile outside the `--profile` allowlist is refused with
+`isError: profile not available: other` — the allowlist is fixed at
+startup and a client cannot widen it. The transcript above shows the
+extracted fields; the raw frames are newline-delimited JSON-RPC exactly as
+an MCP client sends them.
+
 ## What just happened
 
 **Steps 1–2 — the sandbox and the refusal.** `saya demo --non-interactive`
@@ -249,13 +473,44 @@ covers the definition, the target, and the referenced objects' schema, and
 the recorded binding no longer matches (`--revalidate` is the documented
 way to re-review, which this walkthrough deliberately does not take).
 
+**Step 14 — parameters.** `--param-spec name:type[:required]` declares what
+the SQL's `:name` placeholders bind: the declaration list must cover the
+SQL's placeholders exactly. Values parse strictly as their declared types
+at run time (`--param name=value`), the evidence line names the bound
+parameters without their values, and omitting a required one exits `2`
+before any connection is opened.
+
+**Steps 15–16 — context that travels.** `contracts remember` records a
+confirmed claim about the schema; it binds against the *cached* schema, so
+the walkthrough refreshes first (a claim recorded before any refresh reads
+stale, not current). `contracts export` writes the portable document —
+claims, no credentials, no binding — and `contracts import` on bob's side
+lands every item **pending review**: his `contracts queue` shows the
+candidate, and nothing is confirmed by an import.
+
+**Step 17 — a file, opened.** `saya open` stages the CSV as a DuckDB
+snapshot under a generated, read-only profile (`file_deliveries`) and
+prints the preview: hash, shape, delimiter/header detection, per-column
+types and null counts. Every column is stored as text unless `--typed`
+builds a typed copy — which is precisely why the leading-zero `zip` value
+survives. `--list` and `--cleanup all` manage the staged snapshots.
+
+**Step 18 — MCP.** `saya mcp serve` exposes the same bounded surface to an
+MCP client over stdio: newline-delimited JSON-RPC in, responses out. The
+`--profile` allowlist is fixed at startup; data-sharing (row-returning)
+tools appear only with `--allow-data-sharing`, and a tool call naming a
+profile outside the allowlist is refused. Pending requests die at stdin
+EOF — the probe holds stdin open a moment longer, and asserts the server's
+clean exit-0 shutdown.
+
 ## The same journey in the TUI
 
 `bash scripts/walkthrough.sh` drives the headless CLI. Inside `saya` (the
 interactive session) the same operations exist as slash commands; the
 recording [`walkthrough.gif`](walkthrough.gif) was rendered from
 [`walkthrough.tape`](walkthrough.tape) driving the TUI on the demo database
-with the same sandbox environment, and shows the full journey:
+with the same sandbox environment, and shows the full journey — plus a
+closing `saya open` segment:
 
 - `/sql <SQL>` — run bounded read-only SQL directly against the active
   profile; the result is captured for the session. The recording runs the
@@ -268,10 +523,12 @@ with the same sandbox environment, and shows the full journey:
   latest successful, concrete query — a `/sql` capture — on the connection
   that actually ran it. The recording saves the trap query; its transcript
   block shows the derived, hash-suffixed id.
-- `/investigations` — alias for `/investigation list`; one line per saved
-  investigation. The recording's list shows two rows with the same name:
-  the just-saved one (`trap-query-…`, hash-suffixed) and `trap-query` — the
-  imported replay target the run below uses.
+- `/investigations` — alias for `/investigation list`; opens a filterable
+  popup with one row per saved investigation (age · name · dialect ·
+  connection — no ids). The recording's popup shows two rows named "Trap
+  query": the just-saved one (`trap-query-…`, hash-suffixed id shown in
+  save's block above) and the imported replay target `trap-query` the run
+  below uses, staged at the epoch so its age reads as decades.
 - `/export --snapshot <path>` — export the result you already inspected:
   the latest `/sql` capture, held for this session only, with **no query at
   all** (`Exported 4 row(s) to … from snapshot exec …`). The plain
@@ -295,17 +552,38 @@ with the same sandbox environment, and shows the full journey:
   it with an explicit `--connection demo`, exactly as the CLI journey's
   second environment must. The detach itself is described, not shown: the
   local demo query finishes far too fast to detach from.
+- `saya open deliveries.csv --non-interactive` — after the journey, the
+  recording quits the TUI and shows the staged-file preview in the shell:
+  hash, shape, delimiter/header, per-column types and null counts, and the
+  staged path — every column text, so the leading-zero `zip` survives. It
+  then relaunches the TUI on the generated `file_deliveries` profile and
+  runs one `/sql` over the staged file
+  (`SELECT zip, city FROM deliveries ORDER BY city LIMIT 1`), where
+  `02134` comes back with its zero intact. The recording's scratch
+  directory is fixed (`/tmp/saya-walk`, with `HOME` inside it), so no
+  checkout or machine path ever appears.
 
 ## What the walkthrough proves
 
 - The whole journey runs with **no provider and no network** — discovery,
-  raw SQL, saved investigations, and replay are local, bounded, read-only
-  operations.
+  raw SQL, saved investigations, replay, staged files, and the MCP server
+  are local, bounded, read-only operations.
 - A saved investigation travels as a **definition only**: exact SQL,
   metadata, referenced tables. No credentials, no rows, no binding.
 - A definition never runs by accident: the receiving machine must map it to
   a connection explicitly, the mapping binds only after a successful run,
   and a changed target or schema is refused before anything executes.
+- Parameterised investigations bind declared values at run time and refuse
+  a missing required parameter before any connection work; the evidence
+  line names parameters, never values.
+- Remembered context travels as claims that land **pending review** in the
+  receiving environment — an import never confirms anything.
+- A staged file snapshot is read-only and text-typed by default, so values
+  that look numeric (a leading-zero zip) are preserved exactly.
+- The MCP server speaks plain newline-delimited JSON-RPC, advertises only
+  its startup allowlist, keeps row-returning tools behind
+  `--allow-data-sharing`, and refuses any tool call that names a profile
+  outside that allowlist.
 - The evidence line ties every replay to a connection, a row count, and an
   execution id — the same evidence `investigation run --report` records in
   its shareable Markdown report.
