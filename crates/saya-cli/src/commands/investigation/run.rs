@@ -64,9 +64,11 @@ pub(super) async fn run(
         Ok(definition) => definition,
         Err(error) => return no_replay(store_failure(error, id.as_str(), format)),
     };
-    // The parameter bindings parse against the declared specs before any
-    // store, profile, or connection work (invariant 2): unknown names, a
-    // malformed value, and a missing required parameter are usage refusals.
+    // The parameter bindings parse against the declared specs (which the
+    // definition read above supplies) before any profile or connection
+    // work (invariant 2) — no connection is ever made with a bad binding:
+    // unknown names, a malformed value, and a missing required parameter
+    // are usage refusals.
     let bound = match bindings::bind_values(&definition.parameters, &request.params) {
         Ok(bound) => bound,
         Err((code, message)) => return no_replay(failure_message(code, message, format)),
