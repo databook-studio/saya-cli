@@ -5,6 +5,7 @@ use std::{fmt, str::FromStr};
 mod contracts;
 mod help;
 mod investigation;
+pub(crate) mod param_redact;
 pub(crate) mod registry;
 
 // Re-exported so the session command layer's `crate::slash::help_for` path
