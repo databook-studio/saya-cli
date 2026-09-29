@@ -20,8 +20,14 @@ pub enum ResultScope {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EvidenceSource {
     DirectSql,
-    SavedInvestigation { id: String, revision: u32 },
+    SavedInvestigation {
+        id: String,
+        revision: u32,
+    },
     Agent,
+    /// An execution served through `saya mcp serve` (ADR 0008): the query
+    /// tool's evidence names the server as its source.
+    Mcp,
 }
 
 /// Inputs for [`ExecutionEvidence::for_result`], keeping the constructor under
@@ -142,6 +148,7 @@ impl ExecutionEvidence {
             EvidenceSource::DirectSql => "direct sql",
             EvidenceSource::SavedInvestigation { .. } => "saved investigation",
             EvidenceSource::Agent => "agent",
+            EvidenceSource::Mcp => "mcp server",
         };
         let scope = match &self.scope {
             ResultScope::Full => "full result".to_owned(),

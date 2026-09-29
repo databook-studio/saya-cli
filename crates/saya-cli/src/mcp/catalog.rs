@@ -116,12 +116,18 @@ fn investigation_run_tool() -> Tool {
         "Run investigation",
         "Replay one saved investigation against its mapped connection and get \
          its result and evidence; a stale review is refused and is never \
-         revalidated from here.",
+         revalidated from here. Bind the investigation's declared parameters \
+         with `params`, as `{\"name\": \"value\"}` strings — parsed as their \
+         declared types, never echoed.",
         json!({
             "type": "object",
             "properties": {
                 "id": {"type": "string"},
-                "profile": {"type": "string"}
+                "profile": {"type": "string"},
+                "params": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"}
+                }
             },
             "required": ["id"],
             "additionalProperties": false,
