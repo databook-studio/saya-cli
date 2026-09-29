@@ -11,10 +11,12 @@ use crate::config::runtime::RuntimeConfig;
 
 /// Largest accepted request payload, in bytes (1 MiB).
 ///
-/// Enforced where the handler sees a request: a `tools/call` whose arguments
-/// exceed it is refused before dispatch. The raw line is decoded by rmcp's
-/// stdio transport, which has no inbound line cap of its own; the data tools
-/// (task Db) move this gate onto the request line at their dispatch boundary.
+/// Enforced twice. First by the line gate ([`super::line_gate::LineGate`],
+/// driven by the transport): every inbound line is capped at this bound
+/// before rmcp sees it — a longer line is discarded unread up to its newline
+/// and answered with `-32600 "request too large"`. Second by the `tools/call`
+/// arguments check in [`super::server`]: a request whose arguments exceed the
+/// bound is refused before dispatch.
 pub(crate) const MAX_REQUEST_BYTES: usize = 1_048_576;
 
 /// Tool calls served concurrently; a call beyond the cap is refused, never
