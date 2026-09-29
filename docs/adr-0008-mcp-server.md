@@ -241,10 +241,10 @@ server with two independent MCP clients:
 - stdio only — no HTTP/SSE transport; one host per server process.
 - Requests still pending when stdin reaches EOF are **dropped, not
   answered**: the server exits 0 on EOF without waiting for in-flight work,
-  so a one-shot `printf 'initialize\ninitialized\ntools/list\n' | saya mcp
-  serve --profile demo` can leave the last request unanswered — a host keeps
-  stdin open for the session's life and gets every reply; §8 records the
-  verified shapes.
+  so a one-shot pipeline that writes its JSON-RPC frames and closes stdin
+  gets no reply to the frames still in flight — a host keeps stdin open for
+  the session's life and gets every reply (the concrete one-shot/hold-open
+  shapes are in [commands](commands.md)).
 - Claude Code is documented (`claude mcp add saya -- saya mcp serve …`) but
   was not validated by a real client session; see §8.
 - `contracts` returns Active claims only — reviewing a Pending claim still
