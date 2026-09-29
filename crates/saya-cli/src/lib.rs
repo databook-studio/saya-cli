@@ -21,6 +21,7 @@ mod host_h4_tests;
 mod host_red_tests;
 mod interactive;
 mod mcp;
+mod open;
 mod render;
 pub mod render_run;
 mod render_usage;
