@@ -156,10 +156,16 @@ most 512 columns) — which also refuses nested types explicitly (`STRUCT`,
 cap was already enforced at the contained read. Then `CREATE TABLE … AS
 SELECT * FROM read_parquet(?) LIMIT <cap+1>` runs inside a transaction on
 the attached destination; a count check catches overflow, and a watchdog
-thread interrupts any statement still running at the **30-second** wall. A
-timeout, cancel, or failure rolls back and deletes the temp database — no
-partial table exists. The published file is checkpointed, detached, chmodded
-0600, and renamed into place; on success only `source.duckdb` remains.
+thread interrupts any statement still running at the **30-second** wall.
+The decode also carries an enforced **64 MiB accounted decoded-byte
+budget**: once the rows have landed, the sum of decoded cell bytes — text
+and blob columns by octet length, every other flat type at its fixed
+physical width — is measured over the staged table inside the same
+transaction, and exceeding the budget rolls the staging back with a
+refusal naming the limit. A timeout, cancel, or failure rolls back and
+deletes the temp database — no partial table exists. The published file is
+checkpointed, detached, chmodded 0600, and renamed into place; on success
+only `source.duckdb` remains.
 
 ### 6. Snapshot lifecycle: content-addressed, saya-owned only
 
@@ -178,9 +184,11 @@ matches, and foreign directories or files under the root survive cleanup.
 **Accepted costs.**
 
 - Staging duplicates the data: the source bytes are hashed and read once,
-  then a DuckDB copy is written. A 32 MiB file costs up to ~64 MiB of disk,
-  and snapshots accumulate until `--cleanup` — content-addressing means
-  nothing is overwritten, including stale snapshots of changed files.
+  then a DuckDB copy is written. The staged snapshot is bounded by the
+  enforced caps (32 MiB source, 500,000 rows, 512 columns, 64 MiB accounted
+  decoded bytes), and snapshots accumulate until `--cleanup` —
+  content-addressing means nothing is overwritten, including stale
+  snapshots of changed files.
 - The single-read rule means a file changed on disk after staging is not
   seen until the user re-runs `saya open` (and `--reset` if the content
   hash is unchanged but a fresh copy is wanted). The preview's staged time
@@ -221,7 +229,8 @@ matches, and foreign directories or files under the root survive cleanup.
 - One file per session: no joining across staged snapshots, and no `--sheet`
   (CSV and Parquet have no sheets).
 - Caps are hard refusals, not warnings: >500k rows, >512 columns, >32 MiB,
-  nested Parquet types — all refuse with no partial staging.
+  >64 MiB of accounted decoded bytes, nested Parquet types — all refuse with
+  no partial staging.
 - `--typed` inference labels come from the first ≤1,000 rows only; a column
   that starts numeric but turns textual later still casts, and the failures
   are counted and reported (values kept NULL) rather than refused.

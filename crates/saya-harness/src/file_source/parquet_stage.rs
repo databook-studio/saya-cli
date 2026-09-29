@@ -15,13 +15,15 @@
 use std::{
     fs::{self, OpenOptions},
     io,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process,
     sync::{Arc, mpsc},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use duckdb::{AccessMode, Config, Connection, InterruptHandle};
 
@@ -38,6 +40,7 @@ use super::{
 pub struct ParquetCaps {
     pub max_rows: u64,
     pub max_columns: usize,
+    pub max_decoded_bytes: u64,
     pub timeout: Duration,
 }
 
@@ -46,6 +49,7 @@ impl Default for ParquetCaps {
         Self {
             max_rows: 500_000,
             max_columns: 512,
+            max_decoded_bytes: super::parquet_budget::MAX_DECODED_BYTES,
             timeout: STAGE_TIMEOUT,
         }
     }

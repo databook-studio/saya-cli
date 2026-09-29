@@ -10,6 +10,7 @@ use duckdb::{Connection, Transaction, params};
 
 use super::{
     ParquetCaps, RESERVED_METADATA_TABLE, STAGED_DB_FILE, SourceFormat, StageError, StagedSource,
+    parquet_budget,
     parquet_preview::{build_preview, describe_columns},
     parquet_stage::{Watchdog, check_deadline, deadline_or_database, quote_identifier, sql_string},
     read,
@@ -122,6 +123,13 @@ fn write_table(
         return Err(StageError::ParquetTooManyRows {
             rows: staged_rows,
             max: stage.caps.max_rows,
+        });
+    }
+    let decoded_bytes = parquet_budget::decoded_cell_bytes(stage, tx, columns)?;
+    if decoded_bytes > stage.caps.max_decoded_bytes {
+        return Err(StageError::ParquetTooManyDecodedBytes {
+            bytes: decoded_bytes,
+            max: stage.caps.max_decoded_bytes,
         });
     }
     write_metadata(tx, stage.read, columns.len(), staged_rows)?;
