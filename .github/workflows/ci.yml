@@ -105,6 +105,7 @@ jobs:
         with:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --locked -p saya-connectors --test postgres_live
       # The native parameter-binding tests are lib tests
       # (postgres::execute::tests::…), not part of the postgres_live binary, so
       # the step above never executes them. Run them here against the same
