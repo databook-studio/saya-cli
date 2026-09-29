@@ -5,10 +5,12 @@
 
 use std::{
     fs::{self, OpenOptions},
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 /// Writes the one-profile read-only connections file beside the snapshot and
 /// returns its path (the launch override and the printed launch command).
