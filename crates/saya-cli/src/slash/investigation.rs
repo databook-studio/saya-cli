@@ -7,7 +7,7 @@
 
 use crate::cli::InvestigationCommand;
 use crate::slash::SlashParseError;
-use flags::{id_from, scan, take_number, take_value};
+use flags::{id_from, scan, take_number, take_value, take_values};
 use std::path::PathBuf;
 
 mod flags;
@@ -46,11 +46,12 @@ pub(crate) fn parse_investigation_command(
 
 fn parse_save(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     const USAGE: &str = " (usage: /investigation save <name> [--description <words>] \
-                         [--sql <SQL>] [--file <PATH>] [--connection <PROFILE>])";
+                         [--sql <SQL>] [--file <PATH>] [--param-spec <SPEC>] [--connection <PROFILE>])";
     let mut scan = scan(
         tail,
         &["--description", "--sql", "--file", "--connection"],
         &[],
+        &["--param-spec"],
         USAGE,
     )?;
     let Some(name) = Some(scan.positional).filter(|name| !name.is_empty()) else {
@@ -64,12 +65,13 @@ fn parse_save(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
         sql: take_value(&mut scan.values, "--sql"),
         file: take_value(&mut scan.values, "--file").map(PathBuf::from),
         connection: take_value(&mut scan.values, "--connection"),
+        param_specs: take_values(&mut scan.repeats, "--param-spec"),
     })
 }
 
 fn parse_list(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     const USAGE: &str = " (usage: /investigation list [--limit N] [--offset N])";
-    let mut scan = scan(tail, &["--limit", "--offset"], &[], USAGE)?;
+    let mut scan = scan(tail, &["--limit", "--offset"], &[], &[], USAGE)?;
     if !scan.positional.is_empty() {
         return Err(SlashParseError(format!("unexpected argument{USAGE}")));
     }
@@ -81,23 +83,24 @@ fn parse_list(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
 
 fn parse_show(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     const USAGE: &str = " (usage: /investigation show <id>)";
-    let scan = scan(tail, &[], &[], USAGE)?;
+    let scan = scan(tail, &[], &[], &[], USAGE)?;
     Ok(InvestigationCommand::Show {
         id: id_from(&scan.positional, USAGE)?,
     })
 }
 
 /// `/investigation edit <id> [--name <words>] [--description <words>]
-/// [--sql <SQL>] [--file <PATH>]`: the same `Edit` command the clap parser
-/// builds, with the id positional and at least one edit flag required by the
-/// operation itself.
+/// [--sql <SQL>] [--file <PATH>] [--param-spec <SPEC>]`: the same `Edit`
+/// command the clap parser builds, with the id positional and at least one
+/// edit flag required by the operation itself.
 fn parse_edit(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     const USAGE: &str = " (usage: /investigation edit <id> [--name <words>] \
-                         [--description <words>] [--sql <SQL>] [--file <PATH>])";
+                         [--description <words>] [--sql <SQL>] [--file <PATH>] [--param-spec <SPEC>])";
     let mut scan = scan(
         tail,
         &["--name", "--description", "--sql", "--file"],
         &[],
+        &["--param-spec"],
         USAGE,
     )?;
     Ok(InvestigationCommand::Edit {
@@ -106,12 +109,13 @@ fn parse_edit(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
         description: take_value(&mut scan.values, "--description"),
         sql: take_value(&mut scan.values, "--sql"),
         file: take_value(&mut scan.values, "--file").map(PathBuf::from),
+        param_specs: take_values(&mut scan.repeats, "--param-spec"),
     })
 }
 
 fn parse_delete(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     const USAGE: &str = " (usage: /investigation delete <id> [--revision N])";
-    let mut scan = scan(tail, &["--revision"], &[], USAGE)?;
+    let mut scan = scan(tail, &["--revision"], &[], &[], USAGE)?;
     Ok(InvestigationCommand::Delete {
         id: id_from(&scan.positional, USAGE)?,
         revision: take_number(&mut scan.values, "--revision", USAGE)?,
@@ -155,7 +159,7 @@ fn parse_export(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
 fn parse_import(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     const USAGE: &str = " (usage: /investigation import <path>)";
     // The path is the whole tail verbatim; import takes no flags.
-    let scan = scan(tail, &[], &[], USAGE)?;
+    let scan = scan(tail, &[], &[], &[], USAGE)?;
     if scan.positional.is_empty() {
         return Err(SlashParseError(format!("import needs a path{USAGE}")));
     }
@@ -164,13 +168,24 @@ fn parse_import(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
     })
 }
 
+/// `/investigation run <id> [--connection <PROFILE>] [--revalidate]
+/// [--param <NAME=VALUE> …]`: the same `Run` command the clap parser builds;
+/// `--param` is repeatable and rides the background replay through.
 fn parse_run(tail: &str) -> Result<InvestigationCommand, SlashParseError> {
-    const USAGE: &str = " (usage: /investigation run <id> [--connection <PROFILE>] [--revalidate])";
-    let mut scan = scan(tail, &["--connection"], &["--revalidate"], USAGE)?;
+    const USAGE: &str = " (usage: /investigation run <id> [--connection <PROFILE>] \
+                         [--revalidate] [--param <NAME=VALUE> …])";
+    let mut scan = scan(
+        tail,
+        &["--connection"],
+        &["--revalidate"],
+        &["--param"],
+        USAGE,
+    )?;
     Ok(InvestigationCommand::Run {
         id: id_from(&scan.positional, USAGE)?,
         connection: take_value(&mut scan.values, "--connection"),
         revalidate: scan.booleans.contains(&"--revalidate"),
+        params: take_values(&mut scan.repeats, "--param"),
         // The TUI writes reports with /report; the slash run takes no report flags.
         report: None,
         rows: None,

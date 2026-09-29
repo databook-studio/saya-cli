@@ -42,6 +42,7 @@ pub(super) fn fill_save_from_last_query(
         sql,
         file,
         connection,
+        param_specs,
     } = command
     else {
         return Ok(command);
@@ -55,6 +56,7 @@ pub(super) fn fill_save_from_last_query(
             sql,
             file,
             connection,
+            param_specs,
         });
     }
     let Some(last) = last_query else {
@@ -73,6 +75,7 @@ pub(super) fn fill_save_from_last_query(
         sql: Some(last.sql.clone()),
         file: None,
         connection: Some(connection),
+        param_specs,
     })
 }
 

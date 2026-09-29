@@ -59,9 +59,10 @@ fn prepare(
 }
 
 /// Attaches the ordered bind list to the statement through sqlx's encode
-/// path. A null binds as `Option::<String>::None`: the request contract
-/// carries no declared type, so the server infers the parameter's type from
-/// the statement context (an `IS NULL` test sees it everywhere).
+/// path. A null binds as its declared parameter type (B1f): the concrete
+/// `Option<T>` per type, so the server sees the declared parameter type —
+/// `int8`, `numeric`, `bool`, `date`, `timestamptz`, `text` — instead of
+/// inferring one from context (an `IS NULL` test sees it everywhere).
 fn bind_query<'q>(
     query: Query<'q, Postgres, PgArguments>,
     values: &'q [BindValue],
@@ -69,7 +70,7 @@ fn bind_query<'q>(
     let mut query = query;
     for value in values {
         query = match value {
-            BindValue::Null => query.bind(Option::<String>::None),
+            BindValue::Null(param_type) => query.bind(super::TypedNull(*param_type)),
             BindValue::Str(text) => query.bind(text.as_str()),
             BindValue::Int(int) => query.bind(*int),
             BindValue::Bool(flag) => query.bind(*flag),

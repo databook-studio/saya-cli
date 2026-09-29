@@ -580,6 +580,14 @@ pub enum InvestigationCommand {
         /// Connection profile to save against; defaults to the active profile.
         #[arg(long, value_name = "PROFILE")]
         connection: Option<String>,
+        /// Declare a parameter the SQL binds by name, as
+        /// `name:type[:required]` — type is string, integer, boolean,
+        /// decimal, date, or timestamp, and the third part marks it
+        /// required (the default is optional). Repeatable: every `:name`
+        /// placeholder in the SQL must be declared exactly this way, and
+        /// every declaration must appear in the SQL.
+        #[arg(long = "param-spec", value_name = "SPEC")]
+        param_specs: Vec<String>,
     },
     /// Edit a saved investigation as a new revision: the fields you pass
     /// replace the stored ones and everything else is kept — the id,
@@ -604,6 +612,13 @@ pub enum InvestigationCommand {
         /// Read the replacement SQL from this file instead of `--sql`.
         #[arg(long = "file", value_name = "PATH")]
         file: Option<std::path::PathBuf>,
+        /// Replace the whole parameter declaration list with these
+        /// `name:type[:required]` specs (same grammar as `save`), checked
+        /// against the resulting SQL's `:name` placeholders. Omit it to keep
+        /// the stored declarations. Changing the list is a new revision, so
+        /// the next run needs `--revalidate`.
+        #[arg(long = "param-spec", value_name = "SPEC")]
+        param_specs: Vec<String>,
     },
     /// List saved investigations, one line each, at most 50 per page.
     List {
@@ -699,6 +714,12 @@ pub enum InvestigationCommand {
         /// destination is refused, never clobbered.
         #[arg(long)]
         overwrite: bool,
+        /// Bind a declared parameter, as `name=value`. Repeatable; the names
+        /// must be the investigation's declared parameters, values parse as
+        /// their declared types, and the literal `null` binds a typed null.
+        /// Values bind natively at execute time and are never stored.
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
     },
 }
 

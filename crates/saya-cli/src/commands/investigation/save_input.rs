@@ -16,13 +16,15 @@ use std::path::PathBuf;
 
 /// One save request, as the adapter parsed it: the exact SQL from `--sql` or
 /// `--file` (the shared stdin path fills `sql` when both are absent), the
-/// display name/description, and the connection to bind, if given.
+/// display name/description, the connection to bind, if given, and the
+/// declared `--param-spec` list.
 pub(super) struct SaveRequest<'a> {
     pub name: &'a str,
     pub description: Option<&'a str>,
     pub sql: Option<String>,
     pub file: Option<PathBuf>,
     pub connection: Option<&'a str>,
+    pub param_specs: &'a [String],
 }
 
 /// Validates the request into a v1 definition plus the resolved saving
@@ -38,7 +40,11 @@ pub(super) fn checked_definition(
         sql,
         file,
         connection,
+        param_specs,
     } = request;
+    // The declarations parse first: a malformed spec is a usage error before
+    // any SQL work (invariant 1).
+    let parameters = super::params::parse_specs(param_specs)?;
     let (profile_name, dialect, identity) = resolve_connection(runtime, connection)?;
     if sql.is_some() && file.is_some() {
         return Err((
@@ -69,6 +75,10 @@ pub(super) fn checked_definition(
                 .to_string(),
         ));
     }
+    // The placeholder/declaration contract (invariant 1): every `:name` in
+    // the SQL must be declared exactly once, and every declaration must
+    // appear in the SQL — both ways, before the document exists.
+    super::params::check_contract(&sql, dialect, &parameters)?;
     let now = now_unix_ms();
     let name = name.trim();
     // The informational objects field, canonically rendered from the SQL
@@ -83,7 +93,7 @@ pub(super) fn checked_definition(
         name: name.to_string(),
         description: description.map(str::to_string),
         sql,
-        parameters: Vec::new(),
+        parameters,
         dialect,
         connection: profile_name.clone(),
         objects,

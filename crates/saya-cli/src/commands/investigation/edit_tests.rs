@@ -95,6 +95,7 @@ async fn saved_id(
             sql: Some("SELECT id, label FROM events ORDER BY id".into()),
             file: None,
             connection: None,
+            param_specs: Vec::new(),
         },
         runtime,
         state,
@@ -120,6 +121,7 @@ fn edit_command(
         description: description.map(Into::into),
         sql: sql.map(Into::into),
         file,
+        param_specs: Vec::new(),
     }
 }
 
@@ -131,6 +133,7 @@ fn run_command(id: &str, revalidate: bool) -> InvestigationCommand {
         report: None,
         rows: None,
         overwrite: false,
+        params: Vec::new(),
     }
 }
 
