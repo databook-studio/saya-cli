@@ -1,7 +1,5 @@
 use saya_config::MapSecretResolver;
-use saya_connectors::{
-    ConnectorOptions, DatabaseConnector, DuckDbConnector, SqliteConnector, build_connector,
-};
+use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector, build_connector};
 use saya_types::{
     BoundParam, ConnectionError, DatabaseProfile, ForeignKey, ParamValue, QueryRequest, QueryResult,
 };
@@ -1194,32 +1192,9 @@ async fn bounds_rewrite_preserves_bind_order() {
 /// Engines whose native binding has not landed refuse parameters with an
 /// unsupported error before any connection attempt — a ClickHouse profile
 /// pointed at a port with nothing listening must fail as unsupported, not as
-/// a network error.
+/// a network error. DuckDB binds natively now, so it no longer appears here.
 #[tokio::test]
 async fn parameters_on_an_unsupported_connector_are_refused_without_connecting() {
-    let duckdb = DuckDbConnector::open(":memory:", false, ConnectorOptions::default())
-        .await
-        .unwrap();
-    assert!(!duckdb.supports_parameters());
-    let error = duckdb
-        .execute(QueryRequest::with_params(
-            "SELECT 1 WHERE 1 = :v".to_string(),
-            1,
-            vec![bound("v", ParamValue::Integer(1))],
-        ))
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(error, ConnectionError::Unsupported(_)),
-        "{error:?}"
-    );
-    assert!(
-        error
-            .to_string()
-            .contains("parameters are not supported for DuckDB"),
-        "{error}"
-    );
-
     let clickhouse = build_connector(
         &DatabaseProfile::ClickHouse {
             host: "127.0.0.1".into(),

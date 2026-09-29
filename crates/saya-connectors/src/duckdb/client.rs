@@ -65,6 +65,9 @@ impl DatabaseConnector for DuckDbConnector {
     fn dialect(&self) -> SqlDialect {
         SqlDialect::DuckDb
     }
+    fn supports_parameters(&self) -> bool {
+        true
+    }
     async fn connect(&self) -> Result<(), ConnectionError> {
         super::execute::ping(self).await
     }
