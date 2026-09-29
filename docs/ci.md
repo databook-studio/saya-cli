@@ -6,9 +6,9 @@ and strict Clippy. Live PostgreSQL/MySQL contract jobs run on every push and
 pull request with ephemeral services; live Snowflake validation remains opt-in
 and outside CI.
 
-Every workspace crate inherits an MSRV of Rust 1.88, and the edition 2024
+Every workspace crate inherits an MSRV of Rust 1.89, and the edition 2024
 workspace uses Cargo resolver 3. A separate serialized Ubuntu job installs
-Rust 1.88.0 exactly and runs `cargo check --workspace --locked`. This catches
+Rust 1.89.0 exactly and runs `cargo check --workspace --locked`. This catches
 dependency or source MSRV drift without duplicating the stable test matrix.
 
 The workspace pins `duckdb` and its bundled `libduckdb-sys` implementation to
