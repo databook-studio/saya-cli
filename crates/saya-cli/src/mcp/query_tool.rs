@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use rmcp::{
     RoleServer,
-    model::{CallToolRequestParams, CallToolResponse},
+    model::{CallToolRequestParams, CallToolResponse, CallToolResult},
     service::RequestContext,
 };
 use saya_connectors::DatabaseConnector;
@@ -66,15 +66,14 @@ pub(crate) async fn query(
                 Some(result.truncated),
             )
             .await;
-            let payload = payload(
+            bounded_payload(
                 policy,
                 name,
                 connector.as_ref(),
                 &result,
                 max_rows,
                 started_unix_ms,
-            );
-            tools::bounded_result(policy, payload)
+            )
         }
         Err(error) => {
             audit(
@@ -91,18 +90,23 @@ pub(crate) async fn query(
     }
 }
 
-/// The query answer: columns, rows, counts, and evidence. A payload over the
-/// response bound is narrowed by dropping whole rows (truncated:true and a
-/// note), never sent fat.
-fn payload(
+/// The query answer: columns, rows, counts, and evidence. A result over the
+/// response bound is narrowed by dropping whole rows — measured on the FINAL
+/// built wire result, the narrowing note included, never the payload alone
+/// (A922-5, D5) — never sent fat. The narrowed answer stays internally
+/// consistent: `row_count` is the row count sent, the note names the cut,
+/// and the evidence copy reports the sent rows with `truncated: true`; the
+/// un-narrowed execution facts stay in the audit. Only when even the
+/// rowless result exceeds the bound is the answer refused.
+fn bounded_payload(
     policy: &ServePolicy,
     name: &str,
     connector: &dyn DatabaseConnector,
     result: &QueryResult,
     max_rows: usize,
     started_unix_ms: i64,
-) -> serde_json::Value {
-    let evidence = ExecutionEvidence::for_result(
+) -> Result<CallToolResponse, rmcp::ErrorData> {
+    let mut evidence = ExecutionEvidence::for_result(
         result,
         ExecutionEvidenceArgs {
             execution_id: ExecutionEvidence::new_execution_id(started_unix_ms, 0),
@@ -126,21 +130,22 @@ fn payload(
             "truncated": truncated,
             "evidence": evidence,
         });
-        let size = serde_json::to_vec(&payload).map_or(usize::MAX, |bytes| bytes.len());
-        if policy.response_allowed(size) || rows.is_empty() {
-            if !policy.response_allowed(size) {
-                payload["note"] = serde_json::Value::String(
-                    "the response exceeded the byte bound; no row could be kept".into(),
-                );
-            }
-            return payload;
+        // The narrowing note rides the measured payload: the answer that is
+        // sent is exactly the answer that was measured.
+        if truncated != result.truncated {
+            payload["note"] = serde_json::Value::String(format!(
+                "the response exceeded the byte bound and was cut to {}/{} rows",
+                rows.len(),
+                total
+            ));
+        }
+        let built = CallToolResult::structured(payload);
+        if policy.response_allowed(tools::result_wire_bytes(&built)) || rows.is_empty() {
+            return tools::bounded_built_result(policy, built);
         }
         rows.truncate(rows.len() / 2);
         truncated = true;
-        payload["note"] = serde_json::Value::String(format!(
-            "the response exceeded the byte bound and was cut to {}/{} rows",
-            rows.len(),
-            total
-        ));
+        evidence.returned_rows = rows.len();
+        evidence.truncated = true;
     }
 }

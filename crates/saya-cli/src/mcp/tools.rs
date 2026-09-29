@@ -18,6 +18,10 @@ use super::{
     schema_tool,
 };
 
+#[cfg(test)]
+#[path = "tools_tests.rs"]
+mod tools_tests;
+
 /// Run one tool body. The name dispatch is the single extension point; an
 /// unknown name is a method error, per the MCP spec. A row-returning tool
 /// called while data sharing is off is refused as a tool-level error with
@@ -79,6 +83,23 @@ pub(crate) fn profiles_payload(policy: &ServePolicy) -> serde_json::Value {
 
 // -- shared tool-body helpers ------------------------------------------------
 
+/// The JSON-RPC envelope headroom (A922-5, D5): the response bound applies
+/// to the final wire line, so the measure reserves this much on top of the
+/// serialized result for the response object (`jsonrpc`, `id`, framing) that
+/// wraps it.
+pub(crate) const RESPONSE_ENVELOPE_HEADROOM_BYTES: usize = 4 * 1024;
+
+/// The wire size of a built result (A922-5, D5): the final serialized
+/// `CallToolResult` — rmcp's `structured` duplicates the payload into a text
+/// content block, so the whole result is measured, never the payload alone —
+/// plus the reserved envelope headroom. A result that cannot be serialized
+/// measures as unbounded: refused, never sent.
+pub(crate) fn result_wire_bytes(result: &CallToolResult) -> usize {
+    serde_json::to_vec(result)
+        .map_or(usize::MAX, |bytes| bytes.len())
+        .saturating_add(RESPONSE_ENVELOPE_HEADROOM_BYTES)
+}
+
 /// One tool-level error result: the caller sees sanitized text, never
 /// connection strings, paths, hosts, or secrets (invariant 5).
 pub(crate) fn error_result(message: impl Into<String>) -> CallToolResponse {
@@ -91,21 +112,31 @@ pub(crate) fn sanitized(text: &str) -> String {
     crate::render::sanitize_terminal(&saya_types::redact(text))
 }
 
-/// One successful structured result, bounded by the response limit; an
-/// oversized payload is refused, never sent.
+/// One successful structured result, bounded by the response limit; the
+/// measure is the built result — rmcp's `structured` duplicates the payload
+/// into a text block — plus envelope headroom (A922-5, D5); an oversized
+/// result is refused, never sent.
 pub(crate) fn bounded_result(
     policy: &ServePolicy,
     payload: serde_json::Value,
 ) -> Result<CallToolResponse, ErrorData> {
-    let bytes = serde_json::to_vec(&payload)
-        .map_err(|_| ErrorData::internal_error("tool response is not serializable", None))?;
-    if !policy.response_allowed(bytes.len()) {
+    bounded_built_result(policy, CallToolResult::structured(payload))
+}
+
+/// The bounded send for an already-built result (A922-5, D5): tools that
+/// narrow (the query tool) build the result themselves and measure it whole
+/// before sending here.
+pub(crate) fn bounded_built_result(
+    policy: &ServePolicy,
+    result: CallToolResult,
+) -> Result<CallToolResponse, ErrorData> {
+    if !policy.response_allowed(result_wire_bytes(&result)) {
         return Ok(error_result(format!(
             "the response exceeds the {}-byte response bound",
             super::policy::MAX_RESPONSE_BYTES
         )));
     }
-    Ok(CallToolResult::structured(payload).into())
+    Ok(result.into())
 }
 
 /// Reads a required string argument.
