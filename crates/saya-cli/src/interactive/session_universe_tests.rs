@@ -1660,6 +1660,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             false,
             vec![
                 "schema_discovery",
+                "request_clarification",
                 "workspace_read",
                 "workspace_list",
                 "glob",
@@ -1678,6 +1679,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             true,
             vec![
                 "schema_discovery",
+                "request_clarification",
                 "workspace_read",
                 "workspace_list",
                 "glob",
@@ -1703,6 +1705,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             false,
             vec![
                 "schema_discovery",
+                "request_clarification",
                 "workspace_read",
                 "workspace_list",
                 "glob",
@@ -1728,6 +1731,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             true,
             vec![
                 "schema_discovery",
+                "request_clarification",
                 "workspace_read",
                 "workspace_list",
                 "glob",
@@ -1746,6 +1750,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             true,
             vec![
                 "schema_discovery",
+                "request_clarification",
                 "workspace_read",
                 "workspace_list",
                 "glob",

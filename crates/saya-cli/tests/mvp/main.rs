@@ -1,3 +1,4 @@
+mod clarification;
 mod cli;
 mod common;
 mod config;

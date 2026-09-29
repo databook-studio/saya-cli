@@ -7,6 +7,7 @@ use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
 mod contract_view;
 mod io_view;
+mod render_clarification;
 mod render_contract;
 mod render_delta;
 mod render_io;
@@ -20,6 +21,10 @@ pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
 pub use io_view::{ContractExportView, ContractImportClaimView, ContractImportView};
+/// Re-exported for the TUI, which renders [`AgentEvent::ClarificationNeeded`]
+/// as the transcript's Question block, and for the ask-path tests, which pin
+/// the block text — one shaper, both surfaces (B3c).
+pub(crate) use render_clarification::clarification_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeProposed`] in
 /// `apply_event` and shares this shaper so the wording lives in one place.
 pub(crate) use render_learned::knowledge_learned_text;
@@ -126,6 +131,15 @@ pub enum TerminalEvent {
     KnowledgeLearningDisabled {
         model: String,
         misses: u32,
+    },
+    /// The model stopped to ask the user one focused question instead of
+    /// assuming (`AgentEvent::ClarificationNeeded`, B3c). The turn ends here;
+    /// the user's next message answers it. Text is shaped in
+    /// [`render_clarification`] — the same block the TUI transcript pushes;
+    /// JSON/NDJSON fall out of the serde derive.
+    ClarificationNeeded {
+        question: String,
+        options: Vec<String>,
     },
     Complete,
     /// The provider stream failed mid-answer and the turn is being retried
@@ -320,6 +334,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::KnowledgeLearningDisabled { model, misses } => Rendered {
             stdout: render_memory::learning_disabled_text(model, *misses),
+            stderr: String::new(),
+        },
+        TerminalEvent::ClarificationNeeded { question, options } => Rendered {
+            stdout: render_clarification::clarification_text(question, options),
             stderr: String::new(),
         },
         TerminalEvent::Complete => Rendered {

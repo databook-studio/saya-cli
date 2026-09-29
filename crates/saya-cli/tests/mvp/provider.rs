@@ -358,8 +358,11 @@ fn ask_navigates_between_included_database_connections() {
     let handle = thread::spawn(move || {
         for body in [tool_calls_body, final_body] {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 8192];
-            let _ = stream.read(&mut request);
+            let mut request = [0_u8; 16384];
+            let n = stream.read(&mut request).unwrap();
+            eprintln!("MOCK: served a connection, request bytes read = {n}");
+            let _ =
+                std::str::from_utf8(&request[..n.min(2000)]).map(|s| eprintln!("MOCK HEAD: {s}"));
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{}",
