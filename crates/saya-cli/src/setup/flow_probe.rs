@@ -5,11 +5,12 @@
 
 use super::draft::{ProviderDraft, SetupDraft};
 use super::flow_options::FlowOptions;
+use super::probe_database::{SSO_CONSENT_PROMPT, needs_sso_consent, probe_window_label};
 use super::prompt::{Cancel, Prompter};
 
 /// The probes, one at a time: the database always, the provider only with
 /// explicit consent. `Done` carries how many failed (the confirm note says
-/// so); `Cancelled` is the consent prompt's EOF.
+/// so); `Cancelled` is a consent prompt's EOF.
 pub(crate) enum ProbeOutcome {
     Done(usize),
     Cancelled,
@@ -23,10 +24,29 @@ pub(crate) fn run_probes(
 ) -> Result<ProbeOutcome, Box<dyn std::error::Error>> {
     let mut failures = 0usize;
     if let Some(profile) = &draft.profile {
-        prompter.say("Probing the database (up to 15 seconds)...")?;
-        let result = runtime.block_on((options.probes.database)(&profile.profile));
-        prompter.say(&result.message)?;
-        failures += usize::from(!result.ok);
+        // Browser-SSO opens a browser only on explicit consent; declining
+        // skips the probe and says so.
+        let skip = if needs_sso_consent(&profile.profile) {
+            match prompter.confirm(SSO_CONSENT_PROMPT, false) {
+                Ok(true) => false,
+                Ok(false) => {
+                    prompter.say("Snowflake SSO probe skipped (not probed).")?;
+                    true
+                }
+                Err(Cancel) => return Ok(ProbeOutcome::Cancelled),
+            }
+        } else {
+            false
+        };
+        if !skip {
+            prompter.say(&format!(
+                "Probing the database (up to {})...",
+                probe_window_label(&profile.profile)
+            ))?;
+            let result = runtime.block_on((options.probes.database)(&profile.profile));
+            prompter.say(&result.message)?;
+            failures += usize::from(!result.ok);
+        }
     }
     if let Some(provider_draft) = &draft.provider {
         let consented = match prompter.confirm(&provider_consent(provider_draft), false) {

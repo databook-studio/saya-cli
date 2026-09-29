@@ -48,34 +48,12 @@ struct ProfilesFile<'a> {
 
 /// The `[profiles.<name>]` block for one draft profile, via TOML
 /// serialization of the `{ profiles: { <name>: profile } }` wrapper — names
-/// with dots or dashes come out quoted and round-trip.
+/// with dots or dashes come out quoted and round-trip. Every engine variant
+/// of [`DatabaseProfile`] serializes here; optional fields left unset are
+/// omitted and parse back as `None`.
 pub(crate) fn profile_block(name: &str, profile: &DatabaseProfile) -> Result<String, SetupError> {
-    if !matches!(
-        profile,
-        DatabaseProfile::Postgres { .. }
-            | DatabaseProfile::Mysql { .. }
-            | DatabaseProfile::Sqlite { .. }
-            | DatabaseProfile::DuckDb { .. }
-    ) {
-        return Err(SetupError::UnsupportedEngine(format!(
-            "configure {} in connections.toml; see docs/connections.md",
-            engine_name(profile)
-        )));
-    }
     let mut profiles = BTreeMap::new();
     profiles.insert(name, profile);
     toml::to_string(&ProfilesFile { profiles })
         .map_err(|error| SetupError::Render(error.to_string()))
-}
-
-fn engine_name(profile: &DatabaseProfile) -> &'static str {
-    match profile {
-        DatabaseProfile::Postgres { .. } => "postgresql",
-        DatabaseProfile::Mysql { .. } => "mysql",
-        DatabaseProfile::DuckDb { .. } => "duckdb",
-        DatabaseProfile::Sqlite { .. } => "sqlite",
-        DatabaseProfile::Snowflake { .. } => "snowflake",
-        DatabaseProfile::ClickHouse { .. } => "clickhouse",
-        DatabaseProfile::BigQuery { .. } => "bigquery",
-    }
 }

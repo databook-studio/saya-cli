@@ -486,18 +486,56 @@ fn rendered_files_parse_with_real_parsers() {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// The warehouse engines render through the same serializer and must round
+/// trip with the real parser, for every Snowflake auth variant included.
+/// Optional fields left unset are omitted from the TOML and parse back as
+/// `None`.
 #[test]
-fn unsupported_engine_is_explicit() {
+fn warehouse_profiles_render_and_round_trip() {
     let cases = vec![
         (
-            "snowflake",
+            "snowflake_keypair",
             DatabaseProfile::Snowflake {
-                account: "org-account".into(),
-                user: "reader".into(),
+                account: "org-account.us-east-1.aws".into(),
+                user: "jane".into(),
                 auth_type: saya_types::SnowflakeAuth::Keypair,
-                private_key: Some(SecretRef::Env {
-                    env: "SAYA_SF_KEY".into(),
+                private_key: Some(SecretRef::File {
+                    file: "/absolute/path/to/rsa_key.p8".into(),
                 }),
+                password: None,
+                passphrase: Some(SecretRef::Env {
+                    env: "SAYA_SNOWFLAKE_PASSPHRASE".into(),
+                }),
+                warehouse: Some("ANALYTICS".into()),
+                database: Some("PROD".into()),
+                schema: Some("PUBLIC".into()),
+                role: Some("ANALYST".into()),
+            },
+        ),
+        (
+            "snowflake_userpass",
+            DatabaseProfile::Snowflake {
+                account: "org-account.us-east-1.aws".into(),
+                user: "jane".into(),
+                auth_type: saya_types::SnowflakeAuth::Userpass,
+                private_key: None,
+                password: Some(SecretRef::Env {
+                    env: "SAYA_SNOWFLAKE_PASSWORD".into(),
+                }),
+                passphrase: None,
+                warehouse: None,
+                database: None,
+                schema: None,
+                role: None,
+            },
+        ),
+        (
+            "snowflake_browser",
+            DatabaseProfile::Snowflake {
+                account: "org-account.us-east-1.aws".into(),
+                user: "jane".into(),
+                auth_type: saya_types::SnowflakeAuth::Externalbrowser,
+                private_key: None,
                 password: None,
                 passphrase: None,
                 warehouse: None,
@@ -509,45 +547,54 @@ fn unsupported_engine_is_explicit() {
         (
             "clickhouse",
             DatabaseProfile::ClickHouse {
-                host: "ch.example.com".into(),
-                port: None,
-                database: None,
-                user: None,
-                password: None,
-                secure: None,
+                host: "clickhouse.internal.example".into(),
+                port: Some(8443),
+                database: Some("warehouse".into()),
+                user: Some("saya_readonly".into()),
+                password: Some(SecretRef::Env {
+                    env: "SAYA_CLICKHOUSE_PASSWORD".into(),
+                }),
+                secure: Some(true),
             },
         ),
         (
             "bigquery",
             DatabaseProfile::BigQuery {
-                project: "my-project".into(),
-                dataset: None,
+                project: "my-gcp-project".into(),
+                dataset: Some("warehouse".into()),
                 location: None,
-                max_bytes_billed: None,
-                service_account_key: SecretRef::Env {
-                    env: "SAYA_BQ_KEY".into(),
+                max_bytes_billed: Some(1_000_000_000_000),
+                service_account_key: SecretRef::File {
+                    file: "/absolute/path/to/service-account.json".into(),
                 },
             },
         ),
     ];
-    for (engine, profile) in cases {
-        let dir = temp_dir(&format!("unsupported-{engine}"));
+    for (name, profile) in cases {
+        let dir = temp_dir(&format!("render-warehouse-{name}"));
         let draft = SetupDraft {
             provider: None,
             profile: Some(ProfileDraft {
-                name: "x".into(),
-                profile,
+                name: name.into(),
+                profile: profile.clone(),
             }),
         };
-        let error = plan(&dir, &draft).unwrap_err();
-        assert!(
-            matches!(&error, SetupError::UnsupportedEngine(message)
-                if message == &format!("configure {engine} in connections.toml; see docs/connections.md")),
-            "unexpected error for {engine}: {error:?}"
+        let planned = plan(&dir, &draft).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let content = &planned.writes[0].content;
+        let parsed =
+            ConnectionsFile::from_toml(content).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(
+            parsed.profiles.get(name),
+            Some(&profile),
+            "{name} round-trips the typed profile"
         );
+        assert!(content.starts_with(&format!("[profiles.{name}]")));
         assert!(
-            !dir.join("connections.toml").exists(),
-            "plan performs no writes"
+            !content.contains("password = \"")
+                && !content.contains("private_key = \"")
+                && !content.contains("passphrase = \"")
+                && !content.contains("service_account_key = \""),
+            "{name} never renders a secret as an inline value: {content}"
         );
         let _ = fs::remove_dir_all(dir);
     }
