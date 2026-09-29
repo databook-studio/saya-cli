@@ -352,22 +352,22 @@ Columns:
   city: text (0 nulls)
   amount: decimal (1 nulls)
   note: text (2 nulls)
-Staged: …/bob/files/98262980cbeeba94/source.duckdb (… UTC)
+Staged: …/bob/files/98262980cbeeba94-9a33adff/source.duckdb (… UTC)
 Stored as text columns; use --typed for a typed copy.
 Open it read-only:
-  saya --connections …/bob/files/98262980cbeeba94/connections.toml --profile file_deliveries
+  saya --connections …/bob/files/98262980cbeeba94-9a33adff/connections.toml --profile file_deliveries
 $ (cd …) cargo run -q -p saya-cli -- open --list
 
 Staged file sources (newest first):
   98262980cbee  deliveries.csv  3 rows  86 B  … UTC
-    …/bob/files/98262980cbeeba94/source.duckdb
-$ (cd …) cargo run -q -p saya-cli -- --connections …/bob/files/98262980cbeeba94/connections.toml --profile file_deliveries --non-interactive query --sql 'SELECT zip, city FROM deliveries ORDER BY city LIMIT 1'
+    …/bob/files/98262980cbeeba94-9a33adff/source.duckdb
+$ (cd …) cargo run -q -p saya-cli -- --connections …/bob/files/98262980cbeeba94-9a33adff/connections.toml --profile file_deliveries --non-interactive query --sql 'SELECT zip, city FROM deliveries ORDER BY city LIMIT 1'
 
 zip	city
 02134	Boston
 $ (cd …) cargo run -q -p saya-cli -- open --cleanup all
 
-Removed: 98262980cbee deliveries.csv (…/bob/files/98262980cbeeba94)
+Removed: 98262980cbee deliveries.csv (…/bob/files/98262980cbeeba94-9a33adff)
 $ (cd …) cargo run -q -p saya-cli -- open --list
 
 No staged file sources.
