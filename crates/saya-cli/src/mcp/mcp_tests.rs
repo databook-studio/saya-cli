@@ -1,6 +1,8 @@
-//! Unit tests for the MCP serve policy: the allowlist rule (invariant 2 —
-//! explicit `--profile` values, else the configured default, else none), the
-//! byte bounds, and the in-flight cap.
+//! Unit tests for the MCP serve policy (task Da + Db): the allowlist rule
+//! (explicit `--profile` values, else the configured default, else none), the
+//! byte bounds, the in-flight cap, the profiles payload shape, and the
+//! catalog's data-sharing gate. The wire behavior is pinned in
+//! `tests/mcp_stdio.rs` against the real binary.
 
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
@@ -103,7 +105,16 @@ fn the_bounds_hold_the_stated_values() {
     assert_eq!(policy.call_timeout(), Duration::from_secs(30));
     assert_eq!(policy.max_in_flight(), MAX_IN_FLIGHT);
 
-    let server = SayaServer::new(policy);
+    let server = SayaServer::new(
+        policy,
+        std::sync::Arc::new(super::context::McpContext {
+            runtime: fixture_runtime("", ""),
+            store: saya_store::SqliteStateStore::new(
+                std::env::temp_dir().join("saya-mcp-test-state"),
+            ),
+            replay_slot: tokio::sync::Mutex::new(()),
+        }),
+    );
     let mut slots = Vec::new();
     for _ in 0..MAX_IN_FLIGHT {
         slots.push(server.acquire_in_flight().expect("up to the cap"));
@@ -132,4 +143,43 @@ fn the_profiles_payload_names_dialects_only() {
         super::tools::profiles_payload(&policy),
         serde_json::json!({"profiles": [{"name": "local", "dialect": "sqlite"}]}),
     );
+}
+
+/// The catalog gates the row-returning tools on data sharing: with sharing
+/// off they are absent from `tools/list` entirely; with it on, the whole
+/// toolset is advertised. The dispatch-side refusal for a row tool called
+/// anyway is pinned over the wire in `tests/mcp_stdio.rs`
+/// (`mcp_denial_matches_cli_policy`).
+#[test]
+fn the_catalog_gates_row_tools_on_data_sharing() {
+    let runtime = fixture_runtime(TWO_PROFILES, "default_profile = 'first'\n");
+    let sharing_on = ServePolicy::resolve(&runtime, &["first".to_owned()], None)
+        .unwrap()
+        .with_data_sharing(true);
+    let sharing_off = ServePolicy::resolve(&runtime, &["first".to_owned()], None)
+        .unwrap()
+        .with_data_sharing(false);
+    let listed_on: Vec<String> = super::catalog::advertised(&sharing_on)
+        .iter()
+        .map(|tool| tool.name.to_string())
+        .collect();
+    let listed_off: Vec<String> = super::catalog::advertised(&sharing_off)
+        .iter()
+        .map(|tool| tool.name.to_string())
+        .collect();
+    assert_eq!(
+        listed_on,
+        [
+            "contracts",
+            "investigation_run",
+            "list_profiles",
+            "query",
+            "schema"
+        ],
+    );
+    assert_eq!(listed_off, ["contracts", "list_profiles", "schema"]);
+    assert!(super::catalog::is_row_returning("query"));
+    assert!(super::catalog::is_row_returning("investigation_run"));
+    assert!(!super::catalog::is_row_returning("schema"));
+    assert!(!super::catalog::is_row_returning("list_profiles"));
 }
