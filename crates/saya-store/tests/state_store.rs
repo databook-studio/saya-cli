@@ -365,49 +365,142 @@ async fn schema_read_pairs_bytes_with_their_own_metadata() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// Q2 hammer: a writer cycling two distinct schema generations while a
-/// reader hammers `get_schema` must never observe a torn pair — returned
-/// bytes always parse and carry the timestamp written with them. With one
-/// statement per read there is no inter-statement window left to tear.
+/// Q2 hammer: two writers rewrite one cached row while the reader hammers
+/// the production `get_schema` read path. Each writer stamps schema bytes
+/// and the generation's freshness metadata in ONE atomic statement — the
+/// same single-statement upsert production `upsert_schema` runs inside its
+/// transaction — so the row on disk only ever holds self-consistent
+/// generations: gen-a ⇔ (version 1, odd ms), gen-b ⇔ (version 2, even ms).
+/// Every read must pair bytes with metadata from the same generation: a
+/// read that pairs one generation's bytes with the other's version or
+/// timestamp fails. Progress is observable on both sides — a writer ignores
+/// the stop flag until it has completed `MIN_WRITES` upserts, and the
+/// reader must see both generations, so a starved writer fails the test.
+/// The reader's fixed read count and the writers' iteration cap bound the
+/// runtime.
 #[tokio::test]
 async fn concurrent_upserts_never_tear_schema_from_its_metadata() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    // The public write path computes metadata internally (`now()` and
+    // `SCHEMA_VERSION`) and cannot express per-generation metadata, so the
+    // writers stamp generations with the production upsert statement over
+    // raw pools — the established planted-row pattern of this file.
+    const VERSION_A: i64 = 1;
+    const VERSION_B: i64 = 2;
+    const ODD_BASE_MS: i64 = 1_000_001;
+    const EVEN_BASE_MS: i64 = 1_000_000;
+    const MIN_WRITES: i64 = 10;
+    const MAX_WRITES: i64 = 2_000;
+    const READS: usize = 200;
+
     let root = temp_root("schema-tear");
     let db = root.join("state.sqlite3");
     let store = Arc::new(SqliteStateStore::new(&db));
-    store
-        .upsert_schema(PROFILE, &schema("gen-a"))
+    assert!(store.get_schema(PROFILE).await.unwrap().is_none());
+    let json_a = serde_json::to_string(&schema("gen-a")).unwrap();
+    let json_b = serde_json::to_string(&schema("gen-b")).unwrap();
+    let pool_a = raw_pool(&db).await;
+    let pool_b = raw_pool(&db).await;
+    stamp_generation(&pool_a, PROFILE, &json_a, ODD_BASE_MS, VERSION_A)
         .await
-        .unwrap();
+        .expect("seed upsert must succeed");
+
     let stop = Arc::new(AtomicBool::new(false));
-    let writer = {
-        let store = Arc::clone(&store);
+    let writer_a = {
         let stop = Arc::clone(&stop);
+        let json = json_a.clone();
+        let pool = pool_a.clone();
         tokio::spawn(async move {
-            let mut flip = false;
-            while !stop.load(Ordering::Relaxed) {
-                flip = !flip;
-                let table = if flip { "gen-a" } else { "gen-b" };
-                store.upsert_schema(PROFILE, &schema(table)).await.unwrap();
+            let mut index: i64 = 0;
+            // A writer ignores the stop flag until it has completed
+            // MIN_WRITES upserts, so the post-join progress assertion can
+            // never pass while a writer starved below the bound.
+            while (!stop.load(Ordering::Relaxed) || index < MIN_WRITES) && index < MAX_WRITES {
+                stamp_generation(&pool, PROFILE, &json, ODD_BASE_MS + 2 * index, VERSION_A)
+                    .await
+                    .expect("writer A upsert must succeed");
+                index += 1;
             }
+            index
         })
     };
-    for _ in 0..200 {
+    let writer_b = {
+        let stop = Arc::clone(&stop);
+        let json = json_b.clone();
+        let pool = pool_b.clone();
+        tokio::spawn(async move {
+            let mut index: i64 = 0;
+            while (!stop.load(Ordering::Relaxed) || index < MIN_WRITES) && index < MAX_WRITES {
+                stamp_generation(&pool, PROFILE, &json, EVEN_BASE_MS + 2 * index, VERSION_B)
+                    .await
+                    .expect("writer B upsert must succeed");
+                index += 1;
+            }
+            index
+        })
+    };
+    let (mut saw_a, mut saw_b) = (0_u32, 0_u32);
+    for _ in 0..READS {
         match store.get_schema(PROFILE).await {
             Ok(Some(cached)) => {
                 let table = &cached.schema.databases[0].schemas[0].tables[0].name;
-                assert!(
-                    table == "gen-a" || table == "gen-b",
-                    " torn schema bytes: {table}"
-                );
+                match table.as_str() {
+                    "gen-a" => {
+                        saw_a += 1;
+                        assert_eq!(
+                            i64::from(cached.version),
+                            VERSION_A,
+                            "gen-a bytes paired with version {}",
+                            cached.version
+                        );
+                        assert_eq!(
+                            cached.updated_unix_ms % 2,
+                            1,
+                            "gen-a bytes paired with timestamp {}",
+                            cached.updated_unix_ms
+                        );
+                    }
+                    "gen-b" => {
+                        saw_b += 1;
+                        assert_eq!(
+                            i64::from(cached.version),
+                            VERSION_B,
+                            "gen-b bytes paired with version {}",
+                            cached.version
+                        );
+                        assert_eq!(
+                            cached.updated_unix_ms % 2,
+                            0,
+                            "gen-b bytes paired with timestamp {}",
+                            cached.updated_unix_ms
+                        );
+                    }
+                    other => panic!("torn schema bytes: {other}"),
+                }
             }
             Ok(None) => {}
             Err(error) => panic!("a live row must read cleanly: {error:?}"),
         }
     }
     stop.store(true, Ordering::Relaxed);
-    writer.await.unwrap();
+    let wrote_a = writer_a.await.unwrap();
+    let wrote_b = writer_b.await.unwrap();
+    assert!(
+        saw_a >= 1 && saw_b >= 1,
+        "the reader must see both generations (a={saw_a}, b={saw_b})"
+    );
+    assert!(
+        wrote_a >= MIN_WRITES,
+        "writer A completed only {wrote_a} upserts"
+    );
+    assert!(
+        wrote_b >= MIN_WRITES,
+        "writer B completed only {wrote_b} upserts"
+    );
+    pool_a.close().await;
+    pool_b.close().await;
     let _ = fs::remove_dir_all(root);
 }
 
@@ -615,6 +708,42 @@ fn schema(table: &str) -> SchemaTree {
             }],
         }],
     }
+}
+
+/// A single-connection pool over the same store file, as the planted-row
+/// tests use. The connection's default 5s busy timeout absorbs the write
+/// lock held briefly by the sibling writer or a commit.
+async fn raw_pool(db: &std::path::Path) -> sqlx::SqlitePool {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(db)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap()
+}
+
+/// One atomic rewrite of the cached row: bytes and metadata land together
+/// in a single statement — the statement production `upsert_schema` runs
+/// inside its transaction — so the row only ever holds self-consistent
+/// generations.
+async fn stamp_generation(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    schema_json: &str,
+    updated_unix_ms: i64,
+    version: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO schema_cache(profile_id, schema_json, updated_unix_ms, version) VALUES (?, ?, ?, ?) ON CONFLICT(profile_id) DO UPDATE SET schema_json=excluded.schema_json, updated_unix_ms=excluded.updated_unix_ms, version=excluded.version")
+        .bind(profile_id)
+        .bind(schema_json)
+        .bind(updated_unix_ms)
+        .bind(version)
+        .execute(pool)
+        .await
+        .map(drop)
 }
 fn temp_root(label: &str) -> PathBuf {
     let stamp = SystemTime::now()
