@@ -68,9 +68,7 @@ pub(super) fn scan(
     {
         let token = &tail[start..end];
         if token.starts_with("--") {
-            return Err(SlashParseError(format!(
-                "unknown investigation flag: {token}{usage}"
-            )));
+            return Err(unknown_flag_error("investigation flag", token, usage));
         }
     }
     let mut values = Vec::new();
@@ -111,11 +109,11 @@ pub(super) fn scan(
             }
         } else if open.is_none() {
             let error = if token.starts_with("--") {
-                format!("unknown investigation flag: {token}{usage}")
+                unknown_flag_error("investigation flag", token, usage)
             } else {
-                format!("unexpected argument{usage}")
+                SlashParseError(format!("unexpected argument{usage}"))
             };
-            return Err(SlashParseError(error));
+            return Err(error);
         }
     }
     close_zone(
@@ -206,3 +204,26 @@ pub(super) fn id_from(positional: &str, usage: &str) -> Result<String, SlashPars
     }
     Ok(positional.to_string())
 }
+
+/// The usage error for an unknown flag-shaped token (D2/D8): the token is
+/// echoed only up to (not including) its first `=` — a refused token's value
+/// must never reach the transcript or the saved session — and the attached
+/// `--param=` spelling adds the spelling hint. A token without `=` echoes
+/// whole, as before. `kind` names the refused slot ("investigation flag",
+/// "investigation subcommand").
+pub(super) fn unknown_flag_error(kind: &str, token: &str, usage: &str) -> SlashParseError {
+    let echo = match token.split_once('=') {
+        Some((head, _)) => format!("{head}=…"),
+        None => token.to_owned(),
+    };
+    let hint = if token.starts_with("--param=") {
+        "; use --param name=value"
+    } else {
+        ""
+    };
+    SlashParseError(format!("unknown {kind}: {echo}{usage}{hint}"))
+}
+
+#[cfg(test)]
+#[path = "flags_tests.rs"]
+mod tests;
