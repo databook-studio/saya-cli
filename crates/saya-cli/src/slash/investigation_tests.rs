@@ -149,6 +149,15 @@ fn investigations_alias_parses_as_list() {
             offset: None
         }
     );
+    // `--list` is the explicit escape hatch back to the text listing (the
+    // TUI opens its picker on the bare alias before this parser runs).
+    assert_eq!(
+        parsed("investigations", "--list").unwrap(),
+        InvestigationCommand::List {
+            limit: None,
+            offset: None
+        }
+    );
     // And through the full slash parser, the alias lands on the same command.
     assert_eq!(
         parse_slash_command("/investigations").unwrap(),

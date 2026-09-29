@@ -58,7 +58,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "investigation",
         "Save, list, show, run, export, import, or delete a saved investigation",
     ),
-    ("investigations", "Alias for /investigation list"),
+    (
+        "investigations",
+        "Open a picker over saved investigations (TUI); /investigation list prints",
+    ),
     (
         "chart",
         "Re-run the last query and render the fresh result as an HTML chart",
@@ -307,8 +310,10 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              /investigation list",
         ),
         "investigations" => Some(
-            "investigations — alias for /investigation list: the saved investigations, \
-             one line each. Example: /investigations",
+            "investigations — open a searchable picker over the saved investigations \
+             (type to filter · Enter shows the chosen one · r runs it · Esc closes); \
+             `/investigations --list` or `/investigation list` prints the text list. \
+             Example: /investigations",
         ),
         "chart" => Some(
             "chart [type] [path] — re-run the last query and render the fresh result as an interactive HTML chart, then open it. The chart reflects that fresh read, not the displayed table. type: bar|line|area|pie|doughnut|scatter (default auto)",

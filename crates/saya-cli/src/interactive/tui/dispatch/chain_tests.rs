@@ -276,7 +276,9 @@ fn export_snapshot_after_sql_writes_the_file_through_dispatch() {
 
 /// `/investigation save` with neither --sql nor --file fills from the last
 /// query through the real dispatch, saves into the state db, and
-/// `/investigations` lists it back through the same chain.
+/// `/investigation list` lists it back through the same chain (bare
+/// `/investigations` opens the picker overlay instead, so the text listing
+/// is named explicitly here).
 #[test]
 fn investigation_save_through_dispatch_saves() {
     let mut fx = ChainFixture::build("investigation-save");
@@ -294,7 +296,7 @@ fn investigation_save_through_dispatch_saves() {
         msg.contains("Saved exactly as shown"),
         "the save succeeded: {msg}"
     );
-    let outcome = dispatch_line("/investigations", &mut fx);
+    let outcome = dispatch_line("/investigation list", &mut fx);
     assert!(
         matches!(outcome, Dispatch::Handled),
         "the listing reports handled"
@@ -303,6 +305,25 @@ fn investigation_save_through_dispatch_saves() {
     assert!(
         list.contains("chain-sentinel"),
         "the saved investigation is listed: {list}"
+    );
+}
+
+/// Bare `/investigations` opens the picker overlay in the TUI: the dispatch
+/// returns before the text listing would run, and the overlay opens through
+/// the same chain when the loop applies the outcome.
+#[test]
+fn bare_investigations_opens_the_picker() {
+    let mut fx = ChainFixture::build("investigation-picker");
+    let outcome = dispatch_line("/investigations", &mut fx);
+    assert!(
+        matches!(outcome, Dispatch::OpenInvestigationPicker),
+        "bare /investigations opens the picker"
+    );
+    // Any tail keeps the text listing path — the parser handles it.
+    let outcome = dispatch_line("/investigations --list", &mut fx);
+    assert!(
+        matches!(outcome, Dispatch::Handled),
+        "--list keeps the text listing"
     );
 }
 
@@ -350,7 +371,7 @@ fn tests_never_touch_the_real_data_dir() {
         matches!(outcome, Dispatch::Handled),
         "the save dispatches inline"
     );
-    let outcome = dispatch_line("/investigations", &mut fx);
+    let outcome = dispatch_line("/investigation list", &mut fx);
     assert!(
         matches!(outcome, Dispatch::Handled),
         "the listing dispatches inline"
