@@ -420,8 +420,13 @@ mod tests {
         assert!(budgets.max_tool_calls.is_none());
     }
 
+    /// All three ceiling variables set at once parse independently onto their
+    /// own field. The composition onto `AgentLimits` — which value the real
+    /// runtime puts on which limit — is proven at the runtime owner
+    /// (`crates/saya-cli/src/agent/runtime_budget_tests.rs`); asserting it here
+    /// only re-checked this test's own copy of the assignment.
     #[test]
-    fn env_budgets_flow_onto_agent_limits_unchanged() {
+    fn env_budgets_parse_each_ceiling_when_all_three_are_set_at_once() {
         let lookup = |name: &str| match name {
             "SAYA_AGENT_MAX_TURNS" => Some("11".to_string()),
             "SAYA_AGENT_MAX_TOOL_CALLS" => Some("13".to_string()),
@@ -429,17 +434,9 @@ mod tests {
             _ => None,
         };
         let budgets = budgets_from_env(lookup);
-        // The composition `runtime.rs` performs: the value on `AgentLimits`
-        // is the one `budgets_from_env` produced.
-        let limits = AgentLimits {
-            max_turns: budgets.max_turns,
-            max_tool_calls: budgets.max_tool_calls,
-            max_continuations: budgets.max_continuations,
-            ..AgentLimits::default()
-        };
-        assert_eq!(limits.max_turns, Some(11));
-        assert_eq!(limits.max_tool_calls, Some(13));
-        assert_eq!(limits.max_continuations, Some(5));
+        assert_eq!(budgets.max_turns, Some(11));
+        assert_eq!(budgets.max_tool_calls, Some(13));
+        assert_eq!(budgets.max_continuations, Some(5));
     }
 
     #[test]
