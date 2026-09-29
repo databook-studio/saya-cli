@@ -8,6 +8,7 @@
 //! and importing validate and never execute — no AI provider is constructed
 //! anywhere in this module, and nothing here connects to a database.
 
+mod bindings;
 mod connection;
 mod delete;
 mod edit;
@@ -16,6 +17,7 @@ mod fingerprint;
 mod import;
 mod list;
 mod objects;
+mod params;
 mod run;
 mod run_binding;
 mod run_outcome;
@@ -118,6 +120,7 @@ async fn run_investigation_outcome_in(
             sql,
             file,
             connection,
+            param_specs,
         } => save::save(
             repo,
             runtime,
@@ -128,6 +131,7 @@ async fn run_investigation_outcome_in(
                 sql,
                 file,
                 connection: connection.as_deref(),
+                param_specs: &param_specs,
             },
         )
         .map(RunOutcome::plain),
@@ -137,6 +141,7 @@ async fn run_investigation_outcome_in(
             description,
             sql,
             file,
+            param_specs,
         } => edit::edit(
             repo,
             format,
@@ -146,6 +151,7 @@ async fn run_investigation_outcome_in(
                 description: description.as_deref(),
                 sql,
                 file,
+                param_specs: &param_specs,
             },
         )
         .map(RunOutcome::plain),
@@ -171,6 +177,7 @@ async fn run_investigation_outcome_in(
             report,
             rows,
             overwrite,
+            params,
         } => {
             run::run(
                 repo,
@@ -185,6 +192,7 @@ async fn run_investigation_outcome_in(
                     report: report.as_deref(),
                     rows,
                     overwrite,
+                    params,
                 },
             )
             .await

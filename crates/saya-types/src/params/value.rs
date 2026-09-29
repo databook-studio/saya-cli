@@ -39,14 +39,16 @@ impl fmt::Display for ParamType {
 }
 
 /// A typed runtime value for one named parameter. `Decimal`, `Date`, and
-/// `Timestamp` keep their validated text exactly as bound.
+/// `Timestamp` keep their validated text exactly as bound. A `Null` carries
+/// the parameter's declared type, so an engine that needs one binds a typed
+/// null (PostgreSQL's `Option<T>`, BigQuery's declared `parameterType`).
 ///
 /// Values are sensitive: the [`Debug`] impl prints the variant only, never
 /// the value, so bindings survive logs and transcripts without leaking.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ParamValue {
-    Null,
+    Null(ParamType),
     String(String),
     Integer(i64),
     Boolean(bool),
@@ -58,7 +60,7 @@ pub enum ParamValue {
 impl fmt::Debug for ParamValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Null => "Null",
+            Self::Null(_) => "Null(_)",
             Self::String(_) => "String(_)",
             Self::Integer(_) => "Integer(_)",
             Self::Boolean(_) => "Boolean(_)",
@@ -72,12 +74,12 @@ impl fmt::Debug for ParamValue {
 impl ParamValue {
     /// Parses `raw` (for example from `--param name=value`) as a value of
     /// the declared type. The literal `null` is the explicit null for any
-    /// type — which also means a string value `null` is not expressible
-    /// here. Parsing is strict: no trimming, no coercion, no `+` sign, no
-    /// exponent, no bare local time.
+    /// type — carrying that declared type — which also means a string value
+    /// `null` is not expressible here. Parsing is strict: no trimming, no
+    /// coercion, no `+` sign, no exponent, no bare local time.
     pub fn parse(param_type: ParamType, raw: &str) -> Result<Self, ParamError> {
         if raw == "null" {
-            return Ok(Self::Null);
+            return Ok(Self::Null(param_type));
         }
         match param_type {
             ParamType::String => Ok(Self::String(raw.to_owned())),

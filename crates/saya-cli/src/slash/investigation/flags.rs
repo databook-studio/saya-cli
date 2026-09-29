@@ -28,26 +28,33 @@ pub(super) fn token_spans(tail: &str) -> Vec<(usize, usize)> {
 }
 
 /// The parsed flag grammar: the positional zone's text (before the first
-/// known flag), each value flag's captured text in order, and the boolean
-/// flags seen.
+/// known flag), each value flag's captured text in order, the boolean
+/// flags seen, and the repeatable flags' captured texts in order.
 pub(super) struct Scan {
     pub(super) positional: String,
     pub(super) values: Vec<(&'static str, String)>,
     pub(super) booleans: Vec<&'static str>,
+    pub(super) repeats: Vec<(&'static str, String)>,
 }
 
-/// Scans `tail` as a positional zone followed by `--value <value…>` and
-/// `--boolean` flags in any order. A value runs to the next known flag or the
-/// tail's end; unknown `--`-shaped tokens inside a value zone are value text
-/// (SQL comments), anywhere else they are usage errors — never swallowed
-/// names or ids.
+/// Scans `tail` as a positional zone followed by `--value <value…>`,
+/// `--boolean`, and repeatable `--flag <value…>` flags in any order. A value
+/// runs to the next known flag or the tail's end; unknown `--`-shaped tokens
+/// inside a value zone are value text (SQL comments), anywhere else they are
+/// usage errors — never swallowed names or ids. A repeatable flag may be
+/// given any number of times; the others refuse a second occurrence.
 pub(super) fn scan(
     tail: &str,
     value_flags: &[&'static str],
     boolean_flags: &[&'static str],
+    repeat_flags: &[&'static str],
     usage: &str,
 ) -> Result<Scan, SlashParseError> {
-    let known = |token: &str| value_flags.contains(&token) || boolean_flags.contains(&token);
+    let known = |token: &str| {
+        value_flags.contains(&token)
+            || boolean_flags.contains(&token)
+            || repeat_flags.contains(&token)
+    };
     let spans = token_spans(tail);
     let zone_start = spans
         .iter()
@@ -68,6 +75,7 @@ pub(super) fn scan(
     }
     let mut values = Vec::new();
     let mut booleans = Vec::new();
+    let mut repeats = Vec::new();
     // The open value flag and its value's byte start, while its zone runs.
     let mut open: Option<(&'static str, usize)> = None;
     for &(start, end) in &spans[spans.partition_point(|(s, _)| *s < zone_start)..] {
@@ -75,22 +83,27 @@ pub(super) fn scan(
         let flag = boolean_flags
             .iter()
             .chain(value_flags.iter())
+            .chain(repeat_flags.iter())
             .find(|candidate| **candidate == token)
             .copied();
         // A known flag closes any open value; a value flag opens a new one.
         if let Some(flag) = flag {
-            if let Some((open_flag, value_start)) = open.take() {
-                let value = tail[value_start..start].trim();
-                if value.is_empty() {
-                    return Err(SlashParseError(format!("{open_flag} needs a value{usage}")));
-                }
-                values.push((open_flag, value.to_string()));
-            }
+            close_zone(
+                tail,
+                open.take(),
+                start,
+                repeat_flags,
+                &mut values,
+                &mut repeats,
+                usage,
+            )?;
             if boolean_flags.contains(&token) {
                 if booleans.contains(&flag) {
                     return Err(SlashParseError(format!("{token} given twice{usage}")));
                 }
                 booleans.push(flag);
+            } else if repeat_flags.contains(&token) {
+                open = Some((flag, end));
             } else if values.iter().any(|(given, _)| *given == flag) {
                 return Err(SlashParseError(format!("{token} given twice{usage}")));
             } else {
@@ -105,18 +118,47 @@ pub(super) fn scan(
             return Err(SlashParseError(error));
         }
     }
-    if let Some((flag, value_start)) = open.take() {
-        let value = tail[value_start..].trim();
-        if value.is_empty() {
-            return Err(SlashParseError(format!("{flag} needs a value{usage}")));
-        }
-        values.push((flag, value.to_string()));
-    }
+    close_zone(
+        tail,
+        open.take(),
+        tail.len(),
+        repeat_flags,
+        &mut values,
+        &mut repeats,
+        usage,
+    )?;
     Ok(Scan {
         positional: tail[..zone_start].trim().to_string(),
         values,
         booleans,
+        repeats,
     })
+}
+
+/// Closes the open value zone into `values` or `repeats`, by flag kind: a
+/// repeatable flag accumulates every occurrence, the others refuse a second.
+fn close_zone(
+    tail: &str,
+    open: Option<(&'static str, usize)>,
+    end: usize,
+    repeat_flags: &[&'static str],
+    values: &mut Vec<(&'static str, String)>,
+    repeats: &mut Vec<(&'static str, String)>,
+    usage: &str,
+) -> Result<(), SlashParseError> {
+    let Some((open_flag, value_start)) = open else {
+        return Ok(());
+    };
+    let value = tail[value_start..end].trim();
+    if value.is_empty() {
+        return Err(SlashParseError(format!("{open_flag} needs a value{usage}")));
+    }
+    if repeat_flags.contains(&open_flag) {
+        repeats.push((open_flag, value.to_string()));
+    } else {
+        values.push((open_flag, value.to_string()));
+    }
+    Ok(())
 }
 
 /// Removes one flag's value from the scan, if it was given.
@@ -125,6 +167,21 @@ pub(super) fn take_value(values: &mut Vec<(&'static str, String)>, flag: &str) -
         .iter()
         .position(|(candidate, _)| *candidate == flag)?;
     Some(values.remove(index).1)
+}
+
+/// Removes one repeatable flag's captured values, in the order given.
+pub(super) fn take_values(repeats: &mut Vec<(&'static str, String)>, flag: &str) -> Vec<String> {
+    let mut taken = Vec::new();
+    let mut kept = Vec::new();
+    for (candidate, value) in repeats.drain(..) {
+        if candidate == flag {
+            taken.push(value);
+        } else {
+            kept.push((candidate, value));
+        }
+    }
+    *repeats = kept;
+    taken
 }
 
 /// A number-valued flag: the value must parse, or it is a usage error.

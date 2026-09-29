@@ -33,7 +33,7 @@ pub(crate) fn bindings(values: &[BindValue]) -> Result<Value, ConnectionError> {
 
 fn entry(value: &BindValue) -> Result<Value, ConnectionError> {
     Ok(match value {
-        BindValue::Null => json!({"type": NULL_TYPE, "value": Value::Null}),
+        BindValue::Null(_) => json!({"type": NULL_TYPE, "value": Value::Null}),
         BindValue::Str(text) => json!({"type": "TEXT", "value": text}),
         BindValue::Int(int) => json!({"type": "FIXED", "value": int.to_string()}),
         BindValue::Bool(flag) => json!({"type": "BOOLEAN", "value": bool_text(*flag)}),

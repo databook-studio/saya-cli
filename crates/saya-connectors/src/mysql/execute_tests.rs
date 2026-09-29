@@ -5,7 +5,7 @@
 
 use std::str::FromStr;
 
-use saya_types::{BoundParam, ParamValue};
+use saya_types::{BoundParam, ParamType, ParamValue};
 use sqlx::mysql::MySqlConnectOptions;
 
 use super::*;
@@ -137,7 +137,7 @@ async fn live_mysql_binds_typed_parameters_natively() {
         (
             "SELECT :v IS NULL AS is_null",
             "v",
-            ParamValue::Null,
+            ParamValue::Null(ParamType::String),
             serde_json::json!([1]),
         ),
     ] {

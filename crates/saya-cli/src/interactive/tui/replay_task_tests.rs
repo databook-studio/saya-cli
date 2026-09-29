@@ -85,6 +85,7 @@ fn run_command(id: &str) -> InvestigationCommand {
         report: None,
         rows: None,
         overwrite: false,
+        params: Vec::new(),
     }
 }
 
@@ -926,6 +927,7 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
             sql: Some("SELECT 1 AS one".into()),
             file: None,
             connection: Some("local".into()),
+            param_specs: Vec::new(),
         },
         &runtime,
         RenderFormat::Text,

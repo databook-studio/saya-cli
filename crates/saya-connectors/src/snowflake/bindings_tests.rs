@@ -6,7 +6,7 @@ use chrono::{FixedOffset, NaiveDate};
 use saya_types::ConnectionError;
 
 use crate::binds::{BindValue, parse_bind_values};
-use saya_types::ParamValue;
+use saya_types::{ParamType, ParamValue};
 
 fn decimal(text: &str) -> BindValue {
     match parse_bind_values(&[ParamValue::Decimal(text.to_owned())])
@@ -50,7 +50,7 @@ fn empty_values_bind_to_an_empty_object() {
 #[test]
 fn primitives_bind_as_the_documented_types() {
     let bound = super::bindings(&[
-        BindValue::Null,
+        BindValue::Null(ParamType::String),
         BindValue::Str("paris".to_owned()),
         BindValue::Int(12),
         BindValue::Int(-5),

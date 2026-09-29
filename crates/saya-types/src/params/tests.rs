@@ -29,7 +29,7 @@ fn parse_string_takes_the_raw_text_verbatim() {
     );
     assert_eq!(
         ParamValue::parse(ParamType::String, "null"),
-        Ok(ParamValue::Null)
+        Ok(ParamValue::Null(ParamType::String))
     );
 }
 
@@ -45,7 +45,7 @@ fn parse_integer_is_strict() {
     );
     assert_eq!(
         ParamValue::parse(ParamType::Integer, "null"),
-        Ok(ParamValue::Null)
+        Ok(ParamValue::Null(ParamType::Integer))
     );
     for bad in [
         "1.0",
@@ -80,7 +80,7 @@ fn parse_boolean_accepts_only_true_and_false() {
     );
     assert_eq!(
         ParamValue::parse(ParamType::Boolean, "null"),
-        Ok(ParamValue::Null)
+        Ok(ParamValue::Null(ParamType::Boolean))
     );
     for bad in ["True", "TRUE", "1", "0", "yes", "", " true"] {
         assert!(
@@ -109,7 +109,7 @@ fn parse_decimal_shape_and_digit_cap() {
     );
     assert_eq!(
         ParamValue::parse(ParamType::Decimal, "null"),
-        Ok(ParamValue::Null)
+        Ok(ParamValue::Null(ParamType::Decimal))
     );
     for bad in [".5", "5.", "-.5", "1.2.3", "1e5", "NaN", "", "-"] {
         assert!(
@@ -147,7 +147,7 @@ fn parse_date_validates_the_calendar() {
     );
     assert_eq!(
         ParamValue::parse(ParamType::Date, "null"),
-        Ok(ParamValue::Null)
+        Ok(ParamValue::Null(ParamType::Date))
     );
     for bad in [
         "2023-02-29", // not a leap year
@@ -366,7 +366,7 @@ fn param_type_serializes_snake_case() {
 #[test]
 fn param_value_json_round_trip() {
     for value in [
-        ParamValue::Null,
+        ParamValue::Null(ParamType::String),
         ParamValue::String("x".to_owned()),
         ParamValue::Integer(-5),
         ParamValue::Boolean(true),
@@ -379,8 +379,8 @@ fn param_value_json_round_trip() {
         assert_eq!(back, value);
     }
     assert_eq!(
-        serde_json::to_string(&ParamValue::Null).expect("serializes"),
-        "\"null\""
+        serde_json::to_string(&ParamValue::Null(ParamType::String)).expect("serializes"),
+        r#"{"null":"string"}"#
     );
     assert_eq!(
         serde_json::to_string(&ParamValue::Integer(5)).expect("serializes"),
@@ -395,7 +395,7 @@ fn param_value_json_round_trip() {
 #[test]
 fn param_value_debug_prints_only_the_variant() {
     let values = [
-        (ParamValue::Null, "Null"),
+        (ParamValue::Null(ParamType::String), "Null(_)"),
         (ParamValue::String("secret-value".to_owned()), "String(_)"),
         (ParamValue::Integer(-5), "Integer(_)"),
         (ParamValue::Boolean(true), "Boolean(_)"),

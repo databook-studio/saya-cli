@@ -10,23 +10,26 @@
 //! executed.
 
 use super::objects;
+use super::params;
 use super::{EXIT_INVESTIGATION_ERROR, EXIT_SAFETY, parse_investigation_id, store_failure};
 use crate::commands::output::{failure_message, result};
 use crate::render::RenderFormat;
 use saya_connectors::prepare_for_dialect;
 use saya_store::InvestigationRepository;
 use saya_types::investigation::InvestigationDefinitionV1;
-use saya_types::redact;
+use saya_types::{ParameterSpec, redact};
 use std::path::PathBuf;
 
 /// One edit request, as the adapter parsed it: the id plus the fields to
-/// replace; every absent field stays exactly as stored.
+/// replace; every absent field stays exactly as stored. A given
+/// `--param-spec` list replaces the whole declaration list.
 pub(super) struct EditRequest<'a> {
     pub id: &'a str,
     pub name: Option<&'a str>,
     pub description: Option<&'a str>,
     pub sql: Option<String>,
     pub file: Option<PathBuf>,
+    pub param_specs: &'a [String],
 }
 
 /// The edit flow: refuse a no-op up front, read the current document, apply
@@ -42,10 +45,12 @@ pub(super) fn edit(
         && request.description.is_none()
         && request.sql.is_none()
         && request.file.is_none()
+        && request.param_specs.is_empty()
     {
         return failure_message(
             EXIT_INVESTIGATION_ERROR,
-            "edit needs a change: pass --name, --description, --sql, or --file".to_string(),
+            "edit needs a change: pass --name, --description, --sql, --file, or --param-spec"
+                .to_string(),
             format,
         );
     }
@@ -57,12 +62,24 @@ pub(super) fn edit(
         Ok(current) => current,
         Err(error) => return store_failure(error, id.as_str(), format),
     };
-    let (sql, name, description) = match changed_fields(&current, request) {
-        Ok(fields) => fields,
+    let changed = match changed_fields(&current, request) {
+        Ok(changed) => changed,
         Err((code, message)) => return failure_message(code, message, format),
     };
-    let mut next = current.new_revision(sql, name, description, now_unix_ms());
+    let mut next = current.new_revision(
+        changed.sql,
+        changed.name,
+        changed.description,
+        now_unix_ms(),
+    );
+    next.parameters = changed.parameters;
     next.objects = objects::canonical_objects(&next.sql, next.dialect);
+    // The placeholder/declaration contract is re-proven for the published
+    // revision — including when only the spec list changed (invariant 1).
+    if let Err((code, message)) = params::check_contract(&next.sql, next.dialect, &next.parameters)
+    {
+        return failure_message(code, message, format);
+    }
     if let Err(error) = next.validate() {
         return failure_message(EXIT_INVESTIGATION_ERROR, error.to_string(), format);
     }
@@ -79,15 +96,29 @@ pub(super) fn edit(
     )
 }
 
+/// The fields an edit publishes, resolved and gated.
+struct ChangedFields {
+    sql: String,
+    name: String,
+    description: Option<String>,
+    parameters: Vec<ParameterSpec>,
+}
+
 /// Resolves the edited fields: the replacement SQL — from `--sql`/`--file`,
 /// or the stored SQL when neither is given — then the name (trimmed like
-/// save) and the description. The stored SQL is re-gated too, so an edit of
-/// any field still proves the document it publishes passes the execution
-/// gate.
+/// save), the description, and the parameter declarations (the given
+/// `--param-spec` list, or the stored one). The stored SQL is re-gated too,
+/// so an edit of any field still proves the document it publishes passes the
+/// execution gate.
 fn changed_fields(
     current: &InvestigationDefinitionV1,
     request: EditRequest<'_>,
-) -> Result<(String, String, Option<String>), (i32, String)> {
+) -> Result<ChangedFields, (i32, String)> {
+    let parameters = if request.param_specs.is_empty() {
+        current.parameters.clone()
+    } else {
+        params::parse_specs(request.param_specs)?
+    };
     let sql = if request.sql.is_some() || request.file.is_some() {
         if request.sql.is_some() && request.file.is_some() {
             return Err((
@@ -127,7 +158,12 @@ fn changed_fields(
         || current.description.clone(),
         |description| Some(description.to_string()),
     );
-    Ok((sql, name, description))
+    Ok(ChangedFields {
+        sql,
+        name,
+        description,
+        parameters,
+    })
 }
 
 fn now_unix_ms() -> i64 {

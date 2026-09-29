@@ -6,7 +6,7 @@ use saya_types::ConnectionError;
 use serde_json::Value;
 
 use crate::binds::{BindValue, parse_bind_values};
-use saya_types::ParamValue;
+use saya_types::{ParamType, ParamValue};
 
 use super::{dry_run_body, parse_result, query_body, query_parameters};
 
@@ -150,17 +150,23 @@ fn a_decimal_beyond_bignumeric_refuses_without_echoing_the_value() {
 }
 
 #[test]
-fn a_null_parameter_is_refused_on_bigquery() {
-    // BigQuery requires a concrete parameterType for every parameter, and the
-    // runtime value carries no declared type — Google's own client refuses an
-    // untyped null, so the connector refuses before one round trip instead of
-    // sending a guessed STRING-typed null that type-mismatches at compile time.
-    let error = query_parameters(&[bound(ParamValue::Null)]).unwrap_err();
-    assert!(
-        matches!(error, ConnectionError::QueryFailed(_)),
-        "{error:?}"
+fn a_typed_null_binds_the_declared_parameter_type() {
+    // BigQuery requires a concrete parameterType for every parameter; a null
+    // carries its declared type (B1f), so it binds with that type and a null
+    // value — never a guessed STRING that type-mismatches at compile time.
+    let params = query_parameters(&[bound(ParamValue::Null(ParamType::Date))]).unwrap();
+    assert_eq!(
+        params,
+        vec![serde_json::json!({
+            "parameterType": {"type": "DATE"},
+            "parameterValue": {"value": serde_json::Value::Null},
+        })]
     );
-    assert!(error.to_string().contains("BigQuery"), "{error}");
+    let params = query_parameters(&[bound(ParamValue::Null(ParamType::Decimal))]).unwrap();
+    assert_eq!(
+        params[0]["parameterType"]["type"], "NUMERIC",
+        "a null decimal has no magnitude to size"
+    );
 }
 
 #[test]
