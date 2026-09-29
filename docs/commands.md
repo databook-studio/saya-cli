@@ -296,7 +296,8 @@ spliced into the SQL text — and are **never stored anywhere**: the evidence
 record carries the parameter names and a SHA-256 digest of the value set,
 never a value. Binding errors — an unknown name, a bad value, a missing
 required parameter (the error lists every required name with its type) —
-exit `2` before any store, profile, or connection work. Engines that bind
+exit `2` before any profile or connection work: no connection is ever made
+with a bad binding. Engines that bind
 natively: PostgreSQL, MySQL, SQLite, DuckDB, and BigQuery; Snowflake with
 keypair auth only (other auth paths refuse parameterised SQL before any
 network activity); ClickHouse refuses parameterised SQL — fixed
@@ -477,8 +478,10 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
   ≤ 16 MiB (a `query` payload first narrows by halving rows, refusing only
   when even the rowless payload exceeds the bound).
 - **Every failure is a sanitized `isError` result**: credential-shaped
-  content is redacted, control characters stripped, and no filesystem path
-  appears. Write SQL (`DELETE`, `DROP`, …) is refused by the read-only gate,
+  content is redacted, control characters are stripped, and saya's own
+  errors carry no paths — a database engine's own error text may name the
+  database file it failed on (for example a missing DuckDB file). Write
+  SQL (`DELETE`, `DROP`, …) is refused by the read-only gate,
   and a stale review on `investigation_run` is an error naming
   `--revalidate` — words the client reads, a flag it cannot pass; a replay
   never revalidates from the wire.
