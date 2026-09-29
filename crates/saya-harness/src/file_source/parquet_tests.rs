@@ -8,6 +8,7 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 
@@ -420,6 +421,53 @@ fn parquet_stage_respects_the_stage_timeout_constant() {
     assert_eq!(caps.max_columns, 512);
     assert_eq!(caps.max_decoded_bytes, 64 * 1024 * 1024);
     assert_eq!(caps.timeout, super::STAGE_TIMEOUT);
+}
+
+/// The dictionary bomb at the row cap: 500,000 rows repeating one 1,024-byte
+/// value — a ~6 KiB file — decodes to 512,000,000 accounted bytes, far over
+/// the 64 MiB budget. The refusal must happen by a streaming aggregate over
+/// the source, BEFORE the decode's CREATE TABLE runs: the create probe stays
+/// at zero and no staging artifact is left behind.
+#[test]
+fn parquet_row_cap_dictionary_bomb_refuses_before_any_create() {
+    let root = temp_root("budget-bomb");
+    let source = root.join("in").join("bomb.parquet");
+    write_parquet_fixture(
+        &source,
+        "SELECT repeat('x', 1024) AS payload FROM range(500000)",
+    );
+    let on_disk = fs::read(&source).expect("fixture bytes").len();
+    assert!(
+        on_disk < 1_048_576,
+        "the dictionary bomb must be tiny on disk: {on_disk} bytes"
+    );
+    let dest = root.join("dest");
+    fs::create_dir_all(&dest).expect("destination");
+    let create_count = AtomicUsize::new(0);
+    let error = parquet_stage::stage_inner(
+        source_read(&source),
+        &dest,
+        ParquetCaps::default(),
+        Some(&create_count),
+    )
+    .expect_err("the bomb is refused");
+    assert!(
+        matches!(
+            error,
+            StageError::ParquetTooManyDecodedBytes {
+                bytes: 512_000_000,
+                max: 67_108_864
+            }
+        ),
+        "typed budget refusal naming the limit, got {error:?}"
+    );
+    assert_eq!(
+        create_count.load(Ordering::Relaxed),
+        0,
+        "the decode's CREATE TABLE must never run"
+    );
+    assert_dest_empty(&dest);
+    let _ = fs::remove_dir_all(root);
 }
 
 /// The audit regression (A922-6): a tiny, highly compressed Parquet file —
