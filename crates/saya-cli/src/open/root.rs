@@ -5,11 +5,13 @@
 
 use std::{
     fs, io,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 /// Where staged file sources live: `SAYA_FILES_DIR` when set, else
 /// `<data root>/saya/files` beside the state database. Always absolute, so a

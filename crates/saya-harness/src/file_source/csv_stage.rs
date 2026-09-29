@@ -5,12 +5,14 @@
 //! its WAL — no partial `source.duckdb` is ever left behind.
 
 use std::{
-    fs::{self, Permissions},
-    os::unix::fs::PermissionsExt,
+    fs,
     path::{Path, PathBuf},
     process,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(unix)]
+use std::{fs::Permissions, os::unix::fs::PermissionsExt};
 
 use duckdb::{AccessMode, Config, Connection, Transaction, params, params_from_iter};
 

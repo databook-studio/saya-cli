@@ -31,10 +31,12 @@ pub use preview::{Preview, PreviewColumn};
 
 use std::{
     fs, io,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use thiserror::Error;
 
