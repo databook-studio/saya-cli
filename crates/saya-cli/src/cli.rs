@@ -175,6 +175,41 @@ pub enum Command {
         #[arg(long)]
         reset: bool,
     },
+    /// Open a local CSV file as a read-only session: the file is staged once
+    /// into a private DuckDB snapshot keyed by its content hash, a preview
+    /// prints, and the TUI opens over it — the same bounded, read-only query,
+    /// evidence, export, and investigation machinery as any database, with no
+    /// database server and no config editing. The same content reuses its
+    /// snapshot; changed content stages a new one. `--list` shows staged
+    /// sources; `--cleanup <SHA-PREFIX>|all` removes them (only saya's own).
+    /// Non-TTY runs print the preview and the launch command and exit.
+    Open {
+        /// The CSV file to open. Omit it when using `--list` or `--cleanup`.
+        file: Option<std::path::PathBuf>,
+        /// Field delimiter as a single ASCII character (default: sniffed from
+        /// the file's first line).
+        #[arg(long, value_name = "C")]
+        delimiter: Option<String>,
+        /// Treat the first row as data, not a header (columns become
+        /// `column_1`, `column_2`, …).
+        #[arg(long)]
+        no_header: bool,
+        /// Restage even when a snapshot of this exact content already exists.
+        #[arg(long)]
+        reset: bool,
+        /// Also build a typed copy of the table (`<table>_typed`) by explicit
+        /// `TRY_CAST` per inferred non-text column; the text table stays.
+        /// Values that fail the cast are counted and reported.
+        #[arg(long)]
+        typed: bool,
+        /// List staged file sources instead of opening one.
+        #[arg(long)]
+        list: bool,
+        /// Remove staged snapshots: `all`, or a SHA-256 prefix naming exactly
+        /// one. Only directories holding a valid staged source are touched.
+        #[arg(long, value_name = "SHA_PREFIX|all")]
+        cleanup: Option<String>,
+    },
     /// Manage saya's configuration: write starter templates, diagnose setup,
     /// or print the effective configuration.
     Config {
