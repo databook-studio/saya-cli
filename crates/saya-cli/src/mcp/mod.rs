@@ -1,13 +1,23 @@
-//! `saya mcp serve` (ADR 0008, task Da): a stdio MCP server skeleton.
-//!
-//! [`policy`] holds the bounds and the startup allowlist; [`server`] is the
-//! rmcp glue. The data tools of the database wiring (task Db) extend the
-//! server behind the policy hooks. stdout carries protocol frames only; logs
-//! go to stderr.
+//! `saya mcp serve` (ADR 0008): a stdio MCP server over the same typed
+//! operations the CLI uses, with the same policy paths — bounded reads, the
+//! startup allowlist, and the data-sharing gate. [`policy`] holds the bounds
+//! and the allowlist; [`transport`] is the bounded stdio bridge; [`tools`]
+//! is the tool dispatch; [`schema_tool`], [`query_tool`], [`context_tools`], and
+//! [`replay_tools`] are the bodies. stdout carries protocol frames only;
+//! logs go to stderr.
 
+mod catalog;
+mod connector;
+mod context;
+mod context_tools;
+mod line_gate;
 mod policy;
+mod query_tool;
+mod replay_tools;
+mod schema_tool;
 mod server;
 mod tools;
+mod transport;
 
 #[cfg(test)]
 mod mcp_tests;
@@ -56,8 +66,17 @@ pub(crate) fn serve(
             "off"
         },
     );
+    // The store is the one state DB every other subcommand uses: audits,
+    // schema caches, contracts, and saved investigations are shared with the
+    // CLI surfaces, not forked.
+    let store = saya_store::SqliteStateStore::new(crate::state_path::state_db_path());
+    let context = context::McpContext {
+        runtime,
+        store,
+        replay_slot: tokio::sync::Mutex::new(()),
+    };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(server::run(policy))
+        .block_on(server::run(policy, context))
 }
