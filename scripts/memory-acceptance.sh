@@ -94,13 +94,26 @@ SQL_TOOLS = frozenset(
     }
 )
 # Where a WHERE-clause slice ends: the next clause keyword. Subquery WHEREs
-# get their own slice, so a JOIN's ON columns stay out of the predicate text.
+# get their own slice.
 CLAUSE_KEYWORDS = re.compile(
     r"\b(?:GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|OFFSET|WINDOW|UNION|INTERSECT"
     r"|EXCEPT|FETCH\s+(?:FIRST|NEXT)|FOR\s+UPDATE)\b",
     re.IGNORECASE,
 )
 WHERE_KEYWORD = re.compile(r"\bWHERE\b", re.IGNORECASE)
+ON_KEYWORD = re.compile(r"\bON\b", re.IGNORECASE)
+# Where an ON clause ends: the next join's start (spelled so a LEFT(…) function
+# call never terminates it), a WHERE, or another clause keyword.
+JOIN_KEYWORD = re.compile(
+    r"\b(?:NATURAL\s+)?(?:(?:INNER|LEFT|RIGHT|FULL|CROSS)(?:\s+OUTER)?\s+)?JOIN\b",
+    re.IGNORECASE,
+)
+CONJUNCT_KEYWORD = re.compile(r"\b(?:AND|OR)\b", re.IGNORECASE)
+# Comparison operators that are NOT ranges (masked before the range check so a
+# join key like ON a.x <> b.y is never read as one).
+INEQUALITY_OP = re.compile(r"<>|!=")
+# A range/order comparison; BETWEEN is matched by keyword, >=/<= before >/<.
+RANGE_OP = re.compile(r">=|<=|>|<|\bBETWEEN\b")
 SINGLE_QUOTED = re.compile(r"'(?:[^']|'')*'")
 TRAILING_TARGET = re.compile(r"\s+\((?:@[^()\s]*|all connected databases)\)$")
 
@@ -125,11 +138,45 @@ def where_slices(sql):
         yield tail[: cut.start()] if cut else tail
 
 
+def on_range_conjuncts(sql):
+    """ON-clause conjuncts that compare something with a range op.
+
+    A join's equality keys (`ON r.customer_id = c.customer_id`, even
+    `ON a.return_date = b.return_date`) never count: the claimed or guessed
+    column must sit in a >=, >, <=, <, or BETWEEN comparison for the ON clause
+    to speak about time. Only such conjuncts are yielded, so an ON mention
+    inside an equality key can never score.
+    """
+    for match in ON_KEYWORD.finditer(sql):
+        tail = sql[match.end() :]
+        ends = [
+            cut.start()
+            for cut in (
+                CLAUSE_KEYWORDS.search(tail),
+                WHERE_KEYWORD.search(tail),
+                JOIN_KEYWORD.search(tail),
+            )
+            if cut
+        ]
+        clause = tail[: min(ends)] if ends else tail
+        masked = SINGLE_QUOTED.sub("''", clause)
+        for conjunct in CONJUNCT_KEYWORD.split(masked):
+            comparable = INEQUALITY_OP.sub(" ", conjunct)
+            if RANGE_OP.search(comparable):
+                yield comparable
+
+
 def classify(sql, claimed, guess):
-    """Which time column one statement predicates on, from its WHERE slices."""
-    text = " ".join(SINGLE_QUOTED.sub("''", w) for w in where_slices(sql))
-    has = lambda column: re.search(rf"\b{re.escape(column)}\b", text) is not None
-    claimed_hit, guess_hit = has(claimed), has(guess)
+    """Which time column one statement predicates on.
+
+    A WHERE slice scores on any mention of the column; an ON clause scores
+    only through its range conjuncts, so join keys stay out.
+    """
+    where_text = " ".join(SINGLE_QUOTED.sub("''", w) for w in where_slices(sql))
+    on_text = " ".join(on_range_conjuncts(sql))
+    has = lambda column, text: re.search(rf"\b{re.escape(column)}\b", text) is not None
+    claimed_hit = has(claimed, where_text) or has(claimed, on_text)
+    guess_hit = has(guess, where_text) or has(guess, on_text)
     if claimed_hit and guess_hit:
         return "AMBIGUOUS"
     if claimed_hit:
@@ -197,7 +244,7 @@ def verdict_for(path, claimed, guess):
     if kinds == {OVERRIDDEN}:
         return OVERRIDDEN, f"the executed query filtered on {guess}"
     if "AMBIGUOUS" in kinds:
-        return INCONCLUSIVE, "the executed query's WHERE names both time columns"
+        return INCONCLUSIVE, "the executed query's predicates name both time columns"
     if kinds == {"NO_PREDICATE"}:
         return INCONCLUSIVE, "the executed query carried no time predicate"
     return (
