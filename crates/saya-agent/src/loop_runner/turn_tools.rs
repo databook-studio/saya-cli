@@ -26,18 +26,25 @@ pub(super) async fn run_turn_tools(
     failed: &mut failed_statements::FailedStatements,
     last_successful_sql: &mut Option<String>,
 ) -> Result<(), AgentError> {
-    // When every call in the message is valid and auto-runnable, the
-    // calls are independent: run them concurrently instead of paying
-    // their latency sequentially. `auto_runnable` is the single policy
-    // for "may this run with no questions asked"; the sequential path
-    // below applies the same gates, so the two cannot drift.
+    // When every call in the message is valid and needs neither approval nor
+    // a structural refusal, run the batch concurrently instead of paying
+    // their latency sequentially.
     let batch_parallel = assistant.tool_calls.len() > 1
         && assistant.tool_calls.iter().all(|call| {
             tools::invalid_reason(call, definitions).is_none()
                 && definitions
                     .iter()
                     .find(|definition| definition.name == call.name)
-                    .is_some_and(|definition| tools::auto_runnable(definition, limits))
+                    .is_some_and(|definition| {
+                        matches!(
+                            tools::execution_decision(
+                                definition,
+                                limits,
+                                tools::ApprovalState::NotRequired,
+                            ),
+                            tools::ExecutionDecision::Allow
+                        )
+                    })
                 && !failed_statements::is_repeat(failed, call)
         });
     if batch_parallel {
@@ -203,38 +210,10 @@ pub(super) async fn run_turn_tools(
             },
         )
         .await;
-        let approved = !definition.effect.requires_approval
-            || approval.approve(definition, &call.arguments).await;
-        // A decider that refuses with its own typed wording (today, the
-        // session deny list's refusal) names it here; `None` keeps the
-        // loop's generic denial. The read is side-effect free by contract
-        // (`ApprovalDecider::refusal_detail`), so observing the refused call
-        // a second time prompts, grants, and journals nothing. The detail
-        // reaches both the user (the `ToolDenied` reason) and the model (the
-        // tool result): one refusal, in the right words, at both surfaces.
-        // The detail wins over the structural gates' own reasons below: a
-        // denied call was refused for being denied, not for needing a permit
-        // the session never grants — the gates still bind execution either
-        // way, only the wording prefers the decider.
-        let refusal_detail = if approved {
-            None
-        } else {
-            approval.refusal_detail(definition, &call.arguments)
-        };
-        // Apply the same policy the batch path consults (`auto_runnable`),
-        // split into its gates so the denial can name which one refused.
-        // `requires_approval` was already resolved into `approved`, so a
-        // tool that needed approval and got it still runs; the remaining
-        // gates bind whether or not approval was granted. This is the one
-        // place the sequential path decides auto-run. It consults the shared
-        // gates *by name* rather than through `auto_runnable`, so a gate added
-        // to `tools.rs` does NOT reach this path on its own — it must be added
-        // here too. A `WriteWorkspace` tool in a single-call turn ran despite
-        // the permit being false until this line existed.
-        let candidate_denied = tools::candidate_denied(definition, limits);
-        let side_effect_denied = tools::external_side_effect_gated(definition, limits);
-        let workspace_denied = tools::workspace_write_denied(definition, limits);
-        let executed = approved && !candidate_denied && !side_effect_denied && !workspace_denied;
+        let (approval_state, refusal_detail) =
+            tools::resolve_approval(definition, &call.arguments, approval).await;
+        let decision = tools::execution_decision(definition, limits, approval_state);
+        let executed = matches!(decision, tools::ExecutionDecision::Allow);
         // Capture the serialized arguments before `execute` moves
         // `call.arguments` — the persisted record carries what the model sent
         // (the statement for a SQL tool), and the value-free result shape is
@@ -254,17 +233,13 @@ pub(super) async fn run_turn_tools(
                 sink,
                 AgentEvent::ToolDenied {
                     name: call.name.clone(),
-                    reason: if let Some(detail) = refusal_detail.clone() {
-                        detail
-                    } else if side_effect_denied {
-                        "external side effect requires approval".into()
-                    } else if candidate_denied {
-                        "candidate writes are not permitted".into()
-                    } else if workspace_denied {
-                        "workspace writes are not permitted".into()
-                    } else {
-                        "approval was not granted".into()
-                    },
+                    reason: refusal_detail.clone().unwrap_or_else(|| match decision {
+                        tools::ExecutionDecision::Deny(reason) => reason.reason().into(),
+                        tools::ExecutionDecision::Allow
+                        | tools::ExecutionDecision::RequireApproval => {
+                            unreachable!("a non-executed call has a denial decision")
+                        }
+                    }),
                 },
             )
             .await;

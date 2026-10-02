@@ -24,6 +24,50 @@ struct OneCallProvider {
     turn: Mutex<u32>,
 }
 
+/// A provider that emits all of a turn's tool calls together, then answers on
+/// the next request. It exercises the runner's single and multi-call paths at
+/// the public agent boundary.
+struct PolicyProvider {
+    calls: Vec<ToolCall>,
+    turn: Mutex<u32>,
+}
+
+#[async_trait]
+impl ChatProvider for PolicyProvider {
+    fn name(&self) -> &str {
+        "policy-mock"
+    }
+
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("stream path is used")
+    }
+
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: saya_agent::CancellationToken,
+    ) -> Result<saya_agent::ProviderStream, saya_agent::ProviderError> {
+        let first = {
+            let mut turn = self.turn.lock().unwrap();
+            let was = *turn;
+            *turn += 1;
+            was == 0
+        };
+        let events = if first {
+            vec![
+                Ok(saya_agent::ProviderEvent::ToolCalls(self.calls.clone())),
+                Ok(saya_agent::ProviderEvent::Done),
+            ]
+        } else {
+            vec![
+                Ok(saya_agent::ProviderEvent::TextDelta("done".into())),
+                Ok(saya_agent::ProviderEvent::Done),
+            ]
+        };
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
 #[async_trait]
 impl ChatProvider for OneCallProvider {
     fn name(&self) -> &str {
@@ -144,6 +188,63 @@ fn request() -> AgentRequest {
         history: Vec::new(),
         context_blocks: Vec::new(),
     }
+}
+
+fn policy_tool(effect: ToolEffect) -> ToolDefinition {
+    ToolDefinition {
+        name: "policy_tool".into(),
+        description: "policy matrix tool".into(),
+        read_only: true,
+        parameters: serde_json::json!({"type": "object"}),
+        effect,
+        completion: None,
+    }
+}
+
+async fn run_policy_turn(
+    call_count: usize,
+    effect: ToolEffect,
+    limits: AgentLimits,
+    approval: &dyn ApprovalDecider,
+) -> (usize, Vec<String>) {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provider = PolicyProvider {
+        calls: (0..call_count)
+            .map(|index| ToolCall {
+                id: format!("policy-{index}"),
+                name: "policy_tool".into(),
+                arguments: serde_json::json!({}),
+            })
+            .collect(),
+        turn: Mutex::new(0),
+    };
+    run_agent_with_sink(
+        &provider,
+        &RecordingExecutor {
+            calls: calls.clone(),
+        },
+        request(),
+        vec![policy_tool(effect)],
+        limits,
+        approval,
+        &RecordingSink {
+            events: events.clone(),
+        },
+        saya_agent::CancellationToken::new(),
+    )
+    .await
+    .expect("policy refusals feed results and the turn completes");
+    let reasons = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolDenied { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect();
+    (calls.lock().unwrap().len(), reasons)
 }
 
 /// A `WriteCandidate` tool is denied — not executed — when candidate writes
@@ -328,6 +429,145 @@ struct AllowApproval;
 impl ApprovalDecider for AllowApproval {
     async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
         true
+    }
+}
+
+/// Every execution route consumes the same effect, permit, and approval
+/// policy: denied calls never reach the executor, while allowed calls run
+/// once each in both one-call and multi-call turns.
+#[tokio::test]
+async fn policy_matrix_matches_single_and_multi_call_execution() {
+    let cases = vec![
+        (
+            "no effect",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::None,
+            },
+            AgentLimits::default(),
+            true,
+            None,
+        ),
+        (
+            "external effect without approval",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: true,
+                requires_approval: false,
+                local_state: LocalStateEffect::None,
+            },
+            AgentLimits::default(),
+            true,
+            Some("external side effect requires approval"),
+        ),
+        (
+            "external effect with plan permit",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: true,
+                requires_approval: false,
+                local_state: LocalStateEffect::None,
+            },
+            AgentLimits {
+                permit_external_effects: true,
+                ..AgentLimits::default()
+            },
+            true,
+            None,
+        ),
+        (
+            "candidate write without permit",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::WriteCandidate,
+            },
+            AgentLimits::default(),
+            true,
+            Some("candidate writes are not permitted"),
+        ),
+        (
+            "workspace write without permit",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::WriteWorkspace,
+            },
+            AgentLimits::default(),
+            true,
+            Some("workspace writes are not permitted"),
+        ),
+        (
+            "candidate write with permit",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::WriteCandidate,
+            },
+            AgentLimits {
+                permit_candidate_writes: true,
+                ..AgentLimits::default()
+            },
+            true,
+            None,
+        ),
+        (
+            "external effect with refused approval",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: true,
+                requires_approval: true,
+                local_state: LocalStateEffect::None,
+            },
+            AgentLimits::default(),
+            false,
+            Some("approval was not granted"),
+        ),
+        (
+            "external effect with granted approval",
+            ToolEffect {
+                database_data: false,
+                external_side_effect: true,
+                requires_approval: true,
+                local_state: LocalStateEffect::None,
+            },
+            AgentLimits::default(),
+            true,
+            None,
+        ),
+    ];
+
+    for (name, effect, limits, approved, expected_denial) in cases {
+        let approval: &dyn ApprovalDecider = if approved {
+            &AllowApproval
+        } else {
+            &DenyApproval
+        };
+        for call_count in [1, 2] {
+            let (executed, reasons) = run_policy_turn(call_count, effect, limits, approval).await;
+            let expected_executed = if expected_denial.is_none() {
+                call_count
+            } else {
+                0
+            };
+            assert_eq!(executed, expected_executed, "{name}, {call_count} calls");
+            match expected_denial {
+                Some(reason) => assert_eq!(
+                    reasons,
+                    vec![reason; call_count],
+                    "{name}, {call_count} calls"
+                ),
+                None => assert!(
+                    reasons.is_empty(),
+                    "{name}, {call_count} calls: {reasons:?}"
+                ),
+            }
+        }
     }
 }
 
