@@ -58,12 +58,26 @@ jobs:
       - name: Build release binary
         shell: bash
         run: |
+          WORKSPACE_PATH="$GITHUB_WORKSPACE"
+          CARGO_HOME_PATH="${CARGO_HOME:-$HOME/.cargo}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            WORKSPACE_PATH="$(cygpath -w "$WORKSPACE_PATH")"
+            CARGO_HOME_PATH="$(cygpath -w "$CARGO_HOME_PATH")"
+            export CXX="${CXX:-cl.exe} /pathmap:$WORKSPACE_PATH=/saya /pathmap:$CARGO_HOME_PATH=/cargo"
+          else
+            export CXX="${CXX:-c++} -ffile-prefix-map=$WORKSPACE_PATH=/saya -ffile-prefix-map=$CARGO_HOME_PATH=/cargo"
+          fi
+          export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$WORKSPACE_PATH=/saya --remap-path-prefix=$CARGO_HOME_PATH=/cargo"
           if [ -n "${{ matrix.target }}" ]; then
             rustup target add "${{ matrix.target }}"
             cargo build --release --locked -p saya-cli --target "${{ matrix.target }}"
           else
             cargo build --release --locked -p saya-cli
           fi
+          BIN="target/${{ matrix.target }}/release/saya"
+          if [ -z "${{ matrix.target }}" ]; then BIN="target/release/saya"; fi
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then BIN="${BIN}.exe"; fi
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then python scripts/check-artifact-content.py binary "$BIN"; else python3 scripts/check-artifact-content.py binary "$BIN"; fi
       - name: Smoke test binary on Unix
         # Skip for cross-compiled targets — the binary's arch may differ from the runner's.
         if: matrix.os != 'windows-latest' && matrix.target == ''
@@ -115,7 +129,8 @@ jobs:
           mkdir "$STAGE"
           cp "$BIN" "$STAGE/"
           cp README.md LICENSE SECURITY.md "$STAGE/"
-          tar -czf "${STAGE}.tar.gz" "$STAGE"
+          COPYFILE_DISABLE=1 tar -czf "${STAGE}.tar.gz" "$STAGE"
+          python3 scripts/check-artifact-content.py archive "${STAGE}.tar.gz"
           if command -v shasum >/dev/null 2>&1; then shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"; else sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "archive=${STAGE}.tar.gz" >> "$GITHUB_OUTPUT"
@@ -129,6 +144,7 @@ jobs:
           New-Item -ItemType Directory -Path $stage | Out-Null
           Copy-Item target/release/saya.exe,README.md,LICENSE,SECURITY.md $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+          python scripts/check-artifact-content.py archive "$stage.zip"
           $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           $sidecar = "$hash  $stage.zip`n"
           [System.IO.File]::WriteAllText("$stage.zip.sha256", $sidecar, [System.Text.UTF8Encoding]::new($false))

@@ -100,11 +100,23 @@ for crate in "${CRATES[@]}"; do
     echo "== skip $crate $version (already on crates.io)"
     continue
   fi
+  echo "== inspect package $crate $version"
+  PACKAGE_PATCH_ARGS=()
+  for dependency in "${CRATES[@]}"; do
+    PACKAGE_PATCH_ARGS+=(--config "patch.crates-io.$dependency.path=\"crates/$dependency\"")
+  done
+  cargo package "${PACKAGE_PATCH_ARGS[@]}" --locked -p "$crate" --no-verify --allow-dirty
+  PACKAGE="target/package/$crate-$version.crate"
+  if [ ! -f "$PACKAGE" ]; then
+    echo "cargo package did not produce $PACKAGE" >&2
+    exit 1
+  fi
+  python3 scripts/check-artifact-content.py crate "$PACKAGE"
   echo "== publish $crate $version"
   if [ "$DRY_RUN" = "1" ]; then
-    cargo publish -p "$crate" --dry-run --allow-dirty
+    cargo publish "${PACKAGE_PATCH_ARGS[@]}" -p "$crate" --dry-run --allow-dirty
   else
-    cargo publish -p "$crate"
+    cargo publish "${PACKAGE_PATCH_ARGS[@]}" -p "$crate"
     # cargo (>= 1.66) waits for the crate to be indexed; this is a small extra
     # margin so a dependent published next can resolve it.
     [ "$crate" != "saya-cli" ] && sleep 15

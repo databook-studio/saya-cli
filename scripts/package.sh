@@ -11,12 +11,17 @@ ARCHIVE="${OUTPUT_DIR}/saya-${VERSION}-${HOST}.tar.gz"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/saya-package.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-cargo build --release --locked -p saya-cli
+CARGO_HOME_PATH="${CARGO_HOME:-$HOME/.cargo}"
+CXX="${CXX:-c++} -ffile-prefix-map=$ROOT_DIR=/saya -ffile-prefix-map=$CARGO_HOME_PATH=/cargo" \
+RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$ROOT_DIR=/saya --remap-path-prefix=$CARGO_HOME_PATH=/cargo" \
+    cargo build --release --locked -p saya-cli
+python3 scripts/check-artifact-content.py binary target/release/saya
 
 mkdir -p "$OUTPUT_DIR" "$WORK_DIR/saya-${VERSION}-${HOST}"
 cp "target/release/saya" "$WORK_DIR/saya-${VERSION}-${HOST}/saya"
 cp README.md LICENSE SECURITY.md "$WORK_DIR/saya-${VERSION}-${HOST}/"
-tar -czf "$ARCHIVE" -C "$WORK_DIR" "saya-${VERSION}-${HOST}"
+COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C "$WORK_DIR" "saya-${VERSION}-${HOST}"
+python3 scripts/check-artifact-content.py archive "$ARCHIVE"
 if command -v shasum >/dev/null 2>&1; then
     (cd "$OUTPUT_DIR" && shasum -a 256 "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256")
 else
