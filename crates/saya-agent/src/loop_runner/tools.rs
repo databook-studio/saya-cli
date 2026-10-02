@@ -1,4 +1,4 @@
-use crate::{AgentLimits, ChatMessage, LocalStateEffect, ToolCall, ToolDefinition, ToolExecutor};
+use crate::{ChatMessage, ToolCall, ToolDefinition, ToolExecutor};
 use saya_types::{redact, redact_counted};
 use serde_json::Value;
 
@@ -25,61 +25,6 @@ pub(super) fn invalid_reason(call: &ToolCall, definitions: &[ToolDefinition]) ->
         "unknown tool '{}'; available tools: {available}",
         call.name
     ))
-}
-
-/// Whether the runner must refuse to run `definition` unattended because it
-/// has an external side effect. A tool that touches the world outside the
-/// agent must go through approval; when it already requires approval this
-/// gate is satisfied by the prompt, so the term only denies a tool that set
-/// `external_side_effect` without also setting `requires_approval` — a
-/// misconfiguration the loop refuses rather than trusting every author to
-/// set both. The one exception is a run constructed with
-/// `AgentLimits::permit_external_effects`: the plan-gated egress permit for
-/// tools whose effect the run's approved scope already approved once with
-/// its plan, not per call. Everywhere the permit is false the guard's
-/// purpose stands unchanged, which is what keeps interactive turns
-/// byte-identical. Both execution paths consult this, so a tool the
-/// policy gates cannot be auto-run by one path and not the other.
-pub(super) fn external_side_effect_gated(
-    definition: &ToolDefinition,
-    limits: &AgentLimits,
-) -> bool {
-    definition.effect.external_side_effect
-        && !definition.effect.requires_approval
-        && !limits.permit_external_effects
-}
-
-/// Whether the runner must refuse `definition` because it may write a
-/// candidate claim and the run was not constructed with candidate writes
-/// permitted (Phase 3a: fail closed by default).
-pub(super) fn candidate_denied(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
-    definition.effect.local_state == LocalStateEffect::WriteCandidate
-        && !limits.permit_candidate_writes
-}
-
-/// Whether the runner must refuse `definition` because it may write files in
-/// the run workspace and the run was not constructed with workspace writes
-/// permitted — fail closed by default, mirroring [`candidate_denied`].
-pub(super) fn workspace_write_denied(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
-    definition.effect.local_state == LocalStateEffect::WriteWorkspace
-        && !limits.permit_workspace_writes
-}
-
-/// May a call to `definition` run with no questions asked — the single
-/// policy the loop consults to decide auto-run. A call is auto-runnable only
-/// when it needs no approval, the policy does not gate its external side
-/// effect, and it is not a local-state write the runner refused. The batch
-/// path calls this to decide whether the calls in a message are independent
-/// enough to run concurrently. The sequential execution path resolves
-/// approval and then re-applies the gates by name in `run_turn_tools`
-/// (currently [`external_side_effect_gated`] and [`candidate_denied`]) so the
-/// denial can name which one refused — a gate added here must be mirrored
-/// there, or it binds multi-call turns only.
-pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
-    !definition.effect.requires_approval
-        && !external_side_effect_gated(definition, limits)
-        && !candidate_denied(definition, limits)
-        && !workspace_write_denied(definition, limits)
 }
 
 /// The completion summaries reported for a tool call, derived from the

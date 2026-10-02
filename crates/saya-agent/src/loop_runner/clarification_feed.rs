@@ -5,8 +5,7 @@
 use super::clarification_args::ClarificationError;
 use super::{emit, tools};
 use crate::{
-    AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, ChatMessage, ToolCall,
-    ToolDefinition, ToolMetadata,
+    AgentEvent, AgentEventSink, AgentLimits, ChatMessage, ToolCall, ToolDefinition, ToolMetadata,
 };
 
 /// The tool result fed for a call that did not run because the turn paused on
@@ -17,30 +16,6 @@ pub(super) const PAUSED_REFUSAL: &str = "not executed: the turn paused on the cl
 /// The tool result fed for a call that did not run because no ask landed.
 pub(super) const NOT_EXECUTED_REFUSAL: &str = "not executed: the clarification did not land \
      this turn — retry it corrected and alone";
-
-/// The sequential path's denial reasons for the one ask, resolved the same
-/// way [`super::turn_tools`] resolves them.
-pub(super) async fn gate_denial(
-    definition: Option<&ToolDefinition>,
-    limits: &AgentLimits,
-    approval: &dyn ApprovalDecider,
-    arguments: &serde_json::Value,
-) -> Option<String> {
-    let definition = definition?;
-    if definition.effect.requires_approval && !approval.approve(definition, arguments).await {
-        return Some("approval was not granted".into());
-    }
-    if tools::external_side_effect_gated(definition, limits) {
-        return Some("external side effect requires approval".into());
-    }
-    if tools::candidate_denied(definition, limits) {
-        return Some("candidate writes are not permitted".into());
-    }
-    if tools::workspace_write_denied(definition, limits) {
-        return Some("workspace writes are not permitted".into());
-    }
-    None
-}
 
 /// Feeds one malformed ask its validation error: the request surfaces, the
 /// error rides back as the tool result, and the completion names the
