@@ -4,7 +4,9 @@
 //! returns; this function no longer signals which path ran, because both
 //! paths feed the same trim.
 
-use super::{check_cancelled, emit, failed_statements, failure_key, output, tool_record, tools};
+use super::{
+    check_cancelled, emit, failed_statements, failure_key, output, tool_policy, tool_record, tools,
+};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
     ChatMessage, ToolDefinition, ToolExecutor,
@@ -37,12 +39,12 @@ pub(super) async fn run_turn_tools(
                     .find(|definition| definition.name == call.name)
                     .is_some_and(|definition| {
                         matches!(
-                            tools::execution_decision(
+                            tool_policy::execution_decision(
                                 definition,
                                 limits,
-                                tools::ApprovalState::NotRequired,
+                                tool_policy::ApprovalState::NotRequired,
                             ),
-                            tools::ExecutionDecision::Allow
+                            tool_policy::ExecutionDecision::Allow
                         )
                     })
                 && !failed_statements::is_repeat(failed, call)
@@ -211,9 +213,9 @@ pub(super) async fn run_turn_tools(
         )
         .await;
         let (approval_state, refusal_detail) =
-            tools::resolve_approval(definition, &call.arguments, approval).await;
-        let decision = tools::execution_decision(definition, limits, approval_state);
-        let executed = matches!(decision, tools::ExecutionDecision::Allow);
+            tool_policy::resolve_approval(definition, &call.arguments, approval).await;
+        let decision = tool_policy::execution_decision(definition, limits, approval_state);
+        let executed = matches!(decision, tool_policy::ExecutionDecision::Allow);
         // Capture the serialized arguments before `execute` moves
         // `call.arguments` — the persisted record carries what the model sent
         // (the statement for a SQL tool), and the value-free result shape is
@@ -234,9 +236,9 @@ pub(super) async fn run_turn_tools(
                 AgentEvent::ToolDenied {
                     name: call.name.clone(),
                     reason: refusal_detail.clone().unwrap_or_else(|| match decision {
-                        tools::ExecutionDecision::Deny(reason) => reason.reason().into(),
-                        tools::ExecutionDecision::Allow
-                        | tools::ExecutionDecision::RequireApproval => {
+                        tool_policy::ExecutionDecision::Deny(reason) => reason.reason().into(),
+                        tool_policy::ExecutionDecision::Allow
+                        | tool_policy::ExecutionDecision::RequireApproval => {
                             unreachable!("a non-executed call has a denial decision")
                         }
                     }),
