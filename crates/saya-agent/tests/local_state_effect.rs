@@ -24,6 +24,50 @@ struct OneCallProvider {
     turn: Mutex<u32>,
 }
 
+/// A provider that emits all of a turn's tool calls together, then answers on
+/// the next request. It exercises the runner's single and multi-call paths at
+/// the public agent boundary.
+struct PolicyProvider {
+    calls: Vec<ToolCall>,
+    turn: Mutex<u32>,
+}
+
+#[async_trait]
+impl ChatProvider for PolicyProvider {
+    fn name(&self) -> &str {
+        "policy-mock"
+    }
+
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+        unreachable!("stream path is used")
+    }
+
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: saya_agent::CancellationToken,
+    ) -> Result<saya_agent::ProviderStream, saya_agent::ProviderError> {
+        let first = {
+            let mut turn = self.turn.lock().unwrap();
+            let was = *turn;
+            *turn += 1;
+            was == 0
+        };
+        let events = if first {
+            vec![
+                Ok(saya_agent::ProviderEvent::ToolCalls(self.calls.clone())),
+                Ok(saya_agent::ProviderEvent::Done),
+            ]
+        } else {
+            vec![
+                Ok(saya_agent::ProviderEvent::TextDelta("done".into())),
+                Ok(saya_agent::ProviderEvent::Done),
+            ]
+        };
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
 #[async_trait]
 impl ChatProvider for OneCallProvider {
     fn name(&self) -> &str {
@@ -144,6 +188,68 @@ fn request() -> AgentRequest {
         history: Vec::new(),
         context_blocks: Vec::new(),
     }
+}
+
+fn policy_tool(effect: ToolEffect) -> ToolDefinition {
+    ToolDefinition {
+        name: "policy_tool".into(),
+        description: "policy matrix tool".into(),
+        read_only: true,
+        parameters: serde_json::json!({"type": "object"}),
+        effect,
+        completion: None,
+    }
+}
+
+async fn run_policy_turn(
+    call_count: usize,
+    effect: ToolEffect,
+    limits: AgentLimits,
+    approval: &dyn ApprovalDecider,
+) -> (usize, Vec<String>, Vec<String>) {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provider = PolicyProvider {
+        calls: (0..call_count)
+            .map(|index| ToolCall {
+                id: format!("policy-{index}"),
+                name: "policy_tool".into(),
+                arguments: serde_json::json!({}),
+            })
+            .collect(),
+        turn: Mutex::new(0),
+    };
+    let output = run_agent_with_sink(
+        &provider,
+        &RecordingExecutor {
+            calls: calls.clone(),
+        },
+        request(),
+        vec![policy_tool(effect)],
+        limits,
+        approval,
+        &RecordingSink {
+            events: events.clone(),
+        },
+        saya_agent::CancellationToken::new(),
+    )
+    .await
+    .expect("policy refusals feed results and the turn completes");
+    let reasons = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolDenied { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect();
+    let statuses = output
+        .tool_metadata
+        .into_iter()
+        .map(|metadata| metadata.status)
+        .collect();
+    (calls.lock().unwrap().len(), reasons, statuses)
 }
 
 /// A `WriteCandidate` tool is denied — not executed — when candidate writes
@@ -328,6 +434,102 @@ struct AllowApproval;
 impl ApprovalDecider for AllowApproval {
     async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
         true
+    }
+}
+
+/// The independent expected policy for the public boundary matrix. A refused
+/// approval has precedence even when the same declaration is structurally
+/// restricted; a grant still cannot override any structural restriction.
+fn expected_policy(
+    effect: ToolEffect,
+    limits: AgentLimits,
+    approved: bool,
+) -> (&'static str, Option<&'static str>) {
+    if effect.requires_approval && !approved {
+        ("denied", Some("approval was not granted"))
+    } else if effect.external_side_effect
+        && !effect.requires_approval
+        && !limits.permit_external_effects
+    {
+        ("denied", Some("external side effect requires approval"))
+    } else if effect.local_state == LocalStateEffect::WriteCandidate
+        && !limits.permit_candidate_writes
+    {
+        ("denied", Some("candidate writes are not permitted"))
+    } else if effect.local_state == LocalStateEffect::WriteWorkspace
+        && !limits.permit_workspace_writes
+    {
+        ("denied", Some("workspace writes are not permitted"))
+    } else {
+        ("completed", None)
+    }
+}
+
+/// Every execution route consumes the same effect, permit, and approval
+/// policy: denied calls never reach the executor, while allowed calls run
+/// once each in both one-call and multi-call turns.
+#[tokio::test]
+async fn policy_matrix_matches_single_and_multi_call_execution() {
+    for local_state in [
+        LocalStateEffect::None,
+        LocalStateEffect::Read,
+        LocalStateEffect::WriteCandidate,
+        LocalStateEffect::WriteWorkspace,
+        LocalStateEffect::WriteSession,
+    ] {
+        for database_data in [false, true] {
+            for external_side_effect in [false, true] {
+                for requires_approval in [false, true] {
+                    for permits in 0..8 {
+                        let limits = AgentLimits {
+                            permit_candidate_writes: permits & 1 != 0,
+                            permit_workspace_writes: permits & 2 != 0,
+                            permit_external_effects: permits & 4 != 0,
+                            ..AgentLimits::default()
+                        };
+                        for approved in [false, true] {
+                            let effect = ToolEffect {
+                                database_data,
+                                external_side_effect,
+                                requires_approval,
+                                local_state,
+                            };
+                            let (status, denial) = expected_policy(effect, limits, approved);
+                            let approval: &dyn ApprovalDecider = if approved {
+                                &AllowApproval
+                            } else {
+                                &DenyApproval
+                            };
+                            for call_count in [1, 2] {
+                                let (executed, reasons, statuses) =
+                                    run_policy_turn(call_count, effect, limits, approval).await;
+                                assert_eq!(
+                                    executed,
+                                    if denial.is_some() { 0 } else { call_count },
+                                    "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                );
+                                assert_eq!(
+                                    statuses,
+                                    vec![status; call_count],
+                                    "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                );
+                                match denial {
+                                    Some(reason) => assert_eq!(
+                                        reasons,
+                                        vec![reason; call_count],
+                                        "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                    ),
+                                    None => assert!(
+                                        reasons.is_empty(),
+                                        "{effect:?}, permits={permits}, approved={approved}, {call_count} calls: {reasons:?}"
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

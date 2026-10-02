@@ -5,7 +5,7 @@
 
 use super::super::clarification_args::{REQUEST_CLARIFICATION_TOOL, parse};
 use crate::{
-    AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
+    AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval, ApprovalDecider,
     CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse, LocalStateEffect,
     ProviderError, ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolEffect, ToolError,
     ToolExecutor, run_agent_with_sink,
@@ -137,6 +137,19 @@ fn clarification_call(
         id: "call-1".into(),
         name: REQUEST_CLARIFICATION_TOOL.into(),
         arguments: serde_json::json!({"question": question.into(), "options": options.into()}),
+    }
+}
+
+struct CustomDenyApproval;
+
+#[async_trait]
+impl ApprovalDecider for CustomDenyApproval {
+    async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
+        false
+    }
+
+    fn refusal_detail(&self, _: &ToolDefinition, _: &serde_json::Value) -> Option<String> {
+        Some("questions require an approved investigation plan".into())
     }
 }
 
@@ -300,6 +313,67 @@ async fn an_invalid_clarification_call_feeds_an_error_and_the_turn_continues() {
             .iter()
             .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. })),
         "no clarification event for a malformed ask: {events:?}"
+    );
+}
+
+/// A refused ask does not land: it keeps the decider's custom reason, never
+/// executes, and lets the provider answer normally on the following turn.
+#[tokio::test]
+async fn a_denied_clarification_keeps_the_custom_refusal_and_continues() {
+    let provider = ScriptedProvider {
+        turns: Mutex::new(vec![
+            ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![clarification_call(
+                    "Which metric should active users use?",
+                    serde_json::Value::Null,
+                )],
+                tool_call_id: None,
+            },
+            ChatMessage::text("assistant", "answered without asking"),
+        ]),
+        requests: Mutex::new(0),
+    };
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut definition = clarification_definition();
+    definition.effect.requires_approval = true;
+    let output = run_agent_with_sink(
+        &provider,
+        &RecordingTools {
+            calls: calls.clone(),
+            fail_names: Vec::new(),
+        },
+        request(),
+        vec![definition],
+        AgentLimits::default(),
+        &CustomDenyApproval,
+        &RecordingSink {
+            events: events.clone(),
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .expect("a denied ask feeds a result and the turn continues");
+
+    assert_eq!(output.answer, "answered without asking");
+    assert_eq!(output.tool_metadata[0].status, "denied");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "a denied ask must not execute"
+    );
+    let events = events.lock().unwrap();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolDenied { reason, .. }
+            if reason == "questions require an approved investigation plan"
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. })),
+        "a refused ask must not ask the user: {events:?}"
     );
 }
 
