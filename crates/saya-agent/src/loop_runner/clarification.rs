@@ -12,7 +12,7 @@ use super::clarification_args::{
 use super::clarification_feed::{
     NOT_EXECUTED_REFUSAL, PAUSED_REFUSAL, feed_malformed, refuse_others,
 };
-use super::{check_cancelled, designation, emit, output, tool_record, tools};
+use super::{check_cancelled, designation, emit, output, tool_policy, tool_record, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, ApprovalDecider,
     CancellationToken, ChatMessage, TokenUsage, ToolCall, ToolDefinition, ToolExecutor,
@@ -114,16 +114,16 @@ pub(super) async fn handle(
     .await;
     let (decision, refusal_detail) = if let Some(definition) = definition {
         let (approval_state, refusal_detail) =
-            tools::resolve_approval(definition, &asked_call.arguments, approval).await;
+            tool_policy::resolve_approval(definition, &asked_call.arguments, approval).await;
         (
-            tools::execution_decision(definition, limits, approval_state),
+            tool_policy::execution_decision(definition, limits, approval_state),
             refusal_detail,
         )
     } else {
-        (tools::ExecutionDecision::Allow, None)
+        (tool_policy::ExecutionDecision::Allow, None)
     };
     let (result, summary, denied) = match decision {
-        tools::ExecutionDecision::Allow => {
+        tool_policy::ExecutionDecision::Allow => {
             let (result, summary) = tools::execute(
                 executor,
                 REQUEST_CLARIFICATION_TOOL,
@@ -133,7 +133,7 @@ pub(super) async fn handle(
             .await;
             (result, summary, false)
         }
-        tools::ExecutionDecision::Deny(denial) => {
+        tool_policy::ExecutionDecision::Deny(denial) => {
             let reason = refusal_detail.unwrap_or_else(|| denial.reason().into());
             emit(
                 events,
@@ -150,7 +150,7 @@ pub(super) async fn handle(
                 true,
             )
         }
-        tools::ExecutionDecision::RequireApproval => {
+        tool_policy::ExecutionDecision::RequireApproval => {
             unreachable!("resolved approval cannot still require approval")
         }
     };

@@ -5,8 +5,11 @@
 //! failure. The model's JSON path is unchanged — the full error still
 //! reaches it.
 
+use super::super::tool_policy::{
+    ApprovalState, ExecutionDecision, PolicyDenial, execution_decision, external_side_effect_gated,
+};
 use super::*;
-use crate::{LocalStateEffect, ToolDefinition, ToolEffect, ToolError, ToolExecutor};
+use crate::{AgentLimits, LocalStateEffect, ToolDefinition, ToolEffect, ToolError, ToolExecutor};
 
 /// The fetch-shaped declaration: an external side effect approved once by
 /// the run's scope, not per call — the exact combination the misconfiguration

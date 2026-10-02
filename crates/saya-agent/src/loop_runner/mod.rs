@@ -8,6 +8,7 @@ mod failure_key;
 mod output;
 mod receive;
 mod salvage;
+mod tool_policy;
 mod tool_record;
 mod tools;
 mod turn_tools;
