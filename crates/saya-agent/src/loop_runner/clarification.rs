@@ -10,7 +10,7 @@ use super::clarification_args::{
     Clarification, ClarificationError, REQUEST_CLARIFICATION_TOOL, parse,
 };
 use super::clarification_feed::{
-    NOT_EXECUTED_REFUSAL, PAUSED_REFUSAL, feed_malformed, gate_denial, refuse_others,
+    NOT_EXECUTED_REFUSAL, PAUSED_REFUSAL, feed_malformed, refuse_others,
 };
 use super::{check_cancelled, designation, emit, output, tool_record, tools};
 use crate::{
@@ -112,38 +112,59 @@ pub(super) async fn handle(
         ),
     )
     .await;
-    // The gates the sequential path applies to any call, consulted for this
-    // one: a mis-declared definition is denied rather than trusted. The
-    // production definition declares no effect and no approval need, so it
-    // always passes; the arm never widens what the declaration admits.
-    let denial = gate_denial(definition, limits, approval, &asked_call.arguments).await;
-    let (result, summary) = if let Some(reason) = denial {
-        emit(
-            events,
-            sink,
-            AgentEvent::ToolDenied {
-                name: REQUEST_CLARIFICATION_TOOL.into(),
-                reason: reason.clone(),
-            },
-        )
-        .await;
+    let (decision, refusal_detail) = if let Some(definition) = definition {
+        let (approval_state, refusal_detail) =
+            tools::resolve_approval(definition, &asked_call.arguments, approval).await;
         (
-            serde_json::json!({"error": format!("tool call denied by approval policy: {reason}")}),
-            "read-only database tool denied".to_owned(),
+            tools::execution_decision(definition, limits, approval_state),
+            refusal_detail,
         )
     } else {
-        tools::execute(
-            executor,
-            REQUEST_CLARIFICATION_TOOL,
-            asked_call.arguments.clone(),
-            definition,
-        )
-        .await
+        (tools::ExecutionDecision::Allow, None)
+    };
+    let (result, summary, denied) = match decision {
+        tools::ExecutionDecision::Allow => {
+            let (result, summary) = tools::execute(
+                executor,
+                REQUEST_CLARIFICATION_TOOL,
+                asked_call.arguments.clone(),
+                definition,
+            )
+            .await;
+            (result, summary, false)
+        }
+        tools::ExecutionDecision::Deny(denial) => {
+            let reason = refusal_detail.unwrap_or_else(|| denial.reason().into());
+            emit(
+                events,
+                sink,
+                AgentEvent::ToolDenied {
+                    name: REQUEST_CLARIFICATION_TOOL.into(),
+                    reason: reason.clone(),
+                },
+            )
+            .await;
+            (
+                serde_json::json!({"error": format!("tool call denied by approval policy: {reason}")}),
+                "read-only database tool denied".to_owned(),
+                true,
+            )
+        }
+        tools::ExecutionDecision::RequireApproval => {
+            unreachable!("resolved approval cannot still require approval")
+        }
     };
     let failed = summary.contains("failed");
     totals.2.push(ToolMetadata {
         name: REQUEST_CLARIFICATION_TOOL.into(),
-        status: if failed { "failed" } else { "completed" }.into(),
+        status: if denied {
+            "denied"
+        } else if failed {
+            "failed"
+        } else {
+            "completed"
+        }
+        .into(),
         arguments: serde_json::to_string(&asked_call.arguments).unwrap_or_default(),
         result_shape: tool_record::result_shape_of(&result),
     });
@@ -159,7 +180,7 @@ pub(super) async fn handle(
         },
     )
     .await;
-    if failed {
+    if denied || failed {
         refuse_others(
             assistant,
             &[asked_call.id.as_str()],

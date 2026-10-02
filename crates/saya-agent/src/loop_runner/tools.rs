@@ -1,4 +1,7 @@
-use crate::{AgentLimits, ChatMessage, LocalStateEffect, ToolCall, ToolDefinition, ToolExecutor};
+use crate::{
+    AgentLimits, ApprovalDecider, ChatMessage, LocalStateEffect, ToolCall, ToolDefinition,
+    ToolExecutor,
+};
 use saya_types::{redact, redact_counted};
 use serde_json::Value;
 
@@ -65,21 +68,87 @@ pub(super) fn workspace_write_denied(definition: &ToolDefinition, limits: &Agent
         && !limits.permit_workspace_writes
 }
 
-/// May a call to `definition` run with no questions asked — the single
-/// policy the loop consults to decide auto-run. A call is auto-runnable only
-/// when it needs no approval, the policy does not gate its external side
-/// effect, and it is not a local-state write the runner refused. The batch
-/// path calls this to decide whether the calls in a message are independent
-/// enough to run concurrently. The sequential execution path resolves
-/// approval and then re-applies the gates by name in `run_turn_tools`
-/// (currently [`external_side_effect_gated`] and [`candidate_denied`]) so the
-/// denial can name which one refused — a gate added here must be mirrored
-/// there, or it binds multi-call turns only.
-pub(super) fn auto_runnable(definition: &ToolDefinition, limits: &AgentLimits) -> bool {
-    !definition.effect.requires_approval
-        && !external_side_effect_gated(definition, limits)
-        && !candidate_denied(definition, limits)
-        && !workspace_write_denied(definition, limits)
+/// The approval state supplied to the pure execution policy.
+#[derive(Clone, Copy)]
+pub(super) enum ApprovalState {
+    NotRequired,
+    Granted,
+    Denied,
+}
+
+/// The pure execution-policy outcome every tool-call path consumes.
+#[derive(Clone, Copy)]
+pub(super) enum ExecutionDecision {
+    Allow,
+    RequireApproval,
+    Deny(PolicyDenial),
+}
+
+/// The structural or approval reason that denied execution.
+#[derive(Clone, Copy)]
+pub(super) enum PolicyDenial {
+    Approval,
+    ExternalSideEffect,
+    CandidateWrite,
+    WorkspaceWrite,
+}
+
+impl PolicyDenial {
+    pub(super) const fn reason(self) -> &'static str {
+        match self {
+            Self::Approval => "approval was not granted",
+            Self::ExternalSideEffect => "external side effect requires approval",
+            Self::CandidateWrite => "candidate writes are not permitted",
+            Self::WorkspaceWrite => "workspace writes are not permitted",
+        }
+    }
+}
+
+/// Decides whether a validated tool call may execute. Approval state carries
+/// the prompt outcome into this otherwise pure policy. A declined approval
+/// takes wording precedence, preserving the decider's custom refusal detail;
+/// a granted approval still reaches every structural restriction.
+pub(super) fn execution_decision(
+    definition: &ToolDefinition,
+    limits: &AgentLimits,
+    approval: ApprovalState,
+) -> ExecutionDecision {
+    match approval {
+        ApprovalState::NotRequired if definition.effect.requires_approval => {
+            return ExecutionDecision::RequireApproval;
+        }
+        ApprovalState::Denied => return ExecutionDecision::Deny(PolicyDenial::Approval),
+        ApprovalState::NotRequired | ApprovalState::Granted => {}
+    }
+    if external_side_effect_gated(definition, limits) {
+        ExecutionDecision::Deny(PolicyDenial::ExternalSideEffect)
+    } else if candidate_denied(definition, limits) {
+        ExecutionDecision::Deny(PolicyDenial::CandidateWrite)
+    } else if workspace_write_denied(definition, limits) {
+        ExecutionDecision::Deny(PolicyDenial::WorkspaceWrite)
+    } else {
+        ExecutionDecision::Allow
+    }
+}
+
+/// Resolves a required approval prompt without folding it into the execution
+/// policy. Custom refusal text is observed only after an actual refusal.
+pub(super) async fn resolve_approval(
+    definition: &ToolDefinition,
+    arguments: &Value,
+    approval: &dyn ApprovalDecider,
+) -> (ApprovalState, Option<String>) {
+    if !definition.effect.requires_approval {
+        return (ApprovalState::NotRequired, None);
+    }
+    if approval.approve(definition, arguments).await {
+        (ApprovalState::Granted, None)
+    } else {
+        (
+            ApprovalState::Denied,
+            approval.refusal_detail(definition, arguments),
+        )
+    }
 }
 
 /// The completion summaries reported for a tool call, derived from the

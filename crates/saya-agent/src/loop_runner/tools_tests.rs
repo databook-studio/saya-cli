@@ -38,15 +38,20 @@ fn the_guard_stands_everywhere_the_permit_is_false() {
         "the misconfiguration guard keeps denying by default"
     );
     assert!(
-        !auto_runnable(&definition, &AgentLimits::default()),
+        matches!(
+            execution_decision(
+                &definition,
+                &AgentLimits::default(),
+                ApprovalState::NotRequired,
+            ),
+            ExecutionDecision::Deny(PolicyDenial::ExternalSideEffect)
+        ),
         "the batch path refuses it by default"
     );
 }
 
-/// The permit opens the gated tool in the shared policy both paths consult:
-/// `auto_runnable` (the batch path) and the sequential path's by-name gate
-/// resolve through the same function, so a permit granted per step cannot
-/// run in one path and not the other.
+/// The permit opens the gated tool in the shared execution policy, so a
+/// permit granted per step cannot run in one path and not the other.
 #[test]
 fn the_permit_opens_the_gated_tool_in_both_paths() {
     let definition = plan_gated_egress();
@@ -59,9 +64,11 @@ fn the_permit_opens_the_gated_tool_in_both_paths() {
         "the plan-gated egress permit satisfies the guard"
     );
     assert!(
-        auto_runnable(&definition, &limits),
-        "with the permit, a no-approval external tool is auto-runnable in \
-         the batch path — and the sequential path consults the same gate"
+        matches!(
+            execution_decision(&definition, &limits, ApprovalState::NotRequired),
+            ExecutionDecision::Allow
+        ),
+        "with the permit, the shared policy allows the tool"
     );
 }
 
@@ -82,7 +89,10 @@ fn the_permit_does_not_carry_the_write_shaped_members() {
         "the external gate is satisfied by the permit"
     );
     assert!(
-        !auto_runnable(&definition, &limits),
+        matches!(
+            execution_decision(&definition, &limits, ApprovalState::NotRequired),
+            ExecutionDecision::Deny(PolicyDenial::WorkspaceWrite)
+        ),
         "the workspace-write gate still refuses it: one permit per shape"
     );
 }
