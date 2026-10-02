@@ -18,6 +18,15 @@ publish = trigger.dig("workflow_dispatch", "inputs", "publish")
 raise "publish input is not false by default" unless publish["default"] == false
 raise "publish input is not boolean" unless publish["type"] == "boolean"
 jobs = workflow.fetch("jobs")
+build_steps = jobs.fetch("build").fetch("steps")
+build_run = build_steps.map { |step| step["run"] }.compact.join("\n")
+raise "release build does not scan the binary" unless build_run.include?("check-artifact-content.py binary")
+raise "release build does not remap local paths" unless build_run.include?("remap-path-prefix") && build_run.include?("cygpath -w")
+raise "Unix release archive is not scanned" unless build_run.include?("check-artifact-content.py archive")
+raise "Unix tar retains AppleDouble metadata" unless build_run.include?("COPYFILE_DISABLE=1 tar -czf")
+raise "Windows release ZIP is not scanned" unless build_run.include?("check-artifact-content.py archive") && build_run.include?("python scripts/check-artifact-content.py archive")
+publish_script = File.read(File.join(File.dirname(path), "..", "..", "scripts", "publish-crates.sh"))
+raise "crate payload scan missing before publish" unless publish_script.index("check-artifact-content.py crate")&.<(publish_script.index("cargo publish"))
 resource_env = jobs.dig("build", "env")
 raise "release build jobs are not serialized" unless resource_env["CARGO_BUILD_JOBS"] == "1"
 raise "release test debug info is enabled" unless resource_env["CARGO_PROFILE_TEST_DEBUG"] == "0"
@@ -359,7 +368,7 @@ metadata = lambda do |versions, members = crates|
   { "workspace_members" => packages.map { |package| package.fetch("id") }, "packages" => packages }
 end
 
-run_fixture = lambda do |payload|
+run_fixture = lambda do |payload, reject_crate = ""|
   Dir.mktmpdir("publish-check") do |dir|
     scripts_dir = File.join(dir, "scripts")
     bin_dir = File.join(dir, "bin")
@@ -375,11 +384,34 @@ run_fixture = lambda do |payload|
       set -euo pipefail
       if [[ "${1:-}" == "metadata" ]]; then
         cat "$SAYA_METADATA_FILE"
+      elif [[ "${1:-}" == "package" ]]; then
+        crate=""
+        while (($#)); do
+          if [[ "$1" == "-p" ]]; then crate="$2"; shift 2; else shift; fi
+        done
+        mkdir -p target/package
+        : > "target/package/$crate-0.4.1.crate"
+        printf 'stub cargo package %s\n' "$crate"
+        printf 'package %s\n' "$crate" >> "$SAYA_CARGO_LOG"
       elif [[ "${1:-}" == "publish" ]]; then
-        printf 'stub cargo %s\n' "$*"
-        printf '%s\n' "$*" >> "$SAYA_CARGO_LOG"
+        crate=""
+        while (($#)); do
+          if [[ "$1" == "-p" ]]; then crate="$2"; shift 2; else shift; fi
+        done
+        printf 'stub cargo publish -p %s\n' "$crate"
+        printf 'publish %s\n' "$crate" >> "$SAYA_CARGO_LOG"
       else
         echo "unexpected cargo invocation: $*" >&2
+        exit 1
+      fi
+    SH
+    File.write(File.join(bin_dir, "python3"), <<~'SH')
+      #!/usr/bin/env bash
+      set -euo pipefail
+      [[ "$1" == "scripts/check-artifact-content.py" && "$2" == "crate" ]]
+      [[ -f "$3" ]]
+      if [[ "${SAYA_REJECT_CRATE:-}" == "$(basename "$3" .crate)" ]]; then
+        echo "synthetic content rejection" >&2
         exit 1
       fi
     SH
@@ -390,13 +422,14 @@ run_fixture = lambda do |payload|
       printf '%s\n' "$*" >> "$SAYA_CURL_LOG"
       printf '404'
     SH
-    FileUtils.chmod(0o755, [File.join(bin_dir, "cargo"), File.join(bin_dir, "curl")])
+    FileUtils.chmod(0o755, [File.join(bin_dir, "cargo"), File.join(bin_dir, "curl"), File.join(bin_dir, "python3")])
     Open3.capture3(
       {
         "PATH" => "#{bin_dir}:#{ENV.fetch('PATH')}",
         "SAYA_METADATA_FILE" => metadata_path,
         "SAYA_CARGO_LOG" => cargo_log,
         "SAYA_CURL_LOG" => curl_log,
+        "SAYA_REJECT_CRATE" => reject_crate,
         "DRY_RUN" => "1",
       },
       "bash", File.join(scripts_dir, "publish-crates.sh")
@@ -409,7 +442,15 @@ output, error, status, cargo_log, curl_log = run_fixture.call(metadata.call(vers
 raise "valid publish fixture should pass: #{output}\n#{error}" unless status.success?
 published = output.lines.grep(/^stub cargo publish /).map { |line| line.split.fetch(4) }
 raise "publish order omitted saya-harness before saya-cli: #{published.inspect}" unless published == crates
+inspected = output.lines.grep(/^stub cargo package /).map { |line| line.split.fetch(3) }
+raise "actual package command missing for every crate" unless inspected == crates
+raise "content check did not run for every generated crate" unless output.lines.count { |line| line.include?("== inspect package ") } == crates.length
 raise "valid publish fixture should query each crate exactly once" unless error.lines.count { |line| line.start_with?("stub curl ") } == crates.length
+
+output, error, status, cargo_log, curl_log = run_fixture.call(metadata.call(versions), "saya-types-0.4.1")
+raise "rejected crate content should fail the publish run" if status.success?
+raise "content rejection should be reported" unless error.include?("synthetic content rejection")
+raise "rejected crate reached cargo publish" if output.include?("stub cargo publish")
 
 versions["saya-harness"] = "0.4.0"
 output, error, status, cargo_log, curl_log = run_fixture.call(metadata.call(versions))

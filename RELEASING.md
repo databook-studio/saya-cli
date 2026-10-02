@@ -44,6 +44,18 @@ run in order:
    failure during the check also fails, but reports "could not run" rather than
    staleness.
 
+Before an archive is checksummed, the build scans the executable and the
+generated archive. The archive must contain only its top-level release folder,
+the `saya` executable (or `saya.exe`), `README.md`, `LICENSE`, and
+`SECURITY.md`. Before each crates.io publish, including `DRY_RUN=1`, the
+publisher runs `cargo package --locked` with local workspace patches, then
+scans the generated `.crate` payload. The crate allowlist is Cargo's manifest,
+source, tests/examples/benches, and regression corpus plus package metadata and
+README/license metadata. Both checks reject unsafe paths, links, credentials,
+internal session/config files, and a synthetic leak marker. Executables are
+also scanned for embedded local home/workspace paths. This is content checking;
+checksums identify bytes, while signing and build provenance remain separate.
+
 Jobs 4 and 5 no-op unless their secrets are configured, so a release never fails
 because a channel is not set up. Job 6 honors that contract: with
 `HOMEBREW_TAP_TOKEN` unset it downgrades a stale tap to a `::warning`; with the
