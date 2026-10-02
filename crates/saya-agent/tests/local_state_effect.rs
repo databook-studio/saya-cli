@@ -206,7 +206,7 @@ async fn run_policy_turn(
     effect: ToolEffect,
     limits: AgentLimits,
     approval: &dyn ApprovalDecider,
-) -> (usize, Vec<String>) {
+) -> (usize, Vec<String>, Vec<String>) {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let events = Arc::new(Mutex::new(Vec::new()));
     let provider = PolicyProvider {
@@ -219,7 +219,7 @@ async fn run_policy_turn(
             .collect(),
         turn: Mutex::new(0),
     };
-    run_agent_with_sink(
+    let output = run_agent_with_sink(
         &provider,
         &RecordingExecutor {
             calls: calls.clone(),
@@ -244,7 +244,12 @@ async fn run_policy_turn(
             _ => None,
         })
         .collect();
-    (calls.lock().unwrap().len(), reasons)
+    let statuses = output
+        .tool_metadata
+        .into_iter()
+        .map(|metadata| metadata.status)
+        .collect();
+    (calls.lock().unwrap().len(), reasons, statuses)
 }
 
 /// A `WriteCandidate` tool is denied — not executed — when candidate writes
@@ -432,140 +437,97 @@ impl ApprovalDecider for AllowApproval {
     }
 }
 
+/// The independent expected policy for the public boundary matrix. A refused
+/// approval has precedence even when the same declaration is structurally
+/// restricted; a grant still cannot override any structural restriction.
+fn expected_policy(
+    effect: ToolEffect,
+    limits: AgentLimits,
+    approved: bool,
+) -> (&'static str, Option<&'static str>) {
+    if effect.requires_approval && !approved {
+        ("denied", Some("approval was not granted"))
+    } else if effect.external_side_effect
+        && !effect.requires_approval
+        && !limits.permit_external_effects
+    {
+        ("denied", Some("external side effect requires approval"))
+    } else if effect.local_state == LocalStateEffect::WriteCandidate
+        && !limits.permit_candidate_writes
+    {
+        ("denied", Some("candidate writes are not permitted"))
+    } else if effect.local_state == LocalStateEffect::WriteWorkspace
+        && !limits.permit_workspace_writes
+    {
+        ("denied", Some("workspace writes are not permitted"))
+    } else {
+        ("completed", None)
+    }
+}
+
 /// Every execution route consumes the same effect, permit, and approval
 /// policy: denied calls never reach the executor, while allowed calls run
 /// once each in both one-call and multi-call turns.
 #[tokio::test]
 async fn policy_matrix_matches_single_and_multi_call_execution() {
-    let cases = vec![
-        (
-            "no effect",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: false,
-                requires_approval: false,
-                local_state: LocalStateEffect::None,
-            },
-            AgentLimits::default(),
-            true,
-            None,
-        ),
-        (
-            "external effect without approval",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: true,
-                requires_approval: false,
-                local_state: LocalStateEffect::None,
-            },
-            AgentLimits::default(),
-            true,
-            Some("external side effect requires approval"),
-        ),
-        (
-            "external effect with plan permit",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: true,
-                requires_approval: false,
-                local_state: LocalStateEffect::None,
-            },
-            AgentLimits {
-                permit_external_effects: true,
-                ..AgentLimits::default()
-            },
-            true,
-            None,
-        ),
-        (
-            "candidate write without permit",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: false,
-                requires_approval: false,
-                local_state: LocalStateEffect::WriteCandidate,
-            },
-            AgentLimits::default(),
-            true,
-            Some("candidate writes are not permitted"),
-        ),
-        (
-            "workspace write without permit",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: false,
-                requires_approval: false,
-                local_state: LocalStateEffect::WriteWorkspace,
-            },
-            AgentLimits::default(),
-            true,
-            Some("workspace writes are not permitted"),
-        ),
-        (
-            "candidate write with permit",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: false,
-                requires_approval: false,
-                local_state: LocalStateEffect::WriteCandidate,
-            },
-            AgentLimits {
-                permit_candidate_writes: true,
-                ..AgentLimits::default()
-            },
-            true,
-            None,
-        ),
-        (
-            "external effect with refused approval",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: true,
-                requires_approval: true,
-                local_state: LocalStateEffect::None,
-            },
-            AgentLimits::default(),
-            false,
-            Some("approval was not granted"),
-        ),
-        (
-            "external effect with granted approval",
-            ToolEffect {
-                database_data: false,
-                external_side_effect: true,
-                requires_approval: true,
-                local_state: LocalStateEffect::None,
-            },
-            AgentLimits::default(),
-            true,
-            None,
-        ),
-    ];
-
-    for (name, effect, limits, approved, expected_denial) in cases {
-        let approval: &dyn ApprovalDecider = if approved {
-            &AllowApproval
-        } else {
-            &DenyApproval
-        };
-        for call_count in [1, 2] {
-            let (executed, reasons) = run_policy_turn(call_count, effect, limits, approval).await;
-            let expected_executed = if expected_denial.is_none() {
-                call_count
-            } else {
-                0
-            };
-            assert_eq!(executed, expected_executed, "{name}, {call_count} calls");
-            match expected_denial {
-                Some(reason) => assert_eq!(
-                    reasons,
-                    vec![reason; call_count],
-                    "{name}, {call_count} calls"
-                ),
-                None => assert!(
-                    reasons.is_empty(),
-                    "{name}, {call_count} calls: {reasons:?}"
-                ),
+    for local_state in [
+        LocalStateEffect::None,
+        LocalStateEffect::Read,
+        LocalStateEffect::WriteCandidate,
+        LocalStateEffect::WriteWorkspace,
+        LocalStateEffect::WriteSession,
+    ] {
+        for database_data in [false, true] {
+            for external_side_effect in [false, true] {
+                for requires_approval in [false, true] {
+                    for permits in 0..8 {
+                        let limits = AgentLimits {
+                            permit_candidate_writes: permits & 1 != 0,
+                            permit_workspace_writes: permits & 2 != 0,
+                            permit_external_effects: permits & 4 != 0,
+                            ..AgentLimits::default()
+                        };
+                        for approved in [false, true] {
+                            let effect = ToolEffect {
+                                database_data,
+                                external_side_effect,
+                                requires_approval,
+                                local_state,
+                            };
+                            let (status, denial) = expected_policy(effect, limits, approved);
+                            let approval: &dyn ApprovalDecider = if approved {
+                                &AllowApproval
+                            } else {
+                                &DenyApproval
+                            };
+                            for call_count in [1, 2] {
+                                let (executed, reasons, statuses) =
+                                    run_policy_turn(call_count, effect, limits, approval).await;
+                                assert_eq!(
+                                    executed,
+                                    if denial.is_some() { 0 } else { call_count },
+                                    "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                );
+                                assert_eq!(
+                                    statuses,
+                                    vec![status; call_count],
+                                    "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                );
+                                match denial {
+                                    Some(reason) => assert_eq!(
+                                        reasons,
+                                        vec![reason; call_count],
+                                        "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                    ),
+                                    None => assert!(
+                                        reasons.is_empty(),
+                                        "{effect:?}, permits={permits}, approved={approved}, {call_count} calls: {reasons:?}"
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
