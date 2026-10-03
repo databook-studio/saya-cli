@@ -9,7 +9,7 @@ use super::super::super::types::{
 use crate::interactive::session_state::SessionState;
 use crate::interactive::tui::capture_agent::{AgentCaptureOutcome, promote_agent_capture};
 use crate::render::tool_groups::is_failure_summary;
-use saya_agent::{AgentEvent, UsageCall};
+use saya_agent::{AgentEvent, ProviderRecoveryPhase, UsageCall};
 
 impl App {
     /// Drains any queued agent-stream messages into the transcript. Returns true
@@ -140,6 +140,18 @@ impl App {
                             self.pending_queries_desync = false;
                             self.agent_captures.clear_queue();
                         }
+                        AgentEvent::ProviderRecovery {
+                            phase: ProviderRecoveryPhase::Retrying,
+                            attempt,
+                            limit,
+                            ..
+                        } => {
+                            self.request.activity =
+                                Some(format!("retrying provider (attempt {attempt} of {limit})"));
+                        }
+                        AgentEvent::ProviderRecovery { .. } => {
+                            self.request.activity = None;
+                        }
                         // The answer has streamed but the turn is not over:
                         // extraction is a second provider call the loop awaits.
                         // Without this the status bar falls back to "thinking"
@@ -155,7 +167,11 @@ impl App {
                             call: UsageCall::Answer,
                             usage,
                         } => {
+                            self.request.record_answering_usage(*usage);
                             self.request.last_answering_input = Some(usage.input_tokens);
+                        }
+                        AgentEvent::FailedAttemptUsage { usage } => {
+                            self.request.record_answering_usage(*usage);
                         }
                         _ => {}
                     }
@@ -239,6 +255,7 @@ impl App {
             // turn must not show this one's figure if the provider goes
             // silent.
             self.request.last_answering_input = None;
+            self.request.known_answering_usage = None;
         }
         // No forced scroll: when the user is at the bottom the newest lines show
         // automatically; when they've scrolled up to read, streaming leaves them.

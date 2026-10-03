@@ -1,6 +1,7 @@
 use saya_agent::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, TokenUsage, ToolEffect, UsageCall, read_only_permits,
+    ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, TokenUsage, ToolEffect,
+    UsageCall, read_only_permits,
 };
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
@@ -193,6 +194,19 @@ pub enum TerminalEvent {
     /// `/usage`) and a pipe's reader has the answer above it.
     Usage {
         call: UsageCall,
+        usage: TokenUsage,
+    },
+    /// Nonterminal provider-attempt recovery progress. Text names the stable
+    /// phase and local reason; JSON/NDJSON preserve the typed fields.
+    ProviderRecovery {
+        phase: ProviderRecoveryPhase,
+        reason: ProviderRecoveryReason,
+        attempt: u8,
+        limit: u8,
+    },
+    /// Usage known from an attempt whose content was discarded. Machine output
+    /// carries it; text stays silent like successful per-call usage.
+    FailedAttemptUsage {
         usage: TokenUsage,
     },
     Result {
@@ -430,6 +444,23 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: String::new(),
             stderr: String::new(),
         },
+        TerminalEvent::FailedAttemptUsage { .. } => Rendered {
+            stdout: String::new(),
+            stderr: String::new(),
+        },
+        TerminalEvent::ProviderRecovery {
+            phase,
+            reason,
+            attempt,
+            limit,
+        } => Rendered {
+            stdout: format!(
+                "provider recovery: {} attempt {attempt} of {limit} ({})\n",
+                recovery_phase(*phase),
+                recovery_reason(*reason),
+            ),
+            stderr: String::new(),
+        },
         TerminalEvent::Result { message } => Rendered {
             stdout: format!("{message}\n"),
             stderr: String::new(),
@@ -478,6 +509,27 @@ fn text_event(event: &TerminalEvent) -> Rendered {
     Rendered {
         stdout: sanitize_terminal(&rendered.stdout),
         stderr: sanitize_terminal(&rendered.stderr),
+    }
+}
+
+fn recovery_phase(phase: ProviderRecoveryPhase) -> &'static str {
+    match phase {
+        ProviderRecoveryPhase::Retrying => "retrying",
+        ProviderRecoveryPhase::Exhausted => "exhausted",
+        ProviderRecoveryPhase::NotRetried => "not retried",
+        _ => "provider recovery",
+    }
+}
+
+fn recovery_reason(reason: ProviderRecoveryReason) -> &'static str {
+    match reason {
+        ProviderRecoveryReason::EmptyResponse => "empty response",
+        ProviderRecoveryReason::StreamEnded => "stream ended",
+        ProviderRecoveryReason::StreamByteLimit => "stream byte limit",
+        ProviderRecoveryReason::OutputTruncated => "output truncated",
+        ProviderRecoveryReason::ProviderFailure => "provider failure",
+        ProviderRecoveryReason::Cancelled => "cancelled",
+        _ => "provider failure",
     }
 }
 

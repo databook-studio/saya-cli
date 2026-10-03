@@ -253,6 +253,18 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // under a correct answer — the same regression that has shipped for
         // contentless variants here three times.
         AgentEvent::Usage { call, usage } => TerminalEvent::Usage { call, usage },
+        AgentEvent::FailedAttemptUsage { usage } => TerminalEvent::FailedAttemptUsage { usage },
+        AgentEvent::ProviderRecovery {
+            phase,
+            reason,
+            attempt,
+            limit,
+        } => TerminalEvent::ProviderRecovery {
+            phase,
+            reason,
+            attempt,
+            limit,
+        },
         AgentEvent::AnswerDesignated { sql } => TerminalEvent::AnswerDesignated { sql },
         AgentEvent::ConsensusDecided {
             sql,
@@ -1090,6 +1102,43 @@ mod tests {
             matches!(terminal, TerminalEvent::TurnReset),
             "must map to the dedicated variant: {terminal:?}"
         );
+    }
+
+    /// Failed-attempt usage and typed recovery progress are machine events,
+    /// not unrecognized fallbacks. The successful `Usage` event remains its
+    /// own variant for the context numerator.
+    #[test]
+    fn recovery_events_map_to_dedicated_terminal_variants() {
+        let recovery = terminal_event(AgentEvent::provider_recovery(
+            saya_agent::ProviderRecoveryPhase::Retrying,
+            saya_agent::ProviderRecoveryReason::StreamEnded,
+            1,
+            3,
+        ))
+        .expect("recovery progress renders");
+        assert!(matches!(
+            recovery,
+            TerminalEvent::ProviderRecovery {
+                phase: saya_agent::ProviderRecoveryPhase::Retrying,
+                reason: saya_agent::ProviderRecoveryReason::StreamEnded,
+                attempt: 1,
+                limit: 3,
+            }
+        ));
+        let usage = terminal_event(AgentEvent::failed_attempt_usage(
+            saya_agent::TokenUsage::new(7, 2),
+        ))
+        .expect("known failed usage renders for machine consumers");
+        assert!(matches!(
+            usage,
+            TerminalEvent::FailedAttemptUsage {
+                usage: saya_agent::TokenUsage {
+                    input_tokens: 7,
+                    output_tokens: 2,
+                    ..
+                }
+            }
+        ));
     }
 
     /// The text adapter closes the open delta line and prints a notice, so a

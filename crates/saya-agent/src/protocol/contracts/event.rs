@@ -8,7 +8,7 @@ use crate::protocol::streaming::TokenUsage;
 
 use super::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, ToolEffect, UsageCall,
+    ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, ToolEffect, UsageCall,
 };
 
 // `arguments` carries a `serde_json::Value`, which is not `Eq`, so this enum is
@@ -61,6 +61,19 @@ pub enum AgentEvent {
     /// here. A sink with nothing to roll back may ignore it; it carries no
     /// content and means nothing to a pipe.
     TurnStarted,
+    /// Typed, nonterminal progress for an attempt that did not produce a
+    /// usable response. `limit` is the fixed total number of provider attempts
+    /// allowed for this receive (four: the initial attempt plus three unchanged
+    /// backoff delays). `attempt` is one-based: it identifies the next attempt
+    /// for [`ProviderRecoveryPhase::Retrying`], and the settled last attempt for
+    /// [`ProviderRecoveryPhase::NotRetried`] or [`ProviderRecoveryPhase::Exhausted`].
+    /// No provider error text crosses this boundary.
+    ProviderRecovery {
+        phase: ProviderRecoveryPhase,
+        reason: ProviderRecoveryReason,
+        attempt: u8,
+        limit: u8,
+    },
     /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
     /// surfaced so the user can see exactly what will run before approving it.
     /// `effect` carries the tool's **declared effect** (`ToolEffect`) so a
@@ -184,6 +197,12 @@ pub enum AgentEvent {
     /// reported zero stays a number, an unreported one serializes `null`.
     Usage {
         call: UsageCall,
+        usage: TokenUsage,
+    },
+    /// The latest cumulative usage snapshot from an attempt that settled
+    /// without a usable response. It is separate from `Usage`, whose answering
+    /// reports remain the successful-response context signal.
+    FailedAttemptUsage {
         usage: TokenUsage,
     },
     /// The model designated the SQL that answers the question — emitted once,

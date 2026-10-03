@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::{ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
+use crate::{ProviderError, ProviderEvent};
 use async_trait::async_trait;
 use futures_util::stream;
 use std::sync::Mutex;
