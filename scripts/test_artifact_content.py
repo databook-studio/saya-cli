@@ -40,10 +40,10 @@ def tar_gz(path: Path, entries: dict[str, bytes | None], symlink: str | None = N
             archive.addfile(info)
 
 
-def zip_file(path: Path, entries: dict[str, bytes]) -> None:
+def zip_file(path: Path, entries: dict[str, bytes | None]) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         for name, content in entries.items():
-            archive.writestr(name, content)
+            archive.writestr(name, b"" if content is None else content)
 
 
 def valid_crate(path: Path, extra: dict[str, bytes | None] | None = None) -> None:
@@ -127,6 +127,22 @@ class ArtifactContentTests(unittest.TestCase):
             self.assert_rejected("archive", archive)
             self.assertIn("exactly one executable", result.stderr)
 
+    def test_windows_zip_with_explicit_root_directory_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "saya-0.4.2-x86_64-pc-windows-msvc.zip"
+            prefix = "saya-0.4.2-x86_64-pc-windows-msvc"
+            zip_file(
+                archive,
+                {
+                    f"{prefix}/": None,
+                    f"{prefix}/saya.exe": b"MZ public binary",
+                    f"{prefix}/README.md": b"public docs",
+                    f"{prefix}/LICENSE": b"license",
+                    f"{prefix}/SECURITY.md": b"security policy",
+                },
+            )
+            self.assertEqual(self.check("archive", archive).returncode, 0)
+
     def test_credential_filenames_are_rejected_only_for_non_code_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -181,6 +197,60 @@ class ArtifactContentTests(unittest.TestCase):
             with mock.patch.object(zipfile.ZipFile, "open", guarded_open):
                 with self.assertRaisesRegex(gate.Rejected, "size limit"):
                     gate.scan_archive(str(path), "archive")
+
+    def test_archive_input_limit_rejects_before_opening_the_container(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "saya-0.4.2-linux.zip"
+            zip_file(path, {"saya-0.4.2-linux/saya": b"binary"})
+            with mock.patch.object(GATE_MODULE, "MAX_ARCHIVE_INPUT_BYTES", 1, create=True):
+                with mock.patch.object(GATE_MODULE, "archive_entries", side_effect=AssertionError("container opened")):
+                    with self.assertRaisesRegex(GATE_MODULE.Rejected, "input size limit"):
+                        GATE_MODULE.scan_archive(str(path), "archive")
+
+    def test_zip_metadata_limit_rejects_before_stdlib_central_directory_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "saya-0.4.2-linux.zip"
+            prefix = "saya-0.4.2-linux"
+            zip_file(path, {
+                f"{prefix}/saya": b"binary",
+                f"{prefix}/README.md": b"docs",
+                f"{prefix}/LICENSE": b"license",
+                f"{prefix}/SECURITY.md": b"policy",
+            })
+            with mock.patch.object(GATE_MODULE, "MAX_ZIP_METADATA_BYTES", 8, create=True):
+                with mock.patch.object(zipfile.ZipFile, "__init__", side_effect=AssertionError("ZIP central directory parsed")):
+                    with self.assertRaisesRegex(GATE_MODULE.Rejected, "ZIP metadata size limit"):
+                        GATE_MODULE.scan_archive(str(path), "archive")
+            with mock.patch.object(GATE_MODULE, "MAX_ARCHIVE_ENTRIES", 0):
+                with mock.patch.object(zipfile.ZipFile, "__init__", side_effect=AssertionError("ZIP entries allocated")):
+                    with self.assertRaisesRegex(GATE_MODULE.Rejected, "too many entries"):
+                        GATE_MODULE.scan_archive(str(path), "archive")
+
+    def test_tar_extension_metadata_limit_precedes_tarfile_payload_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "saya-0.4.2-linux.tar.gz"
+            with tarfile.open(path, "w:gz", format=tarfile.PAX_FORMAT) as archive:
+                info = tarfile.TarInfo("saya-0.4.2-linux/" + "long-name-" * 16)
+                info.size = 1
+                archive.addfile(info, io.BytesIO(b"x"))
+            with mock.patch.object(GATE_MODULE, "MAX_TAR_METADATA_BYTES", 32, create=True):
+                with mock.patch.object(tarfile.TarInfo, "_proc_pax", side_effect=AssertionError("PAX body allocated")):
+                    with self.assertRaisesRegex(GATE_MODULE.Rejected, "tar metadata size limit"):
+                        GATE_MODULE.scan_archive(str(path), "archive")
+
+    def test_tar_expanded_read_limit_bounds_stream_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "saya-0.4.2-linux.tar.gz"
+            prefix = "saya-0.4.2-linux"
+            tar_gz(path, {
+                f"{prefix}/saya": b"binary payload",
+                f"{prefix}/README.md": b"docs",
+                f"{prefix}/LICENSE": b"license",
+                f"{prefix}/SECURITY.md": b"policy",
+            })
+            with mock.patch.object(GATE_MODULE, "MAX_ARCHIVE_EXPANDED_BYTES", 512):
+                with self.assertRaisesRegex(GATE_MODULE.Rejected, "expanded data exceeds"):
+                    GATE_MODULE.scan_archive(str(path), "archive")
 
     def test_binary_streaming_detects_markers_across_chunks_without_unbounded_reads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -338,6 +408,47 @@ class ReleaseScriptIntegrationTests(unittest.TestCase):
         legacy_encoded = legacy.stdout.decode().split("\0")[0].split("\x1f")
         self.assertEqual(legacy_encoded, [
             "-C", "debuginfo=0",
+            "--remap-path-prefix=/tmp/saya workspace=/saya",
+            "--remap-path-prefix=/tmp/cargo home=/cargo",
+        ])
+
+    def test_release_build_env_preserves_multiline_and_encoded_argument_flags(self) -> None:
+        helper = ROOT / "scripts" / "release-build-env.sh"
+        command = (
+            f'source "{helper}"; configure_saya_release_build_env "$WORKSPACE"; '
+            'printf "%s" "$CARGO_ENCODED_RUSTFLAGS"'
+        )
+        base = os.environ | {
+            "WORKSPACE": "/tmp/saya workspace",
+            "CARGO_HOME": "/tmp/cargo home",
+        }
+        legacy_env = dict(base)
+        legacy_env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+        legacy_env["RUSTFLAGS"] = "-C opt-level=3\n-C debuginfo=0"
+        legacy = subprocess.run(["bash", "-c", command], cwd=ROOT, env=legacy_env, capture_output=True, check=False)
+        self.assertEqual(legacy.returncode, 0, legacy.stderr.decode())
+        self.assertEqual(legacy.stdout.decode().split("\x1f"), [
+            "-C", "opt-level=3", "-C", "debuginfo=0",
+            "--remap-path-prefix=/tmp/saya workspace=/saya",
+            "--remap-path-prefix=/tmp/cargo home=/cargo",
+        ])
+
+        encoded_env = dict(base)
+        encoded_env["CARGO_ENCODED_RUSTFLAGS"] = "--cfg\x1ffeature=custom build\x1f"
+        encoded_env["RUSTFLAGS"] = "-C opt-level=3\n-C debuginfo=0"
+        encoded = subprocess.run(["bash", "-c", command], cwd=ROOT, env=encoded_env, capture_output=True, check=False)
+        self.assertEqual(encoded.returncode, 0, encoded.stderr.decode())
+        self.assertEqual(encoded.stdout.decode().split("\x1f"), [
+            "--cfg", "feature=custom build", "",
+            "--remap-path-prefix=/tmp/saya workspace=/saya",
+            "--remap-path-prefix=/tmp/cargo home=/cargo",
+        ])
+
+        empty_encoded_env = dict(encoded_env)
+        empty_encoded_env["CARGO_ENCODED_RUSTFLAGS"] = ""
+        empty_encoded = subprocess.run(["bash", "-c", command], cwd=ROOT, env=empty_encoded_env, capture_output=True, check=False)
+        self.assertEqual(empty_encoded.returncode, 0, empty_encoded.stderr.decode())
+        self.assertEqual(empty_encoded.stdout.decode().split("\x1f"), [
             "--remap-path-prefix=/tmp/saya workspace=/saya",
             "--remap-path-prefix=/tmp/cargo home=/cargo",
         ])
