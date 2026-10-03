@@ -27,7 +27,10 @@ use std::{
     collections::VecDeque,
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use async_trait::async_trait;
@@ -47,7 +50,8 @@ use saya_harness::journal::Journal;
 use saya_harness::lock::RunLock;
 use saya_harness::workspace::Workspace;
 use saya_store::{
-    NewRun, RunBudgets, RunCapabilityFlags, RunStatus, RunStepStatus, RunStore, SqliteStateStore,
+    NewRun, RunBudgets, RunCapabilityFlags, RunRecord, RunStatus, RunStepRecord, RunStepStatus,
+    RunStore, RunSummary, RunUsage, SqliteStateStore, StoreError,
 };
 use saya_types::{Capabilities, PauseReason, RunEvent, RunId, RunPlan, StepSpec};
 
@@ -125,11 +129,14 @@ impl ChatProvider for UsageProvider {
 
 /// No scripted turn ever calls a tool; executing one is a test failure.
 #[derive(Default)]
-struct NoTools;
+struct NoTools {
+    calls: Arc<AtomicUsize>,
+}
 
 #[async_trait]
 impl ToolExecutor for NoTools {
     async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
         panic!("no resume test may execute a tool call")
     }
 }
@@ -142,6 +149,66 @@ struct AllowApproval;
 impl ApprovalDecider for AllowApproval {
     async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
         true
+    }
+}
+
+/// A store adapter that refuses exactly the first `running` step mirror while
+/// leaving the real journal and database available for assertions.
+struct RefuseStepMirrorStore {
+    inner: SqliteStateStore,
+    refuse_status: RunStepStatus,
+}
+
+#[async_trait]
+impl RunStore for RefuseStepMirrorStore {
+    async fn create_run(&self, run: NewRun) -> Result<RunRecord, StoreError> {
+        RunStore::create_run(&self.inner, run).await
+    }
+
+    async fn get_run(&self, id: &RunId) -> Result<Option<RunRecord>, StoreError> {
+        RunStore::get_run(&self.inner, id).await
+    }
+
+    async fn list_runs(&self) -> Result<Vec<RunSummary>, StoreError> {
+        RunStore::list_runs(&self.inner).await
+    }
+
+    async fn set_run_status(
+        &self,
+        id: &RunId,
+        status: RunStatus,
+        failure_code: Option<saya_types::RunFailureCode>,
+    ) -> Result<(), StoreError> {
+        RunStore::set_run_status(&self.inner, id, status, failure_code).await
+    }
+
+    async fn set_run_usage(&self, id: &RunId, usage: RunUsage) -> Result<(), StoreError> {
+        RunStore::set_run_usage(&self.inner, id, usage).await
+    }
+
+    async fn upsert_step(
+        &self,
+        id: &RunId,
+        step: usize,
+        status: RunStepStatus,
+    ) -> Result<(), StoreError> {
+        if status == self.refuse_status {
+            return Err(StoreError::unavailable());
+        }
+        RunStore::upsert_step(&self.inner, id, step, status).await
+    }
+
+    async fn set_step_usage(
+        &self,
+        id: &RunId,
+        step: usize,
+        usage: RunUsage,
+    ) -> Result<(), StoreError> {
+        RunStore::set_step_usage(&self.inner, id, step, usage).await
+    }
+
+    async fn list_steps(&self, id: &RunId) -> Result<Vec<RunStepRecord>, StoreError> {
+        RunStore::list_steps(&self.inner, id).await
     }
 }
 
@@ -185,6 +252,7 @@ struct CrashedRun {
     run_id: RunId,
     stubs: Stubs,
     plan: RunPlan,
+    tool_calls: Arc<AtomicUsize>,
     /// One toolset per plan step, over one shared `NoTools` executor — no
     /// resume test under this rig executes a tool call.
     toolsets: Vec<StepToolset>,
@@ -200,6 +268,7 @@ impl CrashedRun {
             run_id: self.run_id.clone(),
             store: self.store.clone(),
             plan: self.plan.clone(),
+            incomplete_policy: saya_harness::engine::IncompletePolicy::Conservative,
             workspace: workspace(&self.root),
             collaborators: EpisodeCollaborators {
                 provider: &self.stubs.provider,
@@ -297,7 +366,9 @@ async fn crashed_run(
     for event in events {
         journal.append(event).unwrap();
     }
-    let executor: Arc<dyn ToolExecutor> = Arc::new(NoTools);
+    let no_tools = Arc::new(NoTools::default());
+    let tool_calls = Arc::clone(&no_tools.calls);
+    let executor: Arc<dyn ToolExecutor> = no_tools;
     let toolsets = (0..plan.steps.len())
         .map(|_| StepToolset {
             executor: Arc::clone(&executor),
@@ -311,6 +382,7 @@ async fn crashed_run(
         run_id,
         stubs: Stubs::default(),
         plan,
+        tool_calls,
         toolsets,
     }
 }
@@ -352,7 +424,9 @@ async fn driven_run(label: &str) -> CrashedRun {
         .await
         .unwrap();
     let plan = two_step_plan();
-    let executor: Arc<dyn ToolExecutor> = Arc::new(NoTools);
+    let no_tools = Arc::new(NoTools::default());
+    let tool_calls = Arc::clone(&no_tools.calls);
+    let executor: Arc<dyn ToolExecutor> = no_tools;
     let toolsets: Vec<StepToolset> = (0..plan.steps.len())
         .map(|_| StepToolset {
             executor: Arc::clone(&executor),
@@ -389,6 +463,7 @@ async fn driven_run(label: &str) -> CrashedRun {
         run_id,
         stubs,
         plan,
+        tool_calls,
         toolsets,
     }
 }
@@ -610,8 +685,6 @@ async fn a_step_executing_at_the_crash_restarts_from_its_start() {
     );
 }
 
-/// A second engine on the same run directory is refused while the first
-/// holds the lock — and succeeds once the lock is released.
 #[tokio::test]
 async fn a_second_engine_on_the_same_run_directory_is_refused() {
     let run = crashed_run(
@@ -735,6 +808,7 @@ fn budgeted_inputs<'a>(
         run_id: run.run_id.clone(),
         store: run.store.clone(),
         plan: run.plan.clone(),
+        incomplete_policy: saya_harness::engine::IncompletePolicy::Conservative,
         workspace: workspace(&run.root),
         collaborators: EpisodeCollaborators {
             provider,
@@ -1025,6 +1099,7 @@ fn download_inputs<'a>(
         run_id: run.run_id.clone(),
         store: run.store.clone(),
         plan: run.plan.clone(),
+        incomplete_policy: saya_harness::engine::IncompletePolicy::Conservative,
         workspace: workspace(&run.root),
         collaborators: EpisodeCollaborators {
             provider,
@@ -1218,3 +1293,6 @@ async fn a_resumed_download_claims_the_carried_headroom_and_records_the_level_it
          carried spend, never the carried spend again"
     );
 }
+
+#[path = "engine_resume/uncertainty.rs"]
+mod uncertainty;

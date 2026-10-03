@@ -11,12 +11,13 @@ use super::exit::{Settled, settle};
 use super::mode::RunApproval;
 use super::{parse_run_id, runs_dir};
 use crate::config::runtime::RuntimeConfig;
-use crate::render::RenderFormat;
+use crate::render::{RenderFormat, ResumeEffectCode};
 use crate::render_run;
 use crate::stream_render::TerminalSink;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_harness::engine::{
-    EpisodeCollaborators, EpisodeRequest, ResumeRun, RunState, resume as engine_resume,
+    EpisodeCollaborators, EpisodeRequest, IncompletePolicy, ResumeOutcome, ResumeRun, RunState,
+    resume as engine_resume,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -29,6 +30,7 @@ pub(super) async fn resume(
     format: RenderFormat,
     approval: ApprovalPolicy,
     state: &SqliteStateStore,
+    retry_incomplete: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let run_id = parse_run_id(raw_id)?;
     // The entry guard, shared with every other entry point into a run
@@ -64,7 +66,14 @@ pub(super) async fn resume(
         dir,
         state,
     };
-    let work = continue_run(runtime, inputs, format, approval, cancellation.clone());
+    let work = continue_run(
+        runtime,
+        inputs,
+        format,
+        approval,
+        cancellation.clone(),
+        retry_incomplete,
+    );
     tokio::pin!(work);
     match tokio::select! {
         result = &mut work => result,
@@ -94,6 +103,7 @@ async fn continue_run(
     format: RenderFormat,
     approval: RunApproval,
     cancellation: CancellationToken,
+    retry_incomplete: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let ResumeInputs {
         spec,
@@ -160,6 +170,11 @@ async fn continue_run(
         run_id: run_id.clone(),
         store: store.clone(),
         plan: plan.clone(),
+        incomplete_policy: if retry_incomplete {
+            IncompletePolicy::Retry
+        } else {
+            IncompletePolicy::Conservative
+        },
         workspace: (*workspace).clone(),
         collaborators: EpisodeCollaborators {
             provider: &*pieces.provider,
@@ -189,8 +204,7 @@ async fn continue_run(
     };
     match engine_resume(&dir, resumed).await {
         Ok(outcome) => match outcome {
-            saya_harness::engine::ResumeOutcome::Resumed { state, .. }
-            | saya_harness::engine::ResumeOutcome::Settled { state } => {
+            ResumeOutcome::Resumed { state, .. } | ResumeOutcome::Settled { state } => {
                 // The outcome's state is authoritative; the journal tail
                 // supplies only the typed cause of a terminal failure.
                 let code = match state {
@@ -199,10 +213,9 @@ async fn continue_run(
                 };
                 settle(Settled { state, code }, &run_id, format)
             }
-            outcome @ (saya_harness::engine::ResumeOutcome::Unapproved
-            | saya_harness::engine::ResumeOutcome::NoRun) => {
+            outcome @ (ResumeOutcome::Unapproved | ResumeOutcome::NoRun) => {
                 let why = match outcome {
-                    saya_harness::engine::ResumeOutcome::Unapproved => {
+                    ResumeOutcome::Unapproved => {
                         "was never approved, so there is nothing to resume; start a new run \
                          with `saya run`"
                     }
@@ -210,6 +223,17 @@ async fn continue_run(
                 };
                 crate::commands::output::failure_message(2, format!("run {run_id} {why}"), format)
             }
+            ResumeOutcome::IncompleteEffects {
+                step,
+                goal,
+                effects,
+            } => crate::commands::output::resume_uncertain(
+                bounded_run_id(&run_id),
+                step + 1,
+                bounded_redacted_goal(&goal),
+                effects.into_iter().map(effect_code).collect(),
+                format,
+            ),
         },
         Err(error) => {
             // Mid-resume failure: the journal tail is the durable authority
@@ -230,5 +254,57 @@ async fn continue_run(
                 _ => crate::commands::output::failure_message(3, error.to_string(), format),
             }
         }
+    }
+}
+
+const MAX_RESUME_RUN_ID_CHARS: usize = 64;
+const MAX_RESUME_GOAL_CHARS: usize = 160;
+
+fn bounded_run_id(run_id: &saya_types::RunId) -> String {
+    run_id
+        .as_str()
+        .chars()
+        .take(MAX_RESUME_RUN_ID_CHARS)
+        .collect()
+}
+
+fn bounded_redacted_goal(goal: &str) -> String {
+    let redacted = saya_types::redact(goal);
+    let mut bounded = redacted
+        .chars()
+        .take(MAX_RESUME_GOAL_CHARS)
+        .collect::<String>();
+    if redacted.chars().count() > MAX_RESUME_GOAL_CHARS {
+        bounded.push('…');
+    }
+    bounded
+}
+
+fn effect_code(effect: saya_harness::engine::ResumeEffect) -> ResumeEffectCode {
+    use saya_harness::engine::ResumeEffect as E;
+    match effect {
+        E::WorkspaceWrite => ResumeEffectCode::WorkspaceWrite,
+        E::Scratch => ResumeEffectCode::Scratch,
+        E::Runner => ResumeEffectCode::Runner,
+        E::Interpreter => ResumeEffectCode::Interpreter,
+        E::Fetch => ResumeEffectCode::Fetch,
+        E::ExternalSideEffect => ResumeEffectCode::ExternalSideEffect,
+        E::LocalStateWrite => ResumeEffectCode::LocalStateWrite,
+        E::Unknown => ResumeEffectCode::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uncertainty_goal_is_redacted_and_bounded() {
+        let raw = format!("token=private {}", "g".repeat(300));
+        let goal = bounded_redacted_goal(&raw);
+        assert!(goal.contains("token=[redacted]"));
+        assert!(!goal.contains("private"));
+        assert_eq!(goal.chars().count(), MAX_RESUME_GOAL_CHARS + 1);
+        assert!(goal.ends_with('…'));
     }
 }
