@@ -35,6 +35,7 @@ pub(crate) async fn run(
     context: &McpContext,
     request: &CallToolRequestParams,
     request_context: &RequestContext<RoleServer>,
+    request_deadline: tokio::time::Instant,
 ) -> Result<CallToolResponse, ErrorData> {
     let response = if catalog::is_row_returning(&request.name) && !policy.allow_data_sharing() {
         Ok(error_result(format!(
@@ -47,8 +48,13 @@ pub(crate) async fn run(
             "contracts" => context_tools::contracts(policy, context, request).await,
             "investigation_run" => replay_tools::investigation_run(policy, context, request).await,
             "list_profiles" => run_list_profiles(policy, request).await,
-            "query" => query_tool::query(policy, context, request, request_context).await,
-            "schema" => schema_tool::schema(policy, context, request).await,
+            "query" => {
+                query_tool::query(policy, context, request, request_context, request_deadline).await
+            }
+            "schema" => {
+                schema_tool::schema(policy, context, request, request_context, request_deadline)
+                    .await
+            }
             other => Err(ErrorData::new(
                 ErrorCode::METHOD_NOT_FOUND,
                 format!("unknown tool: {other}"),

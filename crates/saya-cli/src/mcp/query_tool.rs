@@ -1,27 +1,34 @@
 //! The `query` tool (task Db): one bounded, read-only SQL statement through
 //! the connector's safety gate — the same `execute` path `saya query` takes,
 //! with the same configured row cap — returned with execution evidence
-//! naming this server as the source. A cancelled call stops waiting; where
-//! the connector supports cancellation, it is attempted before the unsent
-//! error is dropped.
+//! naming this server as the source. Cancellation and timeout request
+//! connector cancellation but retain the execute future until it settles;
+//! the request outcome does not prove the database stopped.
 
 use std::time::Instant;
 
+use crate::interactive::sql_operation::cancellation::SettledQuery;
 use rmcp::{
     RoleServer,
     model::{CallToolRequestParams, CallToolResponse, CallToolResult, RequestId},
     service::RequestContext,
 };
+use saya_agent::CancellationToken;
 use saya_connectors::DatabaseConnector;
 use saya_store::AuditStatus;
 use saya_types::{
     EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, QueryRequest, QueryResult,
 };
 
+#[cfg(test)]
+#[path = "query_tool_tests.rs"]
+mod query_tool_tests;
+
 use super::{
     connector::{audit, build_connector, unix_now_ms},
     context::McpContext,
     policy::ServePolicy,
+    query_cancellation::{QueryExecution, settle_query_execution},
     tools,
 };
 
@@ -30,6 +37,7 @@ pub(crate) async fn query(
     context: &McpContext,
     request: &CallToolRequestParams,
     request_context: &RequestContext<RoleServer>,
+    request_deadline: tokio::time::Instant,
 ) -> Result<CallToolResponse, rmcp::ErrorData> {
     let name = tools::required_string(request, "profile")?;
     let sql = tools::required_string(request, "sql")?;
@@ -37,23 +45,53 @@ pub(crate) async fn query(
         Ok(pair) => pair,
         Err(message) => return Ok(tools::error_result(message)),
     };
+    let cancellation = CancellationToken::new();
+    let deadline = request_deadline;
+    if let Some(result) =
+        stopped_before_execute(request_context.ct.is_cancelled(), deadline, &cancellation)
+    {
+        return Ok(result);
+    }
     let connector = match build_connector(&profile, context).await {
         Ok(connector) => connector,
         Err(message) => return Ok(tools::error_result(message)),
     };
+    if let Some(result) =
+        stopped_before_execute(request_context.ct.is_cancelled(), deadline, &cancellation)
+    {
+        return Ok(result);
+    }
     if let Err(error) = connector.connect().await {
         return Ok(tools::error_result(error.to_string()));
+    }
+    if let Some(result) =
+        stopped_before_execute(request_context.ct.is_cancelled(), deadline, &cancellation)
+    {
+        return Ok(result);
     }
     let started = Instant::now();
     let started_unix_ms = unix_now_ms();
     let max_rows = context.runtime.resolved.max_rows;
-    let execution = connector.execute(QueryRequest::new(sql, max_rows));
-    let outcome = tokio::select! {
-        _ = request_context.ct.cancelled() => {
-            let _ = connector.cancel().await;
-            return Ok(tools::error_result("the call was cancelled"));
+    let outcome = settle_query_execution(
+        connector.as_ref(),
+        QueryRequest::new(sql, max_rows),
+        &cancellation,
+        request_context.ct.cancelled(),
+        || request_context.ct.is_cancelled(),
+        deadline,
+    )
+    .await;
+    let outcome = match outcome {
+        QueryExecution::Completed(settled) => settled.result,
+        QueryExecution::Cancelled(settled) => {
+            return Ok(cancellation_result(settled, "the call was cancelled"));
         }
-        outcome = execution => outcome,
+        QueryExecution::TimedOut(settled) => {
+            return Ok(cancellation_result(
+                settled,
+                "the database operation exceeded its 30-second cancellation-request deadline",
+            ));
+        }
     };
     match outcome {
         Ok(result) => {
@@ -88,6 +126,31 @@ pub(crate) async fn query(
             .await;
             Ok(tools::error_result(error.to_string()))
         }
+    }
+}
+
+fn cancellation_result(settled: Option<SettledQuery>, message: &str) -> CallToolResponse {
+    match settled.and_then(|settled| settled.cancel_request) {
+        Some(Err(error)) => tools::error_result(error.to_string()),
+        _ => tools::error_result(message),
+    }
+}
+
+fn stopped_before_execute(
+    source_cancelled: bool,
+    deadline: tokio::time::Instant,
+    cancellation: &CancellationToken,
+) -> Option<CallToolResponse> {
+    if source_cancelled {
+        cancellation.cancel();
+        Some(tools::error_result("the call was cancelled"))
+    } else if tokio::time::Instant::now() >= deadline {
+        cancellation.cancel();
+        Some(tools::error_result(
+            "the database operation exceeded its 30-second cancellation-request deadline",
+        ))
+    } else {
+        None
     }
 }
 

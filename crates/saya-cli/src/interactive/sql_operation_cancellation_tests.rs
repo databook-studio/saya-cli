@@ -12,7 +12,47 @@ use tokio::sync::{Mutex, oneshot};
 
 static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
-use super::cancellation::execute_with_cancellation;
+use super::cancellation::{execute_with_cancellation, execute_with_cancellation_outcome};
+
+struct CountExecution(AtomicUsize);
+
+#[async_trait]
+impl DatabaseConnector for CountExecution {
+    fn dialect(&self) -> SqlDialect {
+        SqlDialect::Sqlite
+    }
+
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Ok(SchemaTree::default())
+    }
+
+    async fn execute(&self, request: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Ok(QueryResult::empty(request.sql))
+    }
+}
+
+#[tokio::test]
+async fn already_cancelled_operation_token_prevents_first_native_execute_poll() {
+    let connector = CountExecution(AtomicUsize::new(0));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let settled = execute_with_cancellation_outcome(
+        &connector,
+        QueryRequest::new("select 1", 1),
+        &cancellation,
+    )
+    .await;
+
+    assert!(matches!(settled.result, Err(ConnectionError::Cancelled)));
+    assert!(settled.cancel_request.is_none());
+    assert_eq!(connector.0.load(Ordering::Relaxed), 0);
+}
 
 struct ExecutionTrace {
     first_pending: Mutex<Option<oneshot::Sender<()>>>,

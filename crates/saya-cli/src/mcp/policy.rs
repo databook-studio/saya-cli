@@ -23,7 +23,7 @@ pub(crate) const MAX_REQUEST_BYTES: usize = 1_048_576;
 /// queued.
 pub(crate) const MAX_IN_FLIGHT: usize = 4;
 
-/// Wall-clock ceiling per tool call.
+/// Database cancellation-request deadline and other-tool wall-clock ceiling.
 pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Largest accepted serialized tool response, in bytes (16 MiB).
