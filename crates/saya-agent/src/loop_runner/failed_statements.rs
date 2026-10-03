@@ -112,15 +112,14 @@ pub(super) fn is_repeat(failed: &FailedStatements, call: &ToolCall) -> bool {
 }
 
 /// The completion summary for a refused repeat, kept as a constant so the
-/// batch-path and sequential-path status derivations (`contains("failed")`)
-/// agree. The wording names the *call* — statement or not — so it stays
-/// honest for a non-SQL tool.
+/// batch and sequential typed outcomes agree. The wording names the *call* —
+/// statement or not — so it stays honest for a non-SQL tool.
 pub(super) const REFUSAL_SUMMARY: &str = "call already failed earlier in this run";
 
 /// The tool result and summary returned when a repeat of a known failure is
 /// refused. The result names the error the earlier attempt produced so the
-/// model has the information it needs to change approach; the summary drives
-/// `tool_metadata.status` (it contains "failed", so the status is "failed").
+/// model has the information it needs to change approach; callers retain the
+/// refusal's typed failed outcome alongside this model-facing text.
 pub(super) fn refuse_repeat(prior_error: &str) -> (serde_json::Value, &'static str) {
     (
         serde_json::json!({"error": format!("this call already failed earlier in this run; it will fail again. Change your approach instead. Last error: {prior_error}")}),

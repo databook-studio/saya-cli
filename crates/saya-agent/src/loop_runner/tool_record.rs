@@ -25,8 +25,10 @@ const MAX_RECORDED_COLUMN_NAME_BYTES: usize = 256;
 /// JSON (e.g. `render_chart`'s `{path, note}` or the `result_shape` tool's own
 /// `{columns: [{name, type}]}`). When `columns` is absent, not an array, or
 /// not all strings, the result is treated as non-row-shaped and `None` is
-/// returned. An empty result still names its columns, so a zero-row query
-/// yields `Some` with the names and `row_count: 0`.
+/// returned. To avoid representing an incomplete column list as complete,
+/// results with more than 128 names or any name longer than 256 bytes are
+/// also unknown (`None`). An empty result still names its columns, so a
+/// zero-row query yields `Some` with the names and `row_count: 0`.
 pub(super) fn result_shape_of(result: &Value) -> Option<ToolResultShape> {
     let row_count = result.get("row_count")?.as_u64()?;
     let columns = result.get("columns")?.as_array()?;
@@ -34,27 +36,21 @@ pub(super) fn result_shape_of(result: &Value) -> Option<ToolResultShape> {
     // happens to carry a `row_count` key (none today) or object-typed columns
     // (the `result_shape` tool's own output) is left as `None` so it is not
     // mistaken for a row-shaped query result.
-    if !columns.iter().all(Value::is_string) {
+    if columns.len() > MAX_RECORDED_COLUMNS
+        || !columns.iter().all(|column| {
+            column.is_string()
+                && column
+                    .as_str()
+                    .is_some_and(|name| name.len() <= MAX_RECORDED_COLUMN_NAME_BYTES)
+        })
+    {
         return None;
     }
     let columns = columns
         .iter()
-        .take(MAX_RECORDED_COLUMNS)
-        .map(|name| bound_column_name(name.as_str().unwrap_or("")))
+        .map(|name| name.as_str().unwrap_or("").to_owned())
         .collect();
     Some(ToolResultShape { row_count, columns })
-}
-
-fn bound_column_name(name: &str) -> String {
-    if name.len() <= MAX_RECORDED_COLUMN_NAME_BYTES {
-        return name.to_owned();
-    }
-    let marker = "...[truncated]";
-    let head = super::tools::floor_boundary(
-        name,
-        MAX_RECORDED_COLUMN_NAME_BYTES.saturating_sub(marker.len()),
-    );
-    format!("{}{marker}", &name[..head])
 }
 
 #[cfg(test)]
@@ -114,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn result_shape_of_bounds_column_metadata_without_copying_rows() {
+    fn result_shape_of_is_unknown_when_column_metadata_exceeds_its_bound() {
         let result = serde_json::json!({
             "columns": (0..(MAX_RECORDED_COLUMNS + 3))
                 .map(|index| format!("column_{index}_{}", "x".repeat(300)))
@@ -122,18 +118,9 @@ mod tests {
             "rows": [["SECRET_CELL_9f3a"]],
             "row_count": 1,
         });
-        let shape = result_shape_of(&result).expect("row result has a shape");
-        assert_eq!(shape.columns.len(), MAX_RECORDED_COLUMNS);
         assert!(
-            shape
-                .columns
-                .iter()
-                .all(|column| column.len() <= MAX_RECORDED_COLUMN_NAME_BYTES)
-        );
-        assert!(
-            !serde_json::to_string(&shape)
-                .expect("shape serializes")
-                .contains("SECRET_CELL_9f3a")
+            result_shape_of(&result).is_none(),
+            "partial columns must be recorded as unknown, never complete"
         );
     }
 }
