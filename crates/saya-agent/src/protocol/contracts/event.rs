@@ -62,9 +62,12 @@ pub enum AgentEvent {
     /// content and means nothing to a pipe.
     TurnStarted,
     /// Typed, nonterminal progress for an attempt that did not produce a
-    /// usable response. `attempt` is one-based; `limit` is the fixed number of
-    /// retry delays available for this receive. No provider error text crosses
-    /// this boundary.
+    /// usable response. `limit` is the fixed total number of provider attempts
+    /// allowed for this receive (four: the initial attempt plus three unchanged
+    /// backoff delays). `attempt` is one-based: it identifies the next attempt
+    /// for [`ProviderRecoveryPhase::Retrying`], and the settled last attempt for
+    /// [`ProviderRecoveryPhase::NotRetried`] or [`ProviderRecoveryPhase::Exhausted`].
+    /// No provider error text crosses this boundary.
     ProviderRecovery {
         phase: ProviderRecoveryPhase,
         reason: ProviderRecoveryReason,
