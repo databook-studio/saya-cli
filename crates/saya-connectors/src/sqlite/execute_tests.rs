@@ -57,7 +57,10 @@ async fn cancelled_query_reports_cancellation_not_timeout() {
     });
     // Let the statement start before cancelling it.
     tokio::time::sleep(Duration::from_millis(200)).await;
-    connector.cancel().await.unwrap();
+    assert_eq!(
+        connector.request_cancel().await.unwrap(),
+        crate::CancelRequestOutcome::LocalInterruptRequested
+    );
     let result = tokio::time::timeout(Duration::from_secs(5), task)
         .await
         .expect("cancelled query stops within seconds")
@@ -65,6 +68,73 @@ async fn cancelled_query_reports_cancellation_not_timeout() {
     assert!(
         matches!(result, Err(ConnectionError::Cancelled)),
         "a cancelled query reports cancellation, not a timeout: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn cancellation_during_pool_acquisition_survives_and_connector_is_reusable() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = dir.path().join("acquire-cancel.db");
+    let seed = SqlitePool::connect_with(
+        SqliteConnectOptions::new()
+            .filename(&db)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    seed.close().await;
+    let connector = Arc::new(
+        SqliteConnector::open(
+            &db,
+            true,
+            ConnectorOptions {
+                query_timeout_seconds: 30,
+                max_connections: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap(),
+    );
+    let held = connector.pool.acquire().await.unwrap();
+    let runner = connector.clone();
+    let task = tokio::spawn(async move {
+        runner
+            .execute(QueryRequest::new(SLOW_QUERY.to_string(), 1))
+            .await
+    });
+
+    // The current-thread test runtime polls execute until it blocks on the
+    // only pool connection before this cancellation is sent.
+    tokio::task::yield_now().await;
+    assert_eq!(
+        connector.request_cancel().await.unwrap(),
+        crate::CancelRequestOutcome::LocalInterruptRequested
+    );
+    drop(held);
+
+    let result = tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("cancellation requested during acquisition reaches the VM")
+        .unwrap();
+    assert!(
+        matches!(result, Err(ConnectionError::Cancelled)),
+        "the acquired query reports cancellation: {result:?}"
+    );
+
+    let fresh = connector
+        .execute(QueryRequest::new("SELECT 1".to_owned(), 1))
+        .await
+        .expect("a new query starts with fresh cancellation state");
+    assert_eq!(fresh.row_count, 1);
+}
+
+#[tokio::test]
+async fn idle_cancellation_reports_no_active_operation() {
+    let (connector, _dir) = open(10).await;
+    assert_eq!(
+        connector.request_cancel().await.unwrap(),
+        crate::CancelRequestOutcome::NoActiveOperation
     );
 }
 
