@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use duckdb::{AccessMode, Config, Connection, InterruptHandle};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 
-use crate::{ConnectorOptions, DatabaseConnector};
+use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector};
 
 pub struct DuckDbConnector {
     pub(crate) connection: Arc<Mutex<Connection>>,
@@ -81,6 +81,11 @@ impl DatabaseConnector for DuckDbConnector {
         self.interrupt.interrupt();
         Ok(())
     }
+
+    async fn request_cancel(&self) -> Result<CancelRequestOutcome, ConnectionError> {
+        self.interrupt.interrupt();
+        Ok(CancelRequestOutcome::LocalInterruptRequested)
+    }
 }
 
 #[cfg(test)]
@@ -88,6 +93,16 @@ mod tests {
     use std::time::Duration;
 
     use super::open_sync;
+    use crate::{CancelRequestOutcome, DatabaseConnector};
+
+    #[tokio::test]
+    async fn cancellation_reports_the_local_interrupt_request() {
+        let connector = open_sync(":memory:", false, Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            connector.request_cancel().await.unwrap(),
+            CancelRequestOutcome::LocalInterruptRequested
+        );
+    }
 
     #[test]
     fn engine_blocks_external_access_after_ast_bypass() {
