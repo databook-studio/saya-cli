@@ -21,8 +21,8 @@ pub(crate) struct OllamaRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
     /// Ollama's `options` object — a bag of model parameters. Only
-    /// `temperature` is carried, and only when the caller set one, so the
-    /// endpoint's own defaults win otherwise.
+    /// configured generation controls are carried, and only when the caller
+    /// set one, so the endpoint's own defaults win otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<OllamaOptions>,
 }
@@ -32,7 +32,10 @@ pub(crate) struct OllamaRequest {
 /// overrides the endpoint's own default.
 #[derive(Serialize)]
 pub(crate) struct OllamaOptions {
-    pub temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_predict: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -74,11 +77,18 @@ pub(crate) fn request(request: ChatRequest) -> OllamaRequest {
 }
 
 impl OllamaRequest {
-    /// Carry sampling temperature under `options.temperature`. `None` leaves
-    /// `options` off the wire so the endpoint's own default wins — a value the
-    /// caller did not set is never sent.
-    pub(crate) fn with_temperature(mut self, temperature: Option<f32>) -> Self {
-        self.options = temperature.map(|temperature| OllamaOptions { temperature });
+    /// Carry configured generation controls under Ollama's `options` object.
+    /// An absent value stays absent rather than being translated into an
+    /// endpoint-specific unlimited sentinel.
+    pub(crate) fn with_options(
+        mut self,
+        temperature: Option<f32>,
+        num_predict: Option<u32>,
+    ) -> Self {
+        self.options = (temperature.is_some() || num_predict.is_some()).then_some(OllamaOptions {
+            temperature,
+            num_predict,
+        });
         self
     }
 }
@@ -199,7 +209,7 @@ mod tests {
     #[test]
     fn temperature_is_carried_under_options_when_configured() {
         let body = request(request_with(ResponseFormat::Text, ReasoningEffort::Default))
-            .with_temperature(Some(0.5));
+            .with_options(Some(0.5), Some(1234));
         let value: serde_json::Value = serde_json::to_value(&body).expect("serializes");
         assert_eq!(
             value["options"]["temperature"].as_f64(),
@@ -214,7 +224,7 @@ mod tests {
     #[test]
     fn options_omitted_when_no_temperature_is_configured() {
         let body = request(request_with(ResponseFormat::Text, ReasoningEffort::Default))
-            .with_temperature(None);
+            .with_options(None, None);
         let value: serde_json::Value = serde_json::to_value(&body).expect("serializes");
         assert!(
             value.get("options").is_none(),
