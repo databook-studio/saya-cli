@@ -121,8 +121,23 @@ impl ToolAssembly {
         self.finish_with_empty_arguments(false)
     }
 
-    pub(super) fn finish_with_empty_object(self) -> Result<Vec<ToolCall>, ProviderError> {
-        self.finish_with_empty_arguments(true)
+    pub(super) fn finish_anthropic(self) -> Result<Vec<ToolCall>, ProviderError> {
+        self.calls
+            .into_iter()
+            .map(|(index, call)| {
+                let arguments = if call.arguments.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::from_str(&call.arguments)
+                        .map_err(|_| ProviderError::InvalidResponse)?
+                };
+                Ok(ToolCall {
+                    id: call.id.unwrap_or_else(|| format!("call-{index}")),
+                    name: call.name,
+                    arguments,
+                })
+            })
+            .collect()
     }
 
     fn finish_with_empty_arguments(

@@ -1,5 +1,5 @@
 use super::{attempt, emit};
-use crate::protocol::streaming::admit_tool_calls;
+use crate::protocol::tool_collection::admit_tool_calls;
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
     ProviderError, ProviderEvent, ProviderRecoveryReason, TokenUsage,

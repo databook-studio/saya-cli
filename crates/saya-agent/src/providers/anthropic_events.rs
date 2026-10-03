@@ -123,7 +123,7 @@ fn finish(state: &mut State) -> Result<(), ProviderError> {
             state.tools.partial_json(),
         ));
     }
-    let calls = std::mem::take(&mut state.tools).finish_with_empty_object()?;
+    let calls = std::mem::take(&mut state.tools).finish_anthropic()?;
     if !calls.is_empty() {
         state.pending.push_back(ProviderEvent::ToolCalls(calls));
     }
