@@ -233,8 +233,26 @@ fn query_adapter_audits_each_attempt_and_preserves_phase_exits() {
     // The local peer forces the real PostgreSQL connector's handshake to fail.
     // This proves connect-phase classification only, not remote cancellation behavior.
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
-    let accept = std::thread::spawn(move || drop(listener.accept().unwrap()));
+    let accept = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    drop(stream);
+                    return true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("local PostgreSQL test peer accept failed: {error}"),
+            }
+        }
+    });
     let broken_connections = root.join("broken-connections.toml");
     std::fs::write(
         &broken_connections,
@@ -258,7 +276,11 @@ fn query_adapter_audits_each_attempt_and_preserves_phase_exits() {
         &["query", "--sql", "SELECT 1"],
         &state,
     );
-    accept.join().unwrap();
+    let accepted = accept.join().unwrap();
+    assert!(
+        accepted,
+        "query CLI did not connect to the local PostgreSQL test peer before the 5-second deadline"
+    );
     assert_eq!(broken.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&broken.stderr).contains("\"event\":\"error\""));
 
