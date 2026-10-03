@@ -38,6 +38,23 @@ pub(crate) async fn approval_line(token: &CancellationToken) -> io::Result<Optio
         if key.kind != KeyEventKind::Press {
             continue;
         }
+        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
+            token.cancel();
+            return Ok(None);
+        }
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(event::KeyModifiers::CONTROL) {
+            token.cancel();
+            return Ok(None);
+        }
+        if key.modifiers.intersects(
+            event::KeyModifiers::CONTROL
+                | event::KeyModifiers::ALT
+                | event::KeyModifiers::SUPER
+                | event::KeyModifiers::HYPER
+                | event::KeyModifiers::META,
+        ) {
+            continue;
+        }
         match key.code {
             KeyCode::Enter => {
                 if token.is_cancelled() {
@@ -45,14 +62,6 @@ pub(crate) async fn approval_line(token: &CancellationToken) -> io::Result<Optio
                 }
                 eprintln!();
                 return Ok(Some(line));
-            }
-            KeyCode::Esc => {
-                token.cancel();
-                return Ok(None);
-            }
-            KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                token.cancel();
-                return Ok(None);
             }
             KeyCode::Backspace => {
                 if line.pop().is_some() {
