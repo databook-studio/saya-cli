@@ -140,14 +140,17 @@ impl State {
             }
             let chunk: Chunk =
                 serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
-            if let Some(usage) = chunk.usage {
+            let current_usage_reported = chunk.usage.as_ref().is_some_and(has_reported_usage);
+            if let Some(usage) = chunk.usage
+                && current_usage_reported
+            {
                 self.usage_reported = true;
                 apply_usage(&mut self.usage, &usage);
                 self.pending.push_back(ProviderEvent::Usage(self.usage));
             }
             let Some(choice) = chunk.choices.into_iter().next() else {
                 // The trailing usage-only chunk carries an empty choices list.
-                if self.usage == TokenUsage::default() {
+                if !current_usage_reported {
                     return Err(ProviderError::InvalidResponse);
                 }
                 continue;
@@ -214,6 +217,19 @@ impl State {
 
 fn size_error() -> ProviderError {
     ProviderError::Request("provider stream exceeded size limit".into())
+}
+
+fn has_reported_usage(usage: &super::openai_chunks::Usage) -> bool {
+    usage.prompt_tokens.is_some()
+        || usage.completion_tokens.is_some()
+        || usage
+            .prompt_tokens_details
+            .as_ref()
+            .is_some_and(|details| details.cached_tokens.is_some())
+        || usage
+            .completion_tokens_details
+            .as_ref()
+            .is_some_and(|details| details.reasoning_tokens.is_some())
 }
 
 /// Folds an OpenAI usage chunk into the running totals for one response. The

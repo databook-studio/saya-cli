@@ -144,7 +144,7 @@ fn finish(state: &mut State) -> Result<(), ProviderError> {
 }
 
 fn usage(state: &mut State, value: &serde_json::Value) {
-    if apply_usage(&mut state.usage, value) {
+    if apply_usage(&mut state.usage, &mut state.raw_input_tokens, value) {
         state.usage_reported = true;
         state.pending.push_back(ProviderEvent::Usage(state.usage));
     }
