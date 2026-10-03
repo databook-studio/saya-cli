@@ -80,6 +80,7 @@ where
 #[derive(Default)]
 struct State {
     bytes: Vec<u8>,
+    frames: super::framing::FrameCount,
     usage: TokenUsage,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
@@ -112,11 +113,10 @@ impl State {
                 Err(ProviderError::InvalidResponse)
             };
         }
-        let line = std::str::from_utf8(&self.bytes)
-            .map_err(|_| ProviderError::InvalidResponse)?
-            .to_owned();
-        self.bytes.clear();
-        self.push_line(line.trim_end_matches('\r'))?;
+        let bytes = std::mem::take(&mut self.bytes);
+        let line = std::str::from_utf8(&bytes).map_err(|_| ProviderError::InvalidResponse)?;
+        self.frames.admit(None)?;
+        self.push_line(line.trim_end_matches('\r'), &[])?;
         if self.done {
             Ok(())
         } else {
@@ -130,18 +130,25 @@ impl State {
             ));
         }
         self.bytes.extend_from_slice(chunk);
-        while let Some(end) = self.bytes.iter().position(|byte| *byte == b'\n') {
-            let line = String::from_utf8(self.bytes[..end].to_vec())
+        let bytes = std::mem::take(&mut self.bytes);
+        let mut consumed = 0;
+        while let Some(relative_end) = bytes[consumed..].iter().position(|byte| *byte == b'\n') {
+            let end = consumed + relative_end;
+            self.frames.admit(None)?;
+            let line = std::str::from_utf8(&bytes[consumed..end])
                 .map_err(|_| ProviderError::InvalidResponse)?;
-            self.bytes.drain(..=end);
-            self.push_line(line.trim_end_matches('\r'))?;
+            consumed = end + 1;
+            self.push_line(line.trim_end_matches('\r'), &bytes[consumed..])?;
             if self.done {
                 break;
             }
         }
+        if !self.done {
+            self.bytes.extend_from_slice(&bytes[consumed..]);
+        }
         Ok(())
     }
-    fn push_line(&mut self, line: &str) -> Result<(), ProviderError> {
+    fn push_line(&mut self, line: &str, trailing: &[u8]) -> Result<(), ProviderError> {
         if line.trim().is_empty() {
             return Ok(());
         }
@@ -194,19 +201,18 @@ impl State {
             if self.usage != TokenUsage::default() {
                 self.pending.push_back(ProviderEvent::Usage(self.usage));
             }
-            self.complete()?;
+            self.complete(trailing)?;
         }
         Ok(())
     }
-    fn complete(&mut self) -> Result<(), ProviderError> {
-        if !whitespace(&self.bytes) || (!self.content && self.tools.is_empty()) {
+    fn complete(&mut self, trailing: &[u8]) -> Result<(), ProviderError> {
+        if !whitespace(trailing) || (!self.content && self.tools.is_empty()) {
             return Err(ProviderError::InvalidResponse);
         }
         let calls = std::mem::take(&mut self.tools).finish()?;
         if !calls.is_empty() {
             self.pending.push_back(ProviderEvent::ToolCalls(calls));
         }
-        self.bytes.clear();
         self.pending.push_back(ProviderEvent::Done);
         Ok(())
     }

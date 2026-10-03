@@ -24,6 +24,7 @@ pub enum ProviderRecoveryReason {
     EmptyResponse,
     StreamEnded,
     StreamByteLimit,
+    StreamItemLimit,
     ToolCollectionLimit,
     /// A completed assistant message had blank or duplicate tool-call IDs.
     ToolCallProtocol,

@@ -1,4 +1,8 @@
-use super::{framing::whitespace, openai_chunks::Chunk, tool_assembly::ToolAssembly};
+use super::{
+    framing::{boundary, whitespace},
+    openai_chunks::Chunk,
+    tool_assembly::ToolAssembly,
+};
 use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
@@ -78,9 +82,11 @@ where
 #[derive(Default)]
 struct State {
     bytes: Vec<u8>,
+    frames: super::framing::FrameCount,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
     usage: TokenUsage,
+    usage_reported: bool,
     content: bool,
     done: bool,
     assembled_bytes: usize,
@@ -108,16 +114,24 @@ impl State {
             ));
         }
         self.bytes.extend_from_slice(chunk);
-        while let Some((end, skip)) = boundary(&self.bytes) {
-            let frame = String::from_utf8(self.bytes[..end].to_vec())
+        let mut consumed = 0;
+        while let Some((end, skip)) = boundary(&self.bytes[consumed..]) {
+            let usage = self.usage_reported.then_some(self.usage);
+            self.frames.admit(usage)?;
+            let frame_end = consumed + end;
+            let frame = std::str::from_utf8(&self.bytes[consumed..frame_end])
                 .map_err(|_| ProviderError::InvalidResponse)?;
-            self.bytes.drain(..end + skip);
-            let data = frame
-                .lines()
-                .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if data.is_empty() {
+            consumed = frame_end + skip;
+            let mut data = String::new();
+            let mut has_data = false;
+            for value in frame.lines().filter_map(|line| line.strip_prefix("data:")) {
+                if has_data {
+                    data.push('\n');
+                }
+                data.push_str(value.trim_start());
+                has_data = true;
+            }
+            if !has_data || data.is_empty() {
                 continue;
             }
             if data == "[DONE]" {
@@ -127,6 +141,7 @@ impl State {
             let chunk: Chunk =
                 serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
             if let Some(usage) = chunk.usage {
+                self.usage_reported = true;
                 apply_usage(&mut self.usage, &usage);
                 self.pending.push_back(ProviderEvent::Usage(self.usage));
             }
@@ -179,6 +194,9 @@ impl State {
                 }
             }
         }
+        if consumed > 0 {
+            self.bytes.drain(..consumed);
+        }
         if self.done {
             if !whitespace(&self.bytes) || (!self.content && self.tools.is_empty()) {
                 return Err(ProviderError::InvalidResponse);
@@ -196,19 +214,6 @@ impl State {
 
 fn size_error() -> ProviderError {
     ProviderError::Request("provider stream exceeded size limit".into())
-}
-
-fn boundary(value: &[u8]) -> Option<(usize, usize)> {
-    value
-        .windows(4)
-        .position(|part| part == b"\r\n\r\n")
-        .map(|i| (i, 4))
-        .or_else(|| {
-            value
-                .windows(2)
-                .position(|part| part == b"\n\n")
-                .map(|i| (i, 2))
-        })
 }
 
 /// Folds an OpenAI usage chunk into the running totals for one response. The

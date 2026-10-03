@@ -24,6 +24,7 @@ pub(super) async fn stream_attempt(
     let (mut content, mut calls, mut complete, mut usage, mut reasoning) =
         (String::new(), Vec::new(), false, None, None);
     let mut tool_call_bytes = 0usize;
+    let mut items = crate::protocol::stream_item_limit::StreamItemCount::default();
     loop {
         let next = tokio::select! {
             _ = cancellation.cancelled() => return failed(attempt::AttemptError::Cancelled, usage),
@@ -32,15 +33,31 @@ pub(super) async fn stream_attempt(
         let Some(event) = next else { break };
         let event = match event {
             Ok(event) => event,
-            Err(error) => return failed(provider_failure(error), usage),
+            Err(error) => {
+                let usage = match &error {
+                    ProviderError::StreamItemLimit {
+                        usage: Some(reported),
+                    } => Some(**reported),
+                    _ => usage,
+                };
+                return failed(provider_failure(error), usage);
+            }
         };
+        if let ProviderEvent::Usage(counts) = &event {
+            usage = Some(*counts);
+        }
+        if let Err(error) = items.admit(usage) {
+            return failed(provider_failure(error), usage);
+        }
         match event {
             ProviderEvent::TextDelta(text) => {
                 if content.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
                     return failed(byte_limit_error(), usage);
                 }
                 content.push_str(&text);
-                emit(events, sink, AgentEvent::assistant_text(text)).await;
+                if !text.is_empty() {
+                    emit(events, sink, AgentEvent::assistant_text(text)).await;
+                }
             }
             ProviderEvent::ReasoningDelta(text) => {
                 let accumulated = reasoning.get_or_insert_with(String::new);
@@ -109,6 +126,9 @@ fn provider_failure(error: ProviderError) -> attempt::AttemptError {
             ProviderError::ToolCollectionLimit,
             ProviderRecoveryReason::ToolCollectionLimit,
         ),
+        error @ ProviderError::StreamItemLimit { .. } => {
+            terminal(error, ProviderRecoveryReason::StreamItemLimit)
+        }
         ProviderError::Cancelled => attempt::AttemptError::Cancelled,
         error => retryable(error, ProviderRecoveryReason::ProviderFailure),
     }
