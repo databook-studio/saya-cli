@@ -15,8 +15,8 @@ use super::clarification_feed::{
 use super::{check_cancelled, designation, emit, output, tool_policy, tool_record, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentOutput, ApprovalDecider,
-    CancellationToken, ChatMessage, TokenUsage, ToolCall, ToolDefinition, ToolExecutor,
-    ToolMetadata,
+    CancellationToken, ChatMessage, TokenUsage, ToolCall, ToolDefinition, ToolExecutionContext,
+    ToolExecutor, ToolMetadata,
 };
 
 /// What the clarification arm decided for a turn carrying at least one
@@ -124,11 +124,15 @@ pub(super) async fn handle(
     };
     let (result, summary, denied) = match decision {
         tool_policy::ExecutionDecision::Allow => {
-            let (result, summary) = tools::execute(
+            let (result, summary) = tools::execute_with_context(
                 executor,
                 REQUEST_CLARIFICATION_TOOL,
                 asked_call.arguments.clone(),
                 definition,
+                ToolExecutionContext {
+                    result_cap: tools::tool_message_cap(limits.context_byte_budget),
+                    cancellation: cancellation.clone(),
+                },
             )
             .await;
             (result, summary, false)

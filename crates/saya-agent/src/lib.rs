@@ -27,8 +27,8 @@ pub use protocol::contracts::{
     LearningSkipReason, LocalStateEffect, OverrideFindingDto, ProposedClaimDto, ProviderError,
     ProviderRecoveryPhase, ProviderRecoveryReason, ReasoningEffort, ResponseFormat, SessionGrants,
     SessionPolicy, SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolConcurrency,
-    ToolDefinition, ToolEffect, ToolError, ToolExecutor, ToolMetadata, ToolResultShape, UsageCall,
-    context_utilisation_percent, read_only_permits,
+    ToolDefinition, ToolEffect, ToolError, ToolExecutionContext, ToolExecutor, ToolMetadata,
+    ToolResultShape, UsageCall, context_utilisation_percent, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::streaming::{

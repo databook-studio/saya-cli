@@ -74,8 +74,14 @@ pub(super) async fn run_turn_tools(
                 *used_bounded_sql_query = true;
             }
         }
-        let results =
-            tools::execute_batch(tools, &assistant.tool_calls, definitions, &result_caps).await;
+        let results = tools::execute_batch(
+            tools,
+            &assistant.tool_calls,
+            definitions,
+            &result_caps,
+            cancellation,
+        )
+        .await;
         for (call, completed) in assistant.tool_calls.iter().zip(results) {
             failed_statements::record_outcome(
                 failed,
@@ -225,8 +231,17 @@ pub(super) async fn run_turn_tools(
             if definition.effect.database_data {
                 *used_bounded_sql_query = true;
             }
-            tools::execute_with_outcome(tools, &call.name, call.arguments, Some(definition), cap)
-                .await
+            tools::execute_with_outcome(
+                tools,
+                &call.name,
+                call.arguments,
+                Some(definition),
+                crate::ToolExecutionContext {
+                    result_cap: cap,
+                    cancellation: cancellation.clone(),
+                },
+            )
+            .await
         } else {
             emit(
                 events,
