@@ -8,7 +8,7 @@ use sqlx::{
 };
 use tokio::{sync::Mutex, time::timeout};
 
-use crate::{ConnectorOptions, DatabaseConnector};
+use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector};
 
 pub struct MySqlConnector {
     pub(crate) pool: MySqlPool,
@@ -95,5 +95,9 @@ impl DatabaseConnector for MySqlConnector {
 
     async fn cancel(&self) -> Result<(), ConnectionError> {
         super::cancellation::cancel(self).await
+    }
+
+    async fn request_cancel(&self) -> Result<CancelRequestOutcome, ConnectionError> {
+        super::cancellation::request_cancel(self).await
     }
 }

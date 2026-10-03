@@ -19,17 +19,14 @@ pub(crate) async fn query(
     request: QueryRequest,
 ) -> Result<QueryResult, ConnectionError> {
     let (sql, binds) = prepare(&request.sql, request.max_rows, &request.params)?;
+    let _attempt = c.begin_attempt();
 
     let mut conn = timeout(c.query_timeout, c.pool.acquire())
         .await
         .map_err(|_| ConnectionError::query_failed("SQLite query timed out"))?
         .map_err(errors::query)?;
-
     let deadline = Instant::now() + c.query_timeout;
     let cancelled = c.cancelled.clone();
-    // Cleared before each run so a connector that was cancelled once stays usable
-    // for the next query rather than aborting it immediately.
-    cancelled.store(false, Ordering::Release);
 
     {
         let mut handle = conn.lock_handle().await.map_err(errors::query)?;
