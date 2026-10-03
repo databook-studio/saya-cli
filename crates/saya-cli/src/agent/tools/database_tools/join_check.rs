@@ -11,7 +11,7 @@
 
 use serde_json::{Value, json};
 
-use saya_agent::ToolError;
+use saya_agent::{ToolError, ToolExecutionContext};
 use saya_connectors::{
     prepare_bigquery_sql, prepare_clickhouse_sql, prepare_duckdb_sql, prepare_mysql_sql,
     prepare_postgres_sql, prepare_snowflake_sql, prepare_sqlite_sql,
@@ -19,7 +19,7 @@ use saya_connectors::{
 use saya_types::SqlDialect;
 
 use super::DatabaseTools;
-use crate::connection::ConnectionEntry;
+use crate::connection::OperationEntry;
 
 impl DatabaseTools {
     /// Builds a fan-out probe for `sql`, runs the two COUNT statements through
@@ -28,13 +28,14 @@ impl DatabaseTools {
     /// false` with a reason — never a guess.
     pub(super) async fn join_check(
         &self,
-        entry: &ConnectionEntry,
+        operation: &OperationEntry<'_>,
         sql: &str,
+        context: &ToolExecutionContext,
     ) -> Result<Value, ToolError> {
-        self.detect_and_record_overrides(sql, entry.dialect);
-        ensure_read_only(sql, entry.dialect)?;
+        self.detect_and_record_overrides(sql, operation.entry.dialect);
+        ensure_read_only(sql, operation.entry.dialect)?;
 
-        let Some(probe) = saya_connectors::fanout_probe(sql, entry.dialect) else {
+        let Some(probe) = saya_connectors::fanout_probe(sql, operation.entry.dialect) else {
             return Ok(json!({
                 "applicable": false,
                 "reason": "no sound fan-out probe could be built; the probe requires a single \
@@ -44,20 +45,24 @@ impl DatabaseTools {
             }));
         };
 
-        let joined_result = crate::agent::state_tools::query(
-            entry.connector.as_ref(),
+        let joined_result = crate::agent::state_tools::query_with_context(
+            operation,
             &probe.joined_rows,
             self.max_rows,
             self.state_db.as_ref(),
-            entry.profile_id.as_deref(),
+            operation.entry.profile_id.as_deref(),
+            context,
+            None,
         )
         .await?;
-        let base_result = crate::agent::state_tools::query(
-            entry.connector.as_ref(),
+        let base_result = crate::agent::state_tools::query_with_context(
+            operation,
             &probe.base_rows,
             self.max_rows,
             self.state_db.as_ref(),
-            entry.profile_id.as_deref(),
+            operation.entry.profile_id.as_deref(),
+            context,
+            None,
         )
         .await?;
 

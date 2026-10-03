@@ -19,7 +19,7 @@ impl DatabaseTools {
         &self,
         name: &str,
         arguments: serde_json::Value,
-        result_cap: usize,
+        context: saya_agent::ToolExecutionContext,
     ) -> Result<serde_json::Value, ToolError> {
         // Contract tools have their own argument validation and execution
         // (sibling concern) and never reach a connector; route them before the
@@ -96,21 +96,24 @@ impl DatabaseTools {
                 .get("sql")
                 .and_then(serde_json::Value::as_str)
                 .ok_or(ToolError::InvalidQueryArguments)?;
-            return self.query_all(sql).await;
+            return self.query_all(sql, &context).await;
         }
         let connection = arguments
             .get("connection")
             .and_then(serde_json::Value::as_str);
-        let entry = self.registry.resolve(connection)?;
+        let operation = self.registry.resolve_for_operation(connection)?;
+        let entry = operation.entry;
         match name {
             "schema_discovery" => {
                 let profile_id = entry.profile_id.as_deref();
-                let result = crate::agent::state_tools::schema(
-                    entry.connector.as_ref(),
+                let result = crate::agent::state_tools::schema_with_context(
+                    &operation,
+                    &context,
                     self.state_db.as_ref(),
                     profile_id,
                 )
                 .await;
+                reject_cancelled(&context)?;
                 if let Some(log) = &self.observations {
                     log.record_schema(name, profile_id, result.is_ok());
                 }
@@ -128,13 +131,16 @@ impl DatabaseTools {
                 // records nothing; the turn is never failed by detection.
                 self.detect_and_record_overrides(sql, entry.dialect);
                 let executed = crate::agent::state_tools::query_typed(
-                    entry.connector.as_ref(),
+                    &operation,
                     sql,
                     self.max_rows,
                     self.state_db.as_ref(),
                     entry.profile_id.as_deref(),
+                    &context,
+                    None,
                 )
                 .await;
+                reject_cancelled(&context)?;
                 if let Some(log) = &self.observations {
                     log.record_query(
                         name,
@@ -149,7 +155,7 @@ impl DatabaseTools {
                 // ToolCompleted for the same call. Only here, only on Ok —
                 // never fan-out or the probe tools.
                 if let Ok(executed) = &executed {
-                    self.emit_query_capture(&arguments, sql, entry, executed, result_cap);
+                    self.emit_query_capture(&arguments, sql, entry, executed, context.result_cap);
                 }
                 executed.map(|executed| executed.value)
             }
@@ -158,7 +164,8 @@ impl DatabaseTools {
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
                     .ok_or(ToolError::InvalidQueryArguments)?;
-                let result = self.result_shape(entry, sql).await;
+                let result = self.result_shape(&operation, sql, &context).await;
+                reject_cancelled(&context)?;
                 if let Some(log) = &self.observations {
                     // result_shape runs SQL but returns no rows; record it like
                     // a query so the objects it touched are still credited as
@@ -179,7 +186,8 @@ impl DatabaseTools {
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
                     .ok_or(ToolError::InvalidQueryArguments)?;
-                let result = self.column_health(entry, sql).await;
+                let result = self.column_health(&operation, sql, &context).await;
+                reject_cancelled(&context)?;
                 if let Some(log) = &self.observations {
                     log.record_query(
                         name,
@@ -196,7 +204,8 @@ impl DatabaseTools {
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
                     .ok_or(ToolError::InvalidQueryArguments)?;
-                let result = self.join_check(entry, sql).await;
+                let result = self.join_check(&operation, sql, &context).await;
+                reject_cancelled(&context)?;
                 if let Some(log) = &self.observations {
                     log.record_query(
                         name,
@@ -213,7 +222,8 @@ impl DatabaseTools {
                     .get("sql")
                     .and_then(serde_json::Value::as_str)
                     .ok_or(ToolError::InvalidQueryArguments)?;
-                let result = self.render_chart(&arguments).await;
+                let result = self.render_chart(&arguments, &operation, &context).await;
+                reject_cancelled(&context)?;
                 if let Some(log) = &self.observations {
                     // render_chart runs SQL but returns a path, not rows; it has
                     // no row_count/truncated to record, so it records like a
@@ -246,5 +256,13 @@ impl DatabaseTools {
             truncated: None,
             references_partial: false,
         });
+    }
+}
+
+fn reject_cancelled(context: &saya_agent::ToolExecutionContext) -> Result<(), ToolError> {
+    if context.cancellation.is_cancelled() {
+        Err(ToolError::QueryFailedDetail("query cancelled".into()))
+    } else {
+        Ok(())
     }
 }

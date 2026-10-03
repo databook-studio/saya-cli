@@ -8,13 +8,16 @@ use async_trait::async_trait;
 use saya_agent::{
     AgentLimits, AgentRequest, AllowReadOnlyApproval, ChatMessage, ChatProvider, ChatRequest,
     ChatResponse, LocalStateEffect, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect,
-    ToolExecutor, run_agent, shape_tool_result,
+    ToolExecutor, run_agent_with_sink, shape_tool_result,
 };
 use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use std::sync::{Arc, Mutex};
 
-use crate::connection::{ConnectionEntry, ConnectionRegistry};
+use crate::{
+    agent::tools::RunTools,
+    connection::{ConnectionEntry, ConnectionRegistry},
+};
 
 /// The events one hook observed, shared with the test through a mutex.
 type Observed = Arc<Mutex<Vec<CaptureEvent>>>;
@@ -594,11 +597,11 @@ async fn small_clean_result_is_captured_as_model_visible() {
     );
 }
 
-/// The agent loop assigns each serial result a share before it calls the real
-/// `DatabaseTools` executor. Capture uses that exact share, so it refuses a
-/// result the provider receives cut even when it would fit alone.
+/// The agent loop assigns each serial result a share before it calls the
+/// production `RunTools` wrapper. Capture uses that exact share, so it refuses
+/// a result the provider receives cut even when it would fit alone.
 #[tokio::test]
-async fn serial_turn_share_refuses_capture_when_the_provider_view_is_cut() {
+async fn run_tools_forwards_serial_turn_share_to_capture() {
     struct Provider {
         requests: Arc<Mutex<Vec<ChatRequest>>>,
         turn: Mutex<usize>,
@@ -640,9 +643,11 @@ async fn serial_turn_share_refuses_capture_when_the_provider_view_is_cut() {
 
     let (connector, dir) = sqlite_fixture().await;
     let (hook, observed) = observing_hook();
-    let tools = DatabaseTools::new(Some(connector), 100, true).with_capture(Some(hook), 300 * 1024);
+    let database =
+        DatabaseTools::new(Some(connector), 100, true).with_capture(Some(hook), 300 * 1024);
+    let tools = RunTools::compose(Arc::new(database), None, None, None);
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let output = run_agent(
+    let output = run_agent_with_sink(
         &Provider {
             requests: requests.clone(),
             turn: Mutex::new(0),
@@ -675,6 +680,8 @@ async fn serial_turn_share_refuses_capture_when_the_provider_view_is_cut() {
             ..AgentLimits::default()
         },
         &AllowReadOnlyApproval,
+        &saya_agent::NoopEventSink,
+        saya_agent::CancellationToken::new(),
     )
     .await
     .expect("serial tool turn completes");

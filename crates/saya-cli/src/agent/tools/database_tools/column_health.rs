@@ -12,10 +12,10 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
-use saya_agent::ToolError;
+use saya_agent::{ToolError, ToolExecutionContext};
 
 use super::DatabaseTools;
-use crate::connection::ConnectionEntry;
+use crate::connection::OperationEntry;
 
 impl DatabaseTools {
     /// Runs one bounded read-only SQL query and returns per-column health
@@ -23,16 +23,19 @@ impl DatabaseTools {
     /// layer, bounds, and error mapping are identical.
     pub(super) async fn column_health(
         &self,
-        entry: &ConnectionEntry,
+        operation: &OperationEntry<'_>,
         sql: &str,
+        context: &ToolExecutionContext,
     ) -> Result<Value, ToolError> {
-        self.detect_and_record_overrides(sql, entry.dialect);
-        let result = crate::agent::state_tools::query(
-            entry.connector.as_ref(),
+        self.detect_and_record_overrides(sql, operation.entry.dialect);
+        let result = crate::agent::state_tools::query_with_context(
+            operation,
             sql,
             self.max_rows,
             self.state_db.as_ref(),
-            entry.profile_id.as_deref(),
+            operation.entry.profile_id.as_deref(),
+            context,
+            None,
         )
         .await?;
         Ok(health_of(&result))
