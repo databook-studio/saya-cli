@@ -118,8 +118,11 @@ impl DatabaseTools {
         sql: &str,
         entry: &ConnectionEntry,
         executed: &ExecutedQuery,
-        result_cap: usize,
+        context: &saya_agent::ToolExecutionContext,
     ) {
+        if context.cancellation.is_cancelled() {
+            return;
+        }
         let Some(hook) = self.capture_hook.as_ref() else {
             return;
         };
@@ -135,7 +138,7 @@ impl DatabaseTools {
             entry,
             executed,
             crate::interactive::tui::capture::CAPTURE_BUDGET_BYTES,
-            result_cap,
+            context.result_cap,
         ));
     }
 }

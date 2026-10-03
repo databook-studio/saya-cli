@@ -1,6 +1,7 @@
-use saya_agent::ToolError;
+use saya_agent::{ToolError, ToolExecutionContext};
 
 use super::DatabaseTools;
+use crate::connection::OperationEntry;
 
 impl DatabaseTools {
     /// Runs `sql` read-only at the full row cap, renders an interactive chart file with the
@@ -8,6 +9,8 @@ impl DatabaseTools {
     pub(super) async fn render_chart(
         &self,
         arguments: &serde_json::Value,
+        operation: &OperationEntry<'_>,
+        context: &ToolExecutionContext,
     ) -> Result<serde_json::Value, ToolError> {
         let saved_path = arguments.get("save_to").and_then(serde_json::Value::as_str);
         let workspace = if saved_path.is_some() {
@@ -23,13 +26,15 @@ impl DatabaseTools {
             .get("sql")
             .and_then(serde_json::Value::as_str)
             .ok_or(ToolError::InvalidQueryArguments)?;
-        let connection = arguments.get("connection").and_then(|v| v.as_str());
-        let entry = self.registry.resolve(connection)?;
-        let result = entry
-            .connector
-            .execute(saya_types::QueryRequest::new(sql, self.max_rows))
-            .await
-            .map_err(|error| ToolError::QueryFailedDetail(error.to_string()))?;
+        let result = crate::agent::state_tools::operation_execute(
+            operation,
+            saya_types::QueryRequest::new(sql, self.max_rows),
+            context,
+        )
+        .await?;
+        if context.cancellation.is_cancelled() {
+            return Err(ToolError::QueryFailedDetail("query cancelled".into()));
+        }
 
         let mut spec = crate::chart::suggest_spec(&result);
         if let Some(kind) = arguments

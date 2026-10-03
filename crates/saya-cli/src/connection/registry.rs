@@ -3,6 +3,7 @@ use saya_connectors::DatabaseConnector;
 use saya_types::SqlDialect;
 use std::collections::HashMap;
 use std::fmt;
+use tokio::sync::Mutex;
 
 /// Represents a live database connection entry.
 #[allow(dead_code)]
@@ -13,6 +14,16 @@ pub(crate) struct ConnectionEntry {
     pub(crate) dialect: SqlDialect,
     /// Optional database profile identifier.
     pub(crate) profile_id: Option<String>,
+}
+
+/// One registry entry plus the per-entry lease that owns a connector effect.
+///
+/// The lease is kept by the registry rather than the connector so metadata
+/// callers can still borrow entries without gaining permission to start an
+/// effect. Only the operation-aware registry APIs construct this view.
+pub(crate) struct OperationEntry<'a> {
+    pub(crate) entry: &'a ConnectionEntry,
+    pub(crate) lease: &'a Mutex<()>,
 }
 
 impl fmt::Debug for ConnectionEntry {
@@ -30,6 +41,7 @@ pub(crate) struct ConnectionRegistry {
     primary: String,
     names: Vec<String>,
     map: HashMap<String, ConnectionEntry>,
+    leases: HashMap<String, Mutex<()>>,
 }
 
 #[allow(dead_code)]
@@ -40,6 +52,7 @@ impl ConnectionRegistry {
             primary: primary.into(),
             names: Vec::new(),
             map: HashMap::new(),
+            leases: HashMap::new(),
         }
     }
 
@@ -49,7 +62,8 @@ impl ConnectionRegistry {
         if !self.map.contains_key(&name) {
             self.names.push(name.clone());
         }
-        self.map.insert(name, entry);
+        self.map.insert(name.clone(), entry);
+        self.leases.insert(name, Mutex::new(()));
     }
 
     /// Returns the primary connection name.
@@ -110,6 +124,38 @@ impl ConnectionRegistry {
                 available,
             })
         }
+    }
+
+    /// Resolves a connector effect to its entry and unique operation lease.
+    /// Cancellation-aware callers acquire this lease before calling connector
+    /// `schema` or `execute`; plain metadata resolution deliberately cannot.
+    pub(crate) fn resolve_for_operation(
+        &self,
+        name: Option<&str>,
+    ) -> Result<OperationEntry<'_>, ToolError> {
+        let target = match name {
+            None | Some("") => self.primary.as_str(),
+            Some(name) => name,
+        };
+        let entry = self.resolve(name)?;
+        let Some(lease) = self.leases.get(target) else {
+            return Err(ToolError::NoConnectionSelected);
+        };
+        Ok(OperationEntry { entry, lease })
+    }
+
+    /// Every registered connector with its own operation lease, in insertion
+    /// order. Fan-out acquires these independently; it never takes a global
+    /// database lock.
+    pub(crate) fn operation_entries(&self) -> Vec<(&str, OperationEntry<'_>)> {
+        self.names
+            .iter()
+            .filter_map(|name| {
+                let entry = self.map.get(name)?;
+                let lease = self.leases.get(name)?;
+                Some((name.as_str(), OperationEntry { entry, lease }))
+            })
+            .collect()
     }
 
     /// The connection name whose stored profile identity is `identity`, if any.

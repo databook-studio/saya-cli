@@ -1,4 +1,4 @@
-use saya_agent::ToolError;
+use saya_agent::{ToolError, ToolExecutionContext};
 use saya_connectors::DatabaseConnector;
 use saya_store::{
     AuditEntry, AuditOperation, AuditStatus, AuditStore, SchemaStore, SqliteStateStore,
@@ -6,6 +6,10 @@ use saya_store::{
 use saya_types::{ForeignKey, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use crate::connection::OperationEntry;
+
+mod operation;
 
 /// Rows returned to the MODEL from a tool call are capped small: the model
 /// reasons over a sample and should use aggregate SQL for counts, so feeding it
@@ -210,6 +214,50 @@ pub(crate) async fn schema(
     }
 }
 
+/// Discovers schema while owning the registry entry until the connector's
+/// metadata operation settles. A cancellation never falls back to cached
+/// schema: that would turn a cancelled effect into a successful tool result.
+pub(crate) async fn schema_with_context(
+    operation_entry: &OperationEntry<'_>,
+    context: &ToolExecutionContext,
+    store: Option<&SqliteStateStore>,
+    profile_id: Option<&str>,
+) -> Result<serde_json::Value, ToolError> {
+    let started = Instant::now();
+    let dialect = operation_entry.entry.dialect;
+    match operation::schema(operation_entry, &context.cancellation).await {
+        Ok(schema) => {
+            if context.cancellation.is_cancelled() {
+                return Err(cancelled_tool_error());
+            }
+            if let (Some(store), Some(profile_id)) = (store, profile_id) {
+                let _ = store.upsert_schema(profile_id, &schema).await;
+                audit(
+                    store,
+                    profile_id,
+                    AuditOperation::SchemaRefresh,
+                    AuditStatus::Success,
+                    started,
+                    None,
+                    None,
+                )
+                .await;
+            }
+            Ok(compact_schema(&schema, dialect))
+        }
+        Err(operation::OperationError::Connector(error)) => {
+            if context.cancellation.is_cancelled() {
+                Err(cancelled_tool_error())
+            } else {
+                cached(store, profile_id, started, &error, dialect).await
+            }
+        }
+        Err(operation::OperationError::Cancelled | operation::OperationError::TimedOut) => {
+            Err(cancelled_tool_error())
+        }
+    }
+}
+
 async fn cached(
     store: Option<&SqliteStateStore>,
     profile_id: Option<&str>,
@@ -259,16 +307,45 @@ async fn cached(
     }
 }
 
-pub(crate) async fn query(
-    connector: &dyn DatabaseConnector,
+pub(crate) async fn query_with_context(
+    operation_entry: &OperationEntry<'_>,
     sql: &str,
     max_rows: usize,
     store: Option<&SqliteStateStore>,
     profile_id: Option<&str>,
+    context: &ToolExecutionContext,
+    timeout: Option<std::time::Duration>,
 ) -> Result<serde_json::Value, ToolError> {
-    query_typed(connector, sql, max_rows, store, profile_id)
-        .await
-        .map(|executed| executed.value)
+    query_typed(
+        operation_entry,
+        sql,
+        max_rows,
+        store,
+        profile_id,
+        context,
+        timeout,
+    )
+    .await
+    .map(|executed| executed.value)
+}
+
+/// Executes a registry-owned query for a tool that deliberately has its own
+/// result policy (the chart tool). It shares only operation ownership and
+/// cancellation with the ordinary query path, not auditing or model shaping.
+pub(crate) async fn operation_execute(
+    operation_entry: &OperationEntry<'_>,
+    request: QueryRequest,
+    context: &ToolExecutionContext,
+) -> Result<QueryResult, ToolError> {
+    match operation::execute(operation_entry, request, &context.cancellation, None).await {
+        Ok(result) if !context.cancellation.is_cancelled() => Ok(result),
+        Ok(_) | Err(operation::OperationError::Cancelled | operation::OperationError::TimedOut) => {
+            Err(cancelled_tool_error())
+        }
+        Err(operation::OperationError::Connector(error)) => {
+            Err(ToolError::QueryFailedDetail(error.to_string()))
+        }
+    }
 }
 
 /// One executed agent query: the serialized value the model receives, the
@@ -286,18 +363,30 @@ pub(crate) struct ExecutedQuery {
 /// typed result, the applied row cap, and the execution window, so the
 /// capture hook can hand the TUI exactly what the model saw.
 pub(crate) async fn query_typed(
-    connector: &dyn DatabaseConnector,
+    operation_entry: &OperationEntry<'_>,
     sql: &str,
     max_rows: usize,
     store: Option<&SqliteStateStore>,
     profile_id: Option<&str>,
+    context: &ToolExecutionContext,
+    timeout: Option<std::time::Duration>,
 ) -> Result<ExecutedQuery, ToolError> {
     let started = Instant::now();
     let started_unix_ms = unix_now_ms();
     // Cap the rows the MODEL sees (not the /sql display path, which keeps max_rows).
     let model_rows = model_row_cap(max_rows);
-    match connector.execute(QueryRequest::new(sql, model_rows)).await {
+    match operation::execute(
+        operation_entry,
+        QueryRequest::new(sql, model_rows),
+        &context.cancellation,
+        timeout,
+    )
+    .await
+    {
         Ok(result) => {
+            if context.cancellation.is_cancelled() {
+                return Err(cancelled_tool_error());
+            }
             if let (Some(store), Some(profile_id)) = (store, profile_id) {
                 audit(
                     store,
@@ -321,7 +410,7 @@ pub(crate) async fn query_typed(
                 finished_unix_ms,
             })
         }
-        Err(error) => {
+        Err(operation::OperationError::Connector(error)) => {
             if let (Some(store), Some(profile_id)) = (store, profile_id) {
                 audit(
                     store,
@@ -339,7 +428,13 @@ pub(crate) async fn query_typed(
             // mismatches without exposing driver internals or credentials.
             Err(ToolError::QueryFailedDetail(error.to_string()))
         }
+        Err(operation::OperationError::Cancelled) => Err(cancelled_tool_error()),
+        Err(operation::OperationError::TimedOut) => Err(ToolError::QueryTimedOut),
     }
+}
+
+fn cancelled_tool_error() -> ToolError {
+    ToolError::QueryFailedDetail("query cancelled".into())
 }
 
 /// Current wall clock in unix milliseconds (0 before the epoch).

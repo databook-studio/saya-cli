@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use saya_agent::{ToolError, ToolExecutor};
+use saya_agent::{ToolError, ToolExecutionContext, ToolExecutor};
 
 use super::DatabaseTools;
 use super::host_argv::validate_host_json_argv;
@@ -154,6 +154,40 @@ impl ToolExecutor for RunTools {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
+        self.execute_with_context(
+            name,
+            arguments,
+            ToolExecutionContext {
+                result_cap: self.database.context_byte_budget,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+    }
+
+    async fn execute_with_result_cap(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        result_cap: usize,
+    ) -> Result<serde_json::Value, ToolError> {
+        self.execute_with_context(
+            name,
+            arguments,
+            ToolExecutionContext {
+                result_cap,
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        context: ToolExecutionContext,
+    ) -> Result<serde_json::Value, ToolError> {
         if name == "render_chart" && arguments.get("save_to").is_some() && !self.chart_save_permit {
             return Err(ToolError::WorkspaceWrite(
                 "workspace-write is not permitted for this step".into(),
@@ -225,7 +259,11 @@ impl ToolExecutor for RunTools {
                 }
                 None => Err(ToolError::UnsupportedTool),
             },
-            _ => self.database.execute(name, arguments).await,
+            _ => {
+                self.database
+                    .execute_with_context(name, arguments, context)
+                    .await
+            }
         }
     }
 }

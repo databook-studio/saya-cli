@@ -1,5 +1,5 @@
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use saya_agent::ToolError;
+use saya_agent::{ToolError, ToolExecutionContext};
 
 use super::DatabaseTools;
 
@@ -7,8 +7,12 @@ impl DatabaseTools {
     /// Runs `sql` against every connected database independently, collecting a
     /// per-database `result` or `error` so a dialect mismatch on one database
     /// never sinks the rest. A single approval covers the whole fan-out.
-    pub(super) async fn query_all(&self, sql: &str) -> Result<serde_json::Value, ToolError> {
-        let entries = self.registry.entries();
+    pub(super) async fn query_all(
+        &self,
+        sql: &str,
+        context: &ToolExecutionContext,
+    ) -> Result<serde_json::Value, ToolError> {
+        let entries = self.registry.operation_entries();
         if entries.is_empty() {
             return Err(ToolError::NoConnectionSelected);
         }
@@ -17,20 +21,22 @@ impl DatabaseTools {
         // detection would repeat the same finding. The first entry's dialect
         // parses it; if that dialect cannot, the detector fails closed (no
         // finding), consistent with its single-statement behaviour.
-        self.detect_and_record_overrides(sql, entries[0].1.dialect);
+        self.detect_and_record_overrides(sql, entries[0].1.entry.dialect);
         let mut entries = entries.into_iter().enumerate();
         let mut pending = FuturesUnordered::new();
         for _ in 0..self.max_concurrent_fan_out_queries {
             if let Some((index, (name, entry))) = entries.next() {
-                pending.push(self.query_one(index, name, entry, sql));
+                pending.push(self.query_one(index, name, entry, sql, context));
             }
         }
 
         let mut databases = Vec::new();
         while let Some(database) = pending.next().await {
             databases.push(database);
-            if let Some((index, (name, entry))) = entries.next() {
-                pending.push(self.query_one(index, name, entry, sql));
+            if !context.cancellation.is_cancelled()
+                && let Some((index, (name, entry))) = entries.next()
+            {
+                pending.push(self.query_one(index, name, entry, sql, context));
             }
         }
         databases.sort_by_key(|(index, _, _, _)| *index);
@@ -52,6 +58,9 @@ impl DatabaseTools {
                 serde_json::Value::Object(record)
             })
             .collect::<Vec<_>>();
+        if context.cancellation.is_cancelled() {
+            return Err(ToolError::QueryFailedDetail("query cancelled".into()));
+        }
         Ok(serde_json::json!({ "databases": databases }))
     }
 
@@ -59,36 +68,35 @@ impl DatabaseTools {
         &self,
         index: usize,
         name: &str,
-        entry: &crate::connection::ConnectionEntry,
+        entry: crate::connection::OperationEntry<'_>,
         sql: &str,
+        context: &ToolExecutionContext,
     ) -> (usize, String, String, Result<serde_json::Value, ToolError>) {
-        let outcome = tokio::time::timeout(
-            self.fan_out_query_timeout,
-            crate::agent::state_tools::query(
-                entry.connector.as_ref(),
-                sql,
-                self.max_rows,
-                self.state_db.as_ref(),
-                entry.profile_id.as_deref(),
-            ),
+        let outcome = crate::agent::state_tools::query_with_context(
+            &entry,
+            sql,
+            self.max_rows,
+            self.state_db.as_ref(),
+            entry.entry.profile_id.as_deref(),
+            context,
+            Some(self.fan_out_query_timeout),
         )
-        .await
-        .unwrap_or(Err(ToolError::QueryTimedOut));
+        .await;
         // Record one observation per connection: a fan-out that touched five
         // databases is five observations, each with its own profile (spec §3).
         if let Some(log) = &self.observations {
             log.record_query(
                 "bounded_sql_query_all",
                 sql,
-                entry.dialect,
-                entry.profile_id.as_deref(),
+                entry.entry.dialect,
+                entry.entry.profile_id.as_deref(),
                 outcome.as_ref().ok(),
             );
         }
         (
             index,
             name.to_string(),
-            entry.dialect.as_str().to_string(),
+            entry.entry.dialect.as_str().to_string(),
             outcome,
         )
     }

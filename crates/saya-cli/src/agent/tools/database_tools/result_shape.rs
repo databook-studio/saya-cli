@@ -10,10 +10,10 @@
 
 use serde_json::{Value, json};
 
-use saya_agent::ToolError;
+use saya_agent::{ToolError, ToolExecutionContext};
 
 use super::DatabaseTools;
-use crate::connection::ConnectionEntry;
+use crate::connection::OperationEntry;
 
 impl DatabaseTools {
     /// Runs one bounded read-only SQL query and returns its shape, reusing the
@@ -22,20 +22,23 @@ impl DatabaseTools {
     /// refused here by the same path, not a second one.
     pub(super) async fn result_shape(
         &self,
-        entry: &ConnectionEntry,
+        operation: &OperationEntry<'_>,
         sql: &str,
+        context: &ToolExecutionContext,
     ) -> Result<Value, ToolError> {
         // A1: detect a confirmed claim this statement contradicts, independent
         // of whether the query then succeeds. Best-effort: a missing receipt/log
         // or a fail-closed detector records nothing; the turn is never failed by
         // detection.
-        self.detect_and_record_overrides(sql, entry.dialect);
-        let result = crate::agent::state_tools::query(
-            entry.connector.as_ref(),
+        self.detect_and_record_overrides(sql, operation.entry.dialect);
+        let result = crate::agent::state_tools::query_with_context(
+            operation,
             sql,
             self.max_rows,
             self.state_db.as_ref(),
-            entry.profile_id.as_deref(),
+            operation.entry.profile_id.as_deref(),
+            context,
+            None,
         )
         .await?;
         Ok(shape_of(&result))
