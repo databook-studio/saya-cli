@@ -181,20 +181,6 @@ pub async fn run_agent_with_sink(
         {
             emit(&mut events, sink, AgentEvent::reasoning_text(text)).await;
         }
-        if !tool_protocol::valid_ids(&assistant.tool_calls) {
-            emit(
-                &mut events,
-                sink,
-                AgentEvent::provider_recovery(
-                    crate::ProviderRecoveryPhase::NotRetried,
-                    crate::ProviderRecoveryReason::ToolCallProtocol,
-                    1,
-                    attempt::MAX_ATTEMPTS,
-                ),
-            )
-            .await;
-            return Err(AgentError::InvalidToolCall);
-        }
         messages.push(assistant.clone());
         // Designation arm: see `designation` for the bounded prose recovery.
         match designation::handle(

@@ -3,10 +3,9 @@
 use crate::ToolCall;
 use std::collections::HashSet;
 
-/// IDs identify provider tool replies, so each completed assistant message
-/// needs one nonblank, unique ID per call before the loop can do anything with
-/// that batch. The provider collector already caps the call count and bytes;
-/// this set keeps borrowed IDs only.
+/// Collection bounds the calls and bytes while the provider response is built.
+/// Once complete, every caller validates these reply IDs before treating the
+/// response as an assistant message. This set keeps borrowed IDs only.
 pub(super) fn valid_ids(calls: &[ToolCall]) -> bool {
     let mut ids = HashSet::with_capacity(calls.len());
     calls

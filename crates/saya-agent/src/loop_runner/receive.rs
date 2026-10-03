@@ -1,4 +1,4 @@
-use super::{add_usage, attempt, emit, receive_stream::stream_attempt};
+use super::{add_usage, attempt, emit, receive_stream::stream_attempt, tool_protocol};
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
     ProviderRecoveryPhase, ProviderRecoveryReason, TokenUsage, ToolDefinition, UsageCall,
@@ -36,6 +36,23 @@ pub(super) async fn receive(
                 if let Some(usage) = usage {
                     emit(events, sink, AgentEvent::usage(UsageCall::Answer, usage)).await;
                     add_usage(&mut recovered_usage, usage);
+                }
+                if !tool_protocol::valid_ids(&message.tool_calls) {
+                    emit(
+                        events,
+                        sink,
+                        AgentEvent::provider_recovery(
+                            ProviderRecoveryPhase::NotRetried,
+                            ProviderRecoveryReason::ToolCallProtocol,
+                            retries.saturating_add(1),
+                            attempt::MAX_ATTEMPTS,
+                        ),
+                    )
+                    .await;
+                    return Err(attempt::ReceiveFailure {
+                        error: crate::AgentError::InvalidToolCall,
+                        usage: recovered_usage,
+                    });
                 }
                 return Ok((message, recovered_usage, reasoning));
             }
