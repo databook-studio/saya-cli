@@ -44,6 +44,50 @@ run in order:
    failure during the check also fails, but reports "could not run" rather than
    staleness.
 
+Before an archive is checksummed, the build scans the executable and the
+generated archive. The archive allowlist is exactly one top-level release
+directory containing one executable (`saya` or `saya.exe`), `README.md`,
+`LICENSE`, and `SECURITY.md`. Before each crates.io publish, including
+`DRY_RUN=1`, the publisher runs `cargo package --locked` with local workspace
+patches, then scans that generated `.crate` payload. Crates may contain only
+Cargo package metadata at the root (`Cargo.toml`, its original form, lock/VCS
+metadata, and `build.rs`), `README.md`, license/copyright files, and regular
+payloads below Cargo's `src`, `tests`, `examples`, `benches`, or
+`proptest-regressions` directories. A crate must have a regular `Cargo.toml`,
+license metadata, and at least one regular source file below `src/`.
+
+Both scanners require canonical relative paths and reject traversal, links,
+special archive entries, encrypted ZIP members, colon/NTFS alternate-stream
+names, and entries outside their allowlists. They reject session/config and
+credential-like filename classes (including `.env*`, credentials/secrets/auth
+JSON, TOML, YAML, and common key/certificate files) while allowing ordinary
+public Rust modules such as `session.rs` and `secret.rs`. The synthetic
+`SAYA_ARTIFACT_FORBIDDEN_SENTINEL` marker is rejected wherever it appears.
+Executable bytes are also checked for known local home/workspace path forms.
+These checks do not identify arbitrary credentials or secrets embedded in
+otherwise legitimate public source or data. This is content checking; checksums
+identify bytes, while signing and build provenance remain separate. The
+Windows native C++ build has no documented source-path remapping equivalent in
+the locked `cc` toolchain, so its artifact scan remains a CI check rather than
+a locally proven remapping guarantee.
+
+The scanner bounds work as well as accepted content: each archive input is at
+most 1 GiB; ZIP central-directory metadata is at most 16 MiB and its declared
+entry count is checked before `ZipInfo` objects are built; there are at most
+20,000 archive entries, each at most 256 MiB, with at most 512 MiB of declared
+and observed file payload. TAR parsing accepts at most 20,000 physical headers,
+limits each GNU/PAX metadata body to 1 MiB and all such bodies to 16 MiB, and
+limits decompressed TAR reads to 512 MiB + 16 MiB + 20,000 KiB + 1 KiB. The
+binary scanner reads in 64 KiB chunks and rejects binaries over 256 MiB.
+
+The artifact scanners require Python 3.12 or newer. The release workflow uses
+moving GitHub-hosted runner labels rather than pinning Python; current runner
+image documentation lists Python 3.12 on Ubuntu and Windows and Python 3.14 on
+macOS. TAR streaming uses CPython `tarfile`'s private `TarInfo` hooks
+(`_fromtarfile` and `_proc_*`), confirmed in CPython 3.12 and 3.13 source and
+locally with Python 3.14.6. Recheck those hooks when upgrading runner images or
+the supported Python floor.
+
 Jobs 4 and 5 no-op unless their secrets are configured, so a release never fails
 because a channel is not set up. Job 6 honors that contract: with
 `HOMEBREW_TAP_TOKEN` unset it downgrades a stale tap to a `::warning`; with the
