@@ -560,10 +560,10 @@ async fn explicit_retry_runs_only_the_incomplete_step() {
     );
 }
 
-/// A database-data-only step is allowed to make a new observation: it may see
-/// newer rows or cost more, so resume makes no claim to replay the same result.
+/// This establishes retry eligibility for a database-data-only definition.
+/// The SQL tool is not called; the provider returns a direct answer.
 #[tokio::test]
-async fn a_database_observation_can_restart_as_a_fresh_observation() {
+async fn a_database_data_only_definition_does_not_require_retry_opt_in() {
     let plan = RunPlan::new(vec![step("inspect the data")]).unwrap();
     let mut run = crashed_run(
         "fresh-observation",
