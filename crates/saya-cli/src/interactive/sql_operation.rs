@@ -3,6 +3,9 @@ use saya_agent::CancellationToken;
 use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
 use saya_types::{ConnectionError, DatabaseProfile, QueryRequest, QueryResult};
 
+#[path = "sql_operation_cancellation.rs"]
+mod cancellation;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SqlOperationPhase {
     Build,
@@ -103,28 +106,20 @@ async fn execute_resolved_with_cancellation(
     if is_cancelled(cancellation) {
         return Err(SqlOperationError::Execute(ConnectionError::cancelled()));
     }
-    let execution = connector.execute(QueryRequest::new(
-        sql.to_string(),
-        runtime.resolved.max_rows,
-    ));
-    tokio::pin!(execution);
-    match cancellation {
-        None => execution.await.map_err(SqlOperationError::Execute),
+    let request = QueryRequest::new(sql.to_string(), runtime.resolved.max_rows);
+    let result = match cancellation {
         Some(cancellation) => {
-            tokio::select! {
-                biased;
-                result = &mut execution => result.map_err(SqlOperationError::Execute),
-                _ = cancellation.cancelled() => {
-                    let request = connector.request_cancel();
-                    tokio::pin!(request);
-                    let (result, _request_outcome) = tokio::join!(&mut execution, &mut request);
-                    result.map_err(SqlOperationError::Execute)
-                }
-            }
+            cancellation::execute_with_cancellation(connector.as_ref(), request, cancellation).await
         }
-    }
+        None => connector.execute(request).await,
+    };
+    result.map_err(SqlOperationError::Execute)
 }
 
 fn is_cancelled(cancellation: Option<&CancellationToken>) -> bool {
     cancellation.is_some_and(CancellationToken::is_cancelled)
 }
+
+#[cfg(test)]
+#[path = "sql_operation_cancellation_tests.rs"]
+mod cancellation_tests;
