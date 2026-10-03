@@ -41,3 +41,21 @@ fn the_run_command_debug_names_params_without_values() {
         "the other fields still print: {rendered}"
     );
 }
+#[test]
+fn run_resume_retry_incomplete_is_an_explicit_cli_input() {
+    use clap::Parser;
+
+    let cli = super::Cli::try_parse_from(["saya", "run", "resume", "r-test", "--retry-incomplete"])
+        .expect("the operator retry flag parses on the real run-resume command");
+
+    assert!(matches!(
+        cli.command,
+        Some(super::Command::Run {
+            command: Some(super::RunCommand::Resume {
+                run_id,
+                retry_incomplete: true,
+            }),
+            ..
+        }) if run_id == "r-test"
+    ));
+}

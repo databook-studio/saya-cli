@@ -20,19 +20,66 @@ use crate::engine::state::RunState;
 /// What resume found in the journal and what it did about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeOutcome {
-    /// The run continues at the plan's first incomplete step — an in-flight
-    /// step restarted from its beginning — and every remaining step ran
-    /// through the episode driver. `state` is where the run ended.
+    /// The run continues at the plan's first incomplete step, with each
+    /// permitted restart beginning a fresh episode. `state` is where it ended.
     Resumed { first_step: usize, state: RunState },
     /// Nothing was left to run: the journal already records a terminal
     /// state, or every step is complete and resume recorded the completion
     /// the crash had left unwritten.
     Settled { state: RunState },
+    /// The journal shows an incomplete step that may already have produced
+    /// effects. Resume paused without invoking the provider or tools. An
+    /// operator may reconcile those effects, then opt into a fresh retry.
+    IncompleteEffects {
+        step: usize,
+        goal: String,
+        effects: Vec<ResumeEffect>,
+    },
     /// The journal's run has no approval on record. Approval is explicit;
     /// resume runs nothing and records nothing.
     Unapproved,
     /// The journal holds no run.
     NoRun,
+}
+
+/// The operator's policy for an incomplete step that may have produced effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IncompletePolicy {
+    /// Refuse to repeat effectful or unknown work unless the operator opts in.
+    #[default]
+    Conservative,
+    /// Start a fresh attempt after the operator has reconciled possible effects.
+    Retry,
+}
+
+/// A conservative reason an incomplete step could not be replayed safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeEffect {
+    WorkspaceWrite,
+    Scratch,
+    Runner,
+    Interpreter,
+    Fetch,
+    ExternalSideEffect,
+    LocalStateWrite,
+    Unknown,
+}
+
+impl ResumeEffect {
+    /// Human-readable description of the possible effect, without implying it
+    /// happened or was completed.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::WorkspaceWrite => "workspace mutation",
+            Self::Scratch => "scratch database mutation",
+            Self::Runner => "runner execution",
+            Self::Interpreter => "interpreter execution",
+            Self::Fetch => "fetch or download",
+            Self::ExternalSideEffect => "external side effect",
+            Self::LocalStateWrite => "local state mutation",
+            Self::Unknown => "unknown tool effect",
+        }
+    }
 }
 
 /// Why resume refused or stopped. Data, not prose: `saya-cli` renders these.
@@ -73,6 +120,9 @@ pub struct ResumeRun<'a> {
     pub run_id: RunId,
     pub store: Arc<dyn RunStore>,
     pub plan: RunPlan,
+    /// Default-deny retry policy for steps whose journal state is Started or
+    /// Failed and whose declared effects may already have happened.
+    pub incomplete_policy: IncompletePolicy,
     pub workspace: Workspace,
     pub collaborators: EpisodeCollaborators<'a>,
     pub request: EpisodeRequest,

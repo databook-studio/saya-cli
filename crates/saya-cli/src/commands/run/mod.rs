@@ -112,9 +112,10 @@ pub(super) async fn run_command(
         Some(crate::cli::RunCommand::Cancel { run_id }) => {
             cancel::cancel(&run_id, runtime, format, state).await
         }
-        Some(crate::cli::RunCommand::Resume { run_id }) => {
-            resume::resume(&run_id, runtime, format, approval, state).await
-        }
+        Some(crate::cli::RunCommand::Resume {
+            run_id,
+            retry_incomplete,
+        }) => resume::resume(&run_id, runtime, format, approval, state, retry_incomplete).await,
         None => {
             start::start(
                 start::StartInputs {

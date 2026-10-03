@@ -27,7 +27,10 @@ use std::{
     collections::VecDeque,
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use async_trait::async_trait;
@@ -47,7 +50,8 @@ use saya_harness::journal::Journal;
 use saya_harness::lock::RunLock;
 use saya_harness::workspace::Workspace;
 use saya_store::{
-    NewRun, RunBudgets, RunCapabilityFlags, RunStatus, RunStepStatus, RunStore, SqliteStateStore,
+    NewRun, RunBudgets, RunCapabilityFlags, RunRecord, RunStatus, RunStepRecord, RunStepStatus,
+    RunStore, RunSummary, RunUsage, SqliteStateStore, StoreError,
 };
 use saya_types::{Capabilities, PauseReason, RunEvent, RunId, RunPlan, StepSpec};
 
@@ -125,11 +129,14 @@ impl ChatProvider for UsageProvider {
 
 /// No scripted turn ever calls a tool; executing one is a test failure.
 #[derive(Default)]
-struct NoTools;
+struct NoTools {
+    calls: Arc<AtomicUsize>,
+}
 
 #[async_trait]
 impl ToolExecutor for NoTools {
     async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
         panic!("no resume test may execute a tool call")
     }
 }
@@ -142,6 +149,65 @@ struct AllowApproval;
 impl ApprovalDecider for AllowApproval {
     async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
         true
+    }
+}
+
+/// A store adapter that refuses exactly the first `running` step mirror while
+/// leaving the real journal and database available for assertions.
+struct RefuseStepStartStore {
+    inner: SqliteStateStore,
+}
+
+#[async_trait]
+impl RunStore for RefuseStepStartStore {
+    async fn create_run(&self, run: NewRun) -> Result<RunRecord, StoreError> {
+        RunStore::create_run(&self.inner, run).await
+    }
+
+    async fn get_run(&self, id: &RunId) -> Result<Option<RunRecord>, StoreError> {
+        RunStore::get_run(&self.inner, id).await
+    }
+
+    async fn list_runs(&self) -> Result<Vec<RunSummary>, StoreError> {
+        RunStore::list_runs(&self.inner).await
+    }
+
+    async fn set_run_status(
+        &self,
+        id: &RunId,
+        status: RunStatus,
+        failure_code: Option<saya_types::RunFailureCode>,
+    ) -> Result<(), StoreError> {
+        RunStore::set_run_status(&self.inner, id, status, failure_code).await
+    }
+
+    async fn set_run_usage(&self, id: &RunId, usage: RunUsage) -> Result<(), StoreError> {
+        RunStore::set_run_usage(&self.inner, id, usage).await
+    }
+
+    async fn upsert_step(
+        &self,
+        id: &RunId,
+        step: usize,
+        status: RunStepStatus,
+    ) -> Result<(), StoreError> {
+        if status == RunStepStatus::Running {
+            return Err(StoreError::unavailable());
+        }
+        RunStore::upsert_step(&self.inner, id, step, status).await
+    }
+
+    async fn set_step_usage(
+        &self,
+        id: &RunId,
+        step: usize,
+        usage: RunUsage,
+    ) -> Result<(), StoreError> {
+        RunStore::set_step_usage(&self.inner, id, step, usage).await
+    }
+
+    async fn list_steps(&self, id: &RunId) -> Result<Vec<RunStepRecord>, StoreError> {
+        RunStore::list_steps(&self.inner, id).await
     }
 }
 
@@ -185,6 +251,7 @@ struct CrashedRun {
     run_id: RunId,
     stubs: Stubs,
     plan: RunPlan,
+    tool_calls: Arc<AtomicUsize>,
     /// One toolset per plan step, over one shared `NoTools` executor — no
     /// resume test under this rig executes a tool call.
     toolsets: Vec<StepToolset>,
@@ -200,6 +267,7 @@ impl CrashedRun {
             run_id: self.run_id.clone(),
             store: self.store.clone(),
             plan: self.plan.clone(),
+            incomplete_policy: saya_harness::engine::IncompletePolicy::Conservative,
             workspace: workspace(&self.root),
             collaborators: EpisodeCollaborators {
                 provider: &self.stubs.provider,
@@ -297,7 +365,9 @@ async fn crashed_run(
     for event in events {
         journal.append(event).unwrap();
     }
-    let executor: Arc<dyn ToolExecutor> = Arc::new(NoTools);
+    let no_tools = Arc::new(NoTools::default());
+    let tool_calls = Arc::clone(&no_tools.calls);
+    let executor: Arc<dyn ToolExecutor> = no_tools;
     let toolsets = (0..plan.steps.len())
         .map(|_| StepToolset {
             executor: Arc::clone(&executor),
@@ -311,6 +381,7 @@ async fn crashed_run(
         run_id,
         stubs: Stubs::default(),
         plan,
+        tool_calls,
         toolsets,
     }
 }
@@ -352,7 +423,9 @@ async fn driven_run(label: &str) -> CrashedRun {
         .await
         .unwrap();
     let plan = two_step_plan();
-    let executor: Arc<dyn ToolExecutor> = Arc::new(NoTools);
+    let no_tools = Arc::new(NoTools::default());
+    let tool_calls = Arc::clone(&no_tools.calls);
+    let executor: Arc<dyn ToolExecutor> = no_tools;
     let toolsets: Vec<StepToolset> = (0..plan.steps.len())
         .map(|_| StepToolset {
             executor: Arc::clone(&executor),
@@ -389,6 +462,7 @@ async fn driven_run(label: &str) -> CrashedRun {
         run_id,
         stubs,
         plan,
+        tool_calls,
         toolsets,
     }
 }
@@ -610,6 +684,493 @@ async fn a_step_executing_at_the_crash_restarts_from_its_start() {
     );
 }
 
+/// A durable start for a step with workspace mutation authority is not proof
+/// that its effects did not happen. Conservative resume refuses before calling
+/// either the provider or its executor, and repeating that refusal is stable.
+#[tokio::test]
+async fn an_incomplete_workspace_step_requires_explicit_retry() {
+    let mut capabilities = Capabilities::default();
+    capabilities.workspace_write = true;
+    let risky = StepSpec::new("write the report", capabilities, None, Vec::new(), None).unwrap();
+    let run = crashed_run(
+        "uncertain-workspace",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+            RunEvent::StepStarted { step: 0 },
+        ],
+        RunStatus::Executing,
+        RunPlan::new(vec![risky]).unwrap(),
+    )
+    .await;
+    let expected = ResumeOutcome::IncompleteEffects {
+        step: 0,
+        goal: "write the report".into(),
+        effects: vec![saya_harness::engine::ResumeEffect::WorkspaceWrite],
+    };
+
+    let first = resume(&run.run_dir, run.inputs()).await.unwrap();
+
+    assert_eq!(first, expected);
+    assert_eq!(run.stubs.provider.count(), 0);
+    assert_eq!(run.tool_calls.load(Ordering::Relaxed), 0);
+    let first_journal = run.journal();
+    assert_eq!(
+        first_journal.last(),
+        Some(&RunEvent::Paused {
+            reason: PauseReason::ProcessDeath
+        })
+    );
+    assert!(!first_journal.contains(&RunEvent::StepCompleted { step: 0 }));
+
+    let repeated = resume(&run.run_dir, run.inputs()).await.unwrap();
+
+    assert_eq!(repeated, expected);
+    assert_eq!(run.stubs.provider.count(), 0);
+    assert_eq!(run.tool_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(run.journal(), first_journal);
+}
+
+#[tokio::test]
+async fn an_incomplete_failed_scratch_step_is_also_uncertain() {
+    let mut capabilities = Capabilities::default();
+    capabilities.scratch = true;
+    let plan = RunPlan::new(vec![
+        StepSpec::new("stage the data", capabilities, None, Vec::new(), None).unwrap(),
+    ])
+    .unwrap();
+    let run = crashed_run(
+        "failed-scratch",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+            RunEvent::StepFailed { step: 0 },
+            RunEvent::Paused {
+                reason: PauseReason::ProcessDeath,
+            },
+        ],
+        RunStatus::Paused,
+        plan,
+    )
+    .await;
+
+    let outcome = resume(&run.run_dir, run.inputs()).await.unwrap();
+
+    assert_eq!(
+        outcome,
+        ResumeOutcome::IncompleteEffects {
+            step: 0,
+            goal: "stage the data".into(),
+            effects: vec![saya_harness::engine::ResumeEffect::Scratch],
+        }
+    );
+    assert_eq!(run.stubs.provider.count(), 0);
+    assert_eq!(
+        run.journal().last(),
+        Some(&RunEvent::Paused {
+            reason: PauseReason::ProcessDeath
+        })
+    );
+}
+
+#[tokio::test]
+async fn an_unavailable_step_toolset_fails_closed_as_unknown() {
+    let mut run = crashed_run(
+        "unknown-toolset",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+            RunEvent::StepStarted { step: 0 },
+        ],
+        RunStatus::Executing,
+        RunPlan::new(vec![step("unknown capability")]).unwrap(),
+    )
+    .await;
+    run.toolsets.clear();
+
+    let outcome = resume(&run.run_dir, run.inputs()).await.unwrap();
+
+    assert_eq!(
+        outcome,
+        ResumeOutcome::IncompleteEffects {
+            step: 0,
+            goal: "unknown capability".into(),
+            effects: vec![saya_harness::engine::ResumeEffect::Unknown],
+        }
+    );
+    assert_eq!(run.stubs.provider.count(), 0);
+}
+
+/// Explicit retry begins only the incomplete suffix: a completed prefix stays
+/// authoritative even when the resumed operator opts into retrying uncertainty.
+#[tokio::test]
+async fn explicit_retry_runs_only_the_incomplete_step() {
+    let mut capabilities = Capabilities::default();
+    capabilities.workspace_write = true;
+    let plan = RunPlan::new(vec![
+        StepSpec::new(
+            "completed write",
+            capabilities.clone(),
+            None,
+            Vec::new(),
+            None,
+        )
+        .unwrap(),
+        StepSpec::new("incomplete write", capabilities, None, Vec::new(), None).unwrap(),
+    ])
+    .unwrap();
+    let run = crashed_run(
+        "retry-incomplete",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+            RunEvent::StepStarted { step: 0 },
+            RunEvent::StepCompleted { step: 0 },
+            RunEvent::StepStarted { step: 1 },
+        ],
+        RunStatus::Executing,
+        plan,
+    )
+    .await;
+    let mut inputs = run.inputs();
+    inputs.incomplete_policy = saya_harness::engine::IncompletePolicy::Retry;
+
+    let outcome = resume(&run.run_dir, inputs).await.unwrap();
+
+    assert_eq!(
+        outcome,
+        ResumeOutcome::Resumed {
+            first_step: 1,
+            state: RunState::Completed
+        }
+    );
+    assert_eq!(run.stubs.provider.count(), 1);
+    let events = run.journal();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::StepStarted { step: 0 }))
+            .count(),
+        1,
+        "the durable completed prefix must not repeat"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::StepStarted { step: 1 }))
+            .count(),
+        2,
+        "the explicit retry is represented by a new StepStarted"
+    );
+}
+
+/// A database-data-only step is allowed to make a new observation: it may see
+/// newer rows or cost more, so resume makes no claim to replay the same result.
+#[tokio::test]
+async fn a_database_observation_can_restart_as_a_fresh_observation() {
+    let plan = RunPlan::new(vec![step("inspect the data")]).unwrap();
+    let mut run = crashed_run(
+        "fresh-observation",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+            RunEvent::StepStarted { step: 0 },
+        ],
+        RunStatus::Executing,
+        plan,
+    )
+    .await;
+    run.toolsets[0].definitions.push(ToolDefinition {
+        name: "bounded_sql_query".into(),
+        description: String::new(),
+        read_only: false,
+        parameters: serde_json::json!({"type": "object"}),
+        effect: ToolEffect {
+            database_data: true,
+            external_side_effect: false,
+            requires_approval: true,
+            local_state: LocalStateEffect::None,
+        },
+        completion: None,
+    });
+
+    let outcome = resume(&run.run_dir, run.inputs()).await.unwrap();
+
+    assert_eq!(
+        outcome,
+        ResumeOutcome::Resumed {
+            first_step: 0,
+            state: RunState::Completed
+        }
+    );
+    assert_eq!(run.stubs.provider.count(), 1);
+}
+
+#[tokio::test]
+async fn read_only_and_approval_flags_do_not_hide_declared_external_effects() {
+    let mut run = crashed_run(
+        "read-only-external-effect",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+            RunEvent::StepStarted { step: 0 },
+        ],
+        RunStatus::Executing,
+        RunPlan::new(vec![step("inspect and publish")]).unwrap(),
+    )
+    .await;
+    run.toolsets[0].definitions.push(ToolDefinition {
+        name: "publish_report".into(),
+        description: String::new(),
+        read_only: true,
+        parameters: serde_json::json!({"type": "object"}),
+        effect: ToolEffect {
+            database_data: false,
+            external_side_effect: true,
+            requires_approval: false,
+            local_state: LocalStateEffect::None,
+        },
+        completion: None,
+    });
+
+    let outcome = resume(&run.run_dir, run.inputs()).await.unwrap();
+
+    assert_eq!(
+        outcome,
+        ResumeOutcome::IncompleteEffects {
+            step: 0,
+            goal: "inspect and publish".into(),
+            effects: vec![saya_harness::engine::ResumeEffect::ExternalSideEffect],
+        }
+    );
+    assert_eq!(run.stubs.provider.count(), 0);
+}
+
+/// EpisodeDriver cannot enter provider/tool work when StepStarted cannot be
+/// appended. Use a real journal filesystem fault rather than a test seam.
+#[tokio::test]
+async fn a_step_start_append_failure_prevents_episode_work() {
+    let run = crashed_run(
+        "start-append-failure",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+        ],
+        RunStatus::Approved,
+        RunPlan::new(vec![step("the only step")]).unwrap(),
+    )
+    .await;
+    let journal_path = run.run_dir.join("events.ndjson");
+    fs::remove_file(&journal_path).unwrap();
+    fs::create_dir(&journal_path).unwrap();
+    let journal = Journal::open(&run.run_dir);
+    let sink = EngineEventSink::new(
+        run.run_id.clone(),
+        RunState::Approved,
+        journal.clone(),
+        run.store.clone(),
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            download_budget: None,
+            carried_usage: UsageTotals::default(),
+        },
+        std::time::Instant::now,
+    );
+    let driver = EpisodeDriver::new(
+        EpisodeCollaborators {
+            provider: &run.stubs.provider,
+            approval: &run.stubs.approval,
+            toolsets: &run.toolsets,
+            cancellation: CancellationToken::default(),
+        },
+        EpisodeRun {
+            run_id: run.run_id.clone(),
+            store: run.store.clone(),
+            journal,
+        },
+        request(),
+        bounds(),
+    );
+
+    assert!(
+        driver
+            .run_step(&sink, &run.plan, 0, &workspace(&run.root))
+            .await
+            .is_err()
+    );
+    assert_eq!(run.stubs.provider.count(), 0);
+    assert!(
+        RunStore::list_steps(&*run.store, &run.run_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_step_start_mirror_refusal_prevents_episode_work() {
+    let run = crashed_run(
+        "start-mirror-failure",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+        ],
+        RunStatus::Approved,
+        RunPlan::new(vec![step("the only step")]).unwrap(),
+    )
+    .await;
+    let store: Arc<dyn RunStore> = Arc::new(RefuseStepStartStore {
+        inner: (*run.store).clone(),
+    });
+    let journal = Journal::open(&run.run_dir);
+    let sink = EngineEventSink::new(
+        run.run_id.clone(),
+        RunState::Approved,
+        journal.clone(),
+        store.clone(),
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            download_budget: None,
+            carried_usage: UsageTotals::default(),
+        },
+        std::time::Instant::now,
+    );
+    let driver = EpisodeDriver::new(
+        EpisodeCollaborators {
+            provider: &run.stubs.provider,
+            approval: &run.stubs.approval,
+            toolsets: &run.toolsets,
+            cancellation: CancellationToken::default(),
+        },
+        EpisodeRun {
+            run_id: run.run_id.clone(),
+            store,
+            journal,
+        },
+        request(),
+        bounds(),
+    );
+
+    assert!(
+        driver
+            .run_step(&sink, &run.plan, 0, &workspace(&run.root))
+            .await
+            .is_err()
+    );
+    assert_eq!(run.stubs.provider.count(), 0);
+    assert_eq!(run.tool_calls.load(Ordering::Relaxed), 0);
+    assert!(run.journal().contains(&RunEvent::StepStarted { step: 0 }));
+    assert!(
+        RunStore::list_steps(&*run.store, &run.run_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// A synced StepCompleted followed by a wire interruption precedes the step
+/// mirror. Resume must trust that durable prefix, continue the next step, and
+/// never call the provider for the completed step again.
+#[tokio::test]
+async fn a_durable_completed_prefix_survives_mirror_interruption_on_resume() {
+    use futures_util::FutureExt;
+
+    let run = crashed_run(
+        "completion-wire-interruption",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+        ],
+        RunStatus::Executing,
+        RunPlan::new(vec![step("completed step"), step("next step")]).unwrap(),
+    )
+    .await;
+    let journal = Journal::open(&run.run_dir).with_wire(Arc::new(|event| {
+        if matches!(event, RunEvent::StepCompleted { step: 0 }) {
+            panic!("interrupt after the durable completion append");
+        }
+    }));
+    let sink = EngineEventSink::new(
+        run.run_id.clone(),
+        RunState::Approved,
+        Journal::open(&run.run_dir),
+        run.store.clone(),
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            download_budget: None,
+            carried_usage: UsageTotals::default(),
+        },
+        std::time::Instant::now,
+    );
+    let driver = EpisodeDriver::new(
+        EpisodeCollaborators {
+            provider: &run.stubs.provider,
+            approval: &run.stubs.approval,
+            toolsets: &run.toolsets,
+            cancellation: CancellationToken::default(),
+        },
+        EpisodeRun {
+            run_id: run.run_id.clone(),
+            store: run.store.clone(),
+            journal,
+        },
+        request(),
+        bounds(),
+    );
+    let interrupted =
+        std::panic::AssertUnwindSafe(driver.run_step(&sink, &run.plan, 0, &workspace(&run.root)))
+            .catch_unwind()
+            .await;
+
+    assert!(interrupted.is_err());
+    assert!(run.journal().contains(&RunEvent::StepCompleted { step: 0 }));
+    assert_eq!(
+        RunStore::list_steps(&*run.store, &run.run_id)
+            .await
+            .unwrap()[0]
+            .status,
+        RunStepStatus::Running,
+        "the injected interruption happened before the step mirror"
+    );
+    assert_eq!(run.stubs.provider.count(), 1);
+
+    let outcome = resume(&run.run_dir, run.inputs()).await.unwrap();
+
+    assert_eq!(
+        outcome,
+        ResumeOutcome::Resumed {
+            first_step: 1,
+            state: RunState::Completed
+        }
+    );
+    assert_eq!(run.stubs.provider.count(), 2);
+    let events = run.journal();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::StepStarted { step: 0 }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::StepCompleted { step: 0 }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::StepStarted { step: 1 }))
+            .count(),
+        1
+    );
+}
+
 /// A second engine on the same run directory is refused while the first
 /// holds the lock — and succeeds once the lock is released.
 #[tokio::test]
@@ -735,6 +1296,7 @@ fn budgeted_inputs<'a>(
         run_id: run.run_id.clone(),
         store: run.store.clone(),
         plan: run.plan.clone(),
+        incomplete_policy: saya_harness::engine::IncompletePolicy::Conservative,
         workspace: workspace(&run.root),
         collaborators: EpisodeCollaborators {
             provider,
@@ -1024,6 +1586,7 @@ fn download_inputs<'a>(
         run_id: run.run_id.clone(),
         store: run.store.clone(),
         plan: run.plan.clone(),
+        incomplete_policy: saya_harness::engine::IncompletePolicy::Conservative,
         workspace: workspace(&run.root),
         collaborators: EpisodeCollaborators {
             provider,
