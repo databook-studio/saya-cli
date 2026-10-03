@@ -9,7 +9,8 @@ use crate::commands::{capture_output_start, capture_output_take};
 use crate::config::runtime::{RuntimeConfig, load_with_sources};
 use crate::profile_identity::profile_identity;
 use crate::render::RenderFormat;
-use saya_store::{InvestigationRepository, SqliteStateStore};
+use saya_agent::CancellationToken;
+use saya_store::{AuditStore, InvestigationRepository, SqliteStateStore};
 use saya_types::investigation::InvestigationDefinitionV1;
 use saya_types::{EvidenceSource, ResultScope, SqlDialect};
 use std::{
@@ -659,6 +660,29 @@ async fn run_outcome(
     (outcome, out, err)
 }
 
+async fn run_outcome_with_cancellation(
+    repo: &InvestigationRepository,
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    state_db: &SqliteStateStore,
+    cancellation: &CancellationToken,
+) -> (RunOutcome, String, String) {
+    capture_output_start();
+    let outcome = command
+        .run_outcome_with_cancellation(
+            repo,
+            runtime,
+            RenderFormat::Text,
+            false,
+            state_db,
+            cancellation,
+        )
+        .await
+        .unwrap();
+    let (out, err) = capture_output_take();
+    (outcome, out, err)
+}
+
 fn run_command(id: &str) -> InvestigationCommand {
     InvestigationCommand::Run {
         id: id.to_string(),
@@ -755,5 +779,53 @@ async fn run_outcome_has_no_replay_on_stale_or_failure() {
     );
     assert!(err.contains("nosuchcol"), "err: {err}");
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn pre_cancelled_typed_replay_does_not_execute_or_refresh_its_binding() {
+    let root = temp_root("outcome-cancelled");
+    let runtime = runtime_at(&root, &single_profile_toml(&root));
+    let repo = repo_at(&root);
+    seed_events(&root.join("data.sqlite3")).await;
+    let id = saved_id(&repo, &runtime).await;
+    let state_db = SqliteStateStore::new(root.join("state.sqlite3"));
+
+    // Positive control through the new typed entry: this exact saved replay
+    // executes and records its ordinary successful result/audit.
+    let control = CancellationToken::new();
+    let (completed, out, err) =
+        run_outcome_with_cancellation(&repo, run_command(&id), &runtime, &state_db, &control).await;
+    assert_eq!(completed.code, 0, "out: {out} err: {err}");
+    assert!(completed.replay.is_some(), "the positive control executes");
+    let audit_count = state_db.recent_audit(20).await.unwrap().len();
+    assert_eq!(audit_count, 1, "the successful control is audited once");
+    let binding_before = fs::read(binding_path(&root, &id)).unwrap();
+
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let (stopped, out, err) =
+        run_outcome_with_cancellation(&repo, run_command(&id), &runtime, &state_db, &cancellation)
+            .await;
+
+    assert_eq!(stopped.code, 2, "out: {out} err: {err}");
+    assert!(
+        stopped.replay.is_none(),
+        "a stopped replay carries no result"
+    );
+    assert!(
+        err.contains("cancelled"),
+        "the fixed refusal is captured: {err}"
+    );
+    assert_eq!(
+        state_db.recent_audit(20).await.unwrap().len(),
+        audit_count,
+        "a pre-cancelled replay does not write a query audit"
+    );
+    assert_eq!(
+        fs::read(binding_path(&root, &id)).unwrap(),
+        binding_before,
+        "a stopped replay does not refresh review authority"
+    );
     let _ = fs::remove_dir_all(root);
 }

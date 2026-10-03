@@ -18,21 +18,33 @@
 //! adapter uses — stdout stays protocol-only and the typed outcome, not the
 //! rendered text, is what the client sees.
 
-use rmcp::model::{CallToolRequestParams, CallToolResponse};
+use rmcp::{
+    RoleServer,
+    model::{CallToolRequestParams, CallToolResponse},
+    service::RequestContext,
+};
+use saya_agent::CancellationToken;
 use saya_store::{InvestigationRepository, StoreError};
 use saya_types::InvestigationId;
 use serde_json::json;
 
-use super::{context::McpContext, policy::ServePolicy, tools};
-use crate::commands::{
-    Replay, capture_output_start, capture_output_take, run_investigation_outcome,
+use super::{
+    context::McpContext,
+    policy::ServePolicy,
+    replay_cancellation::{
+        ReplayCompletion, ReplayStop, acquire_replay_slot, retain_replay, stop_message,
+    },
+    tools,
 };
+use crate::commands::{Replay, capture_output_start, capture_output_take};
 use crate::render::RenderFormat;
 
 pub(crate) async fn investigation_run(
     policy: &ServePolicy,
     context: &McpContext,
     request: &CallToolRequestParams,
+    request_context: &RequestContext<RoleServer>,
+    deadline: tokio::time::Instant,
 ) -> Result<CallToolResponse, rmcp::ErrorData> {
     let id = tools::required_string(request, "id")?;
     let profile = tools::optional_string(request, "profile")?;
@@ -44,7 +56,24 @@ pub(crate) async fn investigation_run(
     // binding, so the binding must be read after the wait — anything read
     // before it can authorize a target that no longer is the one the run
     // would take.
-    let _slot = context.replay_slot.lock().await;
+    let cancellation = CancellationToken::new();
+    let _slot = match acquire_replay_slot(
+        &context.replay_slot,
+        request_context.ct.cancelled(),
+        || request_context.ct.is_cancelled(),
+        deadline,
+    )
+    .await
+    {
+        Ok(slot) => slot,
+        Err(stop) => return Ok(tools::error_result(stop_message(stop))),
+    };
+    if request_context.ct.is_cancelled() {
+        return Ok(tools::error_result(stop_message(ReplayStop::Cancelled)));
+    }
+    if tokio::time::Instant::now() >= deadline {
+        return Ok(tools::error_result(stop_message(ReplayStop::TimedOut)));
+    }
     let target = match resolve_target(policy, context, id, profile) {
         Ok(target) => target,
         Err(message) => return Ok(tools::error_result(message)),
@@ -62,18 +91,70 @@ pub(crate) async fn investigation_run(
         overwrite: false,
         params,
     };
+    let repo = InvestigationRepository::new(context.runtime.investigations_root.clone());
     capture_output_start();
     let guard = CaptureGuard;
-    let outcome = run_investigation_outcome(
-        command,
-        &context.runtime,
-        RenderFormat::Text,
-        false,
-        &context.store,
+    let operation = async {
+        command
+            .run_outcome_with_cancellation(
+                &repo,
+                &context.runtime,
+                RenderFormat::Text,
+                false,
+                &context.store,
+                &cancellation,
+            )
+            .await
+            .map_err(|error| error.to_string())
+    };
+    let completion = retain_replay(
+        operation,
+        &cancellation,
+        request_context.ct.cancelled(),
+        || request_context.ct.is_cancelled(),
+        deadline,
     )
     .await;
     let (out, err) = capture_output_take();
     std::mem::forget(guard);
+    let (outcome, stopped) = match completion {
+        ReplayCompletion::Completed(outcome) => (outcome, None),
+        ReplayCompletion::Cancelled(Some(Ok(outcome))) if outcome.code != 0 => {
+            (Ok(outcome), Some(ReplayStop::Cancelled))
+        }
+        ReplayCompletion::TimedOut(Some(Ok(outcome))) if outcome.code != 0 => {
+            if outcome.code == 2 {
+                return Ok(tools::error_result(stop_message(ReplayStop::TimedOut)));
+            }
+            (Ok(outcome), Some(ReplayStop::TimedOut))
+        }
+        ReplayCompletion::Cancelled(Some(Ok(_))) => {
+            return Ok(tools::error_result(stop_message(ReplayStop::Cancelled)));
+        }
+        ReplayCompletion::TimedOut(Some(Ok(_))) => {
+            return Ok(tools::error_result(stop_message(ReplayStop::TimedOut)));
+        }
+        ReplayCompletion::Cancelled(Some(Err(error)))
+        | ReplayCompletion::TimedOut(Some(Err(error))) => {
+            return Ok(tools::error_result(error));
+        }
+        ReplayCompletion::Cancelled(None) => {
+            return Ok(tools::error_result(stop_message(ReplayStop::Cancelled)));
+        }
+        ReplayCompletion::TimedOut(None) => {
+            return Ok(tools::error_result(stop_message(ReplayStop::TimedOut)));
+        }
+    };
+    if let Some(stop) = stopped {
+        // Keep a typed failure from the source, including native request
+        // errors, while never returning a success that raced with a stop.
+        let rendered = if out.trim().is_empty() { err } else { out };
+        return Ok(tools::error_result(if rendered.trim().is_empty() {
+            stop_message(stop).to_owned()
+        } else {
+            rendered
+        }));
+    }
     match outcome {
         Ok(outcome) if outcome.code == 0 => match outcome.replay {
             Some(replay) => tools::bounded_result(policy, replay_payload(replay)),

@@ -1,8 +1,8 @@
 use futures_util::StreamExt;
 use saya_agent::{
     CancellationToken, ChatMessage, ChatProvider, ChatRequest, LocalStateEffect, OllamaProvider,
-    OpenAiCompatibleProvider, ProviderError, ProviderSettings, ToolCall, ToolDefinition,
-    ToolEffect,
+    OpenAiCompatibleProvider, ProviderError, ProviderEvent, ProviderSettings, TokenUsage, ToolCall,
+    ToolDefinition, ToolEffect,
 };
 use std::{
     io::{Read, Write},
@@ -230,6 +230,84 @@ async fn openai_sse_handles_fragmented_text_and_done() {
     let sent = &requests.lock().unwrap()[0];
     assert!(sent.contains("\"stream\":true"));
     assert!(sent.contains("Bearer secret-sentinel"));
+}
+
+#[tokio::test]
+async fn openai_sse_ping_frames_stop_at_the_shared_frame_limit() {
+    const FRAME_LIMIT: usize = 65_536;
+    let mut body = b": ping\n\n".repeat(FRAME_LIMIT + 1);
+    body.splice(
+        0..0,
+        b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":40,\"completion_tokens\":10}}\n\n"
+            .iter()
+            .copied(),
+    );
+    body.extend_from_slice(b"data: [DONE]\n\n");
+    let (base, handle) = byte_server(vec![body]);
+
+    let provider = openai(base);
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut latest_usage = None;
+    let error = loop {
+        match stream.next().await.unwrap() {
+            Ok(ProviderEvent::Usage(usage)) => latest_usage = Some(usage),
+            Ok(event) => panic!("over-limit parser emitted an unexpected event: {event:?}"),
+            Err(error) => break error,
+        }
+    };
+    handle.join().unwrap();
+
+    assert_eq!(latest_usage, Some(TokenUsage::new(40, 10)));
+    assert_eq!(
+        error,
+        ProviderError::StreamItemLimit {
+            usage: Some(Box::new(TokenUsage::new(40, 10)))
+        }
+    );
+}
+
+#[tokio::test]
+async fn anthropic_and_ollama_empty_records_share_the_frame_limit() {
+    const FRAME_LIMIT: usize = 65_536;
+    for provider_kind in ["anthropic", "ollama"] {
+        let body = match provider_kind {
+            "anthropic" => b"\n\n".repeat(FRAME_LIMIT + 1),
+            "ollama" => vec![b'\n'; FRAME_LIMIT + 1],
+            _ => unreachable!("the table lists supported framed parsers"),
+        };
+        let (base, handle) = byte_server(vec![body]);
+        let provider: Box<dyn ChatProvider> = match provider_kind {
+            "anthropic" => Box::new(
+                saya_agent::AnthropicProvider::new(
+                    ProviderSettings::new("test-model", Some(base)).with_retry_delays(Vec::new()),
+                    Some("secret-sentinel"),
+                )
+                .unwrap(),
+            ),
+            "ollama" => Box::new(
+                OllamaProvider::new(
+                    ProviderSettings::new("test-model", Some(base)).with_retry_delays(Vec::new()),
+                )
+                .unwrap(),
+            ),
+            _ => unreachable!("the table lists supported framed parsers"),
+        };
+        let mut stream = provider
+            .stream(request(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                stream.next().await.unwrap(),
+                Err(ProviderError::StreamItemLimit { .. })
+            ),
+            "{provider_kind} did not stop at the shared item limit"
+        );
+        handle.join().unwrap();
+    }
 }
 
 #[tokio::test]
@@ -700,7 +778,7 @@ async fn anthropic_stream_surfaces_cumulative_token_usage() {
     let (base, _, handle) = server(vec![Reply {
         status: 200,
         chunks: vec![
-            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12}}}\n\n",
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":30}}}\n\n",
             "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
             "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{},\"usage\":{\"output_tokens\":34}}\n\n",
             "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
@@ -716,12 +794,57 @@ async fn anthropic_stream_surfaces_cumulative_token_usage() {
     handle.join().unwrap();
     let position = events
         .iter()
-        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage::new(12, 34)))
+        .position(|event| matches!(event, ProviderEvent::Usage(usage) if *usage == TokenUsage::new(150, 34).with_cached_input(Some(20)).with_cache_creation(Some(30))))
         .expect("usage event with both counters must arrive");
     assert!(
         matches!(events[position + 1], ProviderEvent::Done),
         "usage precedes Done"
     );
+}
+
+#[tokio::test]
+async fn anthropic_complete_normalizes_cache_counts_and_preserves_unknown_zero_and_overflow() {
+    use saya_agent::{AnthropicProvider, TokenUsage};
+    let cases = [
+        (
+            "{\"input_tokens\":100,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":30}",
+            TokenUsage::new(150, 7)
+                .with_cached_input(Some(20))
+                .with_cache_creation(Some(30)),
+        ),
+        (
+            "{\"input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0}",
+            TokenUsage::new(0, 7)
+                .with_cached_input(Some(0))
+                .with_cache_creation(Some(0)),
+        ),
+        ("{\"input_tokens\":100}", TokenUsage::new(100, 7)),
+        (
+            "{\"input_tokens\":18446744073709551615,\"cache_read_input_tokens\":1,\"cache_creation_input_tokens\":1}",
+            TokenUsage::new(u64::MAX, 7)
+                .with_cached_input(Some(1))
+                .with_cache_creation(Some(1)),
+        ),
+    ];
+
+    for (input_usage, expected) in cases {
+        let (base, _, handle) = server(vec![Reply {
+            status: 200,
+            chunks: vec![
+                "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":",
+                input_usage,
+                "}}\n\n",
+                "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+                "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{},\"usage\":{\"output_tokens\":7}}\n\n",
+                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+            ],
+        }]);
+        let provider =
+            AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+        let response = provider.complete(request()).await.unwrap();
+        handle.join().unwrap();
+        assert_eq!(response.usage, Some(expected));
+    }
 }
 
 #[tokio::test]
@@ -731,12 +854,20 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
         status: 200,
         chunks: vec![
             "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
-            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":200,\"prompt_tokens_details\":{\"cached_tokens\":90},\"completion_tokens_details\":{\"reasoning_tokens\":170}}}\n\ndata: [DONE]\n\n",
         ],
     }]);
     let response = openai(base.clone()).complete(request()).await.unwrap();
     handle.join().unwrap();
     assert_eq!(response.message.content, "ok");
+    assert_eq!(
+        response.usage,
+        Some(
+            TokenUsage::new(100, 200)
+                .with_cached_input(Some(90))
+                .with_reasoning(Some(170))
+        )
+    );
     let sent = requests.lock().unwrap()[0].clone();
     assert!(
         sent.contains("\"stream_options\":{\"include_usage\":true}"),
@@ -747,7 +878,7 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
         status: 200,
         chunks: vec![
             "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
-            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":200,\"prompt_tokens_details\":{\"cached_tokens\":90},\"completion_tokens_details\":{\"reasoning_tokens\":170}}}\n\ndata: [DONE]\n\n",
         ],
     }]);
     let provider = OpenAiCompatibleProvider::new(
@@ -761,7 +892,138 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
         .unwrap();
     let events = drain(&mut stream).await;
     handle2.join().unwrap();
-    assert!(events.contains(&ProviderEvent::Usage(TokenUsage::new(5, 6))));
+    assert!(
+        events.contains(&ProviderEvent::Usage(
+            TokenUsage::new(100, 200)
+                .with_cached_input(Some(90))
+                .with_reasoning(Some(170))
+        ))
+    );
+}
+
+#[tokio::test]
+async fn openai_usage_only_zero_and_absent_usage_survive_complete_and_stream() {
+    use saya_agent::{ProviderEvent, TokenUsage};
+    let cases = [
+        (
+            vec![
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0}}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            Some(TokenUsage::new(0, 0)),
+        ),
+        (
+            vec![
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            None,
+        ),
+    ];
+    for (terminal, expected) in cases {
+        let mut chunks = vec!["data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"];
+        chunks.extend(terminal.iter().copied());
+        let (base, _, handle) = server(vec![Reply {
+            status: 200,
+            chunks,
+        }]);
+        let response = openai(base).complete(request()).await.unwrap();
+        handle.join().unwrap();
+        assert_eq!(response.usage, expected);
+
+        let mut chunks = vec!["data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"];
+        chunks.extend(terminal.iter().copied());
+        let (base, _, handle) = server(vec![Reply {
+            status: 200,
+            chunks,
+        }]);
+        let mut stream = openai(base)
+            .stream(request(), CancellationToken::new())
+            .await
+            .unwrap();
+        let events = drain(&mut stream).await;
+        handle.join().unwrap();
+        let actual = events.iter().find_map(|event| match event {
+            ProviderEvent::Usage(usage) => Some(*usage),
+            _ => None,
+        });
+        assert_eq!(actual, expected);
+    }
+}
+
+#[tokio::test]
+async fn openai_empty_choices_without_current_usage_remain_invalid_after_a_receipt() {
+    use saya_agent::{ProviderError, ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2}}\n\n",
+            "data: {\"choices\":[]}\n\n",
+            "data: [DONE]\n\n",
+        ],
+    }]);
+    let mut stream = openai(base)
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut receipt_seen = false;
+    let error = loop {
+        match stream.next().await {
+            Some(Ok(ProviderEvent::Usage(usage))) => {
+                receipt_seen |= usage == TokenUsage::new(4, 2);
+            }
+            Some(Ok(_)) => {}
+            Some(Err(error)) => break error,
+            None => panic!("the empty-choices frame without usage must fail"),
+        }
+    };
+    handle.join().unwrap();
+    assert!(
+        receipt_seen,
+        "the actual usage receipt precedes the failed frame"
+    );
+    assert_eq!(error, ProviderError::InvalidResponse);
+}
+
+#[tokio::test]
+async fn gemini_complete_normalizes_thought_tokens_without_double_counting_metadata() {
+    use saya_agent::{GeminiProvider, TokenUsage};
+    let cases = [
+        (
+            "{\"promptTokenCount\":100,\"candidatesTokenCount\":200,\"thoughtsTokenCount\":270,\"totalTokenCount\":570,\"cachedContentTokenCount\":90}",
+            TokenUsage::new(100, 470)
+                .with_cached_input(Some(90))
+                .with_reasoning(Some(270)),
+        ),
+        (
+            "{\"promptTokenCount\":4,\"candidatesTokenCount\":5}",
+            TokenUsage::new(4, 5),
+        ),
+        (
+            "{\"promptTokenCount\":4,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":0}",
+            TokenUsage::new(4, 5).with_reasoning(Some(0)),
+        ),
+        (
+            "{\"promptTokenCount\":4,\"candidatesTokenCount\":18446744073709551615,\"thoughtsTokenCount\":1}",
+            TokenUsage::new(4, u64::MAX).with_reasoning(Some(1)),
+        ),
+    ];
+    for (metadata, expected) in cases {
+        let (base, _, handle) = server(vec![Reply {
+            status: 200,
+            chunks: vec![
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}],\"usageMetadata\":",
+                metadata,
+                "}",
+            ],
+        }]);
+        let provider =
+            GeminiProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+        let response = provider.complete(request()).await.unwrap();
+        handle.join().unwrap();
+        assert_eq!(response.usage, Some(expected));
+    }
 }
 
 #[tokio::test]
@@ -782,6 +1044,74 @@ async fn ollama_stream_surfaces_eval_counts() {
     let events = drain(&mut stream).await;
     handle.join().unwrap();
     assert!(events.contains(&ProviderEvent::Usage(TokenUsage::new(9, 11))));
+}
+
+#[tokio::test]
+async fn ollama_complete_distinguishes_reported_zero_from_absent_usage() {
+    use saya_agent::{OllamaProvider, TokenUsage};
+    for (done_record, expected) in [
+        ("{\"done\":true}", None),
+        (
+            "{\"done\":true,\"prompt_eval_count\":0,\"eval_count\":0}",
+            Some(TokenUsage::new(0, 0)),
+        ),
+        (
+            "{\"done\":true,\"prompt_eval_count\":9,\"eval_count\":11}",
+            Some(TokenUsage::new(9, 11)),
+        ),
+    ] {
+        let (base, _, handle) = server(vec![Reply {
+            status: 200,
+            chunks: vec![
+                "{\"message\":{\"content\":\"ok\"},\"done\":false}\n",
+                done_record,
+            ],
+        }]);
+        let provider = OllamaProvider::new(ProviderSettings::new("m", Some(base))).unwrap();
+        let response = provider.complete(request()).await.unwrap();
+        handle.join().unwrap();
+        assert_eq!(response.usage, expected);
+    }
+}
+
+#[tokio::test]
+async fn ollama_frame_limit_does_not_parse_usage_from_the_rejected_record() {
+    use saya_agent::{OllamaProvider, ProviderError};
+    const FRAME_LIMIT: usize = 65_536;
+    let mut body = b"{\"done\":false}\n".repeat(FRAME_LIMIT);
+    body.extend_from_slice(b"{\"done\":true,\"prompt_eval_count\":0,\"eval_count\":0}\n");
+    let (base, handle) = byte_server(vec![body]);
+    let provider = OllamaProvider::new(ProviderSettings::new("m", Some(base))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let error = loop {
+        match stream.next().await {
+            Some(Err(error)) => break error,
+            Some(Ok(_)) => continue,
+            None => panic!("the over-limit record must fail"),
+        }
+    };
+    handle.join().unwrap();
+    assert_eq!(error, ProviderError::StreamItemLimit { usage: None });
+}
+
+#[tokio::test]
+async fn ollama_frame_limit_precedes_json_conversion_of_the_rejected_record() {
+    use saya_agent::{OllamaProvider, ProviderError};
+    const FRAME_LIMIT: usize = 65_536;
+    let mut body = b"{\"done\":false}\n".repeat(FRAME_LIMIT);
+    body.extend_from_slice(b"not-json\n");
+    let (base, handle) = byte_server(vec![body]);
+    let provider = OllamaProvider::new(ProviderSettings::new("m", Some(base))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let error = stream.next().await.unwrap().unwrap_err();
+    handle.join().unwrap();
+    assert_eq!(error, ProviderError::StreamItemLimit { usage: None });
 }
 
 #[tokio::test]

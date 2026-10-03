@@ -4,7 +4,7 @@ use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
 use saya_types::{ConnectionError, DatabaseProfile, QueryRequest, QueryResult};
 
 #[path = "sql_operation_cancellation.rs"]
-mod cancellation;
+pub(crate) mod cancellation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SqlOperationPhase {

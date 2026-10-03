@@ -1,6 +1,6 @@
 use super::{
-    anthropic_stream::{State, apply_usage, boundary, size_error},
-    framing::whitespace,
+    anthropic_stream::{State, apply_usage, size_error},
+    framing::{boundary, whitespace},
 };
 use crate::{ProviderError, ProviderEvent};
 
@@ -9,16 +9,24 @@ pub(super) fn push(state: &mut State, chunk: &[u8]) -> Result<(), ProviderError>
         return Err(size_error());
     }
     state.bytes.extend_from_slice(chunk);
-    while let Some((end, skip)) = boundary(&state.bytes) {
-        let frame = String::from_utf8(state.bytes[..end].to_vec())
+    let mut consumed = 0;
+    while let Some((end, skip)) = boundary(&state.bytes[consumed..]) {
+        let known_usage = state.usage_reported.then_some(state.usage);
+        state.frames.admit(known_usage)?;
+        let frame_end = consumed + end;
+        let frame = std::str::from_utf8(&state.bytes[consumed..frame_end])
             .map_err(|_| ProviderError::InvalidResponse)?;
-        state.bytes.drain(..end + skip);
-        let data = frame
-            .lines()
-            .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if data.is_empty() {
+        consumed = frame_end + skip;
+        let mut data = String::new();
+        let mut has_data = false;
+        for value in frame.lines().filter_map(|line| line.strip_prefix("data:")) {
+            if has_data {
+                data.push('\n');
+            }
+            data.push_str(value.trim_start());
+            has_data = true;
+        }
+        if !has_data || data.is_empty() {
             continue;
         }
         let json: serde_json::Value =
@@ -44,6 +52,9 @@ pub(super) fn push(state: &mut State, chunk: &[u8]) -> Result<(), ProviderError>
         if state.done {
             break;
         }
+    }
+    if consumed > 0 {
+        state.bytes.drain(..consumed);
     }
     if state.done {
         if !whitespace(&state.bytes) {
@@ -133,7 +144,8 @@ fn finish(state: &mut State) -> Result<(), ProviderError> {
 }
 
 fn usage(state: &mut State, value: &serde_json::Value) {
-    if apply_usage(&mut state.usage, value) {
+    if apply_usage(&mut state.usage, &mut state.raw_input_tokens, value) {
+        state.usage_reported = true;
         state.pending.push_back(ProviderEvent::Usage(state.usage));
     }
 }

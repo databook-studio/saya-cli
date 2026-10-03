@@ -20,6 +20,8 @@ pub const MAX_TOOL_CALLS_PER_RESPONSE: usize = 256;
 
 /// Token counts reported by a provider for one response. Providers that do
 /// not report usage simply never emit it.
+/// `input_tokens` and `output_tokens` hold complete provider-reported totals;
+/// optional cache and reasoning fields preserve provider detail separately.
 ///
 /// Every field beyond `input_tokens`/`output_tokens` is `Option<u64>`: a
 /// provider that does not report a number leaves it `None` (invariant: absent
@@ -32,19 +34,19 @@ pub const MAX_TOOL_CALLS_PER_RESPONSE: usize = 256;
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
-    /// Input tokens served from the provider's prompt cache. **Inclusive of
-    /// `input_tokens`** (a subset of the prompt): a 90% cache hit means 90% of
-    /// `input_tokens` was read from cache, not added on top. Wire sources:
+    /// Input tokens served from the provider's prompt cache. This is a
+    /// provider-reported breakdown of `input_tokens`, not an additional count.
+    /// Wire sources:
     /// OpenAI `usage.prompt_tokens_details.cached_tokens`,
     /// Anthropic `usage.cache_read_input_tokens`,
     /// Gemini `usageMetadata.cachedContentTokenCount`. `None` when the provider
     /// does not report cache reads (Ollama; any provider that omits the field).
     pub cached_input_tokens: Option<u64>,
-    /// Input tokens spent *creating* a cache entry (Anthropic only). Inclusive
-    /// of `input_tokens`, and kept distinct from `cached_input_tokens` because
-    /// creation bills differently from reads. Wire source: Anthropic
-    /// `usage.cache_creation_input_tokens`. `None` for providers with no
-    /// cache-write concept (OpenAI, Gemini, Ollama).
+    /// Input tokens spent *creating* a cache entry (Anthropic only). This is a
+    /// provider-reported breakdown of `input_tokens`, kept distinct from
+    /// `cached_input_tokens` because creation bills differently from reads.
+    /// Wire source: Anthropic `usage.cache_creation_input_tokens`. `None` for
+    /// providers with no cache-write concept (OpenAI, Gemini, Ollama).
     pub cache_creation_input_tokens: Option<u64>,
     /// Tokens spent on chain-of-thought reasoning. The inclusive/separate
     /// split is per-provider and documented here because a normalising layer
@@ -53,9 +55,9 @@ pub struct TokenUsage {
     /// `completion_tokens` and is therefore **inclusive of `output_tokens`**
     /// — do not add it to `output_tokens`. On **Gemini** it is
     /// `usageMetadata.thoughtsTokenCount`, reported *separately* from
-    /// `candidatesTokenCount` (not part of `output_tokens`). Anthropic counts
-    /// reasoning inside its output tokens (no separate field) and Ollama
-    /// reports none; both leave this `None`.
+    /// `candidatesTokenCount` and added by the Gemini adapter to form
+    /// `output_tokens`. Anthropic counts reasoning inside its output tokens
+    /// (no separate field) and Ollama reports none; both leave this `None`.
     pub reasoning_tokens: Option<u64>,
 }
 
@@ -250,6 +252,7 @@ pub trait ChatProvider: Send + Sync {
     }
     async fn collect(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut stream = self.stream(request, CancellationToken::new()).await?;
+        let mut items = super::stream_item_limit::StreamItemCount::default();
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
         let mut assembled_bytes = 0usize;
         let mut tool_call_bytes = 0usize;
@@ -272,7 +275,20 @@ pub trait ChatProvider: Send + Sync {
         // from one that reported zeros.
         let mut usage = None;
         while let Some(event) = stream.next().await {
-            match event? {
+            let event = match event {
+                Ok(event) => event,
+                Err(ProviderError::StreamItemLimit { usage: reported }) => {
+                    return Err(ProviderError::StreamItemLimit {
+                        usage: reported.or(usage.map(Box::new)),
+                    });
+                }
+                Err(error) => return Err(error),
+            };
+            if let ProviderEvent::Usage(reported) = &event {
+                usage = Some(*reported);
+            }
+            items.admit(usage)?;
+            match event {
                 ProviderEvent::TextDelta(value) => {
                     if assembled_bytes.saturating_add(value.len()) > MAX_STREAM_BYTES {
                         return Err(ProviderError::Request(
@@ -500,6 +516,35 @@ mod tests {
             error.to_string().contains("size limit"),
             "size-limit error, got: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn collect_rejects_a_stream_exceeding_the_semantic_item_limit() {
+        const ITEM_LIMIT: usize = 65_536;
+        let mut events = vec![
+            Ok(ProviderEvent::Usage(TokenUsage::new(40, 10))),
+            Ok(ProviderEvent::TextDelta("answer".into())),
+        ];
+        events.extend((0..ITEM_LIMIT).map(|_| Ok(ProviderEvent::TextDelta(String::new()))));
+        events.push(Ok(ProviderEvent::Done));
+        let provider = CannedProvider { events };
+
+        let error = provider
+            .complete(ChatRequest {
+                model: "m".into(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("the semantic item cap applies even when deltas are empty");
+
+        assert!(matches!(
+            error,
+            ProviderError::StreamItemLimit {
+                usage: Some(usage)
+            } if *usage == TokenUsage::new(40, 10)
+        ));
     }
 
     /// A serialized `ChatResponse`

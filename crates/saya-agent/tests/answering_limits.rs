@@ -256,6 +256,10 @@ fn stopped(output: &saya_agent::AgentOutput, dimension: BudgetDimension) -> bool
 
 #[path = "answering_limits/request_admission.rs"]
 mod request_admission;
+#[path = "answering_limits/shared_scope.rs"]
+mod shared_scope;
+#[path = "answering_limits/stream_item_limit.rs"]
+mod stream_item_limit;
 #[path = "answering_limits/tool_admission.rs"]
 mod tool_admission;
 #[path = "answering_limits/usage_cancellation.rs"]

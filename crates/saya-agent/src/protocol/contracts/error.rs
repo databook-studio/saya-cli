@@ -1,5 +1,7 @@
 //! Provider and tool errors that surface from the agent protocol.
 
+use crate::protocol::streaming::TokenUsage;
+
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProviderError {
@@ -9,6 +11,11 @@ pub enum ProviderError {
     InvalidResponse,
     #[error("provider tool calls exceeded collection limit")]
     ToolCollectionLimit,
+    #[error("provider stream exceeded item limit")]
+    StreamItemLimit {
+        /// Latest usage already reported before the attempt crossed its item cap.
+        usage: Option<Box<TokenUsage>>,
+    },
     /// The model hit its per-response output-token limit mid-answer. Distinct
     /// from a transport failure: re-sending the identical request fails
     /// identically, so the loop must not retry it. Carries the redacted

@@ -480,7 +480,8 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
   configured-but-unlisted profile.
 - **Bounds.** Requests ≤ 1 MiB (an oversized line is answered with a
   JSON-RPC error and discarded unread), ≤ 4 tool calls in flight (beyond it,
-  a tool-level `busy` error invites a retry), 30 s per call, responses
+  a tool-level `busy` error invites a retry), 30 s for other tool calls and a
+  30 s cancellation-request deadline for database `query` and `schema`, responses
   ≤ 16 MiB (a `query` payload first narrows by halving rows, refusing only
   when even the rowless payload exceeds the bound).
 - **Every failure is a sanitized `isError` result**: credential-shaped
@@ -491,17 +492,29 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
   and a stale review on `investigation_run` is an error naming
   `--revalidate` — words the client reads, a flag it cannot pass; a replay
   never revalidates from the wire.
-- **Cancellation drops the call**: a `notifications/cancelled` stops the
-  wait and discards the late response; only `query` on the engines that
-  support it stops the actual server-side work.
-- **Stdin EOF drops pending work.** The server exits `0` the moment stdin
-  closes, without waiting for requests still in flight: a one-shot pipeline
-  that writes its JSON-RPC frames and then closes stdin — for example
+- **Database cancellation requests settlement.** A `notifications/cancelled`
+  requests cancellation of an active `query` or active SQL in a saved
+  `investigation_run` through its connector and keeps the server in-flight
+  slot until the typed operation settles; the cancelled request's reply is
+  suppressed by RMCP.
+  Replay also keeps its serialized capture slot until settlement and capture
+  cleanup. Cancellation outcomes are not proof that the database stopped.
+  Active `schema` discovery, including schema discovery during replay, cannot
+  be interrupted, so cancellation or the 30 s deadline keeps its slot while
+  discovery is awaited and its result discarded before a later query. Replay
+  waiting for its capture slot is cancellation-aware and does not cancel the
+  current holder. Connector setup and connect are also awaited if they outlast
+  the deadline. The deadline requests cancellation at 30 s; the database
+  response can therefore arrive later. Other tools keep their existing call
+  timeout behavior.
+- **Stdin EOF does not join pending handlers.** RMCP's current service
+  shutdown exits `0` when stdin closes without cancelling or joining requests
+  still in flight. A one-shot pipeline that writes its JSON-RPC frames and
+  then closes stdin — for example
   `printf '%s\n' "$INIT" "$INITIALIZED" "$LIST" | saya mcp serve --profile
-  demo` (the `initialize`, `initialized`, and `tools/list` frames) — gets no
-  reply to the frames still in flight at EOF. Hold stdin open until the
-  replies arrive (`{ printf …; sleep 2; } | saya mcp serve …`); a host keeps
-  stdin open for the session's life and every call is answered.
+  demo` (the `initialize`, `initialized`, and `tools/list` frames) — may exit
+  before replies to handlers still in flight. Holding stdin open keeps the
+  session active; EOF shutdown settlement remains a service lifecycle limit.
 
 ### Connecting a client
 
