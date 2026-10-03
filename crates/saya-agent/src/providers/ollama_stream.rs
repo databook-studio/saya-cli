@@ -168,6 +168,10 @@ impl State {
                 usage.output_tokens = output;
                 usage_reported = true;
             }
+            if let Some(cached) = chunk.prompt_eval_cached_count {
+                usage.cached_input_tokens = Some(cached);
+                usage_reported = true;
+            }
         }
         if let Some(message) = chunk.message {
             if !message.content.is_empty() {
