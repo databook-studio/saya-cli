@@ -35,7 +35,10 @@ pub use knowledge::{
 pub use learning::LearningSkipReason;
 pub use recovery::{ProviderRecoveryPhase, ProviderRecoveryReason};
 pub use session_policy::{ApprovalChoice, ApprovalDecision, SessionGrants, SessionPolicy};
-pub use tool::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect, ToolExecutor};
+pub use tool::{
+    LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect, ToolExecutionContext,
+    ToolExecutor,
+};
 pub use usage::UsageCall;
 
 #[cfg(test)]

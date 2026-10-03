@@ -1,4 +1,6 @@
-use crate::{ChatMessage, ToolCall, ToolDefinition, ToolExecutor};
+use crate::{
+    CancellationToken, ChatMessage, ToolCall, ToolDefinition, ToolExecutionContext, ToolExecutor,
+};
 use serde_json::Value;
 
 use super::{failed_statements, tool_record, tool_shape, tools};
@@ -20,6 +22,7 @@ pub(super) async fn execute_batch(
     calls: &[ToolCall],
     definitions: &[ToolDefinition],
     result_caps: &[usize],
+    cancellation: &CancellationToken,
 ) -> Vec<CompletedTool> {
     use futures_util::{StreamExt, stream};
 
@@ -29,9 +32,13 @@ pub(super) async fn execute_batch(
             .find(|definition| definition.name == call.name);
         let name = call.name.clone();
         let arguments = call.arguments.clone();
+        let context = ToolExecutionContext {
+            result_cap: cap,
+            cancellation: cancellation.clone(),
+        };
         async move {
             let (result, summary, succeeded) =
-                tools::execute_with_outcome(executor, &name, arguments, definition, cap).await;
+                tools::execute_with_outcome(executor, &name, arguments, definition, context).await;
             complete_tool(call.id.clone(), result, summary, succeeded, cap)
         }
     });
