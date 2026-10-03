@@ -10,11 +10,7 @@ async fn streamed_text_bounds_clock_observations_by_elapsed_seconds_and_boundari
     let journal = Journal::open(&run_dir);
     journal.append(&RunEvent::RunStarted).unwrap();
     let started = Instant::now();
-    let origin = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    let elapsed = ElapsedClock::arm(Duration::from_secs(30), origin, started).unwrap();
+    let elapsed = ElapsedClock::arm_now(Duration::from_secs(30)).unwrap();
     let sink = EngineEventSink::new(
         run_id,
         RunState::Planned,
@@ -155,12 +151,7 @@ async fn a_failed_clock_append_before_a_tool_request_pauses_with_the_journal_err
     fs::create_dir_all(&run_dir).unwrap();
     let journal = Journal::open(&run_dir);
     journal.append(&RunEvent::RunStarted).unwrap();
-    let started = Instant::now();
-    let origin = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    let elapsed = ElapsedClock::arm(Duration::from_secs(30), origin, started).unwrap();
+    let elapsed = ElapsedClock::arm_now(Duration::from_secs(30)).unwrap();
     let sink = EngineEventSink::new(
         run_id,
         RunState::Planned,
