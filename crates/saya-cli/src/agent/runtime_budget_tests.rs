@@ -171,12 +171,16 @@ fn test_runtime(context_byte_budget: usize) -> RuntimeConfig {
 /// under the config `context_byte_budget`.
 #[derive(Default)]
 struct Counters {
-    first_answering_messages: Mutex<Option<Vec<ChatMessage>>>,
+    first_answering_request: Mutex<Option<ChatRequest>>,
 }
 
 impl Counters {
     fn first_messages(&self) -> Option<Vec<ChatMessage>> {
-        self.first_answering_messages.lock().unwrap().clone()
+        self.first_request().map(|request| request.messages)
+    }
+
+    fn first_request(&self) -> Option<ChatRequest> {
+        self.first_answering_request.lock().unwrap().clone()
     }
 }
 
@@ -196,9 +200,9 @@ impl ChatProvider for AnswerProbe {
         request: ChatRequest,
     ) -> Result<ChatResponse, saya_agent::ProviderError> {
         {
-            let mut first = self.counters.first_answering_messages.lock().unwrap();
+            let mut first = self.counters.first_answering_request.lock().unwrap();
             if first.is_none() {
-                *first = Some(request.messages.clone());
+                *first = Some(request.clone());
             }
         }
         Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
@@ -210,6 +214,15 @@ impl ChatProvider for AnswerProbe {
 async fn run_turn(
     context_byte_budget: usize,
     history: Vec<ChatMessage>,
+) -> (Result<AgentOutput, AgentRuntimeError>, Arc<Counters>) {
+    run_turn_with_request(context_byte_budget, "orders by month", history, None).await
+}
+
+async fn run_turn_with_request(
+    context_byte_budget: usize,
+    prompt: &str,
+    history: Vec<ChatMessage>,
+    last_sql: Option<&str>,
 ) -> (Result<AgentOutput, AgentRuntimeError>, Arc<Counters>) {
     let counters = Arc::new(Counters::default());
     let inputs = TurnInputs {
@@ -224,7 +237,7 @@ async fn run_turn(
     let result = run_prompt_with_inputs(
         &runtime,
         inputs,
-        "orders by month",
+        prompt,
         ApprovalPolicy::ReadOnly,
         false,
         false,
@@ -233,13 +246,21 @@ async fn run_turn(
         CancellationToken::new(),
         None,
         None,
-        None,
+        last_sql.map(str::to_owned),
         None,
         AgentMode::Build,
         None,
     )
     .await;
     (result, counters)
+}
+
+async fn record_first_request(prompt: &str, last_sql: Option<&str>) -> ChatRequest {
+    let (result, counters) = run_turn_with_request(16 * 1024, prompt, Vec::new(), last_sql).await;
+    result.expect("the turn completes");
+    counters
+        .first_request()
+        .expect("the provider receives the runtime's first complete request")
 }
 
 // ===========================================================================
@@ -283,5 +304,61 @@ async fn config_context_byte_budget_bounds_the_history_the_loop_sends() {
     assert!(
         !joined.contains("OLD-PAIR-SENTINEL"),
         "the oversized oldest pair is trimmed by the planted budget: {joined}"
+    );
+}
+
+#[tokio::test]
+async fn actual_runtime_request_prefix_is_stable_and_last_sql_stays_in_the_user_tail() {
+    let first = record_first_request("orders by month", Some("SELECT id FROM orders")).await;
+    let repeated = record_first_request("orders by month", Some("SELECT id FROM orders")).await;
+    let changed = record_first_request(
+        "orders by customer",
+        Some("SELECT missing FROM missing_table"),
+    )
+    .await;
+    let non_ascii = record_first_request("orders in München 😀", None).await;
+
+    assert_eq!(
+        serde_json::to_vec(&first).unwrap(),
+        serde_json::to_vec(&repeated).unwrap(),
+        "identical runtime inputs must yield the same complete serialized request"
+    );
+    assert_eq!(
+        serde_json::to_vec(&first.tools).unwrap(),
+        serde_json::to_vec(&changed.tools).unwrap(),
+        "question and last SQL cannot reorder or alter tool schemas"
+    );
+    assert_eq!(
+        first.messages[0], changed.messages[0],
+        "per-turn inputs must not alter the system prefix"
+    );
+    assert!(
+        changed
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("orders by customer")
+    );
+    assert!(
+        changed
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("SELECT missing FROM missing_table")
+    );
+    assert_eq!(
+        first.tools.len(),
+        non_ascii.tools.len(),
+        "the full tool set stays attached"
+    );
+    assert!(
+        non_ascii
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("München 😀")
     );
 }
