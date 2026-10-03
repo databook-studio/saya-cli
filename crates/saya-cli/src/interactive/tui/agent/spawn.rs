@@ -2,7 +2,6 @@
 
 use super::approval::{ChannelApproval, ChannelSink, StreamRequest, approval_capabilities};
 use super::messages::{Stream, StreamMsg};
-use crate::agent::runtime::run_prompt_with_sink;
 use crate::agent::tools::{CaptureEvent, CaptureHook};
 use saya_agent::{ApprovalDecider, CancellationToken};
 use std::sync::Arc;
@@ -44,7 +43,12 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
         session,
         journal,
         agent_mode,
+        prior_tool_outcomes,
+        compaction_summary,
     } = request;
+    let prior_tool_outcomes = (!history.is_empty())
+        .then_some(prior_tool_outcomes)
+        .flatten();
     let (tx, rx) = unbounded_channel();
     let cancel = CancellationToken::new();
     let cancel_worker = cancel.clone();
@@ -79,23 +83,28 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
                 return;
             }
         };
-        let result = runtime_handle.block_on(run_prompt_with_sink(
-            runtime.as_ref(),
-            &prompt_worker,
-            approval,
-            approval_capabilities().0, // never read stdin: the modal collects approvals
-            approval_capabilities().1, // the modal is the approval surface
-            overrides,
-            history,
-            &sink,
-            cancel_worker,
-            Some(state_db),
-            Some(decider),
-            last_sql,
-            Some(session),
-            agent_mode,
-            Some(capture),
-        ));
+        let result =
+            runtime_handle.block_on(crate::agent::runtime::run_prompt_with_sink_and_outcomes(
+                crate::agent::runtime::SinkPrompt {
+                    runtime: runtime.as_ref(),
+                    prompt: &prompt_worker,
+                    approval,
+                    can_prompt: approval_capabilities().0,
+                    can_obtain_approval: approval_capabilities().1,
+                    overrides,
+                    history,
+                    sink: &sink,
+                    cancellation: cancel_worker,
+                    state_db: Some(state_db),
+                    decider: Some(decider),
+                    last_sql,
+                    session: Some(session),
+                    agent_mode,
+                    capture: Some(capture),
+                    prior_tool_outcomes,
+                    compaction_summary,
+                },
+            ));
         let _ = tx.send(StreamMsg::Done(result.map_err(|error| error.to_string())));
     });
 

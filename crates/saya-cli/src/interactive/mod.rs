@@ -10,6 +10,7 @@ pub(crate) mod session_compact_call;
 #[cfg(test)]
 #[path = "session_compact_tests.rs"]
 mod session_compact_tests;
+pub(crate) mod session_continuation;
 pub(crate) mod session_deny;
 #[cfg(test)]
 mod session_deny_red_tests;

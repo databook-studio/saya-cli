@@ -18,6 +18,9 @@ mod capture_agent;
 mod capture_tests;
 mod clipboard;
 mod complete;
+#[cfg(test)]
+#[path = "continuation_acceptance_tests.rs"]
+mod continuation_acceptance_tests;
 mod dispatch;
 mod dispatch_actions;
 mod dispatch_contracts;
