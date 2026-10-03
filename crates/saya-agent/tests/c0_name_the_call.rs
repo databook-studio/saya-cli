@@ -109,6 +109,7 @@ fn workspace_write_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteWorkspace,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: Some("workspace file written".into()),
     }
 }
@@ -125,6 +126,7 @@ fn run_command_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteWorkspace,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: Some("host command ran".into()),
     }
 }
@@ -141,6 +143,7 @@ fn uncovered_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::Read,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: Some("workspace directory listed".into()),
     }
 }

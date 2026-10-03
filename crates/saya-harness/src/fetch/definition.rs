@@ -1,7 +1,7 @@
 //! The `http_fetch` and `http_download` tool definitions: what the model is
 //! told each tool is, and how its effect is declared.
 
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect};
+use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 
 /// The `http_fetch` tool definition. The effect is honest about how fetch is
 /// gated (DESIGN §6.3): `external_side_effect`, without a per-call approval
@@ -34,6 +34,7 @@ pub fn http_fetch_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        concurrency: ToolConcurrency::Serial,
         completion: Some("fetched a declared URL into context".into()),
     }
 }
@@ -75,6 +76,7 @@ pub fn http_download_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteWorkspace,
         },
+        concurrency: ToolConcurrency::Serial,
         completion: Some("downloaded a declared URL into the run workspace".into()),
     }
 }

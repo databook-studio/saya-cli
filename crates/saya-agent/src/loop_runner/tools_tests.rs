@@ -26,6 +26,7 @@ fn plan_gated_egress() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        concurrency: crate::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -179,6 +180,7 @@ fn read_only_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        concurrency: crate::ToolConcurrency::Serial,
         completion: None,
     }
 }

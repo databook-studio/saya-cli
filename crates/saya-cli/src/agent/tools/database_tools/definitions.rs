@@ -1,4 +1,4 @@
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect, ToolError};
+use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect, ToolError};
 
 use super::DatabaseTools;
 use super::workspace_edit::parse_arguments as parse_workspace_edit_arguments;
@@ -66,6 +66,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: None,
         }];
         // The clarification ask (B3c) is unconditional, like `schema_discovery`:
@@ -111,6 +112,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("question asked — the turn pauses for the user's answer".into()),
         });
         // The workspace read is unconditional: it touches no database data, so
@@ -151,6 +153,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("workspace file read".into()),
         });
         // The workspace search tools are unconditional like `workspace_read`:
@@ -186,6 +189,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("workspace directory listed".into()),
         });
         tools.push(ToolDefinition {
@@ -218,6 +222,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("workspace paths matched".into()),
         });
         tools.push(ToolDefinition {
@@ -254,6 +259,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("workspace text searched".into()),
         });
         // The workspace write is the first model-facing tool that writes
@@ -338,6 +344,7 @@ impl DatabaseTools {
                     requires_approval: false,
                     local_state: LocalStateEffect::WriteWorkspace,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: Some("workspace file edited".into()),
             });
             tools.push(ToolDefinition {
@@ -373,6 +380,7 @@ impl DatabaseTools {
                     requires_approval: false,
                     local_state: LocalStateEffect::WriteWorkspace,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: Some("workspace file written".into()),
             });
         }
@@ -399,6 +407,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -427,6 +436,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -456,6 +466,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -487,6 +498,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -519,6 +531,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             // `render_chart` declares `external_side_effect: true` — it writes
@@ -571,6 +584,7 @@ impl DatabaseTools {
                             LocalStateEffect::None
                         },
                     },
+                    concurrency: ToolConcurrency::Serial,
                     completion: Some(if permit_chart_save {
                         "chart opened from a private temporary copy".into()
                     } else {
@@ -602,6 +616,7 @@ impl DatabaseTools {
                     requires_approval: false,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
         }
@@ -711,4 +726,31 @@ pub(super) fn validate_arguments(
         return Err(ToolError::CaseInsensitiveNotBool);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SQL operations share turn-scoped cancellation, observation, and capture
+    /// state. Their advertised definitions must therefore stay serial even
+    /// though the SQL safety layer admits read-only statements.
+    #[test]
+    fn query_definitions_stay_serial() {
+        let definitions = DatabaseTools::definitions(true, false, false, false, true);
+        for name in [
+            "schema_discovery",
+            "bounded_sql_query",
+            "bounded_sql_query_all",
+            "result_shape",
+            "column_health",
+            "join_check",
+        ] {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap_or_else(|| panic!("{name} is advertised"));
+            assert_eq!(definition.concurrency, ToolConcurrency::Serial, "{name}");
+        }
+    }
 }

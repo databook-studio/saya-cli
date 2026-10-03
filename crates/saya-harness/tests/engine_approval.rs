@@ -163,6 +163,7 @@ fn approved_read_tool() -> saya_agent::ToolDefinition {
             requires_approval: true,
             local_state: LocalStateEffect::Read,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }

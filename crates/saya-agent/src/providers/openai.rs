@@ -220,6 +220,7 @@ mod tests {
                     requires_approval: false,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: crate::ToolConcurrency::Serial,
                 completion: None,
             }],
             response_format: format,

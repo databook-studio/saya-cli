@@ -9,7 +9,7 @@
 //! (`requires_approval: false`) becomes per-call approval here — the engine
 //! decides every call, which is the whole point of the unified universe.
 
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect};
+use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 
 fn write_shape(external_side_effect: bool) -> ToolEffect {
     ToolEffect {
@@ -53,6 +53,7 @@ pub(crate) fn workspace_write() -> ToolDefinition {
             "additionalProperties": false
         }),
         effect: write_shape(false),
+        concurrency: ToolConcurrency::Serial,
         completion: Some("workspace file written".into()),
     }
 }
@@ -81,6 +82,7 @@ pub(crate) fn scratch_sql() -> ToolDefinition {
             "additionalProperties": false
         }),
         effect: write_shape(false),
+        concurrency: ToolConcurrency::Serial,
         completion: Some("scratch SQL executed".into()),
     }
 }
@@ -127,6 +129,7 @@ pub(crate) fn http_fetch() -> ToolDefinition {
             external_side_effect: true,
             ..write_shape(false)
         },
+        concurrency: ToolConcurrency::Serial,
         completion: Some("fetched a URL into context".into()),
     }
 }
@@ -160,6 +163,7 @@ pub(crate) fn http_download() -> ToolDefinition {
             "additionalProperties": false
         }),
         effect: write_shape(true),
+        concurrency: ToolConcurrency::Serial,
         completion: Some("downloaded a URL into the workspace".into()),
     }
 }
@@ -200,6 +204,7 @@ pub(crate) fn run_command() -> ToolDefinition {
             requires_approval: true,
             local_state: LocalStateEffect::WriteWorkspace,
         },
+        concurrency: ToolConcurrency::Serial,
         completion: Some("host command ran".into()),
     }
 }
@@ -403,6 +408,7 @@ mod tests {
                 requires_approval: false,
                 local_state: LocalStateEffect::WriteWorkspace,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("program ran".into()),
         };
         let definition = run_program(source);
