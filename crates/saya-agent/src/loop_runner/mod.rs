@@ -12,6 +12,7 @@ mod receive_stream;
 mod salvage;
 mod tool_batch;
 mod tool_policy;
+mod tool_protocol;
 mod tool_record;
 mod tool_shape;
 mod tools;
@@ -179,6 +180,20 @@ pub async fn run_agent_with_sink(
             && !text.is_empty()
         {
             emit(&mut events, sink, AgentEvent::reasoning_text(text)).await;
+        }
+        if !tool_protocol::valid_ids(&assistant.tool_calls) {
+            emit(
+                &mut events,
+                sink,
+                AgentEvent::provider_recovery(
+                    crate::ProviderRecoveryPhase::NotRetried,
+                    crate::ProviderRecoveryReason::ToolCallProtocol,
+                    1,
+                    attempt::MAX_ATTEMPTS,
+                ),
+            )
+            .await;
+            return Err(AgentError::InvalidToolCall);
         }
         messages.push(assistant.clone());
         // Designation arm: see `designation` for the bounded prose recovery.
