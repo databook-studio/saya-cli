@@ -66,12 +66,13 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
 
     std::thread::spawn(move || {
         let sink = ChannelSink { tx: tx.clone() };
-        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::new(
+        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::with_cancellation(
             tx.clone(),
             policy,
             primary,
             facts,
             journal,
+            cancel_worker.clone(),
         ));
         let runtime_handle = match tokio::runtime::Builder::new_current_thread()
             .enable_all()

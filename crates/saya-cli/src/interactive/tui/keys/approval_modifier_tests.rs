@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::interactive::tui::agent::{Stream, StreamMsg};
 use crate::interactive::tui::application::tests_support::idle_app;
 use crate::interactive::tui::run_panel::{PendingPlanApproval, RunPanel};
 use crate::interactive::tui::run_worker::RunWorker;
@@ -157,6 +158,35 @@ fn bare_keys_still_answer() {
         "an unoffered `s` invented a grant"
     );
     assert!(app.request.pending_approval.is_some());
+}
+
+/// Esc on a live request stops the shared question instead of merely denying
+/// this modal; dropping the sender prevents a stale reply from crossing turns.
+#[test]
+fn esc_cancels_the_live_question_and_drops_the_pending_reply() {
+    let (mut app, mut answer) = pending_approval(None);
+    let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<StreamMsg>();
+    let cancellation = CancellationToken::new();
+    app.request.stream = Some(Stream {
+        rx,
+        cancel: cancellation.clone(),
+        prompt: "question".into(),
+    });
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert!(
+        cancellation.is_cancelled(),
+        "Esc must stop the actual question"
+    );
+    assert!(
+        app.request.pending_approval.is_none(),
+        "the modal must clear"
+    );
+    assert!(
+        matches!(answer.try_recv(), Err(TryRecvError::Closed)),
+        "a cleared modal must not retain an approval sender"
+    );
 }
 
 /// Any held Alt or Super is rejected like Ctrl, and Ctrl+Shift is not a

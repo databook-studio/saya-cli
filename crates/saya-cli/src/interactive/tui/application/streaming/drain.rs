@@ -222,6 +222,14 @@ impl App {
                     grant,
                     respond,
                 } => {
+                    if self
+                        .request
+                        .stream
+                        .as_ref()
+                        .is_some_and(|stream| stream.cancel.is_cancelled())
+                    {
+                        continue;
+                    }
                     self.request.pending_approval = Some(PendingApproval {
                         tool,
                         detail,
@@ -239,6 +247,7 @@ impl App {
             }
         }
         if finished {
+            self.request.pending_approval = None;
             self.request.stream = None;
             self.request.started = None;
             self.request.activity = None;

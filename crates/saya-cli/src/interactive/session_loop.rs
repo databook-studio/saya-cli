@@ -619,6 +619,12 @@ fn handle_line_verbatim(
                     SessionAction::Agent(*output)
                 }
                 Ok(PromptResult::Cancelled) => SessionAction::Cancelled,
+                Ok(PromptResult::Failed(error, usage)) => {
+                    for receipt in usage {
+                        state.usage.answering.record_call(&receipt);
+                    }
+                    SessionAction::Error(error.to_string())
+                }
                 Err(error) => SessionAction::Error(error.to_string()),
             }
         }

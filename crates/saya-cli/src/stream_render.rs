@@ -1,6 +1,6 @@
 use crate::{RenderFormat, TerminalEvent, render::Rendered, render_event};
 use async_trait::async_trait;
-use saya_agent::{AgentEvent, AgentEventSink};
+use saya_agent::{AgentEvent, AgentEventSink, TokenUsage};
 use std::{
     io::{self, Write},
     sync::Mutex,
@@ -10,6 +10,7 @@ pub(crate) struct TerminalSink {
     format: RenderFormat,
     text_open: Mutex<bool>,
     group: Mutex<TextGroupState>,
+    failed_attempt_usage: Mutex<Vec<TokenUsage>>,
 }
 impl TerminalSink {
     pub(crate) fn new(format: RenderFormat) -> Self {
@@ -17,13 +18,24 @@ impl TerminalSink {
             format,
             text_open: Mutex::new(false),
             group: Mutex::new(TextGroupState::new()),
+            failed_attempt_usage: Mutex::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn take_failed_attempt_usage(&self) -> Vec<TokenUsage> {
+        std::mem::take(&mut *self.failed_attempt_usage.lock().expect("terminal state"))
     }
 }
 
 #[async_trait]
 impl AgentEventSink for TerminalSink {
     async fn emit(&self, event: AgentEvent) {
+        if let AgentEvent::FailedAttemptUsage { usage } = &event {
+            self.failed_attempt_usage
+                .lock()
+                .expect("terminal state")
+                .push(*usage);
+        }
         let rendered = render_text_stream(
             event,
             self.format,

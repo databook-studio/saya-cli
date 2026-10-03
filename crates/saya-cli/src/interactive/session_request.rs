@@ -9,7 +9,7 @@ use crate::{
 };
 use saya_agent::{
     AgentMode, AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage,
-    SessionPolicy,
+    SessionPolicy, TokenUsage,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -21,6 +21,7 @@ pub(crate) enum PromptResult {
     /// an unboxed `AgentOutput` makes every `PromptResult` as large as a
     /// completed turn.
     Completed(Box<AgentOutput>),
+    Failed(AgentRuntimeError, Vec<TokenUsage>),
     Cancelled,
 }
 
@@ -66,10 +67,16 @@ pub(crate) async fn run(
     // session composition's prompt facts, which its prompts may state.
     let primary = session.primary.clone();
     let facts = session.approval_facts(runtime);
-    let decider: Arc<dyn ApprovalDecider> =
-        Arc::new(crate::prompt_approval::TerminalApproval::from_session(
-            policy, can_prompt, primary, facts, journal,
-        ));
+    let decider: Arc<dyn ApprovalDecider> = Arc::new(
+        crate::prompt_approval::TerminalApproval::from_session_with_cancellation(
+            policy,
+            can_prompt,
+            primary,
+            facts,
+            journal,
+            cancellation.clone(),
+        ),
+    );
     let prior_tool_outcomes = (!history.is_empty())
         .then_some(prior_tool_outcomes)
         .flatten();
@@ -94,9 +101,13 @@ pub(crate) async fn run(
     });
     tokio::pin!(work);
     tokio::select! {
-        result = &mut work => result.map(|output| PromptResult::Completed(Box::new(output))),
+        result = &mut work => match result {
+            Ok(output) => Ok(PromptResult::Completed(Box::new(output))),
+            Err(error) => Ok(PromptResult::Failed(error, sink.take_failed_attempt_usage())),
+        },
         _ = tokio::signal::ctrl_c() => {
             cancellation.cancel();
+            let _ = work.await;
             Ok(PromptResult::Cancelled)
         }
     }

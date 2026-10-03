@@ -12,9 +12,10 @@ use crate::{
 };
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentMode, AgentOutput, AgentRequest,
-    ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage, LocalStateEffect,
-    run_agent_with_sink,
+    AgentRunControl, AnsweringLimits, ApprovalDecider, ApprovalPolicy, BudgetDimension,
+    CancellationReason, CancellationToken, ChatMessage, LocalStateEffect, run_agent_with_control,
 };
+use saya_config::BudgetLimit;
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
@@ -119,6 +120,38 @@ pub(crate) async fn run_prompt_with_sink(
 }
 
 pub(crate) async fn run_prompt_with_sink_and_outcomes(
+    request: SinkPrompt<'_>,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    let deadline = finite_seconds(
+        request
+            .runtime
+            .resolved
+            .investigation_budgets
+            .elapsed_seconds,
+    );
+    let cancellation = request.cancellation.clone();
+    let work = run_prompt_after_question_start(request);
+    tokio::pin!(work);
+    match deadline {
+        Some(duration) => tokio::select! {
+            result = &mut work => result,
+            _ = tokio::time::sleep(duration) => {
+                cancellation.cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+                work.await
+            }
+        },
+        None => work.await,
+    }
+}
+
+fn finite_seconds(limit: BudgetLimit) -> Option<std::time::Duration> {
+    match limit {
+        BudgetLimit::Finite(seconds) => Some(std::time::Duration::from_secs(seconds.get())),
+        BudgetLimit::Unlimited => None,
+    }
+}
+
+async fn run_prompt_after_question_start(
     request: SinkPrompt<'_>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let SinkPrompt {
@@ -410,11 +443,12 @@ pub(crate) async fn run_prompt_with_continuation_inputs(
         history,
         context_blocks,
     };
-    let fallback_approval = TerminalApproval::new(
+    let fallback_approval = TerminalApproval::with_cancellation(
         approval,
         can_prompt,
         fallback_primary,
         crate::approval_facts::ApprovalFacts::for_ask(runtime),
+        cancellation.clone(),
     );
     let approver: &dyn ApprovalDecider = match decider.as_deref() {
         Some(decider) => decider,
@@ -491,15 +525,24 @@ pub(crate) async fn run_prompt_with_continuation_inputs(
         ),
         None => Arc::clone(&database) as Arc<dyn saya_agent::ToolExecutor>,
     };
-    let mut output = run_agent_with_sink(
+    let answering = AnsweringLimits {
+        max_requests: finite_limit(
+            runtime
+                .resolved
+                .investigation_budgets
+                .logical_answering_requests,
+        ),
+        max_tool_calls: finite_limit(runtime.resolved.investigation_budgets.requested_tool_calls),
+        max_reported_tokens: finite_limit(
+            runtime.resolved.investigation_budgets.known_reported_tokens,
+        ),
+    };
+    let mut output = run_agent_with_control(
         &*provider,
         executor.as_ref(),
         request,
         definitions,
-        limits,
-        approver,
-        sink,
-        cancellation,
+        AgentRunControl::new(limits, answering, approver, sink, cancellation.clone()),
     )
     .await;
 
@@ -524,22 +567,26 @@ pub(crate) async fn run_prompt_with_continuation_inputs(
     // learning is disabled, the gate declined, the breaker has already
     // tripped this session, or the call produced no response — absent is
     // not zero.
-    let learning_usage = super::learning::post_turn::run_post_turn_extraction(
-        super::learning::post_turn::PostTurnInputs {
-            permit_candidate_writes: learning.permit_candidate_writes,
-            database: &database,
-            output: output.as_ref(),
-            prompt,
-            observations_log: observations_log.as_deref(),
-            receipt: &receipt,
-            overridden: &overridden,
-            provider: &*provider,
-            model: &ai.model,
-            breaker,
-        },
-        sink,
-    )
-    .await;
+    let learning_usage = if cancellation.is_cancelled() {
+        None
+    } else {
+        super::learning::post_turn::run_post_turn_extraction(
+            super::learning::post_turn::PostTurnInputs {
+                permit_candidate_writes: learning.permit_candidate_writes,
+                database: &database,
+                output: output.as_ref(),
+                prompt,
+                observations_log: observations_log.as_deref(),
+                receipt: &receipt,
+                overridden: &overridden,
+                provider: &*provider,
+                model: &ai.model,
+                breaker,
+            },
+            sink,
+        )
+        .await
+    };
 
     // Attach the extraction usage to the output so both the TUI and headless
     // recorders can fold it into the learning total. A failed answering call
@@ -561,6 +608,13 @@ pub(crate) async fn run_prompt_with_continuation_inputs(
         }
         AgentError::Cancelled => AgentRuntimeError::Agent("request cancelled".into()),
     })
+}
+
+fn finite_limit(limit: BudgetLimit) -> Option<u64> {
+    match limit {
+        BudgetLimit::Finite(value) => Some(value.get()),
+        BudgetLimit::Unlimited => None,
+    }
 }
 
 /// the three first-run failures used to name no next step. Guidance is

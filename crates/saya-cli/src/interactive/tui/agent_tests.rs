@@ -35,7 +35,8 @@ use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::TurnPrimary;
 use crate::prompt_approval::TerminalApproval;
 use saya_agent::{
-    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, SessionPolicy,
+    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, CancellationToken,
+    SessionPolicy,
 };
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -205,4 +206,31 @@ async fn the_tuis_answered_ask_allows_allow_once_and_denies_a_deny() {
         );
         answerer.await.expect("the answerer completes");
     }
+}
+
+/// A live question cancellation wins a pending modal reply: the old sender
+/// cannot turn an approval for a stopped question into a grant.
+#[tokio::test]
+async fn cancelled_channel_approval_denies_before_a_late_reply() {
+    let tool = read_shaped_tool();
+    let (tx, mut rx) = unbounded_channel();
+    let cancellation = CancellationToken::new();
+    let decider = ChannelApproval::with_cancellation(
+        tx,
+        SessionPolicy::new(ApprovalPolicy::Ask),
+        TurnPrimary::default(),
+        ApprovalFacts::default(),
+        None,
+        cancellation.clone(),
+    );
+    let asking = tokio::spawn(async move { decider.approve(&tool, &serde_json::json!({})).await });
+    let Some(StreamMsg::ApprovalRequest { respond, .. }) = rx.recv().await else {
+        panic!("the ask must reach the real channel before cancellation");
+    };
+    cancellation.cancel();
+    assert!(!asking.await.expect("ask task joins"));
+    assert!(
+        respond.send(ApprovalChoice::AllowOnce).is_err(),
+        "a late reply has no receiver after cancellation"
+    );
 }

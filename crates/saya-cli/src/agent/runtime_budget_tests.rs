@@ -15,10 +15,10 @@ use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, AgentMode, AgentOutput, ApprovalPolicy, CancellationToken,
-    ChatMessage, ChatProvider, ChatRequest, ChatResponse, NoopEventSink,
+    ChatMessage, ChatProvider, ChatRequest, ChatResponse, NoopEventSink, ToolCall,
 };
 use saya_config::{
-    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
+    AiProvider, BudgetLimit, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
     ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
     ResolvedRunnerJobs, ThemeChoice,
 };
@@ -28,6 +28,7 @@ use saya_types::{
 };
 use std::{
     collections::BTreeMap,
+    num::NonZeroU64,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -529,5 +530,95 @@ async fn actual_runtime_request_prefix_is_stable_and_last_sql_stays_in_the_user_
         elapsed.max().unwrap().as_micros(),
         first_text.clone().min().unwrap().as_micros(),
         first_text.max().unwrap().as_micros(),
+    );
+}
+
+/// The configured C3 request wallet belongs at the CLI runtime composition
+/// boundary: after a real database tool call, a provider's second answering
+/// request must be refused rather than inheriting the legacy unbounded loop.
+struct ToolThenAnswer {
+    calls: Arc<Mutex<usize>>,
+}
+
+#[async_trait]
+impl ChatProvider for ToolThenAnswer {
+    fn name(&self) -> &str {
+        "tool-then-answer"
+    }
+
+    async fn complete(
+        &self,
+        _request: ChatRequest,
+    ) -> Result<ChatResponse, saya_agent::ProviderError> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        if *calls == 1 {
+            return Ok(ChatResponse::new(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    id: "first".into(),
+                    name: "bounded_sql_query".into(),
+                    arguments: serde_json::json!({"sql": "SELECT 1"}),
+                }],
+                tool_call_id: None,
+            }));
+        }
+        Ok(ChatResponse::new(ChatMessage::text(
+            "assistant",
+            "second request",
+        )))
+    }
+}
+
+#[tokio::test]
+async fn runtime_uses_configured_request_wallet_after_real_sql_tool() {
+    let calls = Arc::new(Mutex::new(0));
+    let inputs = TurnInputs {
+        ai: test_ai(16 * 1024),
+        provider: Box::new(ToolThenAnswer {
+            calls: Arc::clone(&calls),
+        }),
+        registry: registry_for("analytics"),
+        failures: Vec::new(),
+    };
+    let mut runtime = test_runtime(16 * 1024);
+    runtime
+        .resolved
+        .investigation_budgets
+        .logical_answering_requests =
+        BudgetLimit::Finite(NonZeroU64::new(1).expect("one is a valid finite request cap"));
+    let result = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "count rows",
+        ApprovalPolicy::ReadOnly,
+        false,
+        false,
+        Vec::new(),
+        &NoopEventSink,
+        CancellationToken::new(),
+        None,
+        None,
+        None,
+        None,
+        AgentMode::Build,
+        None,
+    )
+    .await;
+    let output = result.expect("a budget stop preserves the loop's partial output");
+    assert!(
+        output.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::AnsweringBudgetStopped {
+                dimension: saya_agent::BudgetDimension::LogicalRequests
+            }
+        )),
+        "the typed partial output must name the configured request budget"
+    );
+    assert_eq!(
+        *calls.lock().unwrap(),
+        1,
+        "the runtime must not send the provider a second request after real SQL"
     );
 }
