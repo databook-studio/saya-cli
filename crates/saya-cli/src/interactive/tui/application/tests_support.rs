@@ -84,6 +84,7 @@ pub(crate) fn unused_runtime() -> RuntimeConfig {
         resolved: ResolvedConfig {
             profile_name: None,
             profile: None,
+            investigation_budgets: Default::default(),
             ai: ResolvedAi {
                 provider: AiProvider::Ollama,
                 model: "test-model".into(),
