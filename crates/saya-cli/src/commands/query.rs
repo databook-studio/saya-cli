@@ -1,7 +1,7 @@
 use crate::{
     agent::runtime::PromptOverrides,
     config::runtime::RuntimeConfig,
-    interactive::sql_operation,
+    interactive::sql_operation::{self, SqlOperationPhase},
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
@@ -123,10 +123,10 @@ pub(super) async fn run(
                 format,
             )
             .await;
-            let code = error.phase().map_or(
-                4,
-                crate::interactive::sql_operation::SqlOperationPhase::exit_code,
-            );
+            let code = match error.phase() {
+                Some(SqlOperationPhase::Connect) => 3,
+                Some(SqlOperationPhase::Build | SqlOperationPhase::Execute) | None => 4,
+            };
             failure_message(code, error.to_string(), format)
         }
         Ok(result) => {

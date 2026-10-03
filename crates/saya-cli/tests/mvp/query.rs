@@ -103,7 +103,7 @@ fn duckdb_commands_have_stable_process_envelopes_and_safety() {
 }
 
 #[test]
-fn sqlite_query_audits_success_denial_and_connect_failure_once_each() {
+fn query_adapter_audits_each_attempt_and_preserves_phase_exits() {
     use saya_store::{AuditOperation, AuditStatus, AuditStore, SqliteStateStore};
 
     let root = test_root("query-audit-phases");
@@ -224,14 +224,14 @@ fn sqlite_query_audits_success_denial_and_connect_failure_once_each() {
     assert_eq!(build_failure.status.code(), Some(4));
     assert!(String::from_utf8_lossy(&build_failure.stderr).contains("SQLite connection failed"));
 
-    let denied = run_cli(
-        &globals,
-        &["query", "--sql", "DELETE FROM missing_table"],
-        &state,
-    );
+    let denied = run_cli(&globals, &["query", "--sql", "DELETE FROM events"], &state);
     assert_eq!(denied.status.code(), Some(4));
-    assert!(String::from_utf8_lossy(&denied.stderr).contains("\"event\":\"error\""));
+    assert!(String::from_utf8_lossy(&denied.stderr).contains(
+        "query rejected by read-only safety policy: DELETE modifies data or schema; only reads are allowed"
+    ));
 
+    // The local peer forces the real PostgreSQL connector's handshake to fail.
+    // This proves connect-phase classification only, not remote cancellation behavior.
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let accept = std::thread::spawn(move || drop(listener.accept().unwrap()));
