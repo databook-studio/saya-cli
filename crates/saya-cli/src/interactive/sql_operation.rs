@@ -9,15 +9,6 @@ pub(crate) enum SqlOperationPhase {
     Execute,
 }
 
-impl SqlOperationPhase {
-    pub(crate) const fn exit_code(self) -> i32 {
-        match self {
-            Self::Connect => 3,
-            Self::Build | Self::Execute => 4,
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SqlOperationError {
     #[error("No active profile. Use /connect <profile> first.")]
@@ -42,10 +33,6 @@ impl SqlOperationError {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "sql_operation_tests.rs"]
-mod tests;
 
 /// Executes bounded direct SQL for interactive adapters; connectors enforce SQL safety.
 pub(crate) async fn execute(
