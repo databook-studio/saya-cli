@@ -10,6 +10,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
+use std::{future::poll_fn, task::Poll};
 use tokio::sync::{Barrier, Notify};
 
 struct FakeConnector {
@@ -413,18 +414,19 @@ async fn cancelled_registry_waiter_leaves_active_owner_running() {
         result_cap: 1024,
         cancellation: waiter_token.clone(),
     };
-    let waiter = tokio::spawn(async move {
-        waiter_tools
-            .execute_with_context(
-                "bounded_sql_query",
-                serde_json::json!({"sql": "SELECT 1"}),
-                waiter_context,
-            )
-            .await
-    });
-    tokio::task::yield_now().await;
+    let waiter = waiter_tools.execute_with_context(
+        "bounded_sql_query",
+        serde_json::json!({"sql": "SELECT 1"}),
+        waiter_context,
+    );
+    tokio::pin!(waiter);
+    poll_fn(|cx| match waiter.as_mut().poll(cx) {
+        Poll::Pending => Poll::Ready(()),
+        Poll::Ready(result) => panic!("waiter settled before reaching the entry lease: {result:?}"),
+    })
+    .await;
     waiter_token.cancel();
-    let waiter_result = waiter.await.expect("waiter task joins");
+    let waiter_result = waiter.await;
     assert!(waiter_result.is_err(), "cancelled waiter is refused");
     assert_eq!(executions.load(Ordering::SeqCst), 1, "waiter starts no SQL");
     assert_eq!(

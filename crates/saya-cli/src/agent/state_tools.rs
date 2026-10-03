@@ -329,53 +329,6 @@ pub(crate) async fn query_with_context(
     .map(|executed| executed.value)
 }
 
-/// Executes a non-registry query through the historical state-tools path.
-/// MCP owns fresh connectors and does not share a registry entry, so it has no
-/// operation lease to acquire here.
-#[cfg(test)]
-pub(crate) async fn query(
-    connector: &dyn DatabaseConnector,
-    sql: &str,
-    max_rows: usize,
-    store: Option<&SqliteStateStore>,
-    profile_id: Option<&str>,
-) -> Result<serde_json::Value, ToolError> {
-    let started = Instant::now();
-    let model_rows = model_row_cap(max_rows);
-    match connector.execute(QueryRequest::new(sql, model_rows)).await {
-        Ok(result) => {
-            if let (Some(store), Some(profile_id)) = (store, profile_id) {
-                audit(
-                    store,
-                    profile_id,
-                    AuditOperation::AgentQuery,
-                    AuditStatus::Success,
-                    started,
-                    Some(result.rows.len()),
-                    Some(result.truncated),
-                )
-                .await;
-            }
-            serde_json::to_value(&result).map_err(|_| ToolError::QueryResultUnavailable)
-        }
-        Err(error) => {
-            if let (Some(store), Some(profile_id)) = (store, profile_id) {
-                audit(
-                    store,
-                    profile_id,
-                    AuditOperation::AgentQuery,
-                    AuditStatus::Failure,
-                    started,
-                    None,
-                    None,
-                )
-                .await;
-            }
-            Err(ToolError::QueryFailedDetail(error.to_string()))
-        }
-    }
-}
-
 /// Executes a registry-owned query for a tool that deliberately has its own
 /// result policy (the chart tool). It shares only operation ownership and
 /// cancellation with the ordinary query path, not auditing or model shaping.

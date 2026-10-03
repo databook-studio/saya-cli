@@ -155,7 +155,7 @@ impl DatabaseTools {
                 // ToolCompleted for the same call. Only here, only on Ok —
                 // never fan-out or the probe tools.
                 if let Ok(executed) = &executed {
-                    self.emit_query_capture(&arguments, sql, entry, executed, context.result_cap);
+                    self.emit_query_capture(&arguments, sql, entry, executed, &context);
                 }
                 executed.map(|executed| executed.value)
             }

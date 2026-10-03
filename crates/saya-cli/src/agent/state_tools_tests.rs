@@ -1,4 +1,4 @@
-use super::{compact_schema, query, schema};
+use super::{compact_schema, query_with_context, schema};
 use async_trait::async_trait;
 use saya_connectors::DatabaseConnector;
 use saya_store::{AuditOperation, AuditStore, SchemaStore, SqliteStateStore};
@@ -10,6 +10,8 @@ use std::{
     fs,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use crate::connection::{ConnectionEntry, ConnectionRegistry};
 
 struct Failing;
 #[async_trait]
@@ -57,13 +59,30 @@ async fn cached_schema_is_explicit_and_agent_query_audit_omits_sql() {
         cached["diagnostic"],
         "using cached schema because live refresh failed: schema discovery failed: server sentinel"
     );
+    let mut registry = ConnectionRegistry::new("primary");
+    registry.insert(
+        "primary",
+        ConnectionEntry {
+            connector: Box::new(Failing),
+            dialect: SqlDialect::DuckDb,
+            profile_id: Some(key.clone()),
+        },
+    );
+    let operation = registry
+        .resolve_for_operation(None)
+        .expect("test registry resolves its primary");
     assert!(
-        query(
-            &Failing,
+        query_with_context(
+            &operation,
             "SELECT 'raw SQL sentinel'",
             1,
             Some(&store),
-            Some(&key)
+            Some(&key),
+            &saya_agent::ToolExecutionContext {
+                result_cap: 1024,
+                cancellation: saya_agent::CancellationToken::new(),
+            },
+            None,
         )
         .await
         .is_err()
