@@ -3,6 +3,7 @@ use sqlx::{ConnectOptions, Connection};
 use tokio::time::timeout;
 
 use super::{MySqlConnector, errors};
+use crate::CancelRequestOutcome;
 
 /// Deadline for the dedicated `KILL QUERY` connection. Bounded independently of
 /// `query_timeout` (which may be tens of seconds): the caller already holds a
@@ -22,10 +23,15 @@ pub(crate) fn next_kill_target(active: &mut Option<u64>) -> Option<u64> {
 }
 
 pub(crate) async fn cancel(connector: &MySqlConnector) -> Result<(), ConnectionError> {
+    request_cancel(connector).await.map(|_| ())
+}
+
+pub(crate) async fn request_cancel(
+    connector: &MySqlConnector,
+) -> Result<CancelRequestOutcome, ConnectionError> {
     let id = next_kill_target(&mut *connector.active_id.lock().await);
     let Some(id) = id else {
-        // Nothing in flight: cancelling is a no-op, not an error.
-        return Ok(());
+        return Ok(CancelRequestOutcome::NoActiveOperation);
     };
     // The id comes from CONNECTION_ID() as an integer and is interpolated
     // only into this KILL statement; KILL does not accept bound parameters.
@@ -49,7 +55,7 @@ pub(crate) async fn cancel(connector: &MySqlConnector) -> Result<(), ConnectionE
         .await
         .map_err(|_| ConnectionError::query_failed("MySQL cancellation timed out"))?
         .map_err(errors::query)?;
-    Ok(())
+    Ok(CancelRequestOutcome::RemoteRequestAccepted)
 }
 
 #[cfg(test)]
@@ -61,6 +67,22 @@ mod tests {
     //! tests prove the ordering invariant Defect A broke, not the wire bytes.
 
     use super::next_kill_target;
+    use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector, MySqlConnector};
+    use sqlx::mysql::MySqlConnectOptions;
+
+    #[tokio::test]
+    async fn cancellation_without_an_active_id_reports_no_operation() {
+        let connector = MySqlConnector::from_options(
+            MySqlConnectOptions::new(),
+            "database",
+            ConnectorOptions::default(),
+        );
+
+        assert_eq!(
+            connector.request_cancel().await.unwrap(),
+            CancelRequestOutcome::NoActiveOperation
+        );
+    }
 
     /// Defect A, reproduced: the old `query` cleared `active_id` *before*
     /// calling `cancel`, so by the time cancellation claimed its target the id

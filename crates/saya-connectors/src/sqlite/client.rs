@@ -1,6 +1,6 @@
 use std::{
     path::Path,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::Duration,
 };
 
@@ -9,7 +9,7 @@ use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDial
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use tokio::time::timeout;
 
-use crate::{ConnectorOptions, DatabaseConnector};
+use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector};
 
 pub struct SqliteConnector {
     pub(crate) pool: SqlitePool,
@@ -19,6 +19,22 @@ pub struct SqliteConnector {
     /// sets it so the handler returns `false` (the same signal a missed deadline
     /// sends), aborting the running statement from inside the SQLite VM.
     pub(crate) cancelled: Arc<AtomicBool>,
+    /// Counts attempts from before pool acquisition through execute settlement.
+    /// It keeps overlapping executes from clearing one another's request.
+    pub(crate) active_attempts: Mutex<usize>,
+}
+
+pub(crate) struct QueryAttempt<'a>(&'a SqliteConnector);
+
+impl Drop for QueryAttempt<'_> {
+    fn drop(&mut self) {
+        let mut active = self
+            .0
+            .active_attempts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active -= 1;
+    }
 }
 
 impl SqliteConnector {
@@ -59,7 +75,34 @@ impl SqliteConnector {
             query_timeout,
             database,
             cancelled: Arc::new(AtomicBool::new(false)),
+            active_attempts: Mutex::new(0),
         })
+    }
+
+    pub(crate) fn begin_attempt(&self) -> QueryAttempt<'_> {
+        let mut active = self
+            .active_attempts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *active == 0 {
+            self.cancelled
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
+        *active += 1;
+        QueryAttempt(self)
+    }
+
+    fn request_cancel(&self) -> CancelRequestOutcome {
+        let active = self
+            .active_attempts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *active == 0 {
+            return CancelRequestOutcome::NoActiveOperation;
+        }
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        CancelRequestOutcome::LocalInterruptRequested
     }
 }
 
@@ -93,9 +136,12 @@ impl DatabaseConnector for SqliteConnector {
     }
 
     async fn cancel(&self) -> Result<(), ConnectionError> {
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.request_cancel();
         Ok(())
+    }
+
+    async fn request_cancel(&self) -> Result<CancelRequestOutcome, ConnectionError> {
+        Ok(self.request_cancel())
     }
 }
 

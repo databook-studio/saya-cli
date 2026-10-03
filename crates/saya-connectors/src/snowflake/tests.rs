@@ -479,7 +479,10 @@ async fn cancellation_uses_uuid_endpoint_and_rejects_invalid_or_timed_out_handle
     let mut item = connector(Auth::Keypair(keypair()));
     item.origin = origin;
     *item.active.lock().await = Some(handle().into());
-    item.cancel().await.unwrap();
+    assert_eq!(
+        item.request_cancel().await.unwrap(),
+        crate::CancelRequestOutcome::RemoteRequestAccepted
+    );
     let request = seen.lock().await[0].clone();
     assert!(request.starts_with(&format!("POST /api/v2/statements/{}/cancel", handle())));
     assert!(
@@ -489,7 +492,7 @@ async fn cancellation_uses_uuid_endpoint_and_rejects_invalid_or_timed_out_handle
     );
     *item.active.lock().await = Some("not-a-uuid".into());
     assert!(
-        item.cancel()
+        item.request_cancel()
             .await
             .unwrap_err()
             .to_string()
@@ -506,7 +509,7 @@ async fn cancellation_uses_uuid_endpoint_and_rejects_invalid_or_timed_out_handle
     timed.origin = origin;
     timed.timeout = Duration::from_millis(30);
     *timed.active.lock().await = Some(handle().into());
-    assert!(timed.cancel().await.is_err());
+    assert!(timed.request_cancel().await.is_err());
 }
 
 #[tokio::test]

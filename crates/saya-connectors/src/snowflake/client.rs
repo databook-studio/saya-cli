@@ -5,7 +5,7 @@ use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use saya_types::{BoundParam, ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use tokio::sync::Mutex;
 
-use crate::{ConnectorOptions, DatabaseConnector};
+use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector};
 
 use super::{auth::Auth, browser, cancellation, errors, legacy, metadata, protocol_v2, sso};
 
@@ -123,6 +123,10 @@ impl DatabaseConnector for SnowflakeConnector {
     }
     async fn cancel(&self) -> Result<(), ConnectionError> {
         cancellation::cancel(self).await
+    }
+
+    async fn request_cancel(&self) -> Result<CancelRequestOutcome, ConnectionError> {
+        cancellation::request_cancel(self).await
     }
 }
 
