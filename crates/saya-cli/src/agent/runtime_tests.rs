@@ -45,6 +45,9 @@ use std::{
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::{RecallOutcomeKind, RecallReceipt};
 
+#[path = "runtime_timer_tests.rs"]
+mod timer_tests;
+
 // ---------------------------------------------------------------------------
 // shared harness
 // ---------------------------------------------------------------------------
