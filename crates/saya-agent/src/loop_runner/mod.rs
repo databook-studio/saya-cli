@@ -1,3 +1,4 @@
+mod attempt;
 mod clarification;
 mod clarification_args;
 mod clarification_feed;
@@ -49,6 +50,17 @@ fn sum_reported(total: &mut Option<u64>, turn: Option<u64>) {
     if let Some(count) = turn {
         *total = Some(total.unwrap_or(0) + count);
     }
+}
+
+pub(super) fn add_usage(total: &mut TokenUsage, turn: TokenUsage) {
+    total.input_tokens += turn.input_tokens;
+    total.output_tokens += turn.output_tokens;
+    sum_reported(&mut total.cached_input_tokens, turn.cached_input_tokens);
+    sum_reported(
+        &mut total.cache_creation_input_tokens,
+        turn.cache_creation_input_tokens,
+    );
+    sum_reported(&mut total.reasoning_tokens, turn.reasoning_tokens);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -124,38 +136,34 @@ pub async fn run_agent_with_sink(
         )
         .await
         {
-            Err(AgentError::Provider(ProviderError::OutputTruncated { .. }))
-                if limits
-                    .max_continuations
-                    .is_some_and(|max| continuation_count < max) =>
-            {
-                continuation_count += 1;
-                messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
-                continue;
+            Ok(turn) => turn,
+            Err(failure) => {
+                add_usage(&mut usage, failure.usage);
+                match failure.error {
+                    AgentError::Provider(ProviderError::OutputTruncated { .. })
+                        if limits
+                            .max_continuations
+                            .is_some_and(|max| continuation_count < max) =>
+                    {
+                        continuation_count += 1;
+                        messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
+                        continue;
+                    }
+                    error if designation.recovering() => {
+                        return designation::failed_follow_up(
+                            &designation,
+                            error,
+                            (&mut events, sink),
+                            (usage, used_bounded_sql_query, tool_metadata),
+                        )
+                        .await;
+                    }
+                    error => return Err(error),
+                }
             }
-            Err(error) if designation.recovering() => {
-                return designation::failed_follow_up(
-                    &designation,
-                    error,
-                    (&mut events, sink),
-                    (usage, used_bounded_sql_query, tool_metadata),
-                )
-                .await;
-            }
-            outcome => outcome?,
         };
         // Providers report cumulative counts per response; sum across turns.
-        usage.input_tokens += turn_usage.input_tokens;
-        usage.output_tokens += turn_usage.output_tokens;
-        sum_reported(
-            &mut usage.cached_input_tokens,
-            turn_usage.cached_input_tokens,
-        );
-        sum_reported(
-            &mut usage.cache_creation_input_tokens,
-            turn_usage.cache_creation_input_tokens,
-        );
-        sum_reported(&mut usage.reasoning_tokens, turn_usage.reasoning_tokens);
+        add_usage(&mut usage, turn_usage);
         // Forward the turn's captured chain-of-thought onto the event stream as
         // one `ReasoningText` event — the provider layer puts it on `ChatResponse.reasoning`
         // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate

@@ -9,7 +9,7 @@ use super::super::super::types::{
 use crate::interactive::session_state::SessionState;
 use crate::interactive::tui::capture_agent::{AgentCaptureOutcome, promote_agent_capture};
 use crate::render::tool_groups::is_failure_summary;
-use saya_agent::{AgentEvent, UsageCall};
+use saya_agent::{AgentEvent, ProviderRecoveryPhase, UsageCall};
 
 impl App {
     /// Drains any queued agent-stream messages into the transcript. Returns true
@@ -135,10 +135,26 @@ impl App {
                         // and the discarded attempt's pairing state resets
                         // as at turn end, so the retry pairs only its own.
                         AgentEvent::TurnReset => {
-                            self.request.activity = None;
+                            if !self
+                                .request
+                                .activity
+                                .as_deref()
+                                .is_some_and(|activity| activity.starts_with("retrying provider"))
+                            {
+                                self.request.activity = None;
+                            }
                             self.pending_queries.clear();
                             self.pending_queries_desync = false;
                             self.agent_captures.clear_queue();
+                        }
+                        AgentEvent::ProviderRecovery {
+                            phase: ProviderRecoveryPhase::Retrying,
+                            attempt,
+                            limit,
+                            ..
+                        } => {
+                            self.request.activity =
+                                Some(format!("retrying provider (attempt {attempt} of {limit})"));
                         }
                         // The answer has streamed but the turn is not over:
                         // extraction is a second provider call the loop awaits.
