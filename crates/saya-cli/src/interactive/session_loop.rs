@@ -618,10 +618,15 @@ fn handle_line_verbatim(
                     state.usage.record_learning(output.learning_usage);
                     SessionAction::Agent(*output)
                 }
-                Ok(PromptResult::Cancelled) => SessionAction::Cancelled,
+                Ok(PromptResult::Cancelled(usage)) => {
+                    if let Some(usage) = usage {
+                        state.usage.answering.record_call(&usage);
+                    }
+                    SessionAction::Cancelled
+                }
                 Ok(PromptResult::Failed(error, usage)) => {
-                    for receipt in usage {
-                        state.usage.answering.record_call(&receipt);
+                    if let Some(usage) = usage {
+                        state.usage.answering.record_call(&usage);
                     }
                     SessionAction::Error(error.to_string())
                 }

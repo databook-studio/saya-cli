@@ -21,8 +21,8 @@ pub(crate) enum PromptResult {
     /// an unboxed `AgentOutput` makes every `PromptResult` as large as a
     /// completed turn.
     Completed(Box<AgentOutput>),
-    Failed(AgentRuntimeError, Vec<TokenUsage>),
-    Cancelled,
+    Failed(AgentRuntimeError, Option<TokenUsage>),
+    Cancelled(Option<TokenUsage>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -103,12 +103,12 @@ pub(crate) async fn run(
     tokio::select! {
         result = &mut work => match result {
             Ok(output) => Ok(PromptResult::Completed(Box::new(output))),
-            Err(error) => Ok(PromptResult::Failed(error, sink.take_failed_attempt_usage())),
+            Err(error) => Ok(PromptResult::Failed(error, sink.take_answering_usage())),
         },
         _ = tokio::signal::ctrl_c() => {
             cancellation.cancel();
             let _ = work.await;
-            Ok(PromptResult::Cancelled)
+            Ok(PromptResult::Cancelled(sink.take_answering_usage()))
         }
     }
 }

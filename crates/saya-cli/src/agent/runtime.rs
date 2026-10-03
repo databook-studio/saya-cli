@@ -130,11 +130,14 @@ pub(crate) async fn run_prompt_with_sink_and_outcomes(
             .elapsed_seconds,
     );
     let cancellation = request.cancellation.clone();
-    let work = run_prompt_after_question_start(request);
+    let (answering_settled_tx, mut answering_settled) = tokio::sync::oneshot::channel();
+    let work = run_prompt_after_question_start(request, Some(answering_settled_tx));
     tokio::pin!(work);
     match deadline {
         Some(duration) => tokio::select! {
+            biased;
             result = &mut work => result,
+            _ = &mut answering_settled => work.await,
             _ = tokio::time::sleep(duration) => {
                 cancellation.cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
                 work.await
@@ -153,6 +156,7 @@ fn finite_seconds(limit: BudgetLimit) -> Option<std::time::Duration> {
 
 async fn run_prompt_after_question_start(
     request: SinkPrompt<'_>,
+    answering_settled: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let SinkPrompt {
         runtime,
@@ -176,25 +180,28 @@ async fn run_prompt_after_question_start(
     let inputs = prepare_turn(runtime, &overrides, can_prompt)
         .await
         .map_err(with_next_step)?;
-    run_prompt_with_continuation_inputs(TurnPrompt {
-        runtime,
-        inputs,
-        prompt,
-        approval,
-        can_prompt,
-        can_obtain_approval,
-        history,
-        sink,
-        cancellation,
-        state_db,
-        decider,
-        last_sql,
-        session,
-        agent_mode,
-        capture,
-        prior_tool_outcomes,
-        compaction_summary,
-    })
+    run_prompt_with_continuation_inputs_with_signal(
+        TurnPrompt {
+            runtime,
+            inputs,
+            prompt,
+            approval,
+            can_prompt,
+            can_obtain_approval,
+            history,
+            sink,
+            cancellation,
+            state_db,
+            decider,
+            last_sql,
+            session,
+            agent_mode,
+            capture,
+            prior_tool_outcomes,
+            compaction_summary,
+        },
+        answering_settled,
+    )
     .await
 }
 
@@ -245,8 +252,16 @@ pub(crate) async fn run_prompt_with_inputs(
     .await
 }
 
+#[cfg(test)]
 pub(crate) async fn run_prompt_with_continuation_inputs(
     turn: TurnPrompt<'_>,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    run_prompt_with_continuation_inputs_with_signal(turn, None).await
+}
+
+async fn run_prompt_with_continuation_inputs_with_signal(
+    turn: TurnPrompt<'_>,
+    answering_settled: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let TurnPrompt {
         runtime,
@@ -545,6 +560,9 @@ pub(crate) async fn run_prompt_with_continuation_inputs(
         AgentRunControl::new(limits, answering, approver, sink, cancellation.clone()),
     )
     .await;
+    if let Some(answering_settled) = answering_settled {
+        let _ = answering_settled.send(());
+    }
 
     let overridden = override_log.drain();
     if !overridden.is_empty() {

@@ -46,9 +46,11 @@ pub(crate) async fn approval_line(token: &CancellationToken) -> io::Result<Optio
                 eprintln!();
                 return Ok(Some(line));
             }
-            KeyCode::Esc | KeyCode::Char('c')
-                if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Esc => {
+                token.cancel();
+                return Ok(None);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                 token.cancel();
                 return Ok(None);
             }

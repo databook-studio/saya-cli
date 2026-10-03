@@ -22,7 +22,16 @@ const DEADLINE: Duration = Duration::from_secs(15);
 
 #[test]
 fn elapsed_deadline_cancels_pending_terminal_approval_without_a_second_request() {
-    let root = scratch_root();
+    run_pending_approval_cancellation("deadline", 1, None);
+}
+
+#[test]
+fn bare_esc_cancels_pending_terminal_approval_before_a_long_deadline() {
+    run_pending_approval_cancellation("esc", 60, Some(b"\x1b"));
+}
+
+fn run_pending_approval_cancellation(label: &str, elapsed_seconds: u64, input: Option<&[u8]>) {
+    let root = scratch_root(label);
     let _cleanup = RootGuard(root.clone());
     let database = root.join("data.sqlite3");
     fs::write(&database, []).unwrap();
@@ -32,9 +41,11 @@ fn elapsed_deadline_cancels_pending_terminal_approval_without_a_second_request()
     let config = saya_config.join("config.toml");
     fs::write(
         &config,
-        "[ai]\nmodel = 'mock'\nallow_data_sharing = true\n\
-         investigation_max_elapsed_seconds = 1\n\n\
-         [memory]\nmode = 'off'\n",
+        format!(
+            "[ai]\nmodel = 'mock'\nallow_data_sharing = true\n\
+             investigation_max_elapsed_seconds = {elapsed_seconds}\n\n\
+             [memory]\nmode = 'off'\n"
+        ),
     )
     .unwrap();
     let connections = root.join("connections.toml");
@@ -110,6 +121,11 @@ fn elapsed_deadline_cancels_pending_terminal_approval_without_a_second_request()
         1,
         "the real provider source started once"
     );
+    if let Some(input) = input {
+        writer
+            .write_all(input)
+            .expect("bare Esc reaches the terminal owner");
+    }
 
     while !terminal.contains("icanon") {
         assert!(
@@ -133,11 +149,18 @@ fn elapsed_deadline_cancels_pending_terminal_approval_without_a_second_request()
         }
     }
     let status = child.try_wait().unwrap().expect("child settled");
+    let expected_exit = if input.is_some() { 5 } else { 0 };
     assert_eq!(
         status.exit_code(),
-        0,
-        "cancelled question exits cleanly: {terminal}"
+        expected_exit,
+        "cancelled question has its established exit class: {terminal}"
     );
+    if input.is_some() {
+        assert!(
+            terminal.contains("request cancelled"),
+            "bare Esc must reach the shared cancellation path: {terminal}"
+        );
+    }
     assert_eq!(
         provider.requests(),
         1,
@@ -247,9 +270,11 @@ fn tool_response() -> String {
     format!("data: {chunk}\n\ndata: [DONE]\n\n")
 }
 
-fn scratch_root() -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("saya-terminal-approval-pty-{}", std::process::id()));
+fn scratch_root(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "saya-terminal-approval-pty-{label}-{}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     root
