@@ -59,7 +59,7 @@ pub use interactive::{Session, SessionAction, SessionState};
 pub use profile_identity::profile_identity;
 pub use render::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView, RenderFormat,
-    TerminalEvent, render_event,
+    ResumeEffectCode, TerminalEvent, render_event,
 };
 // The run event renderer's public seam: the parity test renders `RunEvent`
 // lines with it, and `run_management` is the one dispatcher the slash

@@ -65,23 +65,6 @@ pub enum ResumeEffect {
     Unknown,
 }
 
-impl ResumeEffect {
-    /// Human-readable description of the possible effect, without implying it
-    /// happened or was completed.
-    pub const fn description(self) -> &'static str {
-        match self {
-            Self::WorkspaceWrite => "workspace mutation",
-            Self::Scratch => "scratch database mutation",
-            Self::Runner => "runner execution",
-            Self::Interpreter => "interpreter execution",
-            Self::Fetch => "fetch or download",
-            Self::ExternalSideEffect => "external side effect",
-            Self::LocalStateWrite => "local state mutation",
-            Self::Unknown => "unknown tool effect",
-        }
-    }
-}
-
 /// Why resume refused or stopped. Data, not prose: `saya-cli` renders these.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
