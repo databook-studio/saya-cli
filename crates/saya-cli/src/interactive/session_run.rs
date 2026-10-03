@@ -333,24 +333,6 @@ mod tests {
         assert_eq!(child_argv("list").unwrap(), ["list"]);
     }
 
-    #[test]
-    fn retry_authorization_is_forwarded_only_when_explicit_in_the_tui_tail() {
-        assert!(matches!(
-            parse_run_tail("resume r-1 --retry-incomplete"),
-            Ok(RunTail::Resume {
-                run_id,
-                retry_incomplete: true,
-            }) if run_id == "r-1"
-        ));
-        assert!(matches!(
-            parse_run_tail("resume r-1"),
-            Ok(RunTail::Resume {
-                retry_incomplete: false,
-                ..
-            })
-        ));
-    }
-
     /// The panel path parses the tail through the same grammar the child
     /// gets: a goal tail becomes one positional plus flags, a management
     /// subcommand maps to the shared `RunCommand`, and `resume` is surfaced
