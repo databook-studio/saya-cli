@@ -197,7 +197,7 @@ async fn run_agent_inner(invocation: AgentRunInvocation<'_>) -> Result<AgentOutp
         // identically, so `receive` never retries it. Within budget the loop
         // instead re-instructs: the partial stays discarded, one user-role note
         // tells the model to resume compactly, and the turn is spent — the
-        // `turn_count += 1` above already ran, so `max_turns` keeps binding.
+        // The shared admission owner has already charged this turn, so `max_turns` keeps binding.
         let (assistant, turn_usage, reasoning) = match receive::receive(receive::ReceiveContext {
             provider,
             model: &request.model,

@@ -132,7 +132,14 @@ impl Admission {
         dimension: BudgetDimension,
     ) -> Result<T, AgentError> {
         token.cancel_with_reason(CancellationReason::Budget(dimension));
-        Err(AgentError::Limit("answering budget stopped"))
+        match token.reason() {
+            Some(CancellationReason::Budget(_)) => {
+                Err(AgentError::Limit("answering budget stopped"))
+            }
+            Some(CancellationReason::User | CancellationReason::OwnerFailure) | None => {
+                Err(AgentError::Cancelled)
+            }
+        }
     }
 }
 mod legacy;

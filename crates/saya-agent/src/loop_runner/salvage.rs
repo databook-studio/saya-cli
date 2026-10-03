@@ -128,6 +128,26 @@ pub(super) async fn salvage(
         Err(failure) => return Err(failure.error),
     };
     add_usage(usage, turn_usage);
+    if !assistant.tool_calls.is_empty()
+        && let Err(error) = admission.enforce_tools(cancellation)
+    {
+        if let Some(dimension) = admission.stopped_dimension(&error, cancellation) {
+            return Ok(super::budget_output(
+                dimension,
+                events,
+                sink,
+                super::PartialOutput {
+                    usage: *usage,
+                    used_bounded_sql_query,
+                    tool_metadata,
+                    answer_sql: designated_or_best_sql,
+                    answer: String::new(),
+                },
+            )
+            .await);
+        }
+        return Err(error);
+    }
     emit(events, sink, AgentEvent::Complete).await;
     // When the run ended because a budget ran out rather than by the model
     // finishing, surface the best available answer if the model never nominated
