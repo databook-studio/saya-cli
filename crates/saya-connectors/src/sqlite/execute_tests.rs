@@ -1,8 +1,8 @@
 //! Tests for the SQLite execute path: cancellation, timeouts, the
 //! parameter-free prepare path, and the native parameter binding.
 
-use std::sync::Arc;
 use std::time::Duration;
+use std::{future::Future, sync::Arc, task::Poll};
 
 use saya_types::{BoundParam, ParamValue};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
@@ -97,29 +97,40 @@ async fn cancellation_during_pool_acquisition_survives_and_connector_is_reusable
         .unwrap(),
     );
     let held = connector.pool.acquire().await.unwrap();
-    let runner = connector.clone();
-    let task = tokio::spawn(async move {
-        runner
-            .execute(QueryRequest::new(SLOW_QUERY.to_string(), 1))
-            .await
-    });
+    let mut first = Box::pin(connector.execute(QueryRequest::new(SLOW_QUERY, 1)));
+    let first_poll =
+        std::future::poll_fn(|context| Poll::Ready(first.as_mut().poll(context))).await;
+    assert!(
+        first_poll.is_pending(),
+        "the first execute is pending on the held pool connection"
+    );
 
-    // The current-thread test runtime polls execute until it blocks on the
-    // only pool connection before this cancellation is sent.
-    tokio::task::yield_now().await;
     assert_eq!(
         connector.request_cancel().await.unwrap(),
         crate::CancelRequestOutcome::LocalInterruptRequested
     );
+
+    let mut second = Box::pin(connector.execute(QueryRequest::new(SLOW_QUERY, 1)));
+    let second_poll =
+        std::future::poll_fn(|context| Poll::Ready(second.as_mut().poll(context))).await;
+    assert!(
+        second_poll.is_pending(),
+        "the second execute joins the cancelled epoch while acquisition is pending"
+    );
     drop(held);
 
-    let result = tokio::time::timeout(Duration::from_secs(5), task)
-        .await
-        .expect("cancellation requested during acquisition reaches the VM")
-        .unwrap();
+    let (first_result, second_result) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(first, second)
+    })
+    .await
+    .expect("both pending attempts settle after the cancellation request");
     assert!(
-        matches!(result, Err(ConnectionError::Cancelled)),
-        "the acquired query reports cancellation: {result:?}"
+        matches!(first_result, Err(ConnectionError::Cancelled)),
+        "the first acquired query reports cancellation: {first_result:?}"
+    );
+    assert!(
+        matches!(second_result, Err(ConnectionError::Cancelled)),
+        "the second acquired query reports cancellation: {second_result:?}"
     );
 
     let fresh = connector

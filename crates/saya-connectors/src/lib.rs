@@ -78,8 +78,12 @@ pub trait DatabaseConnector: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct LegacyConnector;
+    struct LegacyConnector {
+        cancel_calls: AtomicUsize,
+        fail_cancel: bool,
+    }
 
     #[async_trait]
     impl DatabaseConnector for LegacyConnector {
@@ -100,15 +104,36 @@ mod tests {
         }
 
         async fn cancel(&self) -> Result<(), ConnectionError> {
-            Ok(())
+            self.cancel_calls.fetch_add(1, Ordering::Relaxed);
+            if self.fail_cancel {
+                Err(ConnectionError::unsupported("legacy cancellation"))
+            } else {
+                Ok(())
+            }
         }
     }
 
     #[tokio::test]
     async fn default_request_cancel_preserves_legacy_cancel_without_overclaiming() {
+        let connector = LegacyConnector {
+            cancel_calls: AtomicUsize::new(0),
+            fail_cancel: false,
+        };
         assert_eq!(
-            LegacyConnector.request_cancel().await.unwrap(),
+            connector.request_cancel().await.unwrap(),
             CancelRequestOutcome::LegacyOutcomeUnknown
         );
+        assert_eq!(connector.cancel_calls.load(Ordering::Relaxed), 1);
+
+        let failing = LegacyConnector {
+            cancel_calls: AtomicUsize::new(0),
+            fail_cancel: true,
+        };
+        let error = failing.request_cancel().await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "unsupported operation: legacy cancellation"
+        );
+        assert_eq!(failing.cancel_calls.load(Ordering::Relaxed), 1);
     }
 }
