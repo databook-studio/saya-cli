@@ -92,6 +92,8 @@ fn esc_cancels_the_agent_stream_before_touching_the_panel() {
             session: std::sync::Arc::clone(&app.session),
             journal: None,
             agent_mode: saya_agent::AgentMode::Build,
+            prior_tool_outcomes: None,
+            compaction_summary: None,
         });
     app.request.stream = Some(stream);
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);

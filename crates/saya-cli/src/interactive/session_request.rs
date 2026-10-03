@@ -53,6 +53,8 @@ pub(crate) async fn run(
     // The agent's task posture, threaded like `approval`: the session's
     // `/mode` state at the composition root.
     agent_mode: AgentMode,
+    prior_tool_outcomes: Option<super::session_continuation::PriorToolOutcomes>,
+    compaction_summary: Option<String>,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = CancellationToken::new();
     let sink = TerminalSink::new(format);
@@ -68,7 +70,10 @@ pub(crate) async fn run(
         Arc::new(crate::prompt_approval::TerminalApproval::from_session(
             policy, can_prompt, primary, facts, journal,
         ));
-    let work = agent::runtime::run_prompt_with_sink(
+    let prior_tool_outcomes = (!history.is_empty())
+        .then_some(prior_tool_outcomes)
+        .flatten();
+    let work = agent::runtime::run_prompt_with_sink_and_outcomes(agent::runtime::SinkPrompt {
         runtime,
         prompt,
         approval,
@@ -76,16 +81,17 @@ pub(crate) async fn run(
         can_obtain_approval,
         overrides,
         history,
-        &sink,
-        cancellation.clone(),
-        Some(state_db.clone()),
-        Some(decider),
-        None,
-        Some(session),
+        sink: &sink,
+        cancellation: cancellation.clone(),
+        state_db: Some(state_db.clone()),
+        decider: Some(decider),
+        last_sql: None,
+        session: Some(session),
         agent_mode,
-        // Headless: no stream channel, no capture hook (C1).
-        None,
-    );
+        capture: None,
+        prior_tool_outcomes,
+        compaction_summary,
+    });
     tokio::pin!(work);
     tokio::select! {
         result = &mut work => result.map(|output| PromptResult::Completed(Box::new(output))),
