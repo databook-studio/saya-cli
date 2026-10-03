@@ -1,16 +1,16 @@
 use crate::{
     agent::runtime::PromptOverrides,
     config::runtime::RuntimeConfig,
+    interactive::sql_operation,
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
 use saya_agent::{AgentEvent, AgentMode, AgentOutput, ApprovalPolicy, CancellationToken};
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
-use saya_types::{ConnectionError, QueryRequest};
+use saya_types::ConnectionError;
 use std::{path::PathBuf, time::Instant};
 
 use super::{
-    connection,
     output::{emit, failure, failure_message},
     state,
 };
@@ -110,22 +110,7 @@ pub(super) async fn run(
     let started = Instant::now();
     let profile_name = runtime.resolved.profile_name.as_deref().unwrap_or("none");
     let identity = state::identity(profile_name, profile, &runtime.cache_scope);
-    let Some(connector) = connection::connector(profile, runtime, 4, format, can_prompt).await?
-    else {
-        state::audit(
-            state_db,
-            &identity,
-            AuditOperation::Query,
-            AuditStatus::Failure,
-            started.elapsed(),
-            None,
-            None,
-            format,
-        )
-        .await;
-        return Ok(4);
-    };
-    match connector.connect().await {
+    match sql_operation::execute_resolved(runtime, profile, &sql, can_prompt).await {
         Err(error) => {
             state::audit(
                 state_db,
@@ -138,41 +123,26 @@ pub(super) async fn run(
                 format,
             )
             .await;
-            failure(3, error, format)
+            let code = error.phase().map_or(
+                4,
+                crate::interactive::sql_operation::SqlOperationPhase::exit_code,
+            );
+            failure_message(code, error.to_string(), format)
         }
-        Ok(()) => match connector
-            .execute(QueryRequest::new(sql, runtime.resolved.max_rows))
-            .await
-        {
-            Ok(result) => {
-                state::audit(
-                    state_db,
-                    &identity,
-                    AuditOperation::Query,
-                    AuditStatus::Success,
-                    started.elapsed(),
-                    Some(result.rows.len()),
-                    Some(result.truncated),
-                    format,
-                )
-                .await;
-                emit(TerminalEvent::QueryResult { result }, format);
-                Ok(0)
-            }
-            Err(error) => {
-                state::audit(
-                    state_db,
-                    &identity,
-                    AuditOperation::Query,
-                    AuditStatus::Failure,
-                    started.elapsed(),
-                    None,
-                    None,
-                    format,
-                )
-                .await;
-                failure(4, error, format)
-            }
-        },
+        Ok(result) => {
+            state::audit(
+                state_db,
+                &identity,
+                AuditOperation::Query,
+                AuditStatus::Success,
+                started.elapsed(),
+                Some(result.rows.len()),
+                Some(result.truncated),
+                format,
+            )
+            .await;
+            emit(TerminalEvent::QueryResult { result }, format);
+            Ok(0)
+        }
     }
 }
