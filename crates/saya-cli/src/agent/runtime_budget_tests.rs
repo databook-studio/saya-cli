@@ -130,6 +130,7 @@ fn test_runtime(context_byte_budget: usize) -> RuntimeConfig {
         resolved: ResolvedConfig {
             profile_name: None,
             profile: None,
+            investigation_budgets: Default::default(),
             ai: test_ai(context_byte_budget),
             max_rows: 100,
             read_only: true,

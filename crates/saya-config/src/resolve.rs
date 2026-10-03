@@ -62,6 +62,9 @@ pub struct ResolvedConfig {
     pub profile_name: Option<String>,
     pub profile: Option<DatabaseProfile>,
     pub ai: ResolvedAi,
+    /// Validated ceilings for one interactive investigation. These are a
+    /// configuration contract; runtime enforcement is composed separately.
+    pub investigation_budgets: crate::ResolvedInvestigationBudgets,
     pub max_rows: usize,
     pub read_only: bool,
     pub max_iterations: usize,
@@ -205,6 +208,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .flatten();
     let profile = overlay_database_environment(profile, &input.env_file, &input.process_env)?;
     let memory = crate::memory::resolve(&file.memory)?;
+    let investigation_budgets = crate::investigation_budget::resolve(&file.ai)?;
     let context_byte_budget = file
         .ai
         .context_byte_budget
@@ -252,6 +256,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         profile_name: selected,
         profile,
         ai,
+        investigation_budgets,
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),
         max_iterations,

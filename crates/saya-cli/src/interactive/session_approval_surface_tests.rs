@@ -45,6 +45,7 @@ fn session_runtime() -> crate::config::runtime::RuntimeConfig {
         resolved: saya_config::ResolvedConfig {
             profile_name: None,
             profile: None,
+            investigation_budgets: Default::default(),
             ai: saya_config::ResolvedAi {
                 provider: saya_config::AiProvider::Ollama,
                 model: "test-model".into(),

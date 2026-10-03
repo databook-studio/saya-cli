@@ -159,6 +159,12 @@ pub struct AiFile {
     /// assembles and sends to the provider. The loop trims under it (oldest
     /// tool results dropped, newest truncated with a marker) rather than abort.
     pub context_byte_budget: Option<usize>,
+    /// Starting policy for an interactive investigation. Raw TOML values stay
+    /// intact until resolution so malformed values cannot become unlimited.
+    pub investigation_max_logical_answering_requests: Option<toml::Value>,
+    pub investigation_max_requested_tool_calls: Option<toml::Value>,
+    pub investigation_max_elapsed_seconds: Option<toml::Value>,
+    pub investigation_max_known_reported_tokens: Option<toml::Value>,
     /// The model's context window in tokens, as the user declares it. This is
     /// how a model the built-in table does not know — a private gateway serving
     /// a name of its own — gets a window at all. `None` defers to the table.

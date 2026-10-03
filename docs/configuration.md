@@ -276,6 +276,27 @@ context_window_tokens = 1048576
 
 A declared value of `0` is rejected as a typo. There is no upper bound.
 
+Interactive investigations also resolve four budget ceilings from `[ai]`:
+`investigation_max_logical_answering_requests` (24),
+`investigation_max_requested_tool_calls` (64),
+`investigation_max_elapsed_seconds` (300), and
+`investigation_max_known_reported_tokens` (250,000). These are conservative starting
+policy values, not production percentile measurements. Each accepts a positive
+integer or the exact string `"unlimited"`; zero, negative values, other strings,
+and non-integer TOML values are errors. Integer literals beyond TOML's signed
+64-bit range are invalid TOML and fail while parsing. A repository project config cannot
+change these trusted budgets unless `--trust-project-config` is supplied. No
+environment aliases are defined for them. This slice establishes the resolved
+configuration contract; runtime budget enforcement follows separately.
+
+```toml
+[ai]
+investigation_max_logical_answering_requests = 24
+investigation_max_requested_tool_calls = 64
+investigation_max_elapsed_seconds = 300
+investigation_max_known_reported_tokens = 250000
+```
+
 The `[[ai.endpoints]]` array declares the named endpoints a run's roles can
 bind to (`saya run --allow endpoint:<role>=<endpoint>`). Each entry is a delta
 over the plain `[ai]` block: a field the entry declares wins, an unset field

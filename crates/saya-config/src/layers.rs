@@ -17,6 +17,10 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(ai.max_output_tokens);
     apply!(ai.retry_delays_ms);
     apply!(ai.context_byte_budget);
+    apply!(ai.investigation_max_logical_answering_requests);
+    apply!(ai.investigation_max_requested_tool_calls);
+    apply!(ai.investigation_max_elapsed_seconds);
+    apply!(ai.investigation_max_known_reported_tokens);
     apply!(ai.context_window_tokens);
     apply!(ai.show_thinking);
     apply!(ai.compaction);
@@ -218,6 +222,10 @@ pub(crate) struct ProtectedSettings {
     ai_base_url: Option<String>,
     ai_api_key: Option<SecretRef>,
     ai_allow_data_sharing: Option<bool>,
+    ai_investigation_max_logical_answering_requests: Option<toml::Value>,
+    ai_investigation_max_requested_tool_calls: Option<toml::Value>,
+    ai_investigation_max_elapsed_seconds: Option<toml::Value>,
+    ai_investigation_max_known_reported_tokens: Option<toml::Value>,
     run_read_only: Option<bool>,
     /// The whole `[jobs.interpreter]` sub-table as the trusted layers
     /// declared it: which interpreters may ever resolve, and by extension
@@ -240,6 +248,19 @@ pub(crate) fn snapshot_protected(file: &ConfigFile) -> ProtectedSettings {
         ai_base_url: file.ai.base_url.clone(),
         ai_api_key: file.ai.api_key.clone(),
         ai_allow_data_sharing: file.ai.allow_data_sharing,
+        ai_investigation_max_logical_answering_requests: file
+            .ai
+            .investigation_max_logical_answering_requests
+            .clone(),
+        ai_investigation_max_requested_tool_calls: file
+            .ai
+            .investigation_max_requested_tool_calls
+            .clone(),
+        ai_investigation_max_elapsed_seconds: file.ai.investigation_max_elapsed_seconds.clone(),
+        ai_investigation_max_known_reported_tokens: file
+            .ai
+            .investigation_max_known_reported_tokens
+            .clone(),
         run_read_only: file.run.read_only,
         jobs_interpreter: file.jobs.interpreter.clone(),
         endpoints: file
@@ -275,6 +296,30 @@ pub(crate) fn revert_untrusted(file: &mut ConfigFile, before: &ProtectedSettings
         file.ai.allow_data_sharing = before.ai_allow_data_sharing;
         ignored.push("ai.allow_data_sharing".into());
     }
+    revert_ai_budget(
+        &mut file.ai.investigation_max_logical_answering_requests,
+        &before.ai_investigation_max_logical_answering_requests,
+        "investigation_max_logical_answering_requests",
+        &mut ignored,
+    );
+    revert_ai_budget(
+        &mut file.ai.investigation_max_requested_tool_calls,
+        &before.ai_investigation_max_requested_tool_calls,
+        "investigation_max_requested_tool_calls",
+        &mut ignored,
+    );
+    revert_ai_budget(
+        &mut file.ai.investigation_max_elapsed_seconds,
+        &before.ai_investigation_max_elapsed_seconds,
+        "investigation_max_elapsed_seconds",
+        &mut ignored,
+    );
+    revert_ai_budget(
+        &mut file.ai.investigation_max_known_reported_tokens,
+        &before.ai_investigation_max_known_reported_tokens,
+        "investigation_max_known_reported_tokens",
+        &mut ignored,
+    );
     if file.run.read_only != before.run_read_only {
         file.run.read_only = before.run_read_only;
         ignored.push("run.read_only".into());
@@ -315,6 +360,18 @@ pub(crate) fn revert_untrusted(file: &mut ConfigFile, before: &ProtectedSettings
         }
     }
     ignored
+}
+
+fn revert_ai_budget(
+    value: &mut Option<toml::Value>,
+    trusted: &Option<toml::Value>,
+    name: &'static str,
+    ignored: &mut Vec<String>,
+) {
+    if value != trusted {
+        *value = trusted.clone();
+        ignored.push(format!("ai.{name}"));
+    }
 }
 
 fn apply_string(target: &mut Option<String>, env: &BTreeMap<String, String>, name: &str) {
