@@ -176,14 +176,14 @@ impl EngineEventSink {
 
 #[async_trait]
 impl AgentEventSink for EngineEventSink {
-    /// One event emission is one tick: usage folds into the run's totals and
-    /// is journaled as the run's durable per-endpoint record, the download
-    /// wallet's spend is journaled when it has grown past the level the
-    /// record holds, and then the wall-clock deadline is checked. Counting
-    /// precedes the check because the tokens the event reports were already
-    /// spent.
+    /// One event emission is one tick: a successful or failed-attempt usage
+    /// receipt folds into the run's totals and is journaled as the durable
+    /// per-endpoint record, the download wallet's spend is journaled when it
+    /// has grown past the level the record holds, and then the wall-clock
+    /// deadline is checked. Counting precedes the check because the tokens
+    /// the event reports were already spent.
     async fn emit(&self, event: AgentEvent) {
-        if let AgentEvent::Usage { usage, .. } = &event {
+        if let AgentEvent::Usage { usage, .. } | AgentEvent::FailedAttemptUsage { usage } = &event {
             self.usage
                 .lock()
                 .expect("engine sink usage lock")
