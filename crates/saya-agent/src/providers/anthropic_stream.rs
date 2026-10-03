@@ -82,6 +82,7 @@ pub(super) struct State {
     pub(super) pending: VecDeque<ProviderEvent>,
     pub(super) tools: super::tool_assembly::ToolAssembly,
     pub(super) usage: TokenUsage,
+    pub(super) raw_input_tokens: Option<u64>,
     pub(super) usage_reported: bool,
     pub(super) done: bool,
     pub(super) assembled_bytes: usize,
@@ -118,18 +119,16 @@ pub(super) fn size_error() -> ProviderError {
     ProviderError::Request("provider stream exceeded size limit".into())
 }
 
-/// Folds an Anthropic `usage` object (from `message_start` or `message_delta`)
-/// into the running totals for one response. Anthropic reports two cache
-/// numbers that bill differently and are kept distinct: reads
-/// (`cache_read_input_tokens`, inclusive of `input_tokens`) and creation
-/// (`cache_creation_input_tokens`, also inclusive of `input_tokens`). Returns
-/// whether anything was reported, so the caller only emits a `Usage` event when
-/// the object actually carried counts. A reported `0` stays `Some(0)`; an
-/// omitted field stays `None` (absent is not zero).
-pub(super) fn apply_usage(accumulated: &mut TokenUsage, usage: &serde_json::Value) -> bool {
+/// Folds an Anthropic usage snapshot. Its raw input count excludes cache
+/// reads and writes, so `TokenUsage` carries their saturating total.
+pub(super) fn apply_usage(
+    accumulated: &mut TokenUsage,
+    raw_input_tokens: &mut Option<u64>,
+    usage: &serde_json::Value,
+) -> bool {
     let mut changed = false;
     if let Some(input) = usage["input_tokens"].as_u64() {
-        accumulated.input_tokens = input;
+        *raw_input_tokens = Some(input);
         changed = true;
     }
     if let Some(output) = usage["output_tokens"].as_u64() {
@@ -143,6 +142,11 @@ pub(super) fn apply_usage(accumulated: &mut TokenUsage, usage: &serde_json::Valu
     if let Some(created) = usage["cache_creation_input_tokens"].as_u64() {
         accumulated.cache_creation_input_tokens = Some(created);
         changed = true;
+    }
+    if changed && let Some(input) = raw_input_tokens {
+        accumulated.input_tokens = input
+            .saturating_add(accumulated.cached_input_tokens.unwrap_or(0))
+            .saturating_add(accumulated.cache_creation_input_tokens.unwrap_or(0));
     }
     changed
 }
@@ -158,13 +162,14 @@ mod tests {
     #[test]
     fn message_start_with_cache_fields_populates_both() {
         let mut accumulated = TokenUsage::default();
+        let mut raw_input = None;
         let usage = json!({
             "input_tokens": 100,
             "cache_read_input_tokens": 90,
             "cache_creation_input_tokens": 10
         });
-        assert!(apply_usage(&mut accumulated, &usage));
-        assert_eq!(accumulated.input_tokens, 100);
+        assert!(apply_usage(&mut accumulated, &mut raw_input, &usage));
+        assert_eq!(accumulated.input_tokens, 200);
         assert_eq!(accumulated.cached_input_tokens, Some(90));
         assert_eq!(accumulated.cache_creation_input_tokens, Some(10));
         assert_eq!(accumulated.reasoning_tokens, None);
@@ -177,13 +182,15 @@ mod tests {
     #[test]
     fn usage_without_cache_fields_leaves_them_none() {
         let mut accumulated = TokenUsage {
-            input_tokens: 100,
+            input_tokens: 190,
             cached_input_tokens: Some(90),
             ..Default::default()
         };
+        let mut raw_input = Some(100);
         let usage = json!({"output_tokens": 34});
-        assert!(apply_usage(&mut accumulated, &usage));
+        assert!(apply_usage(&mut accumulated, &mut raw_input, &usage));
         assert_eq!(accumulated.output_tokens, 34);
+        assert_eq!(accumulated.input_tokens, 190);
         // The earlier cache read survives; `message_delta` did not report it.
         assert_eq!(accumulated.cached_input_tokens, Some(90));
         assert_eq!(accumulated.cache_creation_input_tokens, None);
@@ -194,8 +201,9 @@ mod tests {
     #[test]
     fn reported_zero_cache_read_is_some_zero() {
         let mut accumulated = TokenUsage::default();
+        let mut raw_input = None;
         let usage = json!({"input_tokens": 10, "cache_read_input_tokens": 0});
-        apply_usage(&mut accumulated, &usage);
+        apply_usage(&mut accumulated, &mut raw_input, &usage);
         assert_eq!(accumulated.cached_input_tokens, Some(0));
     }
 
@@ -207,7 +215,8 @@ mod tests {
             input_tokens: 7,
             ..Default::default()
         };
-        assert!(!apply_usage(&mut accumulated, &json!({})));
+        let mut raw_input = Some(7);
+        assert!(!apply_usage(&mut accumulated, &mut raw_input, &json!({})));
         assert_eq!(accumulated.input_tokens, 7);
     }
 }
