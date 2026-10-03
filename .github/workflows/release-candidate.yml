@@ -58,19 +58,26 @@ jobs:
       - name: Build release binary
         shell: bash
         run: |
+          TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+          source scripts/release-build-env.sh
+          configure_saya_release_build_env "$GITHUB_WORKSPACE"
           if [ -n "${{ matrix.target }}" ]; then
             rustup target add "${{ matrix.target }}"
             cargo build --release --locked -p saya-cli --target "${{ matrix.target }}"
           else
             cargo build --release --locked -p saya-cli
           fi
+          BIN="$TARGET_DIR/${{ matrix.target }}/release/saya"
+          if [ -z "${{ matrix.target }}" ]; then BIN="$TARGET_DIR/release/saya"; fi
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then BIN="${BIN}.exe"; fi
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then python scripts/check-artifact-content.py binary "$BIN"; else python3 scripts/check-artifact-content.py binary "$BIN"; fi
       - name: Smoke test binary on Unix
         # Skip for cross-compiled targets — the binary's arch may differ from the runner's.
         if: matrix.os != 'windows-latest' && matrix.target == ''
         shell: bash
         run: |
-          BIN="target/release/saya"
-          test -x "$BIN" || BIN="target/release/saya.exe"
+          BIN="${CARGO_TARGET_DIR:-target}/release/saya"
+          test -x "$BIN" || BIN="${CARGO_TARGET_DIR:-target}/release/saya.exe"
           "$BIN" --version
           # `config doctor` exits 3 when the setup cannot run a query, which is
           # the correct answer on a bare runner with no config and no database.
@@ -89,10 +96,11 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          & "target/release/saya.exe" --version
+          $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "target" }
+          & "$targetDir/release/saya.exe" --version
           # See the Unix step: 3 means "nothing is configured", which is the
           # expected state on a bare runner.
-          & "target/release/saya.exe" --non-interactive config doctor
+          & "$targetDir/release/saya.exe" --non-interactive config doctor
           if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) {
             Write-Error "config doctor exited $LASTEXITCODE; expected 0 (configured) or 3 (nothing configured)"
             exit 1
@@ -106,16 +114,17 @@ jobs:
           VERSION=$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' crates/saya-cli/Cargo.toml | head -n 1)
           if [ -n "${{ matrix.target }}" ]; then
             TRIPLE="${{ matrix.target }}"
-            BIN="target/${{ matrix.target }}/release/saya"
+            BIN="${CARGO_TARGET_DIR:-target}/${{ matrix.target }}/release/saya"
           else
             TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
-            BIN="target/release/saya"
+            BIN="${CARGO_TARGET_DIR:-target}/release/saya"
           fi
           STAGE="saya-${VERSION}-${TRIPLE}"
           mkdir "$STAGE"
           cp "$BIN" "$STAGE/"
           cp README.md LICENSE SECURITY.md "$STAGE/"
-          tar -czf "${STAGE}.tar.gz" "$STAGE"
+          COPYFILE_DISABLE=1 tar -czf "${STAGE}.tar.gz" "$STAGE"
+          python3 scripts/check-artifact-content.py archive "${STAGE}.tar.gz"
           if command -v shasum >/dev/null 2>&1; then shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"; else sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "archive=${STAGE}.tar.gz" >> "$GITHUB_OUTPUT"
@@ -127,8 +136,10 @@ jobs:
           $targetTriple = (rustc -vV | Select-String '^host: ').ToString().Split(':')[1].Trim()
           $stage = "saya-$version-$targetTriple"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item target/release/saya.exe,README.md,LICENSE,SECURITY.md $stage
+          $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "target" }
+          Copy-Item "$targetDir/release/saya.exe",README.md,LICENSE,SECURITY.md $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+          python scripts/check-artifact-content.py archive "$stage.zip"
           $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           $sidecar = "$hash  $stage.zip`n"
           [System.IO.File]::WriteAllText("$stage.zip.sha256", $sidecar, [System.Text.UTF8Encoding]::new($false))
