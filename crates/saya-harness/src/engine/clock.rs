@@ -45,7 +45,10 @@ pub struct ElapsedClock {
 }
 
 impl ElapsedClock {
-    /// Arm a fresh approved run at the current UTC millisecond.
+    /// Arm a fresh approved run from an explicitly paired UTC/monotonic sample.
+    ///
+    /// Callers must sample `now` no earlier than the UTC value represented by
+    /// `now_unix_ms`; production callers should use [`Self::arm_now`].
     pub fn arm(
         ceiling: Duration,
         now_unix_ms: u64,
@@ -69,9 +72,11 @@ impl ElapsedClock {
         })
     }
 
-    /// Arm using the production UTC clock.
-    pub fn arm_now(ceiling: Duration, now: Instant) -> Result<Self, ElapsedClockError> {
-        Self::arm(ceiling, system_time_ms()?, now)
+    /// Arm using production clocks, sampling UTC before the monotonic baseline.
+    pub fn arm_now(ceiling: Duration) -> Result<Self, ElapsedClockError> {
+        let origin_unix_ms = system_time_ms()?;
+        let now = Instant::now();
+        Self::arm(ceiling, origin_unix_ms, now)
     }
 
     pub fn remaining(&self) -> Duration {

@@ -91,9 +91,10 @@ impl EngineEventSink {
     /// `budgets` carries the run's declared ceilings and the spend already
     /// behind them — the seeding a resume does, so the token ceiling
     /// measures the run's whole spend; a fresh run carries
-    /// [`UsageTotals::default`]. Its `wall_clock` remains an invocation-local
-    /// monotonic deadline. Callers that need whole-run elapsed carry attach
-    /// an [`ElapsedClock`] with [`Self::with_elapsed_clock`].
+    /// [`UsageTotals::default`]. For direct/legacy callers, `wall_clock`
+    /// remains an invocation-local monotonic deadline. The product CLI and
+    /// engine resume path attach an [`ElapsedClock`] for journal-owned
+    /// whole-run elapsed carry with [`Self::with_elapsed_clock`].
     pub fn new(
         run_id: RunId,
         initial: RunState,

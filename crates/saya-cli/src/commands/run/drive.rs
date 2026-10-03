@@ -210,7 +210,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     // The clock origin is attached to the approval transition, which
     // journals PlanApproved followed by the clock before mirroring approval.
     let elapsed_clock = match spec.budgets.wall_clock {
-        Some(ceiling) => match ElapsedClock::arm_now(ceiling, std::time::Instant::now()) {
+        Some(ceiling) => match ElapsedClock::arm_now(ceiling) {
             Ok(clock) => Some(clock),
             Err(error) => return exit::connection_failure(error.to_string(), format),
         },

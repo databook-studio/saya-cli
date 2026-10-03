@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use saya_types::RunEvent;
 
-use super::clock::{ElapsedClock, ElapsedClockError};
+use super::clock::{ElapsedClock, ElapsedClockError, system_time_ms};
 
 fn journal_clock(origin_unix_ms: u64, high_water_unix_ms: u64) -> Vec<RunEvent> {
     vec![
@@ -138,4 +138,54 @@ fn monotonic_submillisecond_elapsed_is_not_refunded_and_unrepresentable_high_wat
         Err(ElapsedClockError::Unavailable)
     );
     assert!(overflowing.remaining().is_zero());
+}
+
+#[test]
+fn production_helpers_own_utc_then_monotonic_sampling() {
+    let stale = Instant::now();
+    let later_utc = system_time_ms().unwrap().saturating_add(10);
+    let mut mismatched = ElapsedClock::arm(Duration::from_secs(30), later_utc, stale).unwrap();
+    assert!(
+        mismatched
+            .observe(later_utc, stale + Duration::from_millis(1))
+            .unwrap()
+    );
+    assert_eq!(
+        mismatched.observe(later_utc, stale + Duration::from_millis(2)),
+        Err(ElapsedClockError::Backwards),
+        "a stale monotonic baseline can project beyond a healthy repeated UTC millisecond"
+    );
+
+    let mut fresh = ElapsedClock::arm_now(Duration::from_secs(30)).unwrap();
+    for _ in 0..2 {
+        let monotonic = Instant::now();
+        let utc = system_time_ms().unwrap();
+        fresh.observe(utc, monotonic).unwrap();
+        assert!(matches!(
+            fresh.event(),
+            RunEvent::WallClockObserved {
+                high_water_unix_ms,
+                ..
+            } if high_water_unix_ms <= utc
+        ));
+    }
+    let events = [
+        RunEvent::RunStarted,
+        RunEvent::PlanApproved { scopes: None },
+        fresh.event(),
+    ];
+    let mut resumed = ElapsedClock::resume_now(&events, Duration::from_secs(30)).unwrap();
+    for _ in 0..2 {
+        let monotonic = Instant::now();
+        let utc = system_time_ms().unwrap();
+        resumed.observe(utc, monotonic).unwrap();
+        assert!(matches!(
+            resumed.event(),
+            RunEvent::WallClockObserved {
+                high_water_unix_ms,
+                ..
+            } if high_water_unix_ms <= utc
+        ));
+    }
+    assert!(resumed.remaining() > Duration::from_secs(29));
 }
