@@ -14,8 +14,8 @@ use crate::fetch::DownloadBudget;
 use crate::{HarnessError, journal::JournalWire, workspace::Workspace};
 
 use crate::engine::episode::{EpisodeCollaborators, EpisodeError, EpisodeRequest, ManifestBounds};
-use crate::engine::sink::EngineSinkError;
 use crate::engine::state::RunState;
+use crate::engine::{clock::ElapsedClockError, sink::EngineSinkError};
 
 /// What resume found in the journal and what it did about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +82,13 @@ pub enum ResumeError {
         #[source]
         source: HarnessError,
     },
+    /// A configured whole-run wall clock cannot be established safely from
+    /// the repaired journal or current system clock.
+    #[error("run elapsed clock cannot be established: {source}")]
+    ElapsedClock {
+        #[source]
+        source: ElapsedClockError,
+    },
     /// A resumed step failed, or a gate refused it.
     #[error("resumed episode failed: {source}")]
     Episode {
@@ -110,14 +117,15 @@ pub struct ResumeRun<'a> {
     pub collaborators: EpisodeCollaborators<'a>,
     pub request: EpisodeRequest,
     pub bounds: ManifestBounds,
-    /// The run's declared wall-clock ceiling, armed again for the resumed steps.
+    /// The run's declared whole-run wall-clock ceiling. Resume derives its
+    /// remaining interval from the repaired journal clock origin.
     pub wall_clock: Option<Duration>,
     /// The run's token ceiling. It binds the **run**, not each invocation:
     /// `resume` seeds the sink's usage totals from the journal's usage
     /// record, so a resumed run continues against the same ceiling instead
     /// of re-arming it in full — resuming a run that already paused on this
-    /// ceiling, without raising it, trips on the first tick. The wall clock
-    /// above, which no record can replay, re-arms per invocation.
+    /// ceiling, without raising it, trips on the first tick. The configured
+    /// wall clock instead carries its journaled origin across invocations.
     pub token_ceiling: Option<u64>,
     /// The run's download wallet, armed again so a resumed run keeps its
     /// declared download posture: the composition root hands the same

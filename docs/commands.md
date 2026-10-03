@@ -809,21 +809,23 @@ cache hit of zero shows `cache reads 0`. The usage shown for a run paused on
 its token budget is the same arithmetic the ceiling compared (input plus
 output), so the display and the budget that stopped the run agree.
 
-**Two of the three streaming budgets bind the run, not each invocation; the
-third re-arms.** The token ceiling carries: a run that pauses on its token
-budget resumes against the same ceiling, because the resumed run's totals
-are seeded from the usage its journal already records — so it pauses again
-at the run's cumulative spend, and resuming without raising the ceiling
-trips on the first tick, because the run is already past it. The download
-budget carries the same way: the wallet a resume arms is seeded from the
-download spend the journal records, so ten resumes share one wallet instead
-of each spending the declared budget again. The wallet's check is the
-refusal latch — the record of a claim that was refused, never a threshold
-comparison — so a run already past its limit is refused on its next
-download claim, and that refusal is what pauses it; a carried level never
-stands in for a refusal no download made, and the headroom a record leaves
-is claimable until a claim is refused. The wall clock, which no record can
-replay, re-arms in full on a resume. Per-tool-call approval
+**All three streaming budgets bind the run, not each invocation.** The token
+ceiling carries from journaled usage, and the download wallet carries from
+journaled claims. The wall-clock ceiling also carries: Saya journals the UTC
+origin after approval and raises a durable high-water observation while the
+run emits events. Outside forced boundaries, high-water marks persist at a
+one-second cadence. Writes are forced when a run arms or resumes, before
+provider turns and tool requests, and at lifecycle transitions. Resume uses
+the repaired journal to calculate the remaining interval, so pause and
+offline time count and another invocation cannot recharge the ceiling. A
+configured resume refuses with a bounded clock
+explanation when a legacy or torn journal has no valid origin; start a newly
+approved run to obtain a new clock. With no wall-clock ceiling configured,
+this clock remains inactive. A forward system-clock jump can expire a run
+early. A backward jump detected at a persisted observation pauses
+conservatively; a clock change between observations may not be detectable.
+The clock measures first-party elapsed wall time, not CPU time, and no
+independent timer settles a stalled operation yet. Per-tool-call approval
 defaults to `read-only` (read-shaped tools run,
 side-effecting tools are denied). `--approval-mode ask` or `never` denies
 rather than prompts — a run has no per-call question, so every tool that

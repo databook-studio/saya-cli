@@ -756,6 +756,10 @@ fn every_event_variant_round_trips_through_serde() {
             cached_input_tokens: Some(60),
             cache_creation_input_tokens: None,
         },
+        RunEvent::WallClockObserved {
+            origin_unix_ms: 1_000,
+            high_water_unix_ms: 1_000,
+        },
         RunEvent::DownloadedBytes { bytes: 0 },
         RunEvent::DownloadedBytes { bytes: 97 },
     ];
@@ -830,4 +834,18 @@ proptest! {
         let back: RunEvent = serde_json::from_str(&line).unwrap();
         prop_assert_eq!(back, event);
     }
+}
+
+#[test]
+fn legacy_run_started_wire_and_elapsed_clock_event_are_compatible() {
+    let legacy: RunEvent = serde_json::from_str(r#"{"type":"run_started"}"#).unwrap();
+    assert_eq!(legacy, RunEvent::RunStarted);
+
+    let clock = RunEvent::WallClockObserved {
+        origin_unix_ms: 1_000,
+        high_water_unix_ms: 1_250,
+    };
+    let json = serde_json::to_string(&clock).unwrap();
+    let decoded: RunEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, clock);
 }
