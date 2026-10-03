@@ -12,11 +12,9 @@
 //!   the agent's `request.started` / `request.activity` fields (a SQL task and
 //!   an agent stream are never concurrent: the queued-prompt gate prevents
 //!   dispatch while either is busy).
-//! - **No real cancellation.** The worker thread is detached and the connector
-//!   has no cancellation token wired here. Esc does not cancel the query — it
-//!   detaches: `App::detach_sql_task` drops the receiver so the UI moves on,
-//!   and tells the user the query may still be running server-side. Its result
-//!   lands on a dropped channel and is discarded.
+//! - **Cancellation is a request, not settlement.** Esc signals the operation
+//!   token and drops the receiver so the UI moves on. The worker keeps owning
+//!   native setup/query work and its permit until that work settles.
 //! - **No silent replacement.** A second command submitted while one runs is
 //!   held by the queued-prompt gate until the first finishes (both results
 //!   report). The dispatch handler additionally refuses a `SqlTask` that
@@ -39,6 +37,7 @@ use crate::config::runtime::RuntimeConfig;
 use crate::interactive::tui::types::LastQuery;
 use crate::render::TerminalEvent;
 use crate::slash::ExportRequest;
+use saya_agent::CancellationToken;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
@@ -80,6 +79,7 @@ pub(crate) fn spawn(
     permit: WorkerPermit,
     runtime: Arc<RuntimeConfig>,
     task: SqlTask,
+    cancellation: CancellationToken,
 ) -> Receiver<TerminalEvent> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -88,9 +88,12 @@ pub(crate) fn spawn(
             .enable_all()
             .build()
         {
-            Ok(runtime_handle) => {
-                runtime_handle.block_on(exec::run_sql(&runtime, task.profile.as_deref(), &task.sql))
-            }
+            Ok(runtime_handle) => runtime_handle.block_on(exec::run_sql(
+                &runtime,
+                task.profile.as_deref(),
+                &task.sql,
+                &cancellation,
+            )),
             Err(error) => TerminalEvent::Error {
                 message: error.to_string(),
             },

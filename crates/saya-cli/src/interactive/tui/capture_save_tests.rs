@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use saya_agent::ApprovalPolicy;
+use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_store::FsSessionStore;
 use saya_types::DatabaseProfile;
 
@@ -95,6 +95,10 @@ struct SaveRoundTripFixture {
 
 impl SaveRoundTripFixture {
     fn build() -> Self {
+        Self::build_with_timeout(60)
+    }
+
+    fn build_with_timeout(query_timeout_seconds: u64) -> Self {
         let root = std::env::temp_dir().join(format!(
             "saya-capture-save-{SESSION_ID}-{}-{}",
             std::process::id(),
@@ -112,6 +116,7 @@ impl SaveRoundTripFixture {
             },
         );
         config.resolved.max_rows = 1;
+        config.resolved.query_timeout_seconds = query_timeout_seconds;
         let runtime = Arc::new(config);
         let mut app = empty_app();
         app.runtime = Arc::clone(&runtime);
@@ -202,10 +207,17 @@ fn a_captured_sql_result_never_reaches_the_saved_session() {
     match fx.app.admit_second_sql() {
         SecondSqlDecision::Start(permit) => {
             let started = Instant::now();
+            let cancellation = CancellationToken::new();
             fx.app.sql_task = Some((
-                sql_task::spawn(permit, Arc::clone(&fx.runtime), task.clone()),
+                sql_task::spawn(
+                    permit,
+                    Arc::clone(&fx.runtime),
+                    task.clone(),
+                    cancellation.clone(),
+                ),
                 task,
                 started,
+                cancellation,
             ));
             fx.app.request.started = Some(started);
             fx.app.request.activity = Some("query".into());
@@ -288,10 +300,17 @@ fn direct_sql_operation_matches_the_tui_worker_result() {
     match fx.app.admit_second_sql() {
         SecondSqlDecision::Start(permit) => {
             let started = Instant::now();
+            let cancellation = CancellationToken::new();
             fx.app.sql_task = Some((
-                sql_task::spawn(permit, Arc::clone(&fx.runtime), task.clone()),
+                sql_task::spawn(
+                    permit,
+                    Arc::clone(&fx.runtime),
+                    task.clone(),
+                    cancellation.clone(),
+                ),
                 task,
                 started,
+                cancellation,
             ));
             fx.app.request.started = Some(started);
             fx.app.request.activity = Some("query".into());
@@ -343,6 +362,7 @@ fn direct_sql_operation_preserves_profile_and_read_only_errors() {
         &fx.runtime,
         None,
         "SELECT 1",
+        &CancellationToken::new(),
     ));
     assert!(matches!(
         no_profile_event,
@@ -362,6 +382,7 @@ fn direct_sql_operation_preserves_profile_and_read_only_errors() {
         &fx.runtime,
         Some("missing"),
         "SELECT 1",
+        &CancellationToken::new(),
     ));
     assert!(matches!(
         invalid_event,
@@ -382,11 +403,57 @@ fn direct_sql_operation_preserves_profile_and_read_only_errors() {
         &fx.runtime,
         Some("analytics"),
         sql,
+        &CancellationToken::new(),
     ));
     let crate::render::TerminalEvent::Error { message } = event else {
         panic!("an unsafe query is rendered as an error");
     };
     assert_eq!(message, operation_error.to_string());
+}
+
+#[test]
+fn a_pre_cancelled_sql_operation_stops_before_observable_connector_build() {
+    let mut fx = SaveRoundTripFixture::build();
+    Arc::make_mut(&mut fx.runtime).connections.profiles.insert(
+        "unopened".into(),
+        DatabaseProfile::Sqlite {
+            path: ":memory:".into(),
+            read_only: true,
+        },
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds");
+
+    let uncancelled = runtime
+        .block_on(sql_operation::execute(
+            &fx.runtime,
+            Some("unopened"),
+            "SELECT 1",
+            false,
+        ))
+        .expect_err("the synthetic in-memory profile reaches connector build");
+    assert!(
+        uncancelled
+            .to_string()
+            .contains("SQLite :memory: is not supported"),
+        "the control observes the connector build boundary: {uncancelled}"
+    );
+
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let cancelled = runtime
+        .block_on(sql_operation::execute_with_cancellation(
+            &fx.runtime,
+            Some("unopened"),
+            "SELECT 1",
+            false,
+            &cancellation,
+        ))
+        .expect_err("a pre-cancelled operation stops before connector setup");
+
+    assert_eq!(cancelled.to_string(), "query cancelled");
 }
 
 #[test]
@@ -414,3 +481,7 @@ fn direct_sql_operation_uses_the_configured_query_timeout() {
         "the operation preserves timeout errors: {error}"
     );
 }
+
+#[cfg(test)]
+#[path = "capture_save_sql_cancellation_tests.rs"]
+mod sql_cancellation_tests;

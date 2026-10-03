@@ -25,7 +25,7 @@ pub(crate) fn tick_workers(app: &mut App, store: &FsSessionStore, state: &mut Se
     }
 
     // Poll the direct-SQL worker (non-blocking): apply its result when ready.
-    if let Some((rx, task, _started)) = app.sql_task.as_ref() {
+    if let Some((rx, task, _started, _cancellation)) = app.sql_task.as_ref() {
         match rx.try_recv() {
             Ok(event) => {
                 let task = task.clone();
