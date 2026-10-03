@@ -21,6 +21,7 @@ cd "$(dirname "$0")/.."
 
 CRATES=(saya-types saya-config saya-store saya-agent saya-connectors saya-harness saya-cli)
 DRY_RUN="${DRY_RUN:-0}"
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 UA="saya-release (github.com/databook-studio/saya-cli)"
 METADATA=""
 
@@ -106,7 +107,7 @@ for crate in "${CRATES[@]}"; do
     PACKAGE_PATCH_ARGS+=(--config "patch.crates-io.$dependency.path=\"crates/$dependency\"")
   done
   cargo package "${PACKAGE_PATCH_ARGS[@]}" --locked -p "$crate" --no-verify --allow-dirty
-  PACKAGE="target/package/$crate-$version.crate"
+  PACKAGE="$TARGET_DIR/package/$crate-$version.crate"
   if [ ! -f "$PACKAGE" ]; then
     echo "cargo package did not produce $PACKAGE" >&2
     exit 1

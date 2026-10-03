@@ -21,7 +21,8 @@ jobs = workflow.fetch("jobs")
 build_steps = jobs.fetch("build").fetch("steps")
 build_run = build_steps.map { |step| step["run"] }.compact.join("\n")
 raise "release build does not scan the binary" unless build_run.include?("check-artifact-content.py binary")
-raise "release build does not remap local paths" unless build_run.include?("remap-path-prefix") && build_run.include?("cygpath -w")
+raise "release build does not use shared path remapping" unless build_run.include?("release-build-env.sh") && build_run.include?("configure_saya_release_build_env")
+raise "release binary path ignores CARGO_TARGET_DIR" unless build_run.include?("${CARGO_TARGET_DIR:-target}")
 raise "Unix release archive is not scanned" unless build_run.include?("check-artifact-content.py archive")
 raise "Unix tar retains AppleDouble metadata" unless build_run.include?("COPYFILE_DISABLE=1 tar -czf")
 raise "Windows release ZIP is not scanned" unless build_run.include?("check-artifact-content.py archive") && build_run.include?("python scripts/check-artifact-content.py archive")
@@ -48,7 +49,7 @@ raise "reserved PowerShell $host assignment" if text.match?(/^\s*\$host\s*=/i)
 raise "missing UTF-8 without BOM" unless text.include?("UTF8Encoding]::new($false)")
 raise "missing LF sidecar newline" unless text.include?("$stage.zip`n")
 raise "offline release command" if text.include?("--offline")
-%w[CXXFLAGS _SECURE_SCL /std:c++17 /EHsc].each do |flag|
+%w[_SECURE_SCL /std:c++17 /EHsc].each do |flag|
   raise "release workflow overrides dependency-owned C++ flags" if text.include?(flag)
 end
 {
@@ -389,8 +390,9 @@ run_fixture = lambda do |payload, reject_crate = ""|
         while (($#)); do
           if [[ "$1" == "-p" ]]; then crate="$2"; shift 2; else shift; fi
         done
-        mkdir -p target/package
-        : > "target/package/$crate-0.4.1.crate"
+        target_dir="${CARGO_TARGET_DIR:-target}"
+        mkdir -p "$target_dir/package"
+        : > "$target_dir/package/$crate-0.4.1.crate"
         printf 'stub cargo package %s\n' "$crate"
         printf 'package %s\n' "$crate" >> "$SAYA_CARGO_LOG"
       elif [[ "${1:-}" == "publish" ]]; then

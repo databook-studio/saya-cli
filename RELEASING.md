@@ -45,16 +45,31 @@ run in order:
    staleness.
 
 Before an archive is checksummed, the build scans the executable and the
-generated archive. The archive must contain only its top-level release folder,
-the `saya` executable (or `saya.exe`), `README.md`, `LICENSE`, and
-`SECURITY.md`. Before each crates.io publish, including `DRY_RUN=1`, the
-publisher runs `cargo package --locked` with local workspace patches, then
-scans the generated `.crate` payload. The crate allowlist is Cargo's manifest,
-source, tests/examples/benches, and regression corpus plus package metadata and
-README/license metadata. Both checks reject unsafe paths, links, credentials,
-internal session/config files, and a synthetic leak marker. Executables are
-also scanned for embedded local home/workspace paths. This is content checking;
-checksums identify bytes, while signing and build provenance remain separate.
+generated archive. The archive allowlist is exactly one top-level release
+directory containing one executable (`saya` or `saya.exe`), `README.md`,
+`LICENSE`, and `SECURITY.md`. Before each crates.io publish, including
+`DRY_RUN=1`, the publisher runs `cargo package --locked` with local workspace
+patches, then scans that generated `.crate` payload. Crates may contain only
+Cargo package metadata at the root (`Cargo.toml`, its original form, lock/VCS
+metadata, and `build.rs`), `README.md`, license/copyright files, and regular
+payloads below Cargo's `src`, `tests`, `examples`, `benches`, or
+`proptest-regressions` directories. A crate must have a regular `Cargo.toml`,
+license metadata, and at least one regular source file below `src/`.
+
+Both scanners require canonical relative paths and reject traversal, links,
+special archive entries, encrypted ZIP members, colon/NTFS alternate-stream
+names, and entries outside their allowlists. They reject session/config and
+credential-like filename classes (including `.env*`, credentials/secrets/auth
+JSON, TOML, YAML, and common key/certificate files) while allowing ordinary
+public Rust modules such as `session.rs` and `secret.rs`. The synthetic
+`SAYA_ARTIFACT_FORBIDDEN_SENTINEL` marker is rejected wherever it appears.
+Executable bytes are also checked for known local home/workspace path forms.
+These checks do not identify arbitrary credentials or secrets embedded in
+otherwise legitimate public source or data. This is content checking; checksums
+identify bytes, while signing and build provenance remain separate. The
+Windows native C++ build has no documented source-path remapping equivalent in
+the locked `cc` toolchain, so its artifact scan remains a CI check rather than
+a locally proven remapping guarantee.
 
 Jobs 4 and 5 no-op unless their secrets are configured, so a release never fails
 because a channel is not set up. Job 6 honors that contract: with

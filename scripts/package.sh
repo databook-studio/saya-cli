@@ -6,19 +6,19 @@ cd "$ROOT_DIR"
 
 VERSION="${SAYA_VERSION:-$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' crates/saya-cli/Cargo.toml | head -n 1)}"
 HOST="$(rustc -vV | sed -n 's/^host: //p')"
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 OUTPUT_DIR="${SAYA_PACKAGE_DIR:-$ROOT_DIR/dist}"
 ARCHIVE="${OUTPUT_DIR}/saya-${VERSION}-${HOST}.tar.gz"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/saya-package.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-CARGO_HOME_PATH="${CARGO_HOME:-$HOME/.cargo}"
-CXX="${CXX:-c++} -ffile-prefix-map=$ROOT_DIR=/saya -ffile-prefix-map=$CARGO_HOME_PATH=/cargo" \
-RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$ROOT_DIR=/saya --remap-path-prefix=$CARGO_HOME_PATH=/cargo" \
-    cargo build --release --locked -p saya-cli
-python3 scripts/check-artifact-content.py binary target/release/saya
+source scripts/release-build-env.sh
+configure_saya_release_build_env "$ROOT_DIR"
+cargo build --release --locked -p saya-cli
+python3 scripts/check-artifact-content.py binary "$TARGET_DIR/release/saya"
 
 mkdir -p "$OUTPUT_DIR" "$WORK_DIR/saya-${VERSION}-${HOST}"
-cp "target/release/saya" "$WORK_DIR/saya-${VERSION}-${HOST}/saya"
+cp "$TARGET_DIR/release/saya" "$WORK_DIR/saya-${VERSION}-${HOST}/saya"
 cp README.md LICENSE SECURITY.md "$WORK_DIR/saya-${VERSION}-${HOST}/"
 COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C "$WORK_DIR" "saya-${VERSION}-${HOST}"
 python3 scripts/check-artifact-content.py archive "$ARCHIVE"
