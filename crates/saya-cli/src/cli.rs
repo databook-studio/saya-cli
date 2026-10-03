@@ -738,6 +738,10 @@ pub enum RunCommand {
     Resume {
         /// The id of the run to resume (`saya run list` prints them).
         run_id: String,
+        /// Retry an incomplete step that may already have produced effects.
+        /// Reconcile possible effects before opting in; this is not exactly-once execution.
+        #[arg(long)]
+        retry_incomplete: bool,
     },
     /// Record a run cancelled. A run with a live holder refuses — cancel the
     /// process that owns it (Ctrl-C) instead; a finished run changes nothing.

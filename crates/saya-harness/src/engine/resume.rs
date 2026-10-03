@@ -4,7 +4,8 @@
 //! second engine on the same run is refused outright.
 
 mod contract;
-pub use contract::{ResumeError, ResumeOutcome, ResumeRun};
+mod effects;
+pub use contract::{IncompletePolicy, ResumeEffect, ResumeError, ResumeOutcome, ResumeRun};
 
 use std::{path::Path, sync::Arc};
 
@@ -22,6 +23,7 @@ use crate::{
     journal::{Journal, JournalState, StepState, replay},
     lock::RunLock,
 };
+use effects::possible_effects;
 
 /// Resumes the run in `run_dir` from its journal. The journal is replayed
 /// into the state the run actually held when its process died, and the run
@@ -98,27 +100,44 @@ pub async fn resume(
         Some(stream) => sink.with_agent_stream(Arc::clone(stream)),
         None => sink,
     };
-    match initial {
-        // The process died mid-flight: record the death the journal could
-        // not — a pause the next pickup owns — then resume, both through
-        // the machine like a fresh run's every advance.
-        RunState::Executing => {
-            sink.record(TransitionEvent::Pause(PauseReason::ProcessDeath))
-                .await
-                .map_err(|source| ResumeError::Transition { source })?;
-            sink.record(TransitionEvent::Resume)
-                .await
-                .map_err(|source| ResumeError::Transition { source })?;
-        }
-        RunState::Paused => {
-            sink.record(TransitionEvent::Resume)
-                .await
-                .map_err(|source| ResumeError::Transition { source })?;
-        }
-        _ => {}
-    }
     let first_step = (0..resumed.plan.steps.len())
         .find(|&step| state.steps.get(&step) != Some(&StepState::Completed));
+    let uncertain = first_step.and_then(|first_step| {
+        if resumed.incomplete_policy == IncompletePolicy::Retry {
+            return None;
+        }
+        (first_step..resumed.plan.steps.len()).find_map(|step| {
+            let recorded_incomplete = matches!(
+                state.steps.get(&step),
+                Some(StepState::Started | StepState::Failed)
+            );
+            if !recorded_incomplete {
+                return None;
+            }
+            let spec = &resumed.plan.steps[step];
+            let effects = possible_effects(spec, resumed.collaborators.toolsets.get(step));
+            (!effects.is_empty()).then(|| (step, spec.goal.clone(), effects))
+        })
+    });
+    if initial == RunState::Executing {
+        // Record the death the journal could not. A refusal stays paused and
+        // never records that execution resumed.
+        sink.record(TransitionEvent::Pause(PauseReason::ProcessDeath))
+            .await
+            .map_err(|source| ResumeError::Transition { source })?;
+    }
+    if let Some((step, goal, effects)) = uncertain {
+        return Ok(ResumeOutcome::IncompleteEffects {
+            step,
+            goal,
+            effects,
+        });
+    }
+    if matches!(initial, RunState::Executing | RunState::Paused) {
+        sink.record(TransitionEvent::Resume)
+            .await
+            .map_err(|source| ResumeError::Transition { source })?;
+    }
     let Some(first_step) = first_step else {
         // Every step is complete but the completion was never recorded: the
         // journal proves the plan succeeded, so record it through the sink.
@@ -140,6 +159,9 @@ pub async fn resume(
         resumed.bounds,
     );
     for step in first_step..resumed.plan.steps.len() {
+        if state.steps.get(&step) == Some(&StepState::Completed) {
+            continue;
+        }
         driver
             .run_step(&sink, &resumed.plan, step, &resumed.workspace)
             .await

@@ -1,4 +1,4 @@
-use crate::render::{RenderFormat, TerminalEvent, render_event};
+use crate::render::{RenderFormat, ResumeEffectCode, TerminalEvent, render_event};
 use saya_types::ConnectionError;
 use std::cell::RefCell;
 
@@ -75,4 +75,23 @@ pub fn failure_message(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     emit(TerminalEvent::Error { message }, format);
     Ok(code)
+}
+
+pub fn resume_uncertain(
+    run_id: String,
+    step: usize,
+    goal: String,
+    effects: Vec<ResumeEffectCode>,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    emit(
+        TerminalEvent::ResumeUncertain {
+            run_id,
+            step,
+            goal,
+            effects,
+        },
+        format,
+    );
+    Ok(6)
 }

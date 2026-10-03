@@ -99,6 +99,7 @@ async fn every_entry_point_into_a_run_refuses_bypass() {
         RenderFormat::Text,
         ApprovalPolicy::Bypass,
         &store,
+        false,
     )
     .await
     .expect_err("the resume refuses bypass");

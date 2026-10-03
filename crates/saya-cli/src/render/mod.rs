@@ -47,6 +47,20 @@ pub enum RenderFormat {
     Json,
     Ndjson,
 }
+
+/// Stable machine label for one possible effect of an incomplete run step.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeEffectCode {
+    WorkspaceWrite,
+    Scratch,
+    Runner,
+    Interpreter,
+    Fetch,
+    ExternalSideEffect,
+    LocalStateWrite,
+    Unknown,
+}
 impl From<crate::cli::FormatArg> for RenderFormat {
     fn from(value: crate::cli::FormatArg) -> Self {
         match value {
@@ -199,6 +213,17 @@ pub enum TerminalEvent {
     Error {
         message: String,
     },
+    /// Resume refused to repeat a journaled incomplete step because its
+    /// declared effects may already have happened.
+    ResumeUncertain {
+        run_id: String,
+        /// One-based plan step number.
+        step: usize,
+        /// Unique effect codes returned by the harness; at most one per code.
+        effects: Vec<ResumeEffectCode>,
+        /// Redacted, character-bounded plan goal.
+        goal: String,
+    },
     ContractList {
         contracts: Vec<ContractView>,
     },
@@ -248,6 +273,19 @@ pub fn render_event(event: &TerminalEvent, format: RenderFormat) -> Rendered {
     }
 }
 
+fn resume_effect_label(effect: ResumeEffectCode) -> &'static str {
+    match effect {
+        ResumeEffectCode::WorkspaceWrite => "workspace mutation",
+        ResumeEffectCode::Scratch => "scratch database mutation",
+        ResumeEffectCode::Runner => "runner execution",
+        ResumeEffectCode::Interpreter => "interpreter execution",
+        ResumeEffectCode::Fetch => "fetch or download",
+        ResumeEffectCode::ExternalSideEffect => "external side effect",
+        ResumeEffectCode::LocalStateWrite => "local state mutation",
+        ResumeEffectCode::Unknown => "unknown tool effect",
+    }
+}
+
 pub(crate) fn sanitize_terminal(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -294,6 +332,23 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         TerminalEvent::Diagnostic { message } | TerminalEvent::Error { message } => Rendered {
             stdout: String::new(),
             stderr: format!("{message}\n"),
+        },
+        TerminalEvent::ResumeUncertain {
+            run_id,
+            step,
+            effects,
+            goal,
+        } => Rendered {
+            stdout: String::new(),
+            stderr: format!(
+                "run {run_id} paused: step {step} ({}) may have produced effects before completion was journaled: {}. Reconcile them before retrying with `saya run resume {run_id} --retry-incomplete`.\n",
+                sanitize_terminal(goal),
+                effects
+                    .iter()
+                    .map(|effect| resume_effect_label(*effect))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         },
         TerminalEvent::AssistantText { text } => render_delta::text(text),
         TerminalEvent::ToolRequested {
@@ -425,6 +480,10 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         stderr: sanitize_terminal(&rendered.stderr),
     }
 }
+
+#[cfg(test)]
+#[path = "resume_event_tests.rs"]
+mod resume_event_tests;
 
 fn query_text(result: &QueryResult) -> String {
     let mut output = result.columns.join("\t");
