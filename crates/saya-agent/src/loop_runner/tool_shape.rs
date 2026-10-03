@@ -125,14 +125,7 @@ impl std::io::Write for BoundedWriter {
         let room = self.cap.saturating_sub(self.bytes.len());
         let copied = room.min(bytes.len());
         self.bytes.extend_from_slice(&bytes[..copied]);
-        if copied == bytes.len() {
-            Ok(copied)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::WriteZero,
-                "tool result limit",
-            ))
-        }
+        Ok(copied)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {

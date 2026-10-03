@@ -111,16 +111,44 @@ mod tests {
 
     #[test]
     fn result_shape_of_is_unknown_when_column_metadata_exceeds_its_bound() {
-        let result = serde_json::json!({
-            "columns": (0..(MAX_RECORDED_COLUMNS + 3))
-                .map(|index| format!("column_{index}_{}", "x".repeat(300)))
-                .collect::<Vec<_>>(),
-            "rows": [["SECRET_CELL_9f3a"]],
-            "row_count": 1,
-        });
-        assert!(
-            result_shape_of(&result).is_none(),
-            "partial columns must be recorded as unknown, never complete"
-        );
+        let ordinary_names = (0..=MAX_RECORDED_COLUMNS)
+            .map(|index| format!("column_{index}"))
+            .collect::<Vec<_>>();
+        let exact_utf8_boundary = "é".repeat(MAX_RECORDED_COLUMN_NAME_BYTES / 2);
+        let cases = [
+            ("too many ordinary names", ordinary_names, false),
+            (
+                "one overlength UTF-8 name",
+                vec!["é".repeat((MAX_RECORDED_COLUMN_NAME_BYTES / 2) + 1)],
+                false,
+            ),
+            (
+                "exact count and UTF-8 byte boundary",
+                vec![exact_utf8_boundary; MAX_RECORDED_COLUMNS],
+                true,
+            ),
+        ];
+
+        for (description, columns, known) in cases {
+            let expected_columns = columns.clone();
+            let result = serde_json::json!({
+                "columns": columns,
+                "rows": [["SECRET_CELL_9f3a"]],
+                "row_count": 1,
+            });
+            let shape = result_shape_of(&result);
+            if known {
+                assert_eq!(
+                    shape.expect(description).columns,
+                    expected_columns,
+                    "{description} preserves every name whole"
+                );
+            } else {
+                assert!(
+                    shape.is_none(),
+                    "{description} must be unknown, never partial"
+                );
+            }
+        }
     }
 }
