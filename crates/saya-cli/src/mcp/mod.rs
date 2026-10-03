@@ -14,6 +14,7 @@ mod line_gate;
 mod policy;
 mod query_cancellation;
 mod query_tool;
+mod replay_cancellation;
 mod replay_tools;
 mod schema_tool;
 mod server;

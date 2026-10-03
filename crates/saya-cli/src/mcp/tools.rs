@@ -46,7 +46,16 @@ pub(crate) async fn run(
     } else {
         match request.name.as_ref() {
             "contracts" => context_tools::contracts(policy, context, request).await,
-            "investigation_run" => replay_tools::investigation_run(policy, context, request).await,
+            "investigation_run" => {
+                replay_tools::investigation_run(
+                    policy,
+                    context,
+                    request,
+                    request_context,
+                    request_deadline,
+                )
+                .await
+            }
             "list_profiles" => run_list_profiles(policy, request).await,
             "query" => {
                 query_tool::query(policy, context, request, request_context, request_deadline).await
