@@ -61,31 +61,30 @@ fn second_sql_command_at_the_handler_is_rejected_not_silently_dropped() {
 }
 
 #[test]
-fn detach_sql_task_clears_the_task_and_says_it_is_still_running() {
+fn detach_sql_task_requests_cancellation_and_clears_the_task() {
     let mut app = idle_app();
     app.sql_task = Some(in_flight_task());
+    let cancellation = app.sql_task.as_ref().unwrap().3.clone();
     app.detach_sql_task();
     // The UI no longer tracks the query (spinner stops, gate reopens).
     assert!(app.sql_task.is_none(), "detach clears the in-flight task");
     assert!(!app.is_busy());
-    // The message must be honest: it is still running server-side, NOT cancelled.
+    assert!(cancellation.is_cancelled(), "detach signals the task token");
     let last = app
         .transcript
         .blocks()
         .last()
         .expect("a message was posted");
-    let text = last.text.to_lowercase();
     assert!(
-        text.contains("running"),
-        "message says still running: {text}"
+        last.text
+            .contains("Cancellation requested; query detached and may still be running."),
+        "message reports only a cancellation request: {}",
+        last.text
     );
     assert!(
-        !text.contains("cancel"),
-        "detach must not claim cancellation: {text}"
-    );
-    assert!(
-        text.contains("discarded"),
-        "message says the result is discarded: {text}"
+        !last.text.contains("SELECT") && !last.text.contains("analytics"),
+        "message contains no query or profile data: {}",
+        last.text
     );
 }
 

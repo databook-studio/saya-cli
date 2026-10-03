@@ -50,6 +50,7 @@ pub(crate) struct App {
         std::sync::mpsc::Receiver<crate::render::TerminalEvent>,
         super::super::sql_task::SqlTask,
         std::time::Instant,
+        saya_agent::CancellationToken,
     )>,
     /// In-flight `/compact` running off-thread; polled each loop tick so the
     /// UI never blocks on the summariser. `None` until `/compact` runs.

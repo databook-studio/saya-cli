@@ -94,23 +94,18 @@ impl App {
         }
     }
 
-    /// Detaches the in-flight SQL command so the UI moves on without blocking.
-    /// The worker thread is not joined and the connector has no cancellation
-    /// token wired here, so the query keeps running **server-side**; its result
-    /// lands on a dropped channel and is discarded. The message says exactly
-    /// that — it never claims the query was cancelled.
+    /// Requests cancellation and detaches the in-flight SQL command. The
+    /// worker remains the owner until native work settles; its receiver is
+    /// dropped so late results cannot mutate the app.
     pub(crate) fn detach_sql_task(&mut self) {
-        if let Some((_, _, started)) = self.sql_task.take() {
+        if let Some((_, _, _, cancellation)) = self.sql_task.take() {
+            cancellation.cancel();
             // Release the status fields the bar reused while the query ran.
             self.request.started = None;
             self.request.activity = None;
             self.transcript.push(
                 BlockKind::System,
-                format!(
-                    "Detached the running query ({}s elapsed) — it may still be running on the \
-                     server; its result will be discarded.",
-                    started.elapsed().as_secs()
-                ),
+                "Cancellation requested; query detached and may still be running.",
             );
         }
     }

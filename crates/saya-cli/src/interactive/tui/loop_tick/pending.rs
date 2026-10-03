@@ -78,14 +78,21 @@ pub(crate) fn tick_pending(
                 match app.admit_second_sql() {
                     SecondSqlDecision::Start(permit) => {
                         let started = std::time::Instant::now();
+                        let cancellation = saya_agent::CancellationToken::new();
                         // Share the existing `Arc<RuntimeConfig>` instead of
                         // deep-cloning the whole config (resolved plaintext
                         // secrets included) onto a detached thread per
                         // command.
                         app.sql_task = Some((
-                            sql_task::spawn(permit, Arc::clone(&app.runtime), task.clone()),
+                            sql_task::spawn(
+                                permit,
+                                Arc::clone(&app.runtime),
+                                task.clone(),
+                                cancellation.clone(),
+                            ),
                             task,
                             started,
+                            cancellation,
                         ));
                         // Reuse the agent status fields so the status bar
                         // (which reads them) shows "running query Ns" with
