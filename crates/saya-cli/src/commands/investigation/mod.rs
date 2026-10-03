@@ -32,6 +32,7 @@ use crate::cli::InvestigationCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 pub use run_outcome::{Replay, RunOutcome};
+use saya_agent::CancellationToken;
 use saya_store::{InvestigationRepository, SqliteStateStore, StoreError};
 use saya_types::investigation::InvestigationId;
 
@@ -113,6 +114,21 @@ async fn run_investigation_outcome_in(
     can_prompt: bool,
     state_db: &SqliteStateStore,
 ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    run_investigation_outcome_controlled_in(
+        repo, command, runtime, format, can_prompt, state_db, None,
+    )
+    .await
+}
+
+async fn run_investigation_outcome_controlled_in(
+    repo: &InvestigationRepository,
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+    cancellation: Option<&CancellationToken>,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
     match command {
         InvestigationCommand::Save {
             name,
@@ -193,10 +209,36 @@ async fn run_investigation_outcome_in(
                     rows,
                     overwrite,
                     params,
+                    cancellation,
                 },
             )
             .await
         }
+    }
+}
+
+impl InvestigationCommand {
+    /// Cancellation-aware entry for local adapters that retain this exact
+    /// typed operation until its source has settled.
+    pub(crate) async fn run_outcome_with_cancellation(
+        self,
+        repo: &InvestigationRepository,
+        runtime: &RuntimeConfig,
+        format: RenderFormat,
+        can_prompt: bool,
+        state_db: &SqliteStateStore,
+        cancellation: &CancellationToken,
+    ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+        run_investigation_outcome_controlled_in(
+            repo,
+            self,
+            runtime,
+            format,
+            can_prompt,
+            state_db,
+            Some(cancellation),
+        )
+        .await
     }
 }
 

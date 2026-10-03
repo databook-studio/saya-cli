@@ -493,14 +493,20 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
   `--revalidate` — words the client reads, a flag it cannot pass; a replay
   never revalidates from the wire.
 - **Database cancellation requests settlement.** A `notifications/cancelled`
-  requests cancellation of an active `query` through its connector and keeps
-  its in-flight slot until execution settles; the cancelled request's reply
-  is suppressed by RMCP. Query cancellation outcomes are not proof that the
-  database stopped. Active `schema` discovery cannot be interrupted, so
-  cancellation or the 30 s deadline keeps its slot while discovery is awaited
-  and its result discarded. Connector setup and connect are also awaited if
-  they outlast the deadline. The database response can therefore arrive after
-  30 s. Other tools keep their existing call timeout behavior.
+  requests cancellation of an active `query` or active SQL in a saved
+  `investigation_run` through its connector and keeps the server in-flight
+  slot until the typed operation settles; the cancelled request's reply is
+  suppressed by RMCP.
+  Replay also keeps its serialized capture slot until settlement and capture
+  cleanup. Cancellation outcomes are not proof that the database stopped.
+  Active `schema` discovery, including schema discovery during replay, cannot
+  be interrupted, so cancellation or the 30 s deadline keeps its slot while
+  discovery is awaited and its result discarded before a later query. Replay
+  waiting for its capture slot is cancellation-aware and does not cancel the
+  current holder. Connector setup and connect are also awaited if they outlast
+  the deadline. The deadline requests cancellation at 30 s; the database
+  response can therefore arrive later. Other tools keep their existing call
+  timeout behavior.
 - **Stdin EOF does not join pending handlers.** RMCP's current service
   shutdown exits `0` when stdin closes without cancelling or joining requests
   still in flight. A one-shot pipeline that writes its JSON-RPC frames and

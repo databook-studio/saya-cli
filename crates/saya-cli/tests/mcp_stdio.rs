@@ -793,6 +793,7 @@ fn mcp_cancellation_and_concurrency_are_bounded() {
     let mut config = std::fs::read_to_string(&fixture.config).unwrap();
     config.push_str("\n[run]\nquery_timeout_seconds = 4\n");
     std::fs::write(&fixture.config, config).unwrap();
+    let slow_replay_id = fixture.save_investigation("slow replay", SLOW_SQL, "local");
     let mut server = TestServer::spawn(
         &fixture,
         &["mcp", "serve", "--profile", "local", "--allow-data-sharing"],
@@ -831,9 +832,16 @@ fn mcp_cancellation_and_concurrency_are_bounded() {
     server.send(&format!(
         r#"{{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{{"name":"query","arguments":{{"profile":"local","sql":"{SLOW_SQL}"}}}}}}"#
     ));
-    std::thread::sleep(Duration::from_millis(400));
     server.send(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":20,"reason":"client moved on"}}"#);
     server.expect_no_response_for(20, 2500);
+
+    // Exercise the separate saved-replay route over the real RMCP transport:
+    // the cancelled request id stays suppressed and the server remains live.
+    server.send(&format!(
+        r#"{{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{{"name":"investigation_run","arguments":{{"id":"{slow_replay_id}"}}}}}}"#
+    ));
+    server.send(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":23,"reason":"client moved on"}}"#);
+    server.expect_no_response_for(23, 2500);
 
     // Cancellation does not kill the server; another database request works.
     server.send(r#"{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"query","arguments":{"profile":"local","sql":"SELECT 1 AS still_running"}}}"#);

@@ -22,6 +22,7 @@ use crate::commands::{
 use crate::config::runtime::RuntimeConfig;
 use crate::profile_identity::profile_identity;
 use crate::render::{RenderFormat, TerminalEvent};
+use saya_agent::CancellationToken;
 use saya_connectors::{prepare_for_dialect, sql_references};
 use saya_store::{AuditOperation, AuditStatus, InvestigationRepository, SqliteStateStore};
 use saya_types::{
@@ -41,6 +42,7 @@ pub(super) struct RunRequest<'a> {
     pub rows: Option<usize>,
     pub overwrite: bool,
     pub params: Vec<String>,
+    pub cancellation: Option<&'a CancellationToken>,
 }
 
 pub(super) async fn run(
@@ -51,6 +53,9 @@ pub(super) async fn run(
     state_db: &SqliteStateStore,
     request: RunRequest<'_>,
 ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    if is_cancelled(request.cancellation) {
+        return stopped(format);
+    }
     // Flag-usage refusals come first: they are command-line errors, checked
     // before any store, connection, or query work (invariant 1).
     if let Some(message) = run_report::usage_error(&request) {
@@ -131,6 +136,9 @@ pub(super) async fn run(
         .await;
         return Ok(RunOutcome::plain(EXIT_SAFETY));
     };
+    if is_cancelled(request.cancellation) {
+        return stopped(format);
+    }
     // Capability honesty (invariant 2): an engine without native binding
     // refuses with any parameters before it connects or executes — the
     // same refusal the safety layer would raise, one step earlier.
@@ -144,7 +152,11 @@ pub(super) async fn run(
             format,
         ));
     }
-    if let Err(error) = connector.connect().await {
+    let connection_result = connector.connect().await;
+    if is_cancelled(request.cancellation) {
+        return stopped(format);
+    }
+    if let Err(error) = connection_result {
         audit(
             state_db,
             &review.identity,
@@ -178,7 +190,14 @@ pub(super) async fn run(
     // informational, so imported metadata can never weaken the review.
     let references = sql_references(&definition.sql, definition.dialect);
     let analysis = if fingerprint::needs_schema(references.as_ref()) {
-        match connector.schema().await {
+        if is_cancelled(request.cancellation) {
+            return stopped(format);
+        }
+        let schema_result = connector.schema().await;
+        if is_cancelled(request.cancellation) {
+            return stopped(format);
+        }
+        match schema_result {
             Ok(tree) => fingerprint::analyze(Some(&tree), definition.dialect, references.as_ref()),
             Err(error) => {
                 audit(
@@ -239,7 +258,44 @@ pub(super) async fn run(
             bound.clone(),
         )
     };
-    match connector.execute(request_query).await {
+    if is_cancelled(request.cancellation) {
+        return stopped(format);
+    }
+    let execution = match request.cancellation {
+        Some(cancellation) => {
+            crate::interactive::sql_operation::cancellation::execute_with_cancellation_outcome(
+                connector.as_ref(),
+                request_query,
+                cancellation,
+            )
+            .await
+        }
+        None => crate::interactive::sql_operation::cancellation::SettledQuery {
+            result: connector.execute(request_query).await,
+            cancel_request: None,
+        },
+    };
+    if is_cancelled(request.cancellation) {
+        audit(
+            state_db,
+            &review.identity,
+            AuditStatus::Failure,
+            &started,
+            None,
+            None,
+            format,
+        )
+        .await;
+        let error = match execution.cancel_request.and_then(Result::err) {
+            Some(error) => error,
+            None => match execution.result {
+                Err(error) => error,
+                Ok(_) => ConnectionError::cancelled(),
+            },
+        };
+        return no_replay(failure(EXIT_SAFETY, error, format));
+    }
+    match execution.result {
         Ok(result) => {
             audit(
                 state_db,
@@ -315,6 +371,18 @@ pub(super) async fn run(
             no_replay(failure(EXIT_SAFETY, error, format))
         }
     }
+}
+
+fn is_cancelled(cancellation: Option<&CancellationToken>) -> bool {
+    cancellation.is_some_and(CancellationToken::is_cancelled)
+}
+
+fn stopped(format: RenderFormat) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    no_replay(failure_message(
+        EXIT_INVESTIGATION_ERROR,
+        "the call was cancelled".to_string(),
+        format,
+    ))
 }
 
 /// Wraps a code-only output result — a refusal or failure whose diagnostic

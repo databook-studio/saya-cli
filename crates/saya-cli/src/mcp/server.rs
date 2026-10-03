@@ -57,7 +57,10 @@ impl ServerHandler for SayaServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        if matches!(request.name.as_ref(), "query" | "schema") {
+        if matches!(
+            request.name.as_ref(),
+            "query" | "schema" | "investigation_run"
+        ) {
             // Database operations retain their owning future after a cancel or
             // deadline request; RMCP suppresses the cancelled request's reply.
             self.run_tool(request, &context).await
@@ -91,7 +94,10 @@ impl SayaServer {
         request: CallToolRequestParams,
         request_context: &RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let database_operation = matches!(request.name.as_ref(), "query" | "schema");
+        let database_operation = matches!(
+            request.name.as_ref(),
+            "query" | "schema" | "investigation_run"
+        );
         let request_deadline = tokio::time::Instant::now() + self.policy.call_timeout();
         let _slot = match self.acquire_in_flight() {
             Ok(slot) => slot,
