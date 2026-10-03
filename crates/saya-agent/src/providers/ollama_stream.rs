@@ -82,6 +82,7 @@ struct State {
     bytes: Vec<u8>,
     frames: super::framing::FrameCount,
     usage: TokenUsage,
+    usage_reported: bool,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
     content: bool,
@@ -114,8 +115,9 @@ impl State {
             };
         }
         let bytes = std::mem::take(&mut self.bytes);
+        self.frames
+            .admit(self.usage_reported.then_some(self.usage))?;
         let line = std::str::from_utf8(&bytes).map_err(|_| ProviderError::InvalidResponse)?;
-        self.frames.admit(None)?;
         self.push_line(line.trim_end_matches('\r'), &[])?;
         if self.done {
             Ok(())
@@ -134,7 +136,8 @@ impl State {
         let mut consumed = 0;
         while let Some(relative_end) = bytes[consumed..].iter().position(|byte| *byte == b'\n') {
             let end = consumed + relative_end;
-            self.frames.admit(None)?;
+            self.frames
+                .admit(self.usage_reported.then_some(self.usage))?;
             let line = std::str::from_utf8(&bytes[consumed..end])
                 .map_err(|_| ProviderError::InvalidResponse)?;
             consumed = end + 1;
@@ -154,6 +157,18 @@ impl State {
         }
         let chunk: Chunk =
             serde_json::from_str(line).map_err(|_| ProviderError::InvalidResponse)?;
+        let mut usage = self.usage;
+        let mut usage_reported = self.usage_reported;
+        if chunk.done {
+            if let Some(input) = chunk.prompt_eval_count {
+                usage.input_tokens = input;
+                usage_reported = true;
+            }
+            if let Some(output) = chunk.eval_count {
+                usage.output_tokens = output;
+                usage_reported = true;
+            }
+        }
         if let Some(message) = chunk.message {
             if !message.content.is_empty() {
                 self.reserve(message.content.len())?;
@@ -192,13 +207,9 @@ impl State {
                     self.tools.partial_json(),
                 ));
             }
-            if let Some(input) = chunk.prompt_eval_count {
-                self.usage.input_tokens = input;
-            }
-            if let Some(output) = chunk.eval_count {
-                self.usage.output_tokens = output;
-            }
-            if self.usage != TokenUsage::default() {
+            self.usage = usage;
+            self.usage_reported = usage_reported;
+            if self.usage_reported {
                 self.pending.push_back(ProviderEvent::Usage(self.usage));
             }
             self.complete(trailing)?;

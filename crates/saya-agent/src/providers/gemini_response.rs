@@ -103,27 +103,27 @@ fn collect_text(body: &Value, out: &mut String) {
 }
 
 /// Extracts token usage from a Gemini `generateContent` response's/// `usageMetadata`, or `None` when the response carries no `usageMetadata` at
-/// all. Gemini reports `promptTokenCount`/`candidatesTokenCount` (input/output)
-/// plus `cachedContentTokenCount` (a cache read, inclusive of the prompt) and
-/// `thoughtsTokenCount` (reasoning, **separate** from
-/// `candidatesTokenCount`, unlike OpenAI's reasoning figure). Fields a Gemini
-/// response omits stay `None` (absent is not zero); it has no cache-creation
-/// concept. A wholly absent `usageMetadata` is `None` — distinct from a present
-/// block reporting zeros — so a silent Gemini response is not mistaken for a
-/// free one.
+/// all. Gemini reports `promptTokenCount` as input, `candidatesTokenCount` as
+/// candidate output, and `thoughtsTokenCount` separately; the adapter adds the
+/// last two to form complete generated usage while retaining thoughts as a
+/// detail. `cachedContentTokenCount` is a subset of prompt input. A wholly
+/// absent `usageMetadata` is `None`, distinct from a present block reporting
+/// zeros.
 fn usage(body: &Value) -> Option<TokenUsage> {
     let metadata = body.get("usageMetadata")?;
     let mut usage = TokenUsage::default();
     if let Some(input) = metadata["promptTokenCount"].as_u64() {
         usage.input_tokens = input;
     }
-    if let Some(output) = metadata["candidatesTokenCount"].as_u64() {
-        usage.output_tokens = output;
-    }
+    let candidates = metadata["candidatesTokenCount"].as_u64();
+    let thoughts = metadata["thoughtsTokenCount"].as_u64();
+    usage.output_tokens = candidates
+        .unwrap_or(0)
+        .saturating_add(thoughts.unwrap_or(0));
     if let Some(cached) = metadata["cachedContentTokenCount"].as_u64() {
         usage.cached_input_tokens = Some(cached);
     }
-    if let Some(reasoning) = metadata["thoughtsTokenCount"].as_u64() {
+    if let Some(reasoning) = thoughts {
         usage.reasoning_tokens = Some(reasoning);
     }
     Some(usage)
@@ -203,7 +203,7 @@ mod tests {
         let response = parse(body).expect("parses");
         let usage = response.usage.expect("usage reached the response");
         assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 200);
+        assert_eq!(usage.output_tokens, 470);
         assert_eq!(usage.cached_input_tokens, Some(90));
         assert_eq!(usage.reasoning_tokens, Some(270));
         assert_eq!(usage.cache_creation_input_tokens, None);
@@ -240,7 +240,7 @@ mod tests {
         });
         let usage = usage(&body).expect("present usageMetadata yields Some");
         assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 200);
+        assert_eq!(usage.output_tokens, 470);
         assert_eq!(usage.cached_input_tokens, Some(90));
         assert_eq!(usage.reasoning_tokens, Some(270));
         assert_eq!(usage.cache_creation_input_tokens, None);
