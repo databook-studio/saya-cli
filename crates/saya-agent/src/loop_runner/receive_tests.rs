@@ -1,7 +1,7 @@
 //! Tests for `receive`'s main-loop request shape.
 
 use super::*;
-use crate::{ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
+use crate::{AnsweringLimits, ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
 use crate::{ProviderError, ProviderEvent};
 use async_trait::async_trait;
 use futures_util::stream;
@@ -46,16 +46,18 @@ async fn main_loop_request_does_not_set_json_mode() {
     let sink = crate::NoopEventSink;
     let mut events = Vec::new();
     let cancellation = CancellationToken::new();
+    let mut admission = Admission::new(AnsweringLimits::default(), false);
     let messages = vec![ChatMessage::text("user", "hello")];
-    receive(
-        &provider,
-        "m",
-        &messages,
-        &[],
-        &sink,
-        &cancellation,
-        &mut events,
-    )
+    receive(ReceiveContext {
+        provider: &provider,
+        model: "m",
+        messages: &messages,
+        definitions: &[],
+        sink: &sink,
+        cancellation: &cancellation,
+        events: &mut events,
+        admission: &mut admission,
+    })
     .await
     .expect("receive succeeds");
     let sent = provider

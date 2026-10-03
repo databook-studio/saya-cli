@@ -1,7 +1,7 @@
 //! Salvaging an agent run that hit a turn or tool-call ceiling: answer from
 //! work already done instead of discarding it.
 
-use super::{add_usage, emit, receive, tools};
+use super::{add_usage, admission::Admission, emit, receive, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentOutput, CancellationToken, ChatProvider,
     ProviderError, TokenUsage,
@@ -40,6 +40,7 @@ pub(super) async fn salvage(
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
     usage: &mut TokenUsage,
+    admission: &mut Admission,
     used_bounded_sql_query: bool,
     tool_metadata: Vec<crate::ToolMetadata>,
     // The SQL to carry on the output: the run's designation when the model
@@ -55,8 +56,17 @@ pub(super) async fn salvage(
         messages.push(message);
     }
     messages.push(crate::ChatMessage::text("user", SALVAGE_INSTRUCTION));
-    let salvage_call =
-        receive::receive(provider, model, messages, &[], sink, cancellation, events).await;
+    let salvage_call = receive::receive(receive::ReceiveContext {
+        provider,
+        model,
+        messages,
+        definitions: &[],
+        sink,
+        cancellation,
+        events,
+        admission,
+    })
+    .await;
     let (assistant, turn_usage) = match salvage_call {
         Ok((assistant, turn_usage, _)) => (assistant, turn_usage),
         // A cancellation surfacing from the salvage call is the user stopping
@@ -93,9 +103,51 @@ pub(super) async fn salvage(
                 answer_sql: designated_or_best_sql,
             });
         }
+        Err(super::attempt::ReceiveFailure {
+            error,
+            usage: settled,
+        }) if admission.stopped_dimension(&error, cancellation).is_some() => {
+            let dimension = admission
+                .stopped_dimension(&error, cancellation)
+                .expect("guarded budget reason");
+            add_usage(usage, settled);
+            return Ok(super::budget_output(
+                dimension,
+                events,
+                sink,
+                super::PartialOutput {
+                    usage: *usage,
+                    used_bounded_sql_query,
+                    tool_metadata,
+                    answer_sql: designated_or_best_sql,
+                    answer: String::new(),
+                },
+            )
+            .await);
+        }
         Err(failure) => return Err(failure.error),
     };
     add_usage(usage, turn_usage);
+    if !assistant.tool_calls.is_empty()
+        && let Err(error) = admission.enforce_tools(cancellation)
+    {
+        if let Some(dimension) = admission.stopped_dimension(&error, cancellation) {
+            return Ok(super::budget_output(
+                dimension,
+                events,
+                sink,
+                super::PartialOutput {
+                    usage: *usage,
+                    used_bounded_sql_query,
+                    tool_metadata,
+                    answer_sql: designated_or_best_sql,
+                    answer: String::new(),
+                },
+            )
+            .await);
+        }
+        return Err(error);
+    }
     emit(events, sink, AgentEvent::Complete).await;
     // When the run ended because a budget ran out rather than by the model
     // finishing, surface the best available answer if the model never nominated

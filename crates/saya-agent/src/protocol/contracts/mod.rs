@@ -4,6 +4,7 @@
 //! per-concern submodules.
 
 mod approval;
+mod budget;
 mod builders;
 mod chat;
 mod context;
@@ -22,6 +23,7 @@ mod session_policy_tests;
 pub use approval::{
     AgentMode, AgentModeParseError, AllowReadOnlyApproval, ApprovalDecider, read_only_permits,
 };
+pub use budget::{AnsweringObservation, BudgetDimension};
 pub use chat::{
     AgentRequest, ChatMessage, ChatRequest, ChatResponse, ContextBlock, ReasoningEffort,
     ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,

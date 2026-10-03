@@ -245,6 +245,9 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
         // reasoning is progress, and a future change cannot silence the
         // catch-all to pass one and break the other.
         AgentEvent::ReasoningText { .. } => return None,
+        // The final bounded answer is rendered through AgentOutput's existing
+        // truncated marker; this status has no standalone pipe text.
+        AgentEvent::AnsweringBudgetStopped { .. } => return None,
         // The token counts one provider call reported. This is data the JSON/NDJSON
         // adapter carries whole; the text adapter renders it to nothing (the
         // interactive surfaces for it are the per-turn token line and `/usage`,
@@ -309,8 +312,8 @@ mod tests {
     use super::*;
     use crate::render::{RenderFormat, render_event};
     use saya_agent::{
-        KnowledgeOutcome, LearningSkipReason, LocalStateEffect, OverrideFindingDto,
-        SuppliedClaimDto, SuppliedContractDto, ToolEffect,
+        BudgetDimension, KnowledgeOutcome, LearningSkipReason, LocalStateEffect,
+        OverrideFindingDto, SuppliedClaimDto, SuppliedContractDto, ToolEffect,
     };
     use saya_types::{ClaimId, ClaimStatus};
 
@@ -810,6 +813,12 @@ mod tests {
         assert!(
             !matches!(complete, TerminalEvent::NotImplemented { .. }),
             "a known content event must not fall through to the catch-all"
+        );
+        assert!(
+            terminal_event(AgentEvent::answering_budget_stopped(
+                BudgetDimension::ElapsedTime
+            ))
+            .is_none()
         );
     }
 

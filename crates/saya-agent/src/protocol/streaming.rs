@@ -1,5 +1,5 @@
 use super::tool_collection::admit_tool_calls;
-use crate::{ChatMessage, ChatRequest, ChatResponse, ProviderError, ToolCall};
+use crate::{BudgetDimension, ChatMessage, ChatRequest, ChatResponse, ProviderError, ToolCall};
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
 };
 use tokio::sync::Notify;
@@ -137,19 +137,67 @@ pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<ProviderEvent, Provid
 pub struct CancellationToken(Arc<CancellationState>);
 #[derive(Default)]
 struct CancellationState {
-    cancelled: AtomicBool,
+    reason: AtomicU8,
     notify: Notify,
 }
+
+/// The first cause that cancelled an answering request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancellationReason {
+    User,
+    Budget(BudgetDimension),
+    OwnerFailure,
+}
+
+impl CancellationReason {
+    const fn code(self) -> u8 {
+        match self {
+            Self::User => 1,
+            Self::Budget(BudgetDimension::LogicalRequests) => 2,
+            Self::Budget(BudgetDimension::RequestedToolCalls) => 3,
+            Self::Budget(BudgetDimension::ElapsedTime) => 4,
+            Self::Budget(BudgetDimension::ReportedTokens) => 5,
+            Self::Budget(BudgetDimension::DownloadBytes) => 6,
+            Self::OwnerFailure => 7,
+        }
+    }
+
+    const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::User),
+            2 => Some(Self::Budget(BudgetDimension::LogicalRequests)),
+            3 => Some(Self::Budget(BudgetDimension::RequestedToolCalls)),
+            4 => Some(Self::Budget(BudgetDimension::ElapsedTime)),
+            5 => Some(Self::Budget(BudgetDimension::ReportedTokens)),
+            6 => Some(Self::Budget(BudgetDimension::DownloadBytes)),
+            7 => Some(Self::OwnerFailure),
+            _ => None,
+        }
+    }
+}
+
 impl CancellationToken {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn cancel(&self) {
-        self.0.cancelled.store(true, Ordering::Release);
+        self.cancel_with_reason(CancellationReason::User);
+    }
+    /// Latches the first typed stop reason; a later cancellation cannot replace it.
+    pub fn cancel_with_reason(&self, reason: CancellationReason) -> bool {
+        let first = self
+            .0
+            .reason
+            .compare_exchange(0, reason.code(), Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
         self.0.notify.notify_waiters();
+        first
+    }
+    pub fn reason(&self) -> Option<CancellationReason> {
+        CancellationReason::from_code(self.0.reason.load(Ordering::Acquire))
     }
     pub fn is_cancelled(&self) -> bool {
-        self.0.cancelled.load(Ordering::Acquire)
+        self.reason().is_some()
     }
     pub async fn cancelled(&self) {
         let notified = self.0.notify.notified();
@@ -181,6 +229,11 @@ pub trait ChatProvider: Send + Sync {
         // A provider that reported no usage emits no `Usage` event, so absence
         // keeps meaning "unknown".
         let mut events = Vec::with_capacity(5);
+        // `complete()` has already settled, so preserve its paid usage before
+        // any content consumer can stop early (for example on invalid JSON).
+        if let Some(usage) = response.usage {
+            events.push(ProviderEvent::Usage(usage));
+        }
         if !response.message.content.is_empty() {
             events.push(ProviderEvent::TextDelta(response.message.content));
         }
@@ -189,9 +242,6 @@ pub trait ChatProvider: Send + Sync {
         }
         if !response.message.tool_calls.is_empty() {
             events.push(ProviderEvent::ToolCalls(response.message.tool_calls));
-        }
-        if let Some(usage) = response.usage {
-            events.push(ProviderEvent::Usage(usage));
         }
         events.push(ProviderEvent::Done);
         Ok(Box::pin(futures_util::stream::iter(
@@ -542,13 +592,13 @@ mod tests {
         assert_eq!(
             events,
             vec![
+                ProviderEvent::Usage(response.usage.expect("reported usage")),
                 ProviderEvent::TextDelta("The result is 42.".into()),
                 ProviderEvent::ReasoningDelta(String::new()),
                 ProviderEvent::ToolCalls(response.message.tool_calls.clone()),
-                ProviderEvent::Usage(response.usage.expect("reported usage")),
                 ProviderEvent::Done,
             ],
-            "the complete response reaches the stream exactly once, with Done last"
+            "settled usage leads the full-field stream, with every field once and Done last"
         );
 
         let collected = with_response
