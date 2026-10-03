@@ -169,7 +169,9 @@ pub fn replay(events: &[RunEvent]) -> JournalState {
         // and download levels are not lifecycle and never stand in for one.
         if !matches!(
             event,
-            RunEvent::Usage { .. } | RunEvent::DownloadedBytes { .. }
+            RunEvent::Usage { .. }
+                | RunEvent::DownloadedBytes { .. }
+                | RunEvent::WallClockObserved { .. }
         ) {
             state.last = Some(event.clone());
         }
@@ -194,6 +196,9 @@ pub fn replay(events: &[RunEvent]) -> JournalState {
             // not step state — it is the figure a resume seeds the wallet
             // from, read separately from the replay.
             RunEvent::DownloadedBytes { .. } => {}
+            // Clock observations carry accounting authority only; they do
+            // not stand in for the latest lifecycle event.
+            RunEvent::WallClockObserved { .. } => {}
             _ => {}
         }
     }

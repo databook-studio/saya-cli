@@ -31,6 +31,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -1296,3 +1297,6 @@ async fn a_resumed_download_claims_the_carried_headroom_and_records_the_level_it
 
 #[path = "engine_resume/uncertainty.rs"]
 mod uncertainty;
+
+#[path = "engine_resume/clock.rs"]
+mod clock;

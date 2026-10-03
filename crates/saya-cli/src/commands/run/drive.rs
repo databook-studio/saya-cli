@@ -18,8 +18,9 @@ use crate::render::RenderFormat;
 use crate::render_run;
 use crate::stream_render::TerminalSink;
 use saya_harness::engine::{
-    EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun, PlanDriver,
-    PlanError, PlanRejection, PlanRequest, RunState, SinkBudgets, TransitionEvent, UsageTotals,
+    ElapsedClock, EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun,
+    PlanDriver, PlanError, PlanRejection, PlanRequest, RunState, SinkBudgets, TransitionEvent,
+    UsageTotals,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -206,6 +207,15 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
     {
         eprintln!("{warning}");
     }
+    // The clock origin is attached to the approval transition, which
+    // journals PlanApproved followed by the clock before mirroring approval.
+    let elapsed_clock = match spec.budgets.wall_clock {
+        Some(ceiling) => match ElapsedClock::arm_now(ceiling) {
+            Ok(clock) => Some(clock),
+            Err(error) => return exit::connection_failure(error.to_string(), format),
+        },
+        None => None,
+    };
     // The sink exists from approval on: the wall-clock budget arms here,
     // never before the user has answered. The episode's events forward to
     // the host's sink when one is injected; the headless default renders
@@ -227,6 +237,10 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         },
         std::time::Instant::now,
     );
+    let sink = match elapsed_clock {
+        Some(clock) => sink.with_elapsed_clock(clock),
+        None => sink,
+    };
     let sink = match host.agent_stream {
         Some(stream) => sink.with_agent_stream(stream),
         None => sink.with_agent_stream(Arc::new(TerminalSink::new(format))),

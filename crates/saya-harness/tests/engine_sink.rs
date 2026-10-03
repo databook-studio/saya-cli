@@ -1105,3 +1105,6 @@ async fn the_recorded_spend_precedes_the_pause_that_stopped_it() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+#[path = "engine_sink/clock.rs"]
+mod clock;

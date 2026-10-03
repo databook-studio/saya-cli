@@ -97,7 +97,18 @@ wall_clock_seconds = 1800 # run wall-clock ceiling
 
 `turns` has no default: unset means no ceiling, like `wall_clock_seconds`
 and `tool_calls` — a ceiling left unset is unlimited at the contract level,
-and the run pauses when a declared budget trips rather than overrunning. `tokens_per_endpoint` is
+and the run pauses when a declared budget trips rather than overrunning.
+`wall_clock_seconds` measures first-party elapsed wall time from approved
+execution, including pauses and time between resume invocations. Its origin
+and observed high-water mark live in the run journal. A configured resume
+refuses when a legacy journal has no valid origin; start a newly approved
+run to obtain a new clock. Outside forced boundaries, raised observations
+persist at a one-second cadence; writes are forced at approval, resume,
+provider turns, tool requests, and lifecycle transitions. Forward clock jumps
+may expire early, and
+backward changes are refused when an observation detects them. Changes
+between observations may not be detectable. This is not CPU time; a separate
+timer for stalled operations is planned independently. `tokens_per_endpoint` is
 keyed by run-scoped endpoint name (the same shape `[[ai.endpoints]]` uses);
 more than eight keys, or a key outside the name shape, is a rejected config.
 With several ceilings declared, the tightest binds today.

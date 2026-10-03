@@ -249,3 +249,19 @@ fn a_torn_tail_left_by_a_crash_is_ignored_but_complete_lines_must_parse() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn clock_observations_do_not_replace_the_last_lifecycle_event() {
+    let events = [
+        RunEvent::RunStarted,
+        RunEvent::PlanApproved { scopes: None },
+        RunEvent::WallClockObserved {
+            origin_unix_ms: 1_000,
+            high_water_unix_ms: 1_250,
+        },
+    ];
+    let state = saya_harness::journal::replay(&events);
+    assert!(state.started);
+    assert!(state.plan_approved);
+    assert_eq!(state.last, Some(RunEvent::PlanApproved { scopes: None }));
+}
