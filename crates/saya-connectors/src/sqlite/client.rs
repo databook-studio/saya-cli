@@ -11,6 +11,10 @@ use tokio::time::timeout;
 
 use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector};
 
+/// SQLite cancellation is scoped to this connector's active execute epoch.
+/// A request reaches every active attempt, including one waiting for a pool
+/// connection and attempts that begin before the epoch drains. The API carries
+/// no query identity; an idle request does not latch for a future execute.
 pub struct SqliteConnector {
     pub(crate) pool: SqlitePool,
     pub(crate) query_timeout: Duration,
