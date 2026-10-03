@@ -3,13 +3,17 @@
 //! literal (several payloads cross crates and are `#[non_exhaustive]`).
 
 use super::{
-    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
+    BudgetDimension, KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
     ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, ToolEffect, UsageCall,
 };
 use crate::AgentEvent;
 use crate::protocol::streaming::TokenUsage;
 
 impl AgentEvent {
+    pub fn answering_budget_stopped(dimension: BudgetDimension) -> Self {
+        Self::AnsweringBudgetStopped { dimension }
+    }
+
     pub fn assistant_text(text: impl Into<String>) -> Self {
         Self::AssistantText { text: text.into() }
     }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::protocol::streaming::TokenUsage;
 
 use super::{
-    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
+    BudgetDimension, KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
     ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, ToolEffect, UsageCall,
 };
 
@@ -17,6 +17,12 @@ use super::{
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AgentEvent {
+    /// The controlled answering loop stopped before work exceeded a fixed
+    /// budget dimension. The answer, when present, is the evidence collected
+    /// before this stop.
+    AnsweringBudgetStopped {
+        dimension: BudgetDimension,
+    },
     AssistantText {
         text: String,
     },
