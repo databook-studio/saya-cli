@@ -1108,3 +1108,6 @@ async fn the_recorded_spend_precedes_the_pause_that_stopped_it() {
 
 #[path = "engine_sink/clock.rs"]
 mod clock;
+
+#[path = "engine_sink/failed_attempt_usage.rs"]
+mod failed_attempt_usage;
