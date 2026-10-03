@@ -39,8 +39,9 @@ pub struct TokenUsage {
     /// Wire sources:
     /// OpenAI `usage.prompt_tokens_details.cached_tokens`,
     /// Anthropic `usage.cache_read_input_tokens`,
-    /// Gemini `usageMetadata.cachedContentTokenCount`. `None` when the provider
-    /// does not report cache reads (Ollama; any provider that omits the field).
+    /// Gemini `usageMetadata.cachedContentTokenCount`, and Ollama
+    /// `prompt_eval_cached_count`. The Ollama value is a subset of
+    /// `prompt_eval_count`; `None` when the relevant provider omits this detail.
     pub cached_input_tokens: Option<u64>,
     /// Input tokens spent *creating* a cache entry (Anthropic only). This is a
     /// provider-reported breakdown of `input_tokens`, kept distinct from
