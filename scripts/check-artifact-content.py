@@ -2,6 +2,7 @@
 """Reject unexpected files and local build data in Saya release artifacts."""
 
 import argparse
+import gzip
 import os
 import re
 import stat
@@ -15,9 +16,16 @@ SENTINEL = b"SAYA_ARTIFACT_FORBIDDEN_SENTINEL"
 MAX_ARCHIVE_ENTRIES = 20_000
 MAX_ENTRY_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_INPUT_BYTES = 1024 * 1024 * 1024
+MAX_ZIP_METADATA_BYTES = 16 * 1024 * 1024
+MAX_TAR_METADATA_BYTES = 1024 * 1024
+MAX_ARCHIVE_METADATA_BYTES = 16 * 1024 * 1024
 SCAN_CHUNK_BYTES = 64 * 1024
 SCAN_OVERLAP_BYTES = 512
 MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_ARCHIVE_EXPANDED_BYTES = (
+    MAX_ARCHIVE_BYTES + MAX_ARCHIVE_METADATA_BYTES + MAX_ARCHIVE_ENTRIES * 1024 + 1024
+)
 FORBIDDEN_PARTS = {
     ".aws", ".cargo", ".claude", ".codex", ".cursor", ".git", ".saya",
     ".ssh", "__pycache__", "auth.json", "credentials", "secrets",
@@ -75,13 +83,125 @@ def content_check(name: str, data: bytes, binary: bool = False, overlap: bytes =
     return scan[-SCAN_OVERLAP_BYTES:]
 
 
-def archive_entries(path: str):
-    if zipfile.is_zipfile(path):
-        with zipfile.ZipFile(path) as archive:
+def ensure_archive_input(path: str) -> None:
+    try:
+        size = os.path.getsize(path)
+    except OSError as error:
+        raise Rejected(f"cannot read archive input: {error}") from error
+    if size > MAX_ARCHIVE_INPUT_BYTES:
+        raise Rejected("archive input size limit exceeded")
+
+
+class ExpandedReader:
+    """Bound every decompressed read before it can allocate an oversized result."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.total = 0
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0 or size > SCAN_CHUNK_BYTES:
+            raise Rejected("archive expanded read request exceeds the chunk limit")
+        remaining = MAX_ARCHIVE_EXPANDED_BYTES - self.total
+        data = self.stream.read(min(size, remaining + 1))
+        if len(data) > remaining:
+            raise Rejected("archive expanded data exceeds the size limit")
+        self.total += len(data)
+        return data
+
+    def tell(self) -> int:
+        return self.stream.tell()
+
+    def close(self) -> None:
+        self.stream.close()
+
+
+def tar_entries(path: str):
+    class MetadataBudget:
+        def __init__(self):
+            self.bytes = 0
+            self.headers = 0
+
+        def header(self) -> None:
+            self.headers += 1
+            if self.headers > MAX_ARCHIVE_ENTRIES:
+                raise Rejected("archive has too many tar headers")
+
+        def metadata(self, size: int) -> None:
+            if size < 0 or size > MAX_TAR_METADATA_BYTES:
+                raise Rejected("tar metadata size limit exceeded")
+            self.bytes += size
+            if self.bytes > MAX_ARCHIVE_METADATA_BYTES:
+                raise Rejected("tar aggregate metadata size limit exceeded")
+
+    budget = MetadataBudget()
+
+    class BoundedTarInfo(tarfile.TarInfo):
+        @classmethod
+        def _fromtarfile(cls, archive, *, dircheck=True):
+            budget.header()
+            return super()._fromtarfile(archive, dircheck=dircheck)
+
+        def _proc_pax(self, archive):
+            budget.metadata(self.size)
+            return super()._proc_pax(archive)
+
+        def _proc_gnulong(self, archive):
+            budget.metadata(self.size)
+            return super()._proc_gnulong(archive)
+
+    with open(path, "rb") as raw:
+        with gzip.GzipFile(fileobj=raw) as compressed:
+            expanded = ExpandedReader(compressed)
+            try:
+                with tarfile.open(fileobj=expanded, mode="r|", tarinfo=BoundedTarInfo) as archive:
+                    total_declared = 0
+                    entries = 0
+                    for item in archive:
+                        entries += 1
+                        if entries > MAX_ARCHIVE_ENTRIES:
+                            raise Rejected("archive has too many entries")
+                        if item.issym() or item.islnk() or not (item.isdir() or item.isfile()):
+                            raise Rejected(f"unsafe archive entry type: {item.name}")
+                        if item.size > MAX_ENTRY_BYTES:
+                            raise Rejected(f"oversized archive entry: {item.name}")
+                        total_declared += item.size
+                        if total_declared > MAX_ARCHIVE_BYTES:
+                            raise Rejected("archive payload exceeds the size limit")
+                        opener = (lambda item=item: archive.extractfile(item)) if item.isfile() else None
+                        yield item.name, item.size, item.isdir(), opener
+            finally:
+                expanded.close()
+
+
+def zip_entries(path: str, kind: str):
+    with open(path, "rb") as raw:
+        # The stdlib footer reader resolves ZIP64 too, using only its bounded
+        # end-record/comment window; inspect count/size before ZipFile builds
+        # the central-directory byte buffer and ZipInfo table.
+        end_record = zipfile._EndRecData(raw)
+        if end_record is None:
+            raise zipfile.BadZipFile("file is not a ZIP archive")
+        count = end_record[zipfile._ECD_ENTRIES_TOTAL]
+        central_size = end_record[zipfile._ECD_SIZE]
+        if count > MAX_ARCHIVE_ENTRIES:
+            raise Rejected("archive has too many entries")
+        if central_size > MAX_ZIP_METADATA_BYTES:
+            raise Rejected("ZIP metadata size limit exceeded")
+        raw.seek(0)
+        with zipfile.ZipFile(raw) as archive:
             items = archive.infolist()
-            if len(items) > MAX_ARCHIVE_ENTRIES:
-                raise Rejected("archive has too many entries")
+            if len(items) != count:
+                raise Rejected("ZIP central directory entry count mismatch")
+            names = set()
+            total_declared = 0
+            executable_names = []
+            root = expected_root(path, kind)
             for item in items:
+                name = canonical(item.filename)
+                if name in names:
+                    raise Rejected(f"duplicate archive path: {name}")
+                names.add(name)
                 if item.flag_bits & 1:
                     raise Rejected(f"encrypted ZIP entry: {item.filename}")
                 mode = item.external_attr >> 16
@@ -92,24 +212,22 @@ def archive_entries(path: str):
                     raise Rejected(f"unsafe ZIP entry type: {item.filename}")
                 if item.file_size > MAX_ENTRY_BYTES:
                     raise Rejected(f"oversized archive entry: {item.filename}")
-                yield item.filename, item.file_size, item.is_dir(), lambda item=item: archive.open(item),
+                total_declared += item.file_size
+                if total_declared > MAX_ARCHIVE_BYTES:
+                    raise Rejected("archive payload exceeds the size limit")
+                if kind == "archive" and name in {f"{root}/saya", f"{root}/saya.exe"}:
+                    executable_names.append(name)
+            if kind == "archive" and len(executable_names) != 1:
+                raise Rejected("release archive must contain exactly one executable")
+            for item in items:
+                yield item.filename, item.file_size, item.is_dir(), lambda item=item: archive.open(item)
+
+
+def archive_entries(path: str, kind: str):
+    if kind == "archive" and path.endswith(".zip"):
+        yield from zip_entries(path, kind)
     else:
-        try:
-            archive = tarfile.open(path, "r:*")
-        except (tarfile.TarError, OSError) as error:
-            raise Rejected(f"unsupported or unreadable archive: {error}") from error
-        with archive:
-            count = 0
-            for item in archive:
-                count += 1
-                if count > MAX_ARCHIVE_ENTRIES:
-                    raise Rejected("archive has too many entries")
-                if item.issym() or item.islnk() or not (item.isdir() or item.isfile()):
-                    raise Rejected(f"unsafe archive entry type: {item.name}")
-                if item.size > MAX_ENTRY_BYTES:
-                    raise Rejected(f"oversized archive entry: {item.name}")
-                opener = (lambda item=item: archive.extractfile(item)) if item.isfile() else None
-                yield item.name, item.size, item.isdir(), opener
+        yield from tar_entries(path)
 
 
 def expected_root(path: str, kind: str) -> str:
@@ -147,41 +265,14 @@ def scan_stream(name: str, stream, binary: bool = False, keep: bool = False, max
 
 def scan_archive(path: str, kind: str) -> None:
     root = expected_root(path, kind)
-    headers = []
-    header_names = set()
-    header_bytes = 0
+    ensure_archive_input(path)
     executable_names = []
-    for raw_name, declared_size, is_dir, _opener in archive_entries(path):
-        name = canonical(raw_name)
-        if name in header_names:
-            raise Rejected(f"duplicate archive path: {name}")
-        header_names.add(name)
-        if len(headers) >= MAX_ARCHIVE_ENTRIES:
-            raise Rejected("archive has too many entries")
-        if declared_size > MAX_ENTRY_BYTES:
-            raise Rejected(f"oversized archive entry: {name}")
-        header_bytes += declared_size
-        if header_bytes > MAX_ARCHIVE_BYTES:
-            raise Rejected("archive payload exceeds the size limit")
-        headers.append((name, declared_size, is_dir))
-        if kind == "archive" and name in {f"{root}/saya", f"{root}/saya.exe"}:
-            executable_names.append(name)
-    if kind == "archive" and len(executable_names) != 1:
-        raise Rejected("release archive must contain exactly one executable")
-
     entries = {}
     total_bytes = 0
     observed_archive_bytes = 0
     manifest = None
     source_file = False
-    for (raw_name, declared_size, is_dir), (_header_name, _header_size, _header_dir, opener) in zip(
-        ((name, size, directory) for name, size, directory in headers), archive_entries(path), strict=True
-    ):
-        # Re-read headers in lockstep after budget/cardinality validation; only
-        # payload streams are opened in this pass.
-        actual_name, actual_size, actual_dir = _header_name, _header_size, _header_dir
-        if (raw_name, declared_size, is_dir) != (actual_name, actual_size, actual_dir):
-            raise Rejected("archive headers changed during scan")
+    for raw_name, declared_size, is_dir, opener in archive_entries(path, kind):
         name = canonical(raw_name)
         if name in entries:
             raise Rejected(f"duplicate archive path: {name}")
@@ -193,6 +284,8 @@ def scan_archive(path: str, kind: str) -> None:
         if total_bytes > MAX_ARCHIVE_BYTES:
             raise Rejected("archive payload exceeds the size limit")
         entries[name] = (is_dir, declared_size)
+        if kind == "archive" and name in {f"{root}/saya", f"{root}/saya.exe"}:
+            executable_names.append(name)
         if kind == "crate" and name.startswith(f"{root}/src/") and not is_dir:
             source_file = True
         if is_dir:
@@ -289,7 +382,16 @@ def main() -> int:
     args = parser.parse_args()
     try:
         scan_binary(args.path) if args.kind == "binary" else scan_archive(args.path, args.kind)
-    except (Rejected, OSError, tarfile.TarError, zipfile.BadZipFile, RuntimeError, EOFError, zlib.error) as error:
+    except (
+        Rejected,
+        OSError,
+        ValueError,
+        tarfile.TarError,
+        zipfile.BadZipFile,
+        RuntimeError,
+        EOFError,
+        zlib.error,
+    ) as error:
         print(f"artifact content check failed: {error}", file=sys.stderr)
         return 1
     print(f"artifact content check passed: {args.kind} {args.path}")

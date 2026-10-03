@@ -71,6 +71,15 @@ Windows native C++ build has no documented source-path remapping equivalent in
 the locked `cc` toolchain, so its artifact scan remains a CI check rather than
 a locally proven remapping guarantee.
 
+The scanner bounds work as well as accepted content: each archive input is at
+most 1 GiB; ZIP central-directory metadata is at most 16 MiB and its declared
+entry count is checked before `ZipInfo` objects are built; there are at most
+20,000 archive entries, each at most 256 MiB, with at most 512 MiB of declared
+and observed file payload. TAR parsing accepts at most 20,000 physical headers,
+limits each GNU/PAX metadata body to 1 MiB and all such bodies to 16 MiB, and
+limits decompressed TAR reads to 512 MiB + 16 MiB + 20,000 KiB + 1 KiB. The
+binary scanner reads in 64 KiB chunks and rejects binaries over 256 MiB.
+
 Jobs 4 and 5 no-op unless their secrets are configured, so a release never fails
 because a channel is not set up. Job 6 honors that contract: with
 `HOMEBREW_TAP_TOKEN` unset it downgrades a stale tap to a `::warning`; with the

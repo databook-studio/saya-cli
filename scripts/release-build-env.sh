@@ -13,9 +13,16 @@ configure_saya_release_build_env() {
   esac
   local -a rust_flags=()
   if [[ -n "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
-    [[ -z "$CARGO_ENCODED_RUSTFLAGS" ]] || IFS=$'\x1f' read -r -a rust_flags <<< "$CARGO_ENCODED_RUSTFLAGS"
+    if [[ -n "$CARGO_ENCODED_RUSTFLAGS" ]]; then
+      local remaining="$CARGO_ENCODED_RUSTFLAGS"
+      while [[ "$remaining" == *$'\x1f'* ]]; do
+        rust_flags+=("${remaining%%$'\x1f'*}")
+        remaining="${remaining#*$'\x1f'}"
+      done
+      rust_flags+=("$remaining")
+    fi
   elif [[ -n "${RUSTFLAGS:-}" ]]; then
-    read -r -a rust_flags <<< "$RUSTFLAGS"
+    IFS=$' \t\n' read -r -d '' -a rust_flags < <(printf '%s\0' "$RUSTFLAGS")
   fi
   rust_flags+=("--remap-path-prefix=$workspace=/saya" "--remap-path-prefix=$cargo_home=/cargo")
   local encoded=""
