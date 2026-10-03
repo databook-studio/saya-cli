@@ -43,12 +43,7 @@ impl App {
         match result {
             Ok(output) => {
                 state.task_list = self.session.tasks().current();
-                state.record_turn(
-                    prompt.clone(),
-                    output.answer.clone(),
-                    output.used_bounded_sql_query,
-                    output.tool_metadata.clone(),
-                );
+                state.record_agent_output(prompt.clone(), &output);
                 let usage = &output.usage;
                 // Accumulate into the session total before the
                 // footer is built, so its session segment

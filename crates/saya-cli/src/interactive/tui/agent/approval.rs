@@ -182,6 +182,9 @@ pub(crate) struct StreamRequest {
     // The agent's task posture, threaded like `approval`: the session's
     // `/mode` state at the composition root.
     pub(crate) agent_mode: AgentMode,
+    pub(crate) prior_tool_outcomes:
+        Option<crate::interactive::session_continuation::PriorToolOutcomes>,
+    pub(crate) compaction_summary: Option<String>,
 }
 
 /// What the TUI states about itself at the turn boundary, as the

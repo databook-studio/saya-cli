@@ -33,12 +33,14 @@ impl App {
             approval,
             policy: session.policy(),
             overrides: state.prompt_overrides(),
-            history: state.provider_history(),
+            history: state.provider_request_history(),
             state_db: self.state_db.clone(),
             last_sql: self.last_query.as_ref().map(|lq| lq.sql.clone()),
             session: Arc::clone(&self.session),
             journal: Some(session.journal()),
             agent_mode: state.agent_mode_parsed(),
+            prior_tool_outcomes: state.prior_tool_outcomes.clone(),
+            compaction_summary: state.compaction_narrative(),
         }));
         self.request.started = Some(std::time::Instant::now());
     }

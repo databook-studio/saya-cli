@@ -570,7 +570,7 @@ fn handle_line_verbatim(
                 .collect::<Vec<_>>(),
         ),
         None => {
-            let history = state.provider_history();
+            let history = state.provider_request_history();
             let approval = state
                 .approval_mode
                 .parse()
@@ -602,15 +602,12 @@ fn handle_line_verbatim(
                 state_db,
                 session.universe(),
                 state.agent_mode_parsed(),
+                state.prior_tool_outcomes.clone(),
+                state.compaction_narrative(),
             )) {
                 Ok(PromptResult::Completed(output)) => {
                     state.task_list = session.universe().tasks().current();
-                    state.record_turn(
-                        line,
-                        output.answer.clone(),
-                        output.used_bounded_sql_query,
-                        output.tool_metadata.clone(),
-                    );
+                    state.record_agent_output(line, &output);
                     // Feed the session accumulator so /usage is honest in
                     // headless mode too (the TUI does this in drain_stream).
                     state.usage.record(&output.usage);
