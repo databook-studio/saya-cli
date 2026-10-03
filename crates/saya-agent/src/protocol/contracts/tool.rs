@@ -46,6 +46,20 @@ pub struct ToolEffect {
     pub local_state: LocalStateEffect,
 }
 
+/// Whether calls to this tool may overlap other calls in one assistant message.
+/// This stays separate from permissions and effects: an allowed read can still
+/// contend with another operation or require ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolConcurrency {
+    /// Preserve call order. Legacy serialized definitions also use this default.
+    #[default]
+    Serial,
+    /// The implementation has been audited to run independently.
+    Concurrent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,
@@ -53,6 +67,9 @@ pub struct ToolDefinition {
     pub read_only: bool,
     pub parameters: serde_json::Value,
     pub effect: ToolEffect,
+    /// Explicit scheduling metadata. Omitting it must never grant concurrency.
+    #[serde(default)]
+    pub concurrency: ToolConcurrency,
     /// One-line summary the loop reports when this tool succeeds, overriding
     /// the generic read-only/write wording — a tool whose action is neither
     /// "read-only database" nor "local-state write" (e.g. one that writes a

@@ -26,8 +26,9 @@ pub use protocol::contracts::{
     CONTEXT_WARN_PERCENT, ChatMessage, ChatRequest, ChatResponse, ContextBlock, KnowledgeOutcome,
     LearningSkipReason, LocalStateEffect, OverrideFindingDto, ProposedClaimDto, ProviderError,
     ReasoningEffort, ResponseFormat, SessionGrants, SessionPolicy, SuppliedClaimDto,
-    SuppliedContractDto, ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
-    ToolMetadata, ToolResultShape, UsageCall, context_utilisation_percent, read_only_permits,
+    SuppliedContractDto, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect, ToolError,
+    ToolExecutor, ToolMetadata, ToolResultShape, UsageCall, context_utilisation_percent,
+    read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::streaming::{

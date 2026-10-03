@@ -11,7 +11,7 @@
 //! driving a lexical scan over every stored object. Argument validation lives
 //! in [`super::validation`].
 
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect};
+use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 
 /// Maximum number of search terms a single `contract_search` call accepts.
 pub(super) const MAX_TERMS: usize = 16;
@@ -61,6 +61,7 @@ pub(crate) fn definitions(allow_query_data: bool, has_state_store: bool) -> Vec<
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            concurrency: ToolConcurrency::Concurrent,
             completion: None,
         },
         ToolDefinition {
@@ -91,6 +92,7 @@ pub(crate) fn definitions(allow_query_data: bool, has_state_store: bool) -> Vec<
                 requires_approval: false,
                 local_state: LocalStateEffect::Read,
             },
+            concurrency: ToolConcurrency::Concurrent,
             completion: None,
         },
     ]

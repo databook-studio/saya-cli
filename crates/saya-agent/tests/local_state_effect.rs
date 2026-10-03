@@ -143,6 +143,7 @@ fn candidate_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteCandidate,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -159,6 +160,7 @@ fn workspace_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteWorkspace,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -175,6 +177,7 @@ fn session_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteSession,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -197,6 +200,7 @@ fn policy_tool(effect: ToolEffect) -> ToolDefinition {
         read_only: true,
         parameters: serde_json::json!({"type": "object"}),
         effect,
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -385,6 +389,7 @@ async fn read_local_state_tool_is_unaffected_by_the_candidate_permission() {
             requires_approval: false,
             local_state: LocalStateEffect::Read,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     };
     // Default (not permitted) — a Read tool must still run.
@@ -565,6 +570,7 @@ async fn external_side_effect_without_approval_is_refused_not_auto_run() {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     };
     let _ = run_agent_with_sink(
@@ -634,6 +640,7 @@ async fn external_side_effect_with_approval_runs_when_approved() {
             requires_approval: true,
             local_state: LocalStateEffect::None,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     };
     let _ = run_agent_with_sink(
@@ -690,6 +697,7 @@ async fn external_side_effect_with_approval_is_denied_when_approval_refused() {
             requires_approval: true,
             local_state: LocalStateEffect::None,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     };
     let _ = run_agent_with_sink(

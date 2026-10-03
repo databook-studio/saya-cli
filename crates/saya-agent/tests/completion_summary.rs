@@ -107,6 +107,7 @@ fn read_only_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -123,6 +124,7 @@ fn write_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteCandidate,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -142,6 +144,7 @@ fn custom_completion_tool() -> ToolDefinition {
             requires_approval: true,
             local_state: LocalStateEffect::None,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: Some("chart written and opened".into()),
     }
 }
