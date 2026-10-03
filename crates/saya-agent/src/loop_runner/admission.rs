@@ -160,5 +160,16 @@ impl Admission {
             }
         }
     }
+
+    pub(super) fn stop_preflight(
+        &self,
+        token: &CancellationToken,
+        dimension: BudgetDimension,
+    ) -> AgentError {
+        match self.stop::<()>(token, dimension) {
+            Err(error) => error,
+            Ok(()) => unreachable!("a preflight stop always returns its typed reason"),
+        }
+    }
 }
 mod legacy;

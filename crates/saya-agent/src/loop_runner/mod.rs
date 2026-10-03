@@ -9,6 +9,7 @@ mod designation;
 mod failed_statements;
 mod failure_key;
 mod output;
+mod preflight;
 mod receive;
 mod receive_stream;
 mod salvage;
@@ -35,6 +36,7 @@ pub use control::{AgentRunControl, AnsweringLimits, AnsweringScope};
 pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
+pub use preflight::RequestPreflightConfig;
 pub use tools::{MAX_TOOL_MESSAGE_BYTES, ShapedToolResult, shape_tool_result, tool_message_cap};
 
 /// Re-instruction pushed as a user-role message after the provider caps a
@@ -90,6 +92,7 @@ pub async fn run_agent_with_sink(
         sink,
         cancellation,
         answering: None,
+        request_preflight: None,
     })
     .await
 }
@@ -111,6 +114,7 @@ pub async fn run_agent_with_control<'a>(
         sink: control.sink,
         cancellation: control.cancellation,
         answering: Some(control.answering_scope),
+        request_preflight: control.request_preflight,
     })
     .await
 }
@@ -140,6 +144,7 @@ async fn run_agent_loop(
         sink,
         cancellation,
         answering,
+        request_preflight,
     } = invocation;
     let controlled = answering.is_some();
     admission.initialize(sink).await;
@@ -194,6 +199,7 @@ async fn run_agent_loop(
                 &mut messages,
                 &[],
                 limits.context_byte_budget,
+                request_preflight,
                 sink,
                 &cancellation,
                 &mut events,
@@ -214,8 +220,10 @@ async fn run_agent_loop(
         let (assistant, turn_usage, reasoning) = match receive::receive(receive::ReceiveContext {
             provider,
             model: &request.model,
-            messages: &messages,
+            messages: &mut messages,
             definitions: &definitions,
+            context_byte_budget: limits.context_byte_budget,
+            request_preflight,
             sink,
             cancellation: &cancellation,
             events: &mut events,
@@ -298,6 +306,45 @@ async fn run_agent_loop(
             )
             .await);
         }
+        let mut response_limits = limits;
+        if !assistant.tool_calls.is_empty() {
+            let result_budget = match preflight::reserve_tool_batch(
+                &request.model,
+                &mut messages,
+                &assistant,
+                &definitions,
+                limits.context_byte_budget,
+                request_preflight,
+            ) {
+                Ok(budget) => budget,
+                Err(preflight::PreflightError::Budget(dimension)) => {
+                    let error = admission.stop_preflight(&cancellation, dimension);
+                    if let Some(dimension) = admission.stopped_dimension(&error, &cancellation) {
+                        messages.push(assistant.clone());
+                        messages.extend(preflight::non_execution_replies(&assistant));
+                        return Ok(budget_output(
+                            dimension,
+                            &mut events,
+                            sink,
+                            PartialOutput {
+                                usage,
+                                used_bounded_sql_query,
+                                tool_metadata,
+                                answer_sql: designation.sql.clone().or(last_successful_sql),
+                                answer: assistant.content,
+                            },
+                        )
+                        .await);
+                    }
+                    return Err(error);
+                }
+                Err(preflight::PreflightError::Serialization) => {
+                    return Err(AgentError::Limit("request projection serialization failed"));
+                }
+            };
+            response_limits.context_byte_budget =
+                response_limits.context_byte_budget.min(result_budget);
+        }
         // Forward the turn's captured chain-of-thought onto the event stream as
         // one `ReasoningText` event — the provider layer puts it on `ChatResponse.reasoning`
         // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate
@@ -315,6 +362,7 @@ async fn run_agent_loop(
         }
         messages.push(assistant.clone());
         // Designation arm: see `designation` for the bounded prose recovery.
+        designation.set_context_byte_budget(response_limits.context_byte_budget);
         match designation::handle(
             &mut designation,
             &assistant,
@@ -335,7 +383,7 @@ async fn run_agent_loop(
         match clarification::handle(
             &assistant,
             &definitions,
-            &limits,
+            &response_limits,
             approval,
             tools,
             &designation,
@@ -385,6 +433,7 @@ async fn run_agent_loop(
                 &mut messages,
                 &assistant.tool_calls,
                 limits.context_byte_budget,
+                request_preflight,
                 sink,
                 &cancellation,
                 &mut events,
@@ -402,7 +451,7 @@ async fn run_agent_loop(
             tools,
             assistant,
             &definitions,
-            &limits,
+            &response_limits,
             approval,
             sink,
             &cancellation,

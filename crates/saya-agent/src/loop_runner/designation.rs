@@ -81,6 +81,10 @@ impl State {
         }
     }
 
+    pub(super) fn set_context_byte_budget(&mut self, context_byte_budget: usize) {
+        self.context_byte_budget = context_byte_budget;
+    }
+
     /// Whether the turn in flight is the follow-up owed for an empty
     /// designation — the one turn whose failure degrades the run instead of
     /// failing it. Set when a recovery is taken; cleared when the turn's

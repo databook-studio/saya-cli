@@ -1,4 +1,4 @@
-use super::{AgentLimits, admission::Admission};
+use super::{AgentLimits, admission::Admission, preflight::RequestPreflightConfig};
 use crate::{
     AgentError, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
     ToolDefinition, ToolExecutor,
@@ -74,6 +74,7 @@ pub struct AgentRunControl<'a> {
     pub(super) approval: &'a dyn ApprovalDecider,
     pub(super) sink: &'a dyn AgentEventSink,
     pub(super) cancellation: CancellationToken,
+    pub(super) request_preflight: Option<RequestPreflightConfig>,
 }
 
 impl<'a> AgentRunControl<'a> {
@@ -90,6 +91,7 @@ impl<'a> AgentRunControl<'a> {
             approval,
             sink,
             cancellation,
+            request_preflight: None,
         }
     }
 
@@ -100,6 +102,15 @@ impl<'a> AgentRunControl<'a> {
     pub fn with_answering_scope(mut self, scope: AnsweringScope) -> Self {
         self.cancellation = scope.cancellation_token();
         self.answering_scope = scope;
+        self
+    }
+
+    /// Applies a known model window and actual output reservation to the
+    /// provider-neutral request preflight. Omitting this builder keeps a
+    /// finite byte ceiling with an unknown model window.
+    #[must_use]
+    pub fn with_request_preflight(mut self, config: RequestPreflightConfig) -> Self {
+        self.request_preflight = Some(config);
         self
     }
 }
@@ -114,4 +125,5 @@ pub(super) struct AgentRunInvocation<'a> {
     pub(super) sink: &'a dyn AgentEventSink,
     pub(super) cancellation: CancellationToken,
     pub(super) answering: Option<AnsweringScope>,
+    pub(super) request_preflight: Option<RequestPreflightConfig>,
 }
