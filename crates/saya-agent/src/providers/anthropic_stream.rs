@@ -78,9 +78,11 @@ where
 #[derive(Default)]
 pub(super) struct State {
     pub(super) bytes: Vec<u8>,
+    pub(super) frames: super::framing::FrameCount,
     pub(super) pending: VecDeque<ProviderEvent>,
     pub(super) tools: super::tool_assembly::ToolAssembly,
     pub(super) usage: TokenUsage,
+    pub(super) usage_reported: bool,
     pub(super) done: bool,
     pub(super) assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
@@ -114,19 +116,6 @@ impl State {
 
 pub(super) fn size_error() -> ProviderError {
     ProviderError::Request("provider stream exceeded size limit".into())
-}
-
-pub(super) fn boundary(value: &[u8]) -> Option<(usize, usize)> {
-    value
-        .windows(4)
-        .position(|part| part == b"\r\n\r\n")
-        .map(|i| (i, 4))
-        .or_else(|| {
-            value
-                .windows(2)
-                .position(|part| part == b"\n\n")
-                .map(|i| (i, 2))
-        })
 }
 
 /// Folds an Anthropic `usage` object (from `message_start` or `message_delta`)

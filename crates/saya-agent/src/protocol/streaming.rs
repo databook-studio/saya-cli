@@ -250,6 +250,7 @@ pub trait ChatProvider: Send + Sync {
     }
     async fn collect(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut stream = self.stream(request, CancellationToken::new()).await?;
+        let mut items = super::stream_item_limit::StreamItemCount::default();
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
         let mut assembled_bytes = 0usize;
         let mut tool_call_bytes = 0usize;
@@ -272,7 +273,20 @@ pub trait ChatProvider: Send + Sync {
         // from one that reported zeros.
         let mut usage = None;
         while let Some(event) = stream.next().await {
-            match event? {
+            let event = match event {
+                Ok(event) => event,
+                Err(ProviderError::StreamItemLimit { usage: reported }) => {
+                    return Err(ProviderError::StreamItemLimit {
+                        usage: reported.or(usage.map(Box::new)),
+                    });
+                }
+                Err(error) => return Err(error),
+            };
+            if let ProviderEvent::Usage(reported) = &event {
+                usage = Some(*reported);
+            }
+            items.admit(usage)?;
+            match event {
                 ProviderEvent::TextDelta(value) => {
                     if assembled_bytes.saturating_add(value.len()) > MAX_STREAM_BYTES {
                         return Err(ProviderError::Request(
@@ -500,6 +514,35 @@ mod tests {
             error.to_string().contains("size limit"),
             "size-limit error, got: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn collect_rejects_a_stream_exceeding_the_semantic_item_limit() {
+        const ITEM_LIMIT: usize = 65_536;
+        let mut events = vec![
+            Ok(ProviderEvent::Usage(TokenUsage::new(40, 10))),
+            Ok(ProviderEvent::TextDelta("answer".into())),
+        ];
+        events.extend((0..ITEM_LIMIT).map(|_| Ok(ProviderEvent::TextDelta(String::new()))));
+        events.push(Ok(ProviderEvent::Done));
+        let provider = CannedProvider { events };
+
+        let error = provider
+            .complete(ChatRequest {
+                model: "m".into(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("the semantic item cap applies even when deltas are empty");
+
+        assert!(matches!(
+            error,
+            ProviderError::StreamItemLimit {
+                usage: Some(usage)
+            } if *usage == TokenUsage::new(40, 10)
+        ));
     }
 
     /// A serialized `ChatResponse`

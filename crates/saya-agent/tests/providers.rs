@@ -1,8 +1,8 @@
 use futures_util::StreamExt;
 use saya_agent::{
     CancellationToken, ChatMessage, ChatProvider, ChatRequest, LocalStateEffect, OllamaProvider,
-    OpenAiCompatibleProvider, ProviderError, ProviderSettings, ToolCall, ToolDefinition,
-    ToolEffect,
+    OpenAiCompatibleProvider, ProviderError, ProviderEvent, ProviderSettings, TokenUsage, ToolCall,
+    ToolDefinition, ToolEffect,
 };
 use std::{
     io::{Read, Write},
@@ -230,6 +230,84 @@ async fn openai_sse_handles_fragmented_text_and_done() {
     let sent = &requests.lock().unwrap()[0];
     assert!(sent.contains("\"stream\":true"));
     assert!(sent.contains("Bearer secret-sentinel"));
+}
+
+#[tokio::test]
+async fn openai_sse_ping_frames_stop_at_the_shared_frame_limit() {
+    const FRAME_LIMIT: usize = 65_536;
+    let mut body = b": ping\n\n".repeat(FRAME_LIMIT + 1);
+    body.splice(
+        0..0,
+        b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":40,\"completion_tokens\":10}}\n\n"
+            .iter()
+            .copied(),
+    );
+    body.extend_from_slice(b"data: [DONE]\n\n");
+    let (base, handle) = byte_server(vec![body]);
+
+    let provider = openai(base);
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut latest_usage = None;
+    let error = loop {
+        match stream.next().await.unwrap() {
+            Ok(ProviderEvent::Usage(usage)) => latest_usage = Some(usage),
+            Ok(event) => panic!("over-limit parser emitted an unexpected event: {event:?}"),
+            Err(error) => break error,
+        }
+    };
+    handle.join().unwrap();
+
+    assert_eq!(latest_usage, Some(TokenUsage::new(40, 10)));
+    assert_eq!(
+        error,
+        ProviderError::StreamItemLimit {
+            usage: Some(Box::new(TokenUsage::new(40, 10)))
+        }
+    );
+}
+
+#[tokio::test]
+async fn anthropic_and_ollama_empty_records_share_the_frame_limit() {
+    const FRAME_LIMIT: usize = 65_536;
+    for provider_kind in ["anthropic", "ollama"] {
+        let body = match provider_kind {
+            "anthropic" => b"\n\n".repeat(FRAME_LIMIT + 1),
+            "ollama" => vec![b'\n'; FRAME_LIMIT + 1],
+            _ => unreachable!("the table lists supported framed parsers"),
+        };
+        let (base, handle) = byte_server(vec![body]);
+        let provider: Box<dyn ChatProvider> = match provider_kind {
+            "anthropic" => Box::new(
+                saya_agent::AnthropicProvider::new(
+                    ProviderSettings::new("test-model", Some(base)).with_retry_delays(Vec::new()),
+                    Some("secret-sentinel"),
+                )
+                .unwrap(),
+            ),
+            "ollama" => Box::new(
+                OllamaProvider::new(
+                    ProviderSettings::new("test-model", Some(base)).with_retry_delays(Vec::new()),
+                )
+                .unwrap(),
+            ),
+            _ => unreachable!("the table lists supported framed parsers"),
+        };
+        let mut stream = provider
+            .stream(request(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                stream.next().await.unwrap(),
+                Err(ProviderError::StreamItemLimit { .. })
+            ),
+            "{provider_kind} did not stop at the shared item limit"
+        );
+        handle.join().unwrap();
+    }
 }
 
 #[tokio::test]

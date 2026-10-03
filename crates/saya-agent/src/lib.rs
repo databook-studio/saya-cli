@@ -33,6 +33,7 @@ pub use protocol::contracts::{
     context_utilisation_percent, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
+pub use protocol::stream_item_limit::MAX_STREAM_EVENTS;
 pub use protocol::streaming::{
     CancellationReason, CancellationToken, ChatProvider, MAX_STREAM_BYTES,
     MAX_TOOL_CALLS_PER_RESPONSE, ProviderEvent, ProviderStream, TokenUsage,
