@@ -7,6 +7,8 @@ pub enum ProviderError {
     Request(String),
     #[error("provider returned an invalid response")]
     InvalidResponse,
+    #[error("provider tool calls exceeded collection limit")]
+    ToolCollectionLimit,
     /// The model hit its per-response output-token limit mid-answer. Distinct
     /// from a transport failure: re-sending the identical request fails
     /// identically, so the loop must not retry it. Carries the redacted
