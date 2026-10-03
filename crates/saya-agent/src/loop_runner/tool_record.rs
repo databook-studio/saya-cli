@@ -13,6 +13,9 @@ use serde_json::Value;
 
 use crate::ToolResultShape;
 
+const MAX_RECORDED_COLUMNS: usize = 128;
+const MAX_RECORDED_COLUMN_NAME_BYTES: usize = 256;
+
 /// Builds the value-free shape of a serialized query result, or `None` when
 /// `result` is not a row-shaped query result. Reads only the `row_count` and
 /// `columns` keys; `rows` is never inspected, so no cell value can escape.
@@ -22,8 +25,10 @@ use crate::ToolResultShape;
 /// JSON (e.g. `render_chart`'s `{path, note}` or the `result_shape` tool's own
 /// `{columns: [{name, type}]}`). When `columns` is absent, not an array, or
 /// not all strings, the result is treated as non-row-shaped and `None` is
-/// returned. An empty result still names its columns, so a zero-row query
-/// yields `Some` with the names and `row_count: 0`.
+/// returned. To avoid representing an incomplete column list as complete,
+/// results with more than 128 names or any name longer than 256 bytes are
+/// also unknown (`None`). An empty result still names its columns, so a
+/// zero-row query yields `Some` with the names and `row_count: 0`.
 pub(super) fn result_shape_of(result: &Value) -> Option<ToolResultShape> {
     let row_count = result.get("row_count")?.as_u64()?;
     let columns = result.get("columns")?.as_array()?;
@@ -31,7 +36,14 @@ pub(super) fn result_shape_of(result: &Value) -> Option<ToolResultShape> {
     // happens to carry a `row_count` key (none today) or object-typed columns
     // (the `result_shape` tool's own output) is left as `None` so it is not
     // mistaken for a row-shaped query result.
-    if !columns.iter().all(Value::is_string) {
+    if columns.len() > MAX_RECORDED_COLUMNS
+        || !columns.iter().all(|column| {
+            column.is_string()
+                && column
+                    .as_str()
+                    .is_some_and(|name| name.len() <= MAX_RECORDED_COLUMN_NAME_BYTES)
+        })
+    {
         return None;
     }
     let columns = columns
@@ -95,5 +107,48 @@ mod tests {
             }))
             .is_none()
         );
+    }
+
+    #[test]
+    fn result_shape_of_is_unknown_when_column_metadata_exceeds_its_bound() {
+        let ordinary_names = (0..=MAX_RECORDED_COLUMNS)
+            .map(|index| format!("column_{index}"))
+            .collect::<Vec<_>>();
+        let exact_utf8_boundary = "é".repeat(MAX_RECORDED_COLUMN_NAME_BYTES / 2);
+        let cases = [
+            ("too many ordinary names", ordinary_names, false),
+            (
+                "one overlength UTF-8 name",
+                vec!["é".repeat((MAX_RECORDED_COLUMN_NAME_BYTES / 2) + 1)],
+                false,
+            ),
+            (
+                "exact count and UTF-8 byte boundary",
+                vec![exact_utf8_boundary; MAX_RECORDED_COLUMNS],
+                true,
+            ),
+        ];
+
+        for (description, columns, known) in cases {
+            let expected_columns = columns.clone();
+            let result = serde_json::json!({
+                "columns": columns,
+                "rows": [["SECRET_CELL_9f3a"]],
+                "row_count": 1,
+            });
+            let shape = result_shape_of(&result);
+            if known {
+                assert_eq!(
+                    shape.expect(description).columns,
+                    expected_columns,
+                    "{description} preserves every name whole"
+                );
+            } else {
+                assert!(
+                    shape.is_none(),
+                    "{description} must be unknown, never partial"
+                );
+            }
+        }
     }
 }

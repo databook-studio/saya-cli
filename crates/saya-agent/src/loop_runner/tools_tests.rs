@@ -136,7 +136,7 @@ fn the_exported_cap_is_the_loop_s_truncation_point() {
         message.content.len()
     );
     assert!(
-        message.content.contains("[truncated:"),
+        message.content.contains("[truncated]"),
         "the cut must be visible to the model: {}",
         message.content.len()
     );
@@ -446,7 +446,7 @@ fn old_tool_message_shaping(result: &Value, byte_budget: usize) -> (String, bool
 /// `tool_message` must shape through the same function — no second
 /// implementation to drift.
 #[test]
-fn shaping_is_byte_identical_to_the_old_tool_message() {
+fn shaping_matches_tool_message_and_caps_cut_results() {
     let cap = tool_message_cap(usize::MAX);
     let cases: Vec<(Value, usize, usize)> = vec![
         // A clean, small result — the common case: whole, no redactions.
@@ -481,22 +481,21 @@ fn shaping_is_byte_identical_to_the_old_tool_message() {
     ];
     for (value, budget, redactions) in cases {
         let shaped = shape_tool_result(&value, budget);
-        let (old_content, old_truncated) = old_tool_message_shaping(&value, budget);
-        assert_eq!(
-            shaped.text.as_bytes(),
-            old_content.as_bytes(),
-            "shaping must be byte-identical to the old tool_message body \
-             (budget {budget}): {:?}",
-            String::from_utf8_lossy(shaped.text.as_bytes())
+        if !shaped.truncated {
+            let (old_content, old_truncated) = old_tool_message_shaping(&value, budget);
+            assert_eq!(shaped.text.as_bytes(), old_content.as_bytes());
+            assert_eq!(shaped.truncated, old_truncated);
+        }
+        assert!(
+            shaped.text.len() <= tool_message_cap(budget),
+            "a cut result must remain under the cap (budget {budget})"
         );
-        assert_eq!(
-            shaped.truncated, old_truncated,
-            "the truncation verdict must match the old body (budget {budget})"
-        );
-        assert_eq!(
-            shaped.redactions, redactions,
-            "the redaction count must match the old body (budget {budget})"
-        );
+        if !shaped.truncated {
+            assert_eq!(
+                shaped.redactions, redactions,
+                "the redaction count must match the old body (budget {budget})"
+            );
+        }
         // `tool_message` has no second implementation: its content is exactly
         // the extracted shaping's text.
         let (message, truncated) = tool_message("c1".into(), value.clone(), budget);
@@ -506,4 +505,58 @@ fn shaping_is_byte_identical_to_the_old_tool_message() {
         );
         assert_eq!(truncated, shaped.truncated);
     }
+}
+
+/// The final model-facing text, not merely its serialized prefix, must fit its
+/// cap. A marker, redaction replacement, or redaction notice cannot turn a
+/// bounded result into an oversized provider message.
+#[test]
+fn shaping_never_exceeds_its_cap_for_tiny_unicode_and_redacted_results() {
+    for (value, budget) in [
+        (serde_json::json!({"text": "é".repeat(64)}), 1),
+        (serde_json::json!({"token": "token=abc123"}), 8),
+        (serde_json::json!({"text": "x".repeat(256)}), 16),
+    ] {
+        let shaped = shape_tool_result(&value, budget);
+        assert!(
+            shaped.text.len() <= tool_message_cap(budget),
+            "final shaped text exceeds {} bytes: {}",
+            tool_message_cap(budget),
+            shaped.text.len()
+        );
+        assert!(
+            std::str::from_utf8(shaped.text.as_bytes()).is_ok(),
+            "shaped output must remain UTF-8"
+        );
+    }
+}
+
+/// A serializer may offer an entire JSON string in one write. The bounded
+/// writer still preserves the useful prefix of that one write, rather than
+/// keeping only structural JSON fragments before the truncation marker.
+#[test]
+fn a_single_large_unicode_write_keeps_a_visible_prefix() {
+    let shaped = shape_tool_result(&Value::String("星".repeat(256)), 64);
+    assert!(shaped.truncated, "the oversized value must be marked cut");
+    assert!(
+        shaped.text.contains('星'),
+        "a useful Unicode prefix survives"
+    );
+    assert!(shaped.text.contains("[truncated]"), "the cut stays visible");
+    assert!(
+        shaped.text.len() <= 64,
+        "the final text stays within the cap"
+    );
+}
+
+/// A tool-turn budget is divided before execution, so every accepted call has
+/// a deterministic share and their retained model-facing contents cannot add
+/// up past the turn's aggregate allowance.
+#[test]
+fn turn_result_caps_share_the_aggregate_budget_without_a_minimum() {
+    assert_eq!(turn_result_caps(10, 3), vec![4, 3, 3]);
+    assert_eq!(turn_result_caps(2, 3), vec![1, 1, 0]);
+    let caps = turn_result_caps(usize::MAX, 3);
+    assert_eq!(caps, vec![MAX_TOOL_MESSAGE_BYTES; 3]);
+    assert!(caps.iter().sum::<usize>() <= 256 * 1024);
 }

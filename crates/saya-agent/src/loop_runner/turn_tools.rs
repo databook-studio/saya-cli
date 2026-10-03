@@ -3,9 +3,7 @@
 //! concurrent/serial batch is conservatively serial, as are prompted calls.
 //! The caller trims the intra-loop context budget after either path returns.
 
-use super::{
-    check_cancelled, emit, failed_statements, failure_key, output, tool_policy, tool_record, tools,
-};
+use super::{check_cancelled, emit, failed_statements, failure_key, output, tool_policy, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
     ChatMessage, ToolConcurrency, ToolDefinition, ToolExecutor,
@@ -27,6 +25,8 @@ pub(super) async fn run_turn_tools(
     failed: &mut failed_statements::FailedStatements,
     last_successful_sql: &mut Option<String>,
 ) -> Result<(), AgentError> {
+    let result_caps =
+        tools::turn_result_caps(limits.context_byte_budget, assistant.tool_calls.len());
     // A batch overlaps only when every member opted in and is allowed without
     // a per-call approval. Prompted calls stay serial, preserving approval
     // authority and prompt order.
@@ -74,48 +74,43 @@ pub(super) async fn run_turn_tools(
                 *used_bounded_sql_query = true;
             }
         }
-        let results = tools::execute_batch(tools, &assistant.tool_calls.clone(), definitions).await;
-        for (call, (result, summary)) in assistant.tool_calls.iter().zip(results) {
+        let results =
+            tools::execute_batch(tools, &assistant.tool_calls, definitions, &result_caps).await;
+        for (call, completed) in assistant.tool_calls.iter().zip(results) {
             failed_statements::record_outcome(
                 failed,
                 last_successful_sql,
                 failure_key::key_of(call),
-                &result,
                 true,
-                &summary,
+                completed.succeeded,
+                completed.failure_reason.as_deref(),
             );
-            // Read the value-free shape before `tool_message` takes ownership
-            // of `result`: only `row_count` and `columns` are read, so no cell
-            // value is copied.
-            let result_shape = tool_record::result_shape_of(&result);
-            let (message, truncated) =
-                tools::tool_message(call.id.clone(), result, limits.context_byte_budget);
             tool_metadata.push(crate::ToolMetadata {
                 name: call.name.clone(),
-                status: if summary.contains("failed") {
-                    "failed"
-                } else {
+                status: if completed.succeeded {
                     "completed"
+                } else {
+                    "failed"
                 }
                 .into(),
                 arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
-                result_shape,
+                result_shape: completed.result_shape,
             });
-            messages.push(message);
+            messages.push(completed.message);
             check_cancelled(cancellation)?;
             emit(
                 events,
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name.clone(),
-                    summary: output::completion_summary(&summary, truncated),
+                    summary: output::completion_summary(&completed.summary, completed.truncated),
                 },
             )
             .await;
         }
         return Ok(());
     }
-    for call in assistant.tool_calls {
+    for (call, cap) in assistant.tool_calls.into_iter().zip(result_caps) {
         if let Some(reason) = tools::invalid_reason(&call, definitions) {
             if call.id.trim().is_empty() {
                 return Err(AgentError::InvalidToolCall);
@@ -146,18 +141,20 @@ pub(super) async fn run_turn_tools(
                 arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
                 result_shape: None,
             });
-            let (message, _) = tools::tool_message(
+            let completed = tools::complete_tool(
                 call.id,
                 serde_json::json!({"error": reason}),
-                limits.context_byte_budget,
+                "tool call failed validation".into(),
+                false,
+                cap,
             );
-            messages.push(message);
+            messages.push(completed.message);
             emit(
                 events,
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name,
-                    summary: "tool call failed validation".into(),
+                    summary: output::completion_summary(&completed.summary, completed.truncated),
                 },
             )
             .await;
@@ -182,14 +179,14 @@ pub(super) async fn run_turn_tools(
                 arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
                 result_shape: None,
             });
-            let (message, _) = tools::tool_message(call.id, result, limits.context_byte_budget);
-            messages.push(message);
+            let completed = tools::complete_tool(call.id, result, summary.into(), false, cap);
+            messages.push(completed.message);
             emit(
                 events,
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name,
-                    summary: summary.into(),
+                    summary: output::completion_summary(&completed.summary, completed.truncated),
                 },
             )
             .await;
@@ -222,13 +219,14 @@ pub(super) async fn run_turn_tools(
         // read from `result` after the call resolves. Cell values never reach
         // either; `result_shape_of` reads only `row_count` and `columns`.
         let arguments_json = serde_json::to_string(&call.arguments).unwrap_or_default();
-        let (result, summary) = if executed {
+        let (result, summary, succeeded) = if executed {
             check_cancelled(cancellation)?;
             // Indicates a database-row-producing query tool ran.
             if definition.effect.database_data {
                 *used_bounded_sql_query = true;
             }
-            tools::execute(tools, &call.name, call.arguments, Some(definition)).await
+            tools::execute_with_outcome(tools, &call.name, call.arguments, Some(definition), cap)
+                .await
         } else {
             emit(
                 events,
@@ -253,20 +251,24 @@ pub(super) async fn run_turn_tools(
                     None => serde_json::json!({"error":"tool call denied by approval policy"}),
                 },
                 "read-only database tool denied".to_owned(),
+                false,
             )
         };
         failed_statements::record_outcome(
             failed,
             last_successful_sql,
             key,
-            &result,
             executed,
-            &summary,
+            succeeded,
+            (!succeeded)
+                .then(|| result.get("error").and_then(serde_json::Value::as_str))
+                .flatten(),
         );
+        let completed = tools::complete_tool(call.id, result, summary, succeeded, cap);
         tool_metadata.push(crate::ToolMetadata {
             name: call.name.clone(),
             status: if executed {
-                if summary.contains("failed") {
+                if !completed.succeeded {
                     "failed"
                 } else {
                     "completed"
@@ -276,10 +278,9 @@ pub(super) async fn run_turn_tools(
             }
             .into(),
             arguments: arguments_json,
-            result_shape: tool_record::result_shape_of(&result),
+            result_shape: completed.result_shape,
         });
-        let (message, truncated) = tools::tool_message(call.id, result, limits.context_byte_budget);
-        messages.push(message);
+        messages.push(completed.message);
         if executed {
             check_cancelled(cancellation)?;
             emit(
@@ -287,7 +288,7 @@ pub(super) async fn run_turn_tools(
                 sink,
                 AgentEvent::ToolCompleted {
                     name: call.name,
-                    summary: output::completion_summary(&summary, truncated),
+                    summary: output::completion_summary(&completed.summary, completed.truncated),
                 },
             )
             .await;

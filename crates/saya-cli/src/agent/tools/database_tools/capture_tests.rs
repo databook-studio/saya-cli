@@ -5,8 +5,11 @@
 
 use super::*;
 use async_trait::async_trait;
-use saya_agent::ToolExecutor;
-use saya_agent::shape_tool_result;
+use saya_agent::{
+    AgentLimits, AgentRequest, AllowReadOnlyApproval, ChatMessage, ChatProvider, ChatRequest,
+    ChatResponse, LocalStateEffect, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect,
+    ToolExecutor, run_agent, shape_tool_result,
+};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use std::sync::{Arc, Mutex};
@@ -394,9 +397,9 @@ async fn over_budget_sends_refusal_not_partial() {
 // -- it is exactly what the model received. `shape_tool_result` — the ------
 // -- loop's own shaping, at the loop's own budget — decides. ----------------
 
-/// The turn's context byte budget, the same number the loop passes to
-/// `tool_message` (`AgentLimits::context_byte_budget`) — production plumbs
-/// `runtime.resolved.ai.context_byte_budget`, whose default this is.
+/// The direct-executor result cap used by these capture tests. The agent loop
+/// instead supplies each accepted call's exact assigned result cap through
+/// `ToolExecutor::execute_with_result_cap`.
 fn loop_budget() -> usize {
     saya_agent::AgentLimits::default().context_byte_budget
 }
@@ -589,4 +592,120 @@ async fn small_clean_result_is_captured_as_model_visible() {
         capture.result, model_result,
         "the capture is exactly the model-visible result"
     );
+}
+
+/// The agent loop assigns each serial result a share before it calls the real
+/// `DatabaseTools` executor. Capture uses that exact share, so it refuses a
+/// result the provider receives cut even when it would fit alone.
+#[tokio::test]
+async fn serial_turn_share_refuses_capture_when_the_provider_view_is_cut() {
+    struct Provider {
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+        turn: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl ChatProvider for Provider {
+        fn name(&self) -> &str {
+            "capture-share"
+        }
+
+        async fn complete(
+            &self,
+            request: ChatRequest,
+        ) -> Result<ChatResponse, saya_agent::ProviderError> {
+            self.requests.lock().unwrap().push(request);
+            let mut turn = self.turn.lock().unwrap();
+            if *turn == 0 {
+                *turn += 1;
+                return Ok(ChatResponse::new(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: ["one", "two", "three", "four", "five"]
+                        .into_iter()
+                        .map(|id| ToolCall {
+                            id: id.into(),
+                            name: "bounded_sql_query".into(),
+                            arguments: serde_json::json!({
+                                "sql": "SELECT hex(randomblob(30000)) AS payload"
+                            }),
+                        })
+                        .collect(),
+                    tool_call_id: None,
+                }));
+            }
+            Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
+        }
+    }
+
+    let (connector, dir) = sqlite_fixture().await;
+    let (hook, observed) = observing_hook();
+    let tools = DatabaseTools::new(Some(connector), 100, true).with_capture(Some(hook), 300 * 1024);
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let output = run_agent(
+        &Provider {
+            requests: requests.clone(),
+            turn: Mutex::new(0),
+        },
+        &tools,
+        AgentRequest {
+            prompt: "show payloads".into(),
+            profile_names: vec!["primary".into()],
+            model: "capture-share".into(),
+            system_prompt: None,
+            history: Vec::new(),
+            context_blocks: Vec::new(),
+        },
+        vec![ToolDefinition {
+            name: "bounded_sql_query".into(),
+            description: "query".into(),
+            read_only: true,
+            parameters: serde_json::json!({"type": "object"}),
+            effect: ToolEffect {
+                database_data: true,
+                external_side_effect: false,
+                requires_approval: true,
+                local_state: LocalStateEffect::None,
+            },
+            concurrency: ToolConcurrency::Serial,
+            completion: None,
+        }],
+        AgentLimits {
+            context_byte_budget: 300 * 1024,
+            ..AgentLimits::default()
+        },
+        &AllowReadOnlyApproval,
+    )
+    .await
+    .expect("serial tool turn completes");
+    assert_eq!(output.answer, "done");
+    let provider_view = requests.lock().unwrap()[1].clone();
+    let tool_messages: Vec<_> = provider_view
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .collect();
+    assert_eq!(tool_messages.len(), 5);
+    assert!(
+        tool_messages
+            .iter()
+            .all(|message| message.content.contains("[truncated]")),
+        "provider views: {:?}",
+        tool_messages
+            .iter()
+            .map(|message| &message.content)
+            .collect::<Vec<_>>()
+    );
+    let events = observed.lock().unwrap();
+    assert_eq!(events.len(), 5);
+    assert!(events.iter().all(|event| {
+        matches!(
+            event,
+            CaptureEvent::Refused {
+                reason: CaptureRefusalReason::ModelViewTruncated,
+                ..
+            }
+        )
+    }));
+    let _ = std::fs::remove_dir_all(dir);
 }
