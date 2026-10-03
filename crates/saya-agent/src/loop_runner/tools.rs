@@ -1,6 +1,14 @@
-use crate::{ChatMessage, ToolCall, ToolDefinition, ToolExecutor};
-use saya_types::{redact, redact_counted};
+use crate::{ToolCall, ToolDefinition, ToolExecutor};
+use saya_types::redact;
+#[cfg(test)]
+use saya_types::redact_counted;
 use serde_json::Value;
+
+pub(super) use super::tool_batch::{complete_tool, execute_batch, turn_result_caps};
+pub(super) use super::tool_shape::tool_message;
+pub use super::tool_shape::{
+    MAX_TOOL_MESSAGE_BYTES, ShapedToolResult, shape_tool_result, tool_message_cap,
+};
 
 /// Why a tool call cannot run as requested, or `None` when it is valid.
 ///
@@ -35,11 +43,12 @@ pub(super) fn invalid_reason(call: &ToolCall, definitions: &[ToolDefinition]) ->
 /// declared `read_only`. A write tool (`read_only: false`, e.g. one that
 /// persists a candidate claim) must not read as a "read-only" completion —
 /// that would be a false statement in the feature whose pitch is that it
-/// does not overstate what it knows. The failure summary always keeps the
-/// substring "failed": `tool_metadata.status` and the call-outcome
-/// memory derive their failure signal from it. `None` (no definition found)
-/// falls back to the write wording, matching the pre-definition lookup
-/// behavior for a call whose definition is absent.
+/// does not overstate what it knows. The failure summary keeps the word
+/// "failed" for a useful model-facing explanation. Turn-tool metadata and
+/// failure memory use the typed execution outcome instead of interpreting
+/// that wording. `None` (no definition found) falls back to the write
+/// wording, matching the pre-definition lookup behavior for a call whose
+/// definition is absent.
 pub(super) fn completion_summaries(
     definition: Option<&ToolDefinition>,
     name: &str,
@@ -157,18 +166,33 @@ fn completion_detail(
 
 /// Runs a tool and returns its result with a completion summary that reflects
 /// the tool's *declaration*, not its name (see [`completion_summaries`]). The
-/// summary drives `tool_metadata.status` via a `contains("failed")` check, so
-/// every failure string keeps the substring "failed".
+/// The typed outcome returned beside the summary drives turn-tool status and
+/// failure memory; summary text remains model-facing only.
 pub(super) async fn execute(
     tools: &dyn ToolExecutor,
     name: &str,
     arguments: Value,
     definition: Option<&ToolDefinition>,
 ) -> (Value, String) {
-    match tools.execute(name, arguments.clone()).await {
+    let (result, summary, _) =
+        execute_with_outcome(tools, name, arguments, definition, MAX_TOOL_MESSAGE_BYTES).await;
+    (result, summary)
+}
+
+pub(super) async fn execute_with_outcome(
+    tools: &dyn ToolExecutor,
+    name: &str,
+    arguments: Value,
+    definition: Option<&ToolDefinition>,
+    result_cap: usize,
+) -> (Value, String, bool) {
+    match tools
+        .execute_with_result_cap(name, arguments.clone(), result_cap)
+        .await
+    {
         Ok(value) => {
             let (completed, _) = completion_summaries(definition, name, &arguments, Some(&value));
-            (value, completed)
+            (value, completed, true)
         }
         // The reason reaches the model so it can adjust (e.g. a
         // safety-layer rejection naming what is not allowed); the bounded,
@@ -177,48 +201,19 @@ pub(super) async fn execute(
         Err(error) => {
             let (_, failed) = completion_summaries(definition, name, &arguments, None);
             let summary = failure_summary_with_reason(&failed, &error.to_string());
-            (serde_json::json!({"error": error.to_string()}), summary)
+            (
+                serde_json::json!({"error": error.to_string()}),
+                summary,
+                false,
+            )
         }
     }
 }
-/// Executes already-validated, approval-free calls that explicitly opted into
-/// concurrency while preserving input order in the returned results.
-///
-/// The tool-call list comes from the model, so its size is untrusted:
-/// `max_tool_calls` is a whole-run *total*, not a simultaneity cap, so a
-/// message emitting twenty calls would otherwise fan out twenty concurrent
-/// database queries. Concurrency is bounded here by
-/// [`MAX_CONCURRENT_TOOL_CALLS`]: `buffered` caps how many futures are polled
-/// at once and still yields results in input order. Actual database fan-out is
-/// bounded again by the connection pool, which defaults to four connections
-/// (see `saya-connectors`' factory), so a cap above the pool size only queues
-/// inside the connector — `MAX_CONCURRENT_TOOL_CALLS` matches that default.
-pub(super) async fn execute_batch(
-    tools: &dyn ToolExecutor,
-    calls: &[ToolCall],
-    definitions: &[ToolDefinition],
-) -> Vec<(Value, String)> {
-    use futures_util::{StreamExt, stream};
-    let pending = calls.iter().map(|call| {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.name == call.name);
-        let name = call.name.clone();
-        let arguments = call.arguments.clone();
-        async move { execute(tools, &name, arguments, definition).await }
-    });
-    stream::iter(pending)
-        .buffered(MAX_CONCURRENT_TOOL_CALLS)
-        .collect()
-        .await
-}
-
-/// Ceiling on how many tool calls from a single assistant message run at the
-/// same instant. The connection pool defaults to four connections
-/// (`saya-connectors`' factory), so fanning out more than this only queues
-/// inside the pool — matching the pool default keeps the cap meaningful without
-/// over-subscribing the database.
-const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
+/// Ceiling on how many tool calls from one assistant message run at once.
+/// This scheduler bound is independent of connector or profile pool settings:
+/// calls may target separate connections, so it is not a claim about one
+/// shared database pool.
+pub(super) const MAX_CONCURRENT_TOOL_CALLS: usize = 4;
 
 /// Cap on the failure reason carried into the human-facing summary, in
 /// characters. Long enough to name a safety rejection (the canonical refusal
@@ -232,9 +227,9 @@ const MAX_FAILURE_REASON_CHARS: usize = 200;
 /// untrusted error text, so it is redacted (secret-shaped material must not
 /// reach `TerminalEvent` payloads, per `security.md`), single-lined, and
 /// bounded at [`MAX_FAILURE_REASON_CHARS`] with the existing `…` marker.
-/// Keeps the "failed" substring the status derivation and failure memory key
-/// on, and offers no override — the line explains what was refused, never
-/// how to force it.
+/// Keeps "failed" in model-facing wording and offers no override — the line
+/// explains what was refused, never how to force it. Typed outcomes, rather
+/// than this substring, drive turn-tool status and failure memory.
 fn failure_summary_with_reason(failed: &str, error: &str) -> String {
     let reason = bound_failure_reason(&redact(error));
     if reason.is_empty() {
@@ -259,138 +254,6 @@ fn bound_failure_reason(reason: &str) -> String {
         format!("{bounded}…")
     } else {
         bounded
-    }
-}
-
-/// Builds the `tool`-role message for a result, truncating it to fit the
-/// conversation byte budget when a single result would otherwise exceed it,
-/// and scrubbing secret-shaped material at the model-context boundary (D8).
-/// Returns the message plus whether truncation was applied so the caller can
-/// mark the completion summary — the model must not silently believe it saw a
-/// complete result.
-///
-/// `byte_budget` is the loop's whole-conversation bound
-/// (`AgentLimits::context_byte_budget`); a single tool message is capped below
-/// it so one result can never, by itself, breach the budget and abort the run
-///. `MAX_TOOL_MESSAGE_BYTES` is a separate, provider-facing
-/// hard ceiling kept well under any provider's per-message limit.
-///
-/// The scrub (M2-3b) is the D8 boundary rule: *every* tool result entering
-/// model context — SQL rows included — passes `redact()` after the byte cap,
-/// before the message reaches the provider, so secret-shaped material
-/// (`key=value`, credential headers, userinfo URLs, PEM blocks) cannot cross
-/// to the model. Ordinary values pass through unchanged. The scrub governs the
-/// model's context only: the event stream and `saya query` keep the raw bytes
-/// (the user's own data on their own machine), so an answer may quote
-/// `[redacted]` where the raw value once appeared. Redacting after the cap can
-/// grow the content past `cap` by at most the marker length per match; the
-/// cap is a budget bound, not a provider hard limit.
-///
-/// D8 follow-up: an ordinary `token=next_token` or `password=args.password`
-/// shape is unremarkable in source code, and a model that reads its own file
-/// back and sees `[redacted]` cannot tell a masked secret from corruption —
-/// observed calling it "a corruption" and rewriting the file; writing the
-/// shown text back would replace the real value on disk. When
-/// [`redact_counted`] changed anything, the content is prefixed
-/// once with a fixed note naming the count, so the model has the signal it
-/// needs to leave the masked span alone rather than "fix" it. A clean result
-/// gets no note and is byte-identical to before this change — the redaction
-/// itself is unchanged, only the announcement is new.
-pub(super) fn tool_message(id: String, result: Value, byte_budget: usize) -> (ChatMessage, bool) {
-    let shaped = shape_tool_result(&result, byte_budget);
-    (
-        ChatMessage {
-            role: "tool".into(),
-            content: shaped.text,
-            tool_calls: Vec::new(),
-            tool_call_id: Some(id),
-        },
-        shaped.truncated,
-    )
-}
-
-/// The shaped form of one tool result — the exact bytes [`tool_message`] puts
-/// in the model's context, extracted so a second consumer (the saya-cli
-/// capture hook) can compute the model's view with the same function the loop
-/// uses and refuse to hold a capture the model did not receive unchanged.
-///
-/// Pure: no I/O, no state. Applies the loop's whole shaping in order — cap
-/// derived from `byte_budget` via [`tool_message_cap`], serialization cut to
-/// the cap on a char boundary with the visible marker, then `redact_counted`
-/// (D8), then the fixed redaction note prepended when anything was replaced.
-/// What `truncated` and `redactions` report is therefore exactly what the
-/// model received: a capture that records the unshaped result while either is
-/// non-zero would be evidence of data the model never saw.
-pub struct ShapedToolResult {
-    /// The message content exactly as the model receives it, including the
-    /// redaction note when any secret was replaced.
-    pub text: String,
-    /// Whether the serialized result was cut to the cap.
-    pub truncated: bool,
-    /// How many secret-shaped values redaction replaced.
-    pub redactions: usize,
-}
-
-/// Shapes `value` the way [`tool_message`] does for a run budgeted at
-/// `byte_budget` (the run's `AgentLimits::context_byte_budget`; the per-message
-/// cap is derived inside, matching the loop). See [`ShapedToolResult`].
-pub fn shape_tool_result(value: &Value, byte_budget: usize) -> ShapedToolResult {
-    let cap = tool_message_cap(byte_budget);
-    let (content, truncated) = bounded_json(value, cap);
-    let (content, redactions) = redact_counted(&content);
-    let text = if redactions > 0 {
-        format!("{}\n\n{content}", redaction_note(redactions))
-    } else {
-        content
-    };
-    ShapedToolResult {
-        text,
-        truncated,
-        redactions,
-    }
-}
-
-/// The fixed note prepended to a tool result [`redact_counted`] changed:
-/// names the count, restates that the source on disk is unchanged, and tells
-/// the model what not to do. Wording is fixed and count-parameterized only,
-/// so the model sees the identical shape on every call and can learn it.
-fn redaction_note(count: usize) -> String {
-    format!(
-        "[saya: {count} secret-shaped value(s) in this result were replaced with \
-         [redacted]; the source is unchanged — do not write [redacted] back]"
-    )
-}
-
-/// The per-tool-message cap the loop truncates at, derived from the loop's
-/// whole-conversation byte budget: `min(byte_budget, MAX_TOOL_MESSAGE_BYTES)`.
-/// Exported beside [`MAX_TOOL_MESSAGE_BYTES`] so a producer of large tool
-/// results (the fetch lane's rendered blocks) can pre-bind its own output to
-/// the exact number the loop will enforce — the declared bound and the
-/// truncation point are the same number by construction and cannot drift.
-pub fn tool_message_cap(byte_budget: usize) -> usize {
-    byte_budget.min(MAX_TOOL_MESSAGE_BYTES)
-}
-
-/// Absolute per-tool-message ceiling, independent of the conversation budget:
-/// no provider is asked to ingest a tool result larger than this. Kept below
-/// the 16 MiB a connector can return (`saya-connectors`' `MAX_RESULT_BYTES`)
-/// so the loop's own bounds, not the connector's, govern what reaches the model.
-pub const MAX_TOOL_MESSAGE_BYTES: usize = 65_536;
-
-fn bounded_json(value: &Value, cap: usize) -> (String, bool) {
-    let text = serde_json::to_string(value)
-        .unwrap_or_else(|_| "{\"error\":\"tool result unavailable\"}".into());
-    if text.len() <= cap {
-        (text, false)
-    } else {
-        // Truncate the serialized result to `cap` and append a visible marker
-        // so the model knows the data was cut, preserving the leading bytes it
-        // can still reason about instead of discarding the whole result.
-        let marker = "…[truncated: tool result exceeded the conversation byte budget]";
-        let head = cap.saturating_sub(marker.len());
-        let mut truncated = String::from(&text[..floor_boundary(&text, head)]);
-        truncated.push_str(marker);
-        (truncated, true)
     }
 }
 

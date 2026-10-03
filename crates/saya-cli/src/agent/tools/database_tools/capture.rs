@@ -69,12 +69,12 @@ pub(crate) enum CaptureEvent {
 
 /// Why the hook refused to hold one successful agent query's result — the
 /// reason the TUI's snapshot refusal names. The model-view reasons come from
-/// [`shape_tool_result`] computed with the loop's own budget: a capture may
+/// [`shape_tool_result`] computed with this call's assigned result cap: a capture may
 /// only hold a result the model received unchanged (R3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CaptureRefusalReason {
-    /// The model's message was cut to the conversation byte budget: it saw a
-    /// truncated prefix, so the full result is not its evidence.
+    /// The model's message was cut to this call's assigned result cap: it saw
+    /// a truncated prefix, so the full result is not its evidence.
     ModelViewTruncated,
     /// Redaction replaced secret-shaped material before the message reached
     /// the model: it never saw those values.
@@ -118,6 +118,7 @@ impl DatabaseTools {
         sql: &str,
         entry: &ConnectionEntry,
         executed: &ExecutedQuery,
+        result_cap: usize,
     ) {
         let Some(hook) = self.capture_hook.as_ref() else {
             return;
@@ -134,7 +135,7 @@ impl DatabaseTools {
             entry,
             executed,
             crate::interactive::tui::capture::CAPTURE_BUDGET_BYTES,
-            self.context_byte_budget,
+            result_cap,
         ));
     }
 }
@@ -144,8 +145,7 @@ impl DatabaseTools {
 /// refused with its reason otherwise — whole, never a partial.
 ///
 /// The model-view gate (R3) comes first: `shape_tool_result` — the loop's
-/// own shaping, at `context_byte_budget`, the SAME budget the loop passes to
-/// `tool_message` for this turn — decides whether the model received the
+/// own shaping, at this call's assigned result cap — decides whether the model received the
 /// result at all. A truncated or redacted model view refuses the capture
 /// with that reason: the typed result would be evidence of data the model
 /// never saw. A lossless model view is then still bounded by the accounted
@@ -156,14 +156,14 @@ pub(crate) fn capture_event(
     entry: &ConnectionEntry,
     executed: &ExecutedQuery,
     capture_budget: usize,
-    context_byte_budget: usize,
+    result_cap: usize,
 ) -> CaptureEvent {
     let refused = |reason| CaptureEvent::Refused {
         sql: sql.to_owned(),
         connection: connection.to_owned(),
         reason,
     };
-    let shaped = shape_tool_result(&executed.value, context_byte_budget);
+    let shaped = shape_tool_result(&executed.value, result_cap);
     if shaped.truncated {
         return refused(CaptureRefusalReason::ModelViewTruncated);
     }

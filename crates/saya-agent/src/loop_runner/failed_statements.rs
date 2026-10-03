@@ -29,6 +29,7 @@ use crate::ToolCall;
 /// that changes approach produces distinct calls, and a normal run that
 /// never repeats a failure records nothing here at all.
 pub(super) const MAX_REMEMBERED_FAILURES: usize = 64;
+const MAX_REMEMBERED_FAILURE_BYTES: usize = 4096;
 
 /// The set of calls that have failed during this run, bounded at
 /// [`MAX_REMEMBERED_FAILURES`]. Keyed by [`CallKey`] — the SQL statement
@@ -61,19 +62,32 @@ impl FailedStatements {
     /// [`MAX_REMEMBERED_FAILURES`], evicts the oldest remembered failure
     /// before inserting, so memory is bounded for a long run.
     pub(super) fn record(&mut self, key: CallKey, error: &str) {
+        let error = bound_error(error);
         if let Some(entry) = self
             .entries
             .iter_mut()
             .find(|(existing, _)| existing == &key)
         {
-            entry.1 = error.to_owned();
+            entry.1 = error;
             return;
         }
         if self.entries.len() >= MAX_REMEMBERED_FAILURES {
             self.entries.remove(0);
         }
-        self.entries.push((key, error.to_owned()));
+        self.entries.push((key, error));
     }
+}
+
+pub(super) fn bound_error(error: &str) -> String {
+    if error.len() <= MAX_REMEMBERED_FAILURE_BYTES {
+        return error.to_owned();
+    }
+    let marker = "...[truncated]";
+    let head = super::tools::floor_boundary(
+        error,
+        MAX_REMEMBERED_FAILURE_BYTES.saturating_sub(marker.len()),
+    );
+    format!("{}{marker}", &error[..head])
 }
 
 /// The SQL statement a tool call carries, when its arguments include a `sql`
@@ -98,15 +112,14 @@ pub(super) fn is_repeat(failed: &FailedStatements, call: &ToolCall) -> bool {
 }
 
 /// The completion summary for a refused repeat, kept as a constant so the
-/// batch-path and sequential-path status derivations (`contains("failed")`)
-/// agree. The wording names the *call* — statement or not — so it stays
-/// honest for a non-SQL tool.
+/// batch and sequential typed outcomes agree. The wording names the *call* —
+/// statement or not — so it stays honest for a non-SQL tool.
 pub(super) const REFUSAL_SUMMARY: &str = "call already failed earlier in this run";
 
 /// The tool result and summary returned when a repeat of a known failure is
 /// refused. The result names the error the earlier attempt produced so the
-/// model has the information it needs to change approach; the summary drives
-/// `tool_metadata.status` (it contains "failed", so the status is "failed").
+/// model has the information it needs to change approach; callers retain the
+/// refusal's typed failed outcome alongside this model-facing text.
 pub(super) fn refuse_repeat(prior_error: &str) -> (serde_json::Value, &'static str) {
     (
         serde_json::json!({"error": format!("this call already failed earlier in this run; it will fail again. Change your approach instead. Last error: {prior_error}")}),
@@ -125,19 +138,15 @@ pub(super) fn record_outcome(
     failed: &mut FailedStatements,
     last_successful_sql: &mut Option<String>,
     key: CallKey,
-    result: &serde_json::Value,
     executed: bool,
-    summary: &str,
+    succeeded: bool,
+    failure_reason: Option<&str>,
 ) {
     if !executed {
         return;
     }
-    if summary.contains("failed") {
-        let error = result
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        failed.record(key, error);
+    if !succeeded {
+        failed.record(key, failure_reason.unwrap_or_default());
     } else if let CallKey::Sql(sql) = key {
         // The last statement that completed successfully is the best
         // available nomination when a budget runs out — most recent wins.

@@ -113,11 +113,8 @@ pub(crate) struct DatabaseTools {
     /// `None` — every headless path — leaves behaviour identical: no hook, no
     /// capture, no message.
     pub(super) capture_hook: Option<CaptureHook>,
-    /// The turn's context byte budget — the SAME number the loop passes to
-    /// `tool_message` (`AgentLimits::context_byte_budget`), so the capture
-    /// hook shapes the model's view with the exact budget the loop shapes it
-    /// with (R3). Set together with the hook by [`Self::with_capture`];
-    /// meaningless while the hook is `None`.
+    /// Default result cap for direct executor calls. Agent-loop calls receive
+    /// their exact per-call share through `ToolExecutor::execute_with_result_cap`.
     pub(super) context_byte_budget: usize,
 }
 
@@ -248,10 +245,10 @@ impl DatabaseTools {
     }
 
     /// Attaches the TUI's capture hook (C1) together with the turn's context
-    /// byte budget — the same value the loop's `AgentLimits` will carry, so
-    /// the hook's model-view shaping uses the budget the loop shapes with
-    /// (R3). Only the `bounded_sql_query` arm consults it, only on success;
-    /// every headless path passes `None` and nothing captures.
+    /// byte budget for direct executor calls. The agent loop overrides it with
+    /// its exact per-call result share. Only the `bounded_sql_query` arm
+    /// consults it, only on success; every headless path passes `None` and
+    /// nothing captures.
     pub(crate) fn with_capture(
         mut self,
         capture_hook: Option<CaptureHook>,
