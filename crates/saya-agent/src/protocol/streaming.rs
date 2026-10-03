@@ -170,29 +170,30 @@ pub trait ChatProvider: Send + Sync {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::Cancelled);
+        }
         let response = self.complete(request).await?;
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        // A provider whose only path is `complete()` (Gemini) reports usage on
-        // the response, not as a stream event. Mirroring it here means its
-        // counts cross the boundary the same way a streaming provider's do —
-        // and a provider that reported nothing still emits no `Usage` event, so
-        // absence on the stream keeps meaning "unknown".
-        let mut events = if response.message.tool_calls.is_empty() {
-            vec![
-                ProviderEvent::TextDelta(response.message.content),
-                ProviderEvent::Done,
-            ]
-        } else {
-            vec![
-                ProviderEvent::ToolCalls(response.message.tool_calls),
-                ProviderEvent::Done,
-            ]
-        };
-        if let Some(usage) = response.usage {
-            events.insert(0, ProviderEvent::Usage(usage));
+        // Preserve each complete-response field through the streaming boundary.
+        // A provider that reported no usage emits no `Usage` event, so absence
+        // keeps meaning "unknown".
+        let mut events = Vec::with_capacity(5);
+        if !response.message.content.is_empty() {
+            events.push(ProviderEvent::TextDelta(response.message.content));
         }
+        if let Some(reasoning) = response.reasoning {
+            events.push(ProviderEvent::ReasoningDelta(reasoning));
+        }
+        if !response.message.tool_calls.is_empty() {
+            events.push(ProviderEvent::ToolCalls(response.message.tool_calls));
+        }
+        if let Some(usage) = response.usage {
+            events.push(ProviderEvent::Usage(usage));
+        }
+        events.push(ProviderEvent::Done);
         Ok(Box::pin(futures_util::stream::iter(
             events.into_iter().map(Ok),
         )))
@@ -475,16 +476,13 @@ mod tests {
     // --- the default stream(), for a provider with no streaming endpoint ----
 
     /// A provider whose only path is `complete()` (Gemini is shaped exactly
-    /// this way) reports usage on the response, not as a stream event. The
-    /// default `stream()` mirrors that report onto the stream as a `Usage`
-    /// event, so its counts cross the boundary the same way a streaming
-    /// provider's do. A response reporting nothing emits no `Usage` event, so
-    /// absence on the stream still means "unknown" — and the mirrored event is
-    /// the response's own parsed value, untouched.
+    /// this way) carries every response field through the default stream and
+    /// collect adapters without changing values or collapsing absent fields.
     #[tokio::test]
-    async fn the_default_stream_mirrors_the_response_usage_onto_the_stream() {
+    async fn the_default_stream_preserves_the_complete_response() {
         struct ResponseOnlyProvider {
-            usage: Option<TokenUsage>,
+            response: ChatResponse,
+            complete_calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         }
 
         #[async_trait]
@@ -493,23 +491,39 @@ mod tests {
                 "response-only"
             }
             async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-                let mut response = ChatResponse::new(ChatMessage::text("assistant", "hi"));
-                response.usage = self.usage;
-                Ok(response)
+                self.complete_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(self.response.clone())
             }
             // `stream` is deliberately not overridden: the default is under
             // test, reached directly below exactly as the loop reaches it.
         }
 
-        let with_usage = ResponseOnlyProvider {
+        let complete_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let response = ChatResponse {
+            message: ChatMessage {
+                role: "assistant".into(),
+                content: "The result is 42.".into(),
+                tool_calls: vec![crate::ToolCall {
+                    id: "designation".into(),
+                    name: "designate_answer".into(),
+                    arguments: serde_json::json!({"sql": "SELECT 42"}),
+                }],
+                tool_call_id: None,
+            },
+            reasoning: Some(String::new()),
             usage: Some(TokenUsage {
                 input_tokens: 12,
                 output_tokens: 9,
-                cached_input_tokens: Some(7),
+                cached_input_tokens: Some(0),
                 ..Default::default()
             }),
         };
-        let mut stream = with_usage
+        let with_response = ResponseOnlyProvider {
+            response: response.clone(),
+            complete_calls: complete_calls.clone(),
+        };
+        let mut stream = with_response
             .stream(
                 ChatRequest {
                     model: "m".into(),
@@ -521,19 +535,42 @@ mod tests {
             )
             .await
             .expect("stream opens");
-        let mut saw_usage = None;
+        let mut events = Vec::new();
         while let Some(event) = stream.next().await {
-            if let ProviderEvent::Usage(usage) = event.expect("stream event") {
-                saw_usage = Some(usage);
-            }
+            events.push(event.expect("stream event"));
         }
-        let usage = saw_usage.expect("the response's usage must reach the stream");
-        assert_eq!(usage.input_tokens, 12);
-        assert_eq!(usage.output_tokens, 9);
-        assert_eq!(usage.cached_input_tokens, Some(7));
+        assert_eq!(
+            events,
+            vec![
+                ProviderEvent::TextDelta("The result is 42.".into()),
+                ProviderEvent::ReasoningDelta(String::new()),
+                ProviderEvent::ToolCalls(response.message.tool_calls.clone()),
+                ProviderEvent::Usage(response.usage.expect("reported usage")),
+                ProviderEvent::Done,
+            ],
+            "the complete response reaches the stream exactly once, with Done last"
+        );
 
-        // And a response reporting nothing emits no Usage event at all.
-        let silent = ResponseOnlyProvider { usage: None };
+        let collected = with_response
+            .collect(ChatRequest {
+                model: "m".into(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                ..Default::default()
+            })
+            .await
+            .expect("the complete response is collectable");
+        assert_eq!(collected.message.content, response.message.content);
+        assert_eq!(collected.message.tool_calls, response.message.tool_calls);
+        assert_eq!(collected.reasoning, Some(String::new()));
+        assert_eq!(collected.usage, response.usage);
+        assert_eq!(complete_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        // Absence remains distinct from an explicitly reported empty value.
+        let silent = ResponseOnlyProvider {
+            response: ChatResponse::new(ChatMessage::text("assistant", "hi")),
+            complete_calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        };
         let mut stream = silent
             .stream(
                 ChatRequest {
@@ -546,13 +583,48 @@ mod tests {
             )
             .await
             .expect("stream opens");
-        let mut saw_usage = false;
+        let mut silent_events = Vec::new();
         while let Some(event) = stream.next().await {
-            if matches!(event.expect("stream event"), ProviderEvent::Usage(..)) {
-                saw_usage = true;
+            silent_events.push(event.expect("stream event"));
+        }
+        assert_eq!(
+            silent_events,
+            vec![ProviderEvent::TextDelta("hi".into()), ProviderEvent::Done]
+        );
+        let silent_response = silent
+            .collect(ChatRequest::new("m", Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(silent_response.reasoning, None);
+        assert_eq!(silent_response.usage, None);
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_default_stream_does_not_call_complete() {
+        struct ResponseOnlyProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+        #[async_trait]
+        impl ChatProvider for ResponseOnlyProvider {
+            fn name(&self) -> &str {
+                "response-only"
+            }
+            async fn complete(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(ChatResponse::new(ChatMessage::text("assistant", "hi")))
             }
         }
-        assert!(!saw_usage, "no report on the response means no event");
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = ResponseOnlyProvider(calls.clone());
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        assert!(matches!(
+            provider
+                .stream(ChatRequest::new("m", Vec::new()), cancellation)
+                .await,
+            Err(ProviderError::Cancelled)
+        ));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     // --- reasoning capture -------------------------------------------------

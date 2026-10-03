@@ -483,6 +483,7 @@ async fn salvage_refuses_an_invalid_completed_batch_and_preserves_prior_work() {
         call("duplicate", "schema_discovery", serde_json::json!({})),
         call("duplicate", "schema_discovery", serde_json::json!({})),
     ]));
+    invalid.message.content = "INVALID_SALVAGE_ANSWER_SENTINEL".into();
     invalid.usage = Some(TokenUsage::new(7, 2));
     let (provider, requests) = provider(vec![
         ChatResponse::new(assistant(vec![call(
@@ -519,6 +520,10 @@ async fn salvage_refuses_an_invalid_completed_batch_and_preserves_prior_work() {
     assert!(
         output.answer.is_empty(),
         "invalid salvage content is discarded"
+    );
+    assert!(
+        !output.answer.contains("INVALID_SALVAGE_ANSWER_SENTINEL"),
+        "nonempty prose from the rejected salvage response must not escape"
     );
     assert_eq!(&*calls.lock().unwrap(), &["schema_discovery"]);
     assert_eq!(output.usage, TokenUsage::new(7, 2));
