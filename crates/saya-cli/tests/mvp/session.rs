@@ -113,15 +113,45 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         }
     }
 
-    // Mock provider: accept one connection but never answer, so the agent's
-    // request stays in flight until it is cancelled.
+    fn drain_request(stream: &mut std::net::TcpStream) {
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            if let Some(head) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                let length = String::from_utf8_lossy(&bytes[..head])
+                    .lines()
+                    .find_map(|line| match line.split_once(':') {
+                        Some((name, value)) if name.eq_ignore_ascii_case("content-length") => {
+                            value.trim().parse::<usize>().ok()
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                if bytes.len() >= head + 4 + length {
+                    return;
+                }
+            }
+            let count = stream.read(&mut chunk).expect("provider request reads");
+            if count == 0 {
+                return;
+            }
+            bytes.extend_from_slice(&chunk[..count]);
+        }
+    }
+
+    // Mock provider: the first completed answer has a paid receipt; the second
+    // request reports usage and then remains live until the real session path
+    // receives SIGINT. The second receipt is the regression boundary: it has
+    // no `AgentOutput`, so only the settled cancellation owner can reach
+    // `/usage` with it.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
+    let (first_done_tx, first_done_rx) = mpsc::channel();
     let (accepted_tx, accepted_rx) = mpsc::channel();
     let server = thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
-        let (mut stream, _) = loop {
+        let (mut first, _) = loop {
             match listener.accept() {
                 Ok(value) => break value,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -133,12 +163,52 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
                 Err(_) => return,
             }
         };
-        accepted_tx.send(()).unwrap();
-        stream
+        first
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        let mut request = Vec::new();
-        let _ = stream.read_to_end(&mut request);
+        drain_request(&mut first);
+        let first_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"first answer\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        write!(
+            first,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{first_body}",
+            first_body.len()
+        )
+        .unwrap();
+        first.flush().unwrap();
+        first_done_tx.send(()).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (mut second, _) = loop {
+            match listener.accept() {
+                Ok(value) => break value,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return,
+            }
+        };
+        second
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        drain_request(&mut second);
+        let second_body =
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":0}}\n\n";
+        write!(
+            second,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{second_body}",
+            second_body.len()
+        )
+        .unwrap();
+        second.flush().unwrap();
+        accepted_tx.send(()).unwrap();
+        let _ = second.read_to_end(&mut Vec::new());
     });
 
     let config_root =
@@ -181,13 +251,24 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         }
     });
     let stdout = child.stdout.take().unwrap();
+    let stdout_buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let stdout_sink = stdout_buf.clone();
     let stdout_pump = thread::spawn(move || {
         let mut reader = stdout;
         let mut sink = Vec::new();
         let _ = reader.read_to_end(&mut sink);
+        *stdout_sink.lock().unwrap() = sink;
     });
 
     let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"completed prompt\n").unwrap();
+    stdin.flush().unwrap();
+
+    // The source reported the first settled response; only then ask the
+    // session for its second, cancellable request.
+    first_done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("first provider response was not written");
     stdin.write_all(b"incomplete prompt\n").unwrap();
     stdin.flush().unwrap();
 
@@ -215,7 +296,7 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         drop(seen);
         thread::sleep(Duration::from_millis(20));
     }
-    stdin.write_all(b"/exit\n").unwrap();
+    stdin.write_all(b"/usage\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
 
@@ -236,9 +317,13 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
         .unwrap();
     let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
-    assert_eq!(value["turns"].as_array().unwrap().len(), 0);
+    assert_eq!(value["turns"].as_array().unwrap().len(), 1);
     assert!(!saved.contains("incomplete prompt"));
     assert!(!saved.contains("mock-secret"));
+    let usage = String::from_utf8_lossy(&stdout_buf.lock().unwrap()).into_owned();
+    assert!(usage.contains("Input tokens: 10"), "usage: {usage}");
+    assert!(usage.contains("Output tokens: 2"), "usage: {usage}");
+    assert!(usage.contains("1 turn"), "usage: {usage}");
     let _ = std::fs::remove_dir_all(config_root);
     let _ = std::fs::remove_dir_all(session_root);
 }
