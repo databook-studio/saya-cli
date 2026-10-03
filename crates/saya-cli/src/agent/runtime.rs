@@ -230,36 +230,32 @@ pub(crate) async fn run_prompt_with_inputs(
     // The TUI's capture hook (C1); `None` for every headless caller.
     capture: Option<tools::CaptureHook>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    run_prompt_with_continuation_inputs(TurnPrompt {
-        runtime,
-        inputs,
-        prompt,
-        approval,
-        can_prompt,
-        can_obtain_approval,
-        history,
-        sink,
-        cancellation,
-        state_db,
-        decider,
-        last_sql,
-        session,
-        agent_mode,
-        capture,
-        prior_tool_outcomes: None,
-        compaction_summary: None,
-    })
+    run_prompt_with_continuation_inputs_with_signal(
+        TurnPrompt {
+            runtime,
+            inputs,
+            prompt,
+            approval,
+            can_prompt,
+            can_obtain_approval,
+            history,
+            sink,
+            cancellation,
+            state_db,
+            decider,
+            last_sql,
+            session,
+            agent_mode,
+            capture,
+            prior_tool_outcomes: None,
+            compaction_summary: None,
+        },
+        None,
+    )
     .await
 }
 
-#[cfg(test)]
-pub(crate) async fn run_prompt_with_continuation_inputs(
-    turn: TurnPrompt<'_>,
-) -> Result<AgentOutput, AgentRuntimeError> {
-    run_prompt_with_continuation_inputs_with_signal(turn, None).await
-}
-
-async fn run_prompt_with_continuation_inputs_with_signal(
+pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
     turn: TurnPrompt<'_>,
     answering_settled: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
