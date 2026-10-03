@@ -147,6 +147,7 @@ pub(crate) fn in_flight_task() -> (
     std::sync::mpsc::Receiver<TerminalEvent>,
     super::super::sql_task::SqlTask,
     std::time::Instant,
+    saya_agent::CancellationToken,
 ) {
     in_flight_task_at(std::time::Instant::now())
 }
@@ -159,6 +160,7 @@ pub(crate) fn in_flight_task_at(
     std::sync::mpsc::Receiver<TerminalEvent>,
     super::super::sql_task::SqlTask,
     std::time::Instant,
+    saya_agent::CancellationToken,
 ) {
     let (_tx, rx) = std::sync::mpsc::channel();
     let task = SqlTask {
@@ -169,5 +171,5 @@ pub(crate) fn in_flight_task_at(
         },
         started_unix_ms: 1_790_000_000_000,
     };
-    (rx, task, started)
+    (rx, task, started, saya_agent::CancellationToken::new())
 }
