@@ -14,8 +14,8 @@ use crate::config::runtime::RuntimeConfig;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;
 use saya_agent::{
-    AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage, ChatProvider,
-    ChatRequest, ChatResponse, NoopEventSink,
+    AgentEvent, AgentEventSink, AgentMode, AgentOutput, ApprovalPolicy, CancellationToken,
+    ChatMessage, ChatProvider, ChatRequest, ChatResponse, NoopEventSink,
 };
 use saya_config::{
     AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
@@ -30,6 +30,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 /// A connector that never touches a live database: the probe tool calls run
@@ -171,12 +172,21 @@ fn test_runtime(context_byte_budget: usize) -> RuntimeConfig {
 /// under the config `context_byte_budget`.
 #[derive(Default)]
 struct Counters {
-    first_answering_messages: Mutex<Option<Vec<ChatMessage>>>,
+    first_answering_request: Mutex<Option<ChatRequest>>,
+    request_count: Mutex<usize>,
 }
 
 impl Counters {
     fn first_messages(&self) -> Option<Vec<ChatMessage>> {
-        self.first_answering_messages.lock().unwrap().clone()
+        self.first_request().map(|request| request.messages)
+    }
+
+    fn first_request(&self) -> Option<ChatRequest> {
+        self.first_answering_request.lock().unwrap().clone()
+    }
+
+    fn request_count(&self) -> usize {
+        *self.request_count.lock().unwrap()
     }
 }
 
@@ -195,10 +205,11 @@ impl ChatProvider for AnswerProbe {
         &self,
         request: ChatRequest,
     ) -> Result<ChatResponse, saya_agent::ProviderError> {
+        *self.counters.request_count.lock().unwrap() += 1;
         {
-            let mut first = self.counters.first_answering_messages.lock().unwrap();
+            let mut first = self.counters.first_answering_request.lock().unwrap();
             if first.is_none() {
-                *first = Some(request.messages.clone());
+                *first = Some(request.clone());
             }
         }
         Ok(ChatResponse::new(ChatMessage::text("assistant", "done")))
@@ -211,35 +222,161 @@ async fn run_turn(
     context_byte_budget: usize,
     history: Vec<ChatMessage>,
 ) -> (Result<AgentOutput, AgentRuntimeError>, Arc<Counters>) {
+    let sink = NoopEventSink;
+    run_turn_with_request(
+        context_byte_budget,
+        "orders by month",
+        history,
+        None,
+        test_ai(context_byte_budget),
+        "analytics",
+        &sink,
+    )
+    .await
+}
+
+async fn run_turn_with_request(
+    context_byte_budget: usize,
+    prompt: &str,
+    history: Vec<ChatMessage>,
+    last_sql: Option<&str>,
+    ai: ResolvedAi,
+    profile: &str,
+    sink: &dyn AgentEventSink,
+) -> (Result<AgentOutput, AgentRuntimeError>, Arc<Counters>) {
     let counters = Arc::new(Counters::default());
     let inputs = TurnInputs {
-        ai: test_ai(context_byte_budget),
+        ai,
         provider: Box::new(AnswerProbe {
             counters: Arc::clone(&counters),
         }),
-        registry: registry_for("analytics"),
+        registry: registry_for(profile),
         failures: Vec::new(),
     };
     let runtime = test_runtime(context_byte_budget);
     let result = run_prompt_with_inputs(
         &runtime,
         inputs,
-        "orders by month",
+        prompt,
         ApprovalPolicy::ReadOnly,
         false,
         false,
         history,
-        &NoopEventSink,
+        sink,
         CancellationToken::new(),
         None,
         None,
-        None,
+        last_sql.map(str::to_owned),
         None,
         AgentMode::Build,
         None,
     )
     .await;
     (result, counters)
+}
+
+async fn record_first_request(prompt: &str, last_sql: Option<&str>) -> ChatRequest {
+    record_first_request_for(
+        prompt,
+        last_sql,
+        test_ai(16 * 1024),
+        "analytics",
+        &NoopEventSink,
+    )
+    .await
+}
+
+async fn record_first_request_for(
+    prompt: &str,
+    last_sql: Option<&str>,
+    ai: ResolvedAi,
+    profile: &str,
+    sink: &dyn AgentEventSink,
+) -> ChatRequest {
+    let (result, counters) =
+        run_turn_with_request(16 * 1024, prompt, Vec::new(), last_sql, ai, profile, sink).await;
+    result.expect("the turn completes");
+    counters
+        .first_request()
+        .expect("the provider receives the runtime's first complete request")
+}
+
+struct TimedSink {
+    started: Instant,
+    events: Mutex<Vec<AgentEvent>>,
+    first_assistant_text: Mutex<Option<Duration>>,
+}
+
+impl TimedSink {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            events: Mutex::new(Vec::new()),
+            first_assistant_text: Mutex::new(None),
+        }
+    }
+
+    fn first_assistant_text(&self) -> Option<Duration> {
+        *self.first_assistant_text.lock().unwrap()
+    }
+
+    fn event_count(&self, matches: fn(&AgentEvent) -> bool) -> usize {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| matches(event))
+            .count()
+    }
+}
+
+#[async_trait]
+impl AgentEventSink for TimedSink {
+    async fn emit(&self, event: AgentEvent) {
+        if matches!(&event, AgentEvent::AssistantText { text } if !text.is_empty()) {
+            let mut first = self.first_assistant_text.lock().unwrap();
+            if first.is_none() {
+                *first = Some(self.started.elapsed());
+            }
+        }
+        self.events.lock().unwrap().push(event);
+    }
+}
+
+struct RequestMeasurement {
+    request: ChatRequest,
+    request_count: usize,
+    tool_calls: usize,
+    retries: usize,
+    elapsed: Duration,
+    first_assistant_text: Option<Duration>,
+}
+
+async fn capture_repeated_requests() -> Vec<RequestMeasurement> {
+    let mut measurements = Vec::new();
+    for _ in 0..5 {
+        let sink = TimedSink::new();
+        let (result, counters) = run_turn_with_request(
+            16 * 1024,
+            "orders by month",
+            Vec::new(),
+            Some("SELECT id FROM orders"),
+            test_ai(16 * 1024),
+            "analytics",
+            &sink,
+        )
+        .await;
+        result.expect("the fixed local turn completes");
+        measurements.push(RequestMeasurement {
+            request: counters.first_request().expect("a request was captured"),
+            request_count: counters.request_count(),
+            tool_calls: sink.event_count(|event| matches!(event, AgentEvent::ToolRequested { .. })),
+            retries: sink.event_count(|event| matches!(event, AgentEvent::TurnReset)),
+            elapsed: sink.started.elapsed(),
+            first_assistant_text: sink.first_assistant_text(),
+        });
+    }
+    measurements
 }
 
 // ===========================================================================
@@ -283,5 +420,113 @@ async fn config_context_byte_budget_bounds_the_history_the_loop_sends() {
     assert!(
         !joined.contains("OLD-PAIR-SENTINEL"),
         "the oversized oldest pair is trimmed by the planted budget: {joined}"
+    );
+}
+
+#[tokio::test]
+async fn actual_runtime_request_prefix_is_stable_and_last_sql_stays_in_the_user_tail() {
+    let measurements = capture_repeated_requests().await;
+    assert_eq!(measurements.len(), 5, "five fixed local runs were captured");
+    let first = &measurements[0];
+    let request_bytes = serde_json::to_vec(&first.request).unwrap().len();
+    let system_bytes =
+        first.request.messages[0].role.len() + first.request.messages[0].content.len();
+    let message_bytes = first
+        .request
+        .messages
+        .iter()
+        .map(|message| message.role.len() + message.content.len())
+        .sum::<usize>();
+    let tool_bytes = serde_json::to_vec(&first.request.tools).unwrap().len();
+    let request = serde_json::to_vec(&first.request).unwrap();
+    assert!(
+        measurements
+            .iter()
+            .all(|measurement| serde_json::to_vec(&measurement.request).unwrap() == request),
+        "fixed runtime inputs must produce the same complete request on all five runs"
+    );
+    assert!(
+        measurements.iter().all(|measurement| {
+            measurement.request_count == 1
+                && measurement.tool_calls == 0
+                && measurement.retries == 0
+        }),
+        "the fixed provider made one request with no tool calls or retries"
+    );
+    assert!(
+        measurements
+            .iter()
+            .all(|measurement| measurement.first_assistant_text.is_some()),
+        "each fixed run emitted nonempty assistant text through the event sink"
+    );
+    let changed = record_first_request(
+        "orders by customer",
+        Some("SELECT missing FROM missing_table"),
+    )
+    .await;
+    let non_ascii = record_first_request("orders in München 😀", None).await;
+    let profile_changed = record_first_request_for(
+        "orders by month",
+        None,
+        test_ai(16 * 1024),
+        "warehouse",
+        &NoopEventSink,
+    )
+    .await;
+    assert_eq!(
+        serde_json::to_vec(&first.request.tools).unwrap(),
+        serde_json::to_vec(&changed.tools).unwrap(),
+        "question and last SQL cannot reorder or alter tool schemas"
+    );
+    assert_eq!(
+        first.request.messages[0], changed.messages[0],
+        "per-turn inputs must not alter the system prefix"
+    );
+    assert!(
+        changed
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("orders by customer")
+    );
+    assert!(
+        changed
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("SELECT missing FROM missing_table")
+    );
+    assert_eq!(
+        first.request.tools.len(),
+        non_ascii.tools.len(),
+        "the full tool set stays attached"
+    );
+    assert!(
+        non_ascii
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("München 😀")
+    );
+    assert_ne!(
+        first.request.messages[0], profile_changed.messages[0],
+        "the selected profile changes the production-built session context"
+    );
+    assert!(profile_changed.messages[0].content.contains("warehouse"));
+    let elapsed = measurements.iter().map(|measurement| measurement.elapsed);
+    let first_text = measurements
+        .iter()
+        .map(|measurement| measurement.first_assistant_text.unwrap());
+    eprintln!(
+        "request corpus local fixed-provider: runs=5 request_bytes={request_bytes} \
+         system_bytes={system_bytes} messages_bytes={message_bytes} tools_bytes={tool_bytes} \
+         requests=1 tool_calls=0 retries=0 elapsed_us={}..{} first_assistant_text_us={}..{}",
+        elapsed.clone().min().unwrap().as_micros(),
+        elapsed.max().unwrap().as_micros(),
+        first_text.clone().min().unwrap().as_micros(),
+        first_text.max().unwrap().as_micros(),
     );
 }
