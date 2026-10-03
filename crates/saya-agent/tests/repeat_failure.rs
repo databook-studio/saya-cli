@@ -48,6 +48,27 @@ struct ScriptedExecutor {
     error: String,
 }
 
+/// A failing executor whose two calls must rendezvous. It observes the agent
+/// scheduler at the public boundary: serial execution reaches the timeout,
+/// while the batch path releases both failures for repeat-memory recording.
+struct BatchFailingExecutor {
+    calls: Arc<Mutex<Vec<String>>>,
+    barrier: Arc<tokio::sync::Barrier>,
+}
+
+#[async_trait]
+impl ToolExecutor for BatchFailingExecutor {
+    async fn execute(
+        &self,
+        name: &str,
+        _: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
+        self.calls.lock().unwrap().push(name.into());
+        self.barrier.wait().await;
+        Err(ToolError::QueryFailedDetail("bad batch".into()))
+    }
+}
+
 #[async_trait]
 impl ToolExecutor for ScriptedExecutor {
     async fn execute(
@@ -91,7 +112,7 @@ fn query_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
-        concurrency: saya_agent::ToolConcurrency::Serial,
+        concurrency: saya_agent::ToolConcurrency::Concurrent,
         completion: None,
     }
 }
@@ -414,13 +435,10 @@ async fn budget_exhaustion_with_only_failed_statements_nominates_nothing() {
 /// failure memory.
 #[tokio::test]
 async fn the_batch_path_records_failures_so_a_later_repeat_is_refused() {
-    let executor = ScriptedExecutor {
-        calls: Arc::new(Mutex::new(Vec::new())),
-        fail: true,
-        error: "bad batch".into(),
-    };
-    let (output, calls, requests) = run(
-        vec![
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = CannedProvider {
+        responses: Mutex::new(vec![
             ChatMessage {
                 role: "assistant".into(),
                 content: String::new(),
@@ -429,11 +447,33 @@ async fn the_batch_path_records_failures_so_a_later_repeat_is_refused() {
             },
             tool_turn("c3", "SELECT a"),
             ChatMessage::text("assistant", "done"),
-        ],
-        executor,
-        AgentLimits::default(),
+        ]),
+        requests: requests.clone(),
+    };
+    let executor = BatchFailingExecutor {
+        calls: calls.clone(),
+        barrier: Arc::new(tokio::sync::Barrier::new(2)),
+    };
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        run_agent_with_sink(
+            &provider,
+            &executor,
+            request(),
+            vec![query_tool()],
+            AgentLimits::default(),
+            &AllowReadOnlyApproval,
+            &RecordingSink {
+                events: Arc::new(Mutex::new(Vec::new())),
+            },
+            saya_agent::CancellationToken::new(),
+        ),
     )
-    .await;
+    .await
+    .expect("the batch calls must overlap at the executor")
+    .expect("run completes");
+    let calls = calls.lock().unwrap().clone();
+    let requests = requests.lock().unwrap().clone();
     assert_eq!(output.answer, "done");
     assert_eq!(
         calls.len(),
