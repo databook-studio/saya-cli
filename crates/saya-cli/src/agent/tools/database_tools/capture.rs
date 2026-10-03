@@ -118,6 +118,7 @@ impl DatabaseTools {
         sql: &str,
         entry: &ConnectionEntry,
         executed: &ExecutedQuery,
+        result_cap: usize,
     ) {
         let Some(hook) = self.capture_hook.as_ref() else {
             return;
@@ -134,7 +135,7 @@ impl DatabaseTools {
             entry,
             executed,
             crate::interactive::tui::capture::CAPTURE_BUDGET_BYTES,
-            self.context_byte_budget,
+            result_cap,
         ));
     }
 }
