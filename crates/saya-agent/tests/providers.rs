@@ -902,6 +902,91 @@ async fn openai_stream_surfaces_usage_and_requests_it() {
 }
 
 #[tokio::test]
+async fn openai_usage_only_zero_and_absent_usage_survive_complete_and_stream() {
+    use saya_agent::{ProviderEvent, TokenUsage};
+    let cases = [
+        (
+            vec![
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0}}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            Some(TokenUsage::new(0, 0)),
+        ),
+        (
+            vec![
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            None,
+        ),
+    ];
+    for (terminal, expected) in cases {
+        let mut chunks = vec!["data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"];
+        chunks.extend(terminal.iter().copied());
+        let (base, _, handle) = server(vec![Reply {
+            status: 200,
+            chunks,
+        }]);
+        let response = openai(base).complete(request()).await.unwrap();
+        handle.join().unwrap();
+        assert_eq!(response.usage, expected);
+
+        let mut chunks = vec!["data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"];
+        chunks.extend(terminal.iter().copied());
+        let (base, _, handle) = server(vec![Reply {
+            status: 200,
+            chunks,
+        }]);
+        let mut stream = openai(base)
+            .stream(request(), CancellationToken::new())
+            .await
+            .unwrap();
+        let events = drain(&mut stream).await;
+        handle.join().unwrap();
+        let actual = events.iter().find_map(|event| match event {
+            ProviderEvent::Usage(usage) => Some(*usage),
+            _ => None,
+        });
+        assert_eq!(actual, expected);
+    }
+}
+
+#[tokio::test]
+async fn openai_empty_choices_without_current_usage_remain_invalid_after_a_receipt() {
+    use saya_agent::{ProviderError, ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2}}\n\n",
+            "data: {\"choices\":[]}\n\n",
+            "data: [DONE]\n\n",
+        ],
+    }]);
+    let mut stream = openai(base)
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut receipt_seen = false;
+    let error = loop {
+        match stream.next().await {
+            Some(Ok(ProviderEvent::Usage(usage))) => {
+                receipt_seen |= usage == TokenUsage::new(4, 2);
+            }
+            Some(Ok(_)) => {}
+            Some(Err(error)) => break error,
+            None => panic!("the empty-choices frame without usage must fail"),
+        }
+    };
+    handle.join().unwrap();
+    assert!(
+        receipt_seen,
+        "the actual usage receipt precedes the failed frame"
+    );
+    assert_eq!(error, ProviderError::InvalidResponse);
+}
+
+#[tokio::test]
 async fn gemini_complete_normalizes_thought_tokens_without_double_counting_metadata() {
     use saya_agent::{GeminiProvider, TokenUsage};
     let cases = [
@@ -990,8 +1075,8 @@ async fn ollama_complete_distinguishes_reported_zero_from_absent_usage() {
 }
 
 #[tokio::test]
-async fn ollama_frame_limit_error_keeps_usage_from_the_rejected_record() {
-    use saya_agent::{OllamaProvider, ProviderError, TokenUsage};
+async fn ollama_frame_limit_does_not_parse_usage_from_the_rejected_record() {
+    use saya_agent::{OllamaProvider, ProviderError};
     const FRAME_LIMIT: usize = 65_536;
     let mut body = b"{\"done\":false}\n".repeat(FRAME_LIMIT);
     body.extend_from_slice(b"{\"done\":true,\"prompt_eval_count\":0,\"eval_count\":0}\n");
@@ -1009,12 +1094,24 @@ async fn ollama_frame_limit_error_keeps_usage_from_the_rejected_record() {
         }
     };
     handle.join().unwrap();
-    assert_eq!(
-        error,
-        ProviderError::StreamItemLimit {
-            usage: Some(Box::new(TokenUsage::new(0, 0)))
-        }
-    );
+    assert_eq!(error, ProviderError::StreamItemLimit { usage: None });
+}
+
+#[tokio::test]
+async fn ollama_frame_limit_precedes_json_conversion_of_the_rejected_record() {
+    use saya_agent::{OllamaProvider, ProviderError};
+    const FRAME_LIMIT: usize = 65_536;
+    let mut body = b"{\"done\":false}\n".repeat(FRAME_LIMIT);
+    body.extend_from_slice(b"not-json\n");
+    let (base, handle) = byte_server(vec![body]);
+    let provider = OllamaProvider::new(ProviderSettings::new("m", Some(base))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let error = stream.next().await.unwrap().unwrap_err();
+    handle.join().unwrap();
+    assert_eq!(error, ProviderError::StreamItemLimit { usage: None });
 }
 
 #[tokio::test]

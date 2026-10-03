@@ -115,6 +115,8 @@ impl State {
             };
         }
         let bytes = std::mem::take(&mut self.bytes);
+        self.frames
+            .admit(self.usage_reported.then_some(self.usage))?;
         let line = std::str::from_utf8(&bytes).map_err(|_| ProviderError::InvalidResponse)?;
         self.push_line(line.trim_end_matches('\r'), &[])?;
         if self.done {
@@ -134,6 +136,8 @@ impl State {
         let mut consumed = 0;
         while let Some(relative_end) = bytes[consumed..].iter().position(|byte| *byte == b'\n') {
             let end = consumed + relative_end;
+            self.frames
+                .admit(self.usage_reported.then_some(self.usage))?;
             let line = std::str::from_utf8(&bytes[consumed..end])
                 .map_err(|_| ProviderError::InvalidResponse)?;
             consumed = end + 1;
@@ -149,7 +153,7 @@ impl State {
     }
     fn push_line(&mut self, line: &str, trailing: &[u8]) -> Result<(), ProviderError> {
         if line.trim().is_empty() {
-            return self.frames.admit(self.usage_reported.then_some(self.usage));
+            return Ok(());
         }
         let chunk: Chunk =
             serde_json::from_str(line).map_err(|_| ProviderError::InvalidResponse)?;
@@ -165,7 +169,6 @@ impl State {
                 usage_reported = true;
             }
         }
-        self.frames.admit(usage_reported.then_some(usage))?;
         if let Some(message) = chunk.message {
             if !message.content.is_empty() {
                 self.reserve(message.content.len())?;
