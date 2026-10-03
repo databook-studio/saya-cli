@@ -9,7 +9,7 @@
 //! prefix cache is keyed on. Only a non-empty list emits a block, so an
 //! empty list costs zero tokens.
 
-use saya_agent::{ContextBlock, LocalStateEffect, ToolDefinition, ToolEffect};
+use saya_agent::{ContextBlock, LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 use saya_types::{SessionTaskList, TaskStatus};
 
 /// The context-block label for the session task list.
@@ -76,6 +76,7 @@ pub(crate) fn tasks_set_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteSession,
         },
+        concurrency: ToolConcurrency::Serial,
         completion: Some("task list updated".into()),
     }
 }
