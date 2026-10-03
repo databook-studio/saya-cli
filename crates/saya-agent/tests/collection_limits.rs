@@ -183,19 +183,22 @@ async fn oversized_object_arguments_are_terminal_before_an_eligible_tool_effect(
 }
 
 #[tokio::test]
-async fn eligible_tool_batch_executes_once() {
-    let (output, provider_calls, tool_calls, _) = run(vec![
-        vec![
-            Ok(ProviderEvent::ToolCalls(vec![call(
-                1,
-                serde_json::json!({}),
-            )])),
-            Ok(ProviderEvent::Done),
-        ],
-        natural_answer(),
-    ])
-    .await;
-    assert_eq!(output.unwrap(), "done");
-    assert_eq!(provider_calls, 2);
-    assert_eq!(tool_calls, 1);
+async fn eligible_tool_batches_execute_exactly_once_per_call() {
+    for count in [1, 256] {
+        let (output, provider_calls, tool_calls, _) = run(vec![
+            vec![
+                Ok(ProviderEvent::ToolCalls(
+                    (0..count)
+                        .map(|id| call(id, serde_json::json!({})))
+                        .collect(),
+                )),
+                Ok(ProviderEvent::Done),
+            ],
+            natural_answer(),
+        ])
+        .await;
+        assert_eq!(output.unwrap(), "done", "count {count}");
+        assert_eq!(provider_calls, 2, "count {count}");
+        assert_eq!(tool_calls, count, "count {count}");
+    }
 }

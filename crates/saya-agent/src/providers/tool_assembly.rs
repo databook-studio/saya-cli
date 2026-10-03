@@ -118,7 +118,21 @@ impl ToolAssembly {
     }
 
     pub(super) fn finish(self) -> Result<Vec<ToolCall>, ProviderError> {
-        self.finish_with_empty_arguments(false)
+        self.calls
+            .into_iter()
+            .map(|(index, call)| {
+                let arguments: serde_json::Value = serde_json::from_str(&call.arguments)
+                    .map_err(|_| ProviderError::InvalidResponse)?;
+                if call.name.is_empty() || !arguments.is_object() {
+                    return Err(ProviderError::InvalidResponse);
+                }
+                Ok(ToolCall {
+                    id: call.id.unwrap_or_else(|| format!("call-{index}")),
+                    name: call.name,
+                    arguments,
+                })
+            })
+            .collect()
     }
 
     pub(super) fn finish_anthropic(self) -> Result<Vec<ToolCall>, ProviderError> {
@@ -131,31 +145,6 @@ impl ToolAssembly {
                     serde_json::from_str(&call.arguments)
                         .map_err(|_| ProviderError::InvalidResponse)?
                 };
-                Ok(ToolCall {
-                    id: call.id.unwrap_or_else(|| format!("call-{index}")),
-                    name: call.name,
-                    arguments,
-                })
-            })
-            .collect()
-    }
-
-    fn finish_with_empty_arguments(
-        self,
-        empty_is_object: bool,
-    ) -> Result<Vec<ToolCall>, ProviderError> {
-        self.calls
-            .into_iter()
-            .map(|(index, call)| {
-                let arguments = if empty_is_object && call.arguments.trim().is_empty() {
-                    serde_json::json!({})
-                } else {
-                    serde_json::from_str(&call.arguments)
-                        .map_err(|_| ProviderError::InvalidResponse)?
-                };
-                if call.name.is_empty() || !arguments.is_object() {
-                    return Err(ProviderError::InvalidResponse);
-                }
                 Ok(ToolCall {
                     id: call.id.unwrap_or_else(|| format!("call-{index}")),
                     name: call.name,
