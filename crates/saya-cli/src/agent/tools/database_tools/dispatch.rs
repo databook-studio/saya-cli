@@ -19,6 +19,7 @@ impl DatabaseTools {
         &self,
         name: &str,
         arguments: serde_json::Value,
+        result_cap: usize,
     ) -> Result<serde_json::Value, ToolError> {
         // Contract tools have their own argument validation and execution
         // (sibling concern) and never reach a connector; route them before the
@@ -148,7 +149,7 @@ impl DatabaseTools {
                 // ToolCompleted for the same call. Only here, only on Ok —
                 // never fan-out or the probe tools.
                 if let Ok(executed) = &executed {
-                    self.emit_query_capture(&arguments, sql, entry, executed);
+                    self.emit_query_capture(&arguments, sql, entry, executed, result_cap);
                 }
                 executed.map(|executed| executed.value)
             }

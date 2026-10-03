@@ -29,6 +29,7 @@ use crate::ToolCall;
 /// that changes approach produces distinct calls, and a normal run that
 /// never repeats a failure records nothing here at all.
 pub(super) const MAX_REMEMBERED_FAILURES: usize = 64;
+const MAX_REMEMBERED_FAILURE_BYTES: usize = 4096;
 
 /// The set of calls that have failed during this run, bounded at
 /// [`MAX_REMEMBERED_FAILURES`]. Keyed by [`CallKey`] — the SQL statement
@@ -61,19 +62,32 @@ impl FailedStatements {
     /// [`MAX_REMEMBERED_FAILURES`], evicts the oldest remembered failure
     /// before inserting, so memory is bounded for a long run.
     pub(super) fn record(&mut self, key: CallKey, error: &str) {
+        let error = bound_error(error);
         if let Some(entry) = self
             .entries
             .iter_mut()
             .find(|(existing, _)| existing == &key)
         {
-            entry.1 = error.to_owned();
+            entry.1 = error;
             return;
         }
         if self.entries.len() >= MAX_REMEMBERED_FAILURES {
             self.entries.remove(0);
         }
-        self.entries.push((key, error.to_owned()));
+        self.entries.push((key, error));
     }
+}
+
+pub(super) fn bound_error(error: &str) -> String {
+    if error.len() <= MAX_REMEMBERED_FAILURE_BYTES {
+        return error.to_owned();
+    }
+    let marker = "...[truncated]";
+    let head = super::tools::floor_boundary(
+        error,
+        MAX_REMEMBERED_FAILURE_BYTES.saturating_sub(marker.len()),
+    );
+    format!("{}{marker}", &error[..head])
 }
 
 /// The SQL statement a tool call carries, when its arguments include a `sql`
@@ -125,19 +139,15 @@ pub(super) fn record_outcome(
     failed: &mut FailedStatements,
     last_successful_sql: &mut Option<String>,
     key: CallKey,
-    result: &serde_json::Value,
     executed: bool,
-    summary: &str,
+    succeeded: bool,
+    failure_reason: Option<&str>,
 ) {
     if !executed {
         return;
     }
-    if summary.contains("failed") {
-        let error = result
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        failed.record(key, error);
+    if !succeeded {
+        failed.record(key, failure_reason.unwrap_or_default());
     } else if let CallKey::Sql(sql) = key {
         // The last statement that completed successfully is the best
         // available nomination when a budget runs out — most recent wins.

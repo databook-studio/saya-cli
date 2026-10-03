@@ -10,6 +10,16 @@ impl ToolExecutor for DatabaseTools {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
-        self.execute_read_only(name, arguments).await
+        self.execute_read_only(name, arguments, self.context_byte_budget)
+            .await
+    }
+
+    async fn execute_with_result_cap(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        result_cap: usize,
+    ) -> Result<serde_json::Value, ToolError> {
+        self.execute_read_only(name, arguments, result_cap).await
     }
 }

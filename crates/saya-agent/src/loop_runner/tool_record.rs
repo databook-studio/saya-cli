@@ -13,6 +13,9 @@ use serde_json::Value;
 
 use crate::ToolResultShape;
 
+const MAX_RECORDED_COLUMNS: usize = 128;
+const MAX_RECORDED_COLUMN_NAME_BYTES: usize = 256;
+
 /// Builds the value-free shape of a serialized query result, or `None` when
 /// `result` is not a row-shaped query result. Reads only the `row_count` and
 /// `columns` keys; `rows` is never inspected, so no cell value can escape.
@@ -36,9 +39,22 @@ pub(super) fn result_shape_of(result: &Value) -> Option<ToolResultShape> {
     }
     let columns = columns
         .iter()
-        .map(|name| name.as_str().unwrap_or("").to_owned())
+        .take(MAX_RECORDED_COLUMNS)
+        .map(|name| bound_column_name(name.as_str().unwrap_or("")))
         .collect();
     Some(ToolResultShape { row_count, columns })
+}
+
+fn bound_column_name(name: &str) -> String {
+    if name.len() <= MAX_RECORDED_COLUMN_NAME_BYTES {
+        return name.to_owned();
+    }
+    let marker = "...[truncated]";
+    let head = super::tools::floor_boundary(
+        name,
+        MAX_RECORDED_COLUMN_NAME_BYTES.saturating_sub(marker.len()),
+    );
+    format!("{}{marker}", &name[..head])
 }
 
 #[cfg(test)]
@@ -94,6 +110,30 @@ mod tests {
                 "columns": [{"name": "x", "type": "TEXT"}]
             }))
             .is_none()
+        );
+    }
+
+    #[test]
+    fn result_shape_of_bounds_column_metadata_without_copying_rows() {
+        let result = serde_json::json!({
+            "columns": (0..(MAX_RECORDED_COLUMNS + 3))
+                .map(|index| format!("column_{index}_{}", "x".repeat(300)))
+                .collect::<Vec<_>>(),
+            "rows": [["SECRET_CELL_9f3a"]],
+            "row_count": 1,
+        });
+        let shape = result_shape_of(&result).expect("row result has a shape");
+        assert_eq!(shape.columns.len(), MAX_RECORDED_COLUMNS);
+        assert!(
+            shape
+                .columns
+                .iter()
+                .all(|column| column.len() <= MAX_RECORDED_COLUMN_NAME_BYTES)
+        );
+        assert!(
+            !serde_json::to_string(&shape)
+                .expect("shape serializes")
+                .contains("SECRET_CELL_9f3a")
         );
     }
 }

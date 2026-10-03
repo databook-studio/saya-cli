@@ -165,10 +165,25 @@ pub(super) async fn execute(
     arguments: Value,
     definition: Option<&ToolDefinition>,
 ) -> (Value, String) {
-    match tools.execute(name, arguments.clone()).await {
+    let (result, summary, _) =
+        execute_with_outcome(tools, name, arguments, definition, MAX_TOOL_MESSAGE_BYTES).await;
+    (result, summary)
+}
+
+pub(super) async fn execute_with_outcome(
+    tools: &dyn ToolExecutor,
+    name: &str,
+    arguments: Value,
+    definition: Option<&ToolDefinition>,
+    result_cap: usize,
+) -> (Value, String, bool) {
+    match tools
+        .execute_with_result_cap(name, arguments.clone(), result_cap)
+        .await
+    {
         Ok(value) => {
             let (completed, _) = completion_summaries(definition, name, &arguments, Some(&value));
-            (value, completed)
+            (value, completed, true)
         }
         // The reason reaches the model so it can adjust (e.g. a
         // safety-layer rejection naming what is not allowed); the bounded,
@@ -177,7 +192,11 @@ pub(super) async fn execute(
         Err(error) => {
             let (_, failed) = completion_summaries(definition, name, &arguments, None);
             let summary = failure_summary_with_reason(&failed, &error.to_string());
-            (serde_json::json!({"error": error.to_string()}), summary)
+            (
+                serde_json::json!({"error": error.to_string()}),
+                summary,
+                false,
+            )
         }
     }
 }
@@ -197,20 +216,97 @@ pub(super) async fn execute_batch(
     tools: &dyn ToolExecutor,
     calls: &[ToolCall],
     definitions: &[ToolDefinition],
-) -> Vec<(Value, String)> {
+    result_caps: &[usize],
+) -> Vec<CompletedTool> {
     use futures_util::{StreamExt, stream};
-    let pending = calls.iter().map(|call| {
+    let pending = calls.iter().zip(result_caps).map(|(call, &cap)| {
         let definition = definitions
             .iter()
             .find(|definition| definition.name == call.name);
         let name = call.name.clone();
         let arguments = call.arguments.clone();
-        async move { execute(tools, &name, arguments, definition).await }
+        async move {
+            let (result, summary, succeeded) =
+                execute_with_outcome(tools, &name, arguments, definition, cap).await;
+            complete_tool(call.id.clone(), result, summary, succeeded, cap)
+        }
     });
     stream::iter(pending)
         .buffered(MAX_CONCURRENT_TOOL_CALLS)
         .collect()
         .await
+}
+
+/// A bounded, value-free completion retained after a tool finishes. The raw
+/// JSON result is shaped and dropped inside its future, before `buffered`
+/// stores an ordered completion behind a slow earlier call.
+pub(super) struct CompletedTool {
+    pub(super) message: ChatMessage,
+    pub(super) summary: String,
+    pub(super) succeeded: bool,
+    pub(super) truncated: bool,
+    pub(super) result_shape: Option<crate::ToolResultShape>,
+    pub(super) failure_reason: Option<String>,
+}
+
+pub(super) fn complete_tool(
+    id: String,
+    result: Value,
+    summary: String,
+    succeeded: bool,
+    cap: usize,
+) -> CompletedTool {
+    let result_shape = super::tool_record::result_shape_of(&result);
+    let failure_reason = (!succeeded).then(|| {
+        super::failed_statements::bound_error(
+            result
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        )
+    });
+    let shaped = shape_tool_result_at_cap(&result, cap);
+    CompletedTool {
+        message: ChatMessage {
+            role: "tool".into(),
+            content: shaped.text,
+            tool_calls: Vec::new(),
+            tool_call_id: Some(id),
+        },
+        summary: bound_summary(&summary),
+        succeeded,
+        truncated: shaped.truncated,
+        result_shape,
+        failure_reason,
+    }
+}
+
+const MAX_COMPLETION_SUMMARY_BYTES: usize = 1024;
+
+fn bound_summary(summary: &str) -> String {
+    if summary.len() <= MAX_COMPLETION_SUMMARY_BYTES {
+        return summary.to_owned();
+    }
+    truncated_text(summary, MAX_COMPLETION_SUMMARY_BYTES)
+}
+
+/// Deterministic per-call shares of one assistant turn's model-output budget.
+/// The shares sum to at most `min(context_byte_budget, 256 KiB)` and each
+/// preserves the existing 64 KiB hard ceiling.
+pub(super) fn turn_result_caps(context_byte_budget: usize, calls: usize) -> Vec<usize> {
+    const MAX_TURN_TOOL_RESULT_BYTES: usize = 256 * 1024;
+    if calls == 0 {
+        return Vec::new();
+    }
+    let total = context_byte_budget.min(MAX_TURN_TOOL_RESULT_BYTES);
+    let each = total / calls;
+    let remainder = total % calls;
+    (0..calls)
+        .map(|index| {
+            each.saturating_add(usize::from(index < remainder))
+                .min(MAX_TOOL_MESSAGE_BYTES)
+        })
+        .collect()
 }
 
 /// Ceiling on how many tool calls from a single assistant message run at the
@@ -335,14 +431,19 @@ pub struct ShapedToolResult {
 /// `byte_budget` (the run's `AgentLimits::context_byte_budget`; the per-message
 /// cap is derived inside, matching the loop). See [`ShapedToolResult`].
 pub fn shape_tool_result(value: &Value, byte_budget: usize) -> ShapedToolResult {
-    let cap = tool_message_cap(byte_budget);
-    let (content, truncated) = bounded_json(value, cap);
+    shape_tool_result_at_cap(value, tool_message_cap(byte_budget))
+}
+
+pub(super) fn shape_tool_result_at_cap(value: &Value, cap: usize) -> ShapedToolResult {
+    let (content, serialized_truncated) = bounded_json(value, cap);
     let (content, redactions) = redact_counted(&content);
-    let text = if redactions > 0 {
+    let decorated = if redactions > 0 {
         format!("{}\n\n{content}", redaction_note(redactions))
     } else {
         content
     };
+    let truncated = serialized_truncated || decorated.len() > cap;
+    let text = fit_text(&decorated, cap);
     ShapedToolResult {
         text,
         truncated,
@@ -378,19 +479,64 @@ pub fn tool_message_cap(byte_budget: usize) -> usize {
 pub const MAX_TOOL_MESSAGE_BYTES: usize = 65_536;
 
 fn bounded_json(value: &Value, cap: usize) -> (String, bool) {
-    let text = serde_json::to_string(value)
-        .unwrap_or_else(|_| "{\"error\":\"tool result unavailable\"}".into());
+    let mut writer = BoundedWriter::new(cap);
+    let written = serde_json::to_writer(&mut writer, value).is_ok();
+    let text = String::from_utf8(writer.bytes).unwrap_or_default();
+    if written {
+        return (text, false);
+    }
+    (truncated_text(&text, cap), true)
+}
+
+/// A deliberately small, ASCII marker: its prefix is still visible at every
+/// non-zero byte budget, unlike a multi-byte ellipsis.
+const TRUNCATION_MARKER: &str = "...[truncated]";
+
+/// Fits already-formed model text into `cap`, retaining a visible truncation
+/// marker. This is also used after redaction because its note may add bytes.
+fn fit_text(text: &str, cap: usize) -> String {
     if text.len() <= cap {
-        (text, false)
-    } else {
-        // Truncate the serialized result to `cap` and append a visible marker
-        // so the model knows the data was cut, preserving the leading bytes it
-        // can still reason about instead of discarding the whole result.
-        let marker = "…[truncated: tool result exceeded the conversation byte budget]";
-        let head = cap.saturating_sub(marker.len());
-        let mut truncated = String::from(&text[..floor_boundary(&text, head)]);
-        truncated.push_str(marker);
-        (truncated, true)
+        return text.to_owned();
+    }
+    let marker = &TRUNCATION_MARKER[..cap.min(TRUNCATION_MARKER.len())];
+    let head = floor_boundary(text, cap.saturating_sub(marker.len()));
+    format!("{}{marker}", &text[..head])
+}
+
+fn truncated_text(text: &str, cap: usize) -> String {
+    let marker = &TRUNCATION_MARKER[..cap.min(TRUNCATION_MARKER.len())];
+    let head = floor_boundary(text, cap.saturating_sub(marker.len()));
+    format!("{}{marker}", &text[..head])
+}
+
+struct BoundedWriter {
+    bytes: Vec<u8>,
+    cap: usize,
+}
+
+impl BoundedWriter {
+    fn new(cap: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(cap),
+            cap,
+        }
+    }
+}
+
+impl std::io::Write for BoundedWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.bytes.len().saturating_add(bytes.len()) > self.cap {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "tool result limit",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

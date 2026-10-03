@@ -89,4 +89,16 @@ pub trait ToolExecutor: Send + Sync {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError>;
+
+    /// Executes with the exact model-result cap assigned to this call. Existing
+    /// executors need no context and keep `execute`; executors that publish a
+    /// model-view side channel can use this to apply the same cut.
+    async fn execute_with_result_cap(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        _result_cap: usize,
+    ) -> Result<serde_json::Value, ToolError> {
+        self.execute(name, arguments).await
+    }
 }
