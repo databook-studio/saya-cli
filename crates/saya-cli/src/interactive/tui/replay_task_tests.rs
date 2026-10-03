@@ -818,7 +818,12 @@ fn detached_refresh_export_writes_no_file() {
         let mut state = SessionState::new("test", None, "model");
         let store = session_store(&dir);
         let (tx, rx) = mpsc::channel();
-        app.sql_task = Some((rx, export_task(&path), Instant::now()));
+        app.sql_task = Some((
+            rx,
+            export_task(&path),
+            Instant::now(),
+            saya_agent::CancellationToken::new(),
+        ));
         tx.send(TerminalEvent::QueryResult {
             result: sample_result(),
         })
@@ -837,7 +842,12 @@ fn detached_refresh_export_writes_no_file() {
         let mut state = SessionState::new("test", None, "model");
         let store = session_store(&dir);
         let (tx, rx) = mpsc::channel();
-        app.sql_task = Some((rx, export_task(&path), Instant::now()));
+        app.sql_task = Some((
+            rx,
+            export_task(&path),
+            Instant::now(),
+            saya_agent::CancellationToken::new(),
+        ));
         app.request.started = Some(Instant::now());
         app.request.activity = Some("query".into());
         app.detach_sql_task();
@@ -854,7 +864,7 @@ fn detached_refresh_export_writes_no_file() {
         );
         let system = last_block(&app.transcript, BlockKind::System).expect("detach is said");
         assert!(
-            system.contains("Detached the running query"),
+            system.contains("Cancellation requested; query detached"),
             "the detach message is present: {system}"
         );
         assert!(

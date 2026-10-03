@@ -132,9 +132,8 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             _ => {}
         }
     }
-    // Esc on a running direct-SQL command or saved-investigation replay detaches it —
-    // checked before the agent cancel path: `is_busy()` is also true while either runs,
-    // and neither has a cancellation token, so Esc must not claim cancellation.
+    // Esc requests cancellation for direct SQL and detaches it, or detaches a
+    // saved-investigation replay — both checks precede the agent cancel path.
     if code == KeyCode::Esc && app.detach_in_flight_query() {
         return;
     }
@@ -195,9 +194,10 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     app.ctrl_c_armed = false;
     match code {
         KeyCode::Char('c') if ctrl => {
-            // A running direct-SQL command or replay is detached (not cancelled); an agent
-            // stream is cancelled; otherwise Ctrl+C clears input or arms a quit. The
-            // query check comes first because `is_busy()` is true while either runs.
+            // A running direct-SQL command receives a cancellation request and
+            // detaches; replay detaches; agent streams cancel. Otherwise Ctrl+C
+            // clears input or arms a quit. Query checks come first because
+            // `is_busy()` covers those workers.
             if app.detach_in_flight_query() {
                 return;
             }
