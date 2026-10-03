@@ -1,5 +1,49 @@
 use saya_cli::{GlobalOptions, approval_name};
 
+#[cfg(unix)]
+struct InteractiveChildGuard(Option<std::process::Child>);
+
+#[cfg(unix)]
+impl Drop for InteractiveChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            if child.try_wait().unwrap().is_none() {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn drain_provider_request(stream: &mut std::net::TcpStream) {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        if let Some(head) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            let length = String::from_utf8_lossy(&bytes[..head])
+                .lines()
+                .find_map(|line| match line.split_once(':') {
+                    Some((name, value)) if name.eq_ignore_ascii_case("content-length") => {
+                        value.trim().parse::<usize>().ok()
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0);
+            if bytes.len() >= head + 4 + length {
+                return;
+            }
+        }
+        let count = stream.read(&mut chunk).expect("provider request reads");
+        if count == 0 {
+            return;
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+}
+
 #[test]
 fn scripted_repl_persists_and_continues_a_redacted_session() {
     use std::io::Write;
@@ -90,18 +134,6 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         time::{Duration, Instant},
     };
 
-    struct ChildGuard(Option<Child>);
-    impl Drop for ChildGuard {
-        fn drop(&mut self) {
-            if let Some(mut child) = self.0.take() {
-                if child.try_wait().unwrap().is_none() {
-                    let _ = child.kill();
-                }
-                let _ = child.wait();
-            }
-        }
-    }
-
     fn wait_with_deadline(child: &mut Child, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         loop {
@@ -110,32 +142,6 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
             }
             assert!(Instant::now() < deadline, "interactive child did not exit");
             thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    fn drain_request(stream: &mut std::net::TcpStream) {
-        let mut bytes = Vec::new();
-        let mut chunk = [0_u8; 4096];
-        loop {
-            if let Some(head) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-                let length = String::from_utf8_lossy(&bytes[..head])
-                    .lines()
-                    .find_map(|line| match line.split_once(':') {
-                        Some((name, value)) if name.eq_ignore_ascii_case("content-length") => {
-                            value.trim().parse::<usize>().ok()
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(0);
-                if bytes.len() >= head + 4 + length {
-                    return;
-                }
-            }
-            let count = stream.read(&mut chunk).expect("provider request reads");
-            if count == 0 {
-                return;
-            }
-            bytes.extend_from_slice(&chunk[..count]);
         }
     }
 
@@ -166,7 +172,7 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         first
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        drain_request(&mut first);
+        drain_provider_request(&mut first);
         let first_body = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"first answer\"}}]}\n\n",
             "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\n",
@@ -197,7 +203,7 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         second
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        drain_request(&mut second);
+        drain_provider_request(&mut second);
         let second_body =
             "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":0}}\n\n";
         write!(
@@ -230,7 +236,7 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         .env("SAYA_MODEL", "mock-model")
         .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
         .env("SAYA_API_KEY", "mock-secret");
-    let mut guard = ChildGuard(Some(command.spawn().unwrap()));
+    let mut guard = InteractiveChildGuard(Some(command.spawn().unwrap()));
     let child = guard.0.as_mut().unwrap();
 
     // Drain stdout/stderr so the child never blocks on a full pipe.
@@ -326,4 +332,260 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
     assert!(usage.contains("1 turn"), "usage: {usage}");
     let _ = std::fs::remove_dir_all(config_root);
     let _ = std::fs::remove_dir_all(session_root);
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_provider_error_keeps_same_question_settled_usage_once() {
+    use std::{
+        fs,
+        io::{self, Read, Write},
+        net::TcpListener,
+        process::{Command, Stdio},
+        sync::{Arc, Mutex, mpsc},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    fn wait_for(buffer: &Arc<Mutex<Vec<u8>>>, needle: &[u8], label: &str) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if buffer
+                .lock()
+                .unwrap()
+                .windows(needle.len())
+                .any(|window| window == needle)
+            {
+                return;
+            }
+            assert!(Instant::now() < deadline, "did not observe {label}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!(
+        "saya-cli-terminal-usage-{}-{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let database = root.join("data.sqlite3");
+    fs::File::create(&database).unwrap();
+    let connections = root.join("connections.toml");
+    fs::write(
+        &connections,
+        format!(
+            "[profiles.local]\ntype = 'sqlite'\npath = '{}'\n",
+            database.display()
+        ),
+    )
+    .unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let (second_request_tx, second_request_rx) = mpsc::channel();
+    let (marker_seen_tx, marker_seen_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        fn accept(listener: &TcpListener) -> Option<std::net::TcpStream> {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => return Some(stream),
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return None;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return None,
+                }
+            }
+        }
+
+        let Some(mut first) = accept(&listener) else {
+            return;
+        };
+        first
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        drain_provider_request(&mut first);
+        let first_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"sql-1\",\"function\":{\"name\":\"bounded_sql_query\",\"arguments\":\"{\\\"sql\\\":\\\"SELECT 1 AS value\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        write!(
+            first,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{first_body}",
+            first_body.len()
+        )
+        .unwrap();
+        first.flush().unwrap();
+
+        let Some(mut second) = accept(&listener) else {
+            return;
+        };
+        second
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        drain_provider_request(&mut second);
+        second_request_tx.send(()).unwrap();
+        write!(
+            second,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        // `Usage` is queued before the visible delta. Seeing the delta in the
+        // child proves the real stream delivered that earlier receipt; only
+        // then does this source issue its terminal collection-limit error.
+        second
+            .write_all(
+                b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"terminal-marker\"}}]}\n\n",
+            )
+            .unwrap();
+        second.flush().unwrap();
+        if marker_seen_rx.recv_timeout(Duration::from_secs(5)).is_err() {
+            return;
+        }
+        let calls = (0..=256)
+            .map(|index| {
+                format!(
+                    "{{\"index\":{index},\"id\":\"limit-{index}\",\"function\":{{\"name\":\"bounded_sql_query\",\"arguments\":\"{{}}\"}}}}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        write!(
+            second,
+            "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{calls}]}}}}]}}\n\n"
+        )
+        .unwrap();
+        second.flush().unwrap();
+        drop(second);
+
+        let Some(mut third) = accept(&listener) else {
+            return;
+        };
+        third
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        drain_provider_request(&mut third);
+        let third_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"normal-marker\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":1}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        write!(
+            third,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{third_body}",
+            third_body.len()
+        )
+        .unwrap();
+        third.flush().unwrap();
+    });
+
+    let session_root = root.join("sessions");
+    let state_db = root.join("state.sqlite3");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
+    command
+        .args([
+            "--format",
+            "text",
+            "--approval-mode",
+            "read-only",
+            "--allow-data-sharing",
+            "--profile",
+            "local",
+            "--connections",
+            connections.to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .env("SAYA_SESSION_DIR", &session_root)
+        .env("SAYA_STATE_DB", &state_db)
+        .env("SAYA_PROVIDER", "openai_compatible")
+        .env("SAYA_MODEL", "mock-model")
+        .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
+        .env("SAYA_API_KEY", "mock-secret");
+    let mut guard = InteractiveChildGuard(Some(command.spawn().unwrap()));
+    let (mut stdin, stdout_reader, stderr_reader) = {
+        let child = guard.0.as_mut().unwrap();
+        (
+            child.stdin.take().unwrap(),
+            child.stdout.take().unwrap(),
+            child.stderr.take().unwrap(),
+        )
+    };
+    let stdout = Arc::new(Mutex::new(Vec::new()));
+    let stdout_sink = stdout.clone();
+    let stdout_pump = thread::spawn(move || {
+        let mut reader = stdout_reader;
+        let mut chunk = [0_u8; 4096];
+        while let Ok(size) = reader.read(&mut chunk) {
+            if size == 0 {
+                break;
+            }
+            stdout_sink
+                .lock()
+                .unwrap()
+                .extend_from_slice(&chunk[..size]);
+        }
+    });
+    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let stderr_sink = stderr.clone();
+    let stderr_pump = thread::spawn(move || {
+        let mut reader = stderr_reader;
+        let mut chunk = [0_u8; 4096];
+        while let Ok(size) = reader.read(&mut chunk) {
+            if size == 0 {
+                break;
+            }
+            stderr_sink
+                .lock()
+                .unwrap()
+                .extend_from_slice(&chunk[..size]);
+        }
+    });
+    stdin.write_all(b"run a safe query\n").unwrap();
+    stdin.flush().unwrap();
+
+    second_request_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the completed SQLite tool should prompt the next provider response");
+    wait_for(&stdout, b"terminal-marker", "second response marker");
+    marker_seen_tx.send(()).unwrap();
+    wait_for(&stderr, b"tool call", "terminal provider error");
+    stdin.write_all(b"complete normally\n").unwrap();
+    stdin.flush().unwrap();
+    wait_for(&stdout, b"normal-marker", "normal completion marker");
+    server.join().unwrap();
+
+    stdin.write_all(b"/usage\n/exit\n").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while guard.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "interactive child did not exit");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let status = guard.0.take().unwrap().wait().unwrap();
+    assert!(
+        status.success(),
+        "terminal source error stays in the session"
+    );
+    stdout_pump.join().unwrap();
+    stderr_pump.join().unwrap();
+
+    let output = String::from_utf8_lossy(&stdout.lock().unwrap()).into_owned();
+    let errors = String::from_utf8_lossy(&stderr.lock().unwrap()).into_owned();
+    assert!(output.contains("bounded_sql_query"), "output: {output}");
+    assert!(errors.contains("tool call"), "stderr: {errors}");
+    assert!(output.contains("Input tokens: 21"), "usage: {output}");
+    assert!(output.contains("Output tokens: 6"), "usage: {output}");
+    assert!(output.contains("2 turns"), "usage: {output}");
+    assert!(!output.contains("3 turns"), "usage double folded: {output}");
+    let _ = fs::remove_dir_all(root);
 }
