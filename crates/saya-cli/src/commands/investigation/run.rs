@@ -307,6 +307,12 @@ pub(super) async fn run(
                 format,
             )
             .await;
+            // The query and its success audit are already real. A stop can
+            // arrive while the audit is awaited; preserve that audit, but do
+            // not promote the result into replay evidence or review state.
+            if is_cancelled(request.cancellation) {
+                return stopped(format);
+            }
             let (param_names, params_sha256) = bindings::evidence_fields(&bound);
             let evidence = ExecutionEvidence::for_result(
                 &result,
