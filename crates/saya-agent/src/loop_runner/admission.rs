@@ -9,6 +9,7 @@ pub(super) struct Admission {
     pub(super) tool_calls: u64,
     pub(super) reported_tokens: Option<u64>,
     pub(super) controlled: bool,
+    initialized: bool,
     pub(super) legacy: legacy::LegacyAdmission,
 }
 
@@ -20,14 +21,37 @@ impl Admission {
             tool_calls: 0,
             reported_tokens: None,
             controlled,
+            initialized: false,
             legacy: legacy::LegacyAdmission::default(),
         }
     }
 
-    pub(super) async fn initialize(&self, sink: &dyn AgentEventSink) {
-        if self.controlled {
+    pub(super) fn begin_invocation(&mut self) {
+        self.legacy = legacy::LegacyAdmission::default();
+    }
+
+    pub(super) async fn initialize(&mut self, sink: &dyn AgentEventSink) {
+        if self.controlled && !self.initialized {
             sink.observe_answering(AnsweringObservation::Initialized)
                 .await;
+            self.initialized = true;
+        }
+    }
+
+    pub(super) fn cancellation_error(
+        reason: Option<CancellationReason>,
+        controlled: bool,
+    ) -> Option<AgentError> {
+        match reason {
+            None => None,
+            Some(CancellationReason::Budget(_)) if controlled => {
+                Some(AgentError::Limit("answering budget stopped"))
+            }
+            Some(
+                CancellationReason::User
+                | CancellationReason::Budget(_)
+                | CancellationReason::OwnerFailure,
+            ) => Some(AgentError::Cancelled),
         }
     }
 
@@ -101,13 +125,8 @@ impl Admission {
     }
 
     pub(super) fn check(&self, token: &CancellationToken) -> Result<(), AgentError> {
-        match token.reason() {
-            Some(CancellationReason::User) => Err(AgentError::Cancelled),
-            Some(CancellationReason::Budget(_)) if !self.controlled => Err(AgentError::Cancelled),
-            Some(CancellationReason::Budget(_)) => {
-                Err(AgentError::Limit("answering budget stopped"))
-            }
-            Some(CancellationReason::OwnerFailure) => Err(AgentError::Cancelled),
+        match Self::cancellation_error(token.reason(), self.controlled) {
+            Some(error) => Err(error),
             None => Ok(()),
         }
     }

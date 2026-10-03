@@ -14,8 +14,8 @@ pub use agent_entry::run_agent;
 pub use history::{build_messages, turn_bytes};
 pub use history_context::render_untrusted_block;
 pub use loop_runner::{
-    AgentError, AgentLimits, AgentOutput, AgentRunControl, AnsweringLimits, DESIGNATE_ANSWER_TOOL,
-    EnvBudgets, MAX_CLARIFICATION_OPTION_CHARS, MAX_CLARIFICATION_OPTIONS,
+    AgentError, AgentLimits, AgentOutput, AgentRunControl, AnsweringLimits, AnsweringScope,
+    DESIGNATE_ANSWER_TOOL, EnvBudgets, MAX_CLARIFICATION_OPTION_CHARS, MAX_CLARIFICATION_OPTIONS,
     MAX_CLARIFICATION_QUESTION_CHARS, MAX_TOOL_MESSAGE_BYTES, REQUEST_CLARIFICATION_TOOL,
     ShapedToolResult, budgets_from_env, run_agent_with_control, run_agent_with_sink,
     shape_tool_result, tool_message_cap,

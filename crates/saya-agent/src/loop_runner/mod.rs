@@ -31,7 +31,7 @@ use crate::{
 };
 
 use control::AgentRunInvocation;
-pub use control::{AgentRunControl, AnsweringLimits};
+pub use control::{AgentRunControl, AnsweringLimits, AnsweringScope};
 pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
@@ -110,12 +110,26 @@ pub async fn run_agent_with_control<'a>(
         approval: control.approval,
         sink: control.sink,
         cancellation: control.cancellation,
-        answering: Some(control.answering),
+        answering: Some(control.answering_scope),
     })
     .await
 }
 
 async fn run_agent_inner(invocation: AgentRunInvocation<'_>) -> Result<AgentOutput, AgentError> {
+    if let Some(scope) = invocation.answering.clone() {
+        let mut admission = scope.lock().await?;
+        admission.begin_invocation();
+        run_agent_loop(invocation, &mut admission).await
+    } else {
+        let mut admission = admission::Admission::new(AnsweringLimits::default(), false);
+        run_agent_loop(invocation, &mut admission).await
+    }
+}
+
+async fn run_agent_loop(
+    invocation: AgentRunInvocation<'_>,
+    admission: &mut admission::Admission,
+) -> Result<AgentOutput, AgentError> {
     let AgentRunInvocation {
         provider,
         tools,
@@ -128,7 +142,6 @@ async fn run_agent_inner(invocation: AgentRunInvocation<'_>) -> Result<AgentOutp
         answering,
     } = invocation;
     let controlled = answering.is_some();
-    let mut admission = admission::Admission::new(answering.unwrap_or_default(), controlled);
     admission.initialize(sink).await;
     if controlled {
         admission.check(&cancellation)?;
@@ -185,7 +198,7 @@ async fn run_agent_inner(invocation: AgentRunInvocation<'_>) -> Result<AgentOutp
                 &cancellation,
                 &mut events,
                 &mut usage,
-                &mut admission,
+                admission,
                 used_bounded_sql_query,
                 tool_metadata,
                 designation.sql.clone().or(last_successful_sql),
@@ -206,7 +219,7 @@ async fn run_agent_inner(invocation: AgentRunInvocation<'_>) -> Result<AgentOutp
             sink,
             cancellation: &cancellation,
             events: &mut events,
-            admission: &mut admission,
+            admission,
         })
         .await
         {
@@ -376,7 +389,7 @@ async fn run_agent_inner(invocation: AgentRunInvocation<'_>) -> Result<AgentOutp
                 &cancellation,
                 &mut events,
                 &mut usage,
-                &mut admission,
+                admission,
                 used_bounded_sql_query,
                 tool_metadata,
                 designation.sql.clone().or(last_successful_sql),
