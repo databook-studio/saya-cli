@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use saya_agent::{ApprovalDecider, CancellationToken, ChatProvider, ToolDefinition, ToolExecutor};
 use saya_store::RunStore;
-use saya_types::{RunFailureCode, RunId};
+use saya_types::{PauseReason, RunFailureCode, RunId};
 use thiserror::Error;
 
 use crate::{HarnessError, journal::Journal};
@@ -34,6 +34,15 @@ pub enum EpisodeError {
     /// The user cancelled the run; the run was recorded cancelled.
     #[error("run cancelled during step {step}")]
     Cancelled { step: usize },
+
+    /// A budget stopped the run after the active episode had settled.
+    #[error("run paused during step {step}: {reason:?}")]
+    BudgetStopped { step: usize, reason: PauseReason },
+
+    /// An internal owner stopped the active episode; no user or budget
+    /// lifecycle reason can be inferred from that signal.
+    #[error("run owner failed during step {step}")]
+    OwnerFailure { step: usize },
 
     /// The run cannot begin a step in its current state: `planned` has no
     /// approval to run under, a later step cannot begin an unstarted run,

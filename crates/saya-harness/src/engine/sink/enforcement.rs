@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use saya_agent::BudgetDimension;
 use saya_types::PauseReason;
 
 use super::EngineEventSink;
@@ -6,6 +9,23 @@ use crate::engine::{
 };
 
 impl EngineEventSink {
+    /// Remaining time from the sink's authoritative clock. Observing before
+    /// reading makes the driver's independent timer include time with no
+    /// provider events.
+    pub(in crate::engine) fn time_remaining(&self) -> Option<Duration> {
+        if let Err(error) = self.observe_elapsed_clock(false) {
+            self.hold_diagnostic(error);
+            self.request_budget_stop(BudgetDimension::ElapsedTime);
+            return Some(Duration::ZERO);
+        }
+        let elapsed = self.elapsed_clock.lock().expect("engine sink clock lock");
+        if let Some(clock) = elapsed.as_ref() {
+            return Some(clock.remaining());
+        }
+        self.deadline
+            .map(|deadline| deadline.saturating_duration_since((self.clock)()))
+    }
+
     pub(super) fn observe_elapsed_clock(&self, force: bool) -> Result<bool, EngineSinkError> {
         let mut clock = self.elapsed_clock.lock().expect("engine sink clock lock");
         let Some(clock) = clock.as_mut() else {
@@ -28,10 +48,9 @@ impl EngineEventSink {
 }
 
 impl EngineEventSink {
-    /// The per-tick budget checks, armed while the run executes. Past any
-    /// ceiling the tick pauses the run exactly like any other transition;
-    /// emit has no error channel, so any failure the pause meets is held as
-    /// a diagnostic rather than dropped.
+    /// The per-tick budget checks, armed while the run executes. A controlled
+    /// sink signals its shared token and leaves the lifecycle to the driver
+    /// after settlement; an unattached legacy sink pauses on the tick.
     ///
     /// Tokens are checked after the fold, never before: the tokens an event
     /// reports were already spent, so the ceiling is a stop-after, not a
@@ -52,20 +71,34 @@ impl EngineEventSink {
             Ok(expired) => expired,
             Err(error) => {
                 self.hold_diagnostic(error);
+                if self.request_budget_stop(BudgetDimension::ElapsedTime) {
+                    return;
+                }
                 true
             }
         };
-        let reason = if self.tokens_exhausted() || self.downloads_exhausted() {
-            PauseReason::BudgetExhausted
+        let stop = if self.tokens_exhausted() {
+            Some((
+                BudgetDimension::ReportedTokens,
+                PauseReason::BudgetExhausted,
+            ))
+        } else if self.downloads_exhausted() {
+            Some((BudgetDimension::DownloadBytes, PauseReason::BudgetExhausted))
         } else if clock_expired
             || self
                 .deadline
                 .is_some_and(|deadline| (self.clock)() >= deadline)
         {
-            PauseReason::WallClockExceeded
+            Some((BudgetDimension::ElapsedTime, PauseReason::WallClockExceeded))
         } else {
+            None
+        };
+        let Some((dimension, reason)) = stop else {
             return;
         };
+        if self.request_budget_stop(dimension) {
+            return;
+        }
         if let Err(error) = self.record(TransitionEvent::Pause(reason)).await {
             self.hold_diagnostic(error);
             self.set_state(RunState::Paused);

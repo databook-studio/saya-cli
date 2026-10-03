@@ -27,6 +27,7 @@ pub use contract::{
 };
 pub use retry::MAX_EPISODE_ATTEMPTS;
 
+use saya_agent::{BudgetDimension, CancellationReason};
 use saya_types::{PauseReason, RunPlan};
 
 use crate::workspace::Workspace;
@@ -77,6 +78,37 @@ impl<'a> EpisodeDriver<'a> {
         step: usize,
         workspace: &Workspace,
     ) -> Result<(), EpisodeError> {
+        let remaining = sink.time_remaining();
+        let active = self.run_step_inner(sink, plan, step, workspace);
+        tokio::pin!(active);
+        if remaining.is_some_and(|remaining| remaining.is_zero()) {
+            self.collaborators
+                .cancellation
+                .cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+        }
+        if let Some(remaining) = remaining.filter(|remaining| !remaining.is_zero()) {
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep(remaining) => {
+                    self.collaborators.cancellation.cancel_with_reason(CancellationReason::Budget(
+                        BudgetDimension::ElapsedTime,
+                    ));
+                    active.await
+                }
+                result = &mut active => result,
+            }
+        } else {
+            active.await
+        }
+    }
+
+    async fn run_step_inner(
+        &self,
+        sink: &EngineEventSink,
+        plan: &RunPlan,
+        step: usize,
+        workspace: &Workspace,
+    ) -> Result<(), EpisodeError> {
         if step >= plan.steps.len() {
             return Err(EpisodeError::OutOfRange {
                 step,
@@ -101,11 +133,30 @@ impl<'a> EpisodeDriver<'a> {
             RunState::Executing => {}
             state => return Err(EpisodeError::NotRunnable { step, state }),
         }
+        if let Some(reason) = self.collaborators.cancellation.reason() {
+            return self.settle_stop(sink, step, reason).await;
+        }
         let mut attempt = 0;
         loop {
+            if self.collaborators.cancellation.is_cancelled() {
+                return self
+                    .settle_stop(
+                        sink,
+                        step,
+                        self.collaborators.cancellation.reason().unwrap(),
+                    )
+                    .await;
+            }
             attempt += 1;
             retry::mark_started(&self.run, step).await?;
-            match retry::drive_attempt(self, sink, plan, step, workspace).await {
+            if let Some(reason) = self.collaborators.cancellation.reason() {
+                return self.settle_stop(sink, step, reason).await;
+            }
+            let result = retry::drive_attempt(self, sink, plan, step, workspace).await;
+            if let Some(reason) = self.collaborators.cancellation.reason() {
+                return self.settle_stop(sink, step, reason).await;
+            }
+            match result {
                 Ok(_) => {
                     // The step's declared deliverables become the artifact
                     // manifest at completion: resolved against the workspace
@@ -121,6 +172,9 @@ impl<'a> EpisodeDriver<'a> {
                         retry::record_deliverables(&self.run, step, deliverables)?;
                     }
                     retry::mark_completed(&self.run, step).await?;
+                    if let Some(reason) = self.collaborators.cancellation.reason() {
+                        return self.settle_stop(sink, step, reason).await;
+                    }
                     if step + 1 == plan.steps.len() {
                         sink.record(TransitionEvent::Complete)
                             .await
@@ -151,6 +205,34 @@ impl<'a> EpisodeDriver<'a> {
                     }
                 }
             }
+        }
+    }
+
+    async fn settle_stop(
+        &self,
+        sink: &EngineEventSink,
+        step: usize,
+        reason: CancellationReason,
+    ) -> Result<(), EpisodeError> {
+        match reason {
+            CancellationReason::User => {
+                sink.record(TransitionEvent::Cancel)
+                    .await
+                    .map_err(|source| EpisodeError::Transition { source })?;
+                Err(EpisodeError::Cancelled { step })
+            }
+            CancellationReason::Budget(dimension) => {
+                let reason = if dimension == BudgetDimension::ElapsedTime {
+                    PauseReason::WallClockExceeded
+                } else {
+                    PauseReason::BudgetExhausted
+                };
+                sink.record(TransitionEvent::Pause(reason))
+                    .await
+                    .map_err(|source| EpisodeError::Transition { source })?;
+                Err(EpisodeError::BudgetStopped { step, reason })
+            }
+            CancellationReason::OwnerFailure => Err(EpisodeError::OwnerFailure { step }),
         }
     }
 }

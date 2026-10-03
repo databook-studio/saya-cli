@@ -6,14 +6,49 @@
 
 use super::{CancelOutcome, record_cancelled};
 use crate::cli::RunCommand;
-use crate::commands::run_management;
+use crate::commands::{
+    run::{HostRun, RunRequest, start_for_panel},
+    run_management,
+};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 use saya_harness::journal::Journal;
+use saya_harness::lock::RunLock;
 use saya_harness::run_dir::RunDir;
 use saya_store::{NewRun, RunBudgets, RunCapabilityFlags, RunStatus, RunStore, SqliteStateStore};
-use saya_types::{RunEvent, RunId};
-use std::{collections::BTreeMap, fs, path::Path, path::PathBuf};
+use saya_types::{Capabilities, RunEvent, RunId, RunPlan, StepSpec};
+use std::{collections::BTreeMap, ffi::OsString, fs, path::Path, path::PathBuf, time::Duration};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+    sync::{Mutex, oneshot},
+};
+
+static RUNS_DIR_TEST_LOCK: Mutex<()> = Mutex::const_new(());
+
+struct RunsDirEnv(Option<OsString>);
+
+impl RunsDirEnv {
+    fn set(path: PathBuf) -> Self {
+        let previous = std::env::var_os("SAYA_RUNS_DIR");
+        // SAFETY: both tests that mutate this variable hold the shared test
+        // mutex and restore it through this guard before returning.
+        unsafe { std::env::set_var("SAYA_RUNS_DIR", path) };
+        Self(previous)
+    }
+}
+
+impl Drop for RunsDirEnv {
+    fn drop(&mut self) {
+        match self.0.take() {
+            // SAFETY: the two test callers retain RUNS_DIR_TEST_LOCK through
+            // this guard's drop, serializing process-environment mutation.
+            Some(value) => unsafe { std::env::set_var("SAYA_RUNS_DIR", value) },
+            // SAFETY: same serialized test scope as the restore arm above.
+            None => unsafe { std::env::remove_var("SAYA_RUNS_DIR") },
+        }
+    }
+}
 
 pub(in crate::commands::run) fn temp_root(label: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
@@ -115,13 +150,9 @@ async fn durable_record(
 /// reports it already finished, not a second cancellation.
 #[tokio::test]
 async fn the_panel_stop_and_saya_run_cancel_write_the_same_record() {
+    let _env_lock = RUNS_DIR_TEST_LOCK.lock().await;
     let root = temp_root("parity");
-    // `runs_dir()` resolves `SAYA_RUNS_DIR` at call time; this is the only
-    // unit test in this crate that touches it, and it restores on exit.
-    let previous = std::env::var_os("SAYA_RUNS_DIR");
-    // SAFETY: single-threaded test-local mutation; `previous` is restored
-    // before the function returns, and no other unit test reads the variable.
-    unsafe { std::env::set_var("SAYA_RUNS_DIR", root.join("runs")) };
+    let _runs_dir = RunsDirEnv::set(root.join("runs"));
     let store = SqliteStateStore::new(root.join("state.sqlite3"));
     let runtime = runtime_at(&root);
     let panel_run = seed_claimed_run(&root, &store, "r-panel-cancel").await;
@@ -172,15 +203,258 @@ async fn the_panel_stop_and_saya_run_cancel_write_the_same_record() {
     .await
     .unwrap();
     assert_eq!(again, 0);
-    match previous {
-        Some(value) => {
-            // SAFETY: same single-threaded test scope as above.
-            unsafe { std::env::set_var("SAYA_RUNS_DIR", value) };
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn panel_start_keeps_run_lock_until_cancelled_plan_source_returns() {
+    let _env_lock = RUNS_DIR_TEST_LOCK.lock().await;
+    let root = temp_root("start-settlement");
+    let _runs_dir = RunsDirEnv::set(root.join("runs"));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (request_tx, request_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let plan = RunPlan::new(vec![
+        StepSpec::new("observe", Capabilities::default(), None, Vec::new(), None).unwrap(),
+    ])
+    .unwrap();
+    let plan_content = serde_json::to_string(&plan).unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let request = read_http_request(&mut socket).await;
+        let _ = request_tx.send(request);
+        release_rx.await.unwrap();
+        let body = format!(
+            "{}\n",
+            serde_json::json!({"message": {"content": plan_content}, "done": true})
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let mut runtime = runtime_at(&root);
+    let endpoint = runtime
+        .resolved
+        .endpoints
+        .get_mut(saya_config::ORCHESTRATOR_ROLE)
+        .unwrap();
+    endpoint.provider = saya_config::AiProvider::Ollama;
+    endpoint.base_url = Some(format!("http://{address}"));
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let run_id = RunId::parse("r-start-settlement").unwrap();
+    let cancellation = saya_agent::CancellationToken::default();
+    let approval = super::super::approval::PlanApproval::PreAuthorized;
+    let active = start_for_panel(
+        RunRequest {
+            run_id: run_id.clone(),
+            goal: Some("observe safely".into()),
+            allow: vec!["none".into()],
+            budget: Vec::new(),
+        },
+        &runtime,
+        RenderFormat::Text,
+        saya_agent::ApprovalPolicy::ReadOnly,
+        &store,
+        HostRun {
+            journal_wire: None,
+            agent_stream: None,
+            profile: None,
+            plan_approval: &approval,
+            cancellation: cancellation.clone(),
+        },
+    );
+    tokio::pin!(active);
+    let request = tokio::select! {
+        biased;
+        result = &mut active => panic!("panel start returned before the provider request: {result:?}"),
+        request = request_rx => request.unwrap(),
+    };
+    assert!(String::from_utf8_lossy(&request).contains("/api/chat"));
+
+    cancellation.cancel();
+    tokio::select! {
+        biased;
+        result = &mut active => panic!("panel start returned before source settlement: {result:?}"),
+        _ = tokio::task::yield_now() => {}
+    }
+    let lock = root.join("runs").join(run_id.as_str()).join("lock");
+    assert!(
+        RunLock::acquire(&lock).is_err(),
+        "the started run keeps its single-writer lock until its plan request returns"
+    );
+
+    release_tx.send(()).unwrap();
+    let code = tokio::time::timeout(Duration::from_secs(2), &mut active)
+        .await
+        .expect("panel drive settles after local provider response")
+        .unwrap();
+    assert_eq!(code, 130);
+    server.await.unwrap();
+    let events = Journal::open(root.join("runs").join(run_id.as_str()))
+        .read()
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::Cancelled))
+            .count(),
+        1
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::StepStarted { .. }))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn panel_start_maps_settled_wall_clock_stop_to_exit_six() {
+    let _env_lock = RUNS_DIR_TEST_LOCK.lock().await;
+    let root = temp_root("start-deadline");
+    let _runs_dir = RunsDirEnv::set(root.join("runs"));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (episode_tx, episode_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let plan_content = serde_json::to_string(
+        &RunPlan::new(vec![
+            StepSpec::new(
+                "wait for answer",
+                Capabilities::default(),
+                None,
+                Vec::new(),
+                None,
+            )
+            .unwrap(),
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    let server = tokio::spawn(async move {
+        let (mut planning, _) = listener.accept().await.unwrap();
+        let _ = read_http_request(&mut planning).await;
+        write_ollama_response(&mut planning, &plan_content).await;
+
+        let (mut episode, _) = listener.accept().await.unwrap();
+        let _ = read_http_request(&mut episode).await;
+        let _ = episode_tx.send(());
+        release_rx.await.unwrap();
+    });
+
+    let mut runtime = runtime_at(&root);
+    let endpoint = runtime
+        .resolved
+        .endpoints
+        .get_mut(saya_config::ORCHESTRATOR_ROLE)
+        .unwrap();
+    endpoint.provider = saya_config::AiProvider::Ollama;
+    endpoint.base_url = Some(format!("http://{address}"));
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let run_id = RunId::parse("r-start-deadline").unwrap();
+    let cancellation = saya_agent::CancellationToken::default();
+    let approval = super::super::approval::PlanApproval::PreAuthorized;
+    let active = start_for_panel(
+        RunRequest {
+            run_id: run_id.clone(),
+            goal: Some("wait safely".into()),
+            allow: vec!["none".into()],
+            budget: vec!["wall-clock=1".into()],
+        },
+        &runtime,
+        RenderFormat::Text,
+        saya_agent::ApprovalPolicy::ReadOnly,
+        &store,
+        HostRun {
+            journal_wire: None,
+            agent_stream: None,
+            profile: None,
+            plan_approval: &approval,
+            cancellation: cancellation.clone(),
+        },
+    );
+    tokio::pin!(active);
+    tokio::select! {
+        biased;
+        result = &mut active => panic!("panel start ended before the episode source began: {result:?}"),
+        started = episode_rx => started.unwrap(),
+    }
+    tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::select! {
+            biased;
+            result = &mut active => panic!("panel start ended before its stop token: {result:?}"),
+            _ = cancellation.cancelled() => {},
         }
-        None => {
-            // SAFETY: same single-threaded test scope as above.
-            unsafe { std::env::remove_var("SAYA_RUNS_DIR") };
+    })
+    .await
+    .expect("independent run deadline signals the panel's shared token");
+
+    let code = tokio::time::timeout(Duration::from_secs(2), &mut active)
+        .await
+        .expect("the local provider attempt settles")
+        .unwrap();
+    assert_eq!(code, 6);
+    let events = Journal::open(root.join("runs").join(run_id.as_str()))
+        .read()
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::Paused { .. }))
+            .count(),
+        1
+    );
+    assert!(events.contains(&RunEvent::Paused {
+        reason: saya_types::PauseReason::WallClockExceeded,
+    }));
+
+    release_tx.send(()).unwrap();
+    server.await.unwrap();
+    let _ = fs::remove_dir_all(root);
+}
+
+async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 2048];
+    loop {
+        let count = socket.read(&mut buffer).await.unwrap();
+        assert_ne!(count, 0, "provider request closes before headers complete");
+        request.extend_from_slice(&buffer[..count]);
+        let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&request[..end]);
+        let length = headers
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length: ")
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .expect("Ollama request has a content length");
+        if request.len() >= end + 4 + length {
+            return request;
         }
     }
-    let _ = fs::remove_dir_all(root);
+}
+
+async fn write_ollama_response(socket: &mut tokio::net::TcpStream, content: &str) {
+    let body = format!(
+        "{}\n",
+        serde_json::json!({"message": {"content": content}, "done": true})
+    );
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    socket.write_all(response.as_bytes()).await.unwrap();
 }

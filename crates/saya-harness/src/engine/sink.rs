@@ -4,8 +4,10 @@
 //! The episode driver hands this sink to `run_agent_with_sink`; every event
 //! the loop emits passes through [`EngineEventSink::emit`], and each
 //! emission is a tick. The sink counts usage across the run, journals the
-//! download wallet's spend as it grows, enforces the run's wall-clock
-//! deadline per tick, and records lifecycle transitions: each one advances
+//! download wallet's spend as it grows, enforces budgets per tick, and
+//! signals the attached episode owner when a controlled run must stop. A
+//! legacy unattached sink still pauses on its own tick. The sink records
+//! lifecycle transitions: each one advances
 //! the state machine, is appended to the run journal, and is mirrored to
 //! the state store.
 //!
@@ -29,7 +31,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use saya_agent::{AgentEvent, AgentEventSink};
+use saya_agent::{
+    AgentEvent, AgentEventSink, BudgetDimension, CancellationReason, CancellationToken,
+};
 use saya_store::RunStore;
 use saya_types::{PauseReason, RunId};
 
@@ -83,6 +87,7 @@ pub struct EngineEventSink {
     /// accounting (usage totals, the wall-clock tick) is unchanged either way.
     agent_stream: Option<Arc<dyn AgentEventSink>>,
     elapsed_clock: Mutex<Option<ElapsedClock>>,
+    cancellation: Option<CancellationToken>,
 }
 
 impl EngineEventSink {
@@ -130,6 +135,7 @@ impl EngineEventSink {
             diagnostic: Mutex::new(None),
             agent_stream: None,
             elapsed_clock: Mutex::new(None),
+            cancellation: None,
         }
     }
 
@@ -137,6 +143,20 @@ impl EngineEventSink {
     pub fn with_elapsed_clock(self, clock: ElapsedClock) -> Self {
         *self.elapsed_clock.lock().expect("engine sink clock lock") = Some(clock);
         self
+    }
+
+    /// Attaches the production run's shared cancellation owner. Legacy sink
+    /// callers without this attachment keep the historical per-tick pause.
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = Some(cancellation);
+        self
+    }
+
+    pub(super) fn request_budget_stop(&self, dimension: BudgetDimension) -> bool {
+        self.cancellation.as_ref().is_some_and(|cancellation| {
+            cancellation.cancel_with_reason(CancellationReason::Budget(dimension));
+            true
+        })
     }
 
     /// Attaches the downstream sink every agent event forwards to.
@@ -201,6 +221,7 @@ impl AgentEventSink for EngineEventSink {
             clock_boundary_failed = true;
         }
         if clock_boundary_failed
+            && !self.request_budget_stop(BudgetDimension::ElapsedTime)
             && let Err(error) = self
                 .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
                 .await

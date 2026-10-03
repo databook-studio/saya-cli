@@ -241,6 +241,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         Some(clock) => sink.with_elapsed_clock(clock),
         None => sink,
     };
+    let sink = sink.with_cancellation(host.cancellation.clone());
     let sink = match host.agent_stream {
         Some(stream) => sink.with_agent_stream(stream),
         None => sink.with_agent_stream(Arc::new(TerminalSink::new(format))),

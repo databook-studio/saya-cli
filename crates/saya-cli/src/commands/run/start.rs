@@ -17,17 +17,16 @@
 //! CLI's cancel write one durable record.
 
 use super::approval;
+use super::drive;
 use super::host::{HostRun, RunRequest};
 use super::mode::RunApproval;
-use super::{budget, claim, drive};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+use prepare::prepare;
 use saya_agent::{ApprovalPolicy, CancellationToken};
-use saya_harness::journal::JournalWire;
-use saya_harness::lock::RunLock;
-use saya_harness::run_dir::RunDir;
 use saya_store::SqliteStateStore;
-use saya_types::RunSpec;
+
+mod prepare;
 
 /// The fresh-run invocation inputs: the goal prompt, the `--allow` scopes,
 /// and the budget overrides. The host entry passes the same three; only the
@@ -84,6 +83,7 @@ pub(super) async fn start(
         approval::PlanApproval::PreAuthorized
     };
     let spec = prepared.spec;
+    let run_dir = prepared.run_dir.clone();
     let host = super::host::HostRun {
         journal_wire: None,
         agent_stream: None,
@@ -93,7 +93,7 @@ pub(super) async fn start(
     };
     let work = drive::drive(drive::DriveInputs {
         spec: &spec,
-        run_dir: prepared.run_dir,
+        run_dir,
         state,
         runtime,
         format,
@@ -103,11 +103,27 @@ pub(super) async fn start(
     });
     tokio::pin!(work);
     // Ctrl-C covers everything below: the plan proposal, the approval, and
-    // every episode.
-    match tokio::select! {
+    // every episode. Once signalled, keep the drive future and run lock alive
+    // until its current source future settles.
+    let stopped_by_ctrl_c = tokio::select! {
         result = &mut work => result,
-        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); return Ok(130); }
-    } {
+        _ = tokio::signal::ctrl_c() => {
+            cancellation.cancel();
+            work.await
+        }
+    };
+    if cancellation.reason() == Some(saya_agent::CancellationReason::User) {
+        match super::cancel::record_cancelled(&spec.id, prepared.run_dir.root(), state, None).await
+        {
+            super::cancel::CancelOutcome::Recorded => {
+                drop(prepared.lock);
+                return Ok(130);
+            }
+            super::cancel::CancelOutcome::AlreadyFinished(_) => {}
+            _ => {}
+        }
+    }
+    match stopped_by_ctrl_c {
         Ok(exit) => {
             drop(prepared.lock);
             Ok(exit)
@@ -160,82 +176,23 @@ pub(crate) async fn start_for_panel(
         }
         _ = token.cancelled() => {}
     }
-    // The engine records the stop itself once an episode observes the token;
-    // a stop it never saw (mid-plan, mid-approval) is recorded here — the
-    // same machine, journal, and store mirror `saya run cancel` uses, with
-    // the host's wire so the panel sees the same event the journal wrote. An
-    // already-terminal tail (the drive recorded it while this arm raced it)
-    // leaves the record untouched: exactly one `Cancelled`, either way.
-    super::cancel::record_cancelled(&run_id, prepared.run_dir.root(), state, wire).await;
-    drop(prepared.lock);
-    Ok(130)
-}
-
-/// Parses and refuses before anything exists on disk, then claims the run.
-/// The error arm is the *mapped outcome* the caller returns: usage refusals
-/// surface as plain errors (exit 2 through the app), a claim failure as the
-/// connection class (3) with its message already emitted. The mode is
-/// already admitted — both callers pass a [`RunApproval`], so the bypass
-/// refusal happened at the entry, with every other entry's.
-async fn prepare(
-    request: &RunRequest,
-    runtime: &RuntimeConfig,
-    format: RenderFormat,
-    state: &SqliteStateStore,
-    wire: Option<JournalWire>,
-) -> Result<Prepared, Result<i32, Box<dyn std::error::Error>>> {
-    let goal = request
-        .goal
-        .clone()
-        .map(|text| text.trim().to_string())
-        .ok_or(Err(
-            "run requires a goal: `saya run \"<goal>\" --allow <scopes>`".into(),
-        ))?;
-    // Refusal by construction, before anything exists on disk: a headless run
-    // states its scopes up front or does not start — no run directory, no
-    // store row, no prompt. The refusal is about *stating*: `--allow none`
-    // states the empty approval and starts a read-only run, so only an
-    // absent `--allow` refuses here.
-    if request.allow.is_empty() {
-        return Err(Err(
-            "a headless run refuses to start without --allow <scopes>: it cannot \
-             prompt for approval mid-run, so its scopes must be declared up front"
-                .into(),
-        ));
+    // Do not release the run lock while an episode or source future is still
+    // owned by the drive. If cancellation arrived before the engine acquired
+    // a lifecycle sink, settle the durable fallback only after that drive
+    // future has returned.
+    let result = work.await;
+    if token.reason() != Some(saya_agent::CancellationReason::User) {
+        drop(prepared.lock);
+        return result;
     }
-    let approved = super::scopes::parse(&request.allow, super::scopes::Surface::Run)
-        .map_err(|message| Err(message.into()))?;
-    let budgets = budget::parse(&request.budget, &runtime.resolved.jobs.budgets())
-        .map_err(|message| Err(message.into()))?;
-    let spec = RunSpec::new(
-        request.run_id.clone(),
-        &goal,
-        approved.capabilities.clone(),
-        budgets.clone(),
-    )
-    .map_err(|error| Err(format!("run spec refused: {error}").into()))?;
-    let (run_dir, lock) = match claim::claim(&request.run_id, state, &spec, format, wire).await {
-        Ok(claimed) => claimed,
-        Err(message) => return Err(claim::claim_failure(message, format)),
-    };
-    Ok(Prepared {
-        spec,
-        // The stated scopes as the grammar's words: the frozen decider's
-        // seeds, and the carried words the journal's approval payload
-        // records so a resume re-derives them (never `spec.json`).
-        allow_tokens: approved.tokens,
-        run_dir,
-        lock,
-    })
-}
-
-/// What a claim leaves the caller holding: the spec the drive reads, the
-/// stated scopes as grammar words (the decider's seeds and the journal's
-/// carried payload), the claimed directory, and the single-writer lock the
-/// run holds for its life.
-struct Prepared {
-    spec: RunSpec,
-    allow_tokens: Vec<String>,
-    run_dir: RunDir,
-    lock: RunLock,
+    let outcome =
+        super::cancel::record_cancelled(&run_id, prepared.run_dir.root(), state, wire).await;
+    drop(prepared.lock);
+    match outcome {
+        super::cancel::CancelOutcome::Recorded => Ok(130),
+        super::cancel::CancelOutcome::AlreadyFinished(
+            saya_harness::engine::RunState::Cancelled | saya_harness::engine::RunState::Paused,
+        ) => result,
+        _ => result,
+    }
 }
