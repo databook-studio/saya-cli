@@ -10,7 +10,9 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect, ToolError, ToolExecutor};
+use saya_agent::{
+    LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
+};
 use saya_types::{Capabilities, QueryResult};
 
 use super::import::{MAX_IMPORT_FILE_BYTES, import_bytes};
@@ -118,6 +120,7 @@ impl ScratchSql {
                 // knows how to gate.
                 local_state: LocalStateEffect::WriteWorkspace,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("scratch SQL executed".into()),
         }
     }
@@ -152,6 +155,7 @@ impl ScratchSql {
                 requires_approval: false,
                 local_state: LocalStateEffect::WriteWorkspace,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: Some("workspace CSV imported into scratch".into()),
         }
     }

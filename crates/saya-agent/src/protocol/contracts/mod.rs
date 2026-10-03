@@ -33,7 +33,7 @@ pub use knowledge::{
 };
 pub use learning::LearningSkipReason;
 pub use session_policy::{ApprovalChoice, ApprovalDecision, SessionGrants, SessionPolicy};
-pub use tool::{LocalStateEffect, ToolDefinition, ToolEffect, ToolExecutor};
+pub use tool::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect, ToolExecutor};
 pub use usage::UsageCall;
 
 #[cfg(test)]

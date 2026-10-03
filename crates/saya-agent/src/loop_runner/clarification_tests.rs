@@ -95,6 +95,7 @@ fn clarification_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        concurrency: crate::ToolConcurrency::Serial,
         completion: Some("question asked — the turn pauses for the user's answer".into()),
     }
 }
@@ -113,6 +114,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            concurrency: crate::ToolConcurrency::Serial,
             completion: None,
         },
     ]

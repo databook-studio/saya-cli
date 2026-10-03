@@ -129,6 +129,7 @@ fn request() -> ChatRequest {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            concurrency: saya_agent::ToolConcurrency::Serial,
             completion: None,
         },
     ])

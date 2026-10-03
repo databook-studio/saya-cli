@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
     ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    ProviderEvent, ProviderStream, ToolCall, ToolDefinition, ToolEffect, ToolError, ToolExecutor,
-    run_agent, run_agent_with_sink,
+    ProviderEvent, ProviderStream, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect,
+    ToolError, ToolExecutor, run_agent, run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
@@ -96,6 +96,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: true,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: None,
         },
         ToolDefinition {
@@ -109,6 +110,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: true,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            concurrency: ToolConcurrency::Serial,
             completion: None,
         },
         ToolDefinition {
@@ -122,6 +124,7 @@ fn definitions() -> Vec<ToolDefinition> {
                 requires_approval: false,
                 local_state: saya_agent::LocalStateEffect::None,
             },
+            concurrency: ToolConcurrency::Concurrent,
             completion: None,
         },
     ]
@@ -1672,6 +1675,7 @@ fn external_side_effect_without_approval_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: saya_agent::LocalStateEffect::None,
         },
+        concurrency: ToolConcurrency::Serial,
         completion: None,
     }
 }
