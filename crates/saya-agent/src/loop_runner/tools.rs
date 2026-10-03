@@ -181,8 +181,8 @@ pub(super) async fn execute(
         }
     }
 }
-/// Executes already-validated, auto-runnable calls concurrently while
-/// preserving input order in the returned results.
+/// Executes already-validated, approval-free calls that explicitly opted into
+/// concurrency while preserving input order in the returned results.
 ///
 /// The tool-call list comes from the model, so its size is untrusted:
 /// `max_tool_calls` is a whole-run *total*, not a simultaneity cap, so a

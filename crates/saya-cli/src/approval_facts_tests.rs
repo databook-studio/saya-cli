@@ -43,6 +43,7 @@ fn session_tool(name: &str) -> ToolDefinition {
                     requires_approval: false,
                     local_state: LocalStateEffect::WriteWorkspace,
                 },
+                concurrency: saya_agent::ToolConcurrency::Serial,
                 completion: None,
             };
             crate::interactive::session_definitions::run_program(source)

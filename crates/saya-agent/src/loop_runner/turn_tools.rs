@@ -1,15 +1,14 @@
-//! Executes the tool calls of one assistant turn — concurrently when every
-//! call is valid and auto-runnable, otherwise sequentially with approval
-//! gating. The caller trims the intra-loop context budget after either path
-//! returns; this function no longer signals which path ran, because both
-//! paths feed the same trim.
+//! Executes the tool calls of one assistant turn — concurrently only when
+//! every call is valid, auto-runnable, and explicitly independent. A mixed
+//! concurrent/serial batch is conservatively serial, as are prompted calls.
+//! The caller trims the intra-loop context budget after either path returns.
 
 use super::{
     check_cancelled, emit, failed_statements, failure_key, output, tool_policy, tool_record, tools,
 };
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
-    ChatMessage, ToolDefinition, ToolExecutor,
+    ChatMessage, ToolConcurrency, ToolDefinition, ToolExecutor,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -28,9 +27,9 @@ pub(super) async fn run_turn_tools(
     failed: &mut failed_statements::FailedStatements,
     last_successful_sql: &mut Option<String>,
 ) -> Result<(), AgentError> {
-    // When every call in the message is valid and needs neither approval nor
-    // a structural refusal, run the batch concurrently instead of paying
-    // their latency sequentially.
+    // A batch overlaps only when every member opted in and is allowed without
+    // a per-call approval. Prompted calls stay serial, preserving approval
+    // authority and prompt order.
     let batch_parallel = assistant.tool_calls.len() > 1
         && assistant.tool_calls.iter().all(|call| {
             tools::invalid_reason(call, definitions).is_none()
@@ -38,14 +37,15 @@ pub(super) async fn run_turn_tools(
                     .iter()
                     .find(|definition| definition.name == call.name)
                     .is_some_and(|definition| {
-                        matches!(
-                            tool_policy::execution_decision(
-                                definition,
-                                limits,
-                                tool_policy::ApprovalState::NotRequired,
-                            ),
-                            tool_policy::ExecutionDecision::Allow
-                        )
+                        definition.concurrency == ToolConcurrency::Concurrent
+                            && matches!(
+                                tool_policy::execution_decision(
+                                    definition,
+                                    limits,
+                                    tool_policy::ApprovalState::NotRequired,
+                                ),
+                                tool_policy::ExecutionDecision::Allow
+                            )
                     })
                 && !failed_statements::is_repeat(failed, call)
         });
