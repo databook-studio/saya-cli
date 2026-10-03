@@ -4,6 +4,8 @@ use crate::{AgentError, ChatMessage, ProviderError, ProviderRecoveryReason, Toke
 
 /// The three existing 250/500/1000 ms retry delays.
 pub(super) const RETRY_LIMIT: u8 = 3;
+/// Initial attempt plus the three fixed retry delays.
+pub(super) const MAX_ATTEMPTS: u8 = RETRY_LIMIT + 1;
 
 #[derive(Debug)]
 pub(super) struct ReceiveFailure {

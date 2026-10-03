@@ -8,6 +8,7 @@ mod failed_statements;
 mod failure_key;
 mod output;
 mod receive;
+mod receive_stream;
 mod salvage;
 mod tool_batch;
 mod tool_policy;
@@ -48,13 +49,13 @@ const CONTINUATION_NOTE: &str = "Your previous response was cut off at the provi
 /// zero would collapse that distinction and make an unreported rate render as 0%.
 fn sum_reported(total: &mut Option<u64>, turn: Option<u64>) {
     if let Some(count) = turn {
-        *total = Some(total.unwrap_or(0) + count);
+        *total = Some(total.unwrap_or(0).saturating_add(count));
     }
 }
 
 pub(super) fn add_usage(total: &mut TokenUsage, turn: TokenUsage) {
-    total.input_tokens += turn.input_tokens;
-    total.output_tokens += turn.output_tokens;
+    total.input_tokens = total.input_tokens.saturating_add(turn.input_tokens);
+    total.output_tokens = total.output_tokens.saturating_add(turn.output_tokens);
     sum_reported(&mut total.cached_input_tokens, turn.cached_input_tokens);
     sum_reported(
         &mut total.cache_creation_input_tokens,

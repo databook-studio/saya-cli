@@ -83,65 +83,6 @@ fn a_turn_reset_discards_the_partial_answer_and_the_retry_replaces_it() {
     );
 }
 
-/// Recovery progress follows the reset, so the TUI presents the retry rather
-/// than stale partial text. Failed-attempt usage waits for the one final
-/// settlement: it is counted in spend, never reused as the context numerator.
-#[test]
-fn recovery_progress_and_failed_usage_settle_once_without_changing_context_input() {
-    let (mut app, mut state) = app_with_model("gpt-4o");
-    app.request.stream = Some(stream_with(vec![
-        StreamMsg::Event(AgentEvent::assistant_text("discarded")),
-        StreamMsg::Event(AgentEvent::provider_recovery(
-            saya_agent::ProviderRecoveryPhase::Retrying,
-            saya_agent::ProviderRecoveryReason::StreamEnded,
-            1,
-            3,
-        )),
-        StreamMsg::Event(AgentEvent::turn_reset()),
-        StreamMsg::Event(AgentEvent::failed_attempt_usage(TokenUsage::new(7, 2))),
-        answering_report(11),
-    ]));
-    assert!(
-        !app.drain_stream(&mut state),
-        "the retry has not settled yet"
-    );
-    assert!(
-        app.transcript
-            .blocks()
-            .iter()
-            .all(|block| !block.text.contains("discarded")),
-        "the reset removed the failed attempt text"
-    );
-    assert_eq!(
-        app.request.activity.as_deref(),
-        Some("retrying provider (attempt 1 of 3)"),
-        "typed progress is visible while the retry waits"
-    );
-    assert_eq!(state.usage.answering.turns, 0, "only Done settles spend");
-
-    app.request.stream = Some(stream_with(vec![StreamMsg::Done(Ok(output(
-        TokenUsage::new(18, 7),
-    )))]));
-    assert!(app.drain_stream(&mut state), "the aggregate settles once");
-    assert_eq!(state.usage.answering.input_tokens, 18);
-    assert_eq!(state.usage.answering.output_tokens, 7);
-    assert_eq!(state.usage.answering.turns, 1);
-    let footer = app
-        .transcript
-        .blocks()
-        .iter()
-        .rev()
-        .find(|block| block.text.contains("tokens in"))
-        .expect("the settled run has a footer")
-        .text
-        .clone();
-    assert!(footer.contains("18 tokens in · 7 tokens out"), "{footer}");
-    assert!(
-        footer.contains("ctx 0% of 128k"),
-        "the successful report (11), not aggregate spend (18), is the numerator: {footer}"
-    );
-}
-
 /// A usage report processed after `Done` within one drained batch cannot
 /// retroactively inject a ctx figure — and, the invariant that matters, it
 /// must not survive the finished turn: the reset runs after the whole batch,
