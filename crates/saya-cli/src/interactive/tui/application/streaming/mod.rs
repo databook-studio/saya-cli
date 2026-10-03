@@ -50,6 +50,9 @@ mod guard_tests;
 #[path = "numerator_tests.rs"]
 mod numerator_tests;
 #[cfg(test)]
+#[path = "recovery_usage_tests.rs"]
+mod recovery_usage_tests;
+#[cfg(test)]
 #[path = "reset_tests.rs"]
 mod reset_tests;
 #[cfg(test)]

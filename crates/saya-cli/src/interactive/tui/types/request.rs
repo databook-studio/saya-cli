@@ -1,7 +1,7 @@
 //! The live slash-command popup and the active agent-request state.
 
 use super::super::agent::Stream;
-use saya_agent::ApprovalChoice;
+use saya_agent::{ApprovalChoice, TokenUsage};
 use tokio::sync::oneshot;
 
 /// Largest number of text rows the input box grows to before it stops expanding.
@@ -36,4 +36,28 @@ pub(crate) struct RequestState {
     /// the footer's context utilisation. Cleared when the request ends so a
     /// later turn never shows a stale figure.
     pub(crate) last_answering_input: Option<u64>,
+    /// Every provider receipt observed for this in-flight answering run. This
+    /// only settles a terminal error; a successful output already owns its
+    /// aggregate and must not be counted twice.
+    pub(crate) known_answering_usage: Option<TokenUsage>,
+}
+
+impl RequestState {
+    pub(crate) fn record_answering_usage(&mut self, usage: TokenUsage) {
+        let total = self.known_answering_usage.get_or_insert_default();
+        total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
+        total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
+        sum_optional(&mut total.cached_input_tokens, usage.cached_input_tokens);
+        sum_optional(
+            &mut total.cache_creation_input_tokens,
+            usage.cache_creation_input_tokens,
+        );
+        sum_optional(&mut total.reasoning_tokens, usage.reasoning_tokens);
+    }
+}
+
+fn sum_optional(total: &mut Option<u64>, value: Option<u64>) {
+    if let Some(value) = value {
+        *total = Some(total.unwrap_or(0).saturating_add(value));
+    }
 }

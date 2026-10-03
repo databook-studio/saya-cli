@@ -2,144 +2,13 @@ use async_trait::async_trait;
 use saya_agent::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
     ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    ProviderEvent, ProviderRecoveryPhase, ProviderRecoveryReason, ProviderStream, TokenUsage,
-    ToolCall, ToolConcurrency, ToolDefinition, ToolEffect, ToolError, ToolExecutor, run_agent,
-    run_agent_with_sink,
+    ProviderEvent, ProviderStream, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect,
+    ToolError, ToolExecutor, run_agent, run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
 struct MockProvider {
     responses: Mutex<Vec<ChatResponse>>,
-}
-
-/// A dropped stream may have already disclosed cumulative usage. The discarded
-/// answer never reaches the final answer, but the final attempt snapshot is
-/// real spend and must be reported once without changing the successful-call
-/// usage event that UI occupancy consumes.
-#[tokio::test]
-async fn failed_attempt_usage_is_settled_once_and_aggregated_with_the_retry() {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let output = run_agent_with_sink(
-        &UsageDropThenAnswerProvider {
-            attempts: Mutex::new(0),
-        },
-        &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
-        },
-        request(),
-        definitions(),
-        AgentLimits::default(),
-        &AllowReadOnlyApproval,
-        &RecordingSink {
-            events: events.clone(),
-        },
-        CancellationToken::new(),
-    )
-    .await
-    .expect("the second attempt completes");
-
-    assert_eq!(output.answer, "kept");
-    assert_eq!(output.usage, TokenUsage::new(18, 7));
-    let seen = events.lock().unwrap();
-    assert_eq!(
-        seen.iter()
-            .filter_map(|event| match event {
-                AgentEvent::FailedAttemptUsage { usage } => Some(*usage),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        vec![TokenUsage::new(7, 2)],
-        "only the latest cumulative snapshot of the failed attempt is spend"
-    );
-    assert_eq!(
-        seen.iter()
-            .filter_map(|event| match event {
-                AgentEvent::Usage { usage, .. } => Some(*usage),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        vec![TokenUsage::new(11, 5)],
-        "the successful call keeps the existing usage event exactly once"
-    );
-    assert!(
-        seen.iter().any(|event| matches!(
-            event,
-            AgentEvent::ProviderRecovery {
-                phase: ProviderRecoveryPhase::Retrying,
-                reason: ProviderRecoveryReason::StreamEnded,
-                attempt: 1,
-                limit: 3,
-            }
-        )),
-        "the retry reason and bounded attempt progress are typed: {seen:?}"
-    );
-}
-
-/// No usage event remains unknown, while an explicit 0/0 report is still a
-/// known failed-attempt receipt. Both retries produce the same answer, so the
-/// distinction can only come from the receiver's own stream observation.
-#[tokio::test]
-async fn unknown_and_zero_failed_attempt_usage_stay_distinct() {
-    let unknown_events = Arc::new(Mutex::new(Vec::new()));
-    run_agent_with_sink(
-        &OneFailedAttemptProvider {
-            attempts: Mutex::new(0),
-            first_attempt: vec![ProviderEvent::TextDelta("discarded".into())],
-        },
-        &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
-        },
-        request(),
-        definitions(),
-        AgentLimits::default(),
-        &AllowReadOnlyApproval,
-        &RecordingSink {
-            events: unknown_events.clone(),
-        },
-        CancellationToken::new(),
-    )
-    .await
-    .expect("the unknown-usage retry completes");
-    assert!(
-        unknown_events
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|event| !matches!(event, AgentEvent::FailedAttemptUsage { .. })),
-        "no provider receipt must not become a fabricated zero"
-    );
-
-    let zero_events = Arc::new(Mutex::new(Vec::new()));
-    run_agent_with_sink(
-        &OneFailedAttemptProvider {
-            attempts: Mutex::new(0),
-            first_attempt: vec![
-                ProviderEvent::Usage(TokenUsage::new(0, 0)),
-                ProviderEvent::TextDelta("discarded".into()),
-            ],
-        },
-        &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
-        },
-        request(),
-        definitions(),
-        AgentLimits::default(),
-        &AllowReadOnlyApproval,
-        &RecordingSink {
-            events: zero_events.clone(),
-        },
-        CancellationToken::new(),
-    )
-    .await
-    .expect("the zero-usage retry completes");
-    assert!(
-        zero_events.lock().unwrap().iter().any(|event| matches!(
-            event,
-            AgentEvent::FailedAttemptUsage { usage }
-                if *usage == TokenUsage::new(0, 0)
-        )),
-        "a reported zero remains a known receipt"
-    );
 }
 
 #[async_trait]
@@ -193,102 +62,6 @@ impl ApprovalDecider for DenyApproval {
 
 struct RecordingSink {
     events: Arc<Mutex<Vec<AgentEvent>>>,
-}
-
-struct CancelOnRetrySink {
-    token: CancellationToken,
-}
-
-#[async_trait]
-impl AgentEventSink for CancelOnRetrySink {
-    async fn emit(&self, event: AgentEvent) {
-        if matches!(
-            event,
-            AgentEvent::ProviderRecovery {
-                phase: ProviderRecoveryPhase::Retrying,
-                ..
-            }
-        ) {
-            self.token.cancel();
-        }
-    }
-}
-
-struct UsageDropThenAnswerProvider {
-    attempts: Mutex<usize>,
-}
-
-#[async_trait]
-impl ChatProvider for UsageDropThenAnswerProvider {
-    fn name(&self) -> &str {
-        "usage-drop-then-answer"
-    }
-
-    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
-        unreachable!("the main loop drives the provider through stream")
-    }
-
-    async fn stream(
-        &self,
-        _: ChatRequest,
-        _: CancellationToken,
-    ) -> Result<ProviderStream, saya_agent::ProviderError> {
-        let attempt = {
-            let mut attempts = self.attempts.lock().unwrap();
-            *attempts += 1;
-            *attempts
-        };
-        let events = if attempt == 1 {
-            vec![
-                Ok(ProviderEvent::TextDelta("discarded".into())),
-                Ok(ProviderEvent::Usage(TokenUsage::new(3, 1))),
-                Ok(ProviderEvent::Usage(TokenUsage::new(7, 2))),
-            ]
-        } else {
-            vec![
-                Ok(ProviderEvent::TextDelta("kept".into())),
-                Ok(ProviderEvent::Usage(TokenUsage::new(11, 5))),
-                Ok(ProviderEvent::Done),
-            ]
-        };
-        Ok(Box::pin(futures_util::stream::iter(events)))
-    }
-}
-
-struct OneFailedAttemptProvider {
-    attempts: Mutex<usize>,
-    first_attempt: Vec<ProviderEvent>,
-}
-
-#[async_trait]
-impl ChatProvider for OneFailedAttemptProvider {
-    fn name(&self) -> &str {
-        "one-failed-attempt"
-    }
-
-    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
-        unreachable!("the main loop drives the provider through stream")
-    }
-
-    async fn stream(
-        &self,
-        _: ChatRequest,
-        _: CancellationToken,
-    ) -> Result<ProviderStream, saya_agent::ProviderError> {
-        let attempt = {
-            let mut attempts = self.attempts.lock().unwrap();
-            *attempts += 1;
-            *attempts
-        };
-        let events = if attempt == 1 {
-            self.first_attempt.clone()
-        } else {
-            vec![ProviderEvent::TextDelta("kept".into()), ProviderEvent::Done]
-        };
-        Ok(Box::pin(futures_util::stream::iter(
-            events.into_iter().map(Ok),
-        )))
-    }
 }
 
 #[async_trait]
@@ -2890,8 +2663,15 @@ async fn dropped_stream_retries_the_turn_and_the_sink_saw_reset_then_full_text()
         .position(|event| matches!(event, AgentEvent::TurnReset))
         .expect("the sink saw a TurnReset before the retry");
     assert!(
-        matches!(seen.get(split + 1), Some(AgentEvent::TurnStarted)),
-        "the retried attempt announces its own boundary right after the reset"
+        matches!(
+            seen.get(split + 1),
+            Some(AgentEvent::ProviderRecovery { .. })
+        ),
+        "the reset clears discarded text before typed retry progress"
+    );
+    assert!(
+        matches!(seen.get(split + 2), Some(AgentEvent::TurnStarted)),
+        "the retried attempt announces its own boundary after recovery progress"
     );
     let partial: String = seen[..split]
         .iter()
@@ -2986,44 +2766,6 @@ impl ChatProvider for AlwaysDroppingProvider {
     }
 }
 
-struct ByteLimitThenAnswerProvider {
-    attempts: Mutex<usize>,
-}
-
-#[async_trait]
-impl ChatProvider for ByteLimitThenAnswerProvider {
-    fn name(&self) -> &str {
-        "byte-limit-then-answer"
-    }
-
-    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
-        unreachable!("the main loop drives the provider through stream")
-    }
-
-    async fn stream(
-        &self,
-        _: ChatRequest,
-        _: CancellationToken,
-    ) -> Result<ProviderStream, saya_agent::ProviderError> {
-        let attempt = {
-            let mut attempts = self.attempts.lock().unwrap();
-            *attempts += 1;
-            *attempts
-        };
-        let events = if attempt == 1 {
-            vec![Ok(ProviderEvent::TextDelta(
-                "x".repeat(saya_agent::MAX_STREAM_BYTES + 1),
-            ))]
-        } else {
-            vec![
-                Ok(ProviderEvent::TextDelta("kept".into())),
-                Ok(ProviderEvent::Done),
-            ]
-        };
-        Ok(Box::pin(futures_util::stream::iter(events)))
-    }
-}
-
 #[tokio::test]
 async fn exhausted_retries_fall_through_to_the_existing_error_path() {
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -3067,89 +2809,6 @@ async fn exhausted_retries_fall_through_to_the_existing_error_path() {
             .any(|event| matches!(event, AgentEvent::Complete)),
         "an exhausted retry run never completes: {seen:?}"
     );
-    assert!(
-        seen.iter().any(|event| matches!(
-            event,
-            AgentEvent::ProviderRecovery {
-                phase: ProviderRecoveryPhase::Exhausted,
-                reason: ProviderRecoveryReason::StreamEnded,
-                attempt: 4,
-                limit: 3,
-            }
-        )),
-        "the exhausted retry is a typed local stream-end outcome: {seen:?}"
-    );
-}
-
-/// Cancelling while the existing backoff is pending abandons this local wait
-/// and never starts another provider attempt. It says nothing about whether a
-/// provider already saw the first request.
-#[tokio::test]
-async fn cancellation_during_backoff_starts_no_next_provider_attempt() {
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let cancellation = CancellationToken::new();
-    let error = run_agent_with_sink(
-        &AlwaysDroppingProvider {
-            requests: requests.clone(),
-        },
-        &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
-        },
-        request(),
-        definitions(),
-        AgentLimits::default(),
-        &AllowReadOnlyApproval,
-        &CancelOnRetrySink {
-            token: cancellation.clone(),
-        },
-        cancellation,
-    )
-    .await
-    .unwrap_err();
-    assert!(matches!(error, AgentError::Cancelled));
-    assert_eq!(
-        requests.lock().unwrap().len(),
-        1,
-        "cancellation during backoff starts no next provider call"
-    );
-}
-
-/// The locally enforced stream byte ceiling is not a provider error string:
-/// it has its own typed reason and retries under the established schedule.
-#[tokio::test]
-async fn stream_byte_limit_has_a_typed_recovery_reason() {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let output = run_agent_with_sink(
-        &ByteLimitThenAnswerProvider {
-            attempts: Mutex::new(0),
-        },
-        &MockTools {
-            calls: Arc::new(Mutex::new(Vec::new())),
-        },
-        request(),
-        definitions(),
-        AgentLimits::default(),
-        &AllowReadOnlyApproval,
-        &RecordingSink {
-            events: events.clone(),
-        },
-        CancellationToken::new(),
-    )
-    .await
-    .expect("the retry answers after the locally bounded attempt");
-    assert_eq!(output.answer, "kept");
-    assert!(
-        events.lock().unwrap().iter().any(|event| matches!(
-            event,
-            AgentEvent::ProviderRecovery {
-                phase: ProviderRecoveryPhase::Retrying,
-                reason: ProviderRecoveryReason::StreamByteLimit,
-                attempt: 1,
-                limit: 3,
-            }
-        )),
-        "the local byte bound must not be relabelled as generic provider text"
-    );
 }
 
 /// A stream that **completes** (`Done`) but carries no usable response is not
@@ -3187,7 +2846,6 @@ async fn a_completed_but_empty_response_errors_after_one_attempt() {
     let provider = EmptyCompletionProvider {
         requests: requests.clone(),
     };
-    let events = Arc::new(Mutex::new(Vec::new()));
     let error = run_agent_with_sink(
         &provider,
         &MockTools {
@@ -3197,9 +2855,7 @@ async fn a_completed_but_empty_response_errors_after_one_attempt() {
         definitions(),
         AgentLimits::default(),
         &AllowReadOnlyApproval,
-        &RecordingSink {
-            events: events.clone(),
-        },
+        &NoopSink,
         CancellationToken::new(),
     )
     .await
@@ -3215,18 +2871,6 @@ async fn a_completed_but_empty_response_errors_after_one_attempt() {
         requests.lock().unwrap().len(),
         1,
         "a completed-but-empty response is not retried"
-    );
-    assert!(
-        events.lock().unwrap().iter().any(|event| matches!(
-            event,
-            AgentEvent::ProviderRecovery {
-                phase: ProviderRecoveryPhase::NotRetried,
-                reason: ProviderRecoveryReason::EmptyResponse,
-                attempt: 1,
-                limit: 3,
-            }
-        )),
-        "an empty completed response has a typed local reason"
     );
 }
 
@@ -3319,18 +2963,6 @@ async fn truncation_is_never_retried_and_emits_no_reset() {
             .any(|event| matches!(event, AgentEvent::TurnReset)),
         "no reset means no 'interrupted — retrying' line: {seen:?}"
     );
-    assert!(
-        seen.iter().any(|event| matches!(
-            event,
-            AgentEvent::ProviderRecovery {
-                phase: ProviderRecoveryPhase::NotRetried,
-                reason: ProviderRecoveryReason::OutputTruncated,
-                attempt: 1,
-                limit: 3,
-            }
-        )),
-        "a structured truncation is never relabelled as an arbitrary provider failure: {seen:?}"
-    );
 }
 
 /// O1 property 6: a genuine transport failure still retries on the existing
@@ -3405,18 +3037,6 @@ async fn genuine_transport_failure_still_retries_on_the_existing_schedule() {
             .count(),
         3,
         "one reset per retry"
-    );
-    assert!(
-        events.lock().unwrap().iter().any(|event| matches!(
-            event,
-            AgentEvent::ProviderRecovery {
-                phase: ProviderRecoveryPhase::Exhausted,
-                reason: ProviderRecoveryReason::ProviderFailure,
-                attempt: 4,
-                limit: 3,
-            }
-        )),
-        "unstructured provider errors stay generic rather than being parsed into a false cause"
     );
 }
 

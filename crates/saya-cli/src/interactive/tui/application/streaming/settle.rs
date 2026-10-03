@@ -135,6 +135,9 @@ impl App {
                 state.usage.record_learning(output.learning_usage);
             }
             Err(error) => {
+                if let Some(usage) = self.request.known_answering_usage {
+                    state.usage.answering.record_call(&usage);
+                }
                 // The stop's confirmation, not a failure: the
                 // token says this app asked, the worker's settle
                 // text says the worker confirmed — kept work
