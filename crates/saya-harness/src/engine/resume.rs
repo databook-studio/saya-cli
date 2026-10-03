@@ -13,6 +13,7 @@ use saya_types::{PauseReason, RunEvent};
 
 use crate::{
     engine::{
+        clock::ElapsedClock,
         episode::{EpisodeDriver, EpisodeRun},
         sink::{EngineEventSink, SinkBudgets},
         state::RunState,
@@ -83,23 +84,6 @@ pub async fn resume(
         Position::Paused => RunState::Paused,
         Position::MidFlight => RunState::Executing,
     };
-    let sink = EngineEventSink::new(
-        resumed.run_id.clone(),
-        initial,
-        journal.clone(),
-        resumed.store.clone(),
-        SinkBudgets {
-            wall_clock: resumed.wall_clock,
-            token_ceiling: resumed.token_ceiling,
-            download_budget: resumed.download_budget.clone(),
-            carried_usage: UsageTotals::from_journal(&events),
-        },
-        std::time::Instant::now,
-    );
-    let sink = match &resumed.agent_stream {
-        Some(stream) => sink.with_agent_stream(Arc::clone(stream)),
-        None => sink,
-    };
     let first_step = (0..resumed.plan.steps.len())
         .find(|&step| state.steps.get(&step) != Some(&StepState::Completed));
     let uncertain = first_step.and_then(|first_step| {
@@ -119,6 +103,32 @@ pub async fn resume(
             (!effects.is_empty()).then(|| (step, spec.goal.clone(), effects))
         })
     });
+    let elapsed = resumed
+        .wall_clock
+        .filter(|_| first_step.is_some() && uncertain.is_none())
+        .map(|ceiling| ElapsedClock::resume_now(&events, ceiling, std::time::Instant::now()));
+    let carried_wall_clock = match &elapsed {
+        Some(Ok(clock)) => Some(clock.remaining()),
+        Some(Err(_)) => None,
+        None => None,
+    };
+    let sink = EngineEventSink::new(
+        resumed.run_id.clone(),
+        initial,
+        journal.clone(),
+        resumed.store.clone(),
+        SinkBudgets {
+            wall_clock: carried_wall_clock,
+            token_ceiling: resumed.token_ceiling,
+            download_budget: resumed.download_budget.clone(),
+            carried_usage: UsageTotals::from_journal(&events),
+        },
+        std::time::Instant::now,
+    );
+    let sink = match &resumed.agent_stream {
+        Some(stream) => sink.with_agent_stream(Arc::clone(stream)),
+        None => sink,
+    };
     if initial == RunState::Executing {
         // Record the death the journal could not. A refusal stays paused and
         // never records that execution resumed.
@@ -133,10 +143,40 @@ pub async fn resume(
             effects,
         });
     }
+    if let Some(Err(source)) = &elapsed {
+        return Err(ResumeError::ElapsedClock { source: *source });
+    }
+    let (sink, clock_exhausted) = match elapsed {
+        Some(Ok(clock)) => {
+            journal
+                .append(&clock.event())
+                .map_err(|source| ResumeError::Journal { source })?;
+            let exhausted = clock.remaining().is_zero();
+            (sink.with_elapsed_clock(clock), exhausted)
+        }
+        _ => (sink, false),
+    };
     if matches!(initial, RunState::Executing | RunState::Paused) {
         sink.record(TransitionEvent::Resume)
             .await
             .map_err(|source| ResumeError::Transition { source })?;
+    }
+    if clock_exhausted && first_step.is_some() {
+        if initial == RunState::Approved {
+            sink.record(TransitionEvent::Begin)
+                .await
+                .map_err(|source| ResumeError::Transition { source })?;
+        }
+        sink.record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
+            .await
+            .map_err(|source| ResumeError::Transition { source })?;
+        let Some(first_step) = first_step else {
+            unreachable!("clock enforcement is skipped after all steps complete");
+        };
+        return Ok(ResumeOutcome::Resumed {
+            first_step,
+            state: RunState::Paused,
+        });
     }
     let Some(first_step) = first_step else {
         // Every step is complete but the completion was never recorded: the
